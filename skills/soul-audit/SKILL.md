@@ -57,7 +57,7 @@ Ask: "Tell me about yourself. What do you do? What are you working on? Who are t
 Generate: USER.md with role, projects, key people, communication preferences.
 
 ### Phase 5: Boundaries
-Ask: "Who should have access to your brain? Are there people who should see some but not all? Anyone to keep out entirely?"
+Ask: "Who should have access to your Cortex workspace? Are there people who should see some but not all? Anyone to keep out entirely?"
 Generate: ACCESS_POLICY.md with 4 tiers (Full/Work/Family/None).
 
 ### Phase 6: Operational Cadence

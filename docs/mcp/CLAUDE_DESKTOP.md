@@ -1,39 +1,48 @@
-# Connect GBrain to Claude Desktop
+# Connect Cortex To Claude Desktop
 
-**Important:** Claude Desktop does NOT connect to remote MCP servers via
-`claude_desktop_config.json`. That file only works for local stdio servers.
-Remote HTTP servers must be added through the GUI.
+Claude Desktop should connect to the hosted Cortex MCP endpoint from the tenant
+runtime manifest. Do not configure a local server for normal SaaS onboarding.
 
 ## Setup
 
-1. Open Claude Desktop
-2. Go to **Settings > Integrations**
-3. Click **Add Integration** (or **Add Connector**)
-4. Enter the MCP server URL:
+1. Get the teammate or owner onboarding URL from the Cortex console or invite.
+2. Connect the Cortex CLI:
+
+   ```bash
+   cortex connect '<onboarding-url>' --client-secret '<one-time-secret>'
    ```
-   https://YOUR-DOMAIN.ngrok.app/mcp
+
+3. Install the Claude Desktop config:
+
+   ```bash
+   cortex runtime install claude-desktop
    ```
-   Replace `YOUR-DOMAIN` with your ngrok domain (see
-   [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for setup).
-5. Set authentication to **Bearer Token** and paste your token
-   (create one with `gbrain auth create "claude-desktop"`)
-6. Save
+
+4. Restart Claude Desktop.
+
+The generated config contains the hosted Cortex MCP URL. It does not contain the
+one-time OAuth client secret.
+
+## Manifest-Only Setup
+
+Agents can configure Claude Desktop without a prior local profile when they have
+the tenant manifest URL:
+
+```bash
+cortex runtime install claude-desktop \
+  --manifest-url https://<tenant-host>/runtime-manifest.json
+```
 
 ## Verify
 
-Start a new conversation and try:
+Ask Claude Desktop to use Cortex for a company question that should hit the
+tenant brain. The request should appear in the Cortex Activity page, and the
+client id should match the invite or agent client.
 
-```
-Search my brain for [any topic]
-```
+## Notes
 
-Claude Desktop will use your GBrain tools automatically.
-
-## Common Mistakes
-
-**Using claude_desktop_config.json for remote servers** — this silently fails
-with no error message. The JSON config only works for local stdio MCP servers.
-Remote HTTP servers must be added via Settings > Integrations in the GUI.
-
-**Using the wrong URL** — make sure the URL ends with `/mcp` (not `/health`
-or just the base domain).
+- Use one OAuth client per teammate or agent runtime.
+- Keep source scoping in Cortex; do not duplicate authorization rules in the
+  desktop config.
+- Re-run with `--force` only when replacing an existing `mcpServers.cortex`
+  entry intentionally.

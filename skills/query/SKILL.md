@@ -49,10 +49,10 @@ This skill guarantees:
    - Semantic query for conceptual questions
    - Structured queries (list by type, backlinks) for relational questions
 2. **Execute searches:**
-   - Keyword search gbrain for FTS matches (search)
-   - Hybrid search gbrain for semantic+keyword with expansion (query)
-   - List pages in gbrain by type or check backlinks for structural queries
-3. **Read top results.** Read the top 3-5 pages from gbrain to get full context.
+   - Keyword search cortex for FTS matches (search)
+   - Hybrid search cortex for semantic+keyword with expansion (query)
+   - List pages in cortex by type or check backlinks for structural queries
+3. **Read top results.** Read the top 3-5 pages from cortex to get full context.
 4. **Synthesize answer** with citations. Every claim traces back to a specific page slug.
 5. **Flag gaps.** If the brain doesn't have info, say "the brain doesn't have information on X" rather than hallucinating.
 
@@ -86,9 +86,9 @@ Answers should include:
 Search returns **chunks**, not full pages. Read the excerpts first before deciding
 whether to load a full page.
 
-- `gbrain search` / `gbrain query` return ranked chunks with context snippets.
+- `cortex search` / `cortex query` return ranked chunks with context snippets.
   These are often enough to answer the question directly.
-- Only use `gbrain get <slug>` to load the full page when a chunk confirms the
+- Only use `cortex get <slug>` to load the full page when a chunk confirms the
   page is relevant and you need more context (e.g., compiled truth, timeline).
 - **"Tell me about X"** -- get the full page (the user wants the complete picture).
 - **"Did anyone mention Y?"** -- search results are enough (the user wants a yes/no with evidence).
@@ -119,37 +119,37 @@ For relationship questions ("who knows who at X?", "connections between A and B"
 "who works at Acme?", "who attended the standup?"), use the graph layer instead
 of full-text search:
 
-- `gbrain graph-query <slug> --type <link_type> --depth N --direction in|out|both`
+- `cortex graph-query <slug> --type <link_type> --depth N --direction in|out|both`
 - Available link types: `attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, `source`
 - `--direction in` answers "who points to X?" (e.g., who works at company X)
 - `--direction out` answers "what does X point to?" (default)
 - `--depth N` controls multi-hop traversal (default 5)
 
 Examples:
-- "Who works at Acme?" → `gbrain graph-query companies/acme --type works_at --direction in`
-- "Who attended Demo Day W26?" → `gbrain graph-query meetings/demo-day-w26 --type attended --direction out`
-- "What companies has Emily advised?" → `gbrain graph-query people/emily --type advises --direction out`
-- "Who has Alice met (via meetings)?" → `gbrain graph-query people/alice --type attended --depth 2`
+- "Who works at Acme?" → `cortex graph-query companies/acme --type works_at --direction in`
+- "Who attended Demo Day W26?" → `cortex graph-query meetings/demo-day-w26 --type attended --direction out`
+- "What companies has Emily advised?" → `cortex graph-query people/emily --type advises --direction out`
+- "Who has Alice met (via meetings)?" → `cortex graph-query people/alice --type attended --depth 2`
 
-Combine with `gbrain query` for queries that need BOTH semantic similarity AND
+Combine with `cortex query` for queries that need BOTH semantic similarity AND
 graph structure. Search results are ranked with a small backlink boost so well-
 connected entities surface higher.
 
 ## Search Quality Awareness
 
 If search results seem off (wrong results, missing known pages, irrelevant hits):
-- Run `gbrain doctor --json` to check index health
+- Run `cortex doctor --json` to check index health
 - Check embedding coverage -- partial embeddings degrade hybrid search
-- Compare keyword search (`gbrain search`) vs hybrid search (`gbrain query`)
+- Compare keyword search (`cortex search`) vs hybrid search (`cortex query`)
   for the same query to isolate whether the issue is embedding-related
 - Report search quality issues in the maintain workflow (see maintain skill)
 
 ## Tools Used
 
-- Keyword search gbrain (search)
-- Hybrid search gbrain (query)
-- Read a page from gbrain (get_page)
-- List pages in gbrain with filters (list_pages)
-- Check backlinks in gbrain (get_backlinks)
-- Traverse the link graph in gbrain (traverse_graph)
-- View timeline entries in gbrain (get_timeline)
+- Keyword search cortex (search)
+- Hybrid search cortex (query)
+- Read a page from cortex (get_page)
+- List pages in cortex with filters (list_pages)
+- Check backlinks in cortex (get_backlinks)
+- Traverse the link graph in cortex (traverse_graph)
+- View timeline entries in cortex (get_timeline)

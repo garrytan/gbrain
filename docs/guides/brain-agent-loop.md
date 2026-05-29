@@ -24,22 +24,22 @@ DETECT entities (people, companies, concepts, original thinking)
   │
   ▼
 READ: check brain FIRST (before responding)
-  │  → gbrain search "{entity name}"
-  │  → gbrain get {slug} (if you know it)
-  │  → gbrain query "what do we know about {topic}"
+  │  → cortex search "{entity name}"
+  │  → cortex get {slug} (if you know it)
+  │  → cortex query "what do we know about {topic}"
   │
   ▼
 RESPOND with brain context (every answer is better with context)
   │
   ▼
 WRITE: update brain pages (new info → compiled truth + timeline)
-  │  → gbrain put {slug} (update page)
+  │  → cortex put {slug} (update page)
   │  → add_timeline_entry (append to timeline)
   │  → add_link (cross-reference to other entities)
   │
   ▼
-SYNC: gbrain indexes changes
-  │  → gbrain sync --no-pull --no-embed
+SYNC: cortex indexes changes
+  │  → cortex sync --no-pull --no-embed
   │
   ▼
 (next signal arrives — agent is now smarter)
@@ -58,9 +58,9 @@ on_message(text):
   entities = extract_entity_names(text)  // quick regex/NER
   context = []
   for name in entities:
-    results = gbrain_search(name)
+    results = cortex_search(name)
     if results:
-      page = gbrain_get(results[0].slug)
+      page = cortex_get(results[0].slug)
       context.append(page.compiled_truth)
 
   // 3. RESPOND (with brain context injected)
@@ -69,14 +69,14 @@ on_message(text):
   // 4. WRITE (after responding, if new info emerged)
   if response_contains_new_info(response):
     for entity in mentioned_entities:
-      gbrain_add_timeline_entry(entity.slug, {
+      cortex_add_timeline_entry(entity.slug, {
         date: today,
         summary: "Discussed {topic}",
         source: "[Source: User, conversation, {date}]"
       })
 
   // 5. SYNC
-  gbrain_sync()
+  cortex_sync()
 ```
 
 ### The Two Invariants
@@ -102,8 +102,8 @@ on_message(text):
 3. **Sync after every write batch.** Without sync, the brain search index is
    stale. The next query won't find what you just wrote.
 
-4. **External APIs are fallback, not primary.** `gbrain search` before
-   Brave Search. `gbrain get` before Crustdata. The brain has relationship
+4. **External APIs are fallback, not primary.** `cortex search` before
+   Brave Search. `cortex get` before Crustdata. The brain has relationship
    history, your own assessments, meeting transcripts, cross-references.
    No external API can provide that.
 
@@ -121,9 +121,9 @@ on_message(text):
    pull brain context without you asking. If it doesn't reference the brain
    page, the loop isn't running.
 
-4. **Check the sync.** After a conversation, run `gbrain search "{topic}"`
+4. **Check the sync.** After a conversation, run `cortex search "{topic}"`
    from the CLI. The new information should be searchable.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Entity Detection](entity-detection.md), [Brain-First Lookup](brain-first-lookup.md)*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md). See also: [Entity Detection](entity-detection.md), [Brain-First Lookup](brain-first-lookup.md)*

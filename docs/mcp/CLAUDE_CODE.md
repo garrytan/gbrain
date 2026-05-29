@@ -1,40 +1,43 @@
-# Connect GBrain to Claude Code
+# Connect Cortex To Claude Code
 
-## Option 1: Local (recommended, zero server needed)
+Claude Code connects to Cortex through the hosted MCP URL in the runtime
+manifest.
 
-```bash
-claude mcp add gbrain -- gbrain serve
-```
+## Setup
 
-That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
-tunnel, no token needed. Works with both PGLite and Supabase engines.
-
-## Option 2: Remote (access from any machine)
-
-If you have GBrain running on a server with a public tunnel (see
-[ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md)):
+After signup or invite:
 
 ```bash
-claude mcp add gbrain -t http \
-  https://YOUR-DOMAIN.ngrok.app/mcp \
-  -H "Authorization: Bearer YOUR_TOKEN"
+cortex connect '<onboarding-url>' --client-secret '<one-time-secret>'
+cortex runtime install claude-code --json
 ```
 
-Replace `YOUR-DOMAIN` with your ngrok domain and `YOUR_TOKEN` with a token
-from `gbrain auth create "claude-code"`.
+The command returns the native Claude Code registration command:
+
+```bash
+claude mcp add --transport http cortex https://<tenant-host>/mcp
+```
+
+Run the emitted command if your Claude Code environment does not already have
+the Cortex server entry.
+
+## Agent-Driven Setup
+
+An admin agent can use the manifest endpoint directly:
+
+```bash
+cortex runtime install claude-code \
+  --manifest-url https://<tenant-host>/runtime-manifest.json \
+  --json
+```
 
 ## Verify
 
-In Claude Code, try:
-
-```
-search for [any topic in your brain]
-```
-
-You should see results from your GBrain knowledge base.
+Ask Claude Code to list Cortex tools or search the company brain. Confirm the
+request appears in the Cortex Activity page under the expected OAuth client.
 
 ## Remove
 
 ```bash
-claude mcp remove gbrain
+claude mcp remove cortex
 ```

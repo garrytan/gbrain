@@ -37,6 +37,7 @@ function writePlugin(
     plugin_version?: string;
     subagents?: Record<string, string>;
     subagents_field?: string;
+    manifest_name?: 'cortex.plugin.json' | 'gbrain.plugin.json';
     omit_manifest?: boolean;
     bad_manifest_json?: boolean;
   } = {},
@@ -52,7 +53,7 @@ function writePlugin(
       ...(opts.subagents_field ? { subagents: opts.subagents_field } : {}),
     };
     fs.writeFileSync(
-      path.join(dir, 'gbrain.plugin.json'),
+      path.join(dir, opts.manifest_name ?? 'gbrain.plugin.json'),
       opts.bad_manifest_json ? '{not valid json' : JSON.stringify(manifest, null, 2),
     );
   }
@@ -107,7 +108,21 @@ describe('loadSinglePlugin', () => {
     const dir = writePlugin('empty', { omit_manifest: true });
     const res = loadSinglePlugin(dir);
     expect('error' in res).toBe(true);
-    if ('error' in res) expect(res.error).toMatch(/missing gbrain\.plugin\.json/);
+    if ('error' in res) expect(res.error).toMatch(/missing cortex\.plugin\.json/);
+  });
+
+  test('accepts the Cortex manifest filename', () => {
+    const dir = writePlugin('cortex-manifest', {
+      manifest_name: 'cortex.plugin.json',
+      subagents: {
+        'ok.md': `---\nname: ok\n---\nbody\n`,
+      },
+    });
+    const res = loadSinglePlugin(dir);
+    expect('error' in res).toBe(false);
+    if ('error' in res) return;
+    expect(res.manifest.plugin_version).toBe(SUPPORTED_PLUGIN_VERSION);
+    expect(res.subagents[0]!.name).toBe('ok');
   });
 
   test('invalid manifest JSON returns error', () => {
@@ -242,6 +257,24 @@ describe('loadPluginsFromEnv', () => {
     const a = writePlugin('trimmed', { subagents: { 'x.md': `---\nname: x\n---\nbody` } });
     const r = loadPluginsFromEnv({ envPath: `  ${a}  ` });
     expect(r.plugins.length).toBe(1);
+  });
+
+  test('reads CORTEX_PLUGIN_PATH from process.env when envPath is not passed', () => {
+    const a = writePlugin('from-env', { subagents: { 'x.md': `---\nname: x\n---\nbody` } });
+    const previousCortex = process.env.CORTEX_PLUGIN_PATH;
+    const previousLegacy = process.env.GBRAIN_PLUGIN_PATH;
+    process.env.CORTEX_PLUGIN_PATH = a;
+    delete process.env.GBRAIN_PLUGIN_PATH;
+    try {
+      const r = loadPluginsFromEnv();
+      expect(r.plugins.length).toBe(1);
+      expect(r.plugins[0]!.manifest.name).toBe('from-env');
+    } finally {
+      if (previousCortex === undefined) delete process.env.CORTEX_PLUGIN_PATH;
+      else process.env.CORTEX_PLUGIN_PATH = previousCortex;
+      if (previousLegacy === undefined) delete process.env.GBRAIN_PLUGIN_PATH;
+      else process.env.GBRAIN_PLUGIN_PATH = previousLegacy;
+    }
   });
 
   test('manifest rejection shows up as a warning (not a throw)', () => {

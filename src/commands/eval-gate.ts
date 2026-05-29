@@ -1,5 +1,5 @@
 /**
- * gbrain eval gate — fail CI on retrieval regressions OR correctness drops (v0.41).
+ * cortex eval gate — fail CI on retrieval regressions OR correctness drops (v0.41).
  *
  * Two gating paths (per CEO D8 + eng D6/D7):
  *
@@ -18,7 +18,7 @@
  * Fail-closed posture (D3): any in-process throw from replay or
  * correctness-gate flips verdict to `fail` with a named breach. Per
  * codex round-2 #7, replay runs in-process (NOT spawn subprocess) to avoid
- * the gbrain-version-drift bug class for source-tree CI runs.
+ * the cortex-version-drift bug class for source-tree CI runs.
  *
  * Latency math CORRECTED (codex round-2 #2): the gate uses
  * `(baseline_mean_latency_ms + mean_latency_delta_ms) / baseline_mean_latency_ms <= multiplier`.
@@ -147,15 +147,15 @@ function parseArgs(args: string[]): GateOpts {
 }
 
 function printHelp(): void {
-  console.log(`gbrain eval gate — fail CI on retrieval regressions or correctness drops
+  console.log(`cortex eval gate — fail CI on retrieval regressions or correctness drops
 
 Usage:
-  gbrain eval gate --baseline X.baseline.ndjson [flags]      # regression-only
-  gbrain eval gate --qrels Y.qrels.json [flags]              # correctness-only
-  gbrain eval gate --baseline X --qrels Y [flags]            # both required
+  cortex eval gate --baseline X.baseline.ndjson [flags]      # regression-only
+  cortex eval gate --qrels Y.qrels.json [flags]              # correctness-only
+  cortex eval gate --baseline X --qrels Y [flags]            # both required
 
 Required (at least one):
-  --baseline FILE              Baseline NDJSON from \`gbrain bench publish\`
+  --baseline FILE              Baseline NDJSON from \`cortex bench publish\`
   --qrels FILE                 Qrels JSON (\`{schema_version, queries: [...]}\` shape)
 
 Thresholds (override baseline metadata; CLI > embedded > defaults):

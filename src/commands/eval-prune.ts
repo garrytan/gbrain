@@ -1,13 +1,13 @@
 /**
- * gbrain eval prune — delete old eval_candidates rows (v0.21.0).
+ * cortex eval prune — delete old eval_candidates rows (v0.21.0).
  *
  * Retention is unlimited by default (matches ingest_log precedent).
- * This command is the explicit cleanup; pairs with `gbrain eval export`
+ * This command is the explicit cleanup; pairs with `cortex eval export`
  * (snapshot first, then prune if you want to reset).
  *
  * Usage:
- *   gbrain eval prune --older-than 30d
- *   gbrain eval prune --older-than 1h --dry-run
+ *   cortex eval prune --older-than 30d
+ *   cortex eval prune --older-than 1h --dry-run
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -63,10 +63,10 @@ function parseArgs(args: string[]): PruneOpts {
 }
 
 function printHelp(): void {
-  console.error(`gbrain eval prune — delete old eval_candidates rows
+  console.error(`cortex eval prune — delete old eval_candidates rows
 
 USAGE:
-  gbrain eval prune --older-than DUR [--dry-run]
+  cortex eval prune --older-than DUR [--dry-run]
 
 FLAGS:
   --older-than DUR   Delete rows created before now() - DUR (e.g. 30d, 7d, 1h).
@@ -75,8 +75,8 @@ FLAGS:
   --help, -h         Show this help.
 
 EXAMPLES:
-  gbrain eval prune --older-than 30d
-  gbrain eval prune --older-than 90d --dry-run
+  cortex eval prune --older-than 30d
+  cortex eval prune --older-than 90d --dry-run
 `);
 }
 

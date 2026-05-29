@@ -34,8 +34,15 @@ function getSkillDirs(): string[] {
     .filter((name) => name !== "install"); // deprecated skill
 }
 
+function getManifest() {
+  return JSON.parse(readFileSync(MANIFEST_PATH, "utf-8")) as {
+    skills: Array<{ name: string; path: string; description: string }>;
+  };
+}
+
 describe("skills conformance", () => {
-  const skillDirs = getSkillDirs();
+  const allSkillDirs = getSkillDirs();
+  const activeSkillDirs = getManifest().skills.map((skill) => skill.path.split("/")[0]);
 
   test("manifest.json exists and is valid JSON", () => {
     expect(existsSync(MANIFEST_PATH)).toBe(true);
@@ -44,23 +51,27 @@ describe("skills conformance", () => {
     expect(Array.isArray(manifest.skills)).toBe(true);
   });
 
-  test("manifest lists every skill directory", () => {
-    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf-8"));
-    const manifestNames = manifest.skills.map((s: { name: string }) => s.name);
-    for (const dir of skillDirs) {
-      expect(manifestNames).toContain(dir);
-    }
+  test("manifest advertises only the Cortex SaaS runtime catalog", () => {
+    const manifest = getManifest();
+    expect(manifest.skills.map((s) => s.name)).toEqual(["setup", "schema-author"]);
+    const serialized = JSON.stringify(manifest).toLowerCase();
+    expect(serialized).not.toContain("personal");
+    expect(serialized).not.toContain("obsidian");
+    expect(serialized).not.toContain("notion");
+    expect(serialized).not.toContain("roam");
+    expect(serialized).not.toContain("openclaw");
+    expect(serialized).not.toContain("gbrain");
   });
 
   test("every manifest entry points to an existing SKILL.md", () => {
-    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf-8"));
+    const manifest = getManifest();
     for (const skill of manifest.skills) {
       const skillPath = join(SKILLS_DIR, skill.path);
       expect(existsSync(skillPath)).toBe(true);
     }
   });
 
-  for (const dir of skillDirs) {
+  for (const dir of activeSkillDirs) {
     describe(`skills/${dir}/SKILL.md`, () => {
       const content = readFileSync(join(SKILLS_DIR, dir, "SKILL.md"), "utf-8");
 
@@ -93,7 +104,7 @@ describe("skills conformance", () => {
 
   test("no duplicate skill names in frontmatter", () => {
     const names: string[] = [];
-    for (const dir of skillDirs) {
+    for (const dir of activeSkillDirs) {
       const content = readFileSync(join(SKILLS_DIR, dir, "SKILL.md"), "utf-8");
       const fm = parseFrontmatter(content);
       if (fm?.name) {
@@ -102,5 +113,10 @@ describe("skills conformance", () => {
         names.push(name);
       }
     }
+  });
+
+  test("historical skill directories are not treated as public catalog entries", () => {
+    expect(allSkillDirs.length).toBeGreaterThan(activeSkillDirs.length);
+    expect(activeSkillDirs).toEqual(["setup", "schema-author"]);
   });
 });

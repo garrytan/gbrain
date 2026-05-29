@@ -26,12 +26,12 @@ mutating: false
 > **Convention:** see [conventions/cross-modal.yaml](../conventions/cross-modal.yaml)
 > for the review pairs and refusal routing chain.
 
-> **Relationship to `gbrain eval cross-modal`:** This skill is the manual
+> **Relationship to `cortex eval cross-modal`:** This skill is the manual
 > mid-flow gate (one model reviews work product before commit, with refusal
-> routing). The `gbrain eval cross-modal` command (v0.27.x) is a sibling
+> routing). The `cortex eval cross-modal` command (v0.27.x) is a sibling
 > surface: 3 different-provider frontier models score-and-iterate on a
 > documented dimension list *before* tests cement behavior. Use this skill
-> for ad-hoc second opinions; use `gbrain eval cross-modal` for the
+> for ad-hoc second opinions; use `cortex eval cross-modal` for the
 > skillify Phase 3 quality gate. The two are complementary, not redundant.
 
 ## Contract
@@ -85,13 +85,13 @@ Do NOT invoke for:
 
 ## Code-review handoff (v0.25.1 extension)
 
-For diff review specifically, gstack ships a `/codex` skill that wraps
+For diff review specifically, cortex ships a `/codex` skill that wraps
 the OpenAI Codex CLI. Two modes:
 
 ### Codex Review
 
 Independent diff review from a different AI system. The user invokes
-`/codex review` (gstack-shipped); cross-modal-review's job is to
+`/codex review` (cortex-shipped); cross-modal-review's job is to
 RECOGNIZE when this is the right tool and recommend it explicitly.
 
 **When to recommend `/codex review`:**
@@ -184,7 +184,7 @@ decision.
 
 ## Related skills
 
-- gstack `/codex` — the actual Codex CLI wrapper this skill hands off
+- cortex `/codex` — the actual Codex CLI wrapper this skill hands off
   to for diff-review mode. Cross-modal-review knows WHEN to invoke;
   /codex knows HOW.
 - `skills/testing/SKILL.md` — runs the project test suite; complementary

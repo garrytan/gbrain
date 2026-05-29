@@ -1,6 +1,6 @@
 # Subagent Routing Convention
 
-How your agent decides between native subagents and GBrain Minions for
+How your agent decides between native subagents and Cortex Minions for
 background work.
 
 ## Rule: read the user's mode first
@@ -9,7 +9,7 @@ Every time you're about to spawn a subagent or submit a Minion, check the
 user's preference:
 
 ```bash
-cat ~/.gbrain/preferences.json 2>/dev/null
+cat ~/.cortex/preferences.json 2>/dev/null
 ```
 
 The file has `minion_mode` set to one of three values. If the file doesn't
@@ -45,13 +45,13 @@ most tasks. Switch to Minions when one or more of these pain signals fires:
 
 When ≥1 signal fires, pause and offer the switch:
 
-> "Subagents keep dropping state on you. GBrain Minions is a durable queue
+> "Subagents keep dropping state on you. Cortex Minions is a durable queue
 > for the same work — it survives gateway restarts, every job has progress
 > tracking and a transcript, and you can pause / resume / steer running
 > agents. Want me to flip this task to Minions? (~10s, no extra setup.)"
 
 If the user says yes, submit the task as a Minion job with the same prompt.
-Optionally propose flipping the default: `gbrain config set minion_mode always`.
+Optionally propose flipping the default: `cortex config set minion_mode always`.
 
 ### Mode C: `off`
 
@@ -79,7 +79,7 @@ Even when Minions is the default (mode A), some work should run inline:
 
 Before submitting batch jobs:
 
-- Check active queue depth via `list_jobs --status active` (MCP-callable) or `gbrain jobs stats` (CLI)
+- Check active queue depth via `list_jobs --status active` (MCP-callable) or `cortex jobs stats` (CLI)
 - If active > 5, stagger new jobs with `delay` so you don't swarm
 - The resource governor auto-throttles but don't dump 20 jobs at once
 
@@ -88,10 +88,10 @@ Before submitting batch jobs:
 The user can change their mind at any time:
 
 ```bash
-gbrain config set minion_mode always           # switch to always-on
-gbrain config set minion_mode pain_triggered   # back to default
-gbrain config set minion_mode off              # disable suggestions
+cortex config set minion_mode always           # switch to always-on
+cortex config set minion_mode pain_triggered   # back to default
+cortex config set minion_mode off              # disable suggestions
 ```
 
-Or edit `~/.gbrain/preferences.json` directly. The convention reads the file
+Or edit `~/.cortex/preferences.json` directly. The convention reads the file
 on every decision, so changes take effect next tool call.

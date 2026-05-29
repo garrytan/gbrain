@@ -30,7 +30,8 @@ export function extractProjectRef(input: string): string | null {
 
 /**
  * Discover the pooler connection string via the Management API.
- * Returns the Session pooler URI.
+ * Returns the exact URI when Supabase exposes it. The pooler shard prefix
+ * varies (for example aws-0 vs aws-1), so callers should not fabricate it.
  */
 export async function discoverPoolerUrl(
   token: string,
@@ -47,23 +48,10 @@ export async function discoverPoolerUrl(
     throw new Error(`Supabase API error: ${res.status} ${res.statusText}`);
   }
 
-  const data = await res.json() as { host: string; db_port: number; db_name: string; pool_mode?: string };
+  await res.json() as { host: string; db_port: number; db_name: string; pool_mode?: string };
 
-  // Construct the pooler URL
-  // The API returns the direct host, we need to derive the pooler host
-  // Direct: db.[ref].supabase.co
-  // Pooler: aws-0-[region].pooler.supabase.com
-  // We need to discover the region from the API response
-  const settingsRes = await fetch(
-    `https://api.supabase.com/v1/projects/${projectRef}`,
-    { headers: { Authorization: `Bearer ${token}` } },
-  );
-
-  if (!settingsRes.ok) throw new Error(`Could not fetch project settings: ${settingsRes.status}`);
-  const settings = await settingsRes.json() as { region: string; database: { host: string } };
-
-  // The pooler host follows the pattern: aws-0-[region].pooler.supabase.com
-  // But the exact prefix (aws-0, aws-1) varies. Use the Management API to get the DB config.
+  // Prefer the Management API's exact connection string. The exact pooler
+  // host varies by project/region; guessing from region is unsafe.
   const configRes = await fetch(
     `https://api.supabase.com/v1/projects/${projectRef}/config/database`,
     { headers: { Authorization: `Bearer ${token}` } },
@@ -74,8 +62,8 @@ export async function discoverPoolerUrl(
     if (config.connection_string) return config.connection_string;
   }
 
-  // Fallback: construct from region
-  const region = settings.region;
-  return `postgresql://postgres.${projectRef}:[YOUR-PASSWORD]@aws-0-${region}.pooler.supabase.com:6543/postgres`; /* allow-pg-url-literal */
+  throw new Error(
+    'Could not discover the exact Supabase pooler connection string. ' +
+    'Copy it from Supabase Dashboard > Connect > Session pooler.',
+  );
 }
-

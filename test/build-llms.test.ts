@@ -38,18 +38,18 @@ describe("build-llms generator", () => {
     const { llmsTxt } = buildLlmsFiles();
     const lines = llmsTxt.split("\n");
 
-    expect(lines[0], "first line must be H1").toBe("# GBrain");
+    expect(lines[0], "first line must be H1").toBe("# Cortex Company Brain");
 
     // Blockquote summary on line 2 or 3 (spec allows blank line after H1).
     const hasEarlyBlockquote =
       lines.slice(1, 4).some((line) => line.startsWith("> "));
     expect(hasEarlyBlockquote, "needs > blockquote summary near top").toBe(true);
 
-    // Required H2 sections for GBrain's user need (config/debug/migration).
-    expect(llmsTxt).toContain("## Core entry points");
-    expect(llmsTxt).toContain("## Configuration");
-    expect(llmsTxt).toContain("## Debugging");
-    expect(llmsTxt).toContain("## Migrations");
+    // Required H2 sections for Cortex's SaaS operator and agent needs.
+    expect(llmsTxt).toContain("## SaaS entry points");
+    expect(llmsTxt).toContain("## Deployment and runtime");
+    expect(llmsTxt).toContain("## Product model");
+    expect(llmsTxt).toContain("## Verification");
   });
 
   // Case 4 — checked-in files match generator output. Catches "forgot to rerun
@@ -71,16 +71,19 @@ describe("build-llms generator", () => {
   // entries from llms-config.ts. Catches "someone deleted the Debugging section."
   test("content contract: llms.txt references required entry points", () => {
     const { llmsTxt } = buildLlmsFiles();
-    expect(llmsTxt).toContain("skills/RESOLVER.md");
+    expect(llmsTxt).toContain("docs/deploy/multi-tenant-saas.md");
+    expect(llmsTxt).toContain("docs/deploy/saas-runtime-packaging.md");
+    expect(llmsTxt).toContain("docs/tutorials/company-brain.md");
+    expect(llmsTxt).toContain("docs/mcp/DEPLOY.md");
     expect(llmsTxt).toContain("INSTALL_FOR_AGENTS.md");
     expect(llmsTxt).toContain("AGENTS.md");
-    expect(llmsTxt).toContain("CLAUDE.md");
   });
 
-  test("content contract: AGENTS.md mirrors README + INSTALL_FOR_AGENTS install path", () => {
+  test("content contract: AGENTS.md mirrors README + INSTALL_FOR_AGENTS onboarding path", () => {
     const agents = readFileSync(join(repoRoot, "AGENTS.md"), "utf8");
-    expect(agents).toContain("CLAUDE.md");
-    expect(agents).toContain("skills/RESOLVER.md");
+    expect(agents).toContain("Cortex");
+    expect(agents).toContain("docs/deploy/multi-tenant-saas.md");
+    expect(agents).toContain("docs/deploy/saas-runtime-packaging.md");
     expect(agents).toContain("INSTALL_FOR_AGENTS.md");
     expect(agents).toContain("llms.txt");
     // Trust boundary is the non-obvious security concept agents need up-front.

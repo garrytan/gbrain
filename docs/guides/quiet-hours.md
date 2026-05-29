@@ -162,4 +162,4 @@ Set `enabled: false` to disable quiet hours entirely (e.g., for 24/7 monitoring)
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md).*

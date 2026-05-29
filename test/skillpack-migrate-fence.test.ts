@@ -55,10 +55,10 @@ function scratchGbrain(): string {
     '---\nname: beta\n---\n# beta\n',
   );
   writeFileSync(
-    join(root, 'openclaw.plugin.json'),
+    join(root, 'cortex.plugin.json'),
     JSON.stringify(
       {
-        name: 'gbrain-test',
+        name: 'cortex-test',
         version: '0.33.0-test',
         skills: ['skills/alpha', 'skills/beta'],
         shared_deps: [],

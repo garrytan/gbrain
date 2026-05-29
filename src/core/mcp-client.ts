@@ -3,12 +3,12 @@
  *
  * Wraps the official @modelcontextprotocol/sdk Client + StreamableHTTPClientTransport
  * with OAuth `client_credentials` minting + token caching + 401 retry. Used by:
- *   - `gbrain remote ping`   — submits autopilot-cycle, polls get_job
- *   - `gbrain remote doctor` — calls run_doctor MCP op
+ *   - `cortex remote ping`   — submits autopilot-cycle, polls get_job
+ *   - `cortex remote doctor` — calls run_doctor MCP op
  *
  * Token caching strategy: in-process Map keyed by mcp_url, value carries the
  * access_token + expires_at. CLI invocations are short-lived; the cache
- * amortizes when a single `gbrain remote ping` makes multiple calls (submit_job
+ * amortizes when a single `cortex remote ping` makes multiple calls (submit_job
  * + N × get_job). Persisting to disk would create a credential-on-disk
  * surface for marginal benefit — re-mint is a single sub-100ms /token call.
  *
@@ -127,7 +127,7 @@ export function toRemoteMcpError(e: unknown, mcpUrl: string): RemoteMcpError {
  * @internal Exported for test access (test/mcp-client-hardening.test.ts).
  */
 export function extractToolErrorCode(message: string): string | undefined {
-  // Try to parse a JSON payload first — gbrain server-side tool errors
+  // Try to parse a JSON payload first; Cortex server-side tool errors
   // sometimes come through as `{"error":{"code":"...","message":"..."}}`.
   try {
     const parsed = JSON.parse(message);
@@ -146,18 +146,18 @@ function requireRemoteMcp(config: GBrainConfig | null): NonNullable<GBrainConfig
   if (!config?.remote_mcp) {
     throw new RemoteMcpError(
       'config',
-      'No remote_mcp config. Run `gbrain init --mcp-only` first.',
+      'No remote_mcp config. Run `cortex init --mcp-only` first.',
     );
   }
   return config.remote_mcp;
 }
 
 function resolveSecret(remote: NonNullable<GBrainConfig['remote_mcp']>): string {
-  const secret = process.env.GBRAIN_REMOTE_CLIENT_SECRET ?? remote.oauth_client_secret;
+  const secret = process.env.CORTEX_REMOTE_CLIENT_SECRET ?? remote.oauth_client_secret;
   if (!secret) {
     throw new RemoteMcpError(
       'config',
-      'No client_secret available. Set GBRAIN_REMOTE_CLIENT_SECRET or rerun `gbrain init --mcp-only`.',
+      'No client_secret available. Set CORTEX_REMOTE_CLIENT_SECRET or rerun `cortex init --mcp-only`.',
     );
   }
   return secret;
@@ -221,7 +221,7 @@ async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSi
     },
   });
   const client = new Client(
-    { name: 'gbrain-remote-cli', version: '1' },
+    { name: 'cortex-remote-cli', version: '1' },
     { capabilities: {} },
   );
   await client.connect(transport);
@@ -343,7 +343,7 @@ export async function callRemoteTool(
         if (mintErr instanceof RemoteMcpError && mintErr.reason === 'auth') {
           throw new RemoteMcpError(
             'auth_after_refresh',
-            `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`gbrain auth register-client\`.`,
+            `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`cortex auth register-client\`.`,
             { mcp_url: remote.mcp_url },
           );
         }
@@ -356,7 +356,7 @@ export async function callRemoteTool(
         if (/401|unauthor|invalid.token/i.test(m2)) {
           throw new RemoteMcpError(
             'auth_after_refresh',
-            `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`gbrain auth register-client\`.`,
+            `Auth failed after token refresh. Verify oauth_client_id and secret are still valid; the host operator may need to re-run \`cortex auth register-client\`.`,
             { mcp_url: remote.mcp_url },
           );
         }
@@ -376,7 +376,7 @@ export async function callRemoteTool(
 /**
  * Extract the structured result from a successful tool-call response. The MCP
  * spec says tool results are returned as `content: Array<{type, text|...}>`.
- * gbrain ops set the JSON-encoded result as `text` of the first content item.
+ * Cortex ops set the JSON-encoded result as `text` of the first content item.
  * This helper parses + types it for the caller.
  */
 export function unpackToolResult<T = unknown>(res: unknown): T {

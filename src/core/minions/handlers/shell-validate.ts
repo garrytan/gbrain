@@ -155,7 +155,7 @@ export function validateShellJobParams(
       if (value === undefined) {
         throw new UnrecoverableError(
           `shell: inherit requested "${name}" but worker has no ${name} configured. ` +
-          `Fix: \`gbrain config set ${name} <value>\` or set the value in the worker's config file. ` +
+          `Fix: \`cortex config set ${name} <value>\` or set the value in the worker's config file. ` +
           '(see: docs/guides/minions-shell-jobs.md#secrets)',
         );
       }

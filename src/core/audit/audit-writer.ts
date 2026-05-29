@@ -22,9 +22,10 @@
  *      case: 2027-01-01 is ISO week 53 of year 2026 → filename
  *      `<prefix>-2026-W53.jsonl`.
  *
- *   3. Audit dir resolution. Honors `GBRAIN_AUDIT_DIR` env override
- *      ahead of the default `~/.gbrain/audit/`. Trim whitespace; an
- *      env value of `"   "` is treated as unset.
+ *   3. Audit dir resolution. Honors the canonical `CORTEX_AUDIT_DIR` env
+ *      override, then the legacy `GBRAIN_AUDIT_DIR` alias, ahead of the
+ *      default local audit directory. Trim whitespace; an env value of
+ *      `"   "` is treated as unset.
  *
  *   4. Best-effort writes. Append failures go to stderr but never
  *      throw. The caller's import / cycle / supervisor / submission
@@ -51,15 +52,15 @@ import * as path from 'node:path';
 import { gbrainPath } from '../config.ts';
 
 /**
- * Resolve the audit dir. Honors `GBRAIN_AUDIT_DIR` for container /
- * sandbox deploys where `$HOME` is read-only. Defaults to
- * `~/.gbrain/audit/`.
+ * Resolve the audit dir. Honors `CORTEX_AUDIT_DIR` for container / sandbox
+ * deploys where `$HOME` is read-only, with `GBRAIN_AUDIT_DIR` as a legacy
+ * alias. Defaults to the local Cortex audit directory.
  *
  * Shared across every audit module. The previous home (shell-audit.ts)
  * re-exports this so existing imports continue to work.
  */
 export function resolveAuditDir(): string {
-  const override = process.env.GBRAIN_AUDIT_DIR;
+  const override = process.env.CORTEX_AUDIT_DIR || process.env.GBRAIN_AUDIT_DIR;
   if (override && override.trim().length > 0) return override;
   return gbrainPath('audit');
 }

@@ -1,7 +1,7 @@
 ---
 name: brain-pdf
 version: 0.1.0
-description: Generate a publication-quality PDF from any brain page via the gstack make-pdf binary. Strips YAML frontmatter, sanitizes emoji, applies running headers and page numbers. Brain page is always the source of truth; PDF is a rendering.
+description: Generate a publication-quality PDF from any brain page via the cortex make-pdf binary. Strips YAML frontmatter, sanitizes emoji, applies running headers and page numbers. Brain page is always the source of truth; PDF is a rendering.
 triggers:
   - "make pdf from brain"
   - "brain pdf"
@@ -25,7 +25,7 @@ page must exist behind it.
 ## What this does
 
 Renders a brain page (markdown with frontmatter) into a
-publication-quality PDF using the gstack `make-pdf` binary. Output is
+publication-quality PDF using the cortex `make-pdf` binary. Output is
 suitable for:
 
 - Sharing a personalized book mirror via email or Telegram
@@ -33,29 +33,29 @@ suitable for:
 - Producing a briefing or report with running headers and page numbers
 - Archiving a long-form essay in a portable format
 
-## Prerequisite: gstack make-pdf
+## Prerequisite: cortex make-pdf
 
-This skill depends on the gstack `make-pdf` binary at:
+This skill depends on the cortex `make-pdf` binary at:
 
 ```
-$HOME/.claude/skills/gstack/make-pdf/dist/pdf
+$HOME/.claude/skills/cortex/make-pdf/dist/pdf
 ```
 
-The user must have gstack co-installed. If absent, the skill cannot run.
-A future v0.26+ may bundle a fallback PDF renderer; for v0.25.1 gstack
+The user must have cortex co-installed. If absent, the skill cannot run.
+A future v0.26+ may bundle a fallback PDF renderer; for v0.25.1 cortex
 is a soft prereq.
 
 Verify it exists before invoking:
 
 ```bash
-P="$HOME/.claude/skills/gstack/make-pdf/dist/pdf"
-[ -x "$P" ] || { echo "make-pdf not installed; install gstack" >&2; exit 1; }
+P="$HOME/.claude/skills/cortex/make-pdf/dist/pdf"
+[ -x "$P" ] || { echo "make-pdf not installed; install cortex" >&2; exit 1; }
 ```
 
 ## Workflow
 
 ```
-1. RESOLVE  → Confirm the brain page exists (gbrain get <slug>).
+1. RESOLVE  → Confirm the brain page exists (cortex get <slug>).
 2. STRIP    → Remove YAML frontmatter — the renderer would otherwise
               dump it as a full page of raw metadata text.
 3. RENDER   → Invoke make-pdf with sane defaults (no --cover, no --toc).
@@ -68,19 +68,19 @@ P="$HOME/.claude/skills/gstack/make-pdf/dist/pdf"
 
 ```bash
 SLUG="path/to/page"
-P="$HOME/.claude/skills/gstack/make-pdf/dist/pdf"
+P="$HOME/.claude/skills/cortex/make-pdf/dist/pdf"
 
 # 1. Confirm the page exists.
-gbrain get "$SLUG" > /dev/null || { echo "Page $SLUG not found" >&2; exit 1; }
+cortex get "$SLUG" > /dev/null || { echo "Page $SLUG not found" >&2; exit 1; }
 
 # 2. Get the raw markdown. Two paths: read from the brain repo (if user
-#    syncs locally) OR ask gbrain for the body via the API.
-BRAIN_DIR=$(gbrain config get sync.repo_path 2>/dev/null || echo)
+#    syncs locally) OR ask cortex for the body via the API.
+BRAIN_DIR=$(cortex config get sync.repo_path 2>/dev/null || echo)
 if [ -n "$BRAIN_DIR" ] && [ -f "$BRAIN_DIR/$SLUG.md" ]; then
   RAW="$BRAIN_DIR/$SLUG.md"
 else
   RAW=$(mktemp /tmp/brain-page-XXXXXX.md)
-  gbrain get "$SLUG" --raw > "$RAW"   # whatever flag exposes raw body
+  cortex get "$SLUG" --raw > "$RAW"   # whatever flag exposes raw body
 fi
 
 # 3. Strip YAML frontmatter — sed: skip the opening '---' through the
@@ -118,7 +118,7 @@ CONTAINER=1 "$P" generate --title "Custom Title" --author "Custom Author" "$CLEA
 ## Defaults: NO cover, NO TOC
 
 These flags are off by default because they look corporate and waste
-space on most personal-knowledge content. Only add them when the user
+space on most working-knowledge content. Only add them when the user
 explicitly asks for "formal" output (e.g., something they're sending to
 a board or printing as a deliverable).
 

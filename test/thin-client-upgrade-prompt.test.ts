@@ -44,7 +44,7 @@ const DEFAULT_CLI_OPTS: CliOptions = {
 let tmpHome: string;
 
 beforeEach(() => {
-  tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-prompt-'));
+  tmpHome = mkdtempSync(join(tmpdir(), 'cortex-upgrade-prompt-'));
   // Reset injection seams between tests.
   _setVerifierForTest(null);
   _setPromptReaderForTest(null);
@@ -78,7 +78,7 @@ describe('safeCompare', () => {
   test('4-segment versions parse (4th segment ignored by underlying comparator)', () => {
     // Underlying compareVersions from src/commands/migrations/index.ts only
     // compares segments 0-2 — the 4th segment is intentionally ignored. This
-    // matches gbrain's actual 3-segment release practice (VERSION file).
+    // matches Cortex's actual 3-segment release practice (VERSION file).
     expect(safeCompare('0.31.4.0', '0.31.4.0')).toBe(0);
     expect(safeCompare('0.31.4.1', '0.31.4.2')).toBe(0); // 4th segment ignored
     expect(safeCompare('0.31.4.0', '0.31.5.0')).toBe(-1); // segment 2 differs
@@ -127,14 +127,14 @@ describe('driftLevel', () => {
 
 describe('promptState IO', () => {
   test('missing file returns empty state', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       const state = loadPromptState();
       expect(state).toEqual({ schema_version: 1, entries: {} });
     });
   });
 
   test('round-trip: save then load', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       const state: PromptState = {
         schema_version: 1,
         entries: {
@@ -152,9 +152,9 @@ describe('promptState IO', () => {
   });
 
   test('atomic write: tmp file written then renamed', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       savePromptState({ schema_version: 1, entries: {} });
-      const finalPath = join(tmpHome, '.gbrain', 'upgrade-prompt-state.json');
+      const finalPath = join(tmpHome, '.cortex', 'upgrade-prompt-state.json');
       const tmpPath = `${finalPath}.tmp`;
       expect(existsSync(finalPath)).toBe(true);
       expect(existsSync(tmpPath)).toBe(false); // tmp gets renamed away
@@ -162,10 +162,10 @@ describe('promptState IO', () => {
   });
 
   test('corrupt JSON falls through to empty state', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
-      // Pre-create the gbrain dir + corrupt file
-      const path = join(tmpHome, '.gbrain', 'upgrade-prompt-state.json');
-      const dir = join(tmpHome, '.gbrain');
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
+      // Pre-create the Cortex dir + corrupt file
+      const path = join(tmpHome, '.cortex', 'upgrade-prompt-state.json');
+      const dir = join(tmpHome, '.cortex');
       try { require('fs').mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
       writeFileSync(path, '{not valid json');
       const state = loadPromptState();
@@ -174,9 +174,9 @@ describe('promptState IO', () => {
   });
 
   test('truncated mid-write file falls through to empty state', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
-      const path = join(tmpHome, '.gbrain', 'upgrade-prompt-state.json');
-      const dir = join(tmpHome, '.gbrain');
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
+      const path = join(tmpHome, '.cortex', 'upgrade-prompt-state.json');
+      const dir = join(tmpHome, '.cortex');
       try { require('fs').mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
       writeFileSync(path, '{"schema_version":1,"entries":{"foo":{"last_'); // truncated
       const state = loadPromptState();
@@ -185,9 +185,9 @@ describe('promptState IO', () => {
   });
 
   test('malformed entry (missing fields) is dropped, valid sibling preserved', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
-      const path = join(tmpHome, '.gbrain', 'upgrade-prompt-state.json');
-      const dir = join(tmpHome, '.gbrain');
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
+      const path = join(tmpHome, '.cortex', 'upgrade-prompt-state.json');
+      const dir = join(tmpHome, '.cortex');
       try { require('fs').mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
       writeFileSync(path, JSON.stringify({
         schema_version: 1,
@@ -217,9 +217,9 @@ describe('promptState IO', () => {
   });
 
   test('empty-string entry key is dropped', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
-      const path = join(tmpHome, '.gbrain', 'upgrade-prompt-state.json');
-      const dir = join(tmpHome, '.gbrain');
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
+      const path = join(tmpHome, '.cortex', 'upgrade-prompt-state.json');
+      const dir = join(tmpHome, '.cortex');
       try { require('fs').mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
       writeFileSync(path, JSON.stringify({
         schema_version: 1,
@@ -237,9 +237,9 @@ describe('promptState IO', () => {
   });
 
   test('missing schema_version or wrong shape → empty state', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
-      const path = join(tmpHome, '.gbrain', 'upgrade-prompt-state.json');
-      const dir = join(tmpHome, '.gbrain');
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
+      const path = join(tmpHome, '.cortex', 'upgrade-prompt-state.json');
+      const dir = join(tmpHome, '.cortex');
       try { require('fs').mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
       writeFileSync(path, JSON.stringify({ entries: {} })); // missing schema_version
       expect(loadPromptState()).toEqual({ schema_version: 1, entries: {} });
@@ -250,7 +250,7 @@ describe('promptState IO', () => {
   });
 
   test('multi-mcp-url entries are isolated', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       const state: PromptState = {
         schema_version: 1,
         entries: {
@@ -396,10 +396,10 @@ describe('decideAction', () => {
 
 describe('acquirePromptLock', () => {
   test('acquire then release', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       const lock = acquirePromptLock();
       expect(lock).not.toBeNull();
-      const lockPath = join(tmpHome, '.gbrain', 'upgrade-prompt.lock');
+      const lockPath = join(tmpHome, '.cortex', 'upgrade-prompt.lock');
       expect(existsSync(lockPath)).toBe(true);
       lock!.release();
       expect(existsSync(lockPath)).toBe(false);
@@ -407,7 +407,7 @@ describe('acquirePromptLock', () => {
   });
 
   test('concurrent acquire returns null (EEXIST)', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       const lock1 = acquirePromptLock();
       expect(lock1).not.toBeNull();
       const lock2 = acquirePromptLock();
@@ -421,9 +421,9 @@ describe('acquirePromptLock', () => {
   });
 
   test('stale lock (>60s old mtime) reclaimed', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       // Manually create a stale lockfile
-      const dir = join(tmpHome, '.gbrain');
+      const dir = join(tmpHome, '.cortex');
       try { require('fs').mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
       const lockPath = join(dir, 'upgrade-prompt.lock');
       const fd = openSync(lockPath, 'wx+');
@@ -439,7 +439,7 @@ describe('acquirePromptLock', () => {
   });
 
   test('release is idempotent', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       const lock = acquirePromptLock();
       expect(lock).not.toBeNull();
       lock!.release();
@@ -476,7 +476,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
   });
 
   test('decideAction=noop (patch drift) → returns without prompting', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       let prompted = false;
       _setPromptReaderForTest(async () => { prompted = true; return 'n'; });
       await maybePromptForUpgrade(cfg, { version: '0.31.5' }, DEFAULT_CLI_OPTS, false, {
@@ -489,7 +489,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
   });
 
   test('prompt → "n" → state persisted, returns without exit', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       _setPromptReaderForTest(async () => 'n');
       let exited = false;
       await maybePromptForUpgrade(cfg, identity, DEFAULT_CLI_OPTS, false, {
@@ -508,7 +508,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
   });
 
   test('prompt → "y" → upgrade runs → advanced → state=yes, exit 0', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       _setPromptReaderForTest(async () => 'y');
       let upgradeRan = false;
       _setUpgradeRunnerForTest(() => { upgradeRan = true; });
@@ -536,7 +536,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
   });
 
   test('prompt → "y" → upgrade runs → NOT advanced → state=failed, exit 1', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       _setPromptReaderForTest(async () => 'y');
       _setUpgradeRunnerForTest(() => { /* swallow, simulate exit 0 with no advance */ });
       _setVerifierForTest(() => ({ advanced: false, newVersion: '0.31.4' }));
@@ -562,7 +562,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
   });
 
   test('prompt → "y" → upgrade throws → state=failed, exit 1', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       _setPromptReaderForTest(async () => 'y');
       _setUpgradeRunnerForTest(() => { throw new Error('subprocess died'); });
       _setVerifierForTest(() => { throw new Error('verifier should not be called'); });
@@ -590,7 +590,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
   });
 
   test('empty answer (just enter) treated as yes', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       _setPromptReaderForTest(async () => '');
       let upgradeRan = false;
       _setUpgradeRunnerForTest(() => { upgradeRan = true; });
@@ -617,7 +617,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
     // prompt is swallowed by runThinClientRouted's outer AbortController-only
     // handler. We verify by counting SIGINT listeners before, during (inside
     // the prompt-reader callback), and after.
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       const before = process.listeners('SIGINT').length;
       let listenersDuringPrompt = -1;
       _setPromptReaderForTest(async () => {
@@ -638,7 +638,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
   });
 
   test('SIGINT handler is removed even if the prompt reader throws', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       const before = process.listeners('SIGINT').length;
       _setPromptReaderForTest(async () => { throw new Error('stdin closed'); });
       await expect(
@@ -655,7 +655,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
   });
 
   test('prompt reader returns null (EOF) → no state write, no exit, caller continues', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       _setPromptReaderForTest(async () => null);
       let exited = false;
       await maybePromptForUpgrade(cfg, identity, DEFAULT_CLI_OPTS, false, {
@@ -674,7 +674,7 @@ describe('maybePromptForUpgrade orchestrator', () => {
   });
 
   test('lock contention (sibling holds lock) → no prompt fires', async () => {
-    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+    await withEnv({ CORTEX_HOME: tmpHome }, async () => {
       // Pre-acquire the lock
       const sibling = acquirePromptLock();
       expect(sibling).not.toBeNull();

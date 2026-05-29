@@ -1,5 +1,5 @@
 /**
- * Unit tests for `gbrain eval gate` (v0.41).
+ * Unit tests for `cortex eval gate` (v0.41).
  *
  * Pure-logic tests against `runEvalGate` driven through a PGLite engine.
  * The dispatcher's full integration path (capture → publish → gate) is

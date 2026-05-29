@@ -80,10 +80,17 @@ describe('deriveDirectUrl', () => {
 
 describe('readKillSwitchEnv', () => {
   let original: string | undefined;
-  beforeEach(() => { original = process.env.GBRAIN_DISABLE_DIRECT_POOL; });
+  let originalCortex: string | undefined;
+  beforeEach(() => {
+    original = process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    originalCortex = process.env.CORTEX_DISABLE_DIRECT_POOL;
+    delete process.env.CORTEX_DISABLE_DIRECT_POOL;
+  });
   afterEach(() => {
     if (original === undefined) delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
     else process.env.GBRAIN_DISABLE_DIRECT_POOL = original;
+    if (originalCortex === undefined) delete process.env.CORTEX_DISABLE_DIRECT_POOL;
+    else process.env.CORTEX_DISABLE_DIRECT_POOL = originalCortex;
   });
 
   test('false when unset', () => {
@@ -101,6 +108,12 @@ describe('readKillSwitchEnv', () => {
     expect(readKillSwitchEnv()).toBe(true);
   });
 
+  test('CORTEX_DISABLE_DIRECT_POOL is the canonical kill switch', () => {
+    process.env.GBRAIN_DISABLE_DIRECT_POOL = '0';
+    process.env.CORTEX_DISABLE_DIRECT_POOL = '1';
+    expect(readKillSwitchEnv()).toBe(true);
+  });
+
   test('false for any other value', () => {
     process.env.GBRAIN_DISABLE_DIRECT_POOL = '0';
     expect(readKillSwitchEnv()).toBe(false);
@@ -111,10 +124,17 @@ describe('readKillSwitchEnv', () => {
 
 describe('resolveDirectPoolSize', () => {
   let original: string | undefined;
-  beforeEach(() => { original = process.env.GBRAIN_DIRECT_POOL_SIZE; });
+  let originalCortex: string | undefined;
+  beforeEach(() => {
+    original = process.env.GBRAIN_DIRECT_POOL_SIZE;
+    originalCortex = process.env.CORTEX_DIRECT_POOL_SIZE;
+    delete process.env.CORTEX_DIRECT_POOL_SIZE;
+  });
   afterEach(() => {
     if (original === undefined) delete process.env.GBRAIN_DIRECT_POOL_SIZE;
     else process.env.GBRAIN_DIRECT_POOL_SIZE = original;
+    if (originalCortex === undefined) delete process.env.CORTEX_DIRECT_POOL_SIZE;
+    else process.env.CORTEX_DIRECT_POOL_SIZE = originalCortex;
   });
 
   test('default to 3', () => {
@@ -131,6 +151,12 @@ describe('resolveDirectPoolSize', () => {
   test('env overrides default', () => {
     process.env.GBRAIN_DIRECT_POOL_SIZE = '5';
     expect(resolveDirectPoolSize()).toBe(5);
+  });
+
+  test('CORTEX_DIRECT_POOL_SIZE wins over legacy alias', () => {
+    process.env.CORTEX_DIRECT_POOL_SIZE = '6';
+    process.env.GBRAIN_DIRECT_POOL_SIZE = '5';
+    expect(resolveDirectPoolSize()).toBe(6);
   });
 
   test('rejects invalid env values', () => {

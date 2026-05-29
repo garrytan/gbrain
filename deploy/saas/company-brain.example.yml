@@ -1,0 +1,34 @@
+company:
+  id: acme-example
+  name: Acme Example
+
+sources:
+  - id: shared
+    name: Shared company wiki
+    url: https://github.com/your-org/shared-wiki.git
+    federated: true
+  - id: customers
+    name: Customer notes
+    url: https://github.com/your-org/customers.git
+    federated: true
+  - id: internal
+    name: Internal-only docs
+    url: https://github.com/your-org/internal-docs.git
+    federated: false
+
+clients:
+  - name: alice-example
+    grant_types: [client_credentials]
+    scopes: [read, write]
+    source: customers
+    federated_read: [customers, shared]
+  - name: bob-example
+    grant_types: [client_credentials]
+    scopes: [read, write]
+    source: internal
+    federated_read: [internal, shared]
+  - name: carol-example
+    grant_types: [client_credentials]
+    scopes: [read, write]
+    source: shared
+    federated_read: [shared, customers, internal]

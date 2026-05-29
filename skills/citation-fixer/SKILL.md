@@ -189,7 +189,7 @@ This skill can be called:
 ## Metrics
 
 If running as a recurring batch, track state in a small JSON file under
-`~/.gbrain/citation-fixer-state.json`:
+`~/.cortex/citation-fixer-state.json`:
 
 ```json
 {

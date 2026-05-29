@@ -1,7 +1,7 @@
 ---
 name: perplexity-research
 version: 0.1.0
-description: Brain-augmented web research. Sends brain context about a topic to Perplexity, which searches the web with citations and returns what is NEW vs what the brain already knows. Use for entity enrichment, current-state checks, deal monitoring, and freshness deltas. NOT for simple URL fetches (use web_fetch) or brain-only queries (use gbrain query).
+description: Brain-augmented web research. Sends brain context about a topic to Perplexity, which searches the web with citations and returns what is NEW vs what the brain already knows. Use for entity enrichment, current-state checks, deal monitoring, and freshness deltas. NOT for simple URL fetches (use web_fetch) or brain-only queries (use cortex query).
 triggers:
   - "perplexity research"
   - "perplexity-research"
@@ -45,7 +45,7 @@ instead of repeating settled fact.
 |------|-----|
 | Deep research with citations | **This skill** — Perplexity + Opus |
 | Quick URL content | `web_fetch` |
-| Brain-only lookup | `gbrain query` / `gbrain search` |
+| Brain-only lookup | `cortex query` / `cortex search` |
 | Real-time social monitoring | external X / social-media collectors |
 | Structured data lookup against a tracker | `skills/data-research/SKILL.md` |
 
@@ -94,13 +94,13 @@ API directly (or a host-provided `perplexity` CLI if installed):
 
 ```bash
 # 1. Pull brain context
-gbrain get <slug>                    # or
-gbrain query "<topic keywords>"
+cortex get <slug>                    # or
+cortex query "<topic keywords>"
 
 # 2. Compose the Perplexity query with brain context inline:
 #    """
 #    Topic: <topic>
-#    Brain context (what we already know): <embedded gbrain content>
+#    Brain context (what we already know): <embedded cortex content>
 #    Find: what's NEW since 2026-MM-DD that the brain doesn't reflect.
 #    Cite every claim.
 #    """
@@ -112,7 +112,7 @@ gbrain query "<topic keywords>"
 #      -d '{"model": "sonar-pro", "messages": [{"role":"user","content":"..."}]}'
 
 # 4. Write the structured research page via put_page:
-gbrain put_page research/<slug>      # via the put_page operation
+cortex put_page research/<slug>      # via the put_page operation
 
 # 5. Cross-link entities mentioned (people, companies) per Iron Law.
 ```
@@ -135,7 +135,7 @@ Called by `skills/enrich/SKILL.md` when an entity page (person, company)
 needs current web context:
 
 ```bash
-BRAIN=$(gbrain get people/<slug> 2>/dev/null)
+BRAIN=$(cortex get people/<slug> 2>/dev/null)
 # Send <slug>'s page content as brain_context to Perplexity, get current
 # news / role / context, then update the brain page with what's new.
 ```
@@ -170,7 +170,7 @@ for news-cycle topics; omit for evergreen research.
 ## Environment
 
 - `PERPLEXITY_API_KEY` set in the agent's environment (or in
-  `~/.gbrain/.env`).
+  `~/.cortex/.env`).
 - Optional: install Perplexity's official CLI for richer streaming output.
 
 ## Related skills

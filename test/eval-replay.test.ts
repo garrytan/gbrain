@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain eval replay` (v0.25.0).
+ * Tests for `cortex eval replay` (v0.25.0).
  *
  * Three layers:
  *   1. Pure: Jaccard math + NDJSON parser via re-export.
@@ -108,7 +108,7 @@ function captureStdoutStderr(): { restore: () => { stdout: string; stderr: strin
   };
 }
 
-describe('gbrain eval replay — happy path', () => {
+describe('cortex eval replay — happy path', () => {
   test('search row with identical retrieved slugs reports Jaccard 1.0', async () => {
     await withTmp(async (dir) => {
       const ndjson = JSON.stringify(makeCapturedRow({
@@ -321,7 +321,7 @@ describe('gbrain eval replay — happy path', () => {
   });
 });
 
-describe('gbrain eval replay — failure modes', () => {
+describe('cortex eval replay — failure modes', () => {
   test('missing --against errors and exits 1', async () => {
     const origExit = process.exit;
     let code: number | undefined;
@@ -380,7 +380,7 @@ describe('gbrain eval replay — failure modes', () => {
       const { stderr } = cap.restore();
       process.exit = origExit;
       expect(code).toBe(1);
-      expect(stderr.toLowerCase()).toContain('upgrade gbrain');
+      expect(stderr.toLowerCase()).toContain('upgrade cortex');
     });
   });
 

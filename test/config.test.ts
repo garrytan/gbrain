@@ -191,9 +191,40 @@ describe('loadConfig — legacy provider+model migration (v0.36.1.x #1086)', () 
 // v0.36.1.x #1019 (cherry-pick #1083): configDir uses path.isAbsolute and
 // dual-separator '..' rejection so Windows paths are accepted.
 describe('configDir — GBRAIN_HOME Windows path acceptance (v0.36.1.x #1019)', () => {
+  test('CORTEX_HOME is the canonical home override and keeps the stable config suffix', async () => {
+    const { mkdtempSync, rmSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const cortexHome = mkdtempSync(join(tmpdir(), 'cortex-cfg-home-'));
+    const legacyHome = mkdtempSync(join(tmpdir(), 'legacy-cfg-home-'));
+    try {
+      await withEnv({ CORTEX_HOME: cortexHome, GBRAIN_HOME: legacyHome }, async () => {
+        const { configDir } = await import('../src/core/config.ts');
+        expect(configDir()).toBe(join(cortexHome, '.gbrain'));
+      });
+    } finally {
+      rmSync(cortexHome, { recursive: true, force: true });
+      rmSync(legacyHome, { recursive: true, force: true });
+    }
+  });
+
+  test('CORTEX_DATABASE_URL is the canonical database env and wins over legacy aliases', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    await withEnv({
+      CORTEX_DATABASE_URL: 'postgresql://cortex:secret@db.example.com:5432/postgres',
+      GBRAIN_DATABASE_URL: 'postgresql://legacy:secret@db.example.com:5432/postgres',
+      DATABASE_URL: 'postgresql://fallback:secret@db.example.com:5432/postgres',
+    }, async () => {
+      const { getDbUrlSource, loadConfig } = await import('../src/core/config.ts');
+      expect(getDbUrlSource()).toBe('env:CORTEX_DATABASE_URL');
+      expect(loadConfig()?.database_url).toBe('postgresql://cortex:secret@db.example.com:5432/postgres');
+    });
+  });
+
   test('relative paths are rejected with an absolute-path error', async () => {
     const { withEnv } = await import('./helpers/with-env.ts');
-    await withEnv({ GBRAIN_HOME: 'relative/path' }, async () => {
+    await withEnv({ CORTEX_HOME: undefined, GBRAIN_HOME: 'relative/path' }, async () => {
       const { configDir } = await import('../src/core/config.ts');
       expect(() => configDir()).toThrow(/absolute/);
     });
@@ -201,7 +232,7 @@ describe('configDir — GBRAIN_HOME Windows path acceptance (v0.36.1.x #1019)', 
 
   test("'..' segments rejected on POSIX-style absolute paths", async () => {
     const { withEnv } = await import('./helpers/with-env.ts');
-    await withEnv({ GBRAIN_HOME: '/tmp/foo/../bar' }, async () => {
+    await withEnv({ CORTEX_HOME: undefined, GBRAIN_HOME: '/tmp/foo/../bar' }, async () => {
       const { configDir } = await import('../src/core/config.ts');
       expect(() => configDir()).toThrow(/'..' segments/);
     });
@@ -214,7 +245,7 @@ describe('configDir — GBRAIN_HOME Windows path acceptance (v0.36.1.x #1019)', 
     // backslash '..' segment — that's the case where the pre-fix
     // single-separator split would have let it through.
     const { withEnv } = await import('./helpers/with-env.ts');
-    await withEnv({ GBRAIN_HOME: '/tmp/foo\\..\\bar' }, async () => {
+    await withEnv({ CORTEX_HOME: undefined, GBRAIN_HOME: '/tmp/foo\\..\\bar' }, async () => {
       const { configDir } = await import('../src/core/config.ts');
       expect(() => configDir()).toThrow(/'..' segments/);
     });

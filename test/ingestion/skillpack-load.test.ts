@@ -39,12 +39,13 @@ function makePluginDir(opts: {
     permissions?: string[];
   }>;
   moduleBody?: string;
+  manifestName?: 'cortex.plugin.json' | 'gbrain.plugin.json';
 }): string {
   const dir = fs.mkdtempSync(path.join(tmpRoot, 'plugin-'));
   const manifest: Record<string, unknown> = {
     name: opts.name ?? 'test-plugin',
     version: '1.0.0',
-    plugin_version: opts.pluginVersion ?? 'gbrain-plugin-v1',
+    plugin_version: opts.pluginVersion ?? __testing.SUPPORTED_PLUGIN_VERSION,
   };
   if (opts.sources && opts.sources.length > 0) {
     manifest.ingestion_sources = opts.sources.map((s) => ({
@@ -55,7 +56,8 @@ function makePluginDir(opts: {
       permissions: s.permissions,
     }));
   }
-  fs.writeFileSync(path.join(dir, 'gbrain.plugin.json'), JSON.stringify(manifest));
+  const manifestPath = path.join(dir, opts.manifestName ?? 'gbrain.plugin.json');
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
   if (opts.sources && opts.sources.length > 0) {
     fs.writeFileSync(path.join(dir, 'source.js'), opts.moduleBody ?? '// noop');
   }
@@ -72,7 +74,7 @@ function makeFactoryFn(): (config: Record<string, unknown>) => IngestionSource {
 }
 
 describe('loadSkillpackSources — discovery', () => {
-  test('empty GBRAIN_PLUGIN_PATH returns empty result', async () => {
+  test('empty CORTEX_PLUGIN_PATH returns empty result', async () => {
     const result = await loadSkillpackSources({ envPath: '' });
     expect(result.sources).toHaveLength(0);
     expect(result.warnings).toHaveLength(0);
@@ -107,7 +109,7 @@ describe('loadSkillpackSources — discovery', () => {
     expect(result.warnings.some((w) => w.includes('does not exist'))).toBe(true);
   });
 
-  test('directory with no gbrain.plugin.json is silently skipped (not a warning)', async () => {
+  test('directory with no cortex.plugin.json is silently skipped (not a warning)', async () => {
     const dir = fs.mkdtempSync(path.join(tmpRoot, 'no-manifest-'));
     const result = await loadSkillpackSources({ envPath: dir });
     expect(result.sources).toHaveLength(0);
@@ -119,6 +121,19 @@ describe('loadSkillpackSources — discovery', () => {
     const result = await loadSkillpackSources({ envPath: dir });
     expect(result.sources).toHaveLength(0);
     expect(result.warnings).toHaveLength(0);
+  });
+
+  test('accepts the Cortex manifest filename', async () => {
+    const dir = makePluginDir({
+      manifestName: 'cortex.plugin.json',
+      sources: [{ kind: 'cortex-stub' }],
+    });
+    const result = await loadSkillpackSources({
+      envPath: dir,
+      _import: async () => ({ default: makeFactoryFn() }),
+    });
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0]?.declaration.kind).toBe('cortex-stub');
   });
 });
 
@@ -209,7 +224,7 @@ describe('loadSkillpackSources — api_version compatibility', () => {
     const warning = result.warnings.find((w) => w.includes('api_version'));
     expect(warning).toBeDefined();
     expect(warning).toContain('rebuild against the new');
-    expect(warning).toContain('docs/ingestion-source-skillpack.md');
+    expect(warning).toContain('docs.cortex.dev/ingestion-source-skillpack');
   });
 });
 
@@ -285,6 +300,17 @@ describe('loadSkillpackSources — collision policy', () => {
 });
 
 describe('loadSkillpackSources — env var path', () => {
+  test('reads CORTEX_PLUGIN_PATH from process.env when envPath is not passed', async () => {
+    const dir = makePluginDir({ sources: [{ kind: 'cortex-env-stub' }] });
+    await withEnv({ CORTEX_PLUGIN_PATH: dir, GBRAIN_PLUGIN_PATH: undefined }, async () => {
+      const result = await loadSkillpackSources({
+        _import: async () => ({ default: makeFactoryFn() }),
+      });
+      expect(result.sources).toHaveLength(1);
+      expect(result.sources[0]?.declaration.kind).toBe('cortex-env-stub');
+    });
+  });
+
   test('reads GBRAIN_PLUGIN_PATH from process.env when envPath is not passed', async () => {
     const dir = makePluginDir({ sources: [{ kind: 'env-stub' }] });
     await withEnv({ GBRAIN_PLUGIN_PATH: dir }, async () => {

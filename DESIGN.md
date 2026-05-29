@@ -1,148 +1,123 @@
-# DESIGN.md
+# Cortex Design System
 
-The design system source of truth for gbrain. Born from the de facto tokens
-that landed in `admin/src/index.css` during the v0.26.0 admin SPA work and
-formalized during the v0.36.1.0 Hindsight calibration wave's design review.
+Cortex is a company-brain SaaS for operators and agents. The interface should
+feel precise, calm, and capable: a control plane for configuring knowledge,
+access, ingestion, and runtime connectivity across a tenant.
 
-This doc is the calibration target for `/plan-design-review` and `/design-review`.
-When a question is "does this UI fit the system?", the answer is here.
+## Product Surfaces
+
+- **Marketing page**: the first-viewport product promise and signup path.
+- **Signup and onboarding**: org creation, default company brain, owner client,
+  onboarding URL, and connect command.
+- **Admin console**: tenant operations for teams, brains, sources, agents,
+  skills, integrations, billing, runtime, and quality gates.
+- **Agent runtime pages**: setup payloads, manifests, OAuth/MCP metadata, and
+  verification commands.
 
 ## Voice
 
-GBrain talks like a smart friend who knows your past, not a clinical scoring
-system. Every user-facing string passes through this filter:
+Cortex copy is direct and operator-grade.
 
-- Second person, contractions allowed.
-- Grounded in concrete data the user can verify ("2 of 3 missed" beats
-  "Brier 0.31").
-- Never preachy. Never "we recommend." Never "according to your data."
-- Short. Under 25 words for narrative; under one line for status.
-- Numbers grounded in real outcomes, never abstract metrics without
-  translation.
+- Say what happened and what the user can do next.
+- Use Cortex-branded commands and labels.
+- Prefer concrete nouns: org, brain, source, invite, client, scope, manifest.
+- Keep status copy short.
+- Do not explain obvious UI mechanics inside the app.
+- Do not frame the product as a solo recall tool.
 
-Five surfaces use this voice (v0.36.1.0+):
-`pattern_statement`, `nudge`, `forecast_blurb`, `dashboard_caption`,
-`morning_pulse`. All five pass through `gateVoice()` in
-`src/core/calibration/voice-gate.ts` with mode-specific rubrics. A Haiku
-judge rejects academic-sounding candidates; up to 2 regens; then fall
-back to a hand-written template from `src/core/calibration/templates.ts`.
+Good:
 
-## Color tokens
+```text
+Invite queued
+Owner onboarding link created
+Runtime manifest ready
+Skill policy enforced
+```
 
-CSS variables in `admin/src/index.css`. SVG renderer inlines literals
-matching these tokens (`src/core/calibration/svg-renderer.ts`).
+Avoid:
 
-| Token              | Value     | Use                                       |
-|--------------------|-----------|-------------------------------------------|
-| `--bg-primary`     | `#0a0a0f` | Page background                           |
-| `--bg-secondary`   | `#14141f` | Sidebar, cards                            |
-| `--bg-tertiary`    | `#1e1e2e` | Subtle surfaces, borders                  |
-| `--text-primary`   | `#e0e0e0` | Body text                                 |
-| `--text-secondary` | `#888`    | Headings, labels                          |
-| `--text-muted`     | `#777`    | Tertiary text — TD2 bumped from #555 for WCAG AA contrast (~5.5:1) |
-| `--accent`         | `#3b82f6` | Active states, links, primary CTAs        |
-| `--success`        | `#22c55e` | Healthy / ok status                       |
-| `--warning`        | `#f59e0b` | Doctor warnings                           |
-| `--error`          | `#ef4444` | Failures, destructive confirmations       |
+```text
+Here is how this button helps you use the app
+Your private recall store is ready
+```
 
-Dark theme is the only theme. No light mode toggle planned — admin is an
-operator tool, not a marketing surface. Users live in the terminal with a
-dark theme already.
+## Visual Direction
 
-WCAG contrast:
-- Body text (#e0e0e0 on #0a0a0f) → ~14:1, AAA
-- Muted text (#777 on #0a0a0f) → ~5.5:1, AA (was 4.0 / fail before TD2)
-- Accent links (#3b82f6 on #0a0a0f) → ~5.7:1, AA
+Cortex uses a dark, dense, shadcn-based product UI. It should feel closer to a
+developer infrastructure console than a marketing dashboard.
 
-## Typography
-
-| Variable           | Value                       | Use                            |
-|--------------------|-----------------------------|---------------------------------|
-| `--font-sans`      | `Inter, system-ui, sans-serif` | UI text, headings, body         |
-| `--font-mono`      | `JetBrains Mono, monospace` | Numbers, slugs, code, terminal-ish data |
-
-Type scale (de facto, not formalized yet):
-- 18px: sidebar logo / page title
-- 14px: body
-- 13px: nav items
-- 12px: chart captions, secondary labels
-- 11px: tertiary labels in dense charts
-
-Numbers in tables and metrics use JetBrains Mono so column alignment is
-mechanical. Avoid mixing Inter and JetBrains Mono in the same line.
-
-## Spacing scale
-
-4 / 8 / 16 / 24 / 32px. Linear-app-style density: 24-32px between major
-sections, 16px between row groups, 8px within a row. The Calibration tab
-(approved variant-B mockup) is the canonical example.
+- Dark background with restrained contrast.
+- Semantic status color only.
+- Geist or system sans for UI text.
+- Monospace for ids, secrets, commands, JSON, and timestamps.
+- Cards only for repeated items, compact panels, modals, and framed tools.
+- No decorative blobs, oversized hero cards, or gradient-only sections.
+- Keep radius modest and consistent.
 
 ## Layout
 
-- Sidebar 200px on the left. Active item gets a 3px left-border in `--accent`.
-- Main content area uses the remaining width.
-- Max content width: 720px for text-heavy pages (Calibration), 960px for
-  data tables (Request Log).
-- No 3-column feature grids. No icons in colored circles. No decorative blobs.
-- Cards earn their existence — heading + content works without a card frame
-  in most cases.
+- Admin pages use a persistent sidebar and content shell.
+- Main content should be scannable at a glance.
+- Tables are preferred for dense records.
+- Forms should group related fields with clear submit actions.
+- Onboarding and auth pages can use focused panels, but should still expose the
+  product outcome: org, brain, client, invite, or runtime setup.
+- Mobile layouts should preserve task completion over decorative stacking.
 
-## Charts
+## Components
 
-Server-rendered SVG via `src/core/calibration/svg-renderer.ts`. Pure
-functions: data → SVG string. No DOM, no React component, no chart library.
+Prefer shadcn primitives before custom controls:
 
-XSS posture: server-side `escapeXml()` on every caller-controlled string.
-Numeric inputs `.toFixed()`-coerced. Admin SPA renders via
-`<TrustedSVG>` wrapper with `dangerouslySetInnerHTML`. Endpoint gated by
-`requireAdmin` middleware.
+- `Button` for commands.
+- `Input`, `Textarea`, `Select`, `Checkbox`, `Switch`, and `Slider` for forms.
+- `Tabs` for adjacent views.
+- `Table` for records.
+- `Dialog` for focused creation/editing.
+- `AlertDialog` for destructive confirmation.
+- `Badge` for status, role, plan, scope, and health.
+- `Tooltip` for unfamiliar icon buttons.
+- `Sheet` for mobile navigation or side editing.
 
-Why server-rendered SVG (per D23):
-- Chart logic stays close to the data math.
-- Zero new client-side chart-library dep.
-- SVG is accessible (text labels), scalable, copy-paste-friendly to PR
-  descriptions and docs.
-- Sets the precedent for future admin charts (contradictions trend, takes
-  scorecard, etc.).
+Use lucide icons for compact actions when an icon is clearer than text.
 
-Four chart renderers in v0.36.1.0:
-- `renderBrierTrend({ series })` — sparkline + baseline reference at 0.25
-- `renderDomainBars({ bars })` — horizontal accuracy bars
-- `renderAbandonedThreadsCard(threads)` — text rows + "revisit now" links
-- `renderPatternStatementsCard(statements)` — clickable drill-down anchors
+## Status Language
 
-## Interaction patterns
+Use consistent states across the console:
 
-- Keyboard navigation is REQUIRED for all CLI interaction surfaces. The
-  propose-queue review uses J/K/space/u/q shortcuts (gmail-style).
-- Loading states: "Loading...". Don't show spinners on sub-200ms operations.
-- Empty states ARE features: warmth + primary action + context. Cold-brain
-  Calibration page tells the user EXACTLY how to build a profile, not
-  "no data available."
-- Error states: name what failed + name the next step. Never "an error
-  occurred — please try again."
+- `ready`: usable now.
+- `queued`: waiting for a worker.
+- `sending`: provider job in progress.
+- `sent`: provider accepted delivery.
+- `failed`: action needs attention.
+- `revoked`: credential or invite can no longer be used.
+- `draft`: policy exists but should not be enforced.
+- `enforced`: policy is active.
 
-## What's NOT here yet (v0.37+ roadmap)
+## Runtime And Agent Setup
 
-- Type scale formalization (current values are de facto, not enforced)
-- Animation tokens (admin SPA has zero animations on purpose; v0.37 may
-  add subtle progress / loading transitions)
-- Print stylesheet
-- Light mode (NOT planned — see "Dark theme is the only theme" above)
-- Component library extraction (the React components live inline in admin/src/pages/;
-  no `<Button>` / `<Card>` abstraction layer yet)
+Runtime pages should show:
 
-## How to use this document
+- hosted MCP URL
+- token URL
+- runtime manifest URL
+- CLI install command
+- client-specific config snippets
+- verification command
+- last smoke status when available
 
-When adding a new UI surface to gbrain:
+Never place one-time secrets in public manifests, screenshots, or docs. Show
+secrets once in the creation result, next to the connect command.
 
-1. Pick existing tokens before introducing new ones. New tokens go through
-   `/plan-design-review`.
-2. Match the voice rules. Run candidates through `gateVoice()` before
-   shipping any user-facing string in the calibration surfaces.
-3. Match the spacing scale and density. Linear-calm-clarity over
-   dashboard-card-mosaic.
-4. Match the typography: Inter for UI, JetBrains Mono for numbers.
+## Quality Bar
 
-When updating this document: it's a living target, not a frozen spec.
-Major changes go through `/plan-design-review` to keep the system coherent.
+Before declaring a UI change ready:
+
+1. Build the admin export.
+2. Open the changed page in a browser.
+3. Check console errors.
+4. Test the happy path and one failure path.
+5. Confirm copy is Cortex-branded.
+6. Confirm text fits on mobile and desktop.
+7. Confirm the matching agent/API path exists.
+
+The console earns trust by making the tenant state obvious and actionable.

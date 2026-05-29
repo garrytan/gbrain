@@ -29,7 +29,7 @@ on user_shares_media(url_or_file):
 
         # Step 3: Create brain page
         slug = f"media/youtube/{video_slug}"
-        gbrain put <slug> --content """
+        cortex put <slug> --content """
             # {title}
             **Channel:** {channel} | **Date:** {date} | **Link:** {url}
 
@@ -46,9 +46,9 @@ on user_shares_media(url_or_file):
 
         # Step 4: Extract and cross-reference entities
         for person in transcript.mentioned_people:
-            gbrain add_link <slug> <person_slug>
-            gbrain add_link <person_slug> <slug>
-            gbrain add_timeline_entry <person_slug> \
+            cortex add_link <slug> <person_slug>
+            cortex add_link <person_slug> <slug>
+            cortex add_timeline_entry <person_slug> \
                 --entry "Discussed in {video_title}: {what_was_said}" \
                 --source "YouTube: {url}"
 
@@ -63,7 +63,7 @@ on user_shares_media(url_or_file):
         }
 
         slug = f"media/social/{platform}-{author}-{date}"
-        gbrain put <slug> --content """
+        cortex put <slug> --content """
             # {author}: {topic}
             {agent_analysis_of_full_bundle}
 
@@ -80,8 +80,8 @@ on user_shares_media(url_or_file):
 
         # Extract entities and cross-reference
         for entity in bundle.mentioned_entities:
-            gbrain add_link <slug> <entity_slug>
-            gbrain add_link <entity_slug> <slug>
+            cortex add_link <slug> <entity_slug>
+            cortex add_link <entity_slug> <slug>
 
     # PATTERN 3: PDFs and Documents
     elif media.type == "pdf" or media.type == "document":
@@ -90,7 +90,7 @@ on user_shares_media(url_or_file):
 
         # For books and long-form:
         slug = f"sources/{document_slug}"
-        gbrain put <slug> --content """
+        cortex put <slug> --content """
             # {title}
             **Author:** {author} | **Date:** {date}
 
@@ -109,11 +109,11 @@ on user_shares_media(url_or_file):
         """
 
         for entity in document.mentioned_entities:
-            gbrain add_link <slug> <entity_slug>
-            gbrain add_link <entity_slug> <slug>
+            cortex add_link <slug> <entity_slug>
+            cortex add_link <entity_slug> <slug>
 
     # Always sync after ingestion
-    gbrain sync
+    cortex sync
 ```
 
 ## Tricky Spots
@@ -126,11 +126,11 @@ on user_shares_media(url_or_file):
 
 ## How to Verify
 
-1. Ingest a YouTube video. Run `gbrain get media/youtube/{slug}`. Confirm the page has: the agent's analysis (not just a summary), key quotes with speaker attribution, and the full diarized transcript.
-2. Run `gbrain get_links media/youtube/{slug}`. Confirm back-links exist to brain pages for every person and company mentioned in the video.
-3. Pick a person mentioned in the video. Run `gbrain get <person_slug>`. Confirm their timeline has a new entry referencing the video with specific context.
+1. Ingest a YouTube video. Run `cortex get media/youtube/{slug}`. Confirm the page has: the agent's analysis (not just a summary), key quotes with speaker attribution, and the full diarized transcript.
+2. Run `cortex get_links media/youtube/{slug}`. Confirm back-links exist to brain pages for every person and company mentioned in the video.
+3. Pick a person mentioned in the video. Run `cortex get <person_slug>`. Confirm their timeline has a new entry referencing the video with specific context.
 4. Ingest a tweet. Confirm the brain page includes the thread context, linked article summaries, and entity cross-references -- not just the tweet text.
-5. Run `gbrain search "{topic_from_video}"`. Confirm the media page appears in search results (verifies the content is indexed and searchable).
+5. Run `cortex search "{topic_from_video}"`. Confirm the media page appears in search results (verifies the content is indexed and searchable).
 
 ---
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md).*

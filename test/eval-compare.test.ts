@@ -11,7 +11,7 @@ import { runEvalCompare } from '../src/commands/eval-compare.ts';
 let tmp: string;
 
 beforeAll(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'gbrain-eval-compare-'));
+  tmp = mkdtempSync(join(tmpdir(), 'cortex-eval-compare-'));
 });
 
 afterAll(() => {
@@ -110,7 +110,7 @@ describe('runEvalCompare', () => {
     const path = join(tmp, 'does-not-exist.jsonl');
     const out = await captureRun(() => runEvalCompare(['--md', '--input', path]));
     expect(out).toContain('No eval-results.jsonl found');
-    expect(out).toContain('gbrain eval run-all');
+    expect(out).toContain('cortex eval run-all');
   });
 
   test('--modes filter narrows the table', async () => {

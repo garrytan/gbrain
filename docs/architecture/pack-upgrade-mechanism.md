@@ -1,6 +1,6 @@
 # Pack-Upgrade Mechanism (v0.41.22)
 
-> How `gbrain-base@1.x → gbrain-base-v2@1.0.0` (and any future pack
+> How `cortex-base@1.x → cortex-base-v2@1.0.0` (and any future pack
 > succession) wires through the onboard cathedral.
 
 ## The contract
@@ -8,11 +8,11 @@
 A schema pack manifest can declare a `migration_from` field:
 
 ```yaml
-api_version: gbrain-schema-pack-v1
-name: gbrain-base-v2
+api_version: cortex-schema-pack-v1
+name: cortex-base-v2
 version: 1.0.0
 migration_from:
-  pack: gbrain-base
+  pack: cortex-base
   version: "1.x"
 ```
 
@@ -29,7 +29,7 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │                                                                │
 │  Author declares: migration_from: {pack: P, version: R}        │
 │  + mapping_rules: [retype/page_to_link/page_to_alias]          │
-│  Pack ships bundled OR via ~/.gbrain/schema-packs/<name>/      │
+│  Pack ships bundled OR via ~/.cortex/schema-packs/<name>/      │
 └──────────────────────────┬─────────────────────────────────────┘
                            ↓
 ┌────────────────────────────────────────────────────────────────┐
@@ -40,7 +40,7 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │    1. Read engine.getConfig('schema_pack') for dbConfig tier  │
 │    2. loadActivePack({cfg: null, remote: false, dbConfig})    │
 │    3. findPackSuccessors(active.name, active.version)         │
-│         → walks BUNDLED_PACK_NAMES + ~/.gbrain/schema-packs/   │
+│         → walks BUNDLED_PACK_NAMES + ~/.cortex/schema-packs/   │
 │         → matches via _versionRangeMatches(version, range)    │
 │         → returns ResolvedPack[] sorted by successor version  │
 │    4. If successors.length > 0, emit OnboardCheckResult        │
@@ -52,11 +52,11 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 ┌────────────────────────────────────────────────────────────────┐
 │  USER DECIDES                                                  │
 │                                                                │
-│  gbrain onboard --check shows finding                          │
-│  gbrain onboard --check --explain shows per-cluster narrative  │
+│  cortex onboard --check shows finding                          │
+│  cortex onboard --check --explain shows per-cluster narrative  │
 │  User reviews; if OK, runs:                                    │
-│    gbrain jobs submit unify-types --allow-protected \          │
-│      --params '{"target_pack":"gbrain-base-v2"}'               │
+│    cortex jobs submit unify-types --allow-protected \          │
+│      --params '{"target_pack":"cortex-base-v2"}'               │
 │  (Autopilot never auto-fires this; manual_only)                │
 └──────────────────────────┬─────────────────────────────────────┘
                            ↓
@@ -65,7 +65,7 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │                                                                │
 │  1. Preflight: load target pack; assert mapping_rules present  │
 │  2. Stats snapshot (pre-state for celebration)                 │
-│  3. Acquire gbrain-unify db-lock (60min TTL)                   │
+│  3. Acquire cortex-unify db-lock (60min TTL)                   │
 │  4. Apply phases (4):                                          │
 │     a. Explicit retype rules (chunked UPDATE 1000/batch)       │
 │        - frontmatter.legacy_type ALWAYS preserved (D8)         │
@@ -95,7 +95,7 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │  • links table has new partner_of / relates_to rows            │
 │  • Source pages soft-deleted (72h TTL for restore)             │
 │  • Active pack flipped to target_pack                          │
-│  • Next gbrain onboard --check shows ok                        │
+│  • Next cortex onboard --check shows ok                        │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -117,9 +117,9 @@ Implementation: `_versionRangeMatches(version, range)` in
 
 ## findPackSuccessors discovery
 
-Walks `BUNDLED_PACK_NAMES` (currently `gbrain-base`,
-`gbrain-recommended`, `gbrain-creator`, `gbrain-investor`,
-`gbrain-engineer`, `gbrain-everything`, `gbrain-base-v2`). For each
+Walks `BUNDLED_PACK_NAMES` (currently `cortex-base`,
+`cortex-recommended`, `cortex-creator`, `cortex-investor`,
+`cortex-engineer`, `cortex-everything`, `cortex-base-v2`). For each
 candidate ≠ the active pack name, loads the manifest via
 `loadActivePack({ perCall: candidate })`, checks
 `migration_from.pack === activeName && _versionRangeMatches(activeVer,
@@ -127,7 +127,7 @@ migration_from.version)`. Returns matching packs sorted by version
 descending.
 
 v0.41.22 covers bundled packs only. v0.43+ TODO: enumerate user-installed
-packs at `~/.gbrain/schema-packs/*/pack.yaml` (defer to v0.43 since the
+packs at `~/.cortex/schema-packs/*/pack.yaml` (defer to v0.43 since the
 filesystem-scan cost needs the cache invalidation strategy from
 `registry.ts`).
 
@@ -160,19 +160,19 @@ Minimal example for an academic-research brain that adds a
 `researcher` canonical:
 
 ```yaml
-api_version: gbrain-schema-pack-v1
-name: gbrain-academic-v1
+api_version: cortex-schema-pack-v1
+name: cortex-academic-v1
 version: 1.0.0
 description: Academic research brain — adds researcher canonical
-gbrain_min_version: 0.42.0
+cortex_min_version: 0.42.0
 extends: null
 
 migration_from:
-  pack: gbrain-base-v2
+  pack: cortex-base-v2
   version: "1.x"
 
 page_types:
-  # Inherit gbrain-base-v2's 15 types here (or use extends to merge
+  # Inherit cortex-base-v2's 15 types here (or use extends to merge
   # automatically once v0.43+ extends-chain composition lands)
   - { name: person, primitive: entity, path_prefixes: [people/], expert_routing: true }
   - { name: company, primitive: entity, path_prefixes: [companies/], expert_routing: true }
@@ -199,29 +199,29 @@ mapping_rules:
     subtype: "*original_type*"
 ```
 
-Drop at `~/.gbrain/schema-packs/gbrain-academic-v1/pack.yaml`.
-Discoverable via `gbrain schema list`. Activatable via
-`gbrain schema use gbrain-academic-v1`. Once active, the
+Drop at `~/.cortex/schema-packs/cortex-academic-v1/pack.yaml`.
+Discoverable via `cortex schema list`. Activatable via
+`cortex schema use cortex-academic-v1`. Once active, the
 `pack_upgrade_available` check fires for any brain on
-`gbrain-base-v2@1.x` and surfaces a `unify-types` RemediationStep
+`cortex-base-v2@1.x` and surfaces a `unify-types` RemediationStep
 targeting your pack.
 
 ## Lock + concurrency
 
-`gbrain-unify` is a dedicated `gbrain_cycle_locks` row name (60min
+`cortex-unify` is a dedicated `cortex_cycle_locks` row name (60min
 TTL). The handler acquires it before any apply phase + releases in
-`finally`. Two simultaneous `gbrain jobs submit unify-types`
+`finally`. Two simultaneous `cortex jobs submit unify-types`
 invocations: second one fails fast at lock acquisition with a clear
-error. Same pattern as `gbrain-sync` (v0.22.13 PR #490).
+error. Same pattern as `cortex-sync` (v0.22.13 PR #490).
 
 ## Audit trail
 
-Every unify run writes to `~/.gbrain/audit/schema-unify-YYYY-Www.jsonl`
+Every unify run writes to `~/.cortex/audit/schema-unify-YYYY-Www.jsonl`
 (ISO-week rotation, mirrors existing audit channels). Records: pack
 identities (before + after), per-phase counts (would_apply + applied),
 warnings, completion timestamp. Privacy: page slugs are NOT logged in
 bulk (only the per-rule sample_slugs[≤10]); for forensic debugging
-add `GBRAIN_AUDIT_FULL=1` (v0.43+ TODO; not yet wired).
+add `CORTEX_AUDIT_FULL=1` (v0.43+ TODO; not yet wired).
 
 ## What's NOT yet supported
 
@@ -229,13 +229,13 @@ add `GBRAIN_AUDIT_FULL=1` (v0.43+ TODO; not yet wired).
 - Per-source pack-upgrade (the handler accepts `sourceId` but
   `findPackSuccessors` doesn't yet pass it through)
 - Cross-brain federated mounts that disagree on canonical packs
-- Automatic rollback (today: manual SQL or `gbrain pages restore`)
-- LLM-assisted mapping_rules codegen from production data (`gbrain
+- Automatic rollback (today: manual SQL or `cortex pages restore`)
+- LLM-assisted mapping_rules codegen from production data (`cortex
   schema detect-mappings`; deferred to v0.43+)
 
 ## Reference
 
-- Pack file: `src/core/schema-pack/base/gbrain-base-v2.yaml`
+- Pack file: `src/core/schema-pack/base/cortex-base-v2.yaml`
 - Manifest extension: `src/core/schema-pack/manifest-v1.ts`
 - Successor walker: `src/core/schema-pack/load-active.ts:findPackSuccessors`
 - Onboard check: `src/core/onboard/checks.ts:checkPackUpgradeAvailable`

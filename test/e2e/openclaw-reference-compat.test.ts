@@ -114,7 +114,7 @@ describe('OpenClaw reference workspace compat (W1 + W2 + W3)', () => {
     expect(env.ok).toBe(true);
   });
 
-  it('skillpack install against OpenClaw-reference layout writes managed block to AGENTS.md', () => {
+  it('skillpack install against workspace-root AGENTS.md writes managed block to AGENTS.md', () => {
     // Copy fixture into a tmp workspace so we can install without
     // polluting the fixture itself.
     const target = mkdtempSync(join(tmpdir(), 'openclaw-ref-install-'));
@@ -133,7 +133,7 @@ describe('OpenClaw reference workspace compat (W1 + W2 + W3)', () => {
       gbrainRoot: gbrainRoot!,
       targetWorkspace: target,
       targetSkillsDir: join(target, 'skills'),
-      skillSlug: 'brain-ops',
+      skillSlug: 'setup',
     };
     const plan = planInstall(opts);
     const result = applyInstall(plan, opts);
@@ -142,8 +142,8 @@ describe('OpenClaw reference workspace compat (W1 + W2 + W3)', () => {
     expect(result.managedBlock.resolverFile).toBe(join(target, 'AGENTS.md'));
 
     const agents = readFileSync(join(target, 'AGENTS.md'), 'utf-8');
-    expect(agents).toContain('gbrain:skillpack:begin');
-    expect(agents).toContain('`skills/brain-ops/SKILL.md`');
+    expect(agents).toContain('cortex:skillpack:begin');
+    expect(agents).toContain('`skills/setup/SKILL.md`');
     // Pre-existing resolver table preserved.
     expect(agents).toContain('| Trigger | Skill |');
   });

@@ -87,7 +87,7 @@ const DIMENSIONS: Array<
           passed: false,
           detail: msg,
           fix_hint:
-            'Run `gbrain skillpack init <name>` to regenerate a valid stub manifest, or fix the field listed above.',
+            'Run `cortex skillpack init <name>` to regenerate a valid stub manifest, or fix the field listed above.',
         };
       }
     },
@@ -134,7 +134,7 @@ const DIMENSIONS: Array<
             passed: false,
             detail: failures.join('; '),
             fix_hint:
-              'For each missing SKILL.md, run `gbrain skillpack init` (regenerates the stub) or hand-write the frontmatter with name + description + triggers (array of >=1 strings).',
+              'For each missing SKILL.md, run `cortex skillpack init` (regenerates the stub) or hand-write the frontmatter with name + description + triggers (array of >=1 strings).',
           };
     },
   },
@@ -163,7 +163,7 @@ const DIMENSIONS: Array<
             passed: false,
             detail: failures.join('; '),
             fix_hint:
-              'Add intents to skills/<slug>/routing-eval.jsonl — one JSON object per line with {intent, expected_skill, ambiguous_with?}. `gbrain skillpack doctor --fix` will scaffold stubs.',
+              'Add intents to skills/<slug>/routing-eval.jsonl - one JSON object per line with {intent, expected_skill, ambiguous_with?}. `cortex skillpack doctor --fix` will scaffold stubs.',
           };
     },
   },
@@ -216,7 +216,7 @@ const DIMENSIONS: Array<
           passed: false,
           detail: `CHANGELOG.md missing at ${relative(input.packRoot, path)}`,
           fix_hint:
-            'Create CHANGELOG.md with at least a `## [<version>] - <YYYY-MM-DD>` entry for the current version. `gbrain skillpack doctor --fix` will scaffold a stub.',
+            'Create CHANGELOG.md with at least a `## [<version>] - <YYYY-MM-DD>` entry for the current version. `cortex skillpack doctor --fix` will scaffold a stub.',
         };
       }
       const content = readFileSync(path, 'utf-8');
@@ -348,7 +348,7 @@ const DIMENSIONS: Array<
         return {
           passed: false,
           detail: `${path} declared but file does not exist`,
-          fix_hint: `Create ${path} with at least one bootstrap step. \`gbrain skillpack doctor --fix\` will scaffold a stub.`,
+          fix_hint: `Create ${path} with at least one bootstrap step. \`cortex skillpack doctor --fix\` will scaffold a stub.`,
         };
       }
       const content = readFileSync(abs, 'utf-8').trim();
@@ -431,7 +431,7 @@ function walkGlob(packRoot: string, glob: string): string[] {
     for (const e of entries) {
       if (e === 'node_modules' || e.startsWith('.git')) continue;
       const full = join(dir, e);
-      const rel = relative(packRoot, full);
+      const rel = relative(packRoot, full).replace(/\\/g, '/');
       let st;
       try {
         st = statSync(full);

@@ -52,8 +52,8 @@ describe('INHERIT_NAME_RE', () => {
 });
 
 describe('deriveEnvKey', () => {
-  test('database_url → GBRAIN_DATABASE_URL (override, less ambiguous)', () => {
-    expect(deriveEnvKey('database_url')).toBe('GBRAIN_DATABASE_URL');
+  test('database_url → CORTEX_DATABASE_URL (override, less ambiguous)', () => {
+    expect(deriveEnvKey('database_url')).toBe('CORTEX_DATABASE_URL');
   });
   test('anthropic_api_key → ANTHROPIC_API_KEY (provider-standard uppercase)', () => {
     expect(deriveEnvKey('anthropic_api_key')).toBe('ANTHROPIC_API_KEY');
@@ -110,7 +110,7 @@ describe('integration: deriveEnvKey + resolveInheritValue work together', () => 
     openai_api_key: 'sk-x',
   };
   test.each([
-    ['database_url', 'GBRAIN_DATABASE_URL', 'postgresql://x'],
+    ['database_url', 'CORTEX_DATABASE_URL', 'postgresql://x'],
     ['anthropic_api_key', 'ANTHROPIC_API_KEY', 'sk-ant-x'],
     ['openai_api_key', 'OPENAI_API_KEY', 'sk-x'],
   ])('name %s resolves to envKey %s with value %s', (name, expectedEnvKey, expectedValue) => {

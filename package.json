@@ -1,10 +1,10 @@
 {
-  "name": "gbrain",
-  "description": "Postgres-native personal knowledge brain with hybrid RAG search",
+  "name": "cortex-brain",
+  "description": "Multi-tenant company brain SaaS with scoped agent access and hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
   "bin": {
-    "gbrain": "src/cli.ts"
+    "cortex": "src/cli.ts"
   },
   "exports": {
     ".": "./src/core/index.ts",
@@ -30,23 +30,29 @@
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "build": "bun build --compile --outfile bin/gbrain src/cli.ts",
-    "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts",
+    "build": "bun build --compile --outfile bin/cortex src/cli.ts",
+    "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/cortex-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/cortex-linux-x64 src/cli.ts",
     "build:admin": "cd admin && bun run build && cd .. && bun run scripts/build-admin-embedded.ts",
     "build:admin-embedded": "bun run scripts/build-admin-embedded.ts",
     "build:schema": "bash scripts/build-schema.sh",
     "build:llms": "bun run scripts/build-llms.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
+    "plan:saas-tenant": "bun run scripts/saas-tenant-plan.ts",
+    "preflight:saas": "bun run scripts/saas-preflight.ts",
+    "smoke:saas-live": "bun run scripts/saas-live-smoke.ts",
+    "provision:company-brain": "bun run scripts/provision-company-brain.ts",
+    "railway:apply-env": "bun run scripts/railway-apply-env.ts",
     "test": "bash scripts/run-unit-parallel.sh",
     "test:full": "bun run verify && bash scripts/run-unit-parallel.sh && bun run test:slow && ([ -n \"$DATABASE_URL\" ] && bash scripts/run-e2e.sh || echo '[test:full] skipped E2E (no DATABASE_URL); run docker-compose -f docker-compose.ci.yml up + bun run test:e2e to include' 1>&2)",
     "verify": "bash scripts/run-verify-parallel.sh",
     "check:source-config-leak": "scripts/check-source-config-leak.sh",
+    "check:cortex-public-copy": "scripts/check-cortex-public-copy.sh",
     "check:no-pii-agent-voice": "scripts/check-no-pii-in-agent-voice.sh",
     "check:synthetic-corpus-privacy": "scripts/check-synthetic-corpus-privacy.sh",
     "check:system-of-record": "scripts/check-system-of-record.sh",
     "check:admin-scope-drift": "scripts/check-admin-scope-drift.sh",
     "check:cli-exec": "scripts/check-cli-executable.sh",
-    "check:all": "scripts/check-privacy.sh && scripts/check-proposal-pii.sh && scripts/check-test-real-names.sh && scripts/check-jsonb-pattern.sh && scripts/check-source-id-projection.sh && scripts/check-source-config-leak.sh && scripts/check-progress-to-stdout.sh && scripts/check-no-legacy-getconnection.sh && scripts/check-test-isolation.sh && scripts/check-trailing-newline.sh && scripts/check-wasm-embedded.sh && scripts/check-exports-count.sh && scripts/check-admin-build.sh && scripts/check-admin-scope-drift.sh && scripts/check-cli-executable.sh && scripts/check-skill-brain-first.sh && scripts/check-operations-filter-bypass.sh && scripts/check-gateway-routed-no-direct-anthropic.sh && scripts/check-worker-pool-atomicity.sh && scripts/check-no-double-retry.sh && scripts/check-batch-audit-site.sh",
+    "check:all": "scripts/check-privacy.sh && scripts/check-proposal-pii.sh && scripts/check-test-real-names.sh && scripts/check-jsonb-pattern.sh && scripts/check-source-id-projection.sh && scripts/check-source-config-leak.sh && scripts/check-cortex-public-copy.sh && scripts/check-progress-to-stdout.sh && scripts/check-no-legacy-getconnection.sh && scripts/check-test-isolation.sh && scripts/check-trailing-newline.sh && scripts/check-wasm-embedded.sh && scripts/check-exports-count.sh && scripts/check-admin-build.sh && scripts/check-admin-scope-drift.sh && scripts/check-cli-executable.sh && scripts/check-skill-brain-first.sh && scripts/check-operations-filter-bypass.sh && scripts/check-gateway-routed-no-direct-anthropic.sh && scripts/check-worker-pool-atomicity.sh && scripts/check-no-double-retry.sh && scripts/check-batch-audit-site.sh",
     "check:gateway-routed": "scripts/check-gateway-routed-no-direct-anthropic.sh",
     "check:worker-pool-atomicity": "scripts/check-worker-pool-atomicity.sh",
     "check:resolver": "bun src/cli.ts check-resolvable --strict --skills-dir skills/",
@@ -80,16 +86,33 @@
     "check:fixture-privacy": "scripts/check-fixture-privacy.sh",
     "check:conversation-parser": "bun src/cli.ts eval conversation-parser test/fixtures/conversation-formats/all.jsonl --no-llm",
     "check:source-scope-onboard": "scripts/check-source-scope-onboard.sh",
-    "postinstall": "command -v gbrain >/dev/null 2>&1 && gbrain apply-migrations --yes --non-interactive || echo '[gbrain] postinstall skipped. If installed via bun install -g github:...: run `gbrain doctor` and `gbrain apply-migrations --yes` manually. See https://github.com/garrytan/gbrain/issues/218' 1>&2",
-    "prepublish:clawhub": "bun run build:all",
-    "publish:clawhub": "clawhub package publish . --family bundle-plugin"
+    "postinstall": "echo '[cortex] installed. Use `cortex connect <onboarding-url>` for hosted tenants.' 1>&2",
+    "package:runtime": "bun run build:all && bun run build:admin && bun run scripts/package-cortex-runtime.ts",
+    "package:runtime:metadata": "bun run scripts/package-cortex-runtime.ts --skip-binaries",
+    "publish:runtime": "bun run package:runtime && echo '[cortex] runtime package ready in ./dist/cortex-runtime for hosted tenant distribution.' 1>&2"
   },
-  "openclaw": {
-    "compat": {
-      "pluginApi": ">=2026.4.0"
+  "cortex": {
+    "runtimePackage": {
+      "name": "cortex-brain",
+      "bin": "./bin/cortex",
+      "manifest": "./cortex.plugin.json"
     },
-    "extensions": [
-      "./src/openclaw-context-engine.ts"
+    "mcp": {
+      "command": "./bin/cortex",
+      "args": [
+        "serve"
+      ]
+    },
+    "skills": {
+      "manifest": "./skills/manifest.json",
+      "resolver": "./skills/RESOLVER.md"
+    },
+    "runtimes": [
+      "cursor",
+      "claude-desktop",
+      "claude-code",
+      "chatgpt",
+      "perplexity"
     ]
   },
   "dependencies": {

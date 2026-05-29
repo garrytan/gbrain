@@ -1,14 +1,14 @@
 /**
- * gbrain resolvers — introspect the Resolver SDK registry.
+ * cortex resolvers — introspect the Resolver SDK registry.
  *
  * Subcommands:
- *   gbrain resolvers list              Pretty table of all registered resolvers.
- *   gbrain resolvers list --json       Machine-readable output.
- *   gbrain resolvers describe <id>     Detail view: schema + availability.
+ *   cortex resolvers list              Pretty table of all registered resolvers.
+ *   cortex resolvers list --json       Machine-readable output.
+ *   cortex resolvers describe <id>     Detail view: schema + availability.
  *
  * No engine connection required — the registry is in-memory. Loads the
  * embedded builtins at invocation time; future plugin discovery (from
- * ~/.gbrain/resolvers/) plugs in here.
+ * ~/.cortex/resolvers/) plugs in here.
  */
 
 import {
@@ -128,7 +128,7 @@ function pad(s: string, w: number): string {
 async function cmdDescribe(args: string[]): Promise<void> {
   const id = args.find(a => !a.startsWith('--'));
   if (!id) {
-    console.error('Usage: gbrain resolvers describe <id>');
+    console.error('Usage: cortex resolvers describe <id>');
     process.exit(1);
   }
 
@@ -178,7 +178,7 @@ function extractFlag(args: string[], flag: string): string | undefined {
 }
 
 function printHelp(): void {
-  console.log(`Usage: gbrain resolvers <subcommand> [options]
+  console.log(`Usage: cortex resolvers <subcommand> [options]
 
 Subcommands:
   list                    List all registered resolvers (pretty table)
@@ -188,8 +188,8 @@ Subcommands:
   describe <id>           Show schema + availability for a single resolver
 
 Examples:
-  gbrain resolvers list
-  gbrain resolvers list --cost paid
-  gbrain resolvers describe x_handle_to_tweet
+  cortex resolvers list
+  cortex resolvers list --cost paid
+  cortex resolvers describe x_handle_to_tweet
 `);
 }

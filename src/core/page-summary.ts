@@ -53,7 +53,7 @@ const DEFAULT_SYNOPSIS_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 export const SYNOPSIS_PROMPT_VERSION = 1;
 
 const SYSTEM_PROMPT = [
-  'You generate one-sentence chunk synopses for a personal knowledge brain.',
+  'You generate one-sentence chunk synopses for a tenant knowledge brain.',
   '',
   'Given a document (the FULL_DOCUMENT block) and a chunk from it (the CHUNK',
   'block), write a single concise sentence that orients the chunk within the',
@@ -100,7 +100,7 @@ export type GeneratePerChunkSynopsisResult =
 /**
  * Generate one synopsis for one chunk. ~$0.00006 per call at Haiku 4.5
  * pricing (assuming ~500 input tokens + 50 output tokens for typical
- * personal-brain page sizes).
+ * curated brain page sizes).
  *
  * Caller is responsible for:
  *   - Rate-leasing via `src/core/minions/rate-leases.ts` (the SERVICE

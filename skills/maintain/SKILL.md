@@ -52,12 +52,12 @@ This skill guarantees:
 
 ### Autonomous path (v0.36.4.0) — when you want to reach a target score
 
-If the user asks "get my brain to 90/100" or "fix what's broken", prefer the
+If the user asks "get my Cortex workspace to 90/100" or "fix what's broken", prefer the
 one-command loop over walking each dimension by hand:
 
 ```bash
-gbrain doctor --remediation-plan --json              # preview what would run
-gbrain doctor --remediate --yes --target-score 90 --max-usd 5
+cortex doctor --remediation-plan --json              # preview what would run
+cortex doctor --remediate --yes --target-score 90 --max-usd 5
 ```
 
 `--remediation-plan` prints a dependency-ordered list (sync before extract,
@@ -78,31 +78,31 @@ Use the per-dimension walk below (Phase 2 onward) when:
 
 ### Manual path
 
-1. **Run health check.** Check gbrain health to get the dashboard.
+1. **Run health check.** Check cortex health to get the dashboard.
 2. **Check each dimension:**
 
 ### Stale pages
 Pages where compiled_truth is older than the latest timeline entry. The assessment hasn't been updated to reflect recent evidence.
 - Check the health output for stale page count
-- For each stale page: read the page from gbrain, review timeline, determine if compiled_truth needs rewriting
+- For each stale page: read the page from cortex, review timeline, determine if compiled_truth needs rewriting
 
 ### Orphan pages
 Pages with zero inbound links. Nobody references them.
 - Review orphans: are they genuinely isolated or just missing links?
-- Add links in gbrain from related pages or flag for deletion
+- Add links in cortex from related pages or flag for deletion
 
 ### Dead links
 Links pointing to pages that don't exist.
-- Remove dead links in gbrain
+- Remove dead links in cortex
 
 ### Missing cross-references
 Pages that mention entity names but don't have formal links.
-- Read compiled_truth from gbrain, extract entity mentions, create links in gbrain
+- Read compiled_truth from cortex, extract entity mentions, create links in cortex
 
 ### Link graph extraction
 If link_count is 0 or low relative to page_count, run batch extraction:
 ```bash
-gbrain extract links --dir ~/brain
+cortex extract links --dir ~/brain
 ```
 This scans all markdown files for entity references, See Also sections, and
 frontmatter fields, then creates typed links in the database.
@@ -110,12 +110,12 @@ frontmatter fields, then creates typed links in the database.
 ### Timeline extraction
 If timeline_entry_count is 0, extract structured timeline from markdown:
 ```bash
-gbrain extract timeline --dir ~/brain
+cortex extract timeline --dir ~/brain
 ```
 
 ### Dream cycle (v0.23): synthesize + patterns
 
-`gbrain dream` runs the full 8-phase maintenance cycle:
+`cortex dream` runs the full 8-phase maintenance cycle:
 
 ```
 lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
@@ -168,36 +168,36 @@ verdicts) but skips the Sonnet synthesis pass. NOT zero LLM calls.
 
 **Configure synthesize on a fresh brain:**
 ```bash
-gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
-gbrain config set dream.synthesize.enabled true
-gbrain dream --phase synthesize --dry-run --json   # preview
-gbrain dream                                       # full 8-phase cycle
+cortex config set dream.synthesize.session_corpus_dir /path/to/transcripts
+cortex config set dream.synthesize.enabled true
+cortex dream --phase synthesize --dry-run --json   # preview
+cortex dream                                       # full 8-phase cycle
 ```
 
 **Invocation patterns:**
 ```bash
-gbrain dream                                          # full cycle
-gbrain dream --phase synthesize                       # just synthesize
-gbrain dream --phase patterns                         # just patterns
-gbrain dream --input ~/transcripts/2026-04-25.txt     # ad-hoc one transcript
-gbrain dream --from 2026-04-01 --to 2026-04-25        # backfill range
-gbrain dream --json                                   # CycleReport JSON
+cortex dream                                          # full cycle
+cortex dream --phase synthesize                       # just synthesize
+cortex dream --phase patterns                         # just patterns
+cortex dream --input ~/transcripts/2026-04-25.txt     # ad-hoc one transcript
+cortex dream --from 2026-04-01 --to 2026-04-25        # backfill range
+cortex dream --json                                   # CycleReport JSON
 ```
 
 **Auto-commit deferred to v1.1:** v1 writes files to `brain_dir` but does NOT
-`git add` / `commit` / `push`. Either commit yourself or let `gbrain autopilot`
+`git add` / `commit` / `push`. Either commit yourself or let `cortex autopilot`
 handle it.
 Parses `- **YYYY-MM-DD** | Source — Summary` and `### YYYY-MM-DD — Title` formats.
-Note: extracted entries improve structured queries (`gbrain timeline`), not vector search.
+Note: extracted entries improve structured queries (`cortex timeline`), not vector search.
 
 ### Autopilot check
 Verify autopilot is running:
 ```bash
-gbrain autopilot --status
+cortex autopilot --status
 ```
 If not running, install it:
 ```bash
-gbrain autopilot --install --repo ~/brain
+cortex autopilot --install --repo ~/brain
 ```
 Autopilot runs sync, extract, and embed in a continuous loop with adaptive scheduling.
 In v0.11.1+, autopilot dispatches each cycle as a single `autopilot-cycle`
@@ -206,18 +206,18 @@ sync + extract + embed + backlinks + durable job processing.
 
 ### Fix a half-migrated install
 A v0.11.0 install where the migration skill never fired leaves Minions
-partially set up: schema is applied, but `~/.gbrain/preferences.json`
+partially set up: schema is applied, but `~/.cortex/preferences.json`
 doesn't exist, autopilot runs inline, host manifests still reference
 `agentTurn`. Repair:
 
 ```bash
 # Check migration status
-gbrain apply-migrations --list
+cortex apply-migrations --list
 
 # Apply pending migrations (idempotent; safe on healthy installs)
-gbrain apply-migrations --yes
+cortex apply-migrations --yes
 
-# If host-specific handlers are flagged in ~/.gbrain/migrations/pending-host-work.jsonl:
+# If host-specific handlers are flagged in ~/.cortex/migrations/pending-host-work.jsonl:
 # walk them per skills/migrations/v0.11.0.md + docs/guides/plugin-handlers.md,
 # ship handler registrations in the host repo, then re-run apply-migrations.
 ```
@@ -236,7 +236,7 @@ Check that the back-linking iron law is being followed:
 Check for common misfiling patterns (see `skills/_brain-filing-rules.md`):
 - Content with clear primary subjects filed in `sources/` instead of the
   appropriate directory (people/, companies/, concepts/, etc.)
-- Use gbrain search to find pages in `sources/` that reference specific
+- Use cortex search to find pages in `sources/` that reference specific
   people, companies, or concepts -- these may be misfiled
 - Flag misfiled pages for review or re-filing
 
@@ -249,55 +249,55 @@ Spot-check pages for missing `[Source: ...]` citations:
 
 ### Tag consistency
 Inconsistent tagging (e.g., "vc" vs "venture-capital", "ai" vs "artificial-intelligence").
-- Standardize to the most common variant using gbrain tag operations
+- Standardize to the most common variant using cortex tag operations
 
 ### Graph population (v0.10.3+)
 
 The `links` and `timeline_entries` tables are the structured graph layer.
 Populate them periodically or after major imports:
 
-- `gbrain extract links --source db` — backfill structured links by walking pages
+- `cortex extract links --source db` — backfill structured links by walking pages
   from the engine. Reads `[Name](people/slug)` / `[Name](companies/slug)` references
   and infers relationship types (`attended`, `works_at`, `invested_in`, `founded`,
   `advises`, `mentions`, `source`). Idempotent. Use `--source fs --dir <brain>`
   if you have a markdown checkout to walk instead.
-- `gbrain extract timeline --source db` — backfill structured timeline entries.
+- `cortex extract timeline --source db` — backfill structured timeline entries.
   Parses `- **YYYY-MM-DD** | summary` lines from page content. Idempotent (DB
   UNIQUE constraint).
-- `gbrain extract all --source db` — both in one run.
-- `gbrain graph-query <slug> --depth 2` — verify connectivity (use any well-known
+- `cortex extract all --source db` — both in one run.
+- `cortex graph-query <slug> --depth 2` — verify connectivity (use any well-known
   entity slug as a probe).
-- `gbrain stats` — verify `link_count > 0` and `timeline_entry_count > 0` after extraction.
-- `gbrain health` — review `link_coverage` and `timeline_coverage` percentages
+- `cortex stats` — verify `link_count > 0` and `timeline_entry_count > 0` after extraction.
+- `cortex health` — review `link_coverage` and `timeline_coverage` percentages
   on entity pages (person/company). Below 50% means more extraction is needed.
 
-Available link types (use with `gbrain graph-query --type`):
+Available link types (use with `cortex graph-query --type`):
 `attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, `source`.
 
-Going forward, every `gbrain put` call auto-creates and reconciles links via the
-auto-link post-hook (default on; disable: `gbrain config set auto_link false`).
+Going forward, every `cortex put` call auto-creates and reconciles links via the
+auto-link post-hook (default on; disable: `cortex config set auto_link false`).
 So link-extract is mostly a one-time backfill. timeline-extract should be re-run
 after bulk imports or content edits that add new dated entries.
 
 ### Embedding freshness
 Chunks without embeddings, or chunks embedded with an old model.
 - For large embedding refreshes (>1000 chunks), use nohup:
-  `nohup gbrain embed refresh > /tmp/gbrain-embed.log 2>&1 &`
-- Then check progress: `tail -1 /tmp/gbrain-embed.log`
+  `nohup cortex embed refresh > /tmp/cortex-embed.log 2>&1 &`
+- Then check progress: `tail -1 /tmp/cortex-embed.log`
 
 ### Security (RLS verification)
-Run `gbrain doctor --json` and check the RLS status.
-All tables should show RLS enabled. If not, run `gbrain init` again.
+Run `cortex doctor --json` and check the RLS status.
+All tables should show RLS enabled. If not, run `cortex init` again.
 
 ### Schema health
-Check that the schema version is up to date. `gbrain doctor --json` reports
-the current version vs expected. If behind, `gbrain init` runs migrations
+Check that the schema version is up to date. `cortex doctor --json` reports
+the current version vs expected. If behind, `cortex init` runs migrations
 automatically.
 
 ### File storage health
 Check the integrity of stored files and redirect pointers:
-- Run `gbrain files verify` to check all DB records have valid data
-- Run `gbrain files status` to see migration state (local, mirrored, redirected)
+- Run `cortex files verify` to check all DB records have valid data
+- Run `cortex files status` to see migration state (local, mirrored, redirected)
 - Check for orphan `.redirect.yaml` pointers that reference missing storage files
 - Check for large binary files (>= 100 MB) still in git that should be in cloud storage
 - If storage backend is configured: verify redirect pointers resolve (download test)
@@ -316,37 +316,37 @@ queries across difficulty tiers:
 - **Tier 3 (semantic):** queries with no exact keyword match -- needs embeddings
 - **Tier 4 (cross-domain):** relational/connection queries -- only semantic handles
 
-Compare results from `gbrain search` (keyword) vs `gbrain query` (hybrid).
+Compare results from `cortex search` (keyword) vs `cortex query` (hybrid).
 Quality matters more than speed (2.5s right > 200ms wrong).
 
 When to run benchmarks:
 - After major brain imports or re-imports
-- After gbrain version upgrades
+- After cortex version upgrades
 - After embedding regeneration
 - Monthly to track quality drift
 
 ## Heartbeat Integration
 
-For production agents running on a schedule, integrate gbrain health checks into
+For production agents running on a schedule, integrate cortex health checks into
 your operational heartbeat.
 
 ### On every heartbeat (hourly or per-session)
 
-Run `gbrain doctor --json` and check for degradation. Report any failing checks
+Run `cortex doctor --json` and check for degradation. Report any failing checks
 to the user. Key signals: connection health, schema version, RLS status, embedding
 staleness.
 
 ### Weekly maintenance
 
-Run `gbrain embed --stale` to refresh embeddings for pages that have changed since
+Run `cortex embed --stale` to refresh embeddings for pages that have changed since
 their last embedding. For large brains (>5000 pages), run this with nohup:
 ```bash
-nohup gbrain embed --stale > /tmp/gbrain-embed.log 2>&1 &
+nohup cortex embed --stale > /tmp/cortex-embed.log 2>&1 &
 ```
 
 ### Daily verification
 
-Verify sync is running: check `gbrain stats` and confirm `last_sync` is within
+Verify sync is running: check `cortex stats` and confirm `last_sync` is within
 the last 24 hours. If sync has stopped, the brain is drifting from the repo.
 
 ### Stale compiled truth detection
@@ -371,7 +371,7 @@ This creates an audit trail for brain health over time.
 
 - Never delete pages without confirmation
 - Log all changes via timeline entries
-- Check gbrain health before and after to show improvement
+- Check cortex health before and after to show improvement
 
 ## Anti-Patterns
 
@@ -419,12 +419,12 @@ The maintenance report follows this structure:
 
 ## Tools Used
 
-- Check gbrain health (get_health)
-- List pages in gbrain with filters (list_pages)
-- Read a page from gbrain (get_page)
-- Check backlinks in gbrain (get_backlinks)
-- Link entities in gbrain (add_link)
-- Remove links in gbrain (remove_link)
-- Tag a page in gbrain (add_tag)
-- Remove a tag in gbrain (remove_tag)
-- View timeline in gbrain (get_timeline)
+- Check cortex health (get_health)
+- List pages in cortex with filters (list_pages)
+- Read a page from cortex (get_page)
+- Check backlinks in cortex (get_backlinks)
+- Link entities in cortex (add_link)
+- Remove links in cortex (remove_link)
+- Tag a page in cortex (add_tag)
+- Remove a tag in cortex (remove_tag)
+- View timeline in cortex (get_timeline)

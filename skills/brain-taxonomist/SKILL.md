@@ -5,8 +5,8 @@ prompt_version: 1
 description: |
   Filing gate for ALL brain writes. Consulted before creating any new
   brain page to determine the correct path. Reads the ACTIVE schema pack
-  via `gbrain schema show --json` — no hardcoded directory table. Also
-  runs periodic taxonomy drift detection via `gbrain schema review-orphans`.
+  via `cortex schema show --json` — no hardcoded directory table. Also
+  runs periodic taxonomy drift detection via `cortex schema review-orphans`.
 triggers:
   - "where does this brain page go"
   - "file this in the brain"
@@ -39,13 +39,13 @@ This skill guarantees:
 ## Critical: this skill reads the ACTIVE schema pack as data
 
 `brain-taxonomist` has NO hardcoded directory table. Every decision is
-driven by `gbrain schema show --json`. This means:
-- A user who runs `gbrain schema use gbrain-recommended` gets the full
+driven by `cortex schema show --json`. This means:
+- A user who runs `cortex schema use cortex-recommended` gets the full
   recommended directory set (deal, meeting, concept, project, source,
   daily, personal, civic, original, place, trip, conversation, writing,
-  plus all gbrain-base types).
-- A user who authored a custom pack via `gbrain schema init` + edit gets
-  filing recommendations based on THEIR taxonomy, not gbrain's defaults.
+  plus all cortex-base types).
+- A user who authored a custom pack via `cortex schema init` + edit gets
+  filing recommendations based on THEIR taxonomy, not cortex's defaults.
 - Per-source overrides (tier 3 in the 7-tier resolution chain) are honored
   when `--source <id>` is passed to brain-taxonomist.
 
@@ -80,7 +80,7 @@ Walk these questions in order:
 ### Step 2: Look up the directory for that type in the active pack
 
 ```bash
-gbrain schema show --json | jq '.page_types[] | select(.primitive == "entity")'
+cortex schema show --json | jq '.page_types[] | select(.primitive == "entity")'
 ```
 
 Each `page_types[]` entry has a `path_prefixes:` array. The first prefix
@@ -90,11 +90,11 @@ specific one (the one with the more specific path prefix).
 
 ### Step 3: For books — determine sub-category
 
-The `gbrain-recommended` pack treats books as `media/books/<category>/<slug>.md`
+The `cortex-recommended` pack treats books as `media/books/<category>/<slug>.md`
 where category is one of: psychology, philosophy, spirituality, business,
 media-and-society, family-and-divorce, heritage, science, fiction,
 biography, arts-and-design. If your active pack has a different scheme,
-walk it from `gbrain schema show --json` instead of hardcoding here.
+walk it from `cortex schema show --json` instead of hardcoding here.
 
 ### Step 4: Construct the slug
 
@@ -124,10 +124,10 @@ type is needed and let the schema-pack cathedral handle the proposal flow.
 
 ```bash
 # What pages have no type matching the active pack?
-gbrain schema review-orphans --json
+cortex schema review-orphans --json
 
 # What's the overall health?
-gbrain doctor --json | jq '.checks[] | select(.name == "schema_pack_consistency")'
+cortex doctor --json | jq '.checks[] | select(.name == "schema_pack_consistency")'
 ```
 
 When `schema_pack_consistency` warns at >10% untyped, run the EIIRP
@@ -154,29 +154,29 @@ When the active pack has NO matching type, signal to EIIRP Phase 3
 
 ```markdown
 **No match in active pack `<name>`.**
-**Suggested next step:** `gbrain schema detect --source <source_id>` then
-`gbrain schema review-candidates`.
+**Suggested next step:** `cortex schema detect --source <source_id>` then
+`cortex schema review-candidates`.
 ```
 
 ## Anti-Patterns
 
 - **Hardcoded directory table in this skill.** Every decision goes through
-  `gbrain schema show --json`. v0.39+ broke the old hardcoded table on
-  purpose so users on `gbrain-recommended` or custom packs get the right
+  `cortex schema show --json`. v0.39+ broke the old hardcoded table on
+  purpose so users on `cortex-recommended` or custom packs get the right
   routing automatically.
 - **Picking the closest-fitting type when no type matches.** Closest-fit
   silently degrades user filing. Surface to EIIRP Phase 3 instead.
 - **Ignoring `--source <id>` on multi-brain setups.** Per-source overrides
   are tier-3 in the 7-tier resolution chain; missing the flag silently
   uses the brain-wide active pack.
-- **Auto-applying a `gbrain schema review-candidates --apply` decision.**
+- **Auto-applying a `cortex schema review-candidates --apply` decision.**
   Even high-confidence suggestions need user approval — this skill is a
   GATE, not an automator.
 
 ## Hard Rules
 
 - **Never hardcode a directory table in this skill.** Every decision goes
-  through `gbrain schema show --json`. The active pack is canonical.
+  through `cortex schema show --json`. The active pack is canonical.
 - **Per-source flag is first-class.** Pass `--source <id>` to every CLI
   call when working with a non-default source.
 - **Confidence-floor honor.** EIIRP's Phase 3 produces suggestions with
@@ -185,11 +185,11 @@ When the active pack has NO matching type, signal to EIIRP Phase 3
 
 ## Changelog
 
-### v1.0.0 — gbrain v0.39.0.0
-- Initial port from upstream OpenClaw. Genericized — no references to
+### v1.0.0 — cortex v0.39.0.0
+- Initial port from upstream Cortex. Genericized — no references to
   private fork names per CLAUDE.md privacy rules.
 - Hardcoded directory table REMOVED. Every decision now reads the active
-  schema pack via `gbrain schema show --json`. Single source of truth.
-- Book taxonomy moved from skill-text to the `gbrain-recommended` pack's
-  media/books/ branch (see `src/core/schema-pack/base/gbrain-recommended.yaml`).
+  schema pack via `cortex schema show --json`. Single source of truth.
+- Book taxonomy moved from skill-text to the `cortex-recommended` pack's
+  media/books/ branch (see `src/core/schema-pack/base/cortex-recommended.yaml`).
 - `--source <id>` propagation documented for multi-brain users (Persona B).

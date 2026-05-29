@@ -1,5 +1,5 @@
 /**
- * HTTP transport for `gbrain serve --http` (legacy bearer-auth path).
+ * HTTP transport for `cortex serve --http` (legacy bearer-auth path).
  *
  * Engine-aware via SqlQuery (works on both Postgres and PGLite as of the
  * v0.31 wave). The access_tokens and mcp_request_log tables exist on both
@@ -8,15 +8,15 @@
  * Security model:
  *   - Every request must include `Authorization: Bearer <token>` (except /health)
  *   - Tokens are validated against SHA-256 hashes in the access_tokens table
- *   - Create/manage tokens with auth.ts (gbrain auth create/list/revoke)
- *   - No open OAuth, no client_credentials, no self-service tokens
+ *   - Create/manage tokens with auth.ts (cortex auth create/list/revoke)
+ *   - No open OAuth, no client_credentials, no unauthenticated token minting
  *
  * Hardening:
- *   - CORS default-deny: allowlist via GBRAIN_HTTP_CORS_ORIGIN (comma-separated)
+ *   - CORS default-deny: allowlist via CORTEX_HTTP_CORS_ORIGIN (comma-separated)
  *   - Rate limit: per-IP pre-auth (protects DB from brute-force load) + per-token-id post-auth
  *     (limits runaway clients). Default 30 req/min per IP, 60 req/min per token. Bounded LRU
  *     so attacker-controlled keys can't grow memory unbounded.
- *   - Body cap: 1 MiB default (GBRAIN_HTTP_MAX_BODY_BYTES). Stream-counted, not buffered —
+ *   - Body cap: 1 MiB default (CORTEX_HTTP_MAX_BODY_BYTES). Stream-counted, not buffered -
  *     chunked transfers without Content-Length are still capped.
  *   - last_used_at debounce: only one UPDATE per token per 60s (SQL-level WHERE clause).
  *   - mcp_request_log: one row per request with token_name + operation + status + latency.
@@ -40,17 +40,37 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function envInt(name: string, fallback: number): number {
-  const v = process.env[name];
+function envFirst(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function envInt(names: string | string[], fallback: number): number {
+  const list = Array.isArray(names) ? names : [names];
+  const v = envFirst(...list);
   if (!v) return fallback;
   const n = parseInt(v, 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 function parseCorsAllowlist(): Set<string> | null {
-  const v = process.env.GBRAIN_HTTP_CORS_ORIGIN;
+  const v = envFirst('CORTEX_HTTP_CORS_ORIGIN', 'GBRAIN_HTTP_CORS_ORIGIN');
   if (!v) return null;
   return new Set(v.split(',').map(s => s.trim()).filter(Boolean));
+}
+
+function cortexBrandText(value: string): string {
+  return value
+    .replace(/GBrain/g, 'Cortex')
+    .replace(/GBRAIN/g, 'CORTEX')
+    .replace(/gbrain/g, 'cortex');
+}
+
+function cortexBrandObject<T>(value: T): T {
+  return JSON.parse(cortexBrandText(JSON.stringify(value))) as T;
 }
 
 interface HttpTransportOptions {
@@ -70,7 +90,7 @@ interface AuthResult {
    * v0.34.1 (#861, D13): source-isolation scope for the auth'd request.
    * Legacy bearer tokens here default to 'default' to match the v0.33
    * effective behavior (the now-removed serve-http.ts fallback chain).
-   * Operators migrate to the full OAuth transport (gbrain serve --http)
+   * Operators migrate to the full OAuth transport (cortex serve --http)
    * for narrower scoping.
    */
   sourceId?: string;
@@ -108,9 +128,9 @@ async function readBodyWithCap(req: Request, cap: number): Promise<string | null
   return new TextDecoder().decode(merged);
 }
 
-/** Resolve client IP. Honors X-Forwarded-For only when GBRAIN_HTTP_TRUST_PROXY=1. */
+/** Resolve client IP. Honors X-Forwarded-For only when CORTEX_HTTP_TRUST_PROXY=1. */
 function resolveClientIp(req: Request, server: { requestIP: (r: Request) => { address: string } | null }): string {
-  if (process.env.GBRAIN_HTTP_TRUST_PROXY === '1') {
+  if (envFirst('CORTEX_HTTP_TRUST_PROXY', 'GBRAIN_HTTP_TRUST_PROXY') === '1') {
     const xff = req.headers.get('x-forwarded-for');
     if (xff) {
       const first = xff.split(',')[0]?.trim();
@@ -133,9 +153,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   const sql = sqlQueryForEngine(engine);
 
   const limiters = opts.limiters || buildDefaultLimiters();
-  const bodyCap = envInt('GBRAIN_HTTP_MAX_BODY_BYTES', DEFAULT_BODY_CAP);
+  const bodyCap = envInt(['CORTEX_HTTP_MAX_BODY_BYTES', 'GBRAIN_HTTP_MAX_BODY_BYTES'], DEFAULT_BODY_CAP);
   const corsAllowlist = parseCorsAllowlist();
-  const tools = buildToolDefs(operations);
+  const tools = cortexBrandObject(buildToolDefs(operations));
 
   /**
    * v0.41.3 (T6): single consolidated CORS header builder. Pre-fix there were
@@ -287,7 +307,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       if (!auth.ok) {
         logRequest(null, 'unknown', 'auth_failed', Date.now() - startedMs);
         return Response.json(
-          { error: 'invalid_token', message: 'Bearer token required. Create one: gbrain auth create <name>' },
+          { error: 'invalid_token', message: 'Bearer token required. Create one: cortex auth create <name>' },
           { status: 401, headers: corsHeaders(origin) },
         );
       }
@@ -326,7 +346,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           {
             result: {
               protocolVersion: '2025-03-26',
-              serverInfo: { name: 'gbrain', version: VERSION },
+              serverInfo: { name: 'cortex', version: VERSION },
               capabilities: { tools: {} },
             },
             jsonrpc: '2.0',
@@ -366,7 +386,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);
         return Response.json(
-          { result, jsonrpc: '2.0', id },
+          { result: cortexBrandObject(result), jsonrpc: '2.0', id },
           { headers: corsHeaders(origin) },
         );
       }
@@ -379,18 +399,18 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
     },
   });
 
-  console.error(`GBrain HTTP MCP server running on port ${port}`);
+  console.error(`Cortex HTTP MCP server running on port ${port}`);
   console.error(`  Health: http://localhost:${port}/health`);
   console.error(`  MCP:    http://localhost:${port}/mcp`);
-  console.error(`  Auth:   Bearer token required (create with: gbrain auth create <name>)`);
+  console.error(`  Auth:   Bearer token required (create with: cortex auth create <name>)`);
   if (!corsAllowlist) {
-    console.error('  CORS:   default-deny. Set GBRAIN_HTTP_CORS_ORIGIN=https://your.app to allow browser clients.');
+    console.error('  CORS:   default-deny. Set CORTEX_HTTP_CORS_ORIGIN=https://your.app to allow browser clients.');
   } else {
     console.error(`  CORS:   allowlist = ${[...corsAllowlist].join(', ')}`);
   }
   console.error('');
   console.error('⚠️  Do NOT use open OAuth registration for remote MCP access.');
-  console.error('   Tokens are managed via: gbrain auth create/list/revoke');
+  console.error('   Tokens are managed via: cortex auth create/list/revoke');
 
   return server;
 }

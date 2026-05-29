@@ -132,7 +132,7 @@ describe('MENU_TEXT cost-matrix anchors (must match CLAUDE.md + methodology doc)
 
   test('tune command is surfaced as the next step', async () => {
     const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
-    expect(MODE_PICKER_MENU).toContain('gbrain search tune');
+    expect(MODE_PICKER_MENU).toContain('cortex search tune');
   });
 });
 
@@ -235,7 +235,7 @@ describe('runModePicker — non-TTY auto-select + idempotent', () => {
 
   test('Opus default model + OpenAI key → picker auto-recommends tokenmax', async () => {
     // OPENAI_API_KEY must be present — the no-key short-circuit fires before
-    // the Opus check (gbrain can't do vector search without embeddings).
+    // the Opus check (Cortex can't do vector search without embeddings).
     await withEnv({ OPENAI_API_KEY: 'sk-test-stub' }, async () => {
       await engine.setConfig('models.default', 'anthropic:claude-opus-4-7');
       const picked = await runModePicker(engine);

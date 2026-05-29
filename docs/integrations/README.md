@@ -1,119 +1,135 @@
-# Getting Data Into Your Brain
+# Cortex Integrations
 
-GBrain is the retrieval layer. But retrieval is only as good as what you put in.
-This directory covers how to get data flowing into your brain automatically.
+Cortex integrations bring external systems into a tenant brain through
+source-scoped ingestion. The MVP integration strategy uses Composio as the
+connector layer and Cortex sources as the authorization and indexing boundary.
 
-## How Data Flows In
+## Ingestion Flow
 
-```
-Signal arrives (phone call, email, tweet, calendar event)
-  ↓
-Collector captures it (deterministic code, reliable)
-  ↓
-Agent analyzes it (LLM, judgment, entity detection)
-  ↓
-Brain pages created/updated (compiled truth + timeline)
-  ↓
-GBrain indexes it (chunking, embedding, search-ready)
-  ↓
-Next query is smarter (the compounding effect)
-```
-
-## Available Integrations
-
-### Self-Installing Recipes
-
-These are integration recipes your agent can set up for you. Run
-`gbrain integrations` to see what's available and their status.
-
-| Recipe | Category | Requires | What It Does | Setup Time |
-|--------|----------|----------|-------------|------------|
-| [ngrok-tunnel](../../recipes/ngrok-tunnel.md) | Infra | — | Fixed public URL for MCP + voice ($8/mo) | 10 min |
-| [credential-gateway](../../recipes/credential-gateway.md) | Infra | — | Gmail + Calendar access (ClawVisor or Google OAuth) | 15 min |
-| [voice-to-brain](../../recipes/twilio-voice-brain.md) | Sense | ngrok-tunnel | Phone calls create brain pages via Twilio + OpenAI Realtime | 30 min |
-| [email-to-brain](../../recipes/email-to-brain.md) | Sense | credential-gateway | Gmail messages flow into entity pages via deterministic collector | 20 min |
-| [x-to-brain](../../recipes/x-to-brain.md) | Sense | — | Twitter timeline, mentions, keyword monitoring with deletion detection | 15 min |
-| [calendar-to-brain](../../recipes/calendar-to-brain.md) | Sense | credential-gateway | Google Calendar events become searchable daily brain pages | 20 min |
-| [meeting-sync](../../recipes/meeting-sync.md) | Sense | — | Circleback meeting transcripts auto-import with attendee propagation | 15 min |
-
-### Manual Integration Guides
-
-These require manual setup (no self-installing recipe yet):
-
-| Guide | What It Does |
-|-------|-------------|
-| [Credential Gateway](credential-gateway.md) | Set up ClawVisor or Hermes for Gmail, Calendar, Contacts access |
-| [Meeting & Call Webhooks](meeting-webhooks.md) | Circleback meeting transcripts + Quo/OpenPhone SMS/calls |
-
-## How to Read a Recipe
-
-Integration recipes are markdown files with YAML frontmatter. Your agent reads
-the recipe and walks you through setup.
-
-```yaml
----
-id: voice-to-brain              # unique identifier
-name: Voice-to-Brain            # human-readable name
-version: 0.7.0                  # recipe version
-description: Phone calls...     # what it does
-category: sense                 # sense (data input) or reflex (automated response)
-requires: []                    # other recipes that must be set up first
-secrets:                        # API keys and credentials needed
-  - name: TWILIO_ACCOUNT_SID
-    description: Twilio account SID
-    where: https://console.twilio.com    # exact URL to get this key
-health_checks:                  # typed DSL to verify the integration is working
-  - type: http
-    url: "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_ACCOUNT_SID.json"
-    auth: basic
-    auth_user: "$TWILIO_ACCOUNT_SID"
-    auth_token: "$TWILIO_AUTH_TOKEN"
-    label: "Twilio account"
-setup_time: 30 min              # estimated time to complete setup
----
-
-[Setup instructions the agent follows step by step...]
+```text
+Third-party event
+  |
+  v
+Composio connector
+  |
+  v
+Cortex webhook
+  |
+  v
+Tenant source
+  |
+  v
+Chunking, embedding, facts, links, activity
+  |
+  v
+Scoped MCP retrieval for humans and agents
 ```
 
-**The recipe IS the installer.** Your agent (OpenClaw, Hermes, Claude Code) reads
-the markdown body and executes the setup steps. It asks you for API keys, validates
-each one, configures the integration, and runs a smoke test.
+The source id is mandatory. It decides where content lands and which OAuth
+clients can read it.
 
-### Recipe trust boundary
+## Integration Objects
 
-Only recipes shipped inside the gbrain package itself (the `recipes/` directory in
-a source install, or the global install copy) are trusted. Recipes discovered at
-runtime from `$GBRAIN_RECIPES_DIR` or a cwd-local `./recipes/` are marked untrusted:
-they cannot run `command` health checks, cannot run `http` health checks (SSRF
-defense), and cannot use the deprecated string health_check form. Untrusted recipes
-can still use `env_exists` and `any_of` compositions. To ship a recipe that runs
-live checks, contribute it upstream so it becomes package-bundled.
+| Object | Purpose |
+| --- | --- |
+| Provider | Composio, Slack, Google Drive, GitHub, Linear, Notion, or another connector source. |
+| Source | Cortex team/integration boundary such as `engineering`, `support`, or `integrations-composio`. |
+| Ingestion event | Provider payload with external id, content, timestamps, source id, and provenance metadata. |
+| Job | Background processing record for chunking, embedding, extraction, and retries. |
+| Agent client | OAuth identity allowed to inspect or administer connector state. |
 
-## The Deterministic Collector Pattern
+## Composio Webhook
 
-When an LLM keeps failing at a mechanical task despite repeated prompt fixes,
-stop fighting the LLM. Move the mechanical work to code.
+Configure Composio to send events to:
 
-**Code for data. LLMs for judgment.**
+```text
+POST https://<tenant-host>/webhooks/composio
+```
 
-- Email collection: code pulls emails with baked-in links (100% reliable).
-  LLM reads the digest, classifies, enriches brain entries (judgment).
-- Tweet collection: code pulls timeline, detects deletions, tracks engagement
-  (deterministic). LLM extracts entities, writes brain updates (judgment).
-- Calendar sync: code pulls events and attendees (deterministic). LLM enriches
-  attendee brain pages (judgment).
+Set:
 
-This pattern prevents the "LLM forgot the links" failure mode. Mechanical work
-must be 100% reliable. Judgment work is where LLMs shine.
+```text
+CORTEX_COMPOSIO_WEBHOOK_SECRET=<shared-secret>
+```
 
-See [Deterministic Collectors](../guides/deterministic-collectors.md) for the
-full pattern.
+Each event should include enough metadata to resolve:
 
-## Architecture
+- organization or tenant
+- brain
+- source id
+- provider
+- external object id
+- content or content URL
+- author/user
+- observed timestamp
+- raw provider metadata
 
-For details on the shared infrastructure that all integrations build on
-(import pipeline, chunking, embedding, search), see the
-[Infrastructure Layer](../architecture/infra-layer.md).
+## Source Scoping
 
-For the philosophy behind thin harness + fat skills, see
-[Thin Harness, Fat Skills](../ethos/THIN_HARNESS_FAT_SKILLS.md).
+Create a source per team or integration boundary:
+
+```bash
+cortex sources add integrations-composio --name "Composio imports"
+cortex sources add support --name "Support"
+cortex sources add engineering --name "Engineering"
+```
+
+Agent path:
+
+```text
+sources_add
+sources_list
+sources_status
+```
+
+Then issue OAuth clients with only the sources they should read:
+
+```bash
+cortex auth register-client support-agent \
+  --grant-types client_credentials \
+  --scopes read,write \
+  --source support \
+  --federated-read support,default
+```
+
+## Console Workflow
+
+1. Open Integrations.
+2. Confirm provider webhook secret status.
+3. Create or select a source.
+4. Connect the provider in Composio.
+5. Send a test event.
+6. Confirm Activity shows ingestion.
+7. Confirm Sources shows updated page/job counts.
+8. Confirm an agent with the right federated-read list can retrieve it.
+
+## Agent Workflow
+
+An admin agent can:
+
+- create the source
+- create an agent client
+- fetch runtime setup
+- send or validate a test webhook
+- inspect source status
+- inspect activity through `saas_console_snapshot`
+- invite teammates who should read the connected source
+
+The agent should not bypass Cortex authorization by filtering provider data in
+the runtime. Provider permissions and Cortex OAuth source scopes both matter;
+Cortex remains the enforcement boundary for brain access.
+
+## Reliability
+
+Ingestion should be idempotent by provider and external object id. Retries should
+not create duplicate pages. Failed jobs should appear in Jobs and Quality so a
+human or agent can replay them.
+
+Before a demo, run:
+
+```bash
+bun run smoke:saas-live -- --json
+```
+
+The smoke sends a Composio-style event and verifies it queues into a Cortex
+source.

@@ -13,8 +13,8 @@
 #   bash scripts/run-verify-parallel.sh --dry-list   # print check list, exit
 #
 # Env overrides:
-#   GBRAIN_VERIFY_TIMEOUT       per-check wallclock cap, seconds (default 120)
-#   GBRAIN_VERIFY_LOG_DIR       where to write per-check logs (default tempdir)
+#   CORTEX_VERIFY_TIMEOUT       per-check wallclock cap, seconds (default 120)
+#   CORTEX_VERIFY_LOG_DIR       where to write per-check logs (default tempdir)
 #
 # Exit codes:
 #   0   all checks passed
@@ -81,16 +81,16 @@ if [ "$#" -gt 0 ] && [ "${1:-}" != "" ]; then
   exit 2
 fi
 
-TIMEOUT="${GBRAIN_VERIFY_TIMEOUT:-120}"
+TIMEOUT="${CORTEX_VERIFY_TIMEOUT:-120}"
 
 # Per-check temp dir. Each check gets its own subdir so writes can't race
 # on shared scratch state (the checks themselves are read-only — they grep
 # the working tree — but defense-in-depth.)
-if [ -n "${GBRAIN_VERIFY_LOG_DIR:-}" ]; then
-  LOG_DIR="$GBRAIN_VERIFY_LOG_DIR"
+if [ -n "${CORTEX_VERIFY_LOG_DIR:-}" ]; then
+  LOG_DIR="$CORTEX_VERIFY_LOG_DIR"
   mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create $LOG_DIR" >&2; exit 2; }
 else
-  LOG_DIR="$(mktemp -d /tmp/gbrain-verify-XXXXXX)"
+  LOG_DIR="$(mktemp -d /tmp/cortex-verify-XXXXXX)"
   trap 'rm -rf "$LOG_DIR"' EXIT
 fi
 

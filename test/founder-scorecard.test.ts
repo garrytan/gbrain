@@ -1,5 +1,5 @@
 /**
- * v0.35.4 — `gbrain founder scorecard` CLI (T7) tests.
+ * v0.35.4 — `cortex founder scorecard` CLI (T7) tests.
  *
  * Pins:
  *   - Pure compute fn: each of the four rollup fields produces correct math.

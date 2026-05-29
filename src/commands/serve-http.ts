@@ -1,5 +1,5 @@
 /**
- * GBrain HTTP MCP server with OAuth 2.1.
+ * Cortex HTTP MCP server with OAuth 2.1.
  *
  * Combines:
  * - MCP SDK's mcpAuthRouter (OAuth endpoints: /authorize, /token, /register, /revoke)
@@ -28,6 +28,7 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
+import { isValidSourceId } from '../core/source-id.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
@@ -51,6 +52,16 @@ import {
  * 3s leaves 2s of headroom for TCP, response framing, and clock skew.
  */
 export const HEALTH_TIMEOUT_MS = 3000;
+const ADMIN_COOKIE_NAME = 'cortex_admin';
+const LEGACY_ADMIN_COOKIE_NAME = 'gbrain_admin';
+
+function envFirst(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
 
 /**
  * v0.36.1.x #1024: bootstrap token resolution.
@@ -82,7 +93,7 @@ export function resolveBootstrapToken(
     return {
       kind: 'error',
       message:
-        'GBRAIN_ADMIN_BOOTSTRAP_TOKEN must be at least 32 chars and match [A-Za-z0-9_-]+.\n' +
+        'CORTEX_ADMIN_BOOTSTRAP_TOKEN must be at least 32 chars and match [A-Za-z0-9_-]+.\n' +
         '  Refusing to start with a weak admin bootstrap token. Generate one with:\n' +
         '    head -c 32 /dev/urandom | base64 | tr -d "+/=" | head -c 48',
     };
@@ -188,7 +199,7 @@ export async function probeLiveness(
 }
 
 /**
- * Resolve `GBRAIN_HTTP_TRUST_PROXY` into a value Express's `app.set('trust
+ * Resolve `CORTEX_HTTP_TRUST_PROXY` into a value Express's `app.set('trust
  * proxy', ...)` accepts. Pure function so the test surface is one place,
  * not the whole Express stack.
  *
@@ -203,7 +214,7 @@ export async function probeLiveness(
  *   - any other string → pass through verbatim (Express accepts named modes
  *     like 'uniquelocal', 'linklocal', and CIDR/IP lists)
  *
- * SECURITY: only set GBRAIN_HTTP_TRUST_PROXY when BOTH (a) gbrain is
+ * SECURITY: only set CORTEX_HTTP_TRUST_PROXY when BOTH (a) Cortex is
  * reachable only via a trusted reverse proxy, AND (b) the proxy strips
  * client-supplied X-Forwarded-For headers before re-emitting its own.
  * Otherwise clients can spoof their IP and defeat the pre-auth IP rate
@@ -218,7 +229,7 @@ export function resolveTrustProxy(env: string | undefined): string | number | bo
 }
 
 /**
- * Parse `GBRAIN_HTTP_CORS_ORIGIN` into a Set of allowed origins for OAuth
+ * Parse `CORTEX_HTTP_CORS_ORIGIN` into a Set of allowed origins for OAuth
  * endpoints. Mirrors `src/mcp/http-transport.ts:parseCorsAllowlist`. Single
  * env var so operators don't need to maintain two allowlists.
  *
@@ -227,7 +238,7 @@ export function resolveTrustProxy(env: string | undefined): string | number | bo
  * already takes).
  */
 export function parseCorsAllowlistOAuth(): Set<string> | null {
-  const v = process.env.GBRAIN_HTTP_CORS_ORIGIN;
+  const v = envFirst('CORTEX_HTTP_CORS_ORIGIN', 'GBRAIN_HTTP_CORS_ORIGIN');
   if (!v) return null;
   const origins = v.split(',').map(s => s.trim()).filter(Boolean);
   return origins.length === 0 ? null : new Set(origins);
@@ -272,16 +283,16 @@ interface ServeHttpOptions {
    * feed. Default false: payloads are summarized via dispatch.summarizeMcpParams
    * (declared keys only, no values, no attacker-controlled key names).
    *
-   * Operators running gbrain on their own laptop and debugging agent behavior
-   * can flip this on with `--log-full-params`. The flag prints a loud warning
-   * at startup so the privacy posture change is visible.
+   * Operators debugging agent behavior can flip this on with
+   * `--log-full-params`. The flag prints a loud warning at startup so the
+   * privacy posture change is visible.
    */
   logFullParams?: boolean;
   /**
    * Network interface(s) to bind. Defaults to `127.0.0.1` (loopback only) in
-   * v0.34.1+ — gbrain's primary use case is a personal-knowledge brain on a
-   * laptop, and the pre-v0.34 default of `0.0.0.0` made it one accidental
-   * `--http` invocation away from publishing the brain to a LAN.
+   * v0.34.1+ — loopback is the safest development default, and the
+   * pre-v0.34 default of `0.0.0.0` made it one accidental `--http`
+   * invocation away from publishing the brain to a LAN.
    *
    * Server operators who DO want to accept remote connections pass
    * `--bind 0.0.0.0` (or a specific interface IP). When `--public-url` is
@@ -292,7 +303,7 @@ interface ServeHttpOptions {
   bind?: string;
   /**
    * v0.36.x #1024: suppress the printed admin bootstrap token line on
-   * startup. Combined with `GBRAIN_ADMIN_BOOTSTRAP_TOKEN`, lets long-lived
+   * startup. Combined with `CORTEX_ADMIN_BOOTSTRAP_TOKEN`, lets long-lived
    * production deployments avoid leaking the token into log aggregators on
    * every supervisor-managed restart. When the env var is NOT set, this
    * flag still suppresses the print — operators take responsibility for
@@ -377,12 +388,11 @@ export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentC
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
-  // gbrain's primary use case is a personal-knowledge brain on a laptop;
-  // the pre-v0.34 default exposed brains on every interface. Server
-  // operators who need remote access pass `--bind 0.0.0.0` (or a specific
-  // interface). Declaring `--public-url` without `--bind` is almost always
-  // a misconfiguration; we WARN to stderr at startup in that case rather
-  // than silently binding loopback only.
+  // Loopback is the safest development default; the pre-v0.34 default exposed
+  // brains on every interface. Server operators who need remote access pass
+  // `--bind 0.0.0.0` (or a specific interface). Declaring `--public-url`
+  // without `--bind` is almost always a misconfiguration; we WARN to stderr at
+  // startup in that case rather than silently binding loopback only.
   const bind = options.bind ?? '127.0.0.1';
   const config = loadConfig() || { engine: 'pglite' as const };
 
@@ -429,9 +439,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // can paste into /admin login. Stable across restarts only when env var
   // is set. The env override must be a strong secret — `[A-Za-z0-9_-]{32+}`
   // — otherwise refuse to start. Logging the bootstrap-token value every
-  // restart is the original gripe; with `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` set
+  // restart is the original gripe; with `CORTEX_ADMIN_BOOTSTRAP_TOKEN` set
   // and `--suppress-bootstrap-token`, no value reaches the log.
-  const resolved = resolveBootstrapToken(process.env.GBRAIN_ADMIN_BOOTSTRAP_TOKEN);
+  const resolved = resolveBootstrapToken(envFirst('CORTEX_ADMIN_BOOTSTRAP_TOKEN', 'GBRAIN_ADMIN_BOOTSTRAP_TOKEN'));
   if (resolved.kind === 'error') {
     console.error(resolved.message);
     process.exit(1);
@@ -455,14 +465,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Express 5 app
   const app = express();
-  // v0.41.3 (T8): configurable trust-proxy via GBRAIN_HTTP_TRUST_PROXY env.
+  // v0.41.3 (T8): configurable trust-proxy via CORTEX_HTTP_TRUST_PROXY env.
   // Default 'loopback' (trust Caddy/Tailscale on the same host) preserves
   // pre-v0.41.3 behavior. Operators behind Fly.io / Render / Vercel / nginx
-  // set GBRAIN_HTTP_TRUST_PROXY=1 (one hop) so X-Forwarded-For lands as the
+  // set CORTEX_HTTP_TRUST_PROXY=1 (one hop) so X-Forwarded-For lands as the
   // real client IP for rate-limiting and req.secure detection. The legacy
   // transport already reads this env var (src/mcp/http-transport.ts:111)
   // for the same purpose; T8 makes the Express path agree.
-  app.set('trust proxy', resolveTrustProxy(process.env.GBRAIN_HTTP_TRUST_PROXY));
+  app.set('trust proxy', resolveTrustProxy(envFirst('CORTEX_HTTP_TRUST_PROXY', 'GBRAIN_HTTP_TRUST_PROXY')));
 
   // ---------------------------------------------------------------------------
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
@@ -475,19 +485,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Pre-v0.41.3 every OAuth endpoint used bare `cors()` which defaults to
   // `Access-Control-Allow-Origin: *` — any web origin could complete a token
   // exchange from a logged-in operator's browser. The fix parses
-  // GBRAIN_HTTP_CORS_ORIGIN the same way the legacy transport already does
+  // CORTEX_HTTP_CORS_ORIGIN the same way the legacy transport already does
   // (src/mcp/http-transport.ts:parseCorsAllowlist) and gates every OAuth
   // surface behind the allowlist. When the env var is unset the OAuth
   // endpoints reject all cross-origin requests (default deny). Same-origin
   // requests are unaffected because browsers send no Origin header for them.
   //
-  // The /admin SPA is the one cross-origin caller we expect on a personal
-  // laptop install; it ships co-located with the brain and uses
-  // same-origin XHR, so the lockdown doesn't break it.
+  // The /admin SPA ships co-located with the brain and uses same-origin XHR,
+  // so the lockdown doesn't break the hosted console.
   const corsAllowlistOAuth = parseCorsAllowlistOAuth();
   if (!corsAllowlistOAuth && bind === '0.0.0.0') {
     console.error(
-      '[serve-http] WARNING: --bind 0.0.0.0 is set but GBRAIN_HTTP_CORS_ORIGIN is unset. OAuth endpoints will reject ALL cross-origin requests until you set the env var (comma-separated origins).',
+      '[serve-http] WARNING: --bind 0.0.0.0 is set but CORTEX_HTTP_CORS_ORIGIN is unset. OAuth endpoints will reject ALL cross-origin requests until you set the env var (comma-separated origins).',
     );
   }
   const corsOAuthOptions: cors.CorsOptions = {
@@ -652,7 +661,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // users_admin via /.well-known/oauth-authorization-server. The legacy
     // ['read','write','admin'] list left those new scopes invisible.
     scopesSupported: [...ALLOWED_SCOPES_LIST],
-    resourceName: 'GBrain MCP Server',
+    resourceName: 'Cortex MCP Server',
   };
 
   // F12: DCR disable lives on the provider's constructor option above. The
@@ -712,7 +721,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
     adminSessions.set(sessionId, expiresAt);
 
-    res.cookie('gbrain_admin', sessionId, adminCookie(req, 24 * 60 * 60 * 1000));
+    res.cookie(ADMIN_COOKIE_NAME, sessionId, adminCookie(req, 24 * 60 * 60 * 1000));
+    res.clearCookie(LEGACY_ADMIN_COOKIE_NAME, { path: '/admin' });
     res.json({ status: 'authenticated' });
   });
 
@@ -798,7 +808,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     if (!isValid) {
       res.status(401).send(`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GBrain</title>
+<title>Cortex</title>
 <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center}
 .box{max-width:400px;padding:32px;text-align:left}
 .logo{font-size:28px;font-weight:600;margin-bottom:24px}
@@ -807,10 +817,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 .hint b{color:#e0e0e0}
 .prompt{background:rgba(0,0,0,0.3);border-radius:6px;padding:8px 12px;margin-top:8px;font-family:monospace;font-size:12px;color:#88aaff}
 </style></head><body><div class="box">
-<div class="logo">GBrain</div>
+<div class="logo">Cortex</div>
 <div class="msg">⚠️ This admin link has expired, was already used, or the server has restarted.</div>
 <div class="hint"><b>Get a fresh link from your AI agent:</b>
-<div class="prompt">&ldquo;Give me the GBrain admin login link&rdquo;</div>
+<div class="prompt">&ldquo;Give me the Cortex admin login link&rdquo;</div>
 </div></div></body></html>`);
       return;
     }
@@ -823,13 +833,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const sessionExpiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days for magic link
     adminSessions.set(sessionId, sessionExpiresAt);
 
-    res.cookie('gbrain_admin', sessionId, adminCookie(req, 7 * 24 * 60 * 60 * 1000));
+    res.cookie(ADMIN_COOKIE_NAME, sessionId, adminCookie(req, 7 * 24 * 60 * 60 * 1000));
+    res.clearCookie(LEGACY_ADMIN_COOKIE_NAME, { path: '/admin' });
     res.redirect('/admin/');
   });
 
   // Admin auth middleware
   function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-    const sessionId = (req.cookies as Record<string, string>)?.gbrain_admin;
+    const cookies = (req.cookies as Record<string, string>) || {};
+    const sessionId = cookies[ADMIN_COOKIE_NAME] || cookies[LEGACY_ADMIN_COOKIE_NAME];
     if (!sessionId || !adminSessions.has(sessionId)) {
       res.status(401).json({ error: 'Admin authentication required' });
       return;
@@ -843,6 +855,598 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     next();
   }
 
+  app.get('/admin/api/session', (req: Request, res: Response) => {
+    const cookies = (req.cookies as Record<string, string>) || {};
+    const sessionId = cookies[ADMIN_COOKIE_NAME] || cookies[LEGACY_ADMIN_COOKIE_NAME];
+    if (!sessionId || !adminSessions.has(sessionId)) {
+      res.json({ authenticated: false, expiresAt: null });
+      return;
+    }
+    const expiresAt = adminSessions.get(sessionId)!;
+    if (Date.now() > expiresAt) {
+      adminSessions.delete(sessionId);
+      res.json({ authenticated: false, expiresAt: null });
+      return;
+    }
+    res.json({ authenticated: true, expiresAt });
+  });
+
+  // ---------------------------------------------------------------------------
+  // SaaS control-plane helpers + public signup
+  // ---------------------------------------------------------------------------
+
+  const ROLE_SCOPES: Record<'owner' | 'admin' | 'member' | 'viewer', string> = {
+    owner: 'admin sources_admin users_admin read write',
+    admin: 'admin sources_admin users_admin read write',
+    member: 'read write',
+    viewer: 'read',
+  };
+
+  function publicBaseUrl(req: Request): string {
+    const configured = envFirst('CORTEX_PUBLIC_URL', 'GBRAIN_PUBLIC_URL');
+    if (configured) return configured.replace(/\/+$/, '');
+    const proto = (req.header('x-forwarded-proto') || req.protocol || 'http').split(',')[0].trim();
+    const host = req.header('x-forwarded-host') || req.header('host') || `localhost:${options.port}`;
+    return `${proto}://${host}`.replace(/\/+$/, '');
+  }
+
+  function encodeOnboardingPayload(payload: Record<string, unknown>): string {
+    return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  }
+
+  function onboardingUrl(req: Request, payload: Record<string, unknown>): string {
+    return `${publicBaseUrl(req)}/admin/onboarding?invite=${encodeOnboardingPayload(payload)}`;
+  }
+
+  function escapeHtml(value: unknown): string {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function cortexBrandText(value: string): string {
+    return value
+      .replace(/GBrain/g, 'Cortex')
+      .replace(/GBRAIN/g, 'CORTEX')
+      .replace(/gbrain/g, 'cortex');
+  }
+
+  function cortexBrandObject<T>(value: T): T {
+    return JSON.parse(cortexBrandText(JSON.stringify(value))) as T;
+  }
+
+  async function composioIntegrationStatus(req: Request) {
+    const { getComposioIntegrationStatus } = await import('../core/saas-integrations.ts');
+    return getComposioIntegrationStatus(engine, publicBaseUrl(req));
+  }
+
+  function renderCortexLanding(req: Request): string {
+    const baseUrl = publicBaseUrl(req);
+    const mcpUrl = `${baseUrl}/mcp`;
+    const manifestUrl = `${baseUrl}/runtime-manifest.json`;
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cortex Brain - Hosted company brain for AI agents</title>
+  <link rel="icon" href="/admin/icon.svg" type="image/svg+xml" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #09090b;
+      --panel: #111113;
+      --panel-2: #18181b;
+      --text: #fafafa;
+      --muted: #a1a1aa;
+      --faint: #71717a;
+      --border: #27272a;
+      --accent: #60a5fa;
+      --accent-2: #2dd4bf;
+      --success: #22c55e;
+      --error: #f87171;
+      --radius: 8px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 30% -10%, rgba(96,165,250,0.18), transparent 34%),
+        linear-gradient(180deg, #09090b 0%, #0f0f12 52%, #09090b 100%);
+      color: var(--text);
+    }
+    a { color: inherit; }
+    .page { max-width: 1180px; margin: 0 auto; padding: 28px 22px 36px; }
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 52px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: 0; }
+    .mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      border: 1px solid rgba(96,165,250,0.38);
+      background: linear-gradient(135deg, rgba(96,165,250,0.32), rgba(45,212,191,0.18));
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .nav-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 8px 13px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(24,24,27,0.82);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn.primary { border-color: #2563eb; background: #2563eb; }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.92fr);
+      gap: 28px;
+      align-items: start;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #bfdbfe;
+      border: 1px solid rgba(96,165,250,0.32);
+      background: rgba(96,165,250,0.08);
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      margin-bottom: 18px;
+    }
+    .pulse { width: 7px; height: 7px; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 5px rgba(34,197,94,0.1); }
+    h1 {
+      margin: 0;
+      font-size: clamp(42px, 6.6vw, 76px);
+      line-height: 0.95;
+      letter-spacing: 0;
+      max-width: 820px;
+    }
+    .lede {
+      margin: 22px 0 0;
+      color: #d4d4d8;
+      font-size: 18px;
+      line-height: 1.65;
+      max-width: 680px;
+    }
+    .proof {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 34px;
+      max-width: 760px;
+    }
+    .proof div, .signup-card, .preview {
+      border: 1px solid var(--border);
+      background: rgba(17,17,19,0.78);
+      border-radius: var(--radius);
+    }
+    .proof div { padding: 14px; }
+    .proof strong { display: block; font-size: 18px; margin-bottom: 4px; }
+    .proof span { color: var(--muted); font-size: 13px; }
+    .signup-card { padding: 18px; box-shadow: 0 22px 80px rgba(0,0,0,0.36); }
+    .signup-card h2 { margin: 0 0 6px; font-size: 18px; }
+    .signup-card p { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+    .field { display: grid; gap: 6px; margin-bottom: 12px; }
+    label { color: #e4e4e7; font-size: 12px; font-weight: 600; }
+    input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #09090b;
+      color: var(--text);
+      min-height: 40px;
+      padding: 9px 11px;
+      font-size: 14px;
+      outline: none;
+    }
+    input:focus { border-color: rgba(96,165,250,0.72); box-shadow: 0 0 0 3px rgba(96,165,250,0.12); }
+    .status {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      color: var(--muted);
+      background: #09090b;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .status.show { display: grid; gap: 10px; }
+    .status.error { border-color: rgba(248,113,113,0.55); color: #fecaca; }
+    .code {
+      border: 1px solid #27272a;
+      border-radius: 8px;
+      background: #050506;
+      padding: 10px;
+      font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #e5e7eb;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .preview {
+      margin-top: 18px;
+      padding: 14px;
+      min-height: 230px;
+      background:
+        linear-gradient(180deg, rgba(39,39,42,0.8), rgba(17,17,19,0.9)),
+        #111113;
+    }
+    .preview-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; color: var(--muted); font-size: 12px; }
+    .chip { border: 1px solid var(--border); border-radius: 999px; padding: 4px 8px; color: #bbf7d0; background: rgba(34,197,94,0.08); }
+    .preview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .tile { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: #09090b; min-height: 78px; }
+    .tile b { display: block; margin-bottom: 8px; }
+    .tile span { color: var(--muted); font-size: 12px; }
+    .bar { height: 7px; border-radius: 999px; background: #27272a; overflow: hidden; margin-top: 12px; }
+    .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+    .below {
+      margin-top: 56px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .below article {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(17,17,19,0.74);
+      padding: 16px;
+    }
+    .below h3 { margin: 0 0 8px; font-size: 14px; }
+    .below p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    @media (max-width: 900px) {
+      .nav { margin-bottom: 32px; }
+      .hero, .below { grid-template-columns: 1fr; }
+      .proof { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="nav">
+      <div class="brand"><div class="mark">C</div><span>Cortex Brain</span></div>
+      <div class="nav-actions">
+        <a class="btn" href="/admin/docs/">Agent docs</a>
+        <a class="btn" href="${escapeHtml(manifestUrl)}">Runtime manifest</a>
+        <a class="btn primary" href="/admin/signup">Open console signup</a>
+      </div>
+    </header>
+    <main class="hero">
+      <section>
+        <div class="eyebrow"><span class="pulse"></span> Hosted MCP control plane for company brains</div>
+        <h1>Cortex Brain</h1>
+        <p class="lede">Give every organization a hosted, source-scoped memory layer that agents can query, update, and administer with OAuth. Start with one company brain, add team sources, and create dedicated brains only when isolation, compliance, or lifecycle demands it.</p>
+        <div class="proof">
+          <div><strong>OAuth 2.1</strong><span>Client credentials, scoped sources, and agent-ready onboarding URLs.</span></div>
+          <div><strong>Team invites</strong><span>Owner, admin, member, and viewer access with runtime snippets.</span></div>
+          <div><strong>Composio ingest</strong><span>Connect docs, repos, chat, and product tools into source-scoped memory.</span></div>
+        </div>
+      </section>
+      <aside>
+        <form class="signup-card" id="signup-form">
+          <h2>Create an organization</h2>
+          <p>Provision a Cortex org, owner invite, runtime manifest, and MCP client credentials.</p>
+          <div class="field">
+            <label for="orgName">Organization name</label>
+            <input id="orgName" name="orgName" autocomplete="organization" placeholder="Company name" required />
+          </div>
+          <div class="field">
+            <label for="email">Owner email</label>
+            <input id="email" name="email" type="email" autocomplete="email" placeholder="owner@company.com" required />
+          </div>
+          <div class="field">
+            <label for="domain">Company domain</label>
+            <input id="domain" name="domain" autocomplete="url" placeholder="company.com" />
+          </div>
+          <button class="btn primary" style="width:100%" type="submit">Create org and onboarding link</button>
+          <div class="status" id="signup-status"></div>
+        </form>
+        <div class="preview" aria-label="Cortex product preview">
+          <div class="preview-top"><span>${escapeHtml(mcpUrl)}</span><span class="chip">online</span></div>
+          <div class="preview-grid">
+            <div class="tile"><b>Brains</b><span>Company brain plus isolated workspaces when needed.</span><div class="bar"><i style="width:72%"></i></div></div>
+            <div class="tile"><b>Sources</b><span>Engineering, GTM, product, support, and board memory.</span><div class="bar"><i style="width:58%"></i></div></div>
+            <div class="tile"><b>Agents</b><span>Claude, Cursor, ChatGPT, Perplexity, and custom clients.</span><div class="bar"><i style="width:84%"></i></div></div>
+            <div class="tile"><b>Skills</b><span>Promote vetted workflows into scoped, auditable agent skills.</span><div class="bar"><i style="width:66%"></i></div></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+    <section class="below">
+      <article><h3>One company brain first</h3><p>Use sources as team spaces for routing and permissions. Dedicated brains stay available for hard isolation.</p></article>
+      <article><h3>Agent-admin parity</h3><p>Agents can create orgs, receive onboarding links, register clients, and invite teammates through the same control plane.</p></article>
+      <article><h3>Runtime packaging</h3><p>Every signup returns a Cortex connect command plus client configs for common agent runtimes.</p></article>
+      <article><h3>Investor demo ready</h3><p>Show signup, invites, ingestion, skills, agent registration, activity, and runtime setup from one hosted URL.</p></article>
+    </section>
+  </div>
+  <script>
+    const form = document.getElementById('signup-form');
+    const status = document.getElementById('signup-status');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      status.className = 'status show';
+      status.textContent = 'Creating your Cortex organization...';
+      const body = {
+        orgName: form.orgName.value.trim(),
+        email: form.email.value.trim(),
+        domain: form.domain.value.trim() || undefined,
+      };
+      try {
+        const res = await fetch('/admin/api/signup', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'signup_failed');
+        status.className = 'status show';
+        status.innerHTML = '';
+        const link = document.createElement('a');
+        link.href = data.onboarding_url;
+        link.textContent = 'Open onboarding link';
+        link.className = 'btn primary';
+        const command = document.createElement('div');
+        command.className = 'code';
+        command.textContent = data.connectCommand || 'cortex connect';
+        const secret = document.createElement('div');
+        secret.className = 'code';
+        secret.textContent = 'Client ID: ' + data.clientId + '\\nClient secret: ' + data.clientSecret;
+        status.append(link, command, secret);
+      } catch (err) {
+        status.className = 'status show error';
+        status.textContent = err instanceof Error ? err.message : String(err);
+      }
+    });
+  </script>
+</body>
+</html>`;
+  }
+
+  function queryStringList(value: unknown): string[] {
+    const raw = Array.isArray(value) ? value.join(',') : (typeof value === 'string' ? value : '');
+    return raw.split(/[,\s]+/g).map(v => v.trim()).filter(Boolean);
+  }
+
+  async function runtimeManifestFromRequest(req: Request, extra: Record<string, unknown> = {}) {
+    const { buildSaasRuntimeManifest } = await import('../core/saas-runtime-manifest.ts');
+    const sourceId = typeof extra.source_id === 'string' && extra.source_id
+      ? extra.source_id
+      : (typeof req.query.source_id === 'string' && req.query.source_id ? req.query.source_id : 'default');
+    const federatedRead = Array.isArray(extra.federated_read)
+      ? extra.federated_read.map(v => String(v)).filter(Boolean)
+      : queryStringList(req.query.federated_read);
+    return buildSaasRuntimeManifest({
+      publicUrl: publicBaseUrl(req),
+      onboardingUrl: typeof extra.onboarding_url === 'string' && extra.onboarding_url
+        ? extra.onboarding_url
+        : (typeof req.query.onboarding_url === 'string' ? req.query.onboarding_url : null),
+      clientId: typeof extra.client_id === 'string' && extra.client_id
+        ? extra.client_id
+        : (typeof req.query.client_id === 'string' ? req.query.client_id : null),
+      orgId: typeof extra.org_id === 'string' && extra.org_id
+        ? extra.org_id
+        : (typeof req.query.org_id === 'string' ? req.query.org_id : null),
+      brainId: typeof extra.brain_id === 'string' && extra.brain_id
+        ? extra.brain_id
+        : (typeof req.query.brain_id === 'string' ? req.query.brain_id : null),
+      email: typeof extra.email === 'string' && extra.email
+        ? extra.email
+        : (typeof req.query.email === 'string' ? req.query.email : null),
+      role: typeof extra.role === 'string' && extra.role
+        ? extra.role
+        : (typeof req.query.role === 'string' ? req.query.role : null),
+      sourceId,
+      federatedRead: federatedRead.length > 0 ? federatedRead : [sourceId],
+      scopes: typeof extra.scopes === 'string' && extra.scopes
+        ? extra.scopes
+        : (typeof req.query.scopes === 'string' ? req.query.scopes : 'read write'),
+      clientSecretPlaceholder: typeof extra.client_secret === 'string' && extra.client_secret
+        ? extra.client_secret
+        : null,
+    });
+  }
+
+  async function runtimePackageIndexFromRequest(req: Request) {
+    const { buildSaasRuntimePackageIndex } = await import('../core/saas-runtime-manifest.ts');
+    return buildSaasRuntimePackageIndex({ publicUrl: publicBaseUrl(req) });
+  }
+
+  async function requireKnownSources(sourceIds: string[], res: Response): Promise<boolean> {
+    for (const id of Array.from(new Set(sourceIds))) {
+      if (!isValidSourceId(id)) {
+        res.status(400).json({ error: 'invalid_source_id', sourceId: id });
+        return false;
+      }
+      const rows = await engine.executeRaw<{ id: string }>(
+        `SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE`,
+        [id],
+      );
+      if (rows.length === 0) {
+        res.status(400).json({ error: 'unknown_source_id', sourceId: id });
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async function defaultOrgId(): Promise<string> {
+    const { listOrganizations, createOrganization } = await import('../core/saas-control-plane.ts');
+    const orgs = await listOrganizations(engine);
+    if (orgs[0]) return orgs[0].id;
+    const created = await createOrganization(engine, { name: 'Default Organization', slug: 'default' });
+    return created.id;
+  }
+
+  app.get('/runtime-manifest.json', async (req: Request, res: Response) => {
+    try {
+      res.json(await runtimeManifestFromRequest(req));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'runtime_manifest_failed' });
+    }
+  });
+
+  app.get('/runtime-package.json', async (req: Request, res: Response) => {
+    try {
+      res.json(await runtimePackageIndexFromRequest(req));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'runtime_package_failed' });
+    }
+  });
+
+  app.get('/', (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderCortexLanding(req));
+  });
+
+  app.get('/signup', (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderCortexLanding(req));
+  });
+
+  const handlePublicSignup = async (req: Request, res: Response) => {
+    try {
+      const {
+        assertSaasPlanAllows,
+        createOrganization,
+        createTenantBrain,
+        upsertMember,
+        createInviteRecord,
+        queueInviteEmailDelivery,
+        isValidEmail,
+      } = await import('../core/saas-control-plane.ts');
+      const orgName = typeof req.body?.orgName === 'string' ? req.body.orgName.trim() : '';
+      const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+      const domain = typeof req.body?.domain === 'string' ? req.body.domain.trim() : null;
+      if (!orgName) { res.status(400).json({ error: 'org_name_required' }); return; }
+      if (!isValidEmail(email)) { res.status(400).json({ error: 'valid_email_required' }); return; }
+
+      const org = await createOrganization(engine, { name: orgName, domain });
+      await assertSaasPlanAllows(engine, org.id, 'brains');
+      await assertSaasPlanAllows(engine, org.id, 'members');
+      await assertSaasPlanAllows(engine, org.id, 'pending_invites');
+      await assertSaasPlanAllows(engine, org.id, 'agent_clients');
+      const baseUrl = publicBaseUrl(req);
+      const sourceId = 'default';
+      const federatedRead = ['default'];
+      const scopes = ROLE_SCOPES.owner;
+      const result = await oauthProvider.registerClientManual(
+        email,
+        ['client_credentials'],
+        scopes,
+        [],
+        sourceId,
+        federatedRead,
+        'client_secret_post',
+      );
+      await sql`UPDATE oauth_clients SET token_ttl = ${604800} WHERE client_id = ${result.clientId}`;
+      const brain = await createTenantBrain(engine, {
+        orgId: org.id,
+        name: 'Company Brain',
+        publicUrl: baseUrl,
+        region: process.env.RAILWAY_REGION || null,
+        status: 'online',
+        metadata: { requested_by_email: email, signup_source: 'public' },
+      });
+      const member = await upsertMember(engine, {
+        orgId: org.id,
+        email,
+        role: 'owner',
+        status: 'active',
+        sourceId,
+        federatedRead,
+        oauthClientId: result.clientId,
+      });
+      const url = onboardingUrl(req, {
+        org: org.name,
+        org_id: org.id,
+        brain: brain.name,
+        brain_id: brain.id,
+        email,
+        role: 'owner',
+        status: 'ready',
+        scopes,
+        source_id: sourceId,
+        federated_read: federatedRead,
+        server_url: `${baseUrl}/mcp`,
+        token_url: `${baseUrl}/token`,
+        client_id: result.clientId,
+      });
+      const invite = await createInviteRecord(engine, {
+        orgId: org.id,
+        email,
+        role: 'owner',
+        sourceId,
+        federatedRead,
+        oauthClientId: result.clientId,
+        onboardingUrl: url,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+      const inviteDelivery = await queueInviteEmailDelivery(engine, {
+        orgId: org.id,
+        inviteId: invite.id,
+        email,
+        kind: 'owner_onboarding',
+        onboardingUrl: url,
+        welcome: `Your Cortex workspace for ${org.name} is ready.`,
+      });
+      const connectCommand = `cortex connect '${url}' --client-secret '${result.clientSecret}'`;
+      const runtimeManifest = await runtimeManifestFromRequest(req, {
+        org_id: org.id,
+        brain_id: brain.id,
+        email,
+        role: 'owner',
+        scopes,
+        source_id: sourceId,
+        federated_read: federatedRead,
+        onboarding_url: url,
+        client_id: result.clientId,
+        client_secret: result.clientSecret,
+      });
+      res.json({
+        org,
+        brain,
+        member,
+        invite,
+        invite_delivery: inviteDelivery,
+        onboarding_url: url,
+        provisioning_required: false,
+        clientId: result.clientId,
+        clientSecret: result.clientSecret,
+        client_id: result.clientId,
+        client_secret: result.clientSecret,
+        connectCommand,
+        runtime_manifest: runtimeManifest,
+        secret_notice: 'Save this secret now. It is not stored in plaintext and cannot be shown again.',
+      });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'signup_failed' });
+    }
+  };
+
+  app.post('/admin/api/signup', express.json(), handlePublicSignup);
+  app.post('/api/signup', express.json(), handlePublicSignup);
+
   // ---------------------------------------------------------------------------
   // Admin API endpoints
   // ---------------------------------------------------------------------------
@@ -854,7 +1458,423 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.post('/admin/api/sign-out-everywhere', requireAdmin, (_req: Request, res: Response) => {
     const count = adminSessions.size;
     adminSessions.clear();
+    res.clearCookie(ADMIN_COOKIE_NAME, { path: '/admin' });
+    res.clearCookie(LEGACY_ADMIN_COOKIE_NAME, { path: '/admin' });
     res.json({ revoked_sessions: count });
+  });
+
+  app.get('/admin/api/runtime-manifest', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await runtimeManifestFromRequest(req));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'runtime_manifest_failed' });
+    }
+  });
+
+  app.get('/admin/api/integrations', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await composioIntegrationStatus(req));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'integrations_unavailable' });
+    }
+  });
+
+  app.get('/admin/api/quality', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { buildSaasQualitySnapshot } = await import('../core/saas-quality.ts');
+      res.json(await buildSaasQualitySnapshot(engine, { publicUrl: publicBaseUrl(req) }));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'quality_unavailable' });
+    }
+  });
+
+  app.get('/admin/api/plan', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { getSaasPlan } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.query.orgId === 'string' && req.query.orgId ? req.query.orgId : await defaultOrgId();
+      res.json(await getSaasPlan(engine, orgId));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'plan_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/plan', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { updateSaasPlan } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.body?.orgId === 'string' && req.body.orgId ? req.body.orgId : await defaultOrgId();
+      const limits = req.body?.limits && typeof req.body.limits === 'object' && !Array.isArray(req.body.limits)
+        ? req.body.limits as Record<string, number | null>
+        : undefined;
+      res.json(await updateSaasPlan(engine, orgId, {
+        planKey: req.body?.planKey ?? req.body?.plan_key,
+        status: typeof req.body?.status === 'string' ? req.body.status : undefined,
+        billingCustomerId: typeof req.body?.billingCustomerId === 'string'
+          ? req.body.billingCustomerId
+          : (typeof req.body?.billing_customer_id === 'string' ? req.body.billing_customer_id : undefined),
+        billingProvider: typeof req.body?.billingProvider === 'string'
+          ? req.body.billingProvider
+          : (typeof req.body?.billing_provider === 'string' ? req.body.billing_provider : undefined),
+        billingSubscriptionId: typeof req.body?.billingSubscriptionId === 'string'
+          ? req.body.billingSubscriptionId
+          : (typeof req.body?.billing_subscription_id === 'string' ? req.body.billing_subscription_id : undefined),
+        billingPlanRef: typeof req.body?.billingPlanRef === 'string'
+          ? req.body.billingPlanRef
+          : (typeof req.body?.billing_plan_ref === 'string' ? req.body.billing_plan_ref : undefined),
+        billingCurrentPeriodEnd: typeof req.body?.billingCurrentPeriodEnd === 'string'
+          ? req.body.billingCurrentPeriodEnd
+          : (typeof req.body?.billing_current_period_end === 'string' ? req.body.billing_current_period_end : undefined),
+        limits,
+      }));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'plan_update_failed' });
+    }
+  });
+
+  app.get('/admin/api/orgs', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { listOrganizations } = await import('../core/saas-control-plane.ts');
+      res.json(await listOrganizations(engine));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'service_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/orgs', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { createOrganization, upsertMember, isValidEmail } = await import('../core/saas-control-plane.ts');
+      const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+      const domain = typeof req.body?.domain === 'string' ? req.body.domain.trim() : null;
+      const ownerEmail = typeof req.body?.ownerEmail === 'string' ? req.body.ownerEmail.trim().toLowerCase() : '';
+      if (!name) { res.status(400).json({ error: 'name_required' }); return; }
+      if (ownerEmail && !isValidEmail(ownerEmail)) { res.status(400).json({ error: 'valid_owner_email_required' }); return; }
+      const org = await createOrganization(engine, { name, domain });
+      const owner = ownerEmail
+        ? await upsertMember(engine, {
+          orgId: org.id,
+          email: ownerEmail,
+          role: 'owner',
+          status: 'active',
+          sourceId: 'default',
+          federatedRead: ['default'],
+        })
+        : null;
+      res.json({ org, owner });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'org_create_failed' });
+    }
+  });
+
+  app.get('/admin/api/brains', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { listTenantBrains } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.query.orgId === 'string' ? req.query.orgId : undefined;
+      res.json(await listTenantBrains(engine, orgId));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'service_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/brains', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { createTenantBrain } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.body?.orgId === 'string' && req.body.orgId ? req.body.orgId : await defaultOrgId();
+      const name = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim() : 'Company Brain';
+      const brain = await createTenantBrain(engine, {
+        orgId,
+        name,
+        publicUrl: typeof req.body?.publicUrl === 'string' ? req.body.publicUrl : (envFirst('CORTEX_PUBLIC_URL', 'GBRAIN_PUBLIC_URL') || null),
+        region: typeof req.body?.region === 'string' ? req.body.region : (process.env.RAILWAY_REGION || null),
+        status: typeof req.body?.status === 'string' ? req.body.status : 'online',
+        metadata: typeof req.body?.metadata === 'object' && req.body.metadata ? req.body.metadata : {},
+      });
+      res.json(brain);
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'brain_create_failed' });
+    }
+  });
+
+  app.get('/admin/api/team', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { listMembers } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.query.orgId === 'string' && req.query.orgId ? req.query.orgId : await defaultOrgId();
+      res.json(await listMembers(engine, orgId));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'service_unavailable' });
+    }
+  });
+
+  app.get('/admin/api/invites', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { listInvites } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.query.orgId === 'string' && req.query.orgId ? req.query.orgId : await defaultOrgId();
+      res.json(await listInvites(engine, orgId));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'service_unavailable' });
+    }
+  });
+
+  app.get('/admin/api/invite-deliveries', requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { listEmailDeliveries } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.query.orgId === 'string' && req.query.orgId ? req.query.orgId : await defaultOrgId();
+      const inviteId = typeof req.query.inviteId === 'string' && req.query.inviteId ? req.query.inviteId : null;
+      const limit = typeof req.query.limit === 'string' ? Number(req.query.limit) : 50;
+      res.json(await listEmailDeliveries(engine, { orgId, inviteId, limit }));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'invite_deliveries_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/invite-deliveries', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { queueInviteEmailDelivery } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.body?.orgId === 'string' && req.body.orgId ? req.body.orgId : await defaultOrgId();
+      const inviteId = typeof req.body?.inviteId === 'string' && req.body.inviteId ? req.body.inviteId : null;
+      const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+      const onboardingUrl = typeof req.body?.onboardingUrl === 'string' ? req.body.onboardingUrl : null;
+      const welcome = typeof req.body?.welcome === 'string' ? req.body.welcome : null;
+      const kind = req.body?.kind === 'owner_onboarding' ? 'owner_onboarding' : 'teammate_invite';
+      res.json(await queueInviteEmailDelivery(engine, { orgId, inviteId, email, onboardingUrl, welcome, kind }));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'invite_delivery_queue_failed' });
+    }
+  });
+
+  app.post('/admin/api/invite-deliveries/claim', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { claimEmailDeliveries } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.body?.orgId === 'string' && req.body.orgId ? req.body.orgId : await defaultOrgId();
+      const inviteId = typeof req.body?.inviteId === 'string' && req.body.inviteId ? req.body.inviteId : null;
+      const provider = typeof req.body?.provider === 'string' && req.body.provider.trim() ? req.body.provider.trim() : null;
+      const statuses = Array.isArray(req.body?.statuses) ? req.body.statuses : null;
+      const limit = typeof req.body?.limit === 'number' ? req.body.limit : null;
+      res.json(await claimEmailDeliveries(engine, { orgId, inviteId, provider, statuses, limit }));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'invite_delivery_claim_failed' });
+    }
+  });
+
+  app.post('/admin/api/invite-deliveries/drain', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { drainInviteEmailDeliveries } = await import('../core/saas-email-delivery.ts');
+      const orgId = typeof req.body?.orgId === 'string' && req.body.orgId ? req.body.orgId : await defaultOrgId();
+      const inviteId = typeof req.body?.inviteId === 'string' && req.body.inviteId ? req.body.inviteId : null;
+      const provider = typeof req.body?.provider === 'string' && req.body.provider.trim() ? req.body.provider.trim() : null;
+      const recordProvider = typeof req.body?.recordProvider === 'string' && req.body.recordProvider.trim()
+        ? req.body.recordProvider.trim()
+        : (typeof req.body?.record_provider === 'string' && req.body.record_provider.trim() ? req.body.record_provider.trim() : null);
+      const statuses = Array.isArray(req.body?.statuses) ? req.body.statuses : null;
+      const limit = typeof req.body?.limit === 'number' ? req.body.limit : null;
+      res.json(await drainInviteEmailDeliveries(engine, { orgId, inviteId, provider, recordProvider, statuses, limit }));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'invite_delivery_drain_failed' });
+    }
+  });
+
+  app.post('/admin/api/invite-deliveries/:id/result', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { markEmailDeliveryResult } = await import('../core/saas-control-plane.ts');
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const status = typeof req.body?.status === 'string' ? req.body.status : '';
+      const provider = typeof req.body?.provider === 'string' ? req.body.provider : null;
+      const providerMessageId = typeof req.body?.providerMessageId === 'string'
+        ? req.body.providerMessageId
+        : (typeof req.body?.provider_message_id === 'string' ? req.body.provider_message_id : null);
+      const lastError = typeof req.body?.lastError === 'string'
+        ? req.body.lastError
+        : (typeof req.body?.last_error === 'string' ? req.body.last_error : null);
+      res.json(await markEmailDeliveryResult(engine, { id, status, provider, providerMessageId, lastError }));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'invite_delivery_result_failed' });
+    }
+  });
+
+  app.post('/admin/api/invites', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const {
+        assertSaasPlanAllows,
+        createInviteRecord,
+        queueInviteEmailDelivery,
+        upsertMember,
+        isValidEmail,
+        normalizeRole,
+      } = await import('../core/saas-control-plane.ts');
+      const orgId = typeof req.body?.orgId === 'string' && req.body.orgId ? req.body.orgId : await defaultOrgId();
+      const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+      if (!isValidEmail(email)) { res.status(400).json({ error: 'valid_email_required' }); return; }
+      const role = normalizeRole(req.body?.role);
+      const sourceId = typeof req.body?.sourceId === 'string' && req.body.sourceId ? req.body.sourceId : 'default';
+      const federatedRead = Array.isArray(req.body?.federatedRead)
+        ? (req.body.federatedRead as unknown[]).map(v => String(v).trim()).filter(Boolean)
+        : [sourceId];
+      const effectiveRead = Array.from(new Set([sourceId, ...federatedRead]));
+      if (!(await requireKnownSources(effectiveRead, res))) return;
+      await assertSaasPlanAllows(engine, orgId, 'agent_clients');
+      await assertSaasPlanAllows(engine, orgId, 'members');
+      await assertSaasPlanAllows(engine, orgId, 'pending_invites');
+
+      const scopes = ROLE_SCOPES[role];
+      const result = await oauthProvider.registerClientManual(
+        email,
+        ['client_credentials'],
+        scopes,
+        [],
+        sourceId,
+        effectiveRead,
+        'client_secret_post',
+      );
+      await sql`UPDATE oauth_clients SET token_ttl = ${604800} WHERE client_id = ${result.clientId}`;
+
+      const url = onboardingUrl(req, {
+        org_id: orgId,
+        email,
+        role,
+        scopes,
+        source_id: sourceId,
+        federated_read: effectiveRead,
+        server_url: `${publicBaseUrl(req)}/mcp`,
+        token_url: `${publicBaseUrl(req)}/token`,
+        client_id: result.clientId,
+      });
+      const invite = await createInviteRecord(engine, {
+        orgId,
+        email,
+        role,
+        sourceId,
+        federatedRead: effectiveRead,
+        oauthClientId: result.clientId,
+        onboardingUrl: url,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+      const inviteDelivery = await queueInviteEmailDelivery(engine, {
+        orgId,
+        inviteId: invite.id,
+        email,
+        kind: 'teammate_invite',
+        onboardingUrl: url,
+        welcome: typeof req.body?.welcome === 'string' ? req.body.welcome : null,
+      });
+      const member = await upsertMember(engine, {
+        orgId,
+        email,
+        role,
+        status: 'invited',
+        sourceId,
+        federatedRead: effectiveRead,
+        oauthClientId: result.clientId,
+      });
+      res.json({
+        invite,
+        inviteDelivery,
+        member,
+        onboardingUrl: url,
+        clientId: result.clientId,
+        clientSecret: result.clientSecret,
+        runtime_manifest: await runtimeManifestFromRequest(req, {
+          org_id: orgId,
+          email,
+          role,
+          scopes,
+          source_id: sourceId,
+          federated_read: effectiveRead,
+          onboarding_url: url,
+          client_id: result.clientId,
+          client_secret: result.clientSecret,
+        }),
+      });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'invite_create_failed' });
+    }
+  });
+
+  app.get('/admin/api/sources', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { listSources } = await import('../core/sources-ops.ts');
+      const sources = await listSources(engine, { includeArchived: false });
+      res.json(sources);
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'service_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/sources', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { id, name, federated, remoteUrl } = req.body as {
+        id?: unknown;
+        name?: unknown;
+        federated?: unknown;
+        remoteUrl?: unknown;
+      };
+      if (typeof id !== 'string' || !isValidSourceId(id)) {
+        res.status(400).json({ error: 'invalid_source_id' });
+        return;
+      }
+      if (name !== undefined && typeof name !== 'string') {
+        res.status(400).json({ error: 'invalid_source_name' });
+        return;
+      }
+      if (remoteUrl !== undefined && typeof remoteUrl !== 'string') {
+        res.status(400).json({ error: 'invalid_remote_url' });
+        return;
+      }
+      const orgId = typeof req.body?.orgId === 'string' && req.body.orgId ? req.body.orgId : await defaultOrgId();
+      const { assertSaasPlanAllows, linkSourceToOrg } = await import('../core/saas-control-plane.ts');
+      await assertSaasPlanAllows(engine, orgId, 'sources');
+      const { addSource } = await import('../core/sources-ops.ts');
+      const source = await addSource(engine, {
+        id,
+        name: typeof name === 'string' && name.trim() ? name.trim() : id,
+        federated: federated === undefined ? null : federated === true,
+        remoteUrl: typeof remoteUrl === 'string' && remoteUrl.trim() ? remoteUrl.trim() : undefined,
+      });
+      await linkSourceToOrg(engine, orgId, source.id);
+      res.json(source);
+    } catch (e) {
+      const code = typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : 'source_create_failed';
+      res.status(400).json({ error: code, message: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.get('/admin/api/skills', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { listSaasSkills } = await import('../core/saas-skills.ts');
+      res.json(await listSaasSkills(engine));
+    } catch (e) {
+      res.status(503).json({ error: e instanceof Error ? e.message : 'service_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/skills', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const asStrings = (value: unknown): string[] => Array.isArray(value)
+        ? value.map(v => String(v).trim()).filter(Boolean)
+        : [];
+      const id = typeof req.body?.id === 'string' && req.body.id.trim()
+        ? req.body.id.trim()
+        : (typeof req.body?.name === 'string' ? req.body.name.trim() : '');
+      const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+      if (!id || !name) {
+        res.status(400).json({ error: 'skill_id_and_name_required' });
+        return;
+      }
+      const sourceAccess = asStrings(req.body?.sourceAccess ?? req.body?.source_access);
+      if (!(await requireKnownSources(sourceAccess.length > 0 ? sourceAccess : ['default'], res))) return;
+      const { upsertSaasSkill } = await import('../core/saas-skills.ts');
+      res.json(await upsertSaasSkill(engine, {
+        id,
+        name,
+        owner: typeof req.body?.owner === 'string' ? req.body.owner : undefined,
+        status: req.body?.status,
+        triggers: req.body?.triggers,
+        allowedClients: req.body?.allowedClients ?? req.body?.allowed_clients,
+        sourceAccess,
+        description: typeof req.body?.description === 'string' ? req.body.description : undefined,
+        enforcementStatus: req.body?.enforcementStatus ?? req.body?.enforcement_status,
+        metadata: typeof req.body?.metadata === 'object' && req.body.metadata ? req.body.metadata : {},
+      }));
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : 'skill_save_failed' });
+    }
   });
 
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
@@ -862,7 +1882,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // Unified view: OAuth clients + legacy API keys
       const oauthClients = await sql`
         SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-          c.grant_types, c.scope, c.created_at, c.token_ttl,
+          c.grant_types, c.scope, c.created_at, c.token_ttl, c.source_id, c.federated_read,
           CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
@@ -872,6 +1892,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const legacyKeys = await sql`
         SELECT a.id, a.name, 'api_key' as auth_type,
           '{"bearer"}' as grant_types, 'read write admin' as scope, a.created_at, null as token_ttl,
+          'default' as source_id, ARRAY['default'] as federated_read,
           CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           a.last_used_at,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
@@ -1171,7 +2192,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const { name } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
       const { generateToken, hashToken } = await import('../core/utils.ts');
-      const token = generateToken('gbrain_');
+      const token = generateToken('cortex_');
       const hash = hashToken(token);
       const id = (await import('crypto')).randomUUID();
       await sql`INSERT INTO access_tokens (id, name, token_hash) VALUES (${id}, ${name}, ${hash})`;
@@ -1208,6 +2229,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const { name, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
       const rawScopes = (req.body as Record<string, unknown>).scopes ?? (req.body as Record<string, unknown>).scope;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      if (typeof name !== 'string') { res.status(400).json({ error: 'invalid_name' }); return; }
       let scopeString: string;
       try {
         scopeString = normalizeScopesInput(rawScopes);
@@ -1220,6 +2242,48 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }
       const grants = Array.isArray(grantTypes) && grantTypes.length > 0 ? grantTypes : ['client_credentials'];
       const uris = Array.isArray(redirectUris) ? redirectUris : [];
+      const rawSourceId = (req.body as Record<string, unknown>).sourceId ?? (req.body as Record<string, unknown>).source_id ?? (req.body as Record<string, unknown>).source;
+      const sourceId = typeof rawSourceId === 'string' && rawSourceId.trim() ? rawSourceId.trim() : 'default';
+      if (!isValidSourceId(sourceId)) {
+        res.status(400).json({ error: 'invalid_source_id' });
+        return;
+      }
+      const rawFederatedRead = (req.body as Record<string, unknown>).federatedRead ?? (req.body as Record<string, unknown>).federated_read;
+      let federatedRead: string[] | undefined;
+      if (rawFederatedRead === undefined || rawFederatedRead === null || rawFederatedRead === '') {
+        federatedRead = undefined;
+      } else if (Array.isArray(rawFederatedRead)) {
+        if (!rawFederatedRead.every(v => typeof v === 'string')) {
+          res.status(400).json({ error: 'invalid_federated_read' });
+          return;
+        }
+        federatedRead = rawFederatedRead.map(v => v.trim()).filter(Boolean);
+      } else if (typeof rawFederatedRead === 'string') {
+        federatedRead = rawFederatedRead.split(',').map(v => v.trim()).filter(Boolean);
+      } else {
+        res.status(400).json({ error: 'invalid_federated_read' });
+        return;
+      }
+      const sourceIds = Array.from(new Set([sourceId, ...(federatedRead ?? [])]));
+      for (const id of sourceIds) {
+        if (!isValidSourceId(id)) {
+          res.status(400).json({ error: 'invalid_source_id', sourceId: id });
+          return;
+        }
+        const rows = await engine.executeRaw<{ id: string }>(
+          `SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE`,
+          [id],
+        );
+        if (rows.length === 0) {
+          res.status(400).json({ error: 'unknown_source_id', sourceId: id });
+          return;
+        }
+      }
+      const orgId = typeof (req.body as Record<string, unknown>).orgId === 'string' && (req.body as Record<string, unknown>).orgId
+        ? String((req.body as Record<string, unknown>).orgId)
+        : await defaultOrgId();
+      const { assertSaasPlanAllows, linkAgentClientToOrg } = await import('../core/saas-control-plane.ts');
+      await assertSaasPlanAllows(engine, orgId, 'agent_clients');
       // v0.41.3 (T1+T4): validate token_endpoint_auth_method via shared
       // ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS before reaching the provider.
       // Pre-v0.41.3 this endpoint did INSERT (confidential) → UPDATE (NULL
@@ -1238,13 +2302,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return;
       }
       const result = await oauthProvider.registerClientManual(
-        name, grants, scopeString, uris, 'default', undefined, validatedAuthMethod,
+        name, grants, scopeString, uris, sourceId, federatedRead, validatedAuthMethod,
       );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
         await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
       }
-      res.json({ ...result, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
+      await linkAgentClientToOrg(engine, {
+        orgId,
+        clientId: result.clientId,
+        displayName: name,
+        sourceId,
+        federatedRead,
+      });
+      res.json({ ...result, orgId, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'Registration failed' });
     }
@@ -1312,10 +2383,28 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const useDevPath = fs.existsSync(adminDistPath);
   if (useDevPath) {
     app.use('/admin', express.static(adminDistPath));
+    function sendNextAdminRoute(req: Request, res: Response): boolean {
+      const rel = req.path.replace(/^\/admin\/?/, '').replace(/^\/+/, '');
+      const candidates = rel
+        ? [path.join(adminDistPath, rel, 'index.html'), path.join(adminDistPath, `${rel}.html`)]
+        : [path.join(adminDistPath, 'index.html')];
+      for (const candidate of candidates) {
+        const resolved = path.resolve(candidate);
+        if (!resolved.startsWith(path.resolve(adminDistPath) + path.sep) && resolved !== path.resolve(adminDistPath, 'index.html')) {
+          continue;
+        }
+        if (fs.existsSync(resolved)) {
+          res.sendFile(resolved);
+          return true;
+        }
+      }
+      return false;
+    }
     app.get('/admin/{*path}', (req: Request, res: Response, next: NextFunction) => {
-      if (req.path.startsWith('/admin/api/') || req.path === '/admin/events' || req.path === '/admin/login') {
+      if (req.path.startsWith('/admin/api/') || req.path === '/admin/events') {
         return next();
       }
+      if (sendNextAdminRoute(req, res)) return;
       res.sendFile(path.join(adminDistPath, 'index.html'));
     });
   } else {
@@ -1331,11 +2420,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       cache.set(asset.path, buf);
       return buf;
     }
+    function findEmbeddedAdminRoute(reqPath: string): { path: string; mime: string } | undefined {
+      const direct = ADMIN_ASSETS[reqPath];
+      if (direct) return direct;
+      const routePath = reqPath.endsWith('/') ? `${reqPath}index.html` : `${reqPath}/index.html`;
+      return ADMIN_ASSETS[routePath] ?? ADMIN_ASSETS[`${reqPath}.html`];
+    }
     app.get('/admin/{*path}', (req: Request, res: Response, next: NextFunction) => {
-      if (req.path.startsWith('/admin/api/') || req.path === '/admin/events' || req.path === '/admin/login') {
+      if (req.path.startsWith('/admin/api/') || req.path === '/admin/events') {
         return next();
       }
-      const hit = ADMIN_ASSETS[req.path];
+      const hit = findEmbeddedAdminRoute(req.path);
       if (hit) {
         res.setHeader('Content-Type', hit.mime);
         res.send(loadAsset(hit));
@@ -1380,7 +2475,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
     // Create a fresh MCP server per request (stateless)
     const server = new Server(
-      { name: 'gbrain', version: VERSION },
+      { name: 'cortex', version: VERSION },
       { capabilities: { tools: {} } },
     );
 
@@ -1410,11 +2505,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       return {
         tools: mcpOperations.map(op => ({
           name: op.name,
-          description: op.description,
+          description: cortexBrandText(op.description),
           inputSchema: {
             type: 'object' as const,
             properties: Object.fromEntries(
-              Object.entries(op.params).map(([k, v]) => [k, paramDefToSchema(v)]),
+              Object.entries(op.params).map(([k, v]) => [k, cortexBrandObject(paramDefToSchema(v))]),
             ),
             required: Object.entries(op.params).filter(([, v]) => v.required).map(([k]) => k),
           },
@@ -1496,7 +2591,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // F8: redact request payload by default (declared keys only via the
       // op's `params` allow-list; values + attacker-controlled key names
       // never written to mcp_request_log or the SSE feed). --log-full-params
-      // bypasses this for operators debugging on their own laptop, with the
+      // bypasses this for operators debugging request payloads, with the
       // startup warning printed earlier.
       //
       // D1 (v0.31 wave): mcp_request_log.params is JSONB. Pre-v0.31 wrote
@@ -1609,7 +2704,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           error: { code: 'op_error', message: errMsg },
           timestamp: new Date().toISOString(),
         });
-        return toolResult;
+        return {
+          ...toolResult,
+          content: toolResult.content.map(part => (
+            part.type === 'text' && typeof part.text === 'string'
+              ? { ...part, text: cortexBrandText(part.text) }
+              : part
+          )),
+        };
       }
 
       try {
@@ -1630,7 +2732,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         status: 'success',
         timestamp: new Date().toISOString(),
       });
-      return toolResult;
+      return {
+        ...toolResult,
+        content: toolResult.content.map(part => (
+          part.type === 'text' && typeof part.text === 'string'
+            ? { ...part, text: cortexBrandText(part.text) }
+            : part
+        )),
+      };
     });
 
     // F14: wrap transport setup + handleRequest in try/catch. Without this,
@@ -1687,7 +2796,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Maximum payload bytes for POST /ingest. Configurable via env. Default 1 MB.
   const ingestMaxBytes = (() => {
-    const fromEnv = process.env.GBRAIN_INGEST_MAX_BYTES;
+    const fromEnv = envFirst('CORTEX_INGEST_MAX_BYTES', 'GBRAIN_INGEST_MAX_BYTES');
     if (!fromEnv) return 1_048_576;
     const n = parseInt(fromEnv, 10);
     return Number.isFinite(n) && n > 0 ? n : 1_048_576;
@@ -1765,7 +2874,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // Detect content_type. Caller can override via the X-Gbrain-Content-Type
       // header for the JSON case (since the request's Content-Type would say
       // application/json but the user might intend the body to be markdown).
-      const declared = (req.header('x-gbrain-content-type') || req.header('content-type') || '').toLowerCase();
+      const declared = (
+        req.header('x-cortex-content-type')
+        || req.header('x-gbrain-content-type')
+        || req.header('content-type')
+        || ''
+      ).toLowerCase();
       let contentType: IngestionContentType;
       if (declared.startsWith('text/markdown')) {
         contentType = 'text/markdown';
@@ -1798,9 +2912,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
       const content = body.toString('utf8');
       const contentHash = computeContentHash(content);
-      const sourceUri = (req.header('x-gbrain-source-uri') || `mcp-webhook:${authInfo.clientId}:${Date.now()}`).slice(0, 1024);
-      const sourceId = (req.header('x-gbrain-source-id') || `webhook-${authInfo.clientId}`).slice(0, 256);
-      const callerSlug = req.header('x-gbrain-slug');
+      const sourceUri = (
+        req.header('x-cortex-source-uri')
+        || req.header('x-gbrain-source-uri')
+        || `mcp-webhook:${authInfo.clientId}:${Date.now()}`
+      ).slice(0, 1024);
+      const sourceId = (
+        req.header('x-cortex-source-id')
+        || req.header('x-gbrain-source-id')
+        || `webhook-${authInfo.clientId}`
+      ).slice(0, 256);
+      const callerSlug = req.header('x-cortex-slug') || req.header('x-gbrain-slug');
 
       const event: IngestionEvent = {
         source_id: sourceId,
@@ -2006,7 +3128,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
       const secret = cfg.webhook_secret;
       if (!secret || typeof secret !== 'string') {
-        res.status(401).json({ error: 'webhook_not_configured', message: 'Run: gbrain sources webhook set ' + source.id });
+        res.status(401).json({ error: 'webhook_not_configured', message: 'Run: cortex sources webhook set ' + source.id });
         return;
       }
 
@@ -2052,6 +3174,329 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     },
   );
 
+  function normalizeComposioConnectorId(value: unknown): string {
+    const normalized = String(value ?? 'generic')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 22);
+    return normalized || 'generic';
+  }
+
+  function readBearerOrHeaderSecret(req: Request, extraHeaders: string[] = []): string {
+    const auth = req.header('authorization') || '';
+    const bearer = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+    for (const headerName of ['x-cortex-webhook-secret', ...extraHeaders, 'x-composio-webhook-secret']) {
+      const value = req.header(headerName)?.trim();
+      if (value) return bearer || value;
+    }
+    return bearer
+      || '';
+  }
+
+  function asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+  }
+
+  function nestedRecord(value: unknown, key: string): Record<string, unknown> {
+    return asRecord(asRecord(value)[key]);
+  }
+
+  function firstBillingString(...values: unknown[]): string | undefined {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) return value.trim();
+      if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+      const record = asRecord(value);
+      if (typeof record.id === 'string' && record.id.trim()) return record.id.trim();
+    }
+    return undefined;
+  }
+
+  function billingObjectFromPayload(payload: Record<string, unknown>): Record<string, unknown> {
+    const dataObject = nestedRecord(nestedRecord(payload, 'data'), 'object');
+    return Object.keys(dataObject).length > 0 ? dataObject : payload;
+  }
+
+  function billingPriceFromObject(object: Record<string, unknown>): Record<string, unknown> {
+    const directPrice = asRecord(object.price);
+    if (Object.keys(directPrice).length > 0) return directPrice;
+    const directPlan = asRecord(object.plan);
+    if (Object.keys(directPlan).length > 0) return directPlan;
+    const items = asRecord(object.items);
+    const itemData = Array.isArray(items.data) ? items.data : [];
+    const firstItem = asRecord(itemData[0]);
+    return asRecord(firstItem.price);
+  }
+
+  function billingEventInputFromPayload(payload: Record<string, unknown>) {
+    const object = billingObjectFromPayload(payload);
+    const objectMetadata = asRecord(object.metadata);
+    const payloadMetadata = asRecord(payload.metadata);
+    const price = billingPriceFromObject(object);
+    const priceMetadata = asRecord(price.metadata);
+    const metadata = { ...payloadMetadata, ...objectMetadata, ...priceMetadata };
+    const eventType = firstBillingString(payload.eventType, payload.event_type, payload.type);
+    const subscriptionId = firstBillingString(
+      payload.billingSubscriptionId,
+      payload.billing_subscription_id,
+      object.subscription,
+      String(object.id ?? '').startsWith('sub_') ? object.id : undefined,
+    );
+    const status = firstBillingString(payload.status, object.status)
+      || (eventType?.includes('deleted') ? 'canceled' : undefined);
+
+    return {
+      provider: firstBillingString(payload.provider, payload.billing_provider) || (eventType?.startsWith('customer.') ? 'stripe' : 'billing'),
+      eventId: firstBillingString(payload.eventId, payload.event_id, payload.id),
+      eventType,
+      orgId: firstBillingString(payload.orgId, payload.org_id, metadata.cortex_org_id, metadata.org_id, metadata.organization_id),
+      orgSlug: firstBillingString(payload.orgSlug, payload.org_slug, metadata.cortex_org_slug, metadata.org_slug),
+      billingCustomerId: firstBillingString(payload.billingCustomerId, payload.billing_customer_id, object.customer, payload.customer),
+      billingSubscriptionId: subscriptionId,
+      planKey: firstBillingString(payload.planKey, payload.plan_key, metadata.cortex_plan, metadata.plan_key, metadata.plan),
+      status,
+      billingPlanRef: firstBillingString(payload.billingPlanRef, payload.billing_plan_ref, payload.price_id, price.id, object.price, object.plan),
+      billingCurrentPeriodEnd:
+        payload.billingCurrentPeriodEnd
+        ?? payload.billing_current_period_end
+        ?? object.current_period_end
+        ?? object.current_period_end_at
+        ?? object.currentPeriodEnd,
+      limits: asRecord(payload.limits),
+      raw: payload,
+    };
+  }
+
+  // POST /webhooks/billing - provider-neutral subscription reconciliation.
+  // Stripe/Paddle/Chargebee adapters can either post Cortex-shaped JSON or
+  // include org/plan metadata on their native subscription event payloads.
+  app.post(
+    '/webhooks/billing',
+    ingestRateLimiter,
+    express.json({ limit: '512kb' }),
+    async (req: Request, res: Response) => {
+      const webhookSecret = envFirst('CORTEX_BILLING_WEBHOOK_SECRET', 'BILLING_WEBHOOK_SECRET') || '';
+      if (!webhookSecret) {
+        res.status(503).json({
+          error: 'billing_webhook_not_configured',
+          message: 'Set CORTEX_BILLING_WEBHOOK_SECRET before accepting billing webhooks.',
+        });
+        return;
+      }
+
+      const provided = readBearerOrHeaderSecret(req, ['x-cortex-billing-secret', 'x-billing-webhook-secret']);
+      const expectedHash = createHash('sha256').update(webhookSecret).digest('hex');
+      const providedHash = createHash('sha256').update(provided).digest('hex');
+      if (!provided || !safeHexEqual(providedHash, expectedHash)) {
+        res.status(401).json({ error: 'invalid_webhook_secret' });
+        return;
+      }
+
+      try {
+        const payload = asRecord(req.body);
+        const { reconcileSaasBillingEvent } = await import('../core/saas-control-plane.ts');
+        const result = await reconcileSaasBillingEvent(engine, billingEventInputFromPayload(payload) as any);
+        res.status(result.duplicate ? 200 : 202).json({
+          received: true,
+          applied: result.applied,
+          duplicate: result.duplicate,
+          event_id: result.event_id,
+          plan: result.plan,
+        });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        const status = message === 'billing_org_not_found' ? 404 : 400;
+        res.status(status).json({ error: message || 'billing_webhook_failed' });
+      }
+    },
+  );
+
+  // POST /jobs/invite-deliveries/drain - worker-facing transactional email
+  // drain. The browser console uses the authenticated admin route above;
+  // hosted worker services use this secret-scoped endpoint.
+  app.post(
+    '/jobs/invite-deliveries/drain',
+    ingestRateLimiter,
+    express.json({ limit: '64kb' }),
+    async (req: Request, res: Response) => {
+      const workerSecret = envFirst('CORTEX_EMAIL_DELIVERY_SECRET', 'CORTEX_WORKER_SECRET') || '';
+      if (!workerSecret) {
+        res.status(503).json({
+          error: 'email_delivery_worker_not_configured',
+          message: 'Set CORTEX_EMAIL_DELIVERY_SECRET before accepting invite delivery worker calls.',
+        });
+        return;
+      }
+
+      const provided = readBearerOrHeaderSecret(req, ['x-cortex-email-secret', 'x-cortex-worker-secret']);
+      const expectedHash = createHash('sha256').update(workerSecret).digest('hex');
+      const providedHash = createHash('sha256').update(provided).digest('hex');
+      if (!provided || !safeHexEqual(providedHash, expectedHash)) {
+        res.status(401).json({ error: 'invalid_worker_secret' });
+        return;
+      }
+
+      try {
+        const { drainInviteEmailDeliveries } = await import('../core/saas-email-delivery.ts');
+        const orgId = typeof req.body?.orgId === 'string' && req.body.orgId
+          ? req.body.orgId
+          : (typeof req.body?.org_id === 'string' && req.body.org_id ? req.body.org_id : null);
+        const inviteId = typeof req.body?.inviteId === 'string' && req.body.inviteId
+          ? req.body.inviteId
+          : (typeof req.body?.invite_id === 'string' && req.body.invite_id ? req.body.invite_id : null);
+        const provider = typeof req.body?.provider === 'string' && req.body.provider.trim() ? req.body.provider.trim() : null;
+        const recordProvider = typeof req.body?.recordProvider === 'string' && req.body.recordProvider.trim()
+          ? req.body.recordProvider.trim()
+          : (typeof req.body?.record_provider === 'string' && req.body.record_provider.trim() ? req.body.record_provider.trim() : null);
+        const statuses = Array.isArray(req.body?.statuses) ? req.body.statuses : null;
+        const limit = typeof req.body?.limit === 'number' ? req.body.limit : null;
+        const result = await drainInviteEmailDeliveries(engine, { orgId, inviteId, provider, recordProvider, statuses, limit });
+        res.status(result.configured ? 202 : 503).json(result.configured ? result : {
+          error: 'email_provider_not_configured',
+          ...result,
+        });
+      } catch (e) {
+        res.status(400).json({ error: e instanceof Error ? e.message : 'invite_delivery_drain_failed' });
+      }
+    },
+  );
+
+  // POST /webhooks/composio - vendor-neutral ingestion bridge. Composio
+  // connectors post JSON here, Cortex normalizes the payload into the same
+  // ingest_capture job used by OAuth POST /ingest.
+  app.post(
+    '/webhooks/composio',
+    ingestRateLimiter,
+    express.json({ limit: ingestMaxBytes }),
+    async (req: Request, res: Response) => {
+      const startTime = Date.now();
+      const webhookSecret = process.env.CORTEX_COMPOSIO_WEBHOOK_SECRET?.trim()
+        || process.env.COMPOSIO_WEBHOOK_SECRET?.trim()
+        || '';
+      if (!webhookSecret) {
+        res.status(503).json({
+          error: 'composio_webhook_not_configured',
+          message: 'Set CORTEX_COMPOSIO_WEBHOOK_SECRET before accepting Composio webhooks.',
+        });
+        return;
+      }
+
+      const provided = readBearerOrHeaderSecret(req);
+      const expectedHash = createHash('sha256').update(webhookSecret).digest('hex');
+      const providedHash = createHash('sha256').update(provided).digest('hex');
+      if (!provided || !safeHexEqual(providedHash, expectedHash)) {
+        res.status(401).json({ error: 'invalid_webhook_secret' });
+        return;
+      }
+
+      const payload = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
+      const connectorId = normalizeComposioConnectorId(
+        req.header('x-composio-tool')
+          || payload.tool
+          || payload.appName
+          || payload.app
+          || payload.provider
+          || payload.connector,
+      );
+      const { COMPOSIO_CONNECTORS } = await import('../core/saas-integrations.ts');
+      const knownConnector = COMPOSIO_CONNECTORS.find(connector => connector.id === connectorId);
+      const sourceId = `composio-${connectorId}`;
+      const explicitContent = [payload.markdown, payload.content, payload.text, payload.body]
+        .find(value => typeof value === 'string' && value.trim().length > 0) as string | undefined;
+      const content = explicitContent ?? JSON.stringify(payload, null, 2);
+      const contentHash = computeContentHash(content);
+      const sourceUriValue = [payload.source_url, payload.url, payload.uri, payload.id, payload.event_id]
+        .find(value => typeof value === 'string' && value.trim().length > 0);
+      const sourceUri = String(sourceUriValue ?? `composio:${connectorId}:${Date.now()}`).slice(0, 1024);
+      const callerSlug = typeof payload.slug === 'string' ? payload.slug : req.header('x-cortex-slug') || undefined;
+
+      try {
+        const existing = await engine.executeRaw<{ id: string }>(
+          `SELECT id FROM sources WHERE id = $1`,
+          [sourceId],
+        );
+        if (existing.length === 0) {
+          const { addSource, SourceOpError } = await import('../core/sources-ops.ts');
+          try {
+            await addSource(engine, {
+              id: sourceId,
+              name: knownConnector ? `${knownConnector.label} via Composio` : `Composio ${connectorId}`,
+              federated: true,
+            });
+          } catch (e) {
+            if (!(e instanceof SourceOpError && e.code === 'source_id_taken')) throw e;
+          }
+        }
+
+        const event: IngestionEvent = {
+          source_id: sourceId,
+          source_kind: 'composio',
+          source_uri: sourceUri,
+          received_at: new Date().toISOString(),
+          content_type: explicitContent ? 'text/markdown' : 'application/json',
+          content,
+          content_hash: contentHash,
+          untrusted_payload: true,
+          metadata: {
+            provider: 'composio',
+            connector: connectorId,
+            user_agent: req.header('user-agent') ?? '',
+            ...(callerSlug ? { slug: callerSlug } : {}),
+          },
+        };
+        const validationErr = validateIngestionEvent(event);
+        if (validationErr) {
+          res.status(400).json({
+            error: 'invalid_event',
+            message: validationErr.message,
+            field: validationErr.field,
+          });
+          return;
+        }
+
+        const job = await ingestQueue.add(
+          'ingest_capture',
+          { event, ...(callerSlug ? { slug: callerSlug } : {}) },
+          {
+            idempotency_key: `ingest:composio:${sourceId}:${contentHash}`,
+            maxWaiting: 50,
+          },
+        );
+        const latency = Date.now() - startTime;
+        try {
+          await executeRawJsonb(
+            engine,
+            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+            ['composio-webhook', `Composio ${connectorId}`, 'composio_ingest', latency, 'success'],
+            [{ content_hash: contentHash, source_id: sourceId, job_id: job.id }],
+          );
+        } catch { /* best effort */ }
+        broadcastEvent({
+          agent: `Composio ${connectorId}`,
+          operation: 'composio_ingest',
+          scopes: 'write',
+          latency_ms: latency,
+          status: 'success',
+          timestamp: new Date().toISOString(),
+        });
+
+        res.status(202).json({
+          job_id: job.id,
+          content_hash: contentHash,
+          source_id: sourceId,
+          message: 'Accepted. Composio event queued for Cortex ingestion.',
+        });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error('POST /webhooks/composio error:', message);
+        res.status(500).json({ error: 'composio_ingest_failed', message });
+      }
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // Start server
   // ---------------------------------------------------------------------------
@@ -2060,7 +3505,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.listen(port, bind, () => {
     console.error(`
 ╔══════════════════════════════════════════════════════╗
-║  GBrain MCP Server v${VERSION.padEnd(37)}║
+║  Cortex MCP Server v${VERSION.padEnd(37)}║
 ╠══════════════════════════════════════════════════════╣
 ║  Port:      ${String(port).padEnd(40)}║
 ║  Bind:      ${bind.padEnd(40)}║
@@ -2077,7 +3522,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ${suppressBootstrapPrint
   ? '║  Admin Token: suppressed (--suppress-bootstrap-token) ║\n╚══════════════════════════════════════════════════════╝'
   : bootstrapFromEnv
-    ? '║  Admin Token: from $GBRAIN_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
+    ? '║  Admin Token: from $CORTEX_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
   });

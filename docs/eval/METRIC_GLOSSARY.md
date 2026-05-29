@@ -2,7 +2,7 @@
 
 **Auto-generated from `src/core/eval/metric-glossary.ts`. Do not edit by hand.** Run `bun run scripts/generate-metric-glossary.ts` to regenerate.
 
-Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-English explanation here. Industry terms are preserved verbatim so users searching the literature find what we report.
+Every metric `cortex eval *` and `cortex search stats` reports has a plain-English explanation here. Industry terms are preserved verbatim so users searching the literature find what we report.
 
 ## Retrieval Metrics
 
@@ -120,5 +120,5 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 ## Coverage
 
-Every metric printed by any `gbrain eval *` or `gbrain search stats` command resolves through `getMetricGloss()` in `src/core/eval/metric-glossary.ts`. Adding a new metric to the glossary REQUIRES updating this doc; the CI guard catches drift.
+Every metric printed by any `cortex eval *` or `cortex search stats` command resolves through `getMetricGloss()` in `src/core/eval/metric-glossary.ts`. Adding a new metric to the glossary REQUIRES updating this doc; the CI guard catches drift.
 

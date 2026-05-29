@@ -1,5 +1,5 @@
 /**
- * gbrain check-resolvable — Standalone CLI gate for skill-tree integrity.
+ * cortex check-resolvable — Standalone CLI gate for skill-tree integrity.
  *
  * Thin wrapper over `src/core/check-resolvable.ts`. Exit contract (D-CX-3,
  * post-codex-review):
@@ -64,7 +64,7 @@ export interface Flags {
 // working. Future deferred checks get appended here.
 export const DEFERRED: DeferredCheck[] = [];
 
-const HELP_TEXT = `gbrain check-resolvable [options]
+const HELP_TEXT = `cortex check-resolvable [options]
 
 Validate the skill tree: reachability, MECE overlap, DRY violations, and
 gap detection. Exits non-zero on errors. Warnings are advisory by default;
@@ -151,21 +151,21 @@ export function resolveSkillsDir(flags: Flags): {
         'Could not auto-detect skills/ with a RESOLVER.md or AGENTS.md.\n' +
         'Priority order:\n' +
         AUTO_DETECT_HINT_READ_ONLY +
-        '\nFix: export GBRAIN_SKILLS_DIR=<path>, OPENCLAW_WORKSPACE=<path>, or pass --skills-dir <path>.',
+        '\nFix: export CORTEX_SKILLS_DIR=<path>, set your workspace path, or pass --skills-dir <path>.',
       source: null,
     };
   }
 
   const sourceLabel = {
-    env_explicit: '$GBRAIN_SKILLS_DIR (explicit operator override)',
+    env_explicit: '$CORTEX_SKILLS_DIR (explicit operator override)',
     repo_root: 'repo root skills/',
-    openclaw_workspace_env: '$OPENCLAW_WORKSPACE/skills',
-    openclaw_workspace_env_root: '$OPENCLAW_WORKSPACE (AGENTS.md at workspace root)',
-    openclaw_workspace_home: '~/.openclaw/workspace/skills',
-    openclaw_workspace_home_root: '~/.openclaw/workspace (AGENTS.md at workspace root)',
+    openclaw_workspace_env: '$CORTEX_WORKSPACE/skills',
+    openclaw_workspace_env_root: '$CORTEX_WORKSPACE (AGENTS.md at workspace root)',
+    openclaw_workspace_home: '~/.cortex/workspace/skills',
+    openclaw_workspace_home_root: '~/.cortex/workspace (AGENTS.md at workspace root)',
     cwd_walk_up: 'skills/ found by walking up from cwd (v0.33)',
     cwd_skills: './skills',
-    install_path: 'gbrain install path (read-only fallback)',
+    install_path: 'Cortex install path (read-only fallback)',
   }[detected.source!]!;
 
   return {
@@ -286,14 +286,14 @@ export async function runCheckResolvable(args: string[]): Promise<void> {
     // SAFETY GATE (v0.31.7 follow-up to D5): refuse --fix when the skills
     // dir came from the install-path fallback. autoFixDryViolations writes
     // to SKILL.md files; running --fix from a directory with no resolver up
-    // the cwd tree would resolve to the bundled gbrain repo via the
+    // the cwd tree would resolve to the bundled Cortex repo via the
     // read-only install-path fallback and silently mutate it. Codex caught
     // this leak in the v0.31.7 ship review (D6 lock).
     if (source === 'install_path') {
       process.stderr.write(
-        'gbrain check-resolvable --fix refused: skills dir resolved via install-path fallback (read-only).\n' +
+        'cortex check-resolvable --fix refused: skills dir resolved via install-path fallback (read-only).\n' +
         'The --fix flag writes to SKILL.md files; running it against the bundled install\n' +
-        'tree would silently mutate gbrain itself. Set $GBRAIN_SKILLS_DIR, $OPENCLAW_WORKSPACE,\n' +
+        'tree would silently mutate Cortex itself. Set $CORTEX_SKILLS_DIR,\n' +
         'or pass --skills-dir <path> to point at the workspace you actually want to fix.\n',
       );
       process.exit(1);

@@ -1,5 +1,5 @@
 /**
- * gbrain capture CLI verb tests.
+ * cortex capture CLI verb tests.
  *
  * Pure helper coverage (parseArgs, defaultSlug, buildContent) + an
  * integration smoke that the local-install path lands a page when the
@@ -233,6 +233,6 @@ describe('capture — help', () => {
     } finally {
       console.log = origLog;
     }
-    expect(logCaptured.join('\n')).toContain('Usage: gbrain capture');
+    expect(logCaptured.join('\n')).toContain('Usage: cortex capture');
   });
 });

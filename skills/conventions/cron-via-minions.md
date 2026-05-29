@@ -1,10 +1,10 @@
 # Cron via Minions Convention
 
-How cron-scheduled agent work is dispatched in a GBrain-backed install.
+How cron-scheduled agent work is dispatched in a Cortex-backed install.
 
 ## Rule: scheduled work runs as Minion jobs, not `agentTurn`
 
-When a cron fires, it should submit a Minion job. Not call OpenClaw's
+When a cron fires, it should submit a Minion job. Not call Cortex's
 native `agentTurn` (300s timeout, no durability, no transcript). Not
 start an isolated session that races the gateway for resources.
 
@@ -17,7 +17,7 @@ start an isolated session that races the gateway for resources.
 {
   "schedule": "*/30 * * * *",
   "kind": "shell",
-  "cmd": "gbrain jobs submit ea-inbox-sweep --params '{\"slot\":\"$(date -u +%Y-%m-%dT%H:%M)\"}' --idempotency-key ea-inbox-sweep:$(date -u +%Y-%m-%dT%H:%M)"
+  "cmd": "cortex jobs submit ea-inbox-sweep --params '{\"slot\":\"$(date -u +%Y-%m-%dT%H:%M)\"}' --idempotency-key ea-inbox-sweep:$(date -u +%Y-%m-%dT%H:%M)"
 }
 
 # Good (PGLite): inline execution with --follow. PGLite's exclusive file
@@ -25,7 +25,7 @@ start an isolated session that races the gateway for resources.
 {
   "schedule": "*/30 * * * *",
   "kind": "shell",
-  "cmd": "gbrain jobs submit ea-inbox-sweep --params '{}' --follow"
+  "cmd": "cortex jobs submit ea-inbox-sweep --params '{}' --follow"
 }
 ```
 
@@ -33,7 +33,7 @@ start an isolated session that races the gateway for resources.
 
 - **Durability.** Gateway restart mid-task? Worker picks the job up on
   boot. No lost state.
-- **Observability.** `gbrain jobs list` + `gbrain jobs get <id>` show
+- **Observability.** `cortex jobs list` + `cortex jobs get <id>` show
   every run, its duration, its transcript, its token accounting.
 - **Steering.** Running jobs accept inbox messages. "Skip the
   newsletter thread, focus on the urgent DMs" lands as context on the
@@ -45,8 +45,8 @@ start an isolated session that races the gateway for resources.
 
 ## Who registers the handler?
 
-**GBrain only rewrites cron entries whose handler name matches a
-gbrain builtin** (`sync`, `embed`, `lint`, `import`, `extract`,
+**Cortex only rewrites cron entries whose handler name matches a
+cortex builtin** (`sync`, `embed`, `lint`, `import`, `extract`,
 `backlinks`, `autopilot-cycle`). For host-specific handlers
 (`ea-inbox-sweep`, `morning-briefing`, whatever your deployment runs
 on cron), the host platform ships the handler as code.
@@ -54,7 +54,7 @@ on cron), the host platform ships the handler as code.
 See `docs/guides/plugin-handlers.md` for the plugin contract. In short:
 
 ```ts
-import { MinionQueue, MinionWorker } from 'gbrain/minions';
+import { MinionQueue, MinionWorker } from 'cortex/minions';
 
 const worker = new MinionWorker(engine, { queue: 'default' });
 worker.register('ea-inbox-sweep', async (ctx) => {
@@ -70,13 +70,13 @@ stock worker auto-loads on startup) registers handlers before `start()`.
 
 ## Off mode
 
-Users who set `minion_mode: off` in `~/.gbrain/preferences.json` keep
+Users who set `minion_mode: off` in `~/.cortex/preferences.json` keep
 using `agentTurn`. Respect that. No auto-rewrite.
 
 ## Forward note (v0.12.0)
 
-GBrain v0.12.0 ships `gbrain cron`: a scheduler loop inside
-`gbrain jobs work` that owns cron expressions natively — no more
+Cortex v0.12.0 ships `cortex cron`: a scheduler loop inside
+`cortex jobs work` that owns cron expressions natively — no more
 handing off to host schedulers. Until v0.12.0 lands, the host
 scheduler keeps firing on schedule; v0.11.1 only replaces the execution
 layer (what the cron trigger *does*), not the scheduling layer.
@@ -89,5 +89,5 @@ layer (what the cron trigger *does*), not the scheduling layer.
   once they're in the queue.
 - `skills/cron-scheduler/SKILL.md` — scheduling guidance (quiet hours,
   staggering, idempotency). Now references this convention.
-- `skills/migrations/v0.11.0.md` — how GBrain migrates an existing host
+- `skills/migrations/v0.11.0.md` — how Cortex migrates an existing host
   cron manifest to this convention.

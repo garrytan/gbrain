@@ -128,4 +128,91 @@ describe('loadConfig env database URL precedence', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  test('Cortex model and content-sanity env aliases win over legacy aliases', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'cortex-config-env-'));
+    try {
+      await withEnv(
+        {
+          CORTEX_HOME: home,
+          CORTEX_DATABASE_URL: 'postgres://cortex:cortex@example.test:5432/db',
+          CORTEX_EMBEDDING_MODEL: 'zeroentropyai:zembed-1',
+          GBRAIN_EMBEDDING_MODEL: 'legacy:embedding',
+          CORTEX_EMBEDDING_DIMENSIONS: '1280',
+          GBRAIN_EMBEDDING_DIMENSIONS: '999',
+          CORTEX_EXPANSION_MODEL: 'anthropic:claude-haiku-4-5',
+          GBRAIN_EXPANSION_MODEL: 'legacy:expansion',
+          CORTEX_CHAT_MODEL: 'anthropic:claude-sonnet-4-6',
+          GBRAIN_CHAT_MODEL: 'legacy:chat',
+          CORTEX_CHAT_FALLBACK_CHAIN: 'anthropic:one, anthropic:two',
+          GBRAIN_CHAT_FALLBACK_CHAIN: 'legacy:one',
+          CORTEX_EMBEDDING_MULTIMODAL: 'true',
+          GBRAIN_EMBEDDING_MULTIMODAL: 'false',
+          CORTEX_EMBEDDING_IMAGE_OCR: 'true',
+          GBRAIN_EMBEDDING_IMAGE_OCR: 'false',
+          CORTEX_EMBEDDING_MULTIMODAL_MODEL: 'voyage:voyage-multimodal-3',
+          GBRAIN_EMBEDDING_MULTIMODAL_MODEL: 'legacy:multi',
+          CORTEX_EMBEDDING_IMAGE_OCR_MODEL: 'openai:gpt-4.1-mini',
+          GBRAIN_EMBEDDING_IMAGE_OCR_MODEL: 'legacy:ocr',
+          CORTEX_PAGE_WARN_BYTES: '111',
+          GBRAIN_PAGE_WARN_BYTES: '222',
+          CORTEX_PAGE_BLOCK_BYTES: '333',
+          GBRAIN_PAGE_BLOCK_BYTES: '444',
+          CORTEX_NO_JUNK_PATTERNS: '1',
+          CORTEX_NO_SANITY: '1',
+        },
+        () => {
+          const cfg = loadConfig();
+          expect(cfg?.database_url).toBe('postgres://cortex:cortex@example.test:5432/db');
+          expect(cfg?.embedding_model).toBe('zeroentropyai:zembed-1');
+          expect(cfg?.embedding_dimensions).toBe(1280);
+          expect(cfg?.expansion_model).toBe('anthropic:claude-haiku-4-5');
+          expect(cfg?.chat_model).toBe('anthropic:claude-sonnet-4-6');
+          expect(cfg?.chat_fallback_chain).toEqual(['anthropic:one', 'anthropic:two']);
+          expect(cfg?.embedding_multimodal).toBe(true);
+          expect(cfg?.embedding_image_ocr).toBe(true);
+          expect(cfg?.embedding_multimodal_model).toBe('voyage:voyage-multimodal-3');
+          expect(cfg?.embedding_image_ocr_model).toBe('openai:gpt-4.1-mini');
+          expect(cfg?.content_sanity).toEqual({
+            bytes_warn: 111,
+            bytes_block: 333,
+            junk_patterns_enabled: false,
+            disabled: true,
+          });
+        },
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('CORTEX_REMOTE_CLIENT_SECRET wins over legacy remote secret alias', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'cortex-config-env-'));
+    try {
+      await withEnv({ CORTEX_HOME: home }, () => {
+        saveConfig({
+          engine: 'postgres',
+          remote_mcp: {
+            issuer_url: 'https://cortex.example.com',
+            mcp_url: 'https://cortex.example.com/mcp',
+            oauth_client_id: 'client-id',
+            oauth_client_secret: 'file-secret',
+          },
+        });
+      });
+
+      await withEnv(
+        {
+          CORTEX_HOME: home,
+          CORTEX_REMOTE_CLIENT_SECRET: 'cortex-secret',
+          GBRAIN_REMOTE_CLIENT_SECRET: 'legacy-secret',
+        },
+        () => {
+          expect(loadConfig()?.remote_mcp?.oauth_client_secret).toBe('cortex-secret');
+        },
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

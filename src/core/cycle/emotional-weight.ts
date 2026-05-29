@@ -20,9 +20,9 @@
  * `emotional_weight.high_tags` to add domain-specific tags (e.g. health
  * conditions, family member names, project names tied to grief / loss).
  *
- * Anglocentric and personal-life-biased on purpose: this is the v1 default
- * for someone who keeps a personal brain. Override unconditionally at install
- * time if your brain is mostly work-life.
+ * Anglocentric and life-event-biased on purpose: this is the v1 default.
+ * Override unconditionally at tenant setup time if the brain is mostly
+ * work-domain material.
  */
 export const HIGH_EMOTION_TAGS: ReadonlySet<string> = new Set([
   'family',

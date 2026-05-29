@@ -1,63 +1,52 @@
-# Skillpack anatomy
+# Skillpack Anatomy
 
-The canonical one-page reference for what a third-party gbrain skillpack
-looks like. The reference pack at `examples/skillpack-reference/` is the
-live artifact this page describes; clone its tree and you have a 10/10
-starting point.
+Cortex skillpacks are curated runtime capability bundles for hosted company
+brains. Public skillpacks must be tenant-safe, Cortex-branded, and suitable for
+agents connected through scoped MCP OAuth clients.
 
 ## Tree
 
-```
+```text
 my-skillpack/
-├── skillpack.json                # manifest (cathedral fields declared)
-├── skills/
-│   └── <skill-slug>/
-│       ├── SKILL.md              # frontmatter + body, agent-readable
-│       └── routing-eval.jsonl    # >= 5 intents pinning trigger -> skill
-├── runbooks/
-│   └── bootstrap.md              # post-scaffold display (NOT an executor)
-├── test/
-│   └── *.test.ts                 # bun:test unit tests
-├── e2e/
-│   └── *.test.ts                 # integration tests, gated on DATABASE_URL
-├── evals/
-│   └── *.judge.json              # LLM-judge eval configs (>= 3 cases each)
-├── CHANGELOG.md                  # Keep-a-Changelog shape
-├── LICENSE                       # SPDX-matching text
-├── README.md
-└── .gitignore
+  skillpack.json
+  skills/
+    <skill-slug>/
+      SKILL.md
+      routing-eval.jsonl
+  runbooks/
+    bootstrap.md
+  test/
+  e2e/
+  evals/
+  CHANGELOG.md
+  LICENSE
+  README.md
 ```
 
-`gbrain skillpack init <name>` scaffolds this exact tree, pre-filled
-with stubs that score 10/10 on `gbrain skillpack doctor . --quick`
-immediately. Replace the stubs with real content, run the doctor
-between edits, and `gbrain skillpack pack` produces a deterministic
-`<name>-<version>.tgz` ready to publish to the registry.
+`cortex skillpack init <name>` scaffolds this tree. Replace the stubs with
+real tenant-safe content, run `cortex skillpack doctor` between edits, and
+`cortex skillpack pack` produces a deterministic package ready for review.
 
-## How the agent uses a scaffolded pack
+## Agent Use
 
-After `gbrain skillpack scaffold <source>` lands the files:
+After `cortex skillpack scaffold <source>` lands the files:
 
-1. The user's agent walks `skills/*/SKILL.md` frontmatter and reads
-   each pack's `triggers:` array on startup or per-message.
-2. When a user phrasing matches a trigger, the agent reads that
-   SKILL.md body top-to-bottom as in-context instructions.
-3. gbrain DISPLAYS `runbooks/bootstrap.md` once after the scaffold
-   but does NOT auto-execute it. The agent decides whether to walk
-   the steps. This is the codex T1 supply-chain hardening: an
-   auto-walker would let a malicious pack mutate the user's brain
-   on install, which is how npm postinstall attacks happen.
+1. The agent walks `skills/*/SKILL.md` frontmatter and reads each pack's
+   `triggers:` array on startup or per-message.
+2. When user phrasing matches a trigger, the agent reads that `SKILL.md` body
+   as in-context instructions.
+3. Cortex displays `runbooks/bootstrap.md` once after scaffold but does not
+   auto-execute it. Tenant mutation stays explicit.
 
-## How the doctor scores a pack
+## Doctor Scoring
 
-Ten binary dimensions. Each is checked by a pure function in
-`src/core/skillpack/rubric.ts` and returns `{passed, detail, fix_hint}`.
-The doctor walks them in order and prints the score + per-dimension
-status + paste-ready fix for every failure.
+Ten binary dimensions are checked by pure functions in
+`src/core/skillpack/rubric.ts`. The doctor prints the score, status, and
+paste-ready fix for every failure.
 
 <!-- BEGIN auto-generated:rubric -->
 
-### Core dimensions (5; must all pass to publish at any tier)
+### Core dimensions
 
 | # | Name | Description | Auto-fixable |
 |---|------|-------------|--------------|
@@ -67,7 +56,7 @@ status + paste-ready fix for every failure.
 | 4 | `skills_have_unique_triggers` | no two skills in this pack share an exact trigger phrase (MECE) | no |
 | 5 | `changelog_present_and_current` | CHANGELOG.md present and contains an entry for the current version | yes |
 
-### Quality badges (5; earn for tier eligibility)
+### Quality badges
 
 | # | Name | Description | Auto-fixable |
 |---|------|-------------|--------------|
@@ -80,33 +69,27 @@ status + paste-ready fix for every failure.
 _Generated from `src/core/skillpack/rubric.ts` by `bun run scripts/build-skillpack-anatomy.ts`._
 
 <!-- END auto-generated:rubric -->
-## Tier eligibility
+## Tier Eligibility
 
 | Tier | Requirement |
 |------|-------------|
-| `endorsed` | All 5 core + all 5 badges, plus Garry's `endorsements.json` overlay in the registry repo |
-| `community` | All 5 core + >= 3 of 5 badges. Default tier on PR merge. |
-| `experimental` | All 5 core + < 3 badges |
+| `endorsed` | All 5 core + all 5 badges, plus Cortex registry approval |
+| `community` | All 5 core + at least 3 of 5 badges |
+| `experimental` | All 5 core + fewer than 3 badges |
 | `blocked` | Any core dimension fails |
 
-## CLI reference (third-party path)
+## CLI Reference
 
 ```bash
-# Publisher side
-gbrain skillpack init my-pack         # scaffold the tree
-gbrain skillpack doctor my-pack       # see the score + fix hints
-gbrain skillpack doctor my-pack --fix --yes  # auto-scaffold missing pieces
-gbrain skillpack pack my-pack         # deterministic tarball + SHA-256
-
-# Consumer side
-gbrain skillpack search <query>       # browse the registry
-gbrain skillpack info <name>          # show full pack metadata
-gbrain skillpack scaffold <source>    # owner/repo, https, ./dir, ./*.tgz
-gbrain skillpack registry --url X     # point at a custom registry
+cortex skillpack init my-pack
+cortex skillpack doctor my-pack
+cortex skillpack doctor my-pack --fix --yes
+cortex skillpack pack my-pack
+cortex skillpack search <query>
+cortex skillpack info <name>
+cortex skillpack scaffold <source>
+cortex skillpack registry --url <registry-url>
 ```
 
-## See also
-
-- `examples/skillpack-reference/` — the live 10/10 reference pack
-- `docs/designs/SKILLPACK_REGISTRY_V1_SPEC.md` — strategic spec + decisions
-- `docs/guides/skillpacks-as-scaffolding.md` — v0.36 scaffold/reference model
+The hosted Cortex runtime package currently ships only the active SaaS runtime
+skills listed in `skills/manifest.json`.

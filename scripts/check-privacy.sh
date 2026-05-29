@@ -110,8 +110,8 @@ ALLOW_LIST=(
   # fallbacks where /data/brain/ or /data/.openclaw/ appears legitimately.
   # New skills/, src/, and tests must NOT slip onto this list — extend the
   # banned check above instead.
-  'docs/GBRAIN_RECOMMENDED_SCHEMA.md'
-  'docs/GBRAIN_V0.md'
+  'docs/CORTEX_RECOMMENDED_SCHEMA.md'
+  'docs/CORTEX_PRODUCT_SPEC.md'
   'docs/guides/minions-shell-jobs.md'
   'scripts/smoke-test.sh'
   'skills/migrations/v0.9.0.md'

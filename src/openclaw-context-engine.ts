@@ -1,18 +1,18 @@
 /**
- * OpenClaw plugin entry point for gbrain-context engine.
+ * OpenClaw plugin entry point for cortex-context engine.
  *
  * Registers a deterministic context engine that injects live temporal/spatial
  * context on every turn. Prevents the "time warp" bug class where compacted
  * sessions lose track of the user's current time, location, and state.
  *
  * Enable in openclaw.json:
- *   plugins.slots.contextEngine: "gbrain-context"
+ *   plugins.slots.contextEngine: "cortex-context"
  *
  * @module
  */
 
 /**
- * OpenClaw plugin entry — registers gbrain-context engine.
+ * OpenClaw plugin entry - registers cortex-context engine.
  *
  * This file is discovered via the `openclaw.extensions` field in package.json.
  * It requires the OpenClaw plugin SDK at runtime (available when loaded by the
@@ -20,7 +20,7 @@
  * and independently testable.
  */
 
-import { createGBrainContextEngine, ENGINE_ID } from './core/context-engine.ts';
+import { createCortexContextEngine, ENGINE_ID } from './core/context-engine.ts';
 
 /**
  * Plugin-entry shape consumed by the OpenClaw host. The host's plugin loader
@@ -50,13 +50,13 @@ interface PluginCtx {
 }
 
 const entry: PluginEntry = {
-  id: 'gbrain-context-engine',
-  name: 'GBrain Context Engine',
+  id: 'cortex-context-engine',
+  name: 'Cortex Context Engine',
   description: 'Deterministic temporal/spatial context injection on every turn',
 
   register(api: PluginApi) {
     api.registerContextEngine(ENGINE_ID, (ctx: PluginCtx) =>
-      createGBrainContextEngine({
+      createCortexContextEngine({
         workspaceDir: ctx.workspaceDir,
       }),
     );

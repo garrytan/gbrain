@@ -1,5 +1,5 @@
 /**
- * gbrain whoknows — "Who should I talk to about X?"
+ * cortex whoknows — "Who should I talk to about X?"
  *
  * v0.33 wedge: expertise + relationship-proximity routing query.
  * Returns ranked person/company candidates from the brain that
@@ -30,9 +30,9 @@
  * raw relevance score).
  *
  * Usage:
- *   gbrain whoknows "lab automation"
- *   gbrain whoknows "fintech compliance" --explain
- *   gbrain whoknows "ai agents" --limit 10 --json
+ *   cortex whoknows "lab automation"
+ *   cortex whoknows "fintech compliance" --explain
+ *   cortex whoknows "ai agents" --limit 10 --json
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -286,7 +286,7 @@ function parseArgs(args: string[]): CliOpts | { help: true } | { error: string }
   return opts as CliOpts;
 }
 
-const HELP = `Usage: gbrain whoknows <topic> [options]
+const HELP = `Usage: cortex whoknows <topic> [options]
 
 Ask your brain who knows about a topic. Returns ranked person/company
 pages by expertise depth, relationship recency, and salience.
@@ -298,9 +298,9 @@ Options:
   --help, -h          Show this help
 
 Examples:
-  gbrain whoknows "lab automation"
-  gbrain whoknows fintech compliance --explain
-  gbrain whoknows "ai agents" --limit 10 --json
+  cortex whoknows "lab automation"
+  cortex whoknows fintech compliance --explain
+  cortex whoknows "ai agents" --limit 10 --json
 `;
 
 export async function runWhoknows(
@@ -313,7 +313,7 @@ export async function runWhoknows(
     return;
   }
   if ('error' in parsed) {
-    console.error(`gbrain whoknows: ${parsed.error}`);
+    console.error(`cortex whoknows: ${parsed.error}`);
     console.error(HELP);
     process.exit(2);
     return;

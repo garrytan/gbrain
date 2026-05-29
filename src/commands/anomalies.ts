@@ -1,5 +1,5 @@
 /**
- * gbrain anomalies — Statistical anomalies in recent page activity.
+ * cortex anomalies — Statistical anomalies in recent page activity.
  *
  * Deterministic: zero LLM calls. Computes baseline (mean, stddev) of pages
  * touched per cohort × day over `lookback_days`, with `generate_series`
@@ -9,10 +9,10 @@
  * Cohort kinds: tag, type. Year cohort deferred to v0.30.
  *
  * Usage:
- *   gbrain anomalies                          # since=today, lookback=30d, sigma=3
- *   gbrain anomalies --since 2026-04-28
- *   gbrain anomalies --sigma 2 --lookback-days 60
- *   gbrain anomalies --json
+ *   cortex anomalies                          # since=today, lookback=30d, sigma=3
+ *   cortex anomalies --since 2026-04-28
+ *   cortex anomalies --sigma 2 --lookback-days 60
+ *   cortex anomalies --json
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -51,7 +51,7 @@ function parseArgs(args: string[]): RunOpts | { help: true } {
   return opts;
 }
 
-const HELP = `Usage: gbrain anomalies [options]
+const HELP = `Usage: cortex anomalies [options]
 
 Statistical anomalies in recent page activity, grouped by cohort (tag, type).
 

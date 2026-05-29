@@ -74,7 +74,7 @@ export interface SupervisorOpts {
   healthInterval: number;
   /** Path to the gbrain CLI executable (MUST be a compiled binary; .ts sources cannot be spawned). */
   cliPath: string;
-  /** Allow shell jobs on child worker. Default: false. When true, sets GBRAIN_ALLOW_SHELL_JOBS=1 on child env. */
+  /** Allow shell jobs on child worker. Default: false. When true, sets CORTEX_ALLOW_SHELL_JOBS=1 on child env. */
   allowShellJobs: boolean;
   /** JSON mode: emit JSONL events on stderr, reserve stdout for data payloads. Default: false. */
   json: boolean;
@@ -412,12 +412,13 @@ export class MinionSupervisor {
       workerArgs.push('--max-rss', String(this.opts.maxRssMb));
     }
 
-    // Build child env. Explicit handling for GBRAIN_ALLOW_SHELL_JOBS:
+    // Build child env. Explicit handling for CORTEX_ALLOW_SHELL_JOBS:
     // inherit only when caller opts in, otherwise strip from the clone.
     const env: Record<string, string | undefined> = { ...process.env };
     if (this.opts.allowShellJobs) {
-      env.GBRAIN_ALLOW_SHELL_JOBS = '1';
+      env.CORTEX_ALLOW_SHELL_JOBS = '1';
     } else {
+      delete env.CORTEX_ALLOW_SHELL_JOBS;
       delete env.GBRAIN_ALLOW_SHELL_JOBS;
     }
     // Signal to the child worker that it's running under a supervisor.

@@ -1,0 +1,90 @@
+name: cortex-saas
+
+x-cortex-env: &cortex-env
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/cortex?prepare=false
+  CORTEX_PUBLIC_URL: http://localhost:3131
+  CORTEX_HTTP_CORS_ORIGIN: http://localhost:3131
+  CORTEX_HTTP_TRUST_PROXY: "1"
+  CORTEX_HOME: /data/cortex
+  CORTEX_ADMIN_BOOTSTRAP_TOKEN: localdevlocaldevlocaldevlocaldev
+  CORTEX_SUPPRESS_BOOTSTRAP_TOKEN: "1"
+  CORTEX_POOL_SIZE: "2"
+  CORTEX_WORKER_CONCURRENCY: "2"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cortex
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cortex"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  migrate:
+    image: cortex-saas:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: migrate
+    environment:
+      <<: *cortex-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - cortex-data:/data/cortex
+    profiles:
+      - tools
+
+  web:
+    image: cortex-saas:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: web
+    environment:
+      <<: *cortex-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3131:3131"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bun -e \"const r = await fetch('http://127.0.0.1:3131/health'); process.exit(r.ok ? 0 : 1)\""
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - cortex-data:/data/cortex
+
+  worker:
+    image: cortex-saas:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: worker
+    environment:
+      <<: *cortex-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    volumes:
+      - cortex-data:/data/cortex
+
+volumes:
+  cortex-data:
+  postgres-data:

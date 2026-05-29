@@ -2,29 +2,29 @@
 
 **Read this before doing ANY entity/person/company/fact lookup.**
 
-Sub-agents and fresh sessions inherit gbrain tools but not the knowledge of
+Sub-agents and fresh sessions inherit cortex tools but not the knowledge of
 when and how to use them. This file is that knowledge.
 
-## Available GBrain Tools
+## Available Cortex Tools
 
-Your tool inventory includes these (prefixed `gbrain__` in OpenClaw):
+Your tool inventory includes these (prefixed `cortex__` in Cortex):
 
 | Tool | Use for |
 |------|---------|
-| `gbrain__search` / `search` | Keyword search — fast, always works |
-| `gbrain__query` / `query` | Hybrid search (keyword + semantic) — best quality |
-| `gbrain__get_page` / `get_page` | Direct page read when you know the slug |
-| `gbrain__get_links` / `get_links` | Outgoing links from a page |
-| `gbrain__get_backlinks` / `get_backlinks` | Who references this entity |
-| `gbrain__get_timeline` / `get_timeline` | Dated events for an entity |
-| `gbrain__resolve_slugs` / `resolve_slugs` | Fuzzy slug resolution |
-| `gbrain__traverse_graph` / `traverse_graph` | Walk the relationship graph |
-| `gbrain__put_page` / `put_page` | Create or update a brain page |
-| `gbrain__add_timeline_entry` | Add a dated event |
-| `gbrain__add_link` | Add a relationship edge |
+| `cortex__search` / `search` | Keyword search — fast, always works |
+| `cortex__query` / `query` | Hybrid search (keyword + semantic) — best quality |
+| `cortex__get_page` / `get_page` | Direct page read when you know the slug |
+| `cortex__get_links` / `get_links` | Outgoing links from a page |
+| `cortex__get_backlinks` / `get_backlinks` | Who references this entity |
+| `cortex__get_timeline` / `get_timeline` | Dated events for an entity |
+| `cortex__resolve_slugs` / `resolve_slugs` | Fuzzy slug resolution |
+| `cortex__traverse_graph` / `traverse_graph` | Walk the relationship graph |
+| `cortex__put_page` / `put_page` | Create or update a brain page |
+| `cortex__add_timeline_entry` | Add a dated event |
+| `cortex__add_link` | Add a relationship edge |
 
-Tool names vary by transport (MCP uses short names, OpenClaw plugin uses
-`gbrain__` prefix). Both work. Use whichever your environment provides.
+Tool names vary by transport (MCP uses short names, Cortex plugin uses
+`cortex__` prefix). Both work. Use whichever your environment provides.
 
 ## The Lookup Chain (MANDATORY ORDER)
 
@@ -43,7 +43,7 @@ thousands of pages. The answer is almost always there.
   what the user said in meetings, conversations, and notes. External sources
   are supplementary.
 - **After any brain page write:** trigger a sync so new pages are searchable.
-  In OpenClaw: `gbrain__sync_brain`. From CLI: `gbrain sync --no-pull`.
+  In Cortex: `cortex__sync_brain`. From CLI: `cortex sync --no-pull`.
 - **Every brain page reference in output** should use a clickable link format
   appropriate to the deployment (GitHub URL, local path, or slug).
 - **Never use `memory_search` for entity lookups.** Memory tools search
@@ -60,7 +60,7 @@ Standard directory structure:
 | `companies/` | company | `companies/stripe.md` |
 | `deals/` | deal | `deals/stripe-series-c.md` |
 | `meetings/` | meeting | `meetings/2026-04-23-weekly-sync.md` |
-| `projects/` | project | `projects/gbrain.md` |
+| `projects/` | project | `projects/cortex.md` |
 | `yc/` | yc | `yc/batch-w26.md` |
 
 When creating new pages, include proper frontmatter with `type`, `title`,
@@ -84,7 +84,7 @@ frontmatter:
 Use this for pure-infra skills (cron schedulers, container managers,
 ask-user prompters, browser drivers) whose entire job is to operate without
 consulting the brain. The doctor `skill_brain_first` check honors this opt-
-out; the `gbrain doctor --fix` auto-add of the canonical Convention callout
+out; the `cortex doctor --fix` auto-add of the canonical Convention callout
 skips opted-out skills.
 
 **Strict canonical form (the parser is loud about typos):**

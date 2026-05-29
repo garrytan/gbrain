@@ -69,6 +69,16 @@ export type PackLocator = (name: string) => string | null;
 
 let _packLocator: PackLocator = defaultPackLocator;
 
+const CORTEX_BUNDLED_PACK_ALIASES: Record<string, string> = {
+  'cortex-base': 'gbrain-base',
+  'cortex-recommended': 'gbrain-recommended',
+  'cortex-creator': 'gbrain-creator',
+  'cortex-investor': 'gbrain-investor',
+  'cortex-engineer': 'gbrain-engineer',
+  'cortex-everything': 'gbrain-everything',
+  'cortex-base-v2': 'gbrain-base-v2',
+};
+
 /**
  * Replace the pack locator. Tests use this to inject synthetic packs
  * without writing to ~/.gbrain. Always pair with `_resetPackLocatorForTests`
@@ -113,15 +123,16 @@ function defaultPackLocator(name: string): string | null {
     // upgrade flow (the unify-types Minion handler).
     'gbrain-base-v2',
   ];
-  if (BUNDLED.includes(name)) {
+  const bundledName = CORTEX_BUNDLED_PACK_ALIASES[name] ?? name;
+  if (BUNDLED.includes(bundledName)) {
     // Resolve bundled YAML relative to this source file. Works in both
     // direct-bun execution and bun --compile binaries.
     const here = dirname(fileURLToPath(import.meta.url));
-    const bundledPath = join(here, 'base', `${name}.yaml`);
+    const bundledPath = join(here, 'base', `${bundledName}.yaml`);
     if (existsSync(bundledPath)) return bundledPath;
     // Repo-root fallback for tests running from a worktree where the
     // module path doesn't resolve to the source tree.
-    const repoRootFallback = join(here, '..', '..', '..', 'src', 'core', 'schema-pack', 'base', `${name}.yaml`);
+    const repoRootFallback = join(here, '..', '..', '..', 'src', 'core', 'schema-pack', 'base', `${bundledName}.yaml`);
     if (existsSync(repoRootFallback)) return repoRootFallback;
     return null;
   }
@@ -279,8 +290,11 @@ export function _versionDescCompare(a: string, b: string): number {
 }
 
 function buildResolutionInput(input: LoadActivePackInput): ResolutionInput {
-  const envVar = process.env.GBRAIN_SCHEMA_PACK?.trim() || undefined;
-  // tier-6: ~/.gbrain/config.json schema_pack field
+  const envVar =
+    process.env.CORTEX_SCHEMA_PACK?.trim() ||
+    process.env.GBRAIN_SCHEMA_PACK?.trim() ||
+    undefined;
+  // tier-6: ~/.cortex/config.json schema_pack field
   const homeConfig = input.cfg?.schema_pack?.trim() || undefined;
   return {
     perCall: input.perCall,

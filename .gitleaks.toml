@@ -1,4 +1,4 @@
-title = "GBrain gitleaks config"
+title = "Cortex gitleaks config"
 
 [allowlist]
   paths = [
@@ -7,5 +7,5 @@ title = "GBrain gitleaks config"
     '''test/''',
     '''skills/''',
     '''.claude/skills/''',
-    '''GBRAIN_SKILLPACK\.md''',
+    '''CORTEX_SKILLPACK\.md''',
   ]

@@ -39,10 +39,10 @@ This skill guarantees:
 3. **On event received:**
    - Parse payload
    - Run transform function
-   - Write brain page via `gbrain put`
+   - Write brain page via `cortex put`
    - Extract entities, run enrichment
    - Add timeline entries to mentioned entities
-   - Sync: `gbrain sync`
+   - Sync: `cortex sync`
 
 4. **Error handling:**
    - If transform throws: log raw payload to `_dead-letter/{timestamp}.md`

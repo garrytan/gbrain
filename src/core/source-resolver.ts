@@ -3,10 +3,10 @@
  *
  * Resolution priority (highest first):
  *   1. Explicit --source <id> flag (caller passes this as `explicit`)
- *   2. GBRAIN_SOURCE env var
- *   3. .gbrain-source dotfile in CWD or any ancestor directory
+ *   2. CORTEX_SOURCE env var
+ *   3. .cortex-source dotfile in CWD or any ancestor directory
  *   4. Registered source whose local_path contains CWD
- *   5. Brain-level default via `gbrain sources default <id>`
+ *   5. Brain-level default via `cortex sources default <id>`
  *   6. Literal 'default' (backward compat for pre-v0.17 brains)
  *
  * This helper is shared by the sources CLI, future sync/extract/query
@@ -14,27 +14,29 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { SOURCE_ID_RE, isValidSourceId } from './source-id.ts';
 
-const DOTFILE = '.gbrain-source';
+const DOTFILE = '.cortex-source';
+const LEGACY_DOTFILE = '.gbrain-source';
 // Canonical SOURCE_ID_RE imported from `source-id.ts` (single source of truth).
 // Re-exported below as `__testing.SOURCE_ID_RE` for legacy test imports.
 // Two validator shapes per codex r2 P1-F:
 //   - `isValidSourceId(s)`: boolean — used by tiers that silently fall through
 //     on invalid input (dotfile tier 3, brain_default tier 5)
 //   - explicit throw — used by tiers that must reject loudly with a tailored
-//     message (explicit `--source` flag tier 1, GBRAIN_SOURCE env tier 2).
+//     message (explicit `--source` flag tier 1, CORTEX_SOURCE env tier 2).
 //     Tier-specific messages are clearer than the generic assertValidSourceId
 //     error, so the throws stay inline.
 
-function readDotfileWalk(startDir: string): string | null {
+function readDotfileWalkWithName(startDir: string): { sourceId: string; dotfile: string } | null {
   let dir = resolve(startDir);
   // Guard against infinite loops on malformed paths.
   for (let i = 0; i < 50; i++) {
-    const candidate = join(dir, DOTFILE);
-    if (existsSync(candidate)) {
+    const candidateName = [DOTFILE, LEGACY_DOTFILE].find(name => existsSync(join(dir, name)));
+    const candidate = candidateName ? join(dir, candidateName) : null;
+    if (candidate) {
       try {
         const content = readFileSync(candidate, 'utf8').trim().split('\n')[0].trim();
         // Silent-fallback tier per codex P1-F: invalid dotfile content
@@ -42,7 +44,7 @@ function readDotfileWalk(startDir: string): string | null {
         // falls through to the next tier instead of throwing. The CLI's
         // explicit/env tiers throw; dotfiles are operator-edited and the
         // forgiving behavior preserves the resolver's existing semantics.
-        if (isValidSourceId(content)) return content;
+        if (isValidSourceId(content)) return { sourceId: content, dotfile: candidateName! };
       } catch {
         // Unreadable dotfile — skip and keep walking.
       }
@@ -54,12 +56,21 @@ function readDotfileWalk(startDir: string): string | null {
   return null;
 }
 
+function readDotfileWalk(startDir: string): string | null {
+  return readDotfileWalkWithName(startDir)?.sourceId ?? null;
+}
+
+function isSameOrChildPath(childPath: string, parentPath: string): boolean {
+  const rel = relative(parentPath, childPath);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
+}
+
 /**
  * Resolve the source id for a CLI command.
  *
  * @param engine  Connected brain engine (for sources table lookups).
  * @param explicit  The --source <id> flag value, if the caller parsed one.
- * @param cwd  The working directory to walk for .gbrain-source. Defaults
+ * @param cwd  The working directory to walk for .cortex-source. Defaults
  *             to process.cwd(). Exposed for testability.
  * @returns  The resolved source id. Falls back to 'default' if no other
  *           signal is present. Never returns null — every command must
@@ -83,16 +94,17 @@ export async function resolveSourceId(
   }
 
   // 2. Env var.
-  const env = process.env.GBRAIN_SOURCE;
+  const envName = process.env.CORTEX_SOURCE ? 'CORTEX_SOURCE' : 'GBRAIN_SOURCE';
+  const env = process.env.CORTEX_SOURCE || process.env.GBRAIN_SOURCE;
   if (env && env.length > 0) {
     if (!SOURCE_ID_RE.test(env)) {
-      throw new Error(`Invalid GBRAIN_SOURCE value "${env}". Must match [a-z0-9-]{1,32}.`);
+      throw new Error(`Invalid ${envName} value "${env}". Must match [a-z0-9-]{1,32}.`);
     }
     await assertSourceExists(engine, env);
     return env;
   }
 
-  // 3. .gbrain-source dotfile walk-up.
+  // 3. .cortex-source dotfile walk-up.
   const dotfile = readDotfileWalk(cwd);
   if (dotfile) {
     await assertSourceExists(engine, dotfile);
@@ -109,7 +121,7 @@ export async function resolveSourceId(
   let best: { id: string; pathLen: number } | null = null;
   for (const r of registered) {
     const p = resolve(r.local_path);
-    if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
+    if (isSameOrChildPath(cwdResolved, p)) {
       if (!best || p.length > best.pathLen) {
         best = { id: r.id, pathLen: p.length };
       }
@@ -178,15 +190,15 @@ async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | n
 /**
  * Format the one-line stderr nudge that fires when source resolution falls
  * through to the `sole_non_default` tier. Returns null when suppressed via
- * `GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1` (CI / scripted-pipeline ergonomics).
+ * `CORTEX_NO_SOLE_NON_DEFAULT_NUDGE=1` (CI / scripted-pipeline ergonomics).
  *
  * Single source of truth so the wording stays consistent across every CLI
  * dispatch site that fires the nudge (sync, import, extract, etc.). Callers
  * print to stderr; this helper just builds the line.
  */
 export function formatSoleNonDefaultNudge(sourceId: string): string | null {
-  if (process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE === '1') return null;
-  return `[gbrain] routing to source '${sourceId}' (sole non-default source registered; pass --source to override).`;
+  if (process.env.CORTEX_NO_SOLE_NON_DEFAULT_NUDGE === '1' || process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE === '1') return null;
+  return `[cortex] routing to source '${sourceId}' (sole non-default source registered; pass --source to override).`;
 }
 
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {
@@ -197,8 +209,8 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
   if (rows.length === 0) {
     throw new Error(
       `Source "${id}" not found. Available sources: ` +
-      `run \`gbrain sources list\` to see registered sources, ` +
-      `or \`gbrain sources add ${id}\` to create it.`,
+      `run \`cortex sources list\` to see registered sources, ` +
+      `or \`cortex sources add ${id}\` to create it.`,
     );
   }
 }
@@ -283,20 +295,21 @@ export async function resolveSourceWithTier(
   }
 
   // 2. Env var.
-  const env = process.env.GBRAIN_SOURCE;
+  const envName = process.env.CORTEX_SOURCE ? 'CORTEX_SOURCE' : 'GBRAIN_SOURCE';
+  const env = process.env.CORTEX_SOURCE || process.env.GBRAIN_SOURCE;
   if (env && env.length > 0) {
     if (!SOURCE_ID_RE.test(env)) {
-      throw new Error(`Invalid GBRAIN_SOURCE value "${env}". Must match [a-z0-9-]{1,32}.`);
+      throw new Error(`Invalid ${envName} value "${env}". Must match [a-z0-9-]{1,32}.`);
     }
     await assertSourceExists(engine, env);
-    return { source_id: env, tier: 'env', detail: `GBRAIN_SOURCE=${env}` };
+    return { source_id: env, tier: 'env', detail: `${envName}=${env}` };
   }
 
-  // 3. .gbrain-source dotfile walk-up.
-  const dotfile = readDotfileWalk(cwd);
+  // 3. .cortex-source dotfile walk-up.
+  const dotfile = readDotfileWalkWithName(cwd);
   if (dotfile) {
-    await assertSourceExists(engine, dotfile);
-    return { source_id: dotfile, tier: 'dotfile', detail: `.gbrain-source` };
+    await assertSourceExists(engine, dotfile.sourceId);
+    return { source_id: dotfile.sourceId, tier: 'dotfile', detail: dotfile.dotfile };
   }
 
   // 4. Registered source whose local_path contains CWD.
@@ -307,9 +320,9 @@ export async function resolveSourceWithTier(
   let best: { id: string; path: string; pathLen: number } | null = null;
   for (const r of registered) {
     const p = resolve(r.local_path);
-    if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
+    if (isSameOrChildPath(cwdResolved, p)) {
       if (!best || p.length > best.pathLen) {
-        best = { id: r.id, path: p, pathLen: p.length };
+        best = { id: r.id, path: r.local_path, pathLen: p.length };
       }
     }
   }

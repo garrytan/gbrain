@@ -189,13 +189,13 @@ If a user wants to override either gate, they ask explicitly with `--force`.
 
 ### Step 2: When to compress which file
 
-GBrain workspaces often have TWO routing files merged at runtime (per
+Cortex workspaces often have TWO routing files merged at runtime (per
 `src/core/check-resolvable.ts` v0.31.7): `skills/RESOLVER.md` and a sibling
 `../AGENTS.md`. Choose which to compress:
 
 - Only one is fat (>12KB): compress that one; leave the small one alone.
 - Both are fat: compress them separately, in order: AGENTS.md first
-  (usually the larger one in OpenClaw-style deployments), then RESOLVER.md.
+  (usually the larger one in Cortex-style deployments), then RESOLVER.md.
 - Only the small one is fat (rare): same rule — compress it.
 
 If the deployment uses only one routing file, this section is a no-op —
@@ -247,7 +247,7 @@ fixtures still resolve to the right skills under the compressed routing file.
 Run from the workspace whose routing file you just edited:
 
 ```bash
-gbrain routing-eval --json
+cortex routing-eval --json
 ```
 
 If accuracy on your fixtures drops below 95%, revert and tune the area
@@ -255,7 +255,7 @@ entries before re-running.
 
 **Gate 2: LLM A/B verification on YOUR edited file.** Confirms a frontier
 LLM can still drill into the dispatcher list and reach sub-skills under
-your specific compression. Requires a gbrain repo checkout because the
+your specific compression. Requires a cortex repo checkout because the
 harness lives there. Copy your edited routing file into the harness's
 variants directory, then invoke the harness with `--variants` pointing
 at it:
@@ -264,8 +264,8 @@ at it:
 # In your agent workspace, identify the routing file you just compressed.
 EDITED=/path/to/your/AGENTS.md       # or skills/RESOLVER.md, whichever you edited
 
-# In your gbrain repo checkout:
-cd /path/to/gbrain/evals/functional-area-resolver
+# In your cortex repo checkout:
+cd /path/to/cortex/evals/functional-area-resolver
 TMP=$(mktemp -d)/variants && mkdir -p "$TMP"
 cp "$EDITED" "$TMP/my-edit.md"
 
@@ -274,8 +274,8 @@ ANTHROPIC_API_KEY=... node harness.mjs --variants-dir "$TMP" --variants my-edit 
                                        --model opus --parallel 3 --yes
 ```
 
-The harness uses gbrain's bundled fixture set, so this verifies "did the LLM
-land in the right sub-skill for routing intents the gbrain-bundled fixtures
+The harness uses cortex's bundled fixture set, so this verifies "did the LLM
+land in the right sub-skill for routing intents the cortex-bundled fixtures
 cover" — a regression check on shared skills, not a full re-eval of YOUR
 fixture set. For full eval coverage, mirror this skill's
 `fixtures.jsonl` + `fixtures-held-out.jsonl` setup with intents specific
@@ -287,10 +287,10 @@ compression and tune. Common causes:
 - Trigger phrases for an area are too narrow (LLM can't recognize intent).
 - Areas were collapsed too aggressively (too few areas — see Anti-Patterns).
 - ASCII `->` vs Unicode `→` mismatch — the harness now accepts both, but
-  earlier versions only matched Unicode. Pin gbrain to v0.32.3.0+.
+  earlier versions only matched Unicode. Pin cortex to v0.32.3.0+.
 
 Common false negatives on the harness eval (NOT bugs in your compression):
-- The gbrain-bundled fixtures target skill names like `enrich`, `query`,
+- The cortex-bundled fixtures target skill names like `enrich`, `query`,
   `gmail`, `executive-assistant`. If your routing file doesn't expose
   those skills at all, expect strict-scoring failures on those fixtures.
   Lenient scoring stays accurate for any sub-skill present in your
@@ -307,14 +307,14 @@ This skill guarantees:
 
 - Routing matches the canonical triggers in the frontmatter.
 - Compression is only performed when the preconditions in Step 1 pass (file ≥12KB AND clean working tree, or `--force`).
-- The mandatory verification gate in Step 6 fires on the user's edited file, not on sample variants. The user runs `gbrain routing-eval --json` AND the gbrain-repo harness (`node harness.mjs --variants-dir <tmp> --variants my-edit`) before committing the compressed file.
-- Privacy contract preserved: no fork-specific filesystem path literals (server-side brain home, OpenClaw fork home) leak into the compressed output.
+- The mandatory verification gate in Step 6 fires on the user's edited file, not on sample variants. The user runs `cortex routing-eval --json` AND the cortex-repo harness (`node harness.mjs --variants-dir <tmp> --variants my-edit`) before committing the compressed file.
+- Privacy contract preserved: no fork-specific filesystem path literals (server-side brain home, Cortex fork home) leak into the compressed output.
 
 The full behavior contract is documented in the body sections above; this section exists for the conformance test.
 
 ## Output Format
 
-The compressed routing file follows the area-entry template documented in Step 4 ("Build the area entry format"). Each entry: `- **{Area Name}**: {trigger phrases} -> \`{dispatcher-skill}\` (dispatcher for: {sub-skill list})`. The dispatcher arrow may be either ASCII `->` (default in this template) or Unicode `→` (used in some production deployments); the gbrain harness accepts both.
+The compressed routing file follows the area-entry template documented in Step 4 ("Build the area entry format"). Each entry: `- **{Area Name}**: {trigger phrases} -> \`{dispatcher-skill}\` (dispatcher for: {sub-skill list})`. The dispatcher arrow may be either ASCII `->` (default in this template) or Unicode `→` (used in some production deployments); the cortex harness accepts both.
 
 ## Anti-Patterns
 
@@ -347,7 +347,7 @@ When adding a new functional area:
 ## Changelog
 
 ### v1.0.0 — 2026-05-11
-- Initial version. Pattern shipped in gbrain v0.32.3.0 with a held-out A/B
+- Initial version. Pattern shipped in cortex v0.32.3.0 with a held-out A/B
   eval (see `evals/functional-area-resolver/`).
 - Skill renamed from `compress-agents-md` to `functional-area-resolver`
   pre-release; the contribution is the pattern, not the filename.

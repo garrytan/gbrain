@@ -1,5 +1,5 @@
 /**
- * Pure-function unit tests for `gbrain status` orchestrator helpers.
+ * Pure-function unit tests for `cortex status` orchestrator helpers.
  *
  * Hermetic — no PGLite, no DB. Drives the exported helpers (parseSectionFlag,
  * runStatus with engine=null in thin-client-disabled mode) and asserts:

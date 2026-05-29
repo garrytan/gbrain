@@ -24,7 +24,7 @@ The four doctor checks (in `src/commands/doctor.ts`):
   linked to a follow-up. Always status='ok' with a count.
 
 - `calibration_freshness` — warns when the active profile is older than
-  7 days. Hint: `gbrain calibration --regenerate`.
+  7 days. Hint: `cortex calibration --regenerate`.
 
 - `grade_confidence_drift` (CDX-11 mitigation) — placeholder for the
   v0.37+ confidence-vs-accuracy correlation math. v0.36.1.0 reports the

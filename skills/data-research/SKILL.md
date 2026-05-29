@@ -54,7 +54,7 @@ Ask the user what they want to track. Either:
 - Define a custom recipe with: source queries, classification rules, extraction schema,
   tracker page path, tracker format
 
-Recipes are YAML files at `~/.gbrain/recipes/{name}.yaml`. Use `gbrain research init`
+Recipes are YAML files at `~/.cortex/recipes/{name}.yaml`. Use `cortex research init`
 to scaffold a new one.
 
 ### Phase 2: Search Sources
@@ -106,7 +106,7 @@ Before adding to tracker:
 
 ## Built-In Recipes
 
-Three example recipes ship with GBrain (see `~/.gbrain/recipes/`):
+Three example recipes ship with Cortex (see `~/.cortex/recipes/`):
 
 1. **investor-updates** — extract MRR, ARR, growth, burn, runway, headcount from investor update emails
 2. **expense-tracker** — extract amounts, recipients, platforms from receipt emails (subscriptions, services, recurring charges)

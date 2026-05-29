@@ -75,10 +75,10 @@ describe('validateSchemaPackTrustGate (T8 D13)', () => {
       const msg = (e as Error).message;
       // Names every alternate channel so an MCP-client operator knows
       // how to configure the pack without per-call.
-      expect(msg).toContain('gbrain.yml');
-      expect(msg).toContain('GBRAIN_SCHEMA_PACK');
+      expect(msg).toContain('cortex.yml');
+      expect(msg).toContain('CORTEX_SCHEMA_PACK');
       expect(msg).toContain('config.json');
-      expect(msg).toContain('gbrain config set');
+      expect(msg).toContain('cortex config set');
     }
   });
 });

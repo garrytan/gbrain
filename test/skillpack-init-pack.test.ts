@@ -74,7 +74,7 @@ describe('runInitScaffold — cathedral default', () => {
     writeFileSync(join(dir, 'skills/preexist/SKILL.md'), 'user content');
     const result = runInitScaffold({ targetDir: dir, name: 'preexist' });
     // The user's SKILL.md should be in filesSkippedExisting
-    expect(result.filesSkippedExisting.some((p) => p.endsWith('skills/preexist/SKILL.md'))).toBe(true);
+    expect(result.filesSkippedExisting.some((p) => p.replace(/\\/g, '/').endsWith('skills/preexist/SKILL.md'))).toBe(true);
     // And contents preserved.
     expect(require('fs').readFileSync(join(dir, 'skills/preexist/SKILL.md'), 'utf-8')).toBe('user content');
   });

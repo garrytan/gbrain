@@ -1,24 +1,24 @@
 /**
- * v0.32.3 — `gbrain search` CLI surface.
+ * v0.32.3 - `cortex search` CLI surface.
  *
- * Three sub-subcommands, mirroring `gbrain models` (v0.31.12) for shape
+ * Three sub-subcommands, mirroring `cortex models` (v0.31.12) for shape
  * consistency:
  *
- *   gbrain search modes [--json]
+ *   cortex search modes [--json]
  *     Read-only routing dashboard. Prints the three mode bundles, the
  *     active mode, the source of every resolved knob (mode default vs
  *     config override vs per-call), and a one-liner per knob.
  *
- *   gbrain search modes --reset [--source <mode>]
+ *   cortex search modes --reset [--source <mode>]
  *     Clears every search.* override key (per CDX-8). --source acts as
  *     a dry-run that lists what would change without writing.
  *
- *   gbrain search stats [--days N] [--json]
+ *   cortex search stats [--days N] [--json]
  *     Observability. Reads search_telemetry rollup over the window.
  *     Shows hit rate %, intent mix, mode mix, budget pressure, avg
  *     results, avg tokens delivered.
  *
- *   gbrain search tune [--apply] [--json]
+ *   cortex search tune [--apply] [--json]
  *     Recommendation engine. Reads stats + brain size + model tier and
  *     prints structured recommendations. --apply mutates config (each
  *     change logged loud + paste-ready revert command at the end).
@@ -93,7 +93,7 @@ async function buildModesReport(engine: BrainEngine): Promise<SearchModesReport>
     'tokenBudget',
     'expansion',
     'searchLimit',
-    // v0.35.6.0 — floor-ratio surfaced in `gbrain search modes` dashboard
+    // v0.35.6.0 - floor-ratio surfaced in `cortex search modes` dashboard
     // so config drift is legible. Default undefined renders as 'undefined'
     // in the bundle column, 'mode' source when unset by config/per-call.
     'floor_ratio',
@@ -134,7 +134,7 @@ function formatModesText(report: SearchModesReport): string {
     lines.push(`  ${knob.padEnd(28)} = ${value.padEnd(12)} [${attr.source_detail}]`);
   }
   lines.push('');
-  lines.push('Mode bundles (frozen — set via `gbrain config set search.mode <mode>`):');
+  lines.push('Mode bundles (frozen - set via `cortex config set search.mode <mode>`):');
   for (const mode of SEARCH_MODES) {
     const b = report.bundles[mode];
     const active = mode === report.active_mode ? '  ← active' : '';
@@ -183,7 +183,7 @@ async function runModesSubcommand(engine: BrainEngine, args: string[]): Promise<
     }
     console.log(`Reset complete. Unset ${deleted} key(s):`);
     for (const k of toRemove) console.log(`  - ${k}`);
-    console.log(`Mode bundle is now the only voice. Verify with: gbrain search modes`);
+    console.log(`Mode bundle is now the only voice. Verify with: cortex search modes`);
     return;
   }
 
@@ -238,7 +238,7 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
   console.log(`  Total searches:        ${stats.total_calls}`);
   if (stats.total_calls === 0) {
     console.log('');
-    console.log('No telemetry recorded yet. Run a few `gbrain query` calls and re-check.');
+    console.log('No telemetry recorded yet. Run a few `cortex query` calls and re-check.');
     // Still print the graph-signals section since failures are tracked
     // independently of the search_telemetry table.
     if (gsSection.enabled || gsSection.failures_count > 0) {
@@ -370,13 +370,13 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
         status: 'insufficient_data',
         total_calls: stats.total_calls,
         recommendations: [],
-        message: 'Not enough search activity in the last 7 days to tune. Run `gbrain search stats` after some real usage.',
+        message: 'Not enough search activity in the last 7 days to tune. Run `cortex search stats` after some real usage.',
       }, null, 2));
       return;
     }
     console.log('Not enough search activity in the last 7 days to tune.');
     console.log(`Total searches: ${stats.total_calls} (need >= 20 for confident recommendations).`);
-    console.log('Run a few `gbrain query` calls, then re-run `gbrain search tune`.');
+    console.log('Run a few `cortex query` calls, then re-run `cortex search tune`.');
     return;
   }
 
@@ -389,7 +389,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
         current: 'conservative',
         suggested: 'balanced',
         reason: `Avg ${dropPctPerCall.toFixed(1)} results dropped per search by the 4K budget. Consider balanced (12K budget) or raise search.tokenBudget.`,
-        apply_command: 'gbrain config set search.mode balanced',
+        apply_command: 'cortex config set search.mode balanced',
       });
     }
   }
@@ -401,7 +401,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
       current: resolved.cache_similarity_threshold,
       suggested: 0.94,
       reason: `Cache hit rate is ${(stats.cache_hit_rate * 100).toFixed(1)}%. You can raise similarity threshold to 0.94 for tighter freshness at small recall cost.`,
-      apply_command: 'gbrain config set search.cache.similarity_threshold 0.94',
+      apply_command: 'cortex config set search.cache.similarity_threshold 0.94',
     });
   }
 
@@ -413,7 +413,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
       current: 'tokenmax',
       suggested: 'balanced',
       reason: `Subagent tier is Haiku but mode is tokenmax. LLM expansion adds ~50ms + ~1¢ per query. Balanced cuts that cost without losing intent weighting or cache.`,
-      apply_command: 'gbrain config set search.mode balanced',
+      apply_command: 'cortex config set search.mode balanced',
     });
   }
 
@@ -424,7 +424,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
       current: false,
       suggested: true,
       reason: 'Cache is disabled but mode bundles enable it by default. Cache is a free win (zero LLM cost, big latency drop on repeat queries).',
-      apply_command: 'gbrain config unset search.cache.enabled',
+      apply_command: 'cortex config unset search.cache.enabled',
     });
   }
 
@@ -480,7 +480,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
     console.log('To revert these changes:');
     for (const cmd of reverts) console.log(`  ${cmd}`);
   } else {
-    console.log('Run `gbrain search tune --apply` to apply these changes automatically.');
+    console.log('Run `cortex search tune --apply` to apply these changes automatically.');
   }
 }
 
@@ -489,7 +489,7 @@ async function maybeApplyRecommendation(engine: BrainEngine, r: TuneRecommendati
   // re-parse it to call setConfig / unsetConfig directly so the call
   // happens in-process.
   const parts = r.apply_command.split(/\s+/);
-  if (parts[0] !== 'gbrain' || parts[1] !== 'config') return;
+  if ((parts[0] !== 'cortex' && parts[0] !== 'gbrain') || parts[1] !== 'config') return;
   if (parts[2] === 'set' && parts.length === 5) {
     await engine.setConfig(parts[3], parts[4]);
   } else if (parts[2] === 'unset' && parts.length === 4) {
@@ -500,14 +500,14 @@ async function maybeApplyRecommendation(engine: BrainEngine, r: TuneRecommendati
 function buildRevertCommand(r: TuneRecommendation): string {
   const parts = r.apply_command.split(/\s+/);
   if (parts[2] === 'set') {
-    return `gbrain config set ${parts[3]} ${String(r.current)}`;
+    return `cortex config set ${parts[3]} ${String(r.current)}`;
   } else if (parts[2] === 'unset') {
-    return `gbrain config set ${parts[3]} ${String(r.current)}`;
+    return `cortex config set ${parts[3]} ${String(r.current)}`;
   }
   return r.apply_command;
 }
 
-const USAGE = `Usage: gbrain search <modes|stats|tune> [flags]
+const USAGE = `Usage: cortex search <modes|stats|tune> [flags]
 
 Subcommands:
   modes [--json]              Show active mode, bundles, and per-knob source.
@@ -517,11 +517,11 @@ Subcommands:
   tune [--apply] [--json]     Print recommendations; --apply mutates config.
 
 Examples:
-  gbrain search modes
-  gbrain search modes --reset
-  gbrain search stats --days 30 --json
-  gbrain search tune
-  gbrain search tune --apply
+  cortex search modes
+  cortex search modes --reset
+  cortex search stats --days 30 --json
+  cortex search tune
+  cortex search tune --apply
 `;
 
 export async function runSearch(engine: BrainEngine, args: string[]): Promise<void> {
@@ -551,10 +551,10 @@ export async function runSearch(engine: BrainEngine, args: string[]): Promise<vo
 }
 
 /**
- * `gbrain search modes` is read-only — no DB connection strictly required
+ * `cortex search modes` is read-only - no DB connection strictly required
  * for the bundle display IF the engine is given. The dispatch in cli.ts
  * adds 'search' to its dispatch table so the engine connects normally;
- * this export is here so future no-engine modes (e.g. `gbrain search --help`
+ * this export is here so future no-engine modes (e.g. `cortex search --help`
  * without an engine) could route through it cleanly.
  */
 export const _exports_for_test = {

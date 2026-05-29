@@ -311,7 +311,7 @@ export interface OperationContext {
   /**
    * Trusted-workspace allow-list (v0.23 dream cycle). When the cycle's
    * synthesize/patterns phases dispatch a subagent, they thread an
-   * explicit list of slug-prefix globs (e.g. "wiki/personal/reflections/*")
+   * explicit list of slug-prefix globs (e.g. "wiki/private/reflections/*")
    * through this field. put_page enforces it BEFORE the legacy
    * `wiki/agents/<id>/...` namespace check.
    *
@@ -541,7 +541,7 @@ const get_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
+  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `cortex capture --file PATH --slug SLUG`; capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
@@ -692,8 +692,8 @@ const put_page: Operation = {
           });
           if (process.stderr.isTTY && ctx.remote === false) {
             console.error(
-              `[schema] put_page wrote type=\`${pageType}\` which isn't in active pack \`${activePack.page_types.length ? '<configured>' : 'gbrain-base'}\`. ` +
-              `Run \`gbrain schema review-candidates\` to promote or ignore.`,
+              `[schema] put_page wrote type=\`${pageType}\` which isn't in active pack \`${activePack.page_types.length ? '<configured>' : 'cortex-base'}\`. ` +
+              `Run \`cortex schema review-candidates\` to promote or ignore.`,
             );
           }
         }
@@ -1292,11 +1292,11 @@ const query: Operation = {
       type: 'string',
       enum: ['off', 'on', 'strong'],
       description:
-        "v0.29.1 salience boost — emotional_weight + take_count, NO time component.\n" +
+        "v0.29.1 salience boost - signal weight + take_count, NO time component.\n" +
         "  'off' — default for entity / canonical / definitional queries\n" +
         "  'on'  — surface emotionally-weighted + take-rich pages\n" +
         "  'strong' — aggressive mattering tilt\n" +
-        "Omit and gbrain auto-detects from query text. Independent of `recency`.",
+        "Omit and Cortex auto-detects from query text. Independent of `recency`.",
     },
     recency: {
       type: 'string',
@@ -1306,7 +1306,7 @@ const query: Operation = {
         "  'off' — default for canonical truth\n" +
         "  'on'  — daily/, media/x/, chat/ decay aggressively; concepts/, originals/, writing/ stay evergreen\n" +
         "  'strong' — multiplies the recency factor by 1.5 (use for 'today' / 'right now')\n" +
-        "Omit and gbrain auto-detects. Independent of `salience` (orthogonal axes).",
+        "Omit and Cortex auto-detects. Independent of `salience` (orthogonal axes).",
     },
     since: {
       type: 'string',
@@ -1321,7 +1321,7 @@ const query: Operation = {
     source_id: {
       type: 'string',
       description:
-        "v0.34: scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to force cross-source search in multi-source brains.",
+        "v0.34: scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / CORTEX_SOURCE / .cortex-source dotfile). Pass '__all__' to force cross-source search in multi-source brains.",
     },
     cross_modal: {
       type: 'string',
@@ -1775,7 +1775,7 @@ const get_backlinks: Operation = {
  * grows a `visited` array per path; in `direction=both` the join is `OR`-based and
  * fans out exponentially. Without a cap, a remote MCP caller can pass depth=1e6
  * and burn memory/CPU on the database. 10 hops is well beyond any realistic
- * relationship query (your OpenClaw's "people who attended meetings with Alice"
+ * relationship query (a connected agent's "people who attended meetings with Alice"
  * is 2 hops; the deepest meaningful chain in our test data is 4).
  */
 const TRAVERSE_DEPTH_CAP = 10;
@@ -1793,7 +1793,7 @@ const traverse_graph: Operation = {
     const slug = p.slug as string;
     const requestedDepth = (p.depth as number) || 5;
     if (requestedDepth > TRAVERSE_DEPTH_CAP) {
-      ctx.logger.warn(`[gbrain] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
+      ctx.logger.warn(`[cortex] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
     }
     const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     const linkType = p.link_type as string | undefined;
@@ -1944,7 +1944,7 @@ const get_brain_identity: Operation = {
  *   - Payload: `{schema_version: 1, sync, cycle}` ONLY. Locks, Workers,
  *     Queue, and Autopilot sections are deliberately omitted from the
  *     remote payload — they are local-host concerns that thin-client
- *     callers shouldn't see at all (and the local `gbrain status` renders
+ *     callers shouldn't see at all (and the local `cortex status` renders
  *     them as "N/A on remote brain" instead of pretending they exist).
  *
  *   - The local CLI composes the same data plus the local-only sections
@@ -1952,7 +1952,7 @@ const get_brain_identity: Operation = {
  */
 const get_status_snapshot: Operation = {
   name: 'get_status_snapshot',
-  description: 'Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle. Admin-scope.',
+  description: 'Snapshot for `cortex status` thin-client mode: sync freshness + last cycle. Admin-scope.',
   params: {},
   handler: async (ctx) => {
     const { buildSyncStatusReport } = await import('../commands/sync.ts');
@@ -2322,7 +2322,7 @@ const file_url: Operation = {
       throw new OperationError('storage_error', `File not found: ${p.storage_path}`);
     }
     // TODO: generate signed URL from Supabase Storage
-    return { storage_path: rows[0].storage_path, url: `gbrain:files/${rows[0].storage_path}` };
+    return { storage_path: rows[0].storage_path, url: `cortex:files/${rows[0].storage_path}` };
   },
 };
 
@@ -2443,10 +2443,10 @@ const submit_agent: Operation = {
   handler: async (ctx, p) => {
     // Remote-callable but only when the OAuth client has scope=agent AND
     // a binding row. Local CLI callers (ctx.remote === false) skip the
-    // binding check — `gbrain agent run` already runs through subagent.ts
+    // binding check - `cortex agent run` already runs through subagent.ts
     // directly without going through this op.
     if (ctx.remote === false) {
-      throw new OperationError('invalid_request', 'submit_agent over the local CLI: use `gbrain agent run` instead.');
+      throw new OperationError('invalid_request', 'submit_agent over the local CLI: use `cortex agent run` instead.');
     }
 
     const clientId = (ctx as { auth?: { clientId?: string } }).auth?.clientId;
@@ -2798,7 +2798,7 @@ const get_recent_salience: Operation = {
     limit: { type: 'number', description: 'Max results (default 20, capped at 100).' },
     slugPrefix: {
       type: 'string',
-      description: "Optional slug-prefix filter, e.g. 'personal' or 'wiki/people'.",
+      description: "Optional slug-prefix filter, e.g. 'private' or 'wiki/people'.",
     },
     recency_bias: {
       type: 'string',
@@ -2933,7 +2933,7 @@ const find_contradictions: Operation = {
       : null;
     const rows = await ctx.engine.loadContradictionsTrend(30);
     if (rows.length === 0) {
-      return { contradictions: [], note: 'No probe runs in the last 30 days; run `gbrain eval suspected-contradictions` first.' };
+      return { contradictions: [], note: 'No probe runs in the last 30 days; run `cortex eval suspected-contradictions` first.' };
     }
     const latest = rows[0];
     const report = latest.report_json as Record<string, unknown> | null;
@@ -3086,7 +3086,7 @@ const get_recent_transcripts: Operation = {
     if (ctx.remote === true) {
       throw new OperationError(
         'permission_denied',
-        'get_recent_transcripts is local-only — call via the gbrain CLI.',
+        'get_recent_transcripts is local-only — call via the Cortex CLI.',
       );
     }
     const { listRecentTranscripts } = await import('./transcripts.ts');
@@ -3129,10 +3129,11 @@ const whoami: Operation = {
           'or set ctx.remote === false.',
       );
     }
-    // OAuth tokens have client_id starting with 'gbrain_cl_'; legacy
+    // OAuth tokens have client_id starting with 'cortex_cl_'. Legacy
     // access_tokens reuse `name` as both clientId and clientName (verifyAccessToken
-    // at oauth-provider.ts:417-430). Detect by inspecting the prefix.
-    const isOauth = ctx.auth.clientId.startsWith('gbrain_cl_');
+    // at oauth-provider.ts:417-430). Detect by inspecting the prefix, with
+    // the old prefix accepted for existing tenants upgraded in place.
+    const isOauth = ctx.auth.clientId.startsWith('cortex_cl_') || ctx.auth.clientId.startsWith('gbrain_cl_');
     if (isOauth) {
       return {
         transport: 'oauth',
@@ -3157,7 +3158,7 @@ const sources_add: Operation = {
   description:
     'Register a new source. Supports either --path (existing v0.17 behavior) ' +
     'or --url (v0.28 federated remote-clone path: parses the URL through the ' +
-    'SSRF gate, clones into $GBRAIN_HOME/clones/<id>/ via temp-dir + rename ' +
+    'SSRF gate, clones into $CORTEX_HOME/clones/<id>/ via temp-dir + rename ' +
     'atomicity, and stores remote_url in sources.config). Pre-flight collision ' +
     'check on id; rollback on either-side failure.',
   params: {
@@ -3167,11 +3168,15 @@ const sources_add: Operation = {
       description: 'Source id ([a-z0-9-]{1,32}). Immutable citation key.',
     },
     name: { type: 'string', description: 'Display name (defaults to id).' },
+    org_id: {
+      type: 'string',
+      description: 'Optional Cortex organization id for tenant plan usage and source ownership.',
+    },
     path: { type: 'string', description: 'Local path. Mutually optional with url.' },
     url: {
       type: 'string',
       description:
-        'HTTPS git URL. Cloned into $GBRAIN_HOME/clones/<id>/. SSRF-guarded.',
+        'HTTPS git URL. Cloned into $CORTEX_HOME/clones/<id>/. SSRF-guarded.',
     },
     federated: {
       type: 'boolean',
@@ -3180,13 +3185,14 @@ const sources_add: Operation = {
     clone_dir: {
       type: 'string',
       description:
-        'Override clone destination (only valid with url). Default: $GBRAIN_HOME/clones/<id>/.',
+        'Override clone destination (only valid with url). Default: $CORTEX_HOME/clones/<id>/.',
     },
   },
   mutating: true,
   scope: 'sources_admin',
   handler: async (ctx, p) => {
     const { addSource } = await import('./sources-ops.ts');
+    const { assertSaasPlanAllows, linkSourceToOrg } = await import('./saas-control-plane.ts');
 
     // v0.28.1 codex finding (CRITICAL + HIGH): a `sources_admin` token over
     // HTTP MCP must not be able to plant content at arbitrary host paths.
@@ -3215,6 +3221,8 @@ const sources_add: Operation = {
       );
     }
 
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, false);
+    if (orgId) await assertSaasPlanAllows(ctx.engine, orgId, 'sources');
     const row = await addSource(ctx.engine, {
       id: p.id as string,
       name: p.name as string | undefined,
@@ -3224,6 +3232,7 @@ const sources_add: Operation = {
         p.federated === undefined ? null : (p.federated as boolean),
       cloneDir: remoteCloneDir,
     });
+    if (orgId) await linkSourceToOrg(ctx.engine, orgId, row.id);
     return row;
   },
   cliHints: { name: 'sources_add', hidden: true },
@@ -3302,6 +3311,1115 @@ const sources_status: Operation = {
   cliHints: { name: 'sources_status', hidden: true },
 };
 
+function publicSaasBaseUrl(input?: unknown): string | null {
+  const explicit = typeof input === 'string' ? input.trim() : '';
+  const configured = explicit || process.env.CORTEX_PUBLIC_URL?.trim() || process.env.GBRAIN_PUBLIC_URL?.trim() || '';
+  return configured ? configured.replace(/\/+$/, '') : null;
+}
+
+function encodeSaasOnboardingPayload(payload: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+function stringArrayParam(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map(v => String(v).trim()).filter(Boolean)
+    : [];
+}
+
+function jsonObjectParam(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+async function resolveSaasOrgId(ctx: OperationContext, input: unknown, createDefault: boolean): Promise<string | null> {
+  const explicit = typeof input === 'string' && input.trim() ? input.trim() : '';
+  if (explicit) return explicit;
+  const { createOrganization, firstOrganizationId } = await import('./saas-control-plane.ts');
+  const first = await firstOrganizationId(ctx.engine);
+  if (first || !createDefault) return first;
+  return (await createOrganization(ctx.engine, { name: 'Default Organization', slug: 'default' })).id;
+}
+
+const saas_signup_create: Operation = {
+  name: 'saas_signup_create',
+  description:
+    'Create a SaaS signup request the same way the public signup form does: organization, first brain, owner member, invite, and onboarding URL. Requires users_admin.',
+  params: {
+    org_name: { type: 'string', required: true, description: 'Organization/company name.' },
+    email: { type: 'string', required: true, description: 'Owner work email.' },
+    domain: { type: 'string', description: 'Optional company domain.' },
+    brain_name: { type: 'string', description: 'Initial brain name. Defaults to Company Brain.' },
+    public_url: { type: 'string', description: 'Optional public base URL override. Defaults to CORTEX_PUBLIC_URL.' },
+    region: { type: 'string', description: 'Optional deployment/database region label.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const {
+      createInviteRecord,
+      createOrganization,
+      createTenantBrain,
+      assertSaasPlanAllows,
+      isValidEmail,
+      queueInviteEmailDelivery,
+      upsertMember,
+    } = await import('./saas-control-plane.ts');
+    const { GBrainOAuthProvider } = await import('./oauth-provider.ts');
+    const { sqlQueryForEngine } = await import('./sql-query.ts');
+
+    const orgName = typeof p.org_name === 'string' ? p.org_name.trim() : '';
+    const email = typeof p.email === 'string' ? p.email.trim().toLowerCase() : '';
+    const domain = typeof p.domain === 'string' && p.domain.trim() ? p.domain.trim() : null;
+    const brainName = typeof p.brain_name === 'string' && p.brain_name.trim() ? p.brain_name.trim() : 'Company Brain';
+    if (!orgName) throw new OperationError('invalid_params', 'org_name is required');
+    if (!isValidEmail(email)) throw new OperationError('invalid_params', 'valid email is required');
+
+    const org = await createOrganization(ctx.engine, { name: orgName, domain });
+    await assertSaasPlanAllows(ctx.engine, org.id, 'brains');
+    await assertSaasPlanAllows(ctx.engine, org.id, 'members');
+    await assertSaasPlanAllows(ctx.engine, org.id, 'pending_invites');
+    await assertSaasPlanAllows(ctx.engine, org.id, 'agent_clients');
+    const publicUrl = publicSaasBaseUrl(p.public_url);
+    const scopes = 'admin sources_admin users_admin read write';
+    const sourceId = ctx.sourceId || 'default';
+    const federatedRead = [sourceId];
+    const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(ctx.engine) });
+    const result = await provider.registerClientManual(
+      email,
+      ['client_credentials'],
+      scopes,
+      [],
+      sourceId,
+      federatedRead,
+      'client_secret_post',
+    );
+    await ctx.engine.executeRaw(
+      `UPDATE oauth_clients SET token_ttl = $1 WHERE client_id = $2`,
+      [604800, result.clientId],
+    );
+    const brain = await createTenantBrain(ctx.engine, {
+      orgId: org.id,
+      name: brainName,
+      publicUrl,
+      region: typeof p.region === 'string' && p.region.trim() ? p.region.trim() : (process.env.RAILWAY_REGION || null),
+      status: 'online',
+      metadata: { requested_by_email: email, signup_source: 'agent' },
+    });
+    const member = await upsertMember(ctx.engine, {
+      orgId: org.id,
+      email,
+      role: 'owner',
+      status: 'active',
+      sourceId,
+      federatedRead,
+      oauthClientId: result.clientId,
+    });
+    const payload = {
+      org: org.name,
+      org_id: org.id,
+      brain: brain.name,
+      brain_id: brain.id,
+      email,
+      role: 'owner',
+      status: 'ready',
+      scopes,
+      source_id: sourceId,
+      federated_read: federatedRead,
+      server_url: publicUrl ? `${publicUrl}/mcp` : null,
+      token_url: publicUrl ? `${publicUrl}/token` : null,
+      client_id: result.clientId,
+    };
+    const onboardingUrl = publicUrl
+      ? `${publicUrl}/admin/onboarding?invite=${encodeSaasOnboardingPayload(payload)}`
+      : null;
+    const { buildSaasRuntimeManifest } = await import('./saas-runtime-manifest.ts');
+    const runtimeManifest = buildSaasRuntimeManifest({
+      publicUrl,
+      onboardingUrl,
+      clientId: result.clientId,
+      orgId: org.id,
+      brainId: brain.id,
+      email,
+      role: 'owner',
+      sourceId,
+      federatedRead,
+      scopes,
+      clientSecretPlaceholder: result.clientSecret,
+    });
+    const invite = await createInviteRecord(ctx.engine, {
+      orgId: org.id,
+      email,
+      role: 'owner',
+      sourceId,
+      federatedRead,
+      oauthClientId: result.clientId,
+      onboardingUrl,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+    const inviteDelivery = await queueInviteEmailDelivery(ctx.engine, {
+      orgId: org.id,
+      inviteId: invite.id,
+      email,
+      kind: 'owner_onboarding',
+      onboardingUrl,
+      welcome: `Your Cortex workspace for ${org.name} is ready.`,
+    });
+
+    return {
+      org,
+      brain,
+      member,
+      invite,
+      invite_delivery: inviteDelivery,
+      onboarding_url: onboardingUrl,
+      client_id: result.clientId,
+      client_secret: result.clientSecret,
+      runtime_manifest: runtimeManifest,
+      provisioning_required: false,
+      onboarding_notice: onboardingUrl
+        ? 'Share the URL plus this one-time secret with the owner or their agent.'
+        : 'Set CORTEX_PUBLIC_URL or pass public_url to return an onboarding URL.',
+      secret_notice: 'Save this secret now. It is not stored in plaintext and cannot be shown again.',
+    };
+  },
+  cliHints: { name: 'saas_signup_create', hidden: true },
+};
+
+const saas_orgs_list: Operation = {
+  name: 'saas_orgs_list',
+  description: 'List organizations in the SaaS control plane. Requires users_admin.',
+  params: {},
+  scope: 'users_admin',
+  handler: async (ctx) => {
+    const { listOrganizations } = await import('./saas-control-plane.ts');
+    return listOrganizations(ctx.engine);
+  },
+  cliHints: { name: 'saas_orgs_list', hidden: true },
+};
+
+const saas_orgs_create: Operation = {
+  name: 'saas_orgs_create',
+  description: 'Create an organization in the SaaS control plane, optionally with an owner member. Requires users_admin.',
+  params: {
+    name: { type: 'string', required: true, description: 'Organization/company name.' },
+    domain: { type: 'string', description: 'Optional company domain.' },
+    slug: { type: 'string', description: 'Optional URL-safe slug. Defaults from name.' },
+    owner_email: { type: 'string', description: 'Optional owner email to create as an active owner member.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { createOrganization, isValidEmail, upsertMember } = await import('./saas-control-plane.ts');
+    const name = typeof p.name === 'string' ? p.name.trim() : '';
+    const domain = typeof p.domain === 'string' && p.domain.trim() ? p.domain.trim() : null;
+    const slug = typeof p.slug === 'string' && p.slug.trim() ? p.slug.trim() : null;
+    const ownerEmail = typeof p.owner_email === 'string' && p.owner_email.trim()
+      ? p.owner_email.trim().toLowerCase()
+      : '';
+    if (!name) throw new OperationError('invalid_params', 'name is required');
+    if (ownerEmail && !isValidEmail(ownerEmail)) throw new OperationError('invalid_params', 'valid owner_email is required');
+
+    const org = await createOrganization(ctx.engine, { name, domain, slug });
+    const owner = ownerEmail
+      ? await upsertMember(ctx.engine, {
+        orgId: org.id,
+        email: ownerEmail,
+        role: 'owner',
+        status: 'active',
+        sourceId: 'default',
+        federatedRead: ['default'],
+      })
+      : null;
+    return { org, owner };
+  },
+  cliHints: { name: 'saas_orgs_create', hidden: true },
+};
+
+const saas_brains_list: Operation = {
+  name: 'saas_brains_list',
+  description: 'List tenant brains, optionally scoped to one organization. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', description: 'Optional organization id.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { listTenantBrains } = await import('./saas-control-plane.ts');
+    const orgId = typeof p.org_id === 'string' && p.org_id.trim() ? p.org_id.trim() : undefined;
+    return listTenantBrains(ctx.engine, orgId);
+  },
+  cliHints: { name: 'saas_brains_list', hidden: true },
+};
+
+const saas_brains_create: Operation = {
+  name: 'saas_brains_create',
+  description: 'Create a tenant brain record under an organization. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', required: true, description: 'Organization id.' },
+    name: { type: 'string', required: true, description: 'Brain name.' },
+    public_url: { type: 'string', description: 'Optional public brain URL.' },
+    region: { type: 'string', description: 'Optional deployment/database region label.' },
+    status: { type: 'string', description: 'provisioning | online | ready | needs_attention. Defaults to provisioning.' },
+    metadata: { type: 'object', description: 'Optional JSON metadata.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { createTenantBrain, listOrganizations } = await import('./saas-control-plane.ts');
+    const orgId = typeof p.org_id === 'string' ? p.org_id.trim() : '';
+    const name = typeof p.name === 'string' ? p.name.trim() : '';
+    if (!orgId) throw new OperationError('invalid_params', 'org_id is required');
+    if (!name) throw new OperationError('invalid_params', 'name is required');
+    const orgs = await listOrganizations(ctx.engine);
+    if (!orgs.some(org => org.id === orgId)) {
+      throw new OperationError('invalid_params', `Unknown organization id: ${orgId}`);
+    }
+    const metadata = p.metadata && typeof p.metadata === 'object' && !Array.isArray(p.metadata)
+      ? p.metadata as Record<string, unknown>
+      : {};
+    const brain = await createTenantBrain(ctx.engine, {
+      orgId,
+      name,
+      publicUrl: typeof p.public_url === 'string' && p.public_url.trim() ? p.public_url.trim() : null,
+      region: typeof p.region === 'string' && p.region.trim() ? p.region.trim() : null,
+      status: typeof p.status === 'string' && p.status.trim() ? p.status.trim() : 'provisioning',
+      metadata,
+    });
+    return brain;
+  },
+  cliHints: { name: 'saas_brains_create', hidden: true },
+};
+
+const saas_sources_list: Operation = {
+  name: 'saas_sources_list',
+  description: 'List Cortex sources linked to a SaaS organization. Defaults to the first organization. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', description: 'Optional organization id. Defaults to the first organization.' },
+    include_archived: { type: 'boolean', description: 'Include archived sources when true.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { listOrganizations } = await import('./saas-control-plane.ts');
+    const { listSources } = await import('./sources-ops.ts');
+    const explicitOrgId = typeof p.org_id === 'string' && p.org_id.trim() ? p.org_id.trim() : '';
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, false);
+    if (explicitOrgId) {
+      const orgs = await listOrganizations(ctx.engine);
+      if (!orgs.some(org => org.id === explicitOrgId)) {
+        throw new OperationError('invalid_params', `Unknown organization id: ${explicitOrgId}`);
+      }
+    }
+    const sources = await listSources(ctx.engine, {
+      includeArchived: (p.include_archived as boolean) === true,
+    });
+    if (!orgId) return sources;
+    const linkedRows = await ctx.engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM saas_org_sources WHERE org_id = $1`,
+      [orgId],
+    );
+    const linked = new Set(linkedRows.map(row => String(row.source_id)));
+    return sources
+      .filter(source => linked.has(source.id))
+      .map(source => ({ ...source, org_id: orgId }));
+  },
+  cliHints: { name: 'saas_sources_list', hidden: true },
+};
+
+const saas_sources_create: Operation = {
+  name: 'saas_sources_create',
+  description: 'Create a Cortex source inside a SaaS organization with tenant plan enforcement. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', description: 'Optional organization id. Defaults to the first organization, creating a default org if needed.' },
+    id: { type: 'string', required: true, description: 'Source id ([a-z0-9-]{1,32}). Immutable citation key.' },
+    name: { type: 'string', description: 'Display name. Defaults to id.' },
+    remote_url: { type: 'string', description: 'Optional HTTPS git URL to clone into managed Cortex storage.' },
+    url: { type: 'string', description: 'Alias for remote_url.' },
+    federated: { type: 'boolean', description: 'true allows this source to participate in cross-source read sets.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { assertSaasPlanAllows, linkSourceToOrg, listOrganizations } = await import('./saas-control-plane.ts');
+    const { addSource, listSources } = await import('./sources-ops.ts');
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, true);
+    if (!orgId) throw new OperationError('invalid_params', 'org_id is required');
+    const orgs = await listOrganizations(ctx.engine);
+    if (!orgs.some(org => org.id === orgId)) {
+      throw new OperationError('invalid_params', `Unknown organization id: ${orgId}`);
+    }
+    const id = typeof p.id === 'string' ? p.id.trim() : '';
+    if (!id) throw new OperationError('invalid_params', 'id is required');
+    const name = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : id;
+    const remoteUrl = typeof p.remote_url === 'string' && p.remote_url.trim()
+      ? p.remote_url.trim()
+      : (typeof p.url === 'string' && p.url.trim() ? p.url.trim() : undefined);
+    await assertSaasPlanAllows(ctx.engine, orgId, 'sources');
+    const row = await addSource(ctx.engine, {
+      id,
+      name,
+      remoteUrl,
+      federated: p.federated === undefined ? null : p.federated === true,
+    });
+    await linkSourceToOrg(ctx.engine, orgId, row.id);
+    const sources = await listSources(ctx.engine, { includeArchived: false });
+    const source = sources.find(candidate => candidate.id === row.id);
+    return source ? { ...source, org_id: orgId } : { ...row, org_id: orgId };
+  },
+  cliHints: { name: 'saas_sources_create', hidden: true },
+};
+
+const saas_integrations_status: Operation = {
+  name: 'saas_integrations_status',
+  description: 'Return Composio connector readiness, webhook URL, required env, and source-link status for the tenant integration console. Requires users_admin.',
+  params: {
+    public_url: { type: 'string', description: 'Optional public base URL override. Defaults to CORTEX_PUBLIC_URL.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { getComposioIntegrationStatus } = await import('./saas-integrations.ts');
+    const publicUrl = publicSaasBaseUrl(p.public_url);
+    return getComposioIntegrationStatus(ctx.engine, publicUrl);
+  },
+  cliHints: { name: 'saas_integrations_status', hidden: true },
+};
+
+const saas_team_list: Operation = {
+  name: 'saas_team_list',
+  description: 'List members for an organization in the SaaS control plane. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', required: true, description: 'Organization id.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { listMembers } = await import('./saas-control-plane.ts');
+    const orgId = typeof p.org_id === 'string' ? p.org_id.trim() : '';
+    if (!orgId) throw new OperationError('invalid_params', 'org_id is required');
+    return listMembers(ctx.engine, orgId);
+  },
+  cliHints: { name: 'saas_team_list', hidden: true },
+};
+
+const saas_invites_list: Operation = {
+  name: 'saas_invites_list',
+  description: 'List invites for an organization in the SaaS control plane. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', required: true, description: 'Organization id.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { listInvites } = await import('./saas-control-plane.ts');
+    const orgId = typeof p.org_id === 'string' ? p.org_id.trim() : '';
+    if (!orgId) throw new OperationError('invalid_params', 'org_id is required');
+    return listInvites(ctx.engine, orgId);
+  },
+  cliHints: { name: 'saas_invites_list', hidden: true },
+};
+
+const saas_invite_deliveries_list: Operation = {
+  name: 'saas_invite_deliveries_list',
+  description: 'List queued/sent invite delivery records for an organization or invite. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', description: 'Optional organization id. Defaults to the first organization.' },
+    invite_id: { type: 'string', description: 'Optional invite id filter.' },
+    limit: { type: 'number', description: 'Max delivery records to return. Defaults to 50, max 200.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, false);
+    if (!orgId && !p.invite_id) throw new OperationError('invalid_params', 'org_id or invite_id is required');
+    const { listEmailDeliveries } = await import('./saas-control-plane.ts');
+    return listEmailDeliveries(ctx.engine, {
+      orgId,
+      inviteId: typeof p.invite_id === 'string' && p.invite_id.trim() ? p.invite_id.trim() : null,
+      limit: typeof p.limit === 'number' ? p.limit : null,
+    });
+  },
+  cliHints: { name: 'saas_invite_deliveries_list', hidden: true },
+};
+
+const saas_invite_delivery_queue: Operation = {
+  name: 'saas_invite_delivery_queue',
+  description: 'Queue or re-queue an onboarding email delivery for a Cortex invite. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', description: 'Optional organization id. Defaults to the first organization.' },
+    invite_id: { type: 'string', description: 'Optional invite id to attach delivery status to.' },
+    email: { type: 'string', required: true, description: 'Recipient email.' },
+    onboarding_url: { type: 'string', description: 'Onboarding URL to include in the email body.' },
+    welcome: { type: 'string', description: 'Optional welcome sentence.' },
+    kind: { type: 'string', description: 'owner_onboarding | teammate_invite. Defaults to teammate_invite.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, false);
+    if (!orgId) throw new OperationError('invalid_params', 'org_id is required when no organizations exist');
+    const email = typeof p.email === 'string' ? p.email.trim().toLowerCase() : '';
+    const { isValidEmail, queueInviteEmailDelivery } = await import('./saas-control-plane.ts');
+    if (!isValidEmail(email)) throw new OperationError('invalid_params', 'valid email is required');
+    return queueInviteEmailDelivery(ctx.engine, {
+      orgId,
+      inviteId: typeof p.invite_id === 'string' && p.invite_id.trim() ? p.invite_id.trim() : null,
+      email,
+      onboardingUrl: typeof p.onboarding_url === 'string' && p.onboarding_url.trim() ? p.onboarding_url.trim() : null,
+      welcome: typeof p.welcome === 'string' && p.welcome.trim() ? p.welcome.trim() : null,
+      kind: p.kind === 'owner_onboarding' ? 'owner_onboarding' : 'teammate_invite',
+    });
+  },
+  cliHints: { name: 'saas_invite_delivery_queue', hidden: true },
+};
+
+const saas_invite_deliveries_claim: Operation = {
+  name: 'saas_invite_deliveries_claim',
+  description: 'Claim queued invite delivery records for an email worker or agent-run delivery job. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', description: 'Optional organization id. Defaults to the first organization.' },
+    invite_id: { type: 'string', description: 'Optional invite id filter.' },
+    provider: { type: 'string', description: 'Optional provider filter, for example outbox or resend.' },
+    statuses: { type: 'array', items: { type: 'string' }, description: 'Optional statuses to claim. Defaults to queued and pending_provider.' },
+    limit: { type: 'number', description: 'Max delivery records to claim. Defaults to 25, max 100.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, false);
+    if (!orgId && !p.invite_id) throw new OperationError('invalid_params', 'org_id or invite_id is required');
+    const { claimEmailDeliveries } = await import('./saas-control-plane.ts');
+    return claimEmailDeliveries(ctx.engine, {
+      orgId,
+      inviteId: typeof p.invite_id === 'string' && p.invite_id.trim() ? p.invite_id.trim() : null,
+      provider: typeof p.provider === 'string' && p.provider.trim() ? p.provider.trim() : null,
+      statuses: Array.isArray(p.statuses) ? p.statuses : null,
+      limit: typeof p.limit === 'number' ? p.limit : null,
+    });
+  },
+  cliHints: { name: 'saas_invite_deliveries_claim', hidden: true },
+};
+
+const saas_invite_delivery_mark: Operation = {
+  name: 'saas_invite_delivery_mark',
+  description: 'Mark a claimed invite delivery as sent, failed, queued, or pending provider. Requires users_admin.',
+  params: {
+    delivery_id: { type: 'string', required: true, description: 'Invite delivery id.' },
+    status: { type: 'string', required: true, description: 'sent | failed | queued | pending_provider | sending.' },
+    provider: { type: 'string', description: 'Provider name to persist.' },
+    provider_message_id: { type: 'string', description: 'Provider message id after successful delivery.' },
+    error: { type: 'string', description: 'Failure detail when status is failed.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const deliveryId = typeof p.delivery_id === 'string' ? p.delivery_id.trim() : '';
+    const status = typeof p.status === 'string' ? p.status.trim() : '';
+    if (!deliveryId) throw new OperationError('invalid_params', 'delivery_id is required');
+    if (!status) throw new OperationError('invalid_params', 'status is required');
+    const { markEmailDeliveryResult } = await import('./saas-control-plane.ts');
+    return markEmailDeliveryResult(ctx.engine, {
+      id: deliveryId,
+      status,
+      provider: typeof p.provider === 'string' && p.provider.trim() ? p.provider.trim() : null,
+      providerMessageId: typeof p.provider_message_id === 'string' && p.provider_message_id.trim() ? p.provider_message_id.trim() : null,
+      lastError: typeof p.error === 'string' && p.error.trim() ? p.error.trim() : null,
+    });
+  },
+  cliHints: { name: 'saas_invite_delivery_mark', hidden: true },
+};
+
+const saas_invite_deliveries_drain: Operation = {
+  name: 'saas_invite_deliveries_drain',
+  description: 'Drain queued invite delivery records through the configured transactional email provider. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', description: 'Optional organization id. Defaults to the first organization.' },
+    invite_id: { type: 'string', description: 'Optional invite id filter.' },
+    provider: { type: 'string', description: 'Sending provider. Defaults to CORTEX_EMAIL_PROVIDER or resend.' },
+    record_provider: { type: 'string', description: 'Optional stored delivery provider filter, for example outbox or resend.' },
+    statuses: { type: 'array', items: { type: 'string' }, description: 'Optional statuses to claim. Defaults to queued and pending_provider.' },
+    limit: { type: 'number', description: 'Max delivery records to drain. Defaults to 25, max 100.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, false);
+    if (!orgId && !p.invite_id) throw new OperationError('invalid_params', 'org_id or invite_id is required');
+    const { drainInviteEmailDeliveries } = await import('./saas-email-delivery.ts');
+    return drainInviteEmailDeliveries(ctx.engine, {
+      orgId,
+      inviteId: typeof p.invite_id === 'string' && p.invite_id.trim() ? p.invite_id.trim() : null,
+      provider: typeof p.provider === 'string' && p.provider.trim() ? p.provider.trim() : null,
+      recordProvider: typeof p.record_provider === 'string' && p.record_provider.trim() ? p.record_provider.trim() : null,
+      statuses: Array.isArray(p.statuses) ? p.statuses : null,
+      limit: typeof p.limit === 'number' ? p.limit : null,
+    });
+  },
+  cliHints: { name: 'saas_invite_deliveries_drain', hidden: true },
+};
+
+const saas_skills_list: Operation = {
+  name: 'saas_skills_list',
+  description: 'List bundled skills plus SaaS skill policies for allowed clients, source access, and enforcement status. Requires users_admin.',
+  params: {},
+  scope: 'users_admin',
+  handler: async (ctx) => {
+    const { listSaasSkills } = await import('./saas-skills.ts');
+    return { skills: await listSaasSkills(ctx.engine) };
+  },
+  cliHints: { name: 'saas_skills_list', hidden: true },
+};
+
+const saas_skills_upsert: Operation = {
+  name: 'saas_skills_upsert',
+  description:
+    'Create or update a SaaS skill policy: triggers, allowed OAuth clients, source access, status, and enforcement status. Requires users_admin.',
+  params: {
+    id: { type: 'string', required: true, description: 'Skill id/slug.' },
+    name: { type: 'string', required: true, description: 'Display name.' },
+    owner: { type: 'string', description: 'Owning team or workspace.' },
+    status: { type: 'string', description: 'installed | draft | needs-enforcement.' },
+    triggers: { type: 'array', items: { type: 'string' }, description: 'Trigger phrases.' },
+    allowed_clients: { type: 'array', items: { type: 'string' }, description: 'OAuth client ids allowed to run the skill.' },
+    source_access: { type: 'array', items: { type: 'string' }, description: 'Source ids the skill may read/write. Defaults to default.' },
+    description: { type: 'string', description: 'Operator-facing description.' },
+    enforcement_status: { type: 'string', description: 'enforced | not_enforced | needs_enforcement.' },
+    metadata: { type: 'object', description: 'Optional JSON metadata.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { isValidSourceId } = await import('./source-id.ts');
+    const id = typeof p.id === 'string' ? p.id.trim() : '';
+    const name = typeof p.name === 'string' ? p.name.trim() : '';
+    if (!id) throw new OperationError('invalid_params', 'id is required');
+    if (!name) throw new OperationError('invalid_params', 'name is required');
+    const sourceAccess = stringArrayParam(p.source_access);
+    const effectiveSources = sourceAccess.length > 0 ? sourceAccess : ['default'];
+    for (const sourceId of effectiveSources) {
+      if (!isValidSourceId(sourceId)) throw new OperationError('invalid_params', `Invalid source id: ${sourceId}`);
+      const rows = await ctx.engine.executeRaw<{ id: string }>(
+        `SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE`,
+        [sourceId],
+      );
+      if (rows.length === 0) throw new OperationError('invalid_params', `Unknown source id: ${sourceId}`);
+    }
+    const { upsertSaasSkill } = await import('./saas-skills.ts');
+    return upsertSaasSkill(ctx.engine, {
+      id,
+      name,
+      owner: typeof p.owner === 'string' ? p.owner : undefined,
+      status: p.status,
+      triggers: p.triggers,
+      allowedClients: p.allowed_clients,
+      sourceAccess: effectiveSources,
+      description: typeof p.description === 'string' ? p.description : undefined,
+      enforcementStatus: p.enforcement_status,
+      metadata: p.metadata && typeof p.metadata === 'object' && !Array.isArray(p.metadata)
+        ? p.metadata as Record<string, unknown>
+        : {},
+    });
+  },
+  cliHints: { name: 'saas_skills_upsert', hidden: true },
+};
+
+const saas_runtime_manifest: Operation = {
+  name: 'saas_runtime_manifest',
+  description:
+    'Return the tenant runtime packaging manifest for CLI, Claude Code, Cursor, ChatGPT, Claude Desktop, and Perplexity. Requires users_admin.',
+  params: {
+    public_url: { type: 'string', description: 'Optional public base URL override. Defaults to CORTEX_PUBLIC_URL.' },
+    onboarding_url: { type: 'string', description: 'Optional invite/onboarding URL to embed in runtime commands.' },
+    client_id: { type: 'string', description: 'Optional OAuth client id from an invite/signup flow.' },
+    org_id: { type: 'string', description: 'Optional organization id.' },
+    brain_id: { type: 'string', description: 'Optional brain id.' },
+    email: { type: 'string', description: 'Optional teammate email.' },
+    role: { type: 'string', description: 'Optional teammate role.' },
+    source_id: { type: 'string', description: 'Write source. Defaults to ctx.sourceId or default.' },
+    federated_read: { type: 'array', items: { type: 'string' }, description: 'Readable source ids. Defaults to [source_id].' },
+    scopes: { type: 'string', description: 'OAuth scopes. Defaults to read write.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { buildSaasRuntimeManifest } = await import('./saas-runtime-manifest.ts');
+    const publicUrl = publicSaasBaseUrl(p.public_url);
+    const sourceId = typeof p.source_id === 'string' && p.source_id.trim()
+      ? p.source_id.trim()
+      : (ctx.sourceId || 'default');
+    const federatedRead = stringArrayParam(p.federated_read);
+    return buildSaasRuntimeManifest({
+      publicUrl,
+      onboardingUrl: typeof p.onboarding_url === 'string' && p.onboarding_url.trim() ? p.onboarding_url.trim() : null,
+      clientId: typeof p.client_id === 'string' && p.client_id.trim() ? p.client_id.trim() : null,
+      orgId: typeof p.org_id === 'string' && p.org_id.trim() ? p.org_id.trim() : null,
+      brainId: typeof p.brain_id === 'string' && p.brain_id.trim() ? p.brain_id.trim() : null,
+      email: typeof p.email === 'string' && p.email.trim() ? p.email.trim().toLowerCase() : null,
+      role: typeof p.role === 'string' && p.role.trim() ? p.role.trim() : null,
+      sourceId,
+      federatedRead: federatedRead.length > 0 ? federatedRead : [sourceId],
+      scopes: typeof p.scopes === 'string' && p.scopes.trim() ? p.scopes.trim() : 'read write',
+    });
+  },
+  cliHints: { name: 'saas_runtime_manifest', hidden: true },
+};
+
+const saas_runtime_package_index: Operation = {
+  name: 'saas_runtime_package_index',
+  description:
+    'Return the hosted Cortex runtime package index for CLI/plugin/runtime distribution. Requires users_admin.',
+  params: {
+    public_url: { type: 'string', description: 'Optional public base URL override. Defaults to CORTEX_PUBLIC_URL.' },
+  },
+  scope: 'users_admin',
+  handler: async (_ctx, p) => {
+    const { buildSaasRuntimePackageIndex } = await import('./saas-runtime-manifest.ts');
+    return buildSaasRuntimePackageIndex({ publicUrl: publicSaasBaseUrl(p.public_url) });
+  },
+  cliHints: { name: 'saas_runtime_package_index', hidden: true },
+};
+
+const saas_plan_get: Operation = {
+  name: 'saas_plan_get',
+  description:
+    'Return the active Cortex tenant plan, current usage, remaining capacity, and any hard-limit violations. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', description: 'Optional organization id. Defaults to the first organization.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, false);
+    if (!orgId) throw new OperationError('invalid_params', 'org_id is required when no organizations exist');
+    const { getSaasPlan } = await import('./saas-control-plane.ts');
+    return getSaasPlan(ctx.engine, orgId);
+  },
+  cliHints: { name: 'saas_plan_get', hidden: true },
+};
+
+const saas_plan_update: Operation = {
+  name: 'saas_plan_update',
+  description:
+    'Update a Cortex tenant plan key, status, billing customer id, or per-metric limits. Requires users_admin.',
+  params: {
+    org_id: { type: 'string', required: true, description: 'Organization id.' },
+    plan_key: { type: 'string', description: 'launch | team | business | enterprise.' },
+    status: { type: 'string', description: 'Plan status. Defaults to the current status.' },
+    billing_customer_id: { type: 'string', description: 'External billing customer id, when present.' },
+    billing_provider: { type: 'string', description: 'External billing provider id such as stripe, paddle, or chargebee.' },
+    billing_subscription_id: { type: 'string', description: 'External billing subscription id, when present.' },
+    billing_plan_ref: { type: 'string', description: 'External price, product, or plan reference.' },
+    billing_current_period_end: { type: 'string', description: 'ISO timestamp for the current billing period end.' },
+    limits: {
+      type: 'object',
+      description: 'Optional limit overrides keyed by brains, sources, members, pending_invites, agent_clients, skill_policies, requests_today, or waiting_jobs. Use null for unlimited.',
+    },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, false);
+    if (!orgId) throw new OperationError('invalid_params', 'org_id is required');
+    const rawLimits = jsonObjectParam(p.limits);
+    const limits = rawLimits
+      ? Object.fromEntries(
+        Object.entries(rawLimits).filter(([, value]) => value === null || typeof value === 'number'),
+      )
+      : undefined;
+    const { updateSaasPlan } = await import('./saas-control-plane.ts');
+    return updateSaasPlan(ctx.engine, orgId, {
+      planKey: p.plan_key,
+      status: typeof p.status === 'string' ? p.status : undefined,
+      billingCustomerId: typeof p.billing_customer_id === 'string' ? p.billing_customer_id : undefined,
+      billingProvider: typeof p.billing_provider === 'string' ? p.billing_provider : undefined,
+      billingSubscriptionId: typeof p.billing_subscription_id === 'string' ? p.billing_subscription_id : undefined,
+      billingPlanRef: typeof p.billing_plan_ref === 'string' ? p.billing_plan_ref : undefined,
+      billingCurrentPeriodEnd: typeof p.billing_current_period_end === 'string' ? p.billing_current_period_end : undefined,
+      limits: limits as any,
+    });
+  },
+  cliHints: { name: 'saas_plan_update', hidden: true },
+};
+
+const saas_console_snapshot: Operation = {
+  name: 'saas_console_snapshot',
+  description:
+    'Return the SaaS operator console snapshot for agents: stats, token health, org/brain/source counts, agents, recent requests, and job state. Requires users_admin.',
+  params: {
+    agent: { type: 'string', description: 'Optional token/client filter for recent requests. Use all or omit for all agents.' },
+    operation: { type: 'string', description: 'Optional operation filter for recent requests.' },
+    status: { type: 'string', description: 'Optional status filter for recent requests.' },
+    limit: { type: 'number', description: 'Max agents/requests/jobs to return. Defaults to 20, max 100.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { querySaasConsoleSnapshot } = await import('./saas-console-snapshot.ts');
+    const snapshot = await querySaasConsoleSnapshot(ctx.engine, {
+      agent: typeof p.agent === 'string' && p.agent.trim() ? p.agent.trim() : null,
+      operation: typeof p.operation === 'string' && p.operation.trim() ? p.operation.trim() : null,
+      status: typeof p.status === 'string' && p.status.trim() ? p.status.trim() : null,
+      limit: typeof p.limit === 'number' ? p.limit : null,
+    });
+    const orgId = await resolveSaasOrgId(ctx, null, false);
+    if (!orgId) return { ...snapshot, plan: null };
+    const { getSaasPlan } = await import('./saas-control-plane.ts');
+    return { ...snapshot, plan: await getSaasPlan(ctx.engine, orgId) };
+  },
+  cliHints: { name: 'saas_console_snapshot', hidden: true },
+};
+
+const saas_quality_snapshot: Operation = {
+  name: 'saas_quality_snapshot',
+  description:
+    'Return the Cortex investor/demo readiness snapshot: onboarding, agent OAuth, sources, Composio, skills, queue health, and agent parity. Requires users_admin.',
+  params: {
+    public_url: { type: 'string', description: 'Optional public base URL override. Defaults to CORTEX_PUBLIC_URL.' },
+  },
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const { buildSaasQualitySnapshot } = await import('./saas-quality.ts');
+    return buildSaasQualitySnapshot(ctx.engine, {
+      publicUrl: typeof p.public_url === 'string' && p.public_url.trim() ? p.public_url.trim() : null,
+    });
+  },
+  cliHints: { name: 'saas_quality_snapshot', hidden: true },
+};
+
+const users_register_agent_client: Operation = {
+  name: 'users_register_agent_client',
+  description:
+    'Create a scoped OAuth client for a teammate or agent and return a one-time client secret. ' +
+    'This is the agent-facing equivalent of the SaaS console invite flow. Requires users_admin.',
+  params: {
+    name: { type: 'string', required: true, description: 'Client/display name, usually teammate email or agent name.' },
+    org_id: { type: 'string', description: 'Organization id. Defaults to the first org, creating a default org if none exists.' },
+    scopes: { type: 'string', description: 'OAuth scopes. Defaults to read. Example: "read write".' },
+    source_id: { type: 'string', description: 'Write source. Defaults to ctx.sourceId or default.' },
+    federated_read: { type: 'array', items: { type: 'string' }, description: 'Readable source ids. Defaults to [source_id].' },
+    token_ttl: { type: 'number', description: 'Access token TTL in seconds. Omit for server default.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const name = typeof p.name === 'string' ? p.name.trim() : '';
+    if (!name) throw new OperationError('invalid_params', 'name is required');
+
+    const { normalizeScopesInput } = await import('./scope.ts');
+    const { isValidSourceId } = await import('./source-id.ts');
+    const { GBrainOAuthProvider } = await import('./oauth-provider.ts');
+    const { sqlQueryForEngine } = await import('./sql-query.ts');
+    const { assertSaasPlanAllows, linkAgentClientToOrg } = await import('./saas-control-plane.ts');
+    const orgId = await resolveSaasOrgId(ctx, p.org_id, true);
+    if (!orgId) throw new OperationError('invalid_params', 'org_id is required');
+
+    const sourceId = typeof p.source_id === 'string' && p.source_id.trim()
+      ? p.source_id.trim()
+      : (ctx.sourceId || 'default');
+    if (!isValidSourceId(sourceId)) {
+      throw new OperationError('invalid_params', `Invalid source_id: ${sourceId}`);
+    }
+
+    const requestedReads = Array.isArray(p.federated_read)
+      ? (p.federated_read as unknown[]).map(v => String(v).trim()).filter(Boolean)
+      : [];
+    const federatedRead = Array.from(new Set([sourceId, ...requestedReads]));
+    for (const id of federatedRead) {
+      if (!isValidSourceId(id)) throw new OperationError('invalid_params', `Invalid federated_read source id: ${id}`);
+      const rows = await ctx.engine.executeRaw<{ id: string }>(
+        `SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE`,
+        [id],
+      );
+      if (rows.length === 0) throw new OperationError('invalid_params', `Unknown source id: ${id}`);
+    }
+
+    const scopes = normalizeScopesInput(typeof p.scopes === 'string' ? p.scopes : undefined);
+    await assertSaasPlanAllows(ctx.engine, orgId, 'agent_clients');
+    const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(ctx.engine) });
+    const result = await provider.registerClientManual(
+      name,
+      ['client_credentials'],
+      scopes,
+      [],
+      sourceId,
+      federatedRead,
+      'client_secret_post',
+    );
+
+    if (typeof p.token_ttl === 'number' && Number.isFinite(p.token_ttl) && p.token_ttl > 0) {
+      await ctx.engine.executeRaw(
+        `UPDATE oauth_clients SET token_ttl = $1 WHERE client_id = $2`,
+        [Math.floor(p.token_ttl), result.clientId],
+      );
+    }
+    await linkAgentClientToOrg(ctx.engine, {
+      orgId,
+      clientId: result.clientId,
+      displayName: name,
+      sourceId,
+      federatedRead,
+    });
+
+    const publicUrl = publicSaasBaseUrl();
+    return {
+      org_id: orgId,
+      client_id: result.clientId,
+      client_secret: result.clientSecret,
+      scopes,
+      source_id: sourceId,
+      federated_read: federatedRead,
+      onboarding_url: publicUrl
+        ? `${publicUrl.replace(/\/+$/, '')}/admin/onboarding`
+        : null,
+      secret_notice: 'Save this secret now. It is not stored in plaintext and cannot be shown again.',
+    };
+  },
+  cliHints: { name: 'users_register_agent_client', hidden: true },
+};
+
+const users_update_agent_client_ttl: Operation = {
+  name: 'users_update_agent_client_ttl',
+  description:
+    'Update or clear the access-token TTL for a scoped OAuth client. ' +
+    'This is the agent-facing equivalent of the SaaS console token lifetime control. Requires users_admin.',
+  params: {
+    client_id: { type: 'string', required: true, description: 'OAuth client id to update.' },
+    token_ttl: { type: 'number', description: 'Access token TTL in seconds. Use 0 or omit to clear the override.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const clientId = typeof p.client_id === 'string' ? p.client_id.trim() : '';
+    if (!clientId) throw new OperationError('invalid_params', 'client_id is required');
+
+    let ttl: number | null = null;
+    if (p.token_ttl !== undefined && p.token_ttl !== null && p.token_ttl !== 0) {
+      const requestedTtl = Number(p.token_ttl);
+      if (!Number.isFinite(requestedTtl) || requestedTtl <= 0) {
+        throw new OperationError('invalid_params', 'token_ttl must be a positive number, 0, or null');
+      }
+      ttl = Math.floor(requestedTtl);
+    }
+
+    const rows = await ctx.engine.executeRaw<{ client_id: string; token_ttl: number | null; deleted_at: string | null }>(
+      `UPDATE oauth_clients
+       SET token_ttl = $1
+       WHERE client_id = $2
+       RETURNING client_id, token_ttl, deleted_at`,
+      [ttl, clientId],
+    );
+    if (rows.length === 0) {
+      throw new OperationError('invalid_params', `Unknown OAuth client: ${clientId}`);
+    }
+
+    const updatedTtl = rows[0].token_ttl === null ? null : Number(rows[0].token_ttl);
+    return {
+      client_id: rows[0].client_id,
+      updated: true,
+      token_ttl: updatedTtl,
+      status: rows[0].deleted_at ? 'revoked' : 'active',
+    };
+  },
+  cliHints: { name: 'users_update_agent_client_ttl', hidden: true },
+};
+
+const users_revoke_agent_client: Operation = {
+  name: 'users_revoke_agent_client',
+  description:
+    'Revoke a scoped OAuth client and delete its active OAuth tokens. ' +
+    'This is the agent-facing equivalent of the SaaS console revoke action. Requires users_admin.',
+  params: {
+    client_id: { type: 'string', required: true, description: 'OAuth client id to revoke.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const clientId = typeof p.client_id === 'string' ? p.client_id.trim() : '';
+    if (!clientId) throw new OperationError('invalid_params', 'client_id is required');
+
+    const clients = await ctx.engine.executeRaw<{ client_id: string; deleted_at: string | null }>(
+      `SELECT client_id, deleted_at FROM oauth_clients WHERE client_id = $1`,
+      [clientId],
+    );
+    if (clients.length === 0) {
+      throw new OperationError('invalid_params', `Unknown OAuth client: ${clientId}`);
+    }
+
+    const tokenRows = await ctx.engine.executeRaw<{ count: number }>(
+      `SELECT count(*)::int as count FROM oauth_tokens WHERE client_id = $1`,
+      [clientId],
+    );
+    const tokensDeleted = Number(tokenRows[0]?.count || 0);
+
+    await ctx.engine.executeRaw(
+      `UPDATE oauth_clients
+       SET deleted_at = now()
+       WHERE client_id = $1 AND deleted_at IS NULL`,
+      [clientId],
+    );
+    await ctx.engine.executeRaw(
+      `DELETE FROM oauth_tokens WHERE client_id = $1`,
+      [clientId],
+    );
+
+    return {
+      client_id: clientId,
+      revoked: true,
+      already_revoked: Boolean(clients[0].deleted_at),
+      tokens_deleted: tokensDeleted,
+    };
+  },
+  cliHints: { name: 'users_revoke_agent_client', hidden: true },
+};
+
+const users_create_invite: Operation = {
+  name: 'users_create_invite',
+  description:
+    'Create a teammate invite, provision a scoped OAuth client, persist the member/invite rows, ' +
+    'and return an onboarding URL plus one-time client secret. Requires users_admin.',
+  params: {
+    email: { type: 'string', required: true, description: 'Teammate email address.' },
+    role: { type: 'string', description: 'owner | admin | member | viewer. Defaults to member.' },
+    org_id: { type: 'string', description: 'Organization id. Defaults to the first org, creating a default org if none exists.' },
+    source_id: { type: 'string', description: 'Write source. Defaults to ctx.sourceId or default.' },
+    federated_read: { type: 'array', items: { type: 'string' }, description: 'Readable source ids. Defaults to [source_id].' },
+    token_ttl: { type: 'number', description: 'Access token TTL in seconds. Defaults to 7 days.' },
+    public_url: { type: 'string', description: 'Optional public base URL override. Defaults to CORTEX_PUBLIC_URL.' },
+  },
+  mutating: true,
+  scope: 'users_admin',
+  handler: async (ctx, p) => {
+    const {
+      assertSaasPlanAllows,
+      createInviteRecord,
+      createOrganization,
+      isValidEmail,
+      listOrganizations,
+      normalizeRole,
+      queueInviteEmailDelivery,
+      upsertMember,
+    } = await import('./saas-control-plane.ts');
+    const { isValidSourceId } = await import('./source-id.ts');
+    const { GBrainOAuthProvider } = await import('./oauth-provider.ts');
+    const { sqlQueryForEngine } = await import('./sql-query.ts');
+
+    const email = typeof p.email === 'string' ? p.email.trim().toLowerCase() : '';
+    if (!isValidEmail(email)) throw new OperationError('invalid_params', 'valid email is required');
+
+    const role = normalizeRole(p.role);
+    const roleScopes: Record<typeof role, string> = {
+      owner: 'admin sources_admin users_admin read write',
+      admin: 'admin sources_admin users_admin read write',
+      member: 'read write',
+      viewer: 'read',
+    };
+    let orgId = typeof p.org_id === 'string' && p.org_id ? p.org_id : '';
+    if (!orgId) {
+      const orgs = await listOrganizations(ctx.engine);
+      orgId = orgs[0]?.id || (await createOrganization(ctx.engine, { name: 'Default Organization', slug: 'default' })).id;
+    }
+
+    const sourceId = typeof p.source_id === 'string' && p.source_id.trim()
+      ? p.source_id.trim()
+      : (ctx.sourceId || 'default');
+    if (!isValidSourceId(sourceId)) throw new OperationError('invalid_params', `Invalid source_id: ${sourceId}`);
+    const requestedReads = Array.isArray(p.federated_read)
+      ? (p.federated_read as unknown[]).map(v => String(v).trim()).filter(Boolean)
+      : [];
+    const federatedRead = Array.from(new Set([sourceId, ...requestedReads]));
+    for (const id of federatedRead) {
+      if (!isValidSourceId(id)) throw new OperationError('invalid_params', `Invalid federated_read source id: ${id}`);
+      const rows = await ctx.engine.executeRaw<{ id: string }>(
+        `SELECT id FROM sources WHERE id = $1 AND archived IS NOT TRUE`,
+        [id],
+      );
+      if (rows.length === 0) throw new OperationError('invalid_params', `Unknown source id: ${id}`);
+    }
+
+    const scopes = roleScopes[role];
+    await assertSaasPlanAllows(ctx.engine, orgId, 'agent_clients');
+    await assertSaasPlanAllows(ctx.engine, orgId, 'members');
+    await assertSaasPlanAllows(ctx.engine, orgId, 'pending_invites');
+    const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(ctx.engine) });
+    const result = await provider.registerClientManual(
+      email,
+      ['client_credentials'],
+      scopes,
+      [],
+      sourceId,
+      federatedRead,
+      'client_secret_post',
+    );
+    const ttl = typeof p.token_ttl === 'number' && Number.isFinite(p.token_ttl) && p.token_ttl > 0
+      ? Math.floor(p.token_ttl)
+      : 604800;
+    await ctx.engine.executeRaw(
+      `UPDATE oauth_clients SET token_ttl = $1 WHERE client_id = $2`,
+      [ttl, result.clientId],
+    );
+
+    const publicUrl = publicSaasBaseUrl(p.public_url);
+    const payload = {
+      org_id: orgId,
+      email,
+      role,
+      scopes,
+      source_id: sourceId,
+      federated_read: federatedRead,
+      server_url: publicUrl ? `${publicUrl}/mcp` : null,
+      token_url: publicUrl ? `${publicUrl}/token` : null,
+      client_id: result.clientId,
+    };
+    const onboardingUrl = publicUrl
+      ? `${publicUrl}/admin/onboarding?invite=${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`
+      : null;
+    const { buildSaasRuntimeManifest } = await import('./saas-runtime-manifest.ts');
+    const runtimeManifest = buildSaasRuntimeManifest({
+      publicUrl,
+      onboardingUrl,
+      clientId: result.clientId,
+      orgId,
+      email,
+      role,
+      sourceId,
+      federatedRead,
+      scopes,
+      clientSecretPlaceholder: result.clientSecret,
+    });
+    const invite = await createInviteRecord(ctx.engine, {
+      orgId,
+      email,
+      role,
+      sourceId,
+      federatedRead,
+      oauthClientId: result.clientId,
+      onboardingUrl,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+    const inviteDelivery = await queueInviteEmailDelivery(ctx.engine, {
+      orgId,
+      inviteId: invite.id,
+      email,
+      kind: 'teammate_invite',
+      onboardingUrl,
+    });
+    const member = await upsertMember(ctx.engine, {
+      orgId,
+      email,
+      role,
+      status: 'invited',
+      sourceId,
+      federatedRead,
+      oauthClientId: result.clientId,
+    });
+
+    return {
+      invite,
+      invite_delivery: inviteDelivery,
+      member,
+      onboarding_url: onboardingUrl,
+      client_id: result.clientId,
+      client_secret: result.clientSecret,
+      runtime_manifest: runtimeManifest,
+      secret_notice: 'Save this secret now. It is not stored in plaintext and cannot be shown again.',
+    };
+  },
+  cliHints: { name: 'users_create_invite', hidden: true },
+};
+
 // ============================================================
 // v0.31 — Hot memory ops: extract_facts / recall / forget_fact
 // ============================================================
@@ -3309,7 +4427,7 @@ const sources_status: Operation = {
 const extract_facts: Operation = {
   name: 'extract_facts',
   description:
-    'v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls Haiku to extract structured claims, runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. Skips extraction when the turn is dream-generated content (anti-loop).',
+    'v0.31: extract tenant knowledge facts (events, preferences, commitments, beliefs) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls Haiku to extract structured claims, runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. Skips extraction when the turn is dream-generated content (anti-loop).',
   params: {
     turn_text: { type: 'string', required: true, description: 'The user message or page body to extract facts from. Sanitized via INJECTION_PATTERNS before the LLM call.' },
     session_id: { type: 'string', description: 'Opaque session id (e.g. topic-id from MCP _meta.session_id, or CLI --session). Stored on each fact for the recall --session filter. Not an auth surface.' },
@@ -3477,7 +4595,7 @@ const recall: Operation = {
 
 const forget_fact: Operation = {
   name: 'forget_fact',
-  description: 'v0.32.2: forget a fact. Rewrites the page\'s `## Facts` fence to strike through the row and set valid_until=today (the DB\'s expired_at derives via valid_until + now() on the next reconcile so the forget survives `gbrain rebuild`). Falls back to legacy DB-only expire for pre-v51 / thin-client rows. Idempotent on already-expired or unknown ids.',
+  description: 'v0.32.2: forget a fact. Rewrites the page\'s `## Facts` fence to strike through the row and set valid_until=today (the DB\'s expired_at derives via valid_until + now() on the next reconcile so the forget survives `cortex rebuild`). Falls back to legacy DB-only expire for pre-v51 / thin-client rows. Idempotent on already-expired or unknown ids.',
   params: {
     id: { type: 'number', required: true, description: 'Fact id to forget.' },
     reason: { type: 'string', required: false, description: 'Optional reason; written to the fence row\'s context cell as "forgotten: <reason>". Default: "forgotten".' },
@@ -3749,7 +4867,7 @@ const search_by_image: Operation = {
     'v0.36 cross-modal Phase 2: image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL ' +
     '(SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text ' +
     'refinement merges via weighted RRF (D13 hybrid intersect). True image→full-text-knowledge requires Phase 3 ' +
-    '(`gbrain reindex --multimodal` + `search.unified_multimodal: true`).',
+    '(`cortex reindex --multimodal` + `search.unified_multimodal: true`).',
   params: {
     image_path: { type: 'string', description: 'Absolute path to image (local CLI callers only — rejected for remote MCP per D18).' },
     image_url: { type: 'string', description: 'http(s):// URL to image. SSRF-defended; max 3 redirect hops; 10MB cap.' },
@@ -3891,7 +5009,7 @@ async function getRemoteMaxBytes(engine: BrainEngine): Promise<number> {
 //
 // Read ops (scope: read; NOT localOnly) — any read-scope OAuth client.
 // Write ops (scope: admin; NOT localOnly per D2) — admin-scope client
-// (your OpenClaw and similar remote agents) can author schema packs
+// (Cortex-connected remote agents) can author schema packs
 // remotely. Audit log captures actor=mcp:<clientId8> on every mutation
 // (see src/core/schema-pack/mutate-audit.ts privacy posture per D20).
 //
@@ -4090,7 +5208,7 @@ const schema_review_orphans: Operation = {
 
 const schema_apply_mutations: Operation = {
   name: 'schema_apply_mutations',
-  description: 'v0.40.7.0: batched schema pack mutation. ATOMIC: all mutations succeed or all roll back. Audit log records one batch_id. Admin scope; NOT localOnly so remote agents (your OpenClaw, etc.) can author packs over normal MCP. Mutation shape per ApplyMutationsRequest type — supports add_type / remove_type / update_type / add_alias / remove_alias / add_prefix / remove_prefix / add_link_type / remove_link_type / set_extractable / set_expert_routing.',
+  description: 'v0.40.7.0: batched schema pack mutation. ATOMIC: all mutations succeed or all roll back. Audit log records one batch_id. Admin scope; NOT localOnly so Cortex-connected remote agents can author packs over normal MCP. Mutation shape per ApplyMutationsRequest type - supports add_type / remove_type / update_type / add_alias / remove_alias / add_prefix / remove_prefix / add_link_type / remove_link_type / set_extractable / set_expert_routing.',
   params: {
     pack: { type: 'string', required: true, description: 'Pack to mutate (must not be bundled)' },
     mutations: {
@@ -4240,7 +5358,7 @@ const reload_schema_pack: Operation = {
 };
 
 // v0.41.18.0 (A7 + T16, codex finding #5): MCP op for federated / thin-client
-// brain installs to drive `gbrain onboard --auto` over MCP. Admin scope
+// brain installs to drive `cortex onboard --auto` over MCP. Admin scope
 // (NOT localOnly) so remote agents authenticated via OAuth can probe
 // brain health + submit auto-eligible remediation handlers.
 //
@@ -4364,7 +5482,7 @@ export const operations: Operation[] = [
   get_stats, get_health, run_doctor, get_versions, revert_version,
   // v0.31.1 (Issue #734): thin-client banner identity packet (read-scope, banner-only)
   get_brain_identity,
-  // v0.41.19.0: thin-client `gbrain status` payload (admin-scope, sync + cycle only)
+  // v0.41.19.0: thin-client `cortex status` payload (admin-scope, sync + cycle only)
   get_status_snapshot,
   // Sync
   sync_brain,
@@ -4391,6 +5509,12 @@ export const operations: Operation[] = [
   takes_scorecard, takes_calibration,
   // v0.28: whoami + scoped sources management
   whoami, sources_add, sources_list, sources_remove, sources_status,
+  // SaaS control-plane parity: let agents do the same tenant setup work as the console
+  saas_signup_create, saas_orgs_list, saas_orgs_create,
+  saas_brains_list, saas_brains_create, saas_sources_list, saas_sources_create, saas_integrations_status, saas_team_list, saas_invites_list,
+  saas_invite_deliveries_list, saas_invite_delivery_queue, saas_invite_deliveries_claim, saas_invite_delivery_mark, saas_invite_deliveries_drain,
+  saas_skills_list, saas_skills_upsert, saas_runtime_manifest, saas_runtime_package_index, saas_plan_get, saas_plan_update, saas_console_snapshot, saas_quality_snapshot,
+  users_register_agent_client, users_update_agent_client_ttl, users_revoke_agent_client, users_create_invite,
   // v0.29: Salience + anomalies + recent transcripts
   get_recent_salience, find_anomalies, get_recent_transcripts,
   // v0.31: hot memory (facts table)
@@ -4408,7 +5532,7 @@ export const operations: Operation[] = [
   // v0.34 W3b: code_traversal_cache admin clear op
   code_traversal_cache_clear,
   // v0.40.6.0 Schema Cathedral v3: 9 new ops — 7 read + 2 admin (NOT
-  // localOnly per D2 so remote agents (your OpenClaw, etc.) can author packs).
+  // localOnly per D2 so Cortex-connected remote agents can author packs).
   // schema_apply_mutations is batched per D10 — one MCP tool, N
   // mutations applied atomically inside one withPackLock scope.
   get_active_schema_pack, list_schema_packs,

@@ -82,22 +82,30 @@ describe('computeIsoWeekFilename', () => {
 });
 
 describe('resolveAuditDir', () => {
+  it('honors CORTEX_AUDIT_DIR before legacy aliases', async () => {
+    const dir = makeDir();
+    const legacyDir = makeDir();
+    await withEnv({ CORTEX_AUDIT_DIR: dir, GBRAIN_AUDIT_DIR: legacyDir }, async () => {
+      expect(resolveAuditDir()).toBe(dir);
+    });
+  });
+
   it('honors GBRAIN_AUDIT_DIR override', async () => {
     const dir = makeDir();
-    await withEnv({ GBRAIN_AUDIT_DIR: dir }, async () => {
+    await withEnv({ CORTEX_AUDIT_DIR: undefined, GBRAIN_AUDIT_DIR: dir }, async () => {
       expect(resolveAuditDir()).toBe(dir);
     });
   });
 
   it('falls back to gbrainPath("audit") when override is unset', async () => {
-    await withEnv({ GBRAIN_AUDIT_DIR: undefined }, async () => {
+    await withEnv({ CORTEX_AUDIT_DIR: undefined, GBRAIN_AUDIT_DIR: undefined }, async () => {
       const resolved = resolveAuditDir();
       expect(resolved).toContain('audit');
     });
   });
 
   it('treats whitespace-only override as unset', async () => {
-    await withEnv({ GBRAIN_AUDIT_DIR: '   ' }, async () => {
+    await withEnv({ CORTEX_AUDIT_DIR: undefined, GBRAIN_AUDIT_DIR: '   ' }, async () => {
       const resolved = resolveAuditDir();
       // Should fall back to the default path, not literally "   "
       expect(resolved.trim().length).toBeGreaterThan(3);

@@ -1,122 +1,127 @@
-# Agents working on GBrain
+# Agents Working On Cortex
 
-This is your install + operating protocol. Claude Code reads `./CLAUDE.md` automatically.
-Everyone else (Codex, Cursor, OpenClaw, Aider, Continue, or an LLM fetching via URL):
-start here.
+This is the operating protocol for agents implementing, verifying, or onboarding
+the Cortex multi-tenant company-brain SaaS.
 
-## Install (5 min)
+## Product Shape
 
-1. Install gbrain via Bun (the canonical path):
-   ```bash
-   curl -fsSL https://bun.sh/install | bash
-   export PATH="$HOME/.bun/bin:$PATH"
-   bun install -g github:garrytan/gbrain
-   ```
-   If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`,
-   the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218).
-   Run `gbrain apply-migrations --yes` to recover, or fall back to the
-   deterministic install: `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
-2. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
-   multi-machine sync, init suggests Postgres + pgvector via Supabase.
-3. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
-   default but printed a 9-cell cost matrix (mode × downstream model)
-   preceded by `[AGENT]` markers. You MUST relay the matrix to the operator
-   and confirm their choice before continuing. Cost spread between corners
-   is 25x — silent acceptance is the wrong default. See
-   [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) Step 3.5 for the
-   exact ask-the-user protocol. Same banner fires on `gbrain post-upgrade`
-   for existing users (search modes were added in v0.32.3).
-4. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full 9-step flow
-   (API keys, identity, cron, verification).
+Cortex is not a personal local brain install. Treat it as a hosted SaaS control
+plane:
 
-## Read this order
+```text
+Organization -> one or more brains -> sources -> members, agents, skills, jobs, integrations
+```
 
-1. `./AGENTS.md` (this file) — install + operating protocol.
-2. [`./CLAUDE.md`](./CLAUDE.md) — architecture reference, key files, trust boundaries,
-   test layout.
-3. [`./docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
-   — the two-axis mental model (brain = which DB, source = which repo in the DB). Every
-   query routes on both axes. Read before writing anything that touches brain ops.
-4. [`./skills/conventions/brain-routing.md`](./skills/conventions/brain-routing.md) —
-   agent-facing decision table: when to switch brain, when to switch source, how
-   cross-brain federation works (latent-space only; the agent decides).
-5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+- **Organization** is the customer tenant.
+- **Brain** is the database/deployment boundary. Companies can create multiple
+  brains when ownership, lifecycle, backup, residency, or admin boundaries differ.
+- **Source** is the team/topic/repo/customer boundary inside one brain.
+- **Agent client** is an OAuth client with a write source, federated-read list,
+  scopes, and a runtime manifest.
 
-## Trust boundary (critical)
+For the detailed model, read
+[`docs/architecture/brains-and-sources.md`](./docs/architecture/brains-and-sources.md)
+and [`docs/tutorials/company-brain.md`](./docs/tutorials/company-brain.md).
 
-GBrain distinguishes **trusted local CLI callers** (`OperationContext.remote = false`,
-set by `src/cli.ts`) from **untrusted agent-facing callers** (`remote = true`, set by
-`src/mcp/server.ts`). Security-sensitive operations like `file_upload` tighten filesystem
-confinement when `remote = true` and default to strict behavior when unset. If you are
-writing or reviewing an operation, consult `src/core/operations.ts` for the contract.
+## Agent Onboarding
 
-## Common tasks
+Start with the hosted flow unless the user explicitly asks for local operator
+development:
 
-- **Configure:** [`docs/ENGINES.md`](./docs/ENGINES.md),
-  [`docs/guides/live-sync.md`](./docs/guides/live-sync.md),
-  [`docs/mcp/DEPLOY.md`](./docs/mcp/DEPLOY.md).
-- **Debug:** [`docs/GBRAIN_VERIFY.md`](./docs/GBRAIN_VERIFY.md),
-  [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.
-- **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
-  [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
-  [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes` (manual schema-only).
-- **Eval retrieval changes:** capture is off by default. To benchmark a
-  retrieval change against real captured queries, set
-  `GBRAIN_CONTRIBUTOR_MODE=1`, then `gbrain eval export --since 7d > base.ndjson`
-  and `gbrain eval replay --against base.ndjson`. For public benchmark
-  coverage (LongMemEval, ground-truth scoring), `gbrain eval longmemeval
-  <dataset.jsonl>` (v0.28.8) runs against an isolated in-memory PGLite
-  per question — your `~/.gbrain` is never opened. Full guide:
-  [`docs/eval-bench.md`](./docs/eval-bench.md).
-- **Drive the brain to a target health score (v0.36.4.0):** the one-command
-  loop. `gbrain doctor --remediation-plan --json` previews what would be
-  fixed; `gbrain doctor --remediate --yes --target-score 90 --max-usd 5`
-  walks a dependency-ordered plan (sync before extract, embed after
-  consolidate), re-checking score between every step, refusing to spend
-  past the cost cap. Empty brains (no entity pages) or unconfigured embedding
-  keys hit a `max_reachable_score` ceiling and bail with what's missing.
-  Three phase handlers (synthesize / patterns / consolidate) are
-  PROTECTED — only trusted local callers can submit them; MCP cannot.
-  Reference: [`docs/architecture/topologies.md`](./docs/architecture/topologies.md)
-  and the CHANGELOG entry for v0.36.4.0.
-- **Track a founder/company over time (v0.35.7):** when an entity has
-  typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
-  `unit: USD`, `period: monthly` columns), run
-  `gbrain eval trajectory <entity-slug>` for the chronological history
-  with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
-  for a four-signal JSON rollup (claim_accuracy / consistency /
-  growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
-  same data — read scope, visibility-filtered for remote callers. **v0.40.2.0:**
-  `gbrain think` now uses this substrate automatically on temporal /
-  knowledge_update intent (default ON; flip `think.trajectory_enabled=false`
-  to opt out). Migration v82 added `facts.event_type` so non-metric event
-  rows (`meeting`, `job_change`, `location_change`) ride through the same
-  pipeline; pass `kind: 'event'` or `'all'` to `find_trajectory` to query
-  them.
-- **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
-  [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
-  single-fetch ingestion.
+1. Open or call `https://<tenant-host>/admin/signup`.
+2. Create the organization with org name, owner email, and optional domain.
+3. Save the returned onboarding URL, client id, one-time client secret, and
+   `cortex connect` command.
+4. Invite teammates or agent runtimes from the Team, Invites, or Agents surfaces.
+5. Install runtime config from the hosted manifest:
 
-## Before shipping
+```bash
+cortex connect 'https://<tenant-host>/admin/onboarding?invite=...' --client-secret '<one-time-secret>'
+cortex runtime install cursor --manifest-url https://<tenant-host>/runtime-manifest.json
+cortex runtime install claude-desktop --manifest-url https://<tenant-host>/runtime-manifest.json
+```
 
-Easiest path: `bun run ci:local` runs the full CI gate inside Docker (gitleaks,
-unit tests with `DATABASE_URL` unset, then all 29 E2E files sequentially against a
-fresh pgvector container) and tears down. Use `bun run ci:local:diff` for the
-diff-aware subset during fast iteration on a focused branch. Requires Docker
-(Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
+The onboarding URL must never contain `client_secret`. Secrets are shown once by
+the console or returned once to the creating agent.
 
-Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
-up the test Postgres container, run `bun run test:e2e`, tear it down).
+## Read This Order
 
-Ship via the `/ship` skill, not by hand.
+1. [`README.md`](./README.md) - product overview, hosted quick start, and API map.
+2. [`INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) - hosted tenant onboarding
+   steps for AI agents.
+3. [`docs/deploy/multi-tenant-saas.md`](./docs/deploy/multi-tenant-saas.md) -
+   production deployment and tenant model.
+4. [`docs/deploy/saas-runtime-packaging.md`](./docs/deploy/saas-runtime-packaging.md) -
+   onboarding URL, runtime manifest, and agent parity contracts.
+5. [`docs/tutorials/company-brain.md`](./docs/tutorials/company-brain.md) -
+   company-brain setup and team/source scoping.
+6. [`docs/mcp/DEPLOY.md`](./docs/mcp/DEPLOY.md) - hosted HTTP MCP and OAuth setup.
+7. [`llms.txt`](./llms.txt) - generated map of Cortex docs for single-fetch agents.
 
-## Privacy
+## Trust Boundary
 
-Never commit real names of people, companies, or funds into public artifacts. See the
-Privacy rule in `./CLAUDE.md`. GBrain pages reference real contacts; public docs must
-use generic placeholders (`alice-example`, `acme-example`, `fund-a`).
+Cortex distinguishes trusted local operator calls from untrusted remote agent
+calls:
 
-## Forks
+- Local CLI callers set `OperationContext.remote = false`.
+- HTTP/MCP callers set `remote = true`.
+- Security-sensitive operations must enforce source scoping, OAuth scopes, and
+  remote filesystem confinement.
 
-If you are a fork, regenerate `llms.txt` + `llms-full.txt` with your own URL base before
-publishing: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms`.
+Before changing an operation, inspect `src/core/operations.ts` and the MCP
+dispatcher path. Anything a human can do in the console should also have an
+agent-callable API or MCP operation with equivalent scope checks.
+
+## Common Tasks
+
+- **Create a tenant:** `POST /api/signup` or the `/admin/signup` UI.
+- **Invite a teammate:** `POST /admin/api/invites` or MCP `users_create_invite`.
+- **Inspect invite delivery:** `GET /admin/api/invite-deliveries` or MCP
+  `saas_invite_deliveries_list`.
+- **Run invite delivery worker steps:** `POST /admin/api/invite-deliveries/claim`
+  plus `POST /admin/api/invite-deliveries/:id/result`, or MCP
+  `saas_invite_deliveries_claim` / `saas_invite_delivery_mark`.
+- **Send invite delivery through provider:** `POST /admin/api/invite-deliveries/drain`
+  from the console, `POST /jobs/invite-deliveries/drain` from a worker with
+  `CORTEX_EMAIL_DELIVERY_SECRET`, or MCP `saas_invite_deliveries_drain`.
+- **Register an agent client:** `POST /admin/api/register-client` or MCP
+  `users_register_agent_client`.
+- **Fetch runtime setup:** `GET /runtime-manifest.json`,
+  `GET /admin/api/runtime-manifest`, or MCP `saas_runtime_manifest`.
+- **Inspect/update plan limits:** `GET/POST /admin/api/plan` or MCP
+  `saas_plan_get` / `saas_plan_update`.
+- **Verify hosted SaaS:** `bun run smoke:saas-live -- --json`.
+- **Build the Next.js admin UI:** `bun run build:admin`.
+- **Typecheck:** `bun run tsc --noEmit --pretty false`.
+
+## Brand Rule
+
+User-facing copy, generated docs, hosted responses, commands, and runtime
+instructions should say **Cortex**. Legacy environment aliases may exist only as
+implementation compatibility shims in code and tests.
+
+## Before Shipping
+
+Run the narrowest meaningful verification for the change, then broaden when the
+surface is shared:
+
+```bash
+bun test test/saas-live-smoke.test.ts test/saas-agent-control-plane.test.ts
+bun run tsc --noEmit --pretty false
+bun run build:admin
+```
+
+For hosted proof, run:
+
+```bash
+CORTEX_PUBLIC_URL=https://<tenant-host> \
+CORTEX_ADMIN_BOOTSTRAP_TOKEN=<token> \
+CORTEX_COMPOSIO_WEBHOOK_SECRET=<secret> \
+CORTEX_BILLING_WEBHOOK_SECRET=<secret> \
+CORTEX_EMAIL_DELIVERY_SECRET=<secret> \
+bun run smoke:saas-live -- --json
+```
+
+Do not regress the public signup, onboarding invite URL, invite delivery outbox,
+team invite, agent client, skills policy, billing webhook, Composio webhook,
+OAuth token, MCP tools/list, or runtime manifest paths.

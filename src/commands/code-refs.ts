@@ -1,5 +1,5 @@
 /**
- * gbrain code-refs <symbol>
+ * cortex code-refs <symbol>
  *
  * v0.19.0 Layer 7 — find all usage sites of a named symbol across the
  * brain's code pages. The DX "magical moment" for v0.19.0: an agent
@@ -94,7 +94,7 @@ export async function runCodeRefs(engine: BrainEngine, args: string[]): Promise<
       class: 'UsageError',
       code: 'code_refs_requires_symbol',
       message: 'code-refs requires a symbol name',
-      hint: 'gbrain code-refs <symbol> [--lang <language>] [--json]',
+      hint: 'cortex code-refs <symbol> [--lang <language>] [--json]',
     });
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify({ error: err.envelope }));

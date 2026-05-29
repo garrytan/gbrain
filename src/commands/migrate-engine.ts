@@ -91,7 +91,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // Build target config
   const targetConfig: EngineConfig = { engine: opts.targetEngine };
   if (opts.targetEngine === 'postgres') {
-    targetConfig.database_url = opts.targetUrl || process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+    targetConfig.database_url = opts.targetUrl || process.env.CORTEX_DATABASE_URL || process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
     if (!targetConfig.database_url) {
       console.error('Target is Supabase but no connection string provided. Use: --url <connection_string>');
       process.exit(1);

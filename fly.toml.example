@@ -1,0 +1,48 @@
+# Copy to fly.toml, change app/region, then set secrets with:
+#   fly secrets set CORTEX_DATABASE_URL='postgresql://postgres.<project-ref>:<password>@<pooler-host-from-supabase>:5432/postgres' CORTEX_PUBLIC_URL='https://<app>.fly.dev'
+#   fly secrets set CORTEX_HTTP_CORS_ORIGIN='https://<app>.fly.dev'
+#   fly secrets set CORTEX_ADMIN_BOOTSTRAP_TOKEN="$(openssl rand -hex 32)" CORTEX_SUPPRESS_BOOTSTRAP_TOKEN=1
+
+app = "cortex-company-brain"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3131"
+  CORTEX_BIND = "0.0.0.0"
+  CORTEX_HOME = "/data/cortex"
+  CORTEX_HTTP_TRUST_PROXY = "1"
+  CORTEX_POOL_SIZE = "2"
+  CORTEX_WORKER_CONCURRENCY = "2"
+
+[mounts]
+  source = "cortex_data"
+  destination = "/data/cortex"
+
+[processes]
+  web = "/usr/local/bin/cortex-entrypoint web"
+  worker = "/usr/local/bin/cortex-entrypoint worker"
+
+[[services]]
+  processes = ["web"]
+  protocol = "tcp"
+  internal_port = 3131
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "20s"
+    method = "get"
+    path = "/health"

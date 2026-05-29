@@ -16,12 +16,12 @@ labels: bug
 3.
 
 **Environment**
-- gbrain version: (`gbrain version`)
+- Cortex version: (`cortex version`)
 - OS:
 - Bun version: (`bun --version`)
-- Database: Supabase / self-hosted Postgres
+- Database: Supabase / managed Postgres / local PGLite demo
 
-**`gbrain doctor --json` output**
+**`cortex doctor --json` output**
 ```json
 (paste output here)
 ```

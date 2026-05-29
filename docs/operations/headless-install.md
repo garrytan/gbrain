@@ -1,87 +1,90 @@
-# Headless install: Docker, CI, postinstall
+# Headless Cortex Deployment
 
-As of v0.37, `gbrain init --pglite` in a non-TTY context (Docker `RUN`, CI step, postinstall hook) exits 1 when no embedding-provider API key is present in the environment. This is a deliberate fail-loud — the alternative was the v0.36 silent-broken-state class where init succeeded with a default that didn't match any real key.
+Headless setup is for operators deploying the hosted Cortex SaaS runtime in
+Docker, Railway, CI, or another server environment. It is not the user onboarding
+path. Users and agents connect through onboarding URLs and runtime manifests.
 
-Two patterns work for headless installs. Pick whichever fits your image lifecycle.
+## Required Environment
 
-## Pattern 1: Provider key available at image build time
-
-If your CI / Docker pipeline can inject the API key as a build-time env var, set it before `gbrain init`:
-
-```dockerfile
-# Multi-stage Dockerfile sketch
-FROM oven/bun:1 AS builder
-
-# Inject key at build via --build-arg or `--env` from CI.
-ARG OPENAI_API_KEY
-ENV OPENAI_API_KEY=$OPENAI_API_KEY
-
-RUN bun install -g github:garrytan/gbrain
-RUN gbrain init --pglite  # auto-picks OpenAI, persists config
+```text
+CORTEX_DATABASE_URL=postgresql://...
+CORTEX_PUBLIC_URL=https://<tenant-host>
+CORTEX_ADMIN_BOOTSTRAP_TOKEN=<strong-token>
+CORTEX_COMPOSIO_WEBHOOK_SECRET=<shared-secret>
+CORTEX_BILLING_WEBHOOK_SECRET=<shared-secret>
+CORTEX_EMAIL_DELIVERY_SECRET=<shared-secret>
+CORTEX_EMAIL_PROVIDER=resend
+CORTEX_EMAIL_FROM='Cortex <onboarding@your-domain.com>'
+RESEND_API_KEY=<provider-key>
 ```
 
-```yaml
-# GitHub Actions equivalent
-- name: Initialize gbrain
-  env:
-    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  run: |
-    bun install -g github:garrytan/gbrain
-    gbrain init --pglite
-```
+Add model and ingestion provider keys according to the tenant plan.
 
-Init writes `~/.gbrain/config.json` with the resolved `embedding_model` + `embedding_dimensions`. Subsequent runs (in the same image / runner) read from that config and don't re-resolve.
-
-## Pattern 2: Provider key only at runtime (deferred-setup)
-
-If the API key is a runtime secret (Kubernetes secret, runtime env injection, end-user-supplied), use `--no-embedding` at build time and configure the provider when the container actually runs:
+## Docker Shape
 
 ```dockerfile
 FROM oven/bun:1
-RUN bun install -g github:garrytan/gbrain
+WORKDIR /app
+COPY . .
+RUN bun install --frozen-lockfile
+RUN bun run build:admin
 
-# Build the brain shape without a provider — schema lands at the default
-# width, but no embed callsite will actually run until runtime config.
-RUN gbrain init --pglite --no-embedding
-
-# At container start (entrypoint), provide the real provider:
-ENTRYPOINT ["/bin/sh", "-c", "\
-  gbrain config set embedding_model openai:text-embedding-3-large \
-  && gbrain init --force --pglite \
-  && exec gbrain serve"]
+EXPOSE 3131
+CMD ["bun", "run", "src/cli.ts", "serve", "--http", "--bind", "0.0.0.0", "--port", "3131"]
 ```
 
-The `gbrain init --no-embedding` opt-in writes `embedding_disabled: true` to config. Every embed callsite (`gbrain import`, `gbrain embed`, the `runEmbedCore` library entry point) checks this and refuses cleanly with a `gbrain config set embedding_model <id>` hint rather than proceeding with a silent default.
+Run migrations in a release phase when the host supports it. If not, set the
+startup migration flag only for environments where release phases are not
+available.
 
-The runtime `gbrain init --force` re-runs the init flow against the now-populated env, which:
-
-- Removes `embedding_disabled` from config.
-- Resolves the provider via env detection.
-- Re-templates the PGLite schema if dim differs from the build-time default.
-
-## What WON'T work
-
-```dockerfile
-# Don't do this — silent default leaves you with vector(1280) ZE column
-# and 1536d OpenAI provider at runtime, mismatched.
-RUN gbrain init --pglite
-```
-
-If you upgrade from a pre-v0.37 image that used this pattern, `gbrain doctor` will surface the mismatch on first run after upgrade and print a paste-ready repair command (`gbrain init --force --embedding-model …` for empty brains, `gbrain retrieval-upgrade --reindex` for non-empty).
-
-## Verifying a headless install
-
-After init, run `gbrain doctor --json` to verify state:
+## Runtime Start
 
 ```bash
-gbrain doctor --json | jq '.checks[] | select(.name=="embedding_provider")'
+cortex serve --http \
+  --bind 0.0.0.0 \
+  --port 3131 \
+  --public-url "$CORTEX_PUBLIC_URL"
 ```
 
-The `embedding_provider` check returns `status: 'ok'` when:
+The public URL must match the URL customers and agents use. OAuth discovery,
+token URLs, onboarding payloads, and runtime manifests all derive from it.
 
-- Config has a persisted `embedding_model`.
-- Config has a persisted `embedding_dimensions`.
-- Live provider probe returns the configured dim.
-- DB column width matches.
+## CI Preflight
 
-If you used Pattern 2's deferred-setup path, the check shows `Skipped (no provider credentials)` until the runtime config is populated. That's expected.
+Run before deployment:
+
+```bash
+bun run tsc --noEmit --pretty false
+bun run build:admin
+bun run build:llms
+bash scripts/check-cortex-public-copy.sh
+bun run saas:preflight
+```
+
+The preflight should fail on placeholder database URLs, unsafe shell-job env,
+non-HTTPS public URLs, missing secrets, or invalid pooler configuration.
+
+## Post-Deploy Smoke
+
+```bash
+curl https://<tenant-host>/health
+curl https://<tenant-host>/runtime-manifest.json
+bun run smoke:saas-live -- --json
+```
+
+The smoke must verify signup, owner onboarding URL, invite delivery outbox,
+source creation, skill policy, agent OAuth, Composio webhook ingestion, token
+exchange, and MCP `tools/list`.
+
+## Customer Onboarding
+
+After deployment, give customers and agents:
+
+- `/admin/signup`
+- owner onboarding URL
+- one-time client secret
+- `/runtime-manifest.json`
+- `cortex connect '<onboarding-url>' --client-secret '<one-time-secret>'`
+
+Do not give customers database credentials unless they are operating their own
+dedicated deployment.

@@ -4,7 +4,7 @@
 > brain-ops, query, ingest, smoke-test, migrations). Reference via
 > `> **Convention:** see [skills/_friction-protocol.md](_friction-protocol.md).`
 
-When you encounter friction running gbrain — anything confusing, missing, surprising, or wrong — log it via `gbrain friction log` so maintainers can see it without you writing a bug report. Friction reports drive the claw-test feedback loop (the harness collects, renders, and re-runs).
+When you encounter friction running cortex — anything confusing, missing, surprising, or wrong — log it via `cortex friction log` so maintainers can see it without you writing a bug report. Friction reports drive the claw-test feedback loop (the harness collects, renders, and re-runs).
 
 ## When to log
 
@@ -26,7 +26,7 @@ Log delight (positive signal) when:
 ## How to log
 
 ```
-gbrain friction log \
+cortex friction log \
   --severity {confused|error|blocker|nit} \
   --phase <which-phase-or-command> \
   --message "<one-line-what-happened>" \
@@ -35,7 +35,7 @@ gbrain friction log \
 
 For delight, add `--kind delight` and pick any severity.
 
-The CLI auto-fills `ts`, `cwd`, `gbrain_version`, and resolves `run_id` from `$GBRAIN_FRICTION_RUN_ID` (set by the harness) or falls back to `standalone.jsonl`. So you can call this anywhere — inside a harness run, manually during normal use, or from a scripted test.
+The CLI auto-fills `ts`, `cwd`, `cortex_version`, and resolves `run_id` from `$CORTEX_FRICTION_RUN_ID` (set by the harness) or falls back to `standalone.jsonl`. So you can call this anywhere — inside a harness run, manually during normal use, or from a scripted test.
 
 ## Severity guide
 
@@ -51,10 +51,10 @@ Be specific: "doctor says `schema_version=0` and points at apply-migrations, but
 ## Inspecting reports
 
 ```
-gbrain friction list                      # recent runs with counts
-gbrain friction render --run-id <id>      # markdown report (default)
-gbrain friction render --run-id <id> --json
-gbrain friction summary --run-id <id>     # friction + delight side-by-side
+cortex friction list                      # recent runs with counts
+cortex friction render --run-id <id>      # markdown report (default)
+cortex friction render --run-id <id> --json
+cortex friction summary --run-id <id>     # friction + delight side-by-side
 ```
 
 `render` defaults to `--redact` for markdown (strips `$HOME`/`$CWD` to `<HOME>`/`<CWD>` placeholders) so reports paste safely into PRs and issues.

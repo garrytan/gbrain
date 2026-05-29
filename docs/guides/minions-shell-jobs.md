@@ -4,15 +4,15 @@
 
 ```bash
 # Run your first shell job:
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \
+CORTEX_ALLOW_SHELL_JOBS=1 cortex jobs submit shell \
   --params '{"cmd":"echo hello","cwd":"/tmp"}' --follow
 # → exit_code: 0, stdout_tail: "hello\n", duration_ms: 43
 ```
 
 That's it. Your cron scripts now have a home with retry, backoff, DLQ, and
-`gbrain jobs list` visibility, without each one booting a full LLM session.
+`cortex jobs list` visibility, without each one booting a full LLM session.
 
-**PGLite users:** `gbrain jobs work` does not run on PGLite (exclusive file
+**PGLite users:** `cortex jobs work` does not run on PGLite (exclusive file
 lock). Every crontab invocation must use `--follow` for inline execution.
 Postgres users can run a persistent worker; see recipes below.
 
@@ -40,23 +40,23 @@ pass:
    agents can never submit shell jobs. `MinionQueue.add('shell', ...)` has its
    own guard too, so an in-process handler can't programmatically bypass this.
 2. **Env flag.** The worker only registers the shell handler when
-   `GBRAIN_ALLOW_SHELL_JOBS=1` is set on the worker process. Default: off. Your
+   `CORTEX_ALLOW_SHELL_JOBS=1` is set on the worker process. Default: off. Your
    agent opts in per-host.
 
 **What the env allowlist does AND does not do.** Shell jobs run with a minimal
 env: `PATH, HOME, USER, LANG, TZ, NODE_ENV`. Your secrets like `OPENAI_API_KEY`
-and `DATABASE_URL` are NOT passed to the child. You opt-in additional keys per
+and `CORTEX_DATABASE_URL` are NOT passed to the child. You opt-in additional keys per
 job via `env: { ... }` (non-secret values only — see "Secrets" below) or via
 `inherit: ["database_url"]` (recommended for secrets — names only in the row,
-values resolved at child-spawn from `gbrain config set`). This stops accidental
+values resolved at child-spawn from `cortex config set`). This stops accidental
 `$OPENAI_API_KEY` interpolation in a user-authored script. It does **not**
 sandbox filesystem reads: a shell script can `cat ~/.env` or any file the
 worker process can read. The operator picks a safe `cwd`. That is the trust
 boundary.
 
 **Audit trail, not forensic insurance.** Every submission writes a JSONL line
-to `~/.gbrain/audit/shell-jobs-YYYY-Www.jsonl` (ISO-week rotation; override
-with `GBRAIN_AUDIT_DIR`). Failures log to stderr and don't block submission, so
+to `CORTEX_AUDIT_DIR/shell-jobs-YYYY-Www.jsonl` (ISO-week rotation; override
+with `CORTEX_AUDIT_DIR`). Failures log to stderr and don't block submission, so
 a disk-full adversary could silently disable the trail. Good for "what did
 this cron submit last Tuesday", not for security-critical forensics.
 
@@ -73,18 +73,18 @@ secrets in `env:` instead.
 On one terminal, start a persistent worker:
 
 ```bash
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work
+CORTEX_ALLOW_SHELL_JOBS=1 cortex jobs work
 ```
 
 Rewrite crontab to submit shell jobs (no `--follow`):
 
 ```cron
 # Before (LLM gateway):
-#   OpenClaw cron: x-garrytan-unified
+#   Legacy cron running an external deterministic script
 # After (Minions worker):
 3 13,16,19,22,1,4,7,10 * * * \
-  gbrain jobs submit shell \
-    --params '{"cmd":"node scripts/x-garrytan-daily.mjs","cwd":"/data/.openclaw/workspace"}' \
+  cortex jobs submit shell \
+    --params '{"cmd":"node scripts/daily-ingest.mjs","cwd":"/data/cortex/workspace"}' \
     --max-attempts 3 --timeout-ms 300000
 ```
 
@@ -100,8 +100,8 @@ uses `--follow` to run inline:
 ```cron
 # Each cron tick spawns a short-lived worker that runs the job inline.
 3 13,16,19,22,1,4,7,10 * * * \
-  GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \
-    --params '{"cmd":"node scripts/x-garrytan-daily.mjs","cwd":"/data/.openclaw/workspace"}' \
+  CORTEX_ALLOW_SHELL_JOBS=1 cortex jobs submit shell \
+    --params '{"cmd":"node scripts/daily-ingest.mjs","cwd":"/data/cortex/workspace"}' \
     --follow --timeout-ms 300000
 ```
 
@@ -109,25 +109,25 @@ Note: `--follow` blocks the crontab slot until the job finishes. If 14 shell
 crons land at the same minute and each takes 30s, they serialize through
 crontab's spawning limits. Postgres + persistent worker scales better.
 
-### Calling `gbrain` itself from a shell job — use `inherit:` for DATABASE_URL {#secrets}
+### Calling `cortex` itself from a shell job — use `inherit:` for CORTEX_DATABASE_URL {#secrets}
 
-A common pattern is submitting shell jobs that run `gbrain` CLI commands:
+A common pattern is submitting shell jobs that run `cortex` CLI commands:
 
 ```bash
-gbrain jobs submit shell --params '{
-  "cmd": "gbrain sync --skip-failed && gbrain embed --stale",
-  "cwd": "/data/gbrain",
+cortex jobs submit shell --params '{
+  "cmd": "cortex sync --skip-failed && cortex embed --stale",
+  "cwd": "/data/cortex",
   "inherit": ["database_url"]
 }'
 ```
 
 `inherit: ["database_url"]` tells the worker to look up `database_url` from its
 own `loadConfig()` (file + env merged) and inject the value into the child's
-env as `GBRAIN_DATABASE_URL`. The job row in `minion_jobs.data` stores
+env as `CORTEX_DATABASE_URL`. The job row in `minion_jobs.data` stores
 `inherit: ["database_url"]` — **names only, never values**. The shell-audit
 JSONL records the same. Pre-enqueue validation rejects the submission if the
 worker can't resolve the requested key, with a paste-ready
-`gbrain config set database_url <value>` hint.
+`cortex config set database_url <value>` hint.
 
 **Why not just write the URL into `env:` directly?** Pre-v0.36.5.0 callers
 wrote things like:
@@ -135,9 +135,9 @@ wrote things like:
 ```jsonc
 // ❌ Deprecated as of v0.36.5.0 — REJECTED at submit time.
 {
-  "cmd": "gbrain stats",
-  "cwd": "/data/gbrain",
-  "env": { "GBRAIN_DATABASE_URL": "postgresql://..." }
+  "cmd": "cortex stats",
+  "cwd": "/data/cortex",
+  "env": { "CORTEX_DATABASE_URL": "postgresql://..." }
 }
 ```
 
@@ -152,7 +152,7 @@ row; values resolve at child-spawn from the worker's config.
 config-key name and the worker resolves the value from `loadConfig()` at
 child-spawn time:
 
-- `inherit: ["database_url"]` → child env `GBRAIN_DATABASE_URL`
+- `inherit: ["database_url"]` → child env `CORTEX_DATABASE_URL`
 - `inherit: ["anthropic_api_key"]` → child env `ANTHROPIC_API_KEY`
 - `inherit: ["openai_api_key"]` → child env `OPENAI_API_KEY`
 - `inherit: ["voyage_api_key"]` → child env `VOYAGE_API_KEY`
@@ -161,7 +161,7 @@ child-spawn time:
   `MY_CUSTOM_FIELD`)
 
 The env-key name is derived by uppercasing the config-key name. The one
-override is `database_url` → `GBRAIN_DATABASE_URL` (plain `DATABASE_URL` is
+override is `database_url` → `CORTEX_DATABASE_URL` (plain `DATABASE_URL` is
 ambiguous in most Postgres-app contexts).
 
 Pre-enqueue validation fail-fasts if the worker can't resolve a requested
@@ -172,8 +172,8 @@ your call.
 **Output-side leakage (read this).** The `inherit:` allowlist prevents
 secrets from landing in the JOB ROW INPUT fields (`data.cmd`, `data.argv`,
 `data.env`). By default it does NOT scrub the OUTPUT fields — if your
-script prints the secret to stdout or stderr (`echo "$GBRAIN_DATABASE_URL"`,
-`psql "$GBRAIN_DATABASE_URL"` echoing the URL on error), the value lands
+script prints the secret to stdout or stderr (`echo "$CORTEX_DATABASE_URL"`,
+`psql "$CORTEX_DATABASE_URL"` echoing the URL on error), the value lands
 plaintext in `result.stdout_tail` / `result.stderr_tail` / `error_text`,
 and from there into the brain DB row.
 
@@ -181,16 +181,16 @@ and from there into the brain DB row.
 (or pass `--redact-secrets` on the CLI):
 
 ```bash
-gbrain jobs submit shell --params '{
-  "cmd": "gbrain sync --skip-failed",
-  "cwd": "/data/gbrain",
+cortex jobs submit shell --params '{
+  "cmd": "cortex sync --skip-failed",
+  "cwd": "/data/cortex",
   "inherit": ["database_url"],
   "redact_secrets": true
 }'
 
 # Or, equivalently:
-gbrain jobs submit shell \
-  --params '{"cmd":"gbrain sync --skip-failed","cwd":"/data/gbrain","inherit":["database_url"]}' \
+cortex jobs submit shell \
+  --params '{"cmd":"cortex sync --skip-failed","cwd":"/data/cortex","inherit":["database_url"]}' \
   --redact-secrets
 ```
 
@@ -215,7 +215,7 @@ exfiltration.
 - **Wrap noisy CLI tools to suppress URLs on error.** `psql --quiet`,
   `pg_dump --quiet`, or pipe through
   `2>&1 | sed 's|postgresql://[^@]*@|postgresql://REDACTED@|g'`.
-- **Inspect with `gbrain jobs get <id>` after a failure** to verify what
+- **Inspect with `cortex jobs get <id>` after a failure** to verify what
   actually persisted.
 
 ### Submitting with `argv` (no shell interpolation)
@@ -224,7 +224,7 @@ For programmatic callers assembling commands from JSON, use `argv` instead of
 `cmd`. No shell, no injection surface:
 
 ```bash
-gbrain jobs submit shell \
+cortex jobs submit shell \
   --params '{"argv":["node","scripts/fetch.mjs","--date","2026-04-19"],"cwd":"/data"}' \
   --follow
 ```
@@ -235,18 +235,18 @@ gbrain jobs submit shell \
 
 ```bash
 # List dead shell jobs
-gbrain jobs list --status dead
+cortex jobs list --status dead
 
 # Inspect one
-gbrain jobs get 42
+cortex jobs get 42
 # → error_text, stacktrace, result.stdout_tail, result.stderr_tail
 
 # Submission audit log (operator trail, not forensic)
-cat ~/.gbrain/audit/shell-jobs-*.jsonl | jq '.'
+cat "${CORTEX_AUDIT_DIR:-/data/cortex/audit}"/shell-jobs-*.jsonl | jq '.'
 
 # First-time failure mode: submitted without env flag on the worker
-gbrain jobs list --status waiting --name shell
-# If rows pile up here, no worker with GBRAIN_ALLOW_SHELL_JOBS=1 is running.
+cortex jobs list --status waiting --name shell
+# If rows pile up here, no worker with CORTEX_ALLOW_SHELL_JOBS=1 is running.
 ```
 
 ---
@@ -276,9 +276,9 @@ gbrain jobs list --status waiting --name shell
 | `shell: inherit must be an array of config-key names` | `inherit` wasn't an array. | Pass `"inherit": ["database_url", ...]`. |
 | `shell: inherit entries must be non-empty strings` | An element of `inherit` was empty, non-string, or null. | Use snake_case config-key names like `database_url`, `anthropic_api_key`. |
 | `shell: inherit name "<X>" must match [a-z][a-z0-9_]*` | Name failed snake_case regex (uppercase, leading digit/underscore, special char). | Use the config-key name verbatim — `database_url`, not `DATABASE_URL`. |
-| `shell: inherit requested "<X>" but worker has no <X> configured` | Worker can't resolve the requested name from `loadConfig()`. | Run `gbrain config set <X> <value>` on the worker host, OR check the config file at `~/.gbrain/config.json`. |
+| `shell: inherit requested "<X>" but worker has no <X> configured` | Worker can't resolve the requested name from `loadConfig()`. | Run `cortex config set <X> <value>` on the worker host, or check the worker's local Cortex config. |
 | `shell: redact_secrets must be a boolean if set` | Caller passed a non-boolean for `redact_secrets`. | Pass `true` or `false` (or omit). The CLI `--redact-secrets` flag sets it automatically. |
 | `permission_denied: shell jobs cannot be submitted over MCP` | An MCP client tried to submit a shell job. By design CLI-only. | Submit from CLI or via a trusted operation handler (`ctx.remote === false`). |
 | `protected job name 'shell' requires CLI or operation-local submitter` | A caller invoked `MinionQueue.add('shell', ...)` without the `trusted` opt-in. | Pass `{ allowProtectedSubmit: true }` as the 4th arg. CLI and `submit_job` do this automatically. |
-| `aborted: timeout` / `aborted: cancel` / `aborted: shutdown` / `aborted: lock-lost` | The worker's abort signal fired mid-execution. Child got SIGTERM, 5s grace, then SIGKILL. | Expected: timeout / user cancel / deploy restart / stall. Inspect `gbrain jobs get` to see which. |
-| `exit N: <stderr_tail_500>` | Script exited non-zero. | Read `stderr_tail` in `gbrain jobs get`. |
+| `aborted: timeout` / `aborted: cancel` / `aborted: shutdown` / `aborted: lock-lost` | The worker's abort signal fired mid-execution. Child got SIGTERM, 5s grace, then SIGKILL. | Expected: timeout / user cancel / deploy restart / stall. Inspect `cortex jobs get` to see which. |
+| `exit N: <stderr_tail_500>` | Script exited non-zero. | Read `stderr_tail` in `cortex jobs get`. |

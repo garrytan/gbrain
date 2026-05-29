@@ -1,5 +1,5 @@
 /**
- * gbrain eval takes-quality — reproducible cross-modal eval CLI for
+ * cortex eval takes-quality — reproducible cross-modal eval CLI for
  * the takes table (v0.32 — EXP-5).
  *
  * Sub-subcommands:
@@ -28,7 +28,7 @@ import { loadReceiptFromDisk } from '../core/takes-quality-eval/replay.ts';
 import { compareReceipts } from '../core/takes-quality-eval/regress.ts';
 import { loadTrend, renderTrendTable, type TrendRow } from '../core/takes-quality-eval/trend.ts';
 
-const HELP = `gbrain eval takes-quality — reproducible cross-modal quality eval
+const HELP = `cortex eval takes-quality — reproducible cross-modal quality eval
 
 Subcommands:
   run [--limit N] [--seed N] [--budget-usd N] [--source db|fs]
@@ -91,7 +91,7 @@ function hasFlag(argv: string[], name: string): boolean {
  */
 export async function runReplayNoBrain(argv: string[]): Promise<number> {
   if (argv.length === 0 || argv[0].startsWith('-')) {
-    process.stderr.write('Usage: gbrain eval takes-quality replay <receipt-path> [--json]\n');
+    process.stderr.write('Usage: cortex eval takes-quality replay <receipt-path> [--json]\n');
     return 2;
   }
   const receiptPath = argv[0];

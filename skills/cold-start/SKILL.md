@@ -7,10 +7,10 @@ description: |
   ClawVisor for safe credential handling — the agent never holds raw API keys.
   Covers Gmail import, calendar sync, contacts seeding, X/Twitter archive,
   conversation imports, and file archives.
-  Use when a user has just finished gbrain setup and asks "now what?"
+  Use when a user has just finished cortex setup and asks "now what?"
 triggers:
   - "cold start"
-  - "fill my brain"
+  - "fill my Cortex workspace"
   - "bootstrap brain"
   - "import my data"
   - "day one"
@@ -57,15 +57,15 @@ sources to get you from zero to useful in one session.
   only safe alternative is offline file exports (Google Takeout, Twitter archive download).
 - Each phase is independently valuable — the user can stop after any phase and still
   have a useful brain.
-- Progress is tracked in `~/.gbrain/cold-start-state.json` so interrupted sessions
+- Progress is tracked in `~/.cortex/cold-start-state.json` so interrupted sessions
   can resume.
 - Entity detection and cross-linking run on every import, not as a separate pass.
 
 ## Prerequisites
 
-- GBrain installed and initialized (`gbrain doctor --json` all green)
+- Cortex installed and initialized (`cortex doctor --json` all green)
 - Brain repo cloned and synced
-- Agent has terminal access and can run `gbrain` CLI commands
+- Agent has terminal access and can run `cortex` CLI commands
 
 ## The Priority Stack
 
@@ -107,8 +107,8 @@ them at request time, enforces policies, and logs everything.
 2. Create an agent in the dashboard, copy the agent token
 3. Set environment variables:
    ```bash
-   gbrain config set clawvisor_url "https://app.clawvisor.com"
-   gbrain config set clawvisor_agent_token "<token>"
+   cortex config set clawvisor_url "https://app.clawvisor.com"
+   cortex config set clawvisor_agent_token "<token>"
    ```
 4. Activate Google services (Gmail, Calendar, Contacts) in the dashboard
 5. Create a standing task with expansive scope:
@@ -116,7 +116,7 @@ them at request time, enforces policies, and logs everything.
    > populate knowledge base. List, read, and search across all connected accounts."
 6. Save the standing task ID:
    ```bash
-   gbrain config set clawvisor_task_id "<task_id>"
+   cortex config set clawvisor_task_id "<task_id>"
    ```
 
 **Critical scoping rule:** Be expansive in task purposes. "Email triage" gets
@@ -169,25 +169,25 @@ done
 
 ```bash
 # For Obsidian vaults, use the migrate skill for proper wikilink handling
-gbrain migrate --from obsidian --path /path/to/vault
+cortex migrate --from obsidian --path /path/to/vault
 
 # For plain markdown directories
-gbrain import /path/to/dir --no-embed --workers 4
+cortex import /path/to/dir --no-embed --workers 4
 
 # Verify
-gbrain stats
-gbrain search "<topic from the imported data>"
+cortex stats
+cortex search "<topic from the imported data>"
 ```
 
 ### Post-import
 
-- Run link extraction: `gbrain extract links --source db`
-- Run timeline extraction: `gbrain extract timeline --source db`
-- Start embeddings: `gbrain embed --stale` (runs in background)
+- Run link extraction: `cortex extract links --source db`
+- Run timeline extraction: `cortex extract timeline --source db`
+- Start embeddings: `cortex embed --stale` (runs in background)
 
 > **Track progress:**
 > ```bash
-> echo '{"phase_1_complete": true, "pages_imported": N}' > ~/.gbrain/cold-start-state.json
+> echo '{"phase_1_complete": true, "pages_imported": N}' > ~/.cortex/cold-start-state.json
 > ```
 
 ## Phase 2: Google Contacts → People Pages
@@ -219,7 +219,7 @@ curl -s -H "Authorization: Bearer $GOOGLE_TOKEN" \
 For each contact:
 1. **Filter out noise** — skip contacts with no name, no email, or that are clearly
    automated (noreply@, no-reply@, support@, notifications@)
-2. **Check brain first** — `gbrain search "name"` to avoid duplicates
+2. **Check brain first** — `cortex search "name"` to avoid duplicates
 3. **Create people/ page** with:
    - Name, email(s), phone(s), company, title
    - Source attribution: `[Source: Google Contacts, YYYY-MM-DD]`
@@ -383,7 +383,7 @@ Delegate to the `archive-crawler` skill. It handles:
 > **Safety gate:** Archive crawling can be slow and create many pages. Always start
 > with a scan-only pass:
 > ```bash
-> gbrain archive-crawler --scan-only --path /path/to/archive
+> cortex archive-crawler --scan-only --path /path/to/archive
 > ```
 > Show the user the manifest before proceeding with full ingestion.
 
@@ -410,26 +410,26 @@ After completing available phases:
 
 1. **Verify brain health:**
    ```bash
-   gbrain doctor --json
-   gbrain stats
+   cortex doctor --json
+   cortex stats
    ```
 
 2. **Test retrieval:**
    ```bash
-   gbrain query "who do I meet with most often?"
-   gbrain query "what am I working on?"
-   gbrain search "<person from contacts>"
+   cortex query "who do I meet with most often?"
+   cortex query "what am I working on?"
+   cortex search "<person from contacts>"
    ```
 
 3. **Set up live sync** (if not already):
    - Calendar: daily cron
    - Email: periodic sweep (4-8 hours)
    - X: daily ingest
-   - Brain repo: `gbrain sync --repo <path>` every 5-30 minutes
+   - Brain repo: `cortex sync --repo <path>` every 5-30 minutes
 
 4. **Track state:**
    ```json
-   // ~/.gbrain/cold-start-state.json
+   // ~/.cortex/cold-start-state.json
    {
      "started": "2026-01-15T10:00:00Z",
      "credential_gateway": "clawvisor",
@@ -442,7 +442,7 @@ After completing available phases:
    ```
 
 5. **Tell the user what to do next:**
-   > "Your brain has N pages across people, calendar, email, and conversations.
+   > "Your Cortex workspace has N pages across people, calendar, email, and conversations.
    > Live sync is configured for [sources]. From here:
    > - The **signal-detector** captures entities from every conversation
    > - The **briefing** skill can compile daily context
@@ -470,7 +470,7 @@ After completing available phases:
 
 If the session is interrupted:
 
-1. Read `~/.gbrain/cold-start-state.json`
+1. Read `~/.cortex/cold-start-state.json`
 2. Skip completed phases
 3. Resume from `next_phase`
 4. The user doesn't have to repeat credential setup or re-import completed sources

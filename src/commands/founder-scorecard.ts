@@ -1,5 +1,5 @@
 /**
- * gbrain founder scorecard <entity-slug> — rolls up Phase 2's typed-claim
+ * cortex founder scorecard <entity-slug> — rolls up Phase 2's typed-claim
  * substrate + the takes outcome columns into a four-metric founder
  * scorecard.
  *
@@ -34,9 +34,9 @@
  *   }
  *
  * Usage:
- *   gbrain founder scorecard companies/acme-example
- *   gbrain founder scorecard companies/acme-example --since 2025-05-17 --until 2026-05-17
- *   gbrain founder scorecard companies/acme-example --json
+ *   cortex founder scorecard companies/acme-example
+ *   cortex founder scorecard companies/acme-example --since 2025-05-17 --until 2026-05-17
+ *   cortex founder scorecard companies/acme-example --json
  */
 
 import type { BrainEngine, Take, TrajectoryPoint } from '../core/engine.ts';
@@ -189,7 +189,7 @@ interface RunOpts {
   json?: boolean;
 }
 
-const HELP = `Usage: gbrain founder scorecard <entity-slug> [options]
+const HELP = `Usage: cortex founder scorecard <entity-slug> [options]
 
 Rolls up the entity's typed-claim trajectory + resolved-take outcomes into
 the four founder-evaluation metrics: claim accuracy, consistency, growth
@@ -202,8 +202,8 @@ Options:
   --help, -h          Show this help
 
 Examples:
-  gbrain founder scorecard companies/acme-example
-  gbrain founder scorecard companies/acme-example --since 2025-05-17 --json
+  cortex founder scorecard companies/acme-example
+  cortex founder scorecard companies/acme-example --since 2025-05-17 --json
 `;
 
 function parseArgs(args: string[]): RunOpts | { help: true } | { error: string } {

@@ -57,9 +57,9 @@ describe('hashToken', () => {
 
 describe('generateToken', () => {
   test('produces prefixed random hex', () => {
-    const token = generateToken('gbrain_cl_');
-    expect(token).toStartWith('gbrain_cl_');
-    expect(token).toHaveLength('gbrain_cl_'.length + 64); // 32 bytes = 64 hex chars
+    const token = generateToken('cortex_cl_');
+    expect(token).toStartWith('cortex_cl_');
+    expect(token).toHaveLength('cortex_cl_'.length + 64); // 32 bytes = 64 hex chars
   });
 
   test('tokens are unique', () => {
@@ -115,8 +115,8 @@ describe('client registration', () => {
     const { clientId, clientSecret } = await provider.registerClientManual(
       'test-agent', ['client_credentials'], 'read write',
     );
-    expect(clientId).toStartWith('gbrain_cl_');
-    expect(clientSecret).toStartWith('gbrain_cs_');
+    expect(clientId).toStartWith('cortex_cl_');
+    expect(clientSecret).toStartWith('cortex_cs_');
 
     // Verify client exists in DB
     const client = await provider.clientsStore.getClient(clientId);
@@ -159,7 +159,7 @@ describe('client credentials', () => {
 
   test('valid exchange returns access token', async () => {
     const tokens = await provider.exchangeClientCredentials(clientId, clientSecret, 'read');
-    expect(tokens.access_token).toStartWith('gbrain_at_');
+    expect(tokens.access_token).toStartWith('cortex_at_');
     expect(tokens.token_type).toBe('bearer');
     expect(tokens.expires_in).toBe(60);
     expect(tokens.scope).toBe('read');
@@ -211,7 +211,7 @@ describe('verifyAccessToken', () => {
 
   test('expired token is rejected', async () => {
     // Insert a token that's already expired
-    const expiredToken = generateToken('gbrain_at_');
+    const expiredToken = generateToken('cortex_at_');
     const hash = hashToken(expiredToken);
     const firstClient = (await sql`SELECT client_id FROM oauth_clients LIMIT 1`)[0];
     await sql`
@@ -228,7 +228,7 @@ describe('verifyAccessToken', () => {
   // v0.36.1.x #935: the SDK's requireBearerAuth middleware only returns 401
   // on InvalidTokenError; bare Error falls through to 500. Lock in the class.
   test('verifyAccessToken throws InvalidTokenError (not bare Error) on expired token', async () => {
-    const expiredToken = generateToken('gbrain_at_');
+    const expiredToken = generateToken('cortex_at_');
     const hash = hashToken(expiredToken);
     const firstClient = (await sql`SELECT client_id FROM oauth_clients LIMIT 1`)[0];
     await sql`
@@ -258,7 +258,7 @@ describe('verifyAccessToken', () => {
     // Schema declares oauth_tokens.expires_at as nullable BIGINT (schema.sql:372).
     // Hand-modified or corrupt rows could land with NULL; verifyAccessToken must
     // fail-closed, not return an undefined-bearing AuthInfo that the SDK accepts.
-    const nullExpiryToken = generateToken('gbrain_at_');
+    const nullExpiryToken = generateToken('cortex_at_');
     const hash = hashToken(nullExpiryToken);
     const firstClient = (await sql`SELECT client_id FROM oauth_clients LIMIT 1`)[0];
     await sql`
@@ -370,7 +370,7 @@ describe('authorization code flow', () => {
       state: 'test-state',
     }, mockRes);
 
-    expect(redirectUrl).toContain('code=gbrain_code_');
+    expect(redirectUrl).toContain('code=cortex_code_');
     expect(redirectUrl).toContain('state=test-state');
 
     // Extract code from redirect URL
@@ -379,7 +379,7 @@ describe('authorization code flow', () => {
 
     // Exchange code for tokens
     const tokens = await provider.exchangeAuthorizationCode(client, code);
-    expect(tokens.access_token).toStartWith('gbrain_at_');
+    expect(tokens.access_token).toStartWith('cortex_at_');
     expect(tokens.refresh_token).toBeDefined(); // Auth code flow includes refresh
   });
 
@@ -410,7 +410,7 @@ describe('authorization code flow', () => {
 
   test('expired code is rejected', async () => {
     // Insert an already-expired code
-    const expiredCode = generateToken('gbrain_code_');
+    const expiredCode = generateToken('cortex_code_');
     const hash = hashToken(expiredCode);
     const firstClient = (await sql`SELECT client_id FROM oauth_clients LIMIT 1`)[0];
 
@@ -659,7 +659,7 @@ describe('redirect_uri validation (DCR)', () => {
       scope: 'read',
       token_endpoint_auth_method: 'client_secret_post',
     });
-    expect(result.client_id).toStartWith('gbrain_cl_');
+    expect(result.client_id).toStartWith('cortex_cl_');
   });
 
   test('https:// is allowed', async () => {
@@ -670,7 +670,7 @@ describe('redirect_uri validation (DCR)', () => {
       scope: 'read',
       token_endpoint_auth_method: 'client_secret_post',
     });
-    expect(result.client_id).toStartWith('gbrain_cl_');
+    expect(result.client_id).toStartWith('cortex_cl_');
   });
 
   test('plaintext http:// (non-loopback) is rejected', async () => {
@@ -760,7 +760,7 @@ describe('F1/F4 cross-client isolation', () => {
     // the code afterward. Without it, the attacker would have burned the
     // row in the DELETE and the owner's redemption would 404.
     const tokens = await provider.exchangeAuthorizationCode(owner, code);
-    expect(tokens.access_token).toStartWith('gbrain_at_');
+    expect(tokens.access_token).toStartWith('cortex_at_');
   });
 
   test('wrong client cannot read another client PKCE challenge', async () => {
@@ -839,7 +839,7 @@ describe('F2/F3 refresh hardening', () => {
     // Owner still redeems atomically — the row was not burned by the
     // attacker's attempt.
     const rotated = await provider.exchangeRefreshToken(owner, tokens.refresh_token!);
-    expect(rotated.access_token).toStartWith('gbrain_at_');
+    expect(rotated.access_token).toStartWith('cortex_at_');
     expect(rotated.refresh_token).toBeDefined();
     expect(rotated.refresh_token).not.toBe(tokens.refresh_token);
   });
@@ -1010,7 +1010,7 @@ describe('F5 verifyAccessToken / client_credentials column probes', () => {
       const query = strings.join('$');
       if (query.includes('SELECT client_id, client_secret_hash')) {
         return [{
-          client_id: 'gbrain_cl_fake',
+          client_id: 'cortex_cl_fake',
           client_secret_hash: hashToken('secret'),
           client_name: 'fake',
           redirect_uris: [],
@@ -1025,7 +1025,7 @@ describe('F5 verifyAccessToken / client_credentials column probes', () => {
     const failingProvider = new GBrainOAuthProvider({ sql: fakeSql as any });
 
     await expect(
-      failingProvider.exchangeClientCredentials('gbrain_cl_fake', 'secret', 'read'),
+      failingProvider.exchangeClientCredentials('cortex_cl_fake', 'secret', 'read'),
     ).rejects.toThrow('database session failed');
   });
 });
@@ -1077,7 +1077,7 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     const tokens = await provider.exchangeAuthorizationCode(
       client, code, undefined, 'http://localhost:3000/callback',
     );
-    expect(tokens.access_token).toStartWith('gbrain_at_');
+    expect(tokens.access_token).toStartWith('cortex_at_');
   });
 
   test('mismatched redirect_uri rejects', async () => {
@@ -1153,7 +1153,7 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     const tokens = await provider.exchangeAuthorizationCode(client, code);
-    expect(tokens.access_token).toStartWith('gbrain_at_');
+    expect(tokens.access_token).toStartWith('cortex_at_');
   });
 });
 
@@ -1183,8 +1183,8 @@ describe('F12 dcrDisabled constructor option', () => {
     const result = await dcrOff.registerClientManual(
       'dcr-disabled-cli-test', ['client_credentials'], 'read',
     );
-    expect(result.clientId).toStartWith('gbrain_cl_');
-    expect(result.clientSecret).toStartWith('gbrain_cs_');
+    expect(result.clientId).toStartWith('cortex_cl_');
+    expect(result.clientSecret).toStartWith('cortex_cs_');
   });
 });
 
@@ -1207,7 +1207,7 @@ describe('PKCE DCR public-client gate (#909)', () => {
       scope: 'read',
       token_endpoint_auth_method: 'none',
     });
-    expect(result.client_id).toStartWith('gbrain_cl_');
+    expect(result.client_id).toStartWith('cortex_cl_');
     // RFC 7591 §3.2.1: public clients get NO client_secret in the response.
     expect(result.client_secret).toBeUndefined();
     expect(result.token_endpoint_auth_method).toBe('none');
@@ -1223,8 +1223,8 @@ describe('PKCE DCR public-client gate (#909)', () => {
       scope: 'read',
       // token_endpoint_auth_method omitted; falls back to 'client_secret_post'
     });
-    expect(result.client_id).toStartWith('gbrain_cl_');
-    expect(result.client_secret).toStartWith('gbrain_cs_');
+    expect(result.client_id).toStartWith('cortex_cl_');
+    expect(result.client_secret).toStartWith('cortex_cs_');
   });
 
   test('explicit client_secret_post still issues a client_secret', async () => {
@@ -1235,8 +1235,8 @@ describe('PKCE DCR public-client gate (#909)', () => {
       scope: 'read',
       token_endpoint_auth_method: 'client_secret_post',
     });
-    expect(result.client_id).toStartWith('gbrain_cl_');
-    expect(result.client_secret).toStartWith('gbrain_cs_');
+    expect(result.client_id).toStartWith('cortex_cl_');
+    expect(result.client_secret).toStartWith('cortex_cs_');
   });
 
   test('getClient on a public client returns client_secret=undefined (NULL normalized)', async () => {
@@ -1280,11 +1280,11 @@ describe('PKCE DCR public-client gate (#909)', () => {
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    expect(code).toMatch(/^gbrain_code_/);
+    expect(code).toMatch(/^cortex_code_/);
 
     // Exchange the code — public client; no secret on the wire.
     const tokens = await provider.exchangeAuthorizationCode(client, code);
-    expect(tokens.access_token).toStartWith('gbrain_at_');
+    expect(tokens.access_token).toStartWith('cortex_at_');
     // SDK normalizes token_type per RFC 6750 §6.1.1 (case-insensitive);
     // implementations may emit "bearer" lowercase.
     expect(String(tokens.token_type).toLowerCase()).toBe('bearer');
@@ -1378,9 +1378,9 @@ describe('v0.41.3 registerClientManual tokenEndpointAuthMethod', () => {
     const result = await provider.registerClientManual(
       'v413-default-test', ['client_credentials'], 'read',
     );
-    expect(result.clientId).toStartWith('gbrain_cl_');
+    expect(result.clientId).toStartWith('cortex_cl_');
     expect(result.clientSecret).toBeDefined();
-    expect(result.clientSecret!).toStartWith('gbrain_cs_');
+    expect(result.clientSecret!).toStartWith('cortex_cs_');
   });
 
   test('explicit client_secret_post → confidential client with secret', async () => {
@@ -1406,7 +1406,7 @@ describe('v0.41.3 registerClientManual tokenEndpointAuthMethod', () => {
       'v413-public-test', ['authorization_code'], 'read',
       ['https://example.test/cb'], 'default', undefined, 'none',
     );
-    expect(result.clientId).toStartWith('gbrain_cl_');
+    expect(result.clientId).toStartWith('cortex_cl_');
     expect(result.clientSecret).toBeUndefined();
 
     // Verify the stored row has client_secret_hash = NULL (public client shape)
@@ -1453,7 +1453,7 @@ describe('v0.41.3 DCR validator (T5)', () => {
       redirect_uris: ['https://example.test/cb'],
       token_endpoint_auth_method: 'none',
     } as any);
-    expect(reg.client_id).toStartWith('gbrain_cl_');
+    expect(reg.client_id).toStartWith('cortex_cl_');
     // RFC 7591 §3.2.1: public clients MUST NOT receive a client_secret
     expect(reg.client_secret).toBeUndefined();
   });
@@ -1466,7 +1466,7 @@ describe('v0.41.3 DCR validator (T5)', () => {
       redirect_uris: [],
       token_endpoint_auth_method: 'client_secret_basic',
     } as any);
-    expect(reg.client_id).toStartWith('gbrain_cl_');
-    expect(reg.client_secret).toStartWith('gbrain_cs_');
+    expect(reg.client_id).toStartWith('cortex_cl_');
+    expect(reg.client_secret).toStartWith('cortex_cs_');
   });
 });

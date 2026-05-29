@@ -1,5 +1,13 @@
 node_modules/
 bin/
+tmp/
+.tmp/
+.tmp-live/
+test-results/
+dist/
+admin/.next/
+admin/out/
+admin/tsconfig.tsbuildinfo
 .DS_Store
 *.log
 .env

@@ -63,11 +63,11 @@ extractable rules, different link verbs, different rubric).
 
 Add the type:
 ```
-gbrain schema add-type meeting \
+cortex schema add-type meeting \
   --primitive temporal \
   --prefix meetings/ \
   --extractable
-gbrain schema sync --apply
+cortex schema sync --apply
 ```
 
 The `sync --apply` backfills all 4000 pages. From here forward,
@@ -89,7 +89,7 @@ imports under `meetings/` infer `meeting` type via the pack.
   `expert_routing_without_prefix` lint rule warns about this exact
   shape: an expert-routed type with no prefix never matches a put_page
   inference, so `whoknows` silently never surfaces it.
-- **Don't mutate `gbrain-base` or `gbrain-recommended`.** Fork first.
+- **Don't mutate `cortex-base` or `cortex-recommended`.** Fork first.
 
 ## When to remove a type
 
@@ -107,7 +107,7 @@ Break those references first.
 
 ## When to commit the pack
 
-If your pack lives in source control (`~/.gbrain/schema-packs/<name>/`
+If your pack lives in source control (`~/.cortex/schema-packs/<name>/`
 is a git repo), commit after every batch of mutations. The
 `mutation_count_anomaly` lint rule warns at >50 mutations in 7 days —
 that's the hint to start committing rather than relying on disk-only
@@ -121,11 +121,11 @@ active pack matches the declared `from`, the `pack_upgrade_available`
 onboard check surfaces the successor + a `manual_only` RemediationStep
 pointing at the `unify-types` PROTECTED Minion handler.
 
-v0.41.22 ships **gbrain-base-v2** as the declared successor to
-gbrain-base@1.x — collapses 94 noisy types to 15 canonical via
-declarative mapping_rules. Run via `gbrain onboard --check --explain`
-(preview) → `gbrain jobs submit unify-types --allow-protected --params
-'{"target_pack":"gbrain-base-v2"}'` (apply). See
+v0.41.22 ships **cortex-base-v2** as the declared successor to
+cortex-base@1.x — collapses 94 noisy types to 15 canonical via
+declarative mapping_rules. Run via `cortex onboard --check --explain`
+(preview) → `cortex jobs submit unify-types --allow-protected --params
+'{"target_pack":"cortex-base-v2"}'` (apply). See
 `skills/schema-unify/SKILL.md` for the full playbook.
 
 Authoring a successor pack: declare
@@ -138,9 +138,9 @@ codex D9 — third-party packs cannot inject `title` / `slug` / `type`.
 
 When NOT to upgrade:
 - Custom types not covered by the successor's mapping_rules → fork the
-  successor first (`gbrain schema fork gbrain-base-v2 my-pack`), edit
+  successor first (`cortex schema fork cortex-base-v2 my-pack`), edit
   rules, then target your fork.
 - Mid-ingest or autopilot maintenance → wait. Unify holds the
-  `gbrain-unify` db-lock for ~10 min on big brains.
+  `cortex-unify` db-lock for ~10 min on big brains.
 - Federated brain with sources you don't want to touch → scope per
   source via `--params sourceId`.

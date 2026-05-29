@@ -62,7 +62,7 @@ export async function runInit(args: string[]) {
     const url = existing!.remote_mcp!.mcp_url;
     const msg = `Thin-client config already present at ${configPath()} (remote_mcp.mcp_url=${url}).\n` +
       `Re-init would create a local engine and conflict with the remote MCP setup.\n` +
-      `Use --force to overwrite, or \`gbrain init --mcp-only --force\` to refresh thin-client config.`;
+      `Use --force to overwrite, or \`cortex init --mcp-only --force\` to refresh thin-client config.`;
     if (jsonOutput) {
       console.log(JSON.stringify({ status: 'error', reason: 'thin_client_config_present', mcp_url: url, message: msg }));
     } else {
@@ -114,8 +114,8 @@ export async function runInit(args: string[]) {
         console.log(`Found ~${fileCount} .md files. For a brain this size, Supabase gives faster`);
         console.log('search and remote access ($25/mo). PGLite works too but search will be slower at scale.');
         console.log('');
-        console.log('  gbrain init --supabase   Set up with Supabase (recommended for large brains)');
-        console.log('  gbrain init --pglite     Use local PGLite anyway');
+        console.log('  cortex init --supabase   Set up with Supabase (recommended for large brains)');
+        console.log('  cortex init --pglite     Use local PGLite anyway');
         console.log('');
         // Default to PGLite, let the user choose Supabase if they want
       }
@@ -129,11 +129,11 @@ export async function runInit(args: string[]) {
   if (manualUrl) {
     databaseUrl = manualUrl;
   } else if (isNonInteractive) {
-    const envUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+    const envUrl = process.env.CORTEX_DATABASE_URL || process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
     if (envUrl) {
       databaseUrl = envUrl;
     } else {
-      console.error('--non-interactive requires --url <connection_string> or GBRAIN_DATABASE_URL env var');
+      console.error('--non-interactive requires --url <connection_string> or CORTEX_DATABASE_URL env var');
       process.exit(1);
     }
   } else {
@@ -217,7 +217,7 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
     const { getRecipe } = await import('../core/ai/recipes/index.ts');
     const recipe = getRecipe(shorthand);
     if (!recipe) {
-      console.error(`Unknown provider: ${shorthand}. Run \`gbrain providers list\` to see known providers.`);
+      console.error(`Unknown provider: ${shorthand}. Run \`cortex providers list\` to see known providers.`);
       process.exit(1);
     }
     // v0.32 D8=A: recipes flagged user_provided_models (litellm, llama-server)
@@ -227,7 +227,7 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
     if (recipe.touchpoints.embedding?.user_provided_models === true) {
       console.error(
         `Provider ${shorthand} requires you to specify the model + dimensions explicitly:\n` +
-        `  gbrain init --embedding-model ${shorthand}:<your-model-id> --embedding-dimensions <N>\n` +
+        `  cortex init --embedding-model ${shorthand}:<your-model-id> --embedding-dimensions <N>\n` +
         (recipe.setup_hint ? `\nSetup: ${recipe.setup_hint}` : '')
       );
       process.exit(1);
@@ -391,13 +391,13 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
   console.error('  export OPENAI_API_KEY=sk-…        # openai:text-embedding-3-large (1536d)');
   console.error('  export ZEROENTROPY_API_KEY=ze-…   # zeroentropyai:zembed-1 (2560d, Matryoshka)');
   console.error('  export VOYAGE_API_KEY=pa-…        # voyage:voyage-3-large (1024d)');
-  console.error('Then re-run: gbrain init --pglite');
+  console.error('Then re-run: cortex init --pglite');
   console.error('');
   console.error('Or pick explicitly:');
-  console.error('  gbrain init --pglite --embedding-model openai:text-embedding-3-large');
+  console.error('  cortex init --pglite --embedding-model openai:text-embedding-3-large');
   console.error('');
-  console.error('Or defer setup: gbrain init --pglite --no-embedding');
-  console.error('  (you can configure later with `gbrain config set embedding_model <id>`)');
+  console.error('Or defer setup: cortex init --pglite --no-embedding');
+  console.error('  (you can configure later with `cortex config set embedding_model <id>`)');
   // D13: surface near-miss env vars (e.g. OPENAPI_API_KEY → OPENAI_API_KEY).
   if (typos.length > 0) {
     console.error('');
@@ -517,7 +517,7 @@ async function resolveChatByEnv(out: ResolvedAIOptions): Promise<void> {
 async function initMigrateOnly(opts: { jsonOutput: boolean }) {
   const config = loadConfig();
   if (!config) {
-    const msg = 'No brain configured. Run `gbrain init` (interactive) or `gbrain init --pglite` / `gbrain init --supabase` first.';
+    const msg = 'No Cortex brain configured. Run `cortex init --supabase` for an operator service or `cortex connect <onboarding-url>` for a hosted tenant runtime.';
     if (opts.jsonOutput) {
       console.log(JSON.stringify({ status: 'error', reason: 'no_config', message: msg }));
     } else {
@@ -556,34 +556,36 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
 }
 
 /**
- * `gbrain init --mcp-only` — thin-client setup. Writes a `remote_mcp` config
+ * `cortex init --mcp-only` — thin-client setup. Writes a `remote_mcp` config
  * field, runs three pre-flight smokes (OAuth discovery, token round-trip,
  * MCP initialize), and never creates a local engine.
  *
  * Required flags (or env vars):
- *   --issuer-url <url>          (or GBRAIN_REMOTE_ISSUER_URL)
- *   --mcp-url <url>             (or GBRAIN_REMOTE_MCP_URL)
- *   --oauth-client-id <id>      (or GBRAIN_REMOTE_CLIENT_ID)
- *   --oauth-client-secret <s>   (or GBRAIN_REMOTE_CLIENT_SECRET; preferred)
+ *   --issuer-url <url>          (or CORTEX_REMOTE_ISSUER_URL)
+ *   --mcp-url <url>             (or CORTEX_REMOTE_MCP_URL)
+ *   --oauth-client-id <id>      (or CORTEX_REMOTE_CLIENT_ID)
+ *   --oauth-client-secret <s>   (or CORTEX_REMOTE_CLIENT_SECRET; preferred)
+ *   --no-smoke                  (optional; write config without pre-flight probes)
  *
  * Re-run semantics: if a thin-client config already exists, --force overwrites;
  * otherwise refuses with a hint pointing at the existing mcp_url.
  */
-async function initRemoteMcp(opts: {
+export async function initRemoteMcp(opts: {
   args: string[];
   jsonOutput: boolean;
   isForce: boolean;
   isNonInteractive: boolean;
 }) {
   const { args, jsonOutput, isForce } = opts;
+  const skipSmoke = args.includes('--no-smoke');
   const arg = (flag: string) => {
     const i = args.indexOf(flag);
     return i !== -1 ? args[i + 1] : null;
   };
-  const issuerUrl = (arg('--issuer-url') ?? process.env.GBRAIN_REMOTE_ISSUER_URL ?? '').trim();
-  const mcpUrl = (arg('--mcp-url') ?? process.env.GBRAIN_REMOTE_MCP_URL ?? '').trim();
-  const clientId = (arg('--oauth-client-id') ?? process.env.GBRAIN_REMOTE_CLIENT_ID ?? '').trim();
-  const clientSecret = (arg('--oauth-client-secret') ?? process.env.GBRAIN_REMOTE_CLIENT_SECRET ?? '').trim();
+  const issuerUrl = (arg('--issuer-url') ?? process.env.CORTEX_REMOTE_ISSUER_URL ?? process.env.GBRAIN_REMOTE_ISSUER_URL ?? '').trim();
+  const mcpUrl = (arg('--mcp-url') ?? process.env.CORTEX_REMOTE_MCP_URL ?? process.env.GBRAIN_REMOTE_MCP_URL ?? '').trim();
+  const clientId = (arg('--oauth-client-id') ?? process.env.CORTEX_REMOTE_CLIENT_ID ?? process.env.GBRAIN_REMOTE_CLIENT_ID ?? '').trim();
+  const clientSecret = (arg('--oauth-client-secret') ?? process.env.CORTEX_REMOTE_CLIENT_SECRET ?? process.env.GBRAIN_REMOTE_CLIENT_SECRET ?? '').trim();
 
   function fail(reason: string, message: string, extra: Record<string, unknown> = {}): never {
     if (jsonOutput) {
@@ -594,10 +596,10 @@ async function initRemoteMcp(opts: {
     process.exit(1);
   }
 
-  if (!issuerUrl) fail('missing_issuer_url', '--issuer-url is required (or set GBRAIN_REMOTE_ISSUER_URL). Example: --issuer-url https://brain-host.local:3001');
-  if (!mcpUrl) fail('missing_mcp_url', '--mcp-url is required (or set GBRAIN_REMOTE_MCP_URL). Example: --mcp-url https://brain-host.local:3001/mcp');
-  if (!clientId) fail('missing_client_id', '--oauth-client-id is required (or set GBRAIN_REMOTE_CLIENT_ID). Get it from `gbrain auth register-client` on the host.');
-  if (!clientSecret) fail('missing_client_secret', '--oauth-client-secret is required (or set GBRAIN_REMOTE_CLIENT_SECRET). Get it from `gbrain auth register-client` on the host.');
+  if (!issuerUrl) fail('missing_issuer_url', '--issuer-url is required (or set CORTEX_REMOTE_ISSUER_URL). Example: --issuer-url https://brain-host.local:3001');
+  if (!mcpUrl) fail('missing_mcp_url', '--mcp-url is required (or set CORTEX_REMOTE_MCP_URL). Example: --mcp-url https://brain-host.local:3001/mcp');
+  if (!clientId) fail('missing_client_id', '--oauth-client-id is required (or set CORTEX_REMOTE_CLIENT_ID). Get it from `cortex auth register-client` on the host.');
+  if (!clientSecret) fail('missing_client_secret', '--oauth-client-secret is required (or set CORTEX_REMOTE_CLIENT_SECRET). Get it from `cortex auth register-client` on the host.');
 
   // Re-run guard for --mcp-only specifically: refuse without --force to
   // avoid silently rotating credentials on a working install.
@@ -613,46 +615,50 @@ async function initRemoteMcp(opts: {
   }
 
   if (!jsonOutput) {
-    console.log('Thin-client setup — running pre-flight smoke...');
+    console.log(skipSmoke ? 'Thin-client setup — writing remote profile...' : 'Thin-client setup — running pre-flight smoke...');
     console.log(`  issuer: ${issuerUrl}`);
     console.log(`  mcp:    ${mcpUrl}`);
   }
 
-  // 1. OAuth discovery
-  const disco = await discoverOAuth(issuerUrl);
-  if (!disco.ok) {
-    fail(
-      `discovery_${disco.reason}`,
-      `Pre-flight failed: OAuth discovery on ${issuerUrl} — ${disco.message}\n` +
-      `Hint: confirm the issuer_url, that the host is reachable, and that \`gbrain serve --http\` is running there.`,
-      { detail: disco.message, ...(disco.status ? { status: disco.status } : {}) },
-    );
-  }
-  if (!jsonOutput) console.log(`  ✓ OAuth discovery (token_endpoint=${disco.metadata.token_endpoint})`);
+  if (!skipSmoke) {
+    // 1. OAuth discovery
+    const disco = await discoverOAuth(issuerUrl);
+    if (!disco.ok) {
+      fail(
+        `discovery_${disco.reason}`,
+        `Pre-flight failed: OAuth discovery on ${issuerUrl} — ${disco.message}\n` +
+        `Hint: confirm the issuer_url, that the host is reachable, and that \`cortex serve --http\` is running there.`,
+        { detail: disco.message, ...(disco.status ? { status: disco.status } : {}) },
+      );
+    }
+    if (!jsonOutput) console.log(`  ✓ OAuth discovery (token_endpoint=${disco.metadata.token_endpoint})`);
 
-  // 2. Token round-trip
-  const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, clientId, clientSecret);
-  if (!tokenRes.ok) {
-    fail(
-      `token_${tokenRes.reason}`,
-      `Pre-flight failed: OAuth /token — ${tokenRes.message}\n` +
-      `Hint: the host operator can run \`gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin\` to mint fresh credentials.`,
-      { detail: tokenRes.message, ...(tokenRes.status ? { status: tokenRes.status } : {}) },
-    );
-  }
-  if (!jsonOutput) console.log(`  ✓ OAuth /token (${tokenRes.token.token_type ?? 'bearer'}, scope=${tokenRes.token.scope ?? 'unspecified'})`);
+    // 2. Token round-trip
+    const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, clientId, clientSecret);
+    if (!tokenRes.ok) {
+      fail(
+        `token_${tokenRes.reason}`,
+        `Pre-flight failed: OAuth /token — ${tokenRes.message}\n` +
+        `Hint: the host operator can run \`cortex auth register-client <name> --grant-types client_credentials --scopes read,write,admin\` to mint fresh credentials.`,
+        { detail: tokenRes.message, ...(tokenRes.status ? { status: tokenRes.status } : {}) },
+      );
+    }
+    if (!jsonOutput) console.log(`  ✓ OAuth /token (${tokenRes.token.token_type ?? 'bearer'}, scope=${tokenRes.token.scope ?? 'unspecified'})`);
 
-  // 3. MCP smoke
-  const mcpRes = await smokeTestMcp(mcpUrl, tokenRes.token.access_token);
-  if (!mcpRes.ok) {
-    fail(
-      `mcp_smoke_${mcpRes.reason}`,
-      `Pre-flight failed: MCP initialize on ${mcpUrl} — ${mcpRes.message}\n` +
-      `Hint: confirm \`mcp_url\` matches the path the host serves \`/mcp\` on (default: <issuer_url>/mcp).`,
-      { detail: mcpRes.message, ...(mcpRes.status ? { status: mcpRes.status } : {}) },
-    );
+    // 3. MCP smoke
+    const mcpRes = await smokeTestMcp(mcpUrl, tokenRes.token.access_token);
+    if (!mcpRes.ok) {
+      fail(
+        `mcp_smoke_${mcpRes.reason}`,
+        `Pre-flight failed: MCP initialize on ${mcpUrl} — ${mcpRes.message}\n` +
+        `Hint: confirm \`mcp_url\` matches the path the host serves \`/mcp\` on (default: <issuer_url>/mcp).`,
+        { detail: mcpRes.message, ...(mcpRes.status ? { status: mcpRes.status } : {}) },
+      );
+    }
+    if (!jsonOutput) console.log(`  ✓ MCP initialize`);
+  } else if (!jsonOutput) {
+    console.log('  Smoke: skipped by --no-smoke');
   }
-  if (!jsonOutput) console.log(`  ✓ MCP initialize`);
 
   // 4. Persist config. Preserve any existing AI/storage/etc. fields on
   // the existing config — only overwrite remote_mcp + drop engine/database
@@ -674,7 +680,7 @@ async function initRemoteMcp(opts: {
       // Only persist the secret to disk if it didn't come from the env var.
       // Env-var-supplied secrets stay in env; on-disk copy is opt-in via
       // the --oauth-client-secret flag (or absent env var).
-      ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET === clientSecret
+      ...(process.env.CORTEX_REMOTE_CLIENT_SECRET === clientSecret || process.env.GBRAIN_REMOTE_CLIENT_SECRET === clientSecret
         ? {}
         : { oauth_client_secret: clientSecret }),
     },
@@ -694,6 +700,7 @@ async function initRemoteMcp(opts: {
       mcp_url: config.remote_mcp!.mcp_url,
       oauth_client_id: config.remote_mcp!.oauth_client_id,
       oauth_secret_in_config: 'oauth_client_secret' in config.remote_mcp!,
+      smoke: skipSmoke ? 'skipped' : 'passed',
     }));
   } else {
     console.log('');
@@ -703,8 +710,8 @@ async function initRemoteMcp(opts: {
     console.log('');
     console.log('Next steps:');
     console.log(`  1. Configure your agent's MCP client to point at ${config.remote_mcp!.mcp_url} (Claude Desktop / Hermes / openclaw).`);
-    console.log('  2. Run `gbrain doctor` to re-verify connectivity at any time.');
-    console.log('  3. Run `gbrain remote ping` after writing markdown if you want the host to re-index immediately (Tier B).');
+    console.log('  2. Run `cortex doctor` to re-verify connectivity at any time.');
+    console.log('  3. Run `cortex remote ping` after writing markdown if you want the host to re-index immediately (Tier B).');
   }
 }
 
@@ -781,10 +788,10 @@ function printResolvedAIChoice(
       console.warn('  Heads up: ZEROENTROPY_API_KEY is not set.');
       console.warn('  Set it before first embed:');
       console.warn('    export ZEROENTROPY_API_KEY=...');
-      console.warn('  Or add to ~/.gbrain/config.json:');
+      console.warn('  Or add to the Cortex config file:');
       console.warn('    "zeroentropy_api_key": "..."');
       console.warn('  Or pick a different provider:');
-      console.warn('    gbrain init --pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536');
+      console.warn('    cortex init --pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536');
     }
   }
 }
@@ -810,7 +817,7 @@ async function initPGLite(opts: {
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
     // D9 deferred-setup mode: skip preflight, no model/dim resolved.
-    console.log(`  --no-embedding: deferred setup — configure with \`gbrain config set embedding_model <id>\` before import`);
+    console.log(`  --no-embedding: deferred setup — configure with \`cortex config set embedding_model <id>\` before import`);
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -859,10 +866,10 @@ async function initPGLite(opts: {
       console.warn('  Heads up: ZEROENTROPY_API_KEY is not set.');
       console.warn('  Set it before first embed:');
       console.warn('    export ZEROENTROPY_API_KEY=...');
-      console.warn('  Or add to ~/.gbrain/config.json:');
+      console.warn('  Or add to the Cortex config file:');
       console.warn('    "zeroentropy_api_key": "..."');
       console.warn('  Or pick a different provider:');
-      console.warn('    gbrain init --pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536');
+      console.warn('    cortex init --pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536');
     }
   }
 
@@ -912,7 +919,7 @@ async function initPGLite(opts: {
       const after = await readContentChunksEmbeddingDim(engine);
       if (after.exists && after.dims !== null && after.dims !== resolvedDim) {
         console.error('\nUNEXPECTED: post-initSchema invariant assertion failed.');
-        console.error('  This is a bug. Please file an issue with the output of `gbrain doctor`.\n');
+        console.error('  This is a bug. Please capture the output of `cortex doctor` for support.\n');
         console.error(embeddingMismatchMessage({
           currentDims: after.dims,
           requestedDims: resolvedDim,
@@ -982,14 +989,14 @@ async function initPGLite(opts: {
       if (stats.page_count > 0) {
         console.log('');
         console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
-        console.log('  gbrain extract links --source db        (typed link backfill)');
-        console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
-        console.log('  gbrain stats                            (verify links > 0)');
+        console.log('  cortex extract links --source db        (typed link backfill)');
+        console.log('  cortex extract timeline --source db     (structured timeline backfill)');
+        console.log('  cortex stats                            (verify links > 0)');
       } else {
-        console.log('Next: gbrain import <dir>');
+        console.log('Next: cortex import <dir>');
       }
       console.log('');
-      console.log('When you outgrow local: gbrain migrate --to supabase');
+      console.log('When you outgrow local: cortex migrate --to supabase');
       reportModStatus();
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');
@@ -1026,7 +1033,7 @@ async function initPostgres(opts: {
   let resolvedDim: number | undefined;
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
-    console.log(`  --no-embedding: deferred setup — configure with \`gbrain config set embedding_model <id>\` before import`);
+    console.log(`  --no-embedding: deferred setup — configure with \`cortex config set embedding_model <id>\` before import`);
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -1067,10 +1074,10 @@ async function initPostgres(opts: {
       console.warn('  Heads up: ZEROENTROPY_API_KEY is not set.');
       console.warn('  Set it before first embed:');
       console.warn('    export ZEROENTROPY_API_KEY=...');
-      console.warn('  Or add to ~/.gbrain/config.json:');
+      console.warn('  Or add to the Cortex config file:');
       console.warn('    "zeroentropy_api_key": "..."');
       console.warn('  Or pick a different provider:');
-      console.warn('    gbrain init --pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536');
+      console.warn('    cortex init --pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536');
     }
   }
 
@@ -1079,7 +1086,7 @@ async function initPostgres(opts: {
     console.warn('');
     console.warn('WARNING: You provided a Supabase direct connection URL (db.*.supabase.co:5432).');
     console.warn('  Direct connections are IPv6 only and fail in many environments.');
-    console.warn('  Use the Session pooler connection string instead (port 6543):');
+    console.warn('  Use the Session pooler connection string instead (pooler.supabase.com:5432):');
     console.warn('  Supabase Dashboard > gear icon (Project Settings) > Database >');
     console.warn('  Connection string > URI tab > change dropdown to "Session pooler"');
     console.warn('');
@@ -1094,7 +1101,7 @@ async function initPostgres(opts: {
       const msg = e instanceof Error ? e.message : String(e);
       if (databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
         console.error('Connection failed. Supabase direct connections (db.*.supabase.co:5432) are IPv6 only.');
-        console.error('Use the Session pooler connection string instead (port 6543).');
+        console.error('Use the Session pooler connection string instead (pooler.supabase.com:5432).');
       }
       throw e;
     }
@@ -1156,7 +1163,7 @@ async function initPostgres(opts: {
       const after = await readContentChunksEmbeddingDim(engine);
       if (after.exists && after.dims !== null && after.dims !== resolvedDim) {
         console.error('\nUNEXPECTED: post-initSchema invariant assertion failed.');
-        console.error('  This is a bug. Please file an issue with the output of `gbrain doctor`.\n');
+        console.error('  This is a bug. Please capture the output of `cortex doctor` for support.\n');
         console.error(embeddingMismatchMessage({
           currentDims: after.dims,
           requestedDims: resolvedDim,
@@ -1189,7 +1196,7 @@ async function initPostgres(opts: {
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
     saveConfig(config);
-    console.log('Config saved to ~/.gbrain/config.json');
+    console.log(`Config saved to ${configPath()}`);
     if (opts.schemaPack) {
       process.stderr.write(
         `[init] Using schema pack: ${opts.schemaPack} (override with --schema-pack <name>)\n`,
@@ -1216,11 +1223,11 @@ async function initPostgres(opts: {
       if (stats.page_count > 0) {
         console.log('');
         console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
-        console.log('  gbrain extract links --source db        (typed link backfill)');
-        console.log('  gbrain extract timeline --source db     (structured timeline backfill)');
-        console.log('  gbrain stats                            (verify links > 0)');
+        console.log('  cortex extract links --source db        (typed link backfill)');
+        console.log('  cortex extract timeline --source db     (structured timeline backfill)');
+        console.log('  cortex stats                            (verify links > 0)');
       } else {
-        console.log('Next: gbrain import <dir>');
+        console.log('Next: cortex import <dir>');
       }
       reportModStatus();
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
@@ -1270,14 +1277,16 @@ async function supabaseWizard(): Promise<string> {
     execSync('bunx supabase --version', { stdio: 'pipe' });
     console.log('Supabase CLI detected.');
     console.log('To auto-provision, run: bunx supabase login && bunx supabase projects create');
-    console.log('Then use: gbrain init --url <your-connection-string>');
+    console.log('Then use: cortex init --url <your-connection-string>');
   } catch {
     console.log('Supabase CLI not found.');
   }
 
   console.log('\nEnter your Supabase/Postgres connection URL:');
-  console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres'); /* allow-pg-url-literal */
-  console.log('  Find it: Supabase Dashboard > Connect (top bar) > Connection String > Session Pooler\n');
+  console.log('  Session pooler format: postgresql://postgres.[ref]:[password]@[pooler-host].pooler.supabase.com:5432/postgres'); /* allow-pg-url-literal */
+  console.log('  Transaction pooler format: postgresql://postgres.[ref]:[password]@[pooler-host].pooler.supabase.com:6543/postgres?prepare=false'); /* allow-pg-url-literal */
+  console.log('  Find it: Supabase Dashboard > Connect (top bar) > Connection String > Session Pooler');
+  console.log('  Copy the exact pooler host; it is not always aws-0.\n');
 
   const url = await readLine('Connection URL: ');
   if (!url) {
@@ -1443,7 +1452,7 @@ export function reportModStatus(): void {
   } catch { /* manifest not found */ }
 
   console.log('');
-  console.log('--- GBrain Mod Status ---');
+  console.log('--- Cortex Runtime Status ---');
   console.log(`Skills: ${skillCount} loaded`);
   console.log(`GStack: ${gstack.found ? `found (${gstack.host})` : 'not found'}`);
   if (!gstack.found) {
@@ -1452,25 +1461,31 @@ export function reportModStatus(): void {
     console.log('  cd ~/.claude/skills/gstack && ./setup');
   }
   console.log('Resolver: skills/RESOLVER.md');
-  console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
+  console.log('Identity audit: run `cortex soul-audit` to customize agent identity');
   console.log('');
 }
 
 function printInitHelp() {
   console.log(`
-gbrain init — initialize a brain (PGLite or Supabase Postgres)
+cortex init — legacy engine setup for Cortex operators
 
 USAGE
-  gbrain init [flags]
+  cortex init [flags]
 
-ENGINE SELECTION (mutually exclusive)
-  --pglite              Use embedded PGLite (zero-config, default for <1000 .md files)
-  --supabase            Use Supabase Postgres (recommended for 1000+ files)
+HOSTED TENANT SETUP
+  cortex connect '<onboarding-url>' --client-secret '<secret>'
+  cortex runtime install cursor --mcp-url https://brain.example.com/mcp
+
+ENGINE SELECTION (operator/internal)
+  --supabase            Use Supabase Postgres for a Cortex tenant service
   --url <URL>           Use a manual Postgres connection string
-  --mcp-only            Thin-client mode: connect to a remote gbrain MCP, no local engine
+  --pglite              Use embedded PGLite for development fixtures
+  --mcp-only            Thin-client mode: connect to a remote Cortex MCP, no local engine
 
 OPTIONS
   --force               Overwrite an existing config (gated by default)
+  --no-smoke            With --mcp-only, write the remote profile without
+                        OAuth/MCP pre-flight probes
   --non-interactive     Don't prompt; use defaults
   --migrate-only        Apply pending schema migrations against the configured engine
                         without re-saving config (used by post-upgrade and orchestrators)
@@ -1488,15 +1503,14 @@ OPTIONS
                         Default subagent driver (v0.27+)
 
 EXAMPLES
-  gbrain init --pglite                      # Local-only, no API keys
-  gbrain init --supabase                    # Interactive Supabase setup
-  gbrain init --url postgresql://...        # Use a custom Postgres
-  gbrain init --mcp-only --url https://...  # Thin-client mode
+  cortex connect '<onboarding-url>' --client-secret '<secret>'
+  cortex init --supabase                    # Tenant service provisioning
+  cortex init --url postgresql://...        # Use a tenant Postgres URL
+  cortex init --mcp-only --issuer-url https://brain.example.com --mcp-url https://brain.example.com/mcp
 
 NOTES
-  - Bare \`gbrain init\` in a directory with 1000+ .md files defaults to Supabase
-    interactive setup. With <1000 files (or with --pglite explicitly), defaults
-    to PGLite at ~/.gbrain/brain.pglite.
-  - Existing config is preserved unless --force is passed.
+  - Hosted companies should use the signup, onboarding, invite, and runtime
+    install flows from the Cortex console or API.
+  - Existing operator config is preserved unless --force is passed.
 `.trim());
 }

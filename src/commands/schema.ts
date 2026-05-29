@@ -1,4 +1,4 @@
-// `gbrain schema` CLI surface.
+// `cortex schema` CLI surface.
 //
 // The active schema pack drives type inference, link verbs, expert
 // routing, extractable types, enrichment rubrics, and per-source
@@ -19,6 +19,7 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   addAliasToType,
   addLinkTypeToPack,
@@ -48,6 +49,39 @@ import {
 import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
 import { gbrainPath, loadConfig, configPath } from '../core/config.ts';
+
+const CORTEX_BUNDLED_PACK_ALIASES: Record<string, string> = {
+  'cortex-base': 'gbrain-base',
+  'cortex-recommended': 'gbrain-recommended',
+  'cortex-creator': 'gbrain-creator',
+  'cortex-investor': 'gbrain-investor',
+  'cortex-engineer': 'gbrain-engineer',
+  'cortex-everything': 'gbrain-everything',
+  'cortex-base-v2': 'gbrain-base-v2',
+};
+
+function displayPackName(name: string): string {
+  return name.replace(/^gbrain-/, 'cortex-');
+}
+
+function displayPackIdentity(identity: string): string {
+  return identity.replace(/\bgbrain-/g, 'cortex-');
+}
+
+function publicManifest(manifest: SchemaPackManifest): SchemaPackManifest {
+  return {
+    ...manifest,
+    name: displayPackName(manifest.name),
+    extends: manifest.extends ? displayPackName(manifest.extends) : manifest.extends,
+  };
+}
+
+function displayPackPath(path: string, manifest: SchemaPackManifest): string {
+  if (/[\\/]schema-pack[\\/]base[\\/]gbrain-/.test(path)) {
+    return `bundled:${displayPackName(manifest.name)}`;
+  }
+  return path.replace(/\.gbrain/g, '.cortex');
+}
 
 export async function runSchema(args: string[]): Promise<void> {
   const sub = args[0];
@@ -91,17 +125,17 @@ export async function runSchema(args: string[]): Promise<void> {
       return printHelp();
     default:
       console.error(`Unknown schema subcommand: ${sub}`);
-      console.error('Run `gbrain schema --help` for available commands.');
+      console.error('Run `cortex schema --help` for available commands.');
       process.exit(2);
   }
 }
 
 function printHelp(): void {
-  console.log(`gbrain schema — active schema pack management
+  console.log(`cortex schema — active schema pack management
 
 Inspection:
   active                  Show resolved pack + which tier provided it
-  list                    List installed packs (bundled + ~/.gbrain/schema-packs/)
+  list                    List installed packs (bundled + ~/.cortex/schema-packs/)
   show [<pack>]           Pretty-print a manifest (default: active pack)
   validate [<pack>]       Validate manifest shape against the v1 schema
   graph                   Show type/primitive graph with link-verb edges
@@ -111,12 +145,12 @@ Inspection:
   usage [--since N(d|w|m)] CLI invocation telemetry summary
 
 Activation:
-  use <pack>              Activate pack (writes ~/.gbrain/config.json schema_pack)
+  use <pack>              Activate pack (writes ~/.cortex/config.json schema_pack)
   downgrade [--to <pack>] Restore the previous active pack
   reload [--pack <name>]  Flush the in-process pack cache; --pack scopes
 
 Authoring (v0.40.6.0):
-  init <name>             Scaffold a new pack (extends gbrain-base)
+  init <name>             Scaffold a new pack (extends cortex-base)
   fork <src> <new>        Copy a pack to a new editable name
   edit <name>             Print the on-disk pack file path
   diff <a> <b>            Compare page_type sets across two packs
@@ -139,7 +173,7 @@ Authoring (v0.40.6.0):
                           Generates prompts/extract/<type>.md and
                           fixtures/extract/<type>.jsonl stubs the
                           pack-author edits, then pairs with
-                          \`gbrain extract benchmark\` for the iteration loop.
+                          \`cortex extract benchmark\` for the iteration loop.
 
 Discovery + repair:
   detect                  Cluster pages by source_path → candidate page_types
@@ -154,12 +188,12 @@ Pass --force to bypass per-pack lock contention on writes.
 
 Resolution chain (7-tier, tier 1 trust-gated):
   1. Per-call --schema-pack flag (CLI only)
-  2. GBRAIN_SCHEMA_PACK env var
+  2. CORTEX_SCHEMA_PACK env var (legacy GBRAIN_SCHEMA_PACK accepted)
   3. Per-source DB config schema_pack.source.<id>
   4. Brain-wide DB config schema_pack
-  5. gbrain.yml schema: section
-  6. ~/.gbrain/config.json schema_pack
-  7. Default: gbrain-base
+  5. cortex.yml schema: section
+  6. ~/.cortex/config.json schema_pack
+  7. Default: cortex-base
 `);
 }
 
@@ -167,9 +201,9 @@ async function runActive(_args: string[]): Promise<void> {
   const cfg = loadConfig();
   const resolution = resolveActivePackNameOnly({ cfg, remote: false });
   const pack = await loadActivePack({ cfg, remote: false });
-  console.log(`Active pack: ${pack.manifest.name} v${pack.manifest.version}`);
+  console.log(`Active pack: ${displayPackName(pack.manifest.name)} v${pack.manifest.version}`);
   console.log(`Source: ${resolution.source}`);
-  console.log(`Pack identity: ${pack.identity}`);
+  console.log(`Pack identity: ${displayPackIdentity(pack.identity)}`);
   console.log(`Page types: ${pack.manifest.page_types.length}`);
   console.log(`Link verbs: ${pack.manifest.link_types.length}`);
   console.log(`Takes kinds: ${pack.manifest.takes_kinds.join(', ')}`);
@@ -179,7 +213,7 @@ async function runActive(_args: string[]): Promise<void> {
 }
 
 function runList(_args: string[]): void {
-  const bundled = ['gbrain-base', 'gbrain-recommended'];
+  const bundled = ['cortex-base', 'cortex-recommended'];
   const installedDir = gbrainPath('schema-packs');
   const installed: string[] = [];
   if (existsSync(installedDir)) {
@@ -187,7 +221,7 @@ function runList(_args: string[]): void {
       const candidates = ['pack.yaml', 'pack.yml', 'pack.json'];
       for (const c of candidates) {
         if (existsSync(join(installedDir, entry, c))) {
-          installed.push(entry);
+          installed.push(displayPackName(entry));
           break;
         }
       }
@@ -196,10 +230,10 @@ function runList(_args: string[]): void {
   console.log('Bundled packs:');
   for (const name of bundled) console.log(`  ${name}`);
   if (installed.length > 0) {
-    console.log('\nInstalled packs (~/.gbrain/schema-packs/):');
+    console.log('\nInstalled packs (~/.cortex/schema-packs/):');
     for (const name of installed) console.log(`  ${name}`);
   } else {
-    console.log('\nNo user-installed packs (~/.gbrain/schema-packs/ empty or missing).');
+    console.log('\nNo user-installed packs (~/.cortex/schema-packs/ empty or missing).');
   }
 }
 
@@ -220,13 +254,13 @@ async function runShow(args: string[]): Promise<void> {
     const path = packPathByName(packName);
     if (!path) {
       console.error(`Unknown pack: ${packName}`);
-      console.error('Run `gbrain schema list` to see available packs.');
+      console.error('Run `cortex schema list` to see available packs.');
       process.exit(1);
     }
-    manifest = loadPackFromFile(path);
+    manifest = publicManifest(loadPackFromFile(path));
   } else {
     const pack = await loadActivePack({ cfg: loadConfig(), remote: false });
-    manifest = pack.manifest;
+    manifest = publicManifest(pack.manifest);
   }
   if (asFilingRules) {
     // Emit the filing-rules-shaped JSON for downstream consumers per T18.
@@ -235,7 +269,7 @@ async function runShow(args: string[]): Promise<void> {
     // their reads to this output without re-shaping.
     const filingRules = {
       schema_version: 1,
-      source: 'gbrain schema show --as-filing-rules',
+      source: 'cortex schema show --as-filing-rules',
       pack: { name: manifest.name, version: manifest.version },
       page_types: manifest.page_types.map((pt) => ({
         name: pt.name,
@@ -304,16 +338,16 @@ function runValidate(args: string[]): void {
       process.exit(1);
     }
   } else {
-    path = packPathByName('gbrain-base');
+    path = packPathByName('cortex-base');
     if (!path) {
       console.error('No active pack — provide a pack name.');
       process.exit(1);
     }
   }
   try {
-    const manifest = loadPackFromFile(path);
+    const manifest = publicManifest(loadPackFromFile(path));
     console.log(`✓ ${manifest.name} v${manifest.version}: valid manifest`);
-    console.log(`  Path: ${path}`);
+    console.log(`  Path: ${displayPackPath(path, manifest)}`);
     console.log(`  Page types: ${manifest.page_types.length}`);
     console.log(`  Link verbs: ${manifest.link_types.length}`);
     console.log(`  Takes kinds: ${manifest.takes_kinds.length}`);
@@ -336,13 +370,13 @@ function runValidate(args: string[]): void {
 function runUse(args: string[]): void {
   const packName = args[0];
   if (!packName) {
-    console.error('Usage: gbrain schema use <pack-name>');
+    console.error('Usage: cortex schema use <pack-name>');
     process.exit(2);
   }
   const path = packPathByName(packName);
   if (!path) {
     console.error(`Unknown pack: ${packName}`);
-    console.error('Run `gbrain schema list` to see available packs.');
+    console.error('Run `cortex schema list` to see available packs.');
     process.exit(1);
   }
   // Validate before activating — refuse to set a broken pack.
@@ -352,7 +386,7 @@ function runUse(args: string[]): void {
     console.error(`Refusing to activate ${packName}: ${(e as Error).message}`);
     process.exit(1);
   }
-  // Write to file-plane config (~/.gbrain/config.json schema_pack field).
+  // Write to file-plane config (~/.cortex/config.json schema_pack field).
   // Tier 6 in the resolution chain — tiers 1-5 (per-call, env, DB) can
   // still override this without editing the file.
   const cfg = loadConfig() ?? { engine: 'pglite' as const };
@@ -360,18 +394,28 @@ function runUse(args: string[]): void {
   const cfgPath = configPath();
   mkdirSync(dirname(cfgPath), { recursive: true });
   writeFileSync(cfgPath, JSON.stringify(updated, null, 2) + '\n', 'utf-8');
-  console.log(`✓ Active schema pack set to: ${packName}`);
+  console.log(`✓ Active schema pack set to: ${displayPackName(packName)}`);
   console.log(`  Written to: ${cfgPath}`);
-  console.log(`\nRun \`gbrain schema active\` to verify resolution.`);
+  console.log(`\nRun \`cortex schema active\` to verify resolution.`);
 }
 
 function packPathByName(name: string): string | null {
-  if (name === 'gbrain-base') {
+  const diskName = CORTEX_BUNDLED_PACK_ALIASES[name] ?? name;
+  const bundledDiskNames = new Set([
+    'gbrain-base',
+    'gbrain-recommended',
+    'gbrain-creator',
+    'gbrain-investor',
+    'gbrain-engineer',
+    'gbrain-everything',
+    'gbrain-base-v2',
+  ]);
+  if (bundledDiskNames.has(diskName)) {
     // Resolve bundled YAML — try a few locations.
-    const here = dirname(new URL(import.meta.url).pathname);
+    const here = dirname(fileURLToPath(import.meta.url));
     const candidates = [
-      join(here, '..', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
-      join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'),
+      join(here, '..', 'core', 'schema-pack', 'base', `${diskName}.yaml`),
+      join(here, '..', '..', 'src', 'core', 'schema-pack', 'base', `${diskName}.yaml`),
     ];
     for (const c of candidates) {
       if (existsSync(c)) return c;
@@ -471,8 +515,8 @@ async function runDetectCmd(args: string[]): Promise<void> {
     console.log(`  ${p.prefix.padEnd(30)} ${String(p.page_count).padStart(6)} pages → suggest type \`${p.suggested_type}\`${samples}`);
   }
   console.log('');
-  console.log('Next: gbrain schema review-candidates  (decide promote / rename / ignore)');
-  console.log('      gbrain schema suggest             (LLM refinement on this candidate)');
+  console.log('Next: cortex schema review-candidates  (decide promote / rename / ignore)');
+  console.log('      cortex schema suggest             (LLM refinement on this candidate)');
 }
 
 // ------------- T3: schema suggest ---------------------------------
@@ -511,7 +555,7 @@ async function runReviewCandidatesCmd(args: string[]): Promise<void> {
   // Codex finding #10: CLI must surface that this is DISK-derived, not
   // audit-log review. Make this loud so users understand drift semantics.
   console.log('Disk-derived candidates from current brain state.');
-  console.log(`Audit history (cross-reference): ~/.gbrain/audit/schema-candidates-*.jsonl`);
+  console.log(`Audit history (cross-reference): ~/.cortex/audit/schema-candidates-*.jsonl`);
   console.log('');
   if (result.applied) {
     console.log(`Applied: ${result.applied}`);
@@ -538,7 +582,7 @@ async function runInitCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
   const name = positional[0];
   if (!name) {
-    console.error('Usage: gbrain schema init <pack-name>  (experimental)');
+    console.error('Usage: cortex schema init <pack-name>  (experimental)');
     process.exit(2);
   }
   const baseDir = gbrainPath('schema-packs', name);
@@ -554,8 +598,8 @@ async function runInitCmd(args: string[]): Promise<void> {
     name,
     version: '0.0.1',
     gbrain_min_version: '0.39.0',
-    extends: 'gbrain-base',
-    description: `Stub pack scaffolded by 'gbrain schema init ${name}'. Edit ${baseDir}/pack.yaml then 'gbrain schema validate' + 'gbrain schema use ${name}'.`,
+    extends: 'cortex-base',
+    description: `Stub pack scaffolded by 'cortex schema init ${name}'. Edit ${baseDir}/pack.yaml then 'cortex schema validate' + 'cortex schema use ${name}'.`,
     page_types: [] as SchemaPackManifest['page_types'],
     link_types: [] as SchemaPackManifest['link_types'],
     takes_kinds: ['fact', 'take', 'bet', 'hunch'] as string[],
@@ -564,12 +608,12 @@ async function runInitCmd(args: string[]): Promise<void> {
     enrichable_types: [] as SchemaPackManifest['enrichable_types'],
     filing_rules: [] as SchemaPackManifest['filing_rules'],
   };
-  const yaml = `# Stub pack — extends gbrain-base by default. Add your own page_types below.
+  const yaml = `# Stub pack — extends cortex-base by default. Add your own page_types below.
 api_version: ${stub.api_version}
 name: ${stub.name}
 version: ${stub.version}
 gbrain_min_version: ${stub.gbrain_min_version}
-extends: gbrain-base
+extends: cortex-base
 description: ${JSON.stringify(stub.description)}
 
 page_types: []
@@ -587,7 +631,7 @@ borrow_from: []
     return;
   }
   console.log(`(experimental) Scaffolded pack \`${name}\` at ${baseDir}/pack.yaml`);
-  console.log(`Next: edit pack.yaml, then run \`gbrain schema validate ${name}\` and \`gbrain schema use ${name}\`.`);
+  console.log(`Next: edit pack.yaml, then run \`cortex schema validate ${name}\` and \`cortex schema use ${name}\`.`);
 }
 
 async function runForkCmd(args: string[]): Promise<void> {
@@ -595,7 +639,7 @@ async function runForkCmd(args: string[]): Promise<void> {
   const from = positional[0];
   const to = positional[1];
   if (!from || !to) {
-    console.error('Usage: gbrain schema fork <source-pack> <new-name>  (experimental)');
+    console.error('Usage: cortex schema fork <source-pack> <new-name>  (experimental)');
     process.exit(2);
   }
   const fromPath = packPathByName(from);
@@ -623,7 +667,7 @@ async function runEditCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
   const name = positional[0];
   if (!name) {
-    console.error('Usage: gbrain schema edit <pack-name>  (experimental)');
+    console.error('Usage: cortex schema edit <pack-name>  (experimental)');
     process.exit(2);
   }
   const p = packPathByName(name);
@@ -636,7 +680,7 @@ async function runEditCmd(args: string[]): Promise<void> {
     return;
   }
   console.log(`(experimental) Pack file: ${p}`);
-  console.log(`Open it in your editor; then run \`gbrain schema validate ${name}\`.`);
+  console.log(`Open it in your editor; then run \`cortex schema validate ${name}\`.`);
 }
 
 async function runDiffCmd(args: string[]): Promise<void> {
@@ -644,7 +688,7 @@ async function runDiffCmd(args: string[]): Promise<void> {
   const a = positional[0];
   const b = positional[1];
   if (!a || !b) {
-    console.error('Usage: gbrain schema diff <pack-a> <pack-b>  (experimental)');
+    console.error('Usage: cortex schema diff <pack-a> <pack-b>  (experimental)');
     process.exit(2);
   }
   const aPath = packPathByName(a);
@@ -747,7 +791,7 @@ async function runExplainCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
   const typeName = positional[0];
   if (!typeName) {
-    console.error('Usage: gbrain schema explain <type-name>  (experimental)');
+    console.error('Usage: cortex schema explain <type-name>  (experimental)');
     process.exit(2);
   }
   const cfg = loadConfig();
@@ -799,7 +843,7 @@ async function runDowngradeCmd(args: string[]): Promise<void> {
   const target = positional.includes('--to')
     ? positional[positional.indexOf('--to') + 1]
     : undefined;
-  // Find the previous pack from ~/.gbrain/schema-pack-history.jsonl OR honor --to <pack>.
+  // Find the previous pack from ~/.cortex/schema-pack-history.jsonl OR honor --to <pack>.
   const historyPath = gbrainPath('schema-pack-history.jsonl');
   let restoredTo: string | null = null;
   if (target) {
@@ -817,7 +861,7 @@ async function runDowngradeCmd(args: string[]): Promise<void> {
     }
   }
   if (!restoredTo) {
-    restoredTo = 'gbrain-base';
+    restoredTo = 'cortex-base';
   }
   const cfg = loadConfig();
   const updated = { ...cfg, schema_pack: restoredTo };
@@ -829,12 +873,12 @@ async function runDowngradeCmd(args: string[]): Promise<void> {
     return;
   }
   console.log(`Active pack restored to \`${restoredTo}\` in ${path}`);
-  console.log('Run `gbrain schema active` to verify. Note: this command restores CONFIG only.');
+  console.log('Run `cortex schema active` to verify. Note: this command restores CONFIG only.');
   console.log('Custom-typed pages, cache rows, and eval rows from v0.39 are not auto-cleaned.');
   console.log('See docs/architecture/schema-packs.md for the full revert procedure.');
 }
 
-// ------------- T23: gbrain schema usage ---------------------------
+// ------------- T23: cortex schema usage ---------------------------
 
 async function runUsageCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
@@ -993,7 +1037,7 @@ async function runSyncCmd(args: string[]): Promise<void> {
     }
     console.log(`\nTotal: would_apply=${result.total_would_apply} applied=${result.total_applied}`);
     if (!apply && result.total_would_apply > 0) {
-      console.log(`\nRun \`gbrain schema sync --apply\` to backfill page.type.`);
+      console.log(`\nRun \`cortex schema sync --apply\` to backfill page.type.`);
     }
   });
 }
@@ -1022,7 +1066,7 @@ async function runAddTypeCmd(args: string[]): Promise<void> {
   const packName = pickPackName({}, args);
   const positional = args.filter((a) => !a.startsWith('--'));
   const name = positional[0];
-  if (!name) { console.error('Usage: gbrain schema add-type <name> --primitive <p> --prefix <dir/>'); process.exit(2); }
+  if (!name) { console.error('Usage: cortex schema add-type <name> --primitive <p> --prefix <dir/>'); process.exit(2); }
   let primitive: string | undefined;
   let prefix: string | undefined;
   let extractable = false;
@@ -1057,7 +1101,7 @@ async function runRemoveTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const name = args.filter((a) => !a.startsWith('--'))[0];
-  if (!name) { console.error('Usage: gbrain schema remove-type <name>'); process.exit(2); }
+  if (!name) { console.error('Usage: cortex schema remove-type <name>'); process.exit(2); }
   try { emitMutateResult(await removeTypeFromPack(packName, name), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1066,7 +1110,7 @@ async function runUpdateTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const name = args.filter((a) => !a.startsWith('--'))[0];
-  if (!name) { console.error('Usage: gbrain schema update-type <name> [--extractable BOOL] [--expert BOOL] [--primitive P]'); process.exit(2); }
+  if (!name) { console.error('Usage: cortex schema update-type <name> [--extractable BOOL] [--expert BOOL] [--primitive P]'); process.exit(2); }
   const patch: Record<string, unknown> = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -1090,7 +1134,7 @@ async function runAddAliasCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
-  if (pos.length < 2) { console.error('Usage: gbrain schema add-alias <type> <alias>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: cortex schema add-alias <type> <alias>'); process.exit(2); }
   try { emitMutateResult(await addAliasToType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1099,7 +1143,7 @@ async function runRemoveAliasCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
-  if (pos.length < 2) { console.error('Usage: gbrain schema remove-alias <type> <alias>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: cortex schema remove-alias <type> <alias>'); process.exit(2); }
   try { emitMutateResult(await removeAliasFromType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1108,7 +1152,7 @@ async function runAddPrefixCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
-  if (pos.length < 2) { console.error('Usage: gbrain schema add-prefix <type> <prefix>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: cortex schema add-prefix <type> <prefix>'); process.exit(2); }
   try { emitMutateResult(await addPrefixToType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1117,7 +1161,7 @@ async function runRemovePrefixCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
-  if (pos.length < 2) { console.error('Usage: gbrain schema remove-prefix <type> <prefix>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: cortex schema remove-prefix <type> <prefix>'); process.exit(2); }
   try { emitMutateResult(await removePrefixFromType(packName, pos[0]!, pos[1]!), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1126,7 +1170,7 @@ async function runAddLinkTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const name = args.filter((a) => !a.startsWith('--'))[0];
-  if (!name) { console.error('Usage: gbrain schema add-link-type <name> [--inverse <verb>] [--page-type <t>] [--target-type <t>]'); process.exit(2); }
+  if (!name) { console.error('Usage: cortex schema add-link-type <name> [--inverse <verb>] [--page-type <t>] [--target-type <t>]'); process.exit(2); }
   let inverse: string | undefined;
   let pageType: string | undefined;
   let targetType: string | undefined;
@@ -1146,7 +1190,7 @@ async function runRemoveLinkTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const name = args.filter((a) => !a.startsWith('--'))[0];
-  if (!name) { console.error('Usage: gbrain schema remove-link-type <name>'); process.exit(2); }
+  if (!name) { console.error('Usage: cortex schema remove-link-type <name>'); process.exit(2); }
   try { emitMutateResult(await removeLinkTypeFromPack(packName, name), json); }
   catch (e) { handleMutationError(e); }
 }
@@ -1155,7 +1199,7 @@ async function runSetExtractableCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
-  if (pos.length < 2) { console.error('Usage: gbrain schema set-extractable <type> <true|false>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: cortex schema set-extractable <type> <true|false>'); process.exit(2); }
   const v = parseBool(pos[1]);
   if (v === null) { console.error('Second argument must be true|false'); process.exit(2); }
   try { emitMutateResult(await setExtractableOnType(packName, pos[0]!, v), json); }
@@ -1166,7 +1210,7 @@ async function runSetExpertRoutingCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const packName = pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
-  if (pos.length < 2) { console.error('Usage: gbrain schema set-expert-routing <type> <true|false>'); process.exit(2); }
+  if (pos.length < 2) { console.error('Usage: cortex schema set-expert-routing <type> <true|false>'); process.exit(2); }
   const v = parseBool(pos[1]);
   if (v === null) { console.error('Second argument must be true|false'); process.exit(2); }
   try { emitMutateResult(await setExpertRoutingOnType(packName, pos[0]!, v), json); }
@@ -1178,7 +1222,7 @@ async function runScaffoldExtractableCmd(args: string[]): Promise<void> {
   const packName = pickPackName({}, args);
   const pos = args.filter((a) => !a.startsWith('--'));
   if (pos.length < 1) {
-    console.error('Usage: gbrain schema scaffold-extractable <type> [--pack <name>] [--dims a,b,c] [--force]');
+    console.error('Usage: cortex schema scaffold-extractable <type> [--pack <name>] [--dims a,b,c] [--force]');
     process.exit(2);
   }
   const typeName = pos[0]!;
@@ -1215,7 +1259,7 @@ async function runScaffoldExtractableCmd(args: string[]): Promise<void> {
       console.log('Next steps:');
       console.log(`  1. Edit prompts/extract/${typeName}.md to specify your domain.`);
       console.log(`  2. Replace fixture placeholders in fixtures/extract/${typeName}.jsonl with real cases.`);
-      console.log(`  3. Run: gbrain extract benchmark --pack ${packName} --kind ${typeName}`);
+      console.log(`  3. Run: cortex extract benchmark --pack ${packName} --kind ${typeName}`);
     }
   } catch (e) {
     handleMutationError(e);

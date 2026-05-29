@@ -853,7 +853,7 @@ export async function judgeSignificance(
     trimmed = t.content;
   }
 
-  const sys = `You judge whether a conversation transcript is worth synthesizing into a personal knowledge brain.
+  const sys = `You judge whether a conversation transcript is worth synthesizing into a tenant knowledge brain.
 
 WORTH PROCESSING (return worth_processing=true):
 - The user articulates a new idea, frame, mental model, or thesis
@@ -971,7 +971,7 @@ function buildSynthesisPrompt(
   const transcriptHeader = isChunked
     ? `${t.filePath} (chunk ${chunkIdx + 1}/${chunkTotal})`
     : t.filePath;
-  return `You are synthesizing a conversation transcript into the user's personal knowledge brain.
+  return `You are synthesizing a conversation transcript into the tenant knowledge brain.
 
 CONTEXT
 - Today's date: ${dateHint}

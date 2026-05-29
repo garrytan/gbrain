@@ -536,10 +536,22 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
   // Check 5 (W2, v0.17): structural routing eval. Surfaces as warnings
   // only — routing issues are advisory. Agents running under --strict
   // will fail on them; default runs see them as informational.
+  const activeSkillNames = new Set(manifest.map(skill => skill.name));
   const loaded = loadRoutingFixtures(skillsDir);
-  if (loaded.fixtures.length > 0) {
+  const activeFixtures = loaded.fixtures.filter((fixture) => {
+    if (!fixture.source) return true;
+    const rel = relative(skillsDir, fixture.source).replace(/\\/g, '/');
+    const sourceSkill = rel.split('/')[0];
+    return activeSkillNames.has(sourceSkill);
+  });
+  const activeMalformed = loaded.malformed.filter((fixture) => {
+    const rel = relative(skillsDir, fixture.file).replace(/\\/g, '/');
+    const sourceSkill = rel.split('/')[0];
+    return activeSkillNames.has(sourceSkill);
+  });
+  if (activeFixtures.length > 0) {
     const triggerIndex = indexResolverTriggers(resolverContent);
-    const lintIssues = lintRoutingFixtures(loaded.fixtures, triggerIndex);
+    const lintIssues = lintRoutingFixtures(activeFixtures, triggerIndex);
     for (const lint of lintIssues) {
       issues.push({
         type: 'routing_fixture_lint',
@@ -549,7 +561,7 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
         action: `Edit skills/<skill>/routing-eval.jsonl to fix: ${lint.detail}`,
       });
     }
-    const routingReport = runRoutingEval(resolverContent, loaded.fixtures);
+    const routingReport = runRoutingEval(resolverContent, activeFixtures);
     for (const d of routingReport.details) {
       if (d.outcome === 'pass') continue;
       const kind =
@@ -574,7 +586,7 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
       });
     }
   }
-  for (const m of loaded.malformed) {
+  for (const m of activeMalformed) {
     issues.push({
       type: 'routing_fixture_lint',
       severity: 'warning',

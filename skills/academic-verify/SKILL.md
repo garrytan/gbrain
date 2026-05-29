@@ -64,7 +64,7 @@ same claim can re-use the verified analysis.
 - Not adversarial / oppo work. The point is rigor, not takedown.
 - Not generic web research — use `perplexity-research` directly for
   open-ended topic exploration.
-- Not a brain-only lookup — that's `gbrain query`.
+- Not a brain-only lookup — that's `cortex query`.
 
 ## How it works (D7/α: pure routing through perplexity-research)
 
@@ -83,7 +83,7 @@ Step 1: Scope the claim
     • Period: over what time range?
 
 Step 2: Brain-first lookup
-  gbrain query "<paper title> OR <author name> OR <claim keywords>"
+  cortex query "<paper title> OR <author name> OR <claim keywords>"
   If the brain has prior verification of this claim, reuse it.
 
 Step 3: Invoke perplexity-research with citation-mode prompt

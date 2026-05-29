@@ -1,10 +1,10 @@
 /**
  * skillpack/bundle.ts — read the bundled-skills manifest.
  *
- * gbrain ships a curated set of skills (plus shared rule/convention
- * files they depend on) that agents install into their OpenClaw
- * workspace via `gbrain skillpack install`. The source of truth is
- * `openclaw.plugin.json` at the gbrain repo root.
+ * Cortex ships a curated set of runtime skills plus the shared rule and
+ * convention files agents install into their workspace via
+ * `cortex skillpack scaffold`. The source of truth is `cortex.plugin.json`
+ * at the Cortex repo root.
  */
 
 import { existsSync, readFileSync, statSync, readdirSync } from 'fs';
@@ -12,11 +12,13 @@ import { join, dirname, isAbsolute, resolve } from 'path';
 
 import { parseMarkdown } from '../markdown.ts';
 
+const BUNDLE_MANIFEST = 'cortex.plugin.json';
+
 export interface BundleManifest {
   name: string;
   version: string;
   description?: string;
-  skills: string[]; // e.g. "skills/brain-ops" (relative to gbrain root)
+  skills: string[]; // e.g. "skills/setup" (relative to Cortex root)
   shared_deps: string[]; // files + dirs every skill depends on
   excluded_from_install?: string[];
 }
@@ -36,14 +38,14 @@ export class BundleError extends Error {
 }
 
 /**
- * Walk up from `start` (default cwd) looking for an `openclaw.plugin.json`
- * sibling to `src/cli.ts`. That pair identifies a gbrain repo root.
+ * Walk up from `start` (default cwd) looking for a Cortex plugin manifest
+ * sibling to `src/cli.ts`. That pair identifies the runtime repo root.
  */
-export function findGbrainRoot(start: string = process.cwd()): string | null {
+export function findCortexRoot(start: string = process.cwd()): string | null {
   let dir = resolve(start);
   for (let i = 0; i < 10; i++) {
     if (
-      existsSync(join(dir, 'openclaw.plugin.json')) &&
+      existsSync(join(dir, BUNDLE_MANIFEST)) &&
       existsSync(join(dir, 'src', 'cli.ts'))
     ) {
       return dir;
@@ -55,15 +57,17 @@ export function findGbrainRoot(start: string = process.cwd()): string | null {
   return null;
 }
 
+export const findGbrainRoot = findCortexRoot;
+
 /**
- * Parse `openclaw.plugin.json` from the supplied gbrain root (absolute).
+ * Parse the Cortex plugin manifest from the supplied runtime root (absolute).
  * Throws BundleError on missing file or malformed JSON.
  */
 export function loadBundleManifest(gbrainRoot: string): BundleManifest {
-  const manifestPath = join(gbrainRoot, 'openclaw.plugin.json');
+  const manifestPath = join(gbrainRoot, BUNDLE_MANIFEST);
   if (!existsSync(manifestPath)) {
     throw new BundleError(
-      `openclaw.plugin.json not found at ${manifestPath}`,
+      `${BUNDLE_MANIFEST} not found at ${manifestPath}`,
       'manifest_not_found',
     );
   }
@@ -81,34 +85,64 @@ export function loadBundleManifest(gbrainRoot: string): BundleManifest {
     parsed = JSON.parse(content);
   } catch (err) {
     throw new BundleError(
-      `openclaw.plugin.json is not valid JSON: ${(err as Error).message}`,
+      `${BUNDLE_MANIFEST} is not valid JSON: ${(err as Error).message}`,
       'manifest_malformed',
     );
   }
   if (!parsed || typeof parsed !== 'object') {
     throw new BundleError(
-      'openclaw.plugin.json: top-level must be an object',
+      `${BUNDLE_MANIFEST}: top-level must be an object`,
       'manifest_malformed',
     );
   }
-  const m = parsed as Partial<BundleManifest>;
+  const m = parsed as Partial<BundleManifest> & {
+    sharedDeps?: string[];
+    excludedFromInstall?: string[];
+  };
   if (typeof m.name !== 'string' || typeof m.version !== 'string') {
     throw new BundleError(
-      'openclaw.plugin.json: name and version must be strings',
+      `${BUNDLE_MANIFEST}: name and version must be strings`,
       'manifest_malformed',
     );
   }
   if (!Array.isArray(m.skills)) {
     throw new BundleError(
-      'openclaw.plugin.json: "skills" must be an array',
+      `${BUNDLE_MANIFEST}: "skills" must be an array`,
       'manifest_malformed',
     );
   }
-  if (!Array.isArray(m.shared_deps)) {
-    // Tolerate older manifests; default to empty.
-    m.shared_deps = [];
+  if (!m.skills.every(s => typeof s === 'string')) {
+    throw new BundleError(
+      `${BUNDLE_MANIFEST}: "skills" entries must be strings`,
+      'manifest_malformed',
+    );
   }
+  m.skills = m.skills.map(normalizeSkillManifestPath);
+  m.shared_deps = Array.isArray(m.shared_deps)
+    ? m.shared_deps
+    : Array.isArray(m.sharedDeps)
+      ? m.sharedDeps
+      : [];
+  m.excluded_from_install = Array.isArray(m.excluded_from_install)
+    ? m.excluded_from_install
+    : Array.isArray(m.excludedFromInstall)
+      ? m.excludedFromInstall
+      : [];
   return m as BundleManifest;
+}
+
+function normalizeSkillManifestPath(relPath: string): string {
+  return relPath
+    .replace(/\\/g, '/')
+    .replace(/\/SKILL\.md$/i, '')
+    .replace(/\/+$/, '');
+}
+
+function relJoin(...parts: string[]): string {
+  return parts
+    .filter(Boolean)
+    .join('/')
+    .replace(/\/+/g, '/');
 }
 
 /**
@@ -142,15 +176,15 @@ function walkFiles(absDir: string, prefix: string, out: BundleEntry[], sharedDep
       continue;
     }
     if (stat.isDirectory()) {
-      walkFiles(abs, join(prefix, e), out, sharedDep);
+      walkFiles(abs, relJoin(prefix, e), out, sharedDep);
     } else if (stat.isFile()) {
-      out.push({ source: abs, relTarget: join(prefix, e), sharedDep });
+      out.push({ source: abs, relTarget: relJoin(prefix, e), sharedDep });
     }
   }
 }
 
 export interface EnumerateOptions {
-  /** Absolute path to gbrain repo root (source). */
+  /** Absolute path to Cortex repo root (source). */
   gbrainRoot: string;
   /** If set, scope enumeration to just this skill by its slug (last
    *  segment of `skills/<slug>`). Undefined enumerates everything. */
@@ -173,7 +207,7 @@ export function enumerateBundle(opts: EnumerateOptions): BundleEntry[] {
 
   if (skillSlug && skillsToIncludePaths.length === 0) {
     throw new BundleError(
-      `Skill '${skillSlug}' is not listed in openclaw.plugin.json#skills`,
+      `Skill '${skillSlug}' is not listed in ${BUNDLE_MANIFEST}#skills`,
       'skill_not_found',
     );
   }
@@ -219,12 +253,12 @@ export function enumerateBundle(opts: EnumerateOptions): BundleEntry[] {
 
 /**
  * Return the set of skill slugs whose files under `skills/<slug>/` changed
- * between `version` and HEAD in the gbrain source tree. Used by
- * `gbrain skillpack reference --since <version>` so an agent can sweep
+ * between `version` and HEAD in the Cortex source tree. Used by
+ * `cortex skillpack reference --since <version>` so an agent can sweep
  * only the skills that actually moved since the last time it looked.
  *
  * Returns `null` (not an empty array) when:
- *   - the gbrain root is not a git checkout (tarball install)
+ *   - the Cortex root is not a git checkout (tarball install)
  *   - the version tag doesn't resolve in this repo
  *   - any other git error
  *
@@ -318,7 +352,7 @@ export function bundledSkillSlugs(manifest: BundleManifest): string[] {
 //
 // The bundler reads this on every enumerate; scaffold copies the paired
 // files alongside the skill markdown. Single source of truth co-located
-// with the skill — no parallel manifest in openclaw.plugin.json.
+// with the skill; no parallel manifest in cortex.plugin.json.
 
 /** A skill's declared paired-source paths (repo-relative). */
 export interface SkillSources {
@@ -449,7 +483,7 @@ export function enumerateScaffoldEntries(opts: EnumerateOptions): ScaffoldEntry[
 
   if (skillSlug && skillsToIncludePaths.length === 0) {
     throw new BundleError(
-      `Skill '${skillSlug}' is not listed in openclaw.plugin.json#skills`,
+      `Skill '${skillSlug}' is not listed in ${BUNDLE_MANIFEST}#skills`,
       'skill_not_found',
     );
   }
@@ -528,11 +562,11 @@ function walkScaffoldFiles(
       continue;
     }
     if (stat.isDirectory()) {
-      walkScaffoldFiles(abs, join(workspaceRelPrefix, e), out, sharedDep, pairedSource);
+      walkScaffoldFiles(abs, relJoin(workspaceRelPrefix, e), out, sharedDep, pairedSource);
     } else if (stat.isFile()) {
       out.push({
         source: abs,
-        relWorkspaceTarget: join(workspaceRelPrefix, e),
+        relWorkspaceTarget: relJoin(workspaceRelPrefix, e),
         sharedDep,
         pairedSource,
       });

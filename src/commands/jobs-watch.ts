@@ -1,5 +1,5 @@
 /**
- * v0.41 D2 — `gbrain jobs watch` live TTY dashboard.
+ * v0.41 D2 — `cortex jobs watch` live TTY dashboard.
  *
  * Submit and supervise instead of submit and pray. Shows throughput,
  * current rate-lease utilization, top errors clustered by error-classify,
@@ -65,7 +65,7 @@ export function renderSnapshot(s: WatchSnapshot, opts: { useAnsi?: boolean } = {
   const a = opts.useAnsi !== false;
   const c = (color: string) => (a ? color : '');
   const lines: string[] = [];
-  lines.push(`${c(ANSI.bold)}gbrain jobs watch${c(ANSI.reset)}    ${c(ANSI.dim)}q to quit | ${new Date(s.ts_ms).toLocaleTimeString()}${c(ANSI.reset)}`);
+  lines.push(`${c(ANSI.bold)}cortex jobs watch${c(ANSI.reset)}    ${c(ANSI.dim)}q to quit | ${new Date(s.ts_ms).toLocaleTimeString()}${c(ANSI.reset)}`);
   lines.push('');
 
   // Queue health panel.
@@ -193,7 +193,7 @@ export interface WatchOptions {
 }
 
 /**
- * Main entrypoint for `gbrain jobs watch`. Runs until SIGINT or 'q'
+ * Main entrypoint for `cortex jobs watch`. Runs until SIGINT or 'q'
  * keypress (on TTY). Non-TTY mode loops with --progress-json output.
  */
 export async function runWatch(engine: BrainEngine, opts: WatchOptions = {}): Promise<void> {

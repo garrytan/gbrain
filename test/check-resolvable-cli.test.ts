@@ -133,7 +133,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
 
   it('resolves relative --skills-dir against cwd', () => {
     const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: 'skills' });
-    expect(r.dir).toMatch(/\/skills$/);
+    expect(r.dir).toMatch(/[\\/]skills$/);
     expect(r.error).toBeNull();
     expect(r.source).toBe('explicit');
   });
@@ -153,9 +153,9 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
     try {
       process.chdir(empty);
       const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
-      // Install-path fallback succeeds when test runs inside the gbrain repo.
+      // Install-path fallback succeeds when test runs inside the Cortex repo.
       expect(r.error).toBeNull();
-      expect(r.dir).toMatch(/\/skills$/);
+      expect(r.dir).toMatch(/[\\/]skills$/);
       expect(r.source).toBe('install_path');
     } finally {
       process.chdir(original);
@@ -164,29 +164,29 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
   });
 
   it('finds skills via cwd_walk_up when cwd is inside a repo (no --skills-dir)', () => {
-    // Running from this test file — we're inside the real gbrain repo.
+    // Running from this test file — we're inside the real Cortex repo.
     // v0.33 added the cwd_walk_up tier ahead of repo_root, so the same
-    // skills/ dir is matched via the broader (no gbrain-shape gate)
+    // skills/ dir is matched via the broader (no Cortex-shape gate)
     // path. Behavior unchanged — source label updated. The repo_root
     // tier is now functionally subsumed; kept in the type union for
     // back-compat. See src/core/repo-root.ts.
     const r = resolveSkillsDir({ help: false, json: false, fix: false, dryRun: false, verbose: false, strict: false, skillsDir: null });
     expect(r.error).toBeNull();
-    expect(r.dir).toMatch(/\/skills$/);
+    expect(r.dir).toMatch(/[\\/]skills$/);
     expect(r.source).toBe('cwd_walk_up');
   });
 
-  it('REGRESSION-GATE: --skills-dir override takes precedence over OpenClaw env auto-detection', () => {
+  it('REGRESSION-GATE: --skills-dir override takes precedence over Cortex workspace auto-detection', () => {
     const explicit = mkdtempSync(join(tmpdir(), 'explicit-skills-'));
     mkdirSync(explicit, { recursive: true });
     writeFileSync(join(explicit, 'RESOLVER.md'), '# RESOLVER\n');
 
-    const workspace = mkdtempSync(join(tmpdir(), 'openclaw-ws-'));
+    const workspace = mkdtempSync(join(tmpdir(), 'cortex-ws-'));
     mkdirSync(join(workspace, 'skills'), { recursive: true });
     writeFileSync(join(workspace, 'skills', 'RESOLVER.md'), '# RESOLVER\n');
 
-    const prev = process.env.OPENCLAW_WORKSPACE;
-    process.env.OPENCLAW_WORKSPACE = workspace;
+    const prev = process.env.CORTEX_WORKSPACE;
+    process.env.CORTEX_WORKSPACE = workspace;
     try {
       const r = resolveSkillsDir({
         help: false,
@@ -201,8 +201,8 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
       expect(r.dir).toBe(explicit);
       expect(r.source).toBe('explicit');
     } finally {
-      if (prev === undefined) delete process.env.OPENCLAW_WORKSPACE;
-      else process.env.OPENCLAW_WORKSPACE = prev;
+      if (prev === undefined) delete process.env.CORTEX_WORKSPACE;
+      else process.env.CORTEX_WORKSPACE = prev;
       rmSync(explicit, { recursive: true, force: true });
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -222,7 +222,7 @@ describe('check-resolvable — unit: DEFERRED', () => {
 // Integration tests: subprocess via bun src/cli.ts (cwd = repo root)
 // ---------------------------------------------------------------------------
 
-describe('gbrain check-resolvable CLI — integration', () => {
+describe('cortex check-resolvable CLI — integration', () => {
   const created: string[] = [];
   afterEach(() => {
     while (created.length) {
@@ -234,7 +234,7 @@ describe('gbrain check-resolvable CLI — integration', () => {
   it('prints usage and exits 0 on --help', () => {
     const r = run(['--help']);
     expect(r.status).toBe(0);
-    expect(r.stdout).toContain('gbrain check-resolvable');
+    expect(r.stdout).toContain('cortex check-resolvable');
     expect(r.stdout).toContain('--json');
     expect(r.stdout).toContain('--fix');
     expect(r.stdout).toContain('--strict');
@@ -373,12 +373,12 @@ describe('gbrain check-resolvable CLI — integration', () => {
     const r = run([]);
     expect(r.status === 0 || r.status === 1).toBe(true);
     expect(r.stdout).toContain('Auto-detected skills directory');
-    expect(r.stdout).toContain('/skills');
+    expect(r.stdout).toMatch(/[\\/]skills/);
   });
 
   // v0.31.7 D6 regression guard: --fix must refuse install-path fallback.
-  // Without this gate, `cd ~ && gbrain check-resolvable --fix` would silently
-  // mutate SKILL.md files in the bundled gbrain repo via autoFixDryViolations.
+  // Without this gate, `cd ~ && cortex check-resolvable --fix` would silently
+  // mutate SKILL.md files in the bundled Cortex repo via autoFixDryViolations.
   // Codex caught this leak in the v0.31.7 ship review.
   it('v0.31.7 D6: --fix refuses when source is install_path', () => {
     // Run from a guaranteed-empty tempdir so the install-path fallback fires.
@@ -387,13 +387,13 @@ describe('gbrain check-resolvable CLI — integration', () => {
       // Pass --fix; expect refusal exit + clear error message.
       const r = spawnSync('bun', ['run', CLI, 'check-resolvable', '--fix'], {
         cwd: empty,
-        env: { ...process.env, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
+        env: { ...process.env, CORTEX_WORKSPACE: '', CORTEX_SKILLS_DIR: '', OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
         encoding: 'utf-8',
       });
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('install-path fallback');
       expect(r.stderr).toContain('refused');
-      expect(r.stderr).toMatch(/GBRAIN_SKILLS_DIR|OPENCLAW_WORKSPACE|--skills-dir/);
+      expect(r.stderr).toMatch(/CORTEX_SKILLS_DIR|CORTEX_WORKSPACE|--skills-dir/);
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }

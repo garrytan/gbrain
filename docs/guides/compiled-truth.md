@@ -66,10 +66,10 @@ sarah@acmecorp.com | @sarahchen | linkedin.com/in/sarahchen
 
 ```
 update_brain_page(slug, new_info, source):
-  page = gbrain get {slug}
+  page = cortex get {slug}
 
   // TIMELINE: always APPEND (never edit existing entries)
-  gbrain add_timeline_entry {slug} {
+  cortex add_timeline_entry {slug} {
     date: today,
     summary: new_info.summary,
     detail: new_info.detail,
@@ -81,7 +81,7 @@ update_brain_page(slug, new_info, source):
   // Integrate new information
   // Write the updated synthesis
   updated_truth = rewrite_compiled_truth(page.compiled_truth, new_info)
-  gbrain put {slug} {
+  cortex put {slug} {
     compiled_truth: updated_truth,
     // timeline is NOT passed — it's managed by add_timeline_entry
   }
@@ -109,11 +109,11 @@ support that claim.
    turns out to be wrong, add a NEW entry correcting it:
    `- 2026-04-10 | Correction: Sarah is VP Eng, not CTO. Previous entry was wrong.`
 
-3. **GBrain search weights compiled truth higher.** `gbrain query` returns compiled
+3. **Cortex search weights compiled truth higher.** `cortex query` returns compiled
    truth chunks with higher relevance than timeline chunks. This means the freshest
    synthesis surfaces first in search results.
 
-4. **The --- separator matters.** GBrain uses the first standalone `---` after
+4. **The --- separator matters.** Cortex uses the first standalone `---` after
    frontmatter to split compiled_truth from timeline. Everything above is compiled
    truth, everything below is timeline.
 
@@ -125,7 +125,7 @@ support that claim.
 
 1. **Update a person page.** Add new meeting info. Check: compiled truth was
    REWRITTEN (not appended), timeline has new entry at the top.
-2. **Search for the person.** `gbrain query "Sarah Chen"`. The compiled truth
+2. **Search for the person.** `cortex query "Sarah Chen"`. The compiled truth
    (current synthesis) should appear first, not a random timeline entry.
 3. **Check traceability.** Every claim in compiled truth should have a
    corresponding timeline entry. Read both sections and verify.
@@ -134,4 +134,4 @@ support that claim.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Source Attribution](source-attribution.md), [Entity Detection](entity-detection.md)*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md). See also: [Source Attribution](source-attribution.md), [Entity Detection](entity-detection.md)*

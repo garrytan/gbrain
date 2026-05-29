@@ -41,10 +41,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
   if (action === 'show') {
     const config = loadConfig();
     if (!config) {
-      console.error('No config found. Run: gbrain init');
+      console.error('No config found. Run: cortex init');
       process.exit(1);
     }
-    console.log('GBrain config:');
+    console.log('Cortex config:');
     for (const [k, v] of Object.entries(config)) {
       const display = typeof v === 'string' ? redactConfigValue(k, v) : v;
       console.log(`  ${k}: ${display}`);
@@ -52,16 +52,16 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  // v0.32.3 [CDX-7+8]: `unset` is required before `gbrain search modes
+  // v0.32.3 [CDX-7+8]: `unset` is required before `cortex search modes
   // --reset` can implement its contract. Two shapes:
-  //   gbrain config unset <key>             — single-key delete
-  //   gbrain config unset --pattern <pfx>   — prefix-bulk delete
+  //   cortex config unset <key>             — single-key delete
+  //   cortex config unset --pattern <pfx>   — prefix-bulk delete
   if (action === 'unset') {
     const flagIdx = args.indexOf('--pattern');
     if (flagIdx !== -1) {
       const prefix = args[flagIdx + 1];
       if (!prefix || prefix.length === 0) {
-        console.error('Usage: gbrain config unset --pattern <prefix>');
+        console.error('Usage: cortex config unset --pattern <prefix>');
         process.exit(1);
       }
       const keys = await engine.listConfigKeys(prefix);
@@ -81,7 +81,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
 
     const key = args[1];
     if (!key) {
-      console.error('Usage: gbrain config unset <key> | --pattern <prefix>');
+      console.error('Usage: cortex config unset <key> | --pattern <prefix>');
       process.exit(1);
     }
     const n = await engine.unsetConfig(key);
@@ -108,7 +108,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
   } else if (action === 'set' && key && value) {
     // v0.37.11.0 fix wave (Lane C.2 + CDX2-13): refuse writes to schema-sizing
     // fields unconditionally. These fields size the `content_chunks.embedding`
-    // column at init time and are file-plane canonical. `gbrain config set
+    // column at init time and are file-plane canonical. `cortex config set
     // embedding_model X` writes the DB plane, which the embed pipeline
     // never reads — silent lie that took users hours to diagnose.
     //
@@ -127,11 +127,11 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         console.error(`[config] To switch embedding models/dimensions on PGLite, wipe and re-init:`);
         console.error(`[config]   mv ${dbPath} ${dbPath}.bak`);
         if (key === 'embedding_model') {
-          console.error(`[config]   gbrain init --pglite --embedding-model ${value}`);
+          console.error(`[config]   cortex init --pglite --embedding-model ${value}`);
         } else {
-          console.error(`[config]   gbrain init --pglite --embedding-dimensions ${value}`);
+          console.error(`[config]   cortex init --pglite --embedding-dimensions ${value}`);
         }
-        console.error(`[config]   gbrain sync   # re-imports your brain repo`);
+        console.error(`[config]   cortex sync   # re-imports your Cortex sources`);
       } else {
         console.error(`[config] To switch embedding models/dimensions on Postgres, see:`);
         console.error(`[config]   docs/embedding-migrations.md`);
@@ -159,7 +159,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         if (suggestion) {
           console.error(`[config] Did you mean "${suggestion}"?`);
         } else {
-          console.error(`[config] No similar known key. Run \`gbrain config show\` to see currently-set keys.`);
+          console.error(`[config] No similar known key. Run \`cortex config show\` to see currently-set keys.`);
         }
         console.error(`[config] If this is intentional (downstream tooling, forward-compat), re-run with --force.`);
         process.exit(1);
@@ -170,7 +170,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       const isKnown = KNOWN_CONFIG_KEYS.includes(key);
       const matchesPrefix = KNOWN_CONFIG_KEY_PREFIXES.some(p => key.startsWith(p));
       if (!isKnown && !matchesPrefix) {
-        console.error(`[config] WARN: writing unknown key "${key}" with --force. Nothing in gbrain reads this.`);
+        console.error(`[config] WARN: writing unknown key "${key}" with --force. Nothing in Cortex reads this.`);
       }
     }
 
@@ -209,7 +209,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
 
     if (key === 'search_embedding_column') {
       // Validate against the merged registry (file + DB plane + builtins).
-      // We re-read merged config so a prior `gbrain config set
+      // We re-read merged config so a prior `cortex config set
       // embedding_columns ...` is visible.
       const fileCfg = loadConfig();
       const mergedCfg = fileCfg
@@ -233,7 +233,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
           console.error(
             `[config] Unknown embedding column "${value}". ` +
               `Declared columns: ${known}. ` +
-              `Add it via: gbrain config set embedding_columns '<JSON>'`,
+              `Add it via: cortex config set embedding_columns '<JSON>'`,
           );
           process.exit(1);
         }
@@ -263,7 +263,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
               `[config] Re-run with --coverage-override (or --yes) to proceed anyway:`,
             );
             console.error(
-              `[config]   gbrain config set search_embedding_column ${value} --coverage-override`,
+              `[config]   cortex config set search_embedding_column ${value} --coverage-override`,
             );
             process.exit(1);
           }
@@ -320,8 +320,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
   } else {
-    console.error('Usage: gbrain config [show|get|set|unset] <key> [value]');
-    console.error('       gbrain config unset --pattern <prefix>');
+    console.error('Usage: cortex config [show|get|set|unset] <key> [value]');
+    console.error('       cortex config unset --pattern <prefix>');
     process.exit(1);
   }
 }

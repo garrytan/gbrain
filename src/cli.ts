@@ -35,12 +35,14 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status']);
+const CLI_ONLY = new Set(['init', 'connect', 'runtime', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
 const CLI_ONLY_SELF_HELP = new Set([
   'upgrade', 'post-upgrade', 'check-update',
+  'connect',
+  'runtime',
   'embed', 'config',
   'skillpack', 'skillpack-check',
   'integrations', 'friction',
@@ -90,7 +92,7 @@ async function main() {
   }
 
   if (command === '--version' || command === 'version') {
-    console.log(`gbrain ${VERSION}`);
+    console.log(`cortex ${VERSION}`);
     return;
   }
 
@@ -130,7 +132,7 @@ async function main() {
   const op = cliOps.get(command);
   if (!op) {
     console.error(`Unknown command: ${command}`);
-    console.error('Run gbrain --help for available commands.');
+    console.error('Run cortex --help for available commands.');
     process.exit(1);
   }
 
@@ -171,7 +173,7 @@ async function main() {
       const cliName = op.cliHints?.name || op.name;
       const positional = op.cliHints?.positional || [];
       const usage = positional.map(p => `<${p}>`).join(' ');
-      console.error(`Usage: gbrain ${cliName} ${usage}`);
+      console.error(`Usage: cortex ${cliName} ${usage}`);
       process.exit(1);
     }
   }
@@ -272,9 +274,9 @@ function hasHelpFlag(args: string[]): boolean {
 }
 
 function printCliOnlyHelp(command: string) {
-  console.log(`Usage: gbrain ${command}`);
+  console.log(`Usage: cortex ${command}`);
   console.log('');
-  console.log(`gbrain ${command} - run gbrain --help for the full command list.`);
+  console.log(`cortex ${command} - run cortex --help for the full command list.`);
 }
 
 /**
@@ -336,16 +338,16 @@ async function runThinClientRouted(
           break;
         case 'discovery':
           console.error(`OAuth discovery failed at ${cfg.remote_mcp!.issuer_url}.`);
-          console.error('Run `gbrain remote doctor` for details.');
+          console.error('Run `cortex remote doctor` for details.');
           break;
         case 'auth':
           console.error('OAuth auth failed.');
           console.error('On the host, re-register your client:');
-          console.error('  gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin');
+          console.error('  cortex auth register-client <name> --grant-types client_credentials --scopes read,write,admin');
           break;
         case 'auth_after_refresh':
           console.error('OAuth auth failed after token refresh. Credentials may have been revoked.');
-          console.error('Run `gbrain remote doctor` to confirm.');
+          console.error('Run `cortex remote doctor` to confirm.');
           break;
         case 'network':
           if (e.detail?.kind === 'timeout') {
@@ -356,21 +358,21 @@ async function runThinClientRouted(
             process.off('SIGINT', onSigint);
             process.exit(130);
           } else {
-            console.error(`Cannot reach ${url}. Run \`gbrain remote doctor\` for details.`);
+            console.error(`Cannot reach ${url}. Run \`cortex remote doctor\` for details.`);
           }
           break;
         case 'tool_error':
           if (e.detail?.code === 'missing_scope') {
             console.error('Missing OAuth scope on this client.');
             console.error('On the host, re-register the client with broader scopes:');
-            console.error('  gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin');
+            console.error('  cortex auth register-client <name> --grant-types client_credentials --scopes read,write,admin');
           } else {
             console.error(e.message);
-            console.error('Run `gbrain remote doctor` if this persists.');
+            console.error('Run `cortex remote doctor` if this persists.');
           }
           break;
         case 'parse':
-          console.error('Server response was malformed. Run `gbrain remote doctor`.');
+          console.error('Server response was malformed. Run `cortex remote doctor`.');
           break;
         default: {
           // Exhaustive switch sentinel (TS `never` — fails to build if a
@@ -432,9 +434,9 @@ export function _clearIdentityCacheForTest(): void {
 
 export function bannerSuppressed(cliOpts: CliOptions): boolean {
   if (cliOpts.quiet) return true;
-  if (process.env.GBRAIN_NO_BANNER === '1') return true;
+  if (process.env.CORTEX_NO_BANNER === '1' || process.env.GBRAIN_NO_BANNER === '1') return true;
   // Non-TTY default is suppressed (clean pipes); explicit env-flag overrides.
-  if (!process.stderr.isTTY && process.env.GBRAIN_BANNER !== '1') return true;
+  if (!process.stderr.isTTY && process.env.CORTEX_BANNER !== '1' && process.env.GBRAIN_BANNER !== '1') return true;
   return false;
 }
 
@@ -767,16 +769,16 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
  * place during code review.
  */
 const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
-  sync: 'sync runs on the host. Trigger a remote cycle with `gbrain remote ping` (queues an autopilot-cycle job).',
-  embed: 'embed runs on the host as part of the autopilot cycle. `gbrain remote ping` triggers a full cycle including embed.',
-  extract: 'extract runs on the host. Use `gbrain remote ping` to trigger a cycle including extract.',
+  sync: 'sync runs on the host. Trigger a remote cycle with `cortex remote ping` (queues an autopilot-cycle job).',
+  embed: 'embed runs on the host as part of the autopilot cycle. `cortex remote ping` triggers a full cycle including embed.',
+  extract: 'extract runs on the host. Use `cortex remote ping` to trigger a cycle including extract.',
   'extract-conversation-facts': 'extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.',
   migrate: "migrate runs on the host's local engine. Run on the host machine.",
   'apply-migrations': 'schema migrations run on the host. SSH and run there.',
   'repair-jsonb': 'repair-jsonb operates on the local DB only.',
   integrity: 'integrity scans local files. Run on the host machine.',
   serve: 'serve starts a server. Run on the host, not the thin client.',
-  dream: 'dream runs the autopilot cycle on the host. `gbrain remote ping` queues one. (Native `gbrain dream` thin-client routing planned for v0.31.2.)',
+  dream: 'dream runs the autopilot cycle on the host. `cortex remote ping` queues one. (Native `cortex dream` thin-client routing planned for v0.31.2.)',
   orphans: "orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
   transcripts: 'transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.',
   storage: 'storage operates on the local repo on disk. Run on the host.',
@@ -784,8 +786,8 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
   // v0.32 audit additions
   pages: '`pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.',
-  files: '`files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.',
-  eval: '`eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.',
+  files: '`files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `cortex files` on the host machine.',
+  eval: '`eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `cortex eval` on the host.',
   'code-def': '`code-def` needs symbol-aware lookup that has no MCP op yet. Run on the host or use `search` from your agent with a symbol-shaped query.',
   'code-refs': '`code-refs` has no MCP op yet. Run on the host.',
   'code-callers': '`code-callers` has no MCP op yet. Run on the host.',
@@ -801,11 +803,11 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
 function refuseThinClient(command: string, mcpUrl: string): never {
   const hint = THIN_CLIENT_REFUSE_HINTS[command];
   if (hint) {
-    console.error(`\`gbrain ${command}\` is not routable. ${hint}`);
+    console.error(`\`cortex ${command}\` is not routable. ${hint}`);
     console.error(`(thin-client of ${mcpUrl})`);
   } else {
     console.error(
-      `\`gbrain ${command}\` requires a local engine. This install is a thin client of ${mcpUrl}.\n` +
+      `\`cortex ${command}\` requires a local engine. This install is a thin client of ${mcpUrl}.\n` +
       `Run \`${command}\` on the remote host, or use the corresponding MCP tool from your agent.`,
     );
   }
@@ -833,6 +835,16 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'init') {
     const { runInit } = await import('./commands/init.ts');
     await runInit(args);
+    return;
+  }
+  if (command === 'connect') {
+    const { runConnect } = await import('./commands/connect.ts');
+    await runConnect(args);
+    return;
+  }
+  if (command === 'runtime') {
+    const { runRuntime } = await import('./commands/runtime.ts');
+    await runRuntime(args);
     return;
   }
   // v0.37 fix wave (deferred TODO, shipped): one-command wipe-and-reinit.
@@ -1126,9 +1138,9 @@ async function handleCliOnly(command: string, args: string[]) {
     const { runEvalLongMemEval } = await import('./commands/eval-longmemeval.ts');
     if (!(args.length > 1 && (args[1] === '--help' || args[1] === '-h'))) {
       const config = loadConfig() ?? ({
-        embedding_model: process.env.GBRAIN_EMBEDDING_MODEL,
-        embedding_dimensions: process.env.GBRAIN_EMBEDDING_DIMENSIONS
-          ? Number(process.env.GBRAIN_EMBEDDING_DIMENSIONS) : undefined,
+        embedding_model: process.env.CORTEX_EMBEDDING_MODEL || process.env.GBRAIN_EMBEDDING_MODEL,
+        embedding_dimensions: (process.env.CORTEX_EMBEDDING_DIMENSIONS || process.env.GBRAIN_EMBEDDING_DIMENSIONS)
+          ? Number(process.env.CORTEX_EMBEDDING_DIMENSIONS || process.env.GBRAIN_EMBEDDING_DIMENSIONS) : undefined,
       } as GBrainConfig);
       const { configureGateway } = await import('./core/ai/gateway.ts');
       configureGateway(buildGatewayConfig(config));
@@ -1232,7 +1244,7 @@ async function handleCliOnly(command: string, args: string[]) {
 
   if (readOnlyTimeoutMs !== null) {
     const { withTimeout, OperationTimeoutError } = await import('./core/timeout.ts');
-    const label = `gbrain ${command}`;
+    const label = `cortex ${command}`;
     let engine: BrainEngine;
     try {
       engine = await withTimeout(connectEngine(), readOnlyTimeoutMs, `${label}: connect`);
@@ -1660,7 +1672,7 @@ async function handleCliOnly(command: string, args: string[]) {
         // couldn't participate in federation / RLS / multi-tenancy. We
         // keep the alias so scripts like `gbrain repos add .` keep
         // working, with a nudge toward the canonical command.
-        console.error('[gbrain] Note: "repos" is an alias for "sources" as of v0.19.0. Prefer `gbrain sources <subcommand>`.');
+        console.error('[cortex] Note: "repos" is an alias for "sources". Prefer `cortex sources <subcommand>`.');
         const { runSources } = await import('./commands/sources.ts');
         await runSources(engine, args);
         break;
@@ -1751,7 +1763,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
 async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
-    console.error('No brain configured. Run: gbrain init');
+    console.error('No Cortex brain configured. Run: cortex init');
     process.exit(1);
   }
 
@@ -1763,6 +1775,7 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   const { createEngine } = await import('./core/engine-factory.ts');
   const engine = await createEngine(toEngineConfig(config));
   const noRetry = process.argv.includes('--no-retry-connect') ||
+                  process.env.CORTEX_NO_RETRY_CONNECT === '1' ||
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');
   await connectWithRetry(engine, toEngineConfig(config), { noRetry });
@@ -1791,20 +1804,20 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
         'but the migration didn\'t complete within the retry window. This is usually transient.',
       );
       console.warn('  If it persists:');
-      console.warn('    1. Check `gbrain doctor` for stale locks or stuck advisory locks.');
-      console.warn('    2. Check `gbrain jobs supervisor status` for crashed migration workers.');
-      console.warn('    3. Re-run: `gbrain apply-migrations --yes`');
+      console.warn('    1. Check `cortex doctor` for stale locks or stuck advisory locks.');
+      console.warn('    2. Check `cortex jobs supervisor status` for crashed migration workers.');
+      console.warn('    3. Re-run: `cortex apply-migrations --yes`');
     } else if (result.status === 'error') {
       // Non-deadlock error during initSchema. Surface the message and continue;
       // subsequent operations will resurface the real schema error in context.
       console.warn(`  Schema probe failed: ${result.error.message}`);
-      console.warn('  Re-run: `gbrain apply-migrations --yes`');
+      console.warn('  Re-run: `cortex apply-migrations --yes`');
     }
     // 'ok', 'not_needed', 'race_resolved' → silent (the common-case outcomes).
   } catch (err) {
     // Last-resort defense in case the helper itself throws unexpectedly.
     console.warn(`  Schema probe failed (unexpected): ${(err as Error).message}`);
-    console.warn('  Re-run: `gbrain apply-migrations --yes`');
+    console.warn('  Re-run: `cortex apply-migrations --yes`');
   }
 
   // v0.27.1 (F3 fix): re-merge DB-plane config now that the engine is up.
@@ -1851,7 +1864,7 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
 function printOpHelp(op: Operation) {
   const positional = (op.cliHints?.positional || []).map(p => `<${p}>`).join(' ');
   const name = op.cliHints?.name || op.name;
-  console.log(`Usage: gbrain ${name} ${positional} [options]\n`);
+  console.log(`Usage: cortex ${name} ${positional} [options]\n`);
   console.log(op.description + '\n');
   const entries = Object.entries(op.params);
   if (entries.length > 0) {
@@ -1870,13 +1883,15 @@ function printHelp() {
   const cliNames = Array.from(cliOps.entries())
     .map(([name, op]) => ({ name, desc: op.description }));
 
-  console.log(`gbrain ${VERSION} -- personal knowledge brain
+  console.log(`cortex ${VERSION} -- company brain runtime for Cortex SaaS
 
 USAGE
-  gbrain <command> [options]
+  cortex <command> [options]
 
 SETUP
-  init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
+  init [--supabase|--url]            Connect or initialize a hosted company brain
+  connect <onboarding-url>           Attach this runtime to a hosted Cortex brain
+  runtime install <runtime>          Write Cursor/Claude/connector config for a hosted brain
   migrate --to <supabase|pglite>     Transfer brain between engines
   upgrade                            Self-update
   check-update [--json]              Check for new versions
@@ -2006,7 +2021,7 @@ ADMIN
   version                            Version info
   --tools-json                       Tool discovery (JSON)
 
-Run gbrain <command> --help for command-specific help.
+Run cortex <command> --help for command-specific help.
 `);
 }
 

@@ -37,7 +37,7 @@ This skill guarantees:
 - Every ingested item has a brain page with genuine analysis (not just a summary)
 - The author gets a people page (MANDATORY for anyone whose thinking is worth ingesting)
 - Cross-links created bidirectionally (source ↔ author, source ↔ mentioned entities)
-- Raw source preserved for provenance via `gbrain files upload-raw`
+- Raw source preserved for provenance via `cortex files upload-raw`
 - Every fact has an inline `[Source: ...]` citation
 - Filing follows primary subject rules (not format-based)
 
@@ -50,7 +50,7 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 
 1. **Fetch the content.** Use appropriate tools for the content type (web fetch for articles, API for tweets, PDF reader for documents).
 
-2. **Upload raw source.** Save the fetched content for provenance: `gbrain files upload-raw <file> --page <slug>`
+2. **Upload raw source.** Save the fetched content for provenance: `cortex files upload-raw <file> --page <slug>`
 
 3. **Identify the author — MANDATORY people page.** Anyone whose thinking is worth ingesting is worth tracking.
    - Search brain for existing author page
@@ -70,7 +70,7 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
    - Connections — does this involve known people/companies?
    - Don't just summarize. Tell the user things they wouldn't have noticed.
 
-6. **Sync.** `gbrain sync` to update the index.
+6. **Sync.** `cortex sync` to update the index.
 
 ## Output Format
 

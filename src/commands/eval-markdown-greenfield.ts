@@ -1,4 +1,4 @@
-// v0.41 T11 — `gbrain eval markdown-greenfield` command (minimal scaffold).
+// v0.41 T11 — `cortex eval markdown-greenfield` command (minimal scaffold).
 //
 // v0.41 ships the command surface. Pass-rate floor enforcement
 // (--pass-rate-floor 0.95 → fail if validation-pass rate falls below)
@@ -32,7 +32,7 @@ export async function runEvalMarkdownGreenfield(
       repo_path: opts.repoPath ?? null,
       v0_41_1_followup:
         'Run markdown-greenfield --dry-run; parse the per-row validation audit at ' +
-        '~/.gbrain/audit/markdown-greenfield-failures-YYYY-Www.jsonl; compute ' +
+        '~/.cortex/audit/markdown-greenfield-failures-YYYY-Www.jsonl; compute ' +
         'pass_rate = (total - failures) / total; compare to --pass-rate-floor; exit ' +
         '1 when below floor.',
     },

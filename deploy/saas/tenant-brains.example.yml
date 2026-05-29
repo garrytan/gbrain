@@ -1,0 +1,30 @@
+company:
+  id: acme-example
+  name: Acme Example
+
+provider:
+  name: railway
+  environment: production
+
+# A company tenant can own multiple brains. Each brain maps to one deployed
+# Cortex service pair and one Supabase database/project. Most teams should
+# start as sources inside the default company brain; add another brain only
+# when the data owner, lifecycle, compliance boundary, or scale profile changes.
+brains:
+  - id: company
+    name: Acme Company Brain
+    description: Default shared institutional memory for most teams.
+    public_url: https://brain.acme-example.com
+    env_file: .env.acme-company
+    manifest: deploy/saas/company-brain.example.yml
+    railway_service: acme-company-brain-web
+    railway_worker_service: acme-company-brain-worker
+
+  - id: finance
+    name: Acme Finance Brain
+    description: Optional hard-isolated brain for finance/legal/board material.
+    public_url: https://finance-brain.acme-example.com
+    env_file: .env.acme-finance
+    manifest: deploy/saas/company-brain.example.yml
+    railway_service: acme-finance-brain-web
+    railway_worker_service: acme-finance-brain-worker

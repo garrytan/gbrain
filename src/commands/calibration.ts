@@ -1,17 +1,17 @@
 /**
- * v0.36.1.0 (T7) — `gbrain calibration` CLI.
+ * v0.36.1.0 (T7) — `cortex calibration` CLI.
  *
  * Reads the latest calibration profile from the DB and prints it. Mirror of
- * the v0.29 `gbrain salience` / `gbrain anomalies` shape (pure data fn + JSON
+ * the v0.29 `cortex salience` / `cortex anomalies` shape (pure data fn + JSON
  * formatter + human formatter + thin CLI dispatch).
  *
  * Sub-commands:
- *   gbrain calibration                              — print active profile for default holder
- *   gbrain calibration --holder <id>                — print for a specific holder
- *   gbrain calibration --json                       — machine output
- *   gbrain calibration --regenerate                 — run the calibration_profile phase now
- *   gbrain calibration --undo-wave <version>        — D18 undo command (Lane D adds the impl)
- *   gbrain calibration ab-report                    — D19 A/B harness report (Lane D adds the impl)
+ *   cortex calibration                              — print active profile for default holder
+ *   cortex calibration --holder <id>                — print for a specific holder
+ *   cortex calibration --json                       — machine output
+ *   cortex calibration --regenerate                 — run the calibration_profile phase now
+ *   cortex calibration --undo-wave <version>        — D18 undo command (Lane D adds the impl)
+ *   cortex calibration ab-report                    — D19 A/B harness report (Lane D adds the impl)
  *
  * MCP op: `get_calibration_profile` (scope: read) routes the same read path.
  * Source-scoping via sourceScopeOpts(ctx) on the MCP path keeps multi-source
@@ -76,7 +76,7 @@ export function formatProfileText(profile: CalibrationProfileRow | null, holder:
     return (
       `No calibration profile yet for holder "${holder}".\n` +
       `Build one by resolving 5+ takes then running:\n` +
-      `  gbrain dream --phase calibration_profile\n` +
+      `  cortex dream --phase calibration_profile\n` +
       `Or wait for the next autopilot cycle.`
     );
   }

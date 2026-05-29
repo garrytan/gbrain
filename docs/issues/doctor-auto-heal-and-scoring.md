@@ -2,7 +2,7 @@
 
 ## Summary
 
-The `gbrain doctor` health score system has several false-positive patterns and missing auto-heal capabilities. After the crash classification fix (shipped in this PR), these are the remaining improvements ranked by impact.
+The `cortex doctor` health score system has several false-positive patterns and missing auto-heal capabilities. After the crash classification fix (shipped in this PR), these are the remaining improvements ranked by impact.
 
 ---
 
@@ -99,7 +99,7 @@ doctor:
 
 When actual drift ≤ baseline: OK. When drift exceeds baseline: WARN (new drift).
 
-Store in `.gbrain/doctor-baselines.json` so it works without config too:
+Store in `.cortex/doctor-baselines.json` so it works without config too:
 
 ```json
 {
@@ -126,7 +126,7 @@ When image files are missing from disk (stored externally, purged from git), the
 ### Proposed Fix
 
 - `doctor --acknowledge image_assets` marks current missing count as accepted
-- Stored in `.gbrain/doctor-baselines.json`
+- Stored in `.cortex/doctor-baselines.json`
 - WARN only for NEW missing images beyond acknowledged count
 - Optional `image_assets.external_storage: true` config to skip disk check entirely
 
@@ -188,7 +188,7 @@ No history — each `doctor` run is a snapshot. Can't tell if score is improving
 
 ### Proposed Fix
 
-- Write each run to `.gbrain/doctor-history.jsonl`:
+- Write each run to `.cortex/doctor-history.jsonl`:
   ```json
   {"ts":"2026-05-15T12:00:00Z","score":60,"brain_score":79,"checks":{"supervisor":"ok","embeddings":"ok",...}}
   ```

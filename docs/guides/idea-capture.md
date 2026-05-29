@@ -56,7 +56,7 @@ capture_idea(message_text, source_context):
   link_to_concepts(page, referenced_concepts)
 
   // 5. SYNC
-  gbrain sync --no-pull --no-embed
+  cortex sync --no-pull --no-embed
 ```
 
 ### The Authorship Test
@@ -187,4 +187,4 @@ search enrichment. No stubs. If you make a page, make it good.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md).*

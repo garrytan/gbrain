@@ -27,7 +27,7 @@ import type { CRMode } from './types.ts';
 
 /**
  * Hard cap on the title-only block per chunk. Generous because high-signal
- * titles in personal-brain shape are typically 30-80 chars; the cap only
+ * titles in curated brain repos are typically 30-80 chars; the cap only
  * protects against pathological frontmatter.
  */
 const TITLE_HARD_CAP_CHARS = 300;

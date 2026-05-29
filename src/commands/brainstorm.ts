@@ -1,5 +1,5 @@
 /**
- * gbrain brainstorm — bisociation-style idea generation grounded in your
+ * cortex brainstorm - bisociation-style idea generation grounded in your
  * own notes.
  *
  * v0.37.0 wave (D14 + D6 + D11 + D12). Pulls a small close-set via
@@ -132,7 +132,7 @@ export function parseBrainstormArgs(args: string[]): BrainstormCliArgs {
   return out;
 }
 
-const BRAINSTORM_HELP = `Usage: gbrain brainstorm <question> [options]
+const BRAINSTORM_HELP = `Usage: cortex brainstorm <question> [options]
 
 Bisociation idea generator grounded in your own notes. Pulls a close-set
 via hybrid search and a far-set via prefix-stratified domain-bank, crosses
@@ -156,22 +156,22 @@ Options:
   --help, -h                      Show this help
 
 Examples:
-  gbrain brainstorm "why are AI coding tools converging on the same UX?"
-  gbrain brainstorm "what's the real bottleneck on lab automation" --json
+  cortex brainstorm "why are AI coding tools converging on the same UX?"
+  cortex brainstorm "what's the real bottleneck on lab automation" --json
 
-Cost: ~$0.05-0.15 per run. Set GBRAIN_NO_BRAINSTORM_PREVIEW=1 or pass --yes
+Cost: ~$0.05-0.15 per run. Set CORTEX_NO_BRAINSTORM_PREVIEW=1 or pass --yes
 to skip the TTY grace window in scripted callers.
 
-See also: gbrain lsd — Lateral Synaptic Drift, the inverted-judge variant
+See also: cortex lsd - Lateral Synaptic Drift, the inverted-judge variant
 that prefers forgotten pages and rejects ideas that are "too obvious."
 `;
 
-const LSD_HELP = `Usage: gbrain lsd <question> [options]
+const LSD_HELP = `Usage: cortex lsd <question> [options]
 
-LSD = Lateral Synaptic Drift. Same bisociation engine as \`gbrain brainstorm\`
+LSD = Lateral Synaptic Drift. Same bisociation engine as \`cortex brainstorm\`
 with the distance dial maxed: bigger far-bank (12 pages), smaller close-set
 (2 pages), forgotten pages preferred via the stale-bias signal, inverted
-judge that REJECTS ideas scoring too high on coherence ("too obvious — you'd
+judge that REJECTS ideas scoring too high on coherence ("too obvious - you'd
 have thought of this without LSD"), every idea must invert at least one
 implicit axiom. Output is ephemeral by default — pass --save if an idea lands.
 
@@ -191,12 +191,12 @@ Options:
   --help, -h                      Show this help
 
 Examples:
-  gbrain lsd "why are AI coding tools converging on the same UX?"
-  gbrain lsd "the unspoken assumption in venture pricing" --save
+  cortex lsd "why are AI coding tools converging on the same UX?"
+  cortex lsd "the unspoken assumption in venture pricing" --save
 
 Cost: ~$0.20-0.40 per run.
 
-See also: gbrain brainstorm — the sober, cite-heavy default variant.
+See also: cortex brainstorm - the sober, cite-heavy default variant.
 `;
 
 /** Shared body: brainstorm.ts → runBrainstormCli(BRAINSTORM_PROFILE); lsd.ts → runBrainstormCli(LSD_PROFILE). */
@@ -212,7 +212,7 @@ async function runBrainstormCli(
     return;
   }
   if (parsed.error) {
-    console.error(`gbrain ${profile.label}: ${parsed.error}`);
+    console.error(`cortex ${profile.label}: ${parsed.error}`);
     console.error(help);
     process.exit(2);
     return;
@@ -236,7 +236,7 @@ async function runBrainstormCli(
     return;
   }
   if (!parsed.question || parsed.question.trim().length === 0) {
-    console.error(`gbrain ${profile.label}: question required`);
+    console.error(`cortex ${profile.label}: question required`);
     console.error(help);
     process.exit(2);
     return;
@@ -244,7 +244,10 @@ async function runBrainstormCli(
 
   const config = loadConfig() ?? {};
   // Honor env-var skip for scripted environments that can't easily pass --yes.
-  const skipPreview = parsed.yes || process.env.GBRAIN_NO_BRAINSTORM_PREVIEW === '1';
+  const skipPreview =
+    parsed.yes ||
+    process.env.CORTEX_NO_BRAINSTORM_PREVIEW === '1' ||
+    process.env.GBRAIN_NO_BRAINSTORM_PREVIEW === '1';
 
   // --limit override: replace m_far on a shallow copy of the profile.
   const effectiveProfile: BrainstormProfile = parsed.limit
@@ -329,7 +332,7 @@ async function runBrainstormCli(
       console.log(`\n_Saved to \`${slug}\`._`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`gbrain ${profile.label}: save failed: ${msg}`);
+      console.error(`cortex ${profile.label}: save failed: ${msg}`);
     }
   }
 }
@@ -346,12 +349,12 @@ function buildIdeaSlug(question: string, label: 'brainstorm' | 'lsd'): string {
   return `wiki/ideas/${date}-${label}-${stem || 'untitled'}`;
 }
 
-/** CLI entry: `gbrain brainstorm`. */
+/** CLI entry: `cortex brainstorm`. */
 export async function runBrainstormCommand(engine: BrainEngine, args: string[]): Promise<void> {
   return runBrainstormCli(engine, args, BRAINSTORM_PROFILE, BRAINSTORM_HELP);
 }
 
-/** CLI entry: `gbrain lsd`. */
+/** CLI entry: `cortex lsd`. */
 export async function runLsdCommand(engine: BrainEngine, args: string[]): Promise<void> {
   return runBrainstormCli(engine, args, LSD_PROFILE, LSD_HELP);
 }

@@ -1,242 +1,150 @@
-# Brains and Sources — the mental model
+# Brains and Sources
 
-GBrain has two orthogonal axes for organizing knowledge. Users and agents both
-need to understand both of them, or queries misroute silently.
+Cortex has two separate axes for organizing tenant knowledge. Users and
+agents both need the distinction, because access and routing are different at
+each layer.
 
-**TL;DR:**
-- A **brain** is a database. You can have many.
-- A **source** is a named repo of content *inside* a brain. One brain can hold many.
-- `--brain <id>` picks WHICH DATABASE.
-- `--source <id>` picks WHICH REPO WITHIN that database.
-- They're independent. You can target any combination.
+## TL;DR
 
----
+- An **organization** is the customer tenant.
+- A **brain** is the database and deployment boundary for that tenant.
+- A **source** is a named team, repo, or domain boundary inside one brain.
+- Use another brain when ownership, lifecycle, residency, backup, or admin
+  control changes.
+- Use another source when the same organization owns the data and you need
+  scoped writes or federated reads inside one company brain.
 
-## The two axes
+## Brain Axis
 
-### Brains (the DB axis)
+A brain is one database-backed runtime: Supabase Postgres in production, plus
+the HTTP MCP server, OAuth clients, background jobs, file storage, backups,
+and deployment URL that go with it.
 
-A **brain** is one database — PGLite file, self-hosted Postgres, or Supabase.
 Each brain has:
-- Its own `pages` table, `chunks` table, `embeddings`, etc.
-- Its own OAuth surface if served over HTTP MCP (v0.19+, PR 2).
-- Its own separate lifecycle, backup, access control.
 
-Brains are enumerated by:
-- **host** — your default brain, configured in `~/.gbrain/config.json`.
-- **mounts** — additional brains registered in `~/.gbrain/mounts.json` via
-  `gbrain mounts add <id>` (v0.19+).
+- Its own `pages`, `content_chunks`, embeddings, links, facts, jobs, and OAuth
+  tables.
+- Its own public MCP endpoint and OAuth token endpoint when hosted.
+- Its own migration lifecycle, backups, deployment health, and incident
+  boundary.
+- Its own admin/operator lifecycle in the SaaS control plane.
 
-Routing: `--brain <id>`, `GBRAIN_BRAIN_ID`, `.gbrain-mount` dotfile, or
-longest-path match against registered mount paths. Falls back to `host`.
+In the SaaS, companies can create multiple brains. The default path is one
+company brain per organization, then sources inside that brain for teams and
+topics.
 
-### Sources (the repo axis, v0.18.0+)
+Create a separate brain for:
 
-A **source** is a named content repo *inside* one brain. Every `pages` row
-carries a `source_id`. Slugs are unique per source, not globally.
+- Finance, legal, board, or executive material with a different admin surface.
+- A customer-facing brain that should not share lifecycle with internal data.
+- Region-specific data residency.
+- M&A, diligence, or temporary workspaces with different retention.
+- A scale boundary that should not share migrations or connection pools.
 
-Example: in one brain, the slug `topics/ai` can exist under `source=wiki`
-AND under `source=gstack` — they're different pages.
+## Source Axis
 
-Routing: `--source <id>`, `GBRAIN_SOURCE`, `.gbrain-source` dotfile, or
-registered `local_path` match in the `sources` table.
+A source is a named content boundary inside one brain. Every page row carries
+a `source_id`, and slugs are unique per source rather than globally.
 
-### When does each axis move?
+Use sources for:
 
-| You want to | Adjust |
-|---|---|
-| Work in a different repo within the same brain (wiki → gstack notes) | `--source` |
-| Query a team-published brain that isn't yours | `--brain` |
-| Isolate a topic so it never leaks into personal search | `--source` with `federated=false` |
-| Share a brain with teammates | `--brain` (mount the team brain) |
-| Add a new repo to your personal brain | `--source` via `gbrain sources add` |
-| Add a team brain | `--brain` via `gbrain mounts add` |
+- `shared`
+- `engineering`
+- `customers`
+- `sales`
+- `support`
+- `internal`
+- `legal`
+- `docs`
+- Per-repo or per-team knowledge bases
 
-**Rule of thumb:** if the data owner changes, it's a brain boundary. If the
-data owner stays the same but the topic/repo changes, it's a source boundary.
+Sources power agent scoping:
 
----
+- `source_id` is where a client writes.
+- `federated_read` is the list of sources a client can read.
+- OAuth clients and teammate invites should always show both values.
 
-## Topology: a single-person developer
+Example: one company brain can have `source=engineering` and
+`source=customers`, and both can contain a slug like `meetings/weekly-sync`
+without colliding.
 
-Simplest case. One brain, one source.
+## Decision Table
 
-```
-┌─────────────────────────────────────────┐
-│  host brain (~/.gbrain)                 │
-│  ├── source: default (federated=true)   │
-│  │   └── all pages                      │
-└─────────────────────────────────────────┘
-```
+| You want to | Use |
+| --- | --- |
+| Add a new team or repo inside the same company knowledge base | A source |
+| Give an agent write access only to engineering notes | `source_id=engineering` |
+| Let an agent read engineering and shared context | `federated_read=["engineering", "shared"]` |
+| Separate finance/legal lifecycle from general company context | A separate brain |
+| Give a customer their own external-facing knowledge runtime | A separate brain |
+| Enforce regional residency or separate backups | A separate brain |
+| Organize a teammate's customer notes inside a team source | Folders inside the source |
 
-`gbrain query "retry budgets"` finds everything. No `--brain`, no `--source`
-needed.
+Rule of thumb: if the data owner or operational lifecycle changes, use a
+brain. If the owner stays the same and you need topic, team, repo, or access
+scoping, use a source.
 
----
+## Default SaaS Topology
 
-## Topology: a personal brain with multiple repos
-
-You maintain several codebases or writing streams. Each is its own source
-inside one brain. Cross-source search is on by default so a query about
-"caching" returns hits from every repo.
-
-```
-┌──────────────────────────────────────────────┐
-│  host brain (~/.gbrain)                      │
-│  ├── source: wiki      (federated=true)      │
-│  │   └── personal notes, people, companies   │
-│  ├── source: gstack    (federated=true)      │
-│  │   └── gstack plans, learnings             │
-│  ├── source: openclaw  (federated=true)      │
-│  │   └── openclaw docs, memos                │
-│  └── source: essays    (federated=false)     │
-│      └── draft essays, isolated on purpose   │
-└──────────────────────────────────────────────┘
+```text
+organization: Acme
+  brain: company
+    source: shared       federated=true
+    source: engineering  federated=true
+    source: customers    federated=true
+    source: internal     federated=false
 ```
 
-Inside `~/openclaw/` the `.gbrain-source` dotfile pins every command to
-`source=openclaw`. Inside `~/gstack/` the dotfile pins to `source=gstack`.
-Everything still targets one DB.
+Most tenants should start here. The operator creates the organization, creates
+the first brain, creates sources, then invites teammates and their agents with
+source-scoped OAuth clients.
 
-Use this topology when:
-- You own all the content.
-- You want cross-repo search to just work.
-- You don't need to share any of it with someone who isn't you.
+## Multi-Brain Tenant
 
----
+```text
+organization: Acme
+  brain: company
+    source: shared
+    source: engineering
+    source: customers
 
-## Topology: personal brain + one team brain
+  brain: finance-legal
+    source: board
+    source: contracts
+    source: investor-updates
 
-You're on a team that publishes a shared brain. Your personal brain stays
-as-is; you mount the team brain alongside it.
-
-```
-┌──────────────────────────────────────────────┐
-│  host brain (~/.gbrain)  — YOUR personal DB  │
-│  ├── source: wiki                            │
-│  ├── source: gstack                          │
-│  └── ...                                     │
-└──────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────┐
-│  mount: media-team                           │
-│  path:   ~/team-brains/media                 │
-│  engine: postgres (team's Supabase)          │
-│  └── sources: wiki, raw, enriched            │
-└──────────────────────────────────────────────┘
+  brain: customer-portal
+    source: public-docs
+    source: account-faqs
 ```
 
-`gbrain query "X"` (no flags) → runs against host (your personal brain).
-`gbrain query "X" --brain media-team` → runs against the team's DB.
-Inside `~/team-brains/media/` a `.gbrain-mount` dotfile pins brain to
-`media-team` automatically.
+This shape is right when a customer needs different admins, lifecycle,
+backups, retention, or external access for a subset of knowledge.
 
-Use this topology when:
-- You're on a team and someone publishes a brain the team subscribes to.
-- You need data isolation between work and personal.
-- Different teams/orgs own different brains.
+Cross-brain search is not SQL federation. It is an agent and product
+orchestration layer: the agent decides which brain to query, synthesizes the
+answers, and cites each result with its brain and source.
 
----
+## Agent Routing Rules
 
-## Topology: a CEO-class user with multiple team memberships
+- Start with the current tenant brain unless the user or task names another
+  brain.
+- Stay inside the OAuth client's `federated_read` list.
+- Write only to the OAuth client's `source_id`.
+- Ask for an invite or scoped client change instead of silently broadening
+  access.
+- Cite results with enough context for an operator to see the boundary:
+  `brain:source:slug`.
 
-You're senior enough to sit across multiple teams. You maintain your personal
-brain (with N sources inside) AND mount several work team brains. Each team
-brain is itself a multi-source brain in the v0.18.0 sense — organized
-internally however the team owner chose.
+## CLI Compatibility
 
-```
-┌──────────────────────────────────────────────┐
-│  host brain — YOUR personal DB               │
-│  ├── source: wiki                            │
-│  ├── source: essays                          │
-│  ├── source: gstack                          │
-│  └── source: openclaw                        │
-└──────────────────────────────────────────────┘
+The underlying runtime still supports local mounts and dotfile routing for
+developer workflows:
 
-┌──────────────────────────────────────────────┐
-│  mount: media-team (your media team's brain) │
-│  └── sources: wiki, pipeline, enriched       │
-└──────────────────────────────────────────────┘
+- `--brain <id>` selects a brain/database.
+- `--source <id>` selects a source inside that brain.
+- `CORTEX_BRAIN_ID` and `CORTEX_SOURCE` provide environment defaults.
+- `.cortex-mount` and `.cortex-source` can pin local checkouts.
 
-┌──────────────────────────────────────────────┐
-│  mount: policy-team (your policy team's)     │
-│  └── sources: wiki, research, letters        │
-└──────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────┐
-│  mount: portfolio (another team's)           │
-│  └── sources: companies, deals, diligence    │
-└──────────────────────────────────────────────┘
-```
-
-Inside each team's checkout, a `.gbrain-mount` dotfile pins the brain. Inside
-a specific subdirectory, a `.gbrain-source` dotfile pins the source. So `cd
-~/team-brains/policy/research && gbrain query "X"` targets
-`brain=policy-team, source=research` with zero flags.
-
-Use this topology when:
-- You cross-cut multiple teams.
-- Each team owns its own brain with its own access policy.
-- You need latent-space federation (agent decides when to query across
-  brains), not SQL federation.
-
-Cross-brain queries are **not deterministic** in v0.19. The agent sees the
-brain list and re-queries as needed. That's the feature — it keeps debugging
-sane and access control clean.
-
----
-
-## Resolution precedence (one page to remember)
-
-```
-WHICH BRAIN (DB)?                    WHICH SOURCE (repo in DB)?
- 1. --brain <id>                      1. --source <id>
- 2. GBRAIN_BRAIN_ID env               2. GBRAIN_SOURCE env
- 3. .gbrain-mount dotfile             3. .gbrain-source dotfile
- 4. longest-prefix mount path match   4. longest-prefix source path match
- 5. (reserved: brains.default v2)     5. sources.default config
- 6. fallback: 'host'                  6. fallback: 'default'
-```
-
-Both axes follow the same layered pattern on purpose. If you know one, you
-know the other.
-
----
-
-## For agents reading this
-
-- Default assumption when the user asks a question: start in the current
-  brain (resolved via the precedence above). Don't jump brains without a
-  reason.
-- If the user asks a question that crosses topic areas a team might own
-  (e.g. "what did Team X decide last week?"), the right move is to *query
-  the team's brain explicitly* rather than searching host with "team x".
-- Cross-brain federation is YOUR JOB, not the DB's. You have the brain list
-  (`gbrain mounts list`). You decide when to fan out. You synthesize
-  findings. You cite `brain:source:slug`.
-- When writing a page, respect the brain boundary. A fact about a team's
-  work belongs in the team's brain, not in the user's personal brain. Ask
-  before writing cross-brain.
-- See `skills/conventions/brain-routing.md` for the full decision table.
-
-## For users reading this
-
-- **Default path:** set up your personal brain (`gbrain init`), add a source
-  per repo you care about (`gbrain sources add gstack --path ~/gstack`).
-  You'll almost never need `--brain`.
-- **When a team publishes a brain:** `gbrain mounts add <team-id> --path
-  <clone> --db-url <url>` and the `.gbrain-mount` dotfile in that checkout
-  routes queries there automatically.
-- **When you are the CEO-class user with multiple team memberships:** mount
-  each team brain. Trust the resolver — inside a team's directory the
-  dotfile picks the brain, inside a subdirectory the dotfile picks the
-  source. The flags are for when you want to query across the boundary
-  deliberately.
-
-## Further reading
-
-- v0.18.0 CHANGELOG — introduced `sources` primitive.
-- v0.19.0 CHANGELOG (TBD after PR 0+1+2 ship) — introduces `mounts`.
-- `docs/mounts/publishing-a-team-brain.md` (PR 2) — how to be the brain
-  publisher, not just the subscriber.
+Those mechanics are compatibility features. The hosted SaaS model should be
+explained to customers as organization -> brain -> source -> member/agent.

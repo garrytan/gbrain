@@ -42,18 +42,18 @@ The Analysis section can interpret; the transcript section is sacred.
 ## When to invoke
 
 The user sends an audio or voice message via any channel (Telegram, voice
-memo upload, openclaw audio attachment). The host agent typically provides
-the transcript text. If not, transcribe via `gbrain transcription` (Groq
+memo upload, cortex audio attachment). The host agent typically provides
+the transcript text. If not, transcribe via `cortex transcription` (Groq
 Whisper by default; OpenAI fallback for audio > 25MB segmented via ffmpeg).
 
 ## The pipeline
 
 ```
-1. STORE       → Upload original audio to gbrain storage backend
+1. STORE       → Upload original audio to cortex storage backend
                  (S3 / Supabase Storage / local — pluggable per
                  src/core/storage.ts).
 2. TRANSCRIBE  → Use the agent-provided transcript verbatim, OR call
-                 gbrain transcription if no transcript was supplied.
+                 cortex transcription if no transcript was supplied.
 3. ROUTE       → Apply the decision tree (below) to find the right
                  destination directory.
 4. WRITE       → Create / update the destination brain page; preserve the
@@ -111,7 +111,7 @@ tags: [voice-note, relevant-tags]
 sources:
   voice-note:
     type: voice_note
-    storage_path: "[gbrain storage URL or relative path]"
+    storage_path: "[cortex storage URL or relative path]"
     acquired: YYYY-MM-DD
     acquired_via: "voice note from <channel>"
 ---
@@ -125,7 +125,7 @@ sources:
 > "Exact transcript, verbatim, preserving every word, hesitation, and verbal
 > tic. This is the primary source material. Do not edit."
 
-🔊 [Audio]([gbrain storage URL or relative path])
+🔊 [Audio]([cortex storage URL or relative path])
 
 ## Analysis
 

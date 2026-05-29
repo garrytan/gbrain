@@ -1,550 +1,187 @@
 ---
 name: setup
-description: Set up GBrain with auto-provision Supabase or PGLite, AGENTS.md injection, first import
+description: Set up Cortex SaaS onboarding for an organization, including signup, first brain, sources, invites, runtime manifest, and agent-client verification
 triggers:
-  - "set up gbrain"
-  - "initialize brain"
-  - "gbrain setup"
+  - "set up cortex"
+  - "create cortex org"
+  - "initialize company brain"
+  - "cortex setup"
 tools:
-  - get_stats
-  - get_health
-  - sync_brain
-  - put_page
+  - saas_signup_create
+  - saas_orgs_list
+  - saas_brains_list
+  - sources_list
+  - users_create_invite
+  - users_register_agent_client
+  - saas_runtime_manifest
+  - run_onboard
 mutating: true
 ---
 
-# Setup GBrain
+# Setup Cortex
 
-Set up GBrain from scratch. Target: working brain in under 5 minutes.
+Set up Cortex as a hosted company-brain tenant. The target is not a local-only
+setup; the target is an organization that can invite teammates,
+connect sources, issue scoped OAuth clients, and point agent runtimes at the
+hosted MCP endpoint.
 
 ## Contract
 
-- Setup completes with a working brain verified by `gbrain doctor --json` (all checks OK).
-- The brain-first lookup protocol is injected into the project's AGENTS.md or equivalent.
-- Live sync is configured and verified (a test change pushed and found via search).
-- Schema state is tracked in `~/.gbrain/update-state.json` so future upgrades know what the user adopted or declined.
-- No Supabase anon key is requested; GBrain uses only the database connection string.
+Setup is complete only when all of these are true:
 
-## Install (if not already installed)
+- An organization exists.
+- At least one brain exists for the organization.
+- At least one source exists or the default source is intentionally selected.
+- The owner has an onboarding URL and one-time client secret.
+- A teammate invite or agent client can be created from the same control plane.
+- The runtime manifest is reachable and names Cortex only.
+- `cortex connect '<onboarding-url>' --client-secret '<secret>'` is the install
+  path for agents and humans.
+- The agent can perform the same setup actions through MCP that a human can
+  perform through the console.
 
-```bash
-bun add github:garrytan/gbrain
-```
+## Product Model
 
-## How GBrain connects
+Use these boundaries:
 
-GBrain connects directly to Postgres over the wire protocol. NOT through the
-Supabase REST API. You need the **database connection string** (a `postgresql://` URI),
-not the project URL or anon key. The password is embedded in the connection string.
+- **Organization**: billing, domain, members, invites, roles, and plan limits.
+- **Brain**: hosted deployment and database boundary. Create multiple brains only
+  for hard isolation, region, retention, or scale needs.
+- **Source**: team, integration, repository, department, or project boundary
+  inside one brain. Use sources as the normal "sub-brain" model.
+- **Agent client**: OAuth identity for a teammate, bot, integration, or customer
+  agent runtime.
+- **Skill policy**: source/client-scoped capability rule enforced by MCP
+  dispatch when runtime calls include a skill id.
 
-Use the **Shared Pooler** connection string (port 6543), not the direct connection
-(port 5432). The direct hostname resolves to IPv6 only, which many environments
-can't reach. Find it: go to the project, click **Get Connected** next to the
-project URL, then **Direct Connection String** > **Session Pooler**, and copy
-the **Shared Pooler** connection string.
+## Preferred Setup Path
 
-**Do NOT ask for the Supabase anon key.** GBrain doesn't use it.
+1. Create the tenant:
 
-## Why Supabase
-
-Supabase gives you managed Postgres + pgvector (vector search built in) for $25/mo:
-- 8GB database + 100GB storage on Pro tier
-- No server to manage, automatic backups, dashboard for debugging
-- pgvector pre-installed, just works
-- Alternative: any Postgres with pgvector extension (self-hosted, Neon, Railway, etc.)
-
-## Prerequisites
-
-- A Supabase account (Pro tier recommended, $25/mo) OR any Postgres with pgvector
-- An OpenAI API key (for semantic search embeddings, ~$4-5 for 7,500 pages)
-- A git-backed markdown knowledge base (or start fresh)
-
-## Available init options
-
-- `gbrain init --supabase` -- interactive wizard (prompts for connection string)
-- `gbrain init --url <connection_string>` -- direct, no prompts
-- `gbrain init --non-interactive --url <connection_string>` -- for scripts/agents
-- `gbrain doctor --json` -- health check after init
-
-There is no `--local`, `--sqlite`, or offline mode. GBrain requires Postgres + pgvector
-(local PGLite or remote Supabase / self-hosted).
-
-## Phase A.5: Choose Topology (run BEFORE Phase A)
-
-GBrain supports three deployment shapes. Pick the right one before installing,
-because picking wrong creates contention or duplicate work that's painful to
-unwind. Read `docs/architecture/topologies.md` for the full picture; the short
-version:
-
-Ask the user this BEFORE running `gbrain init`:
-
-> "Three deployment shapes:
->  1. **Single brain (default)** — one machine, one DB, one agent. Pick this if
->     unsure.
->  2. **Cross-machine thin client** — your brain lives on another machine
->     (e.g. brain-host) running `gbrain serve --http`, and this install just
->     calls it over MCP. No local DB on this machine.
->  3. **Per-worktree code + shared remote artifacts** — Conductor users with
->     multiple worktrees indexing the same code repo. Each worktree owns its
->     own code engine; artifacts live on a shared remote brain. For code
->     engines, configure Voyage's code-tuned model:
->     `gbrain init --pglite --embedding-model voyage:voyage-code-3 --embedding-dimensions 1024`
->     (full guidance in `docs/architecture/topologies.md` Topology 3).
->
->  Which fits?"
-
-### If the user picks 1 (single brain) — proceed to Phase A
-
-Continue with the existing `gbrain init --supabase` / `--pglite` setup below.
-
-### If the user picks 2 (cross-machine thin client)
-
-1. **Confirm a host already exists.** Ask: "Is the remote `gbrain serve --http`
-   already running on the host machine?" If no, the user needs to set up the
-   host first (Phases A-C on the host, then `gbrain serve --http`). Don't try
-   to run init on this machine until the host is up.
-
-2. **Get OAuth credentials from the host operator.** Ask the user to run
-   on the host:
    ```bash
-   gbrain auth register-client <name> \
+   curl -X POST https://<tenant-host>/api/signup \
+     -H 'content-type: application/json' \
+     -d '{"orgName":"Acme AI","email":"owner@acme.ai","domain":"acme.ai"}'
+   ```
+
+   Agent path: call `saas_signup_create` with the same fields.
+
+2. Capture the returned `onboarding_url`, `client_id`, and one-time
+   `client_secret`. The secret must not be embedded in the URL.
+
+3. Connect the owner's runtime:
+
+   ```bash
+   cortex connect '<onboarding-url>' --client-secret '<one-time-secret>'
+   cortex runtime install cursor
+   cortex runtime install claude-desktop
+   ```
+
+4. Open `/admin/onboarding` with the invite payload and confirm the decoded
+   tenant endpoint, token URL, client id, scopes, write source, and
+   federated-read list.
+
+5. Create the first teammate invite:
+
+   ```bash
+   cortex users create-invite \
+     --email teammate@acme.ai \
+     --role member \
+     --source engineering \
+     --federated-read engineering,default
+   ```
+
+   Agent path: call `users_create_invite`.
+
+6. Create a non-human agent client when no teammate invite is needed:
+
+   ```bash
+   cortex auth register-client acme-build-agent \
      --grant-types client_credentials \
-     --scopes read,write,admin
-   ```
-   The `admin` scope is required because `gbrain remote ping` and
-   `gbrain remote doctor` (Tier B convenience commands) call MCP ops with
-   `admin` scope. `read,write` alone breaks ping/doctor.
-
-3. **Run thin-client init on this machine:**
-   ```bash
-   gbrain init --mcp-only \
-     --issuer-url https://<host>:<port> \
-     --mcp-url https://<host>:<port>/mcp \
-     --oauth-client-id <id> \
-     --oauth-client-secret <secret>
-   ```
-   Or set `GBRAIN_REMOTE_CLIENT_SECRET` env var instead of the flag (preferred
-   for headless / scripted setup). Pre-flight runs three smoke probes; any
-   failure surfaces an actionable error.
-
-4. **Configure your agent's MCP client.** Add a server entry pointing at
-   `<mcp_url>` with the bearer token. See `docs/mcp/CLAUDE_DESKTOP.md`,
-   `docs/mcp/CLAUDE_CODE.md`, etc. for per-client snippets.
-
-5. **Verify with `gbrain doctor`.** Thin-client doctor runs OAuth discovery,
-   token round-trip, and MCP smoke against the host. Should report
-   `mode: thin-client` with all checks green.
-
-6. **Skip Phases B, C, C.5, and H entirely.** They're for local engines.
-   The host's autopilot handles sync/extract/embed. Thin clients consume
-   only.
-
-7. **Continue to Phase D (brain-first lookup).** It works identically over
-   MCP — the agent uses the same brain-ops skill to query/search/get_page,
-   they just round-trip through the host's `gbrain serve --http`.
-
-If init reports "thin-client config already present", a previous setup
-already configured this machine. Refusing without `--force` is the correct
-behavior; either accept the existing config or pass `--force` to refresh.
-
-### If the user picks 3 (split-engine per-worktree)
-
-This shape requires per-worktree wiring that gstack handles, not gbrain
-directly. gbrain's role is just to run a local engine when `GBRAIN_HOME` is
-set — that already works.
-
-Point the user at `docs/architecture/topologies.md` (the Topology 3 section)
-for the wiring recipe, then continue with Phase A as normal — `gbrain init`
-on this machine sets up the artifact brain (the "default" home). The
-per-worktree code engines are configured per-worktree as gstack creates them.
-
-If the user has a remote artifact brain (Topology 2 + 3 combined), follow
-the thin-client setup above for the artifact brain instead of Phase A.
-
-## Phase A: Supabase Setup (recommended)
-
-Guide the user through creating a Supabase project:
-
-1. "Go to https://supabase.com and sign up or log in."
-2. "Click 'New Project' in the top left."
-   - Name: `gbrain`
-   - Region: pick the one closest to you
-   - Database password: generate a strong one and save it
-3. "Wait about 2 minutes for the project to initialize."
-4. "Find the connection string: go to your project, click **Get Connected** next
-   to the project URL, then **Direct Connection String** > **Session Pooler**,
-   and copy the **Shared Pooler** connection string (port 6543)."
-5. Initialize gbrain:
-   ```bash
-   gbrain init --non-interactive --url "postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres"
-   ```
-6. Verify: `gbrain doctor --json`
-
-**OpenClaw/Hermes agent instructions:** Store the Supabase access token in your persistent
-env as `SUPABASE_ACCESS_TOKEN`. gbrain doesn't store it, you need it for future
-`gbrain doctor` runs. Generate at: https://supabase.com/dashboard/account/tokens
-
-## Phase B: BYO Postgres (alternative)
-
-If the user already has Postgres with pgvector:
-
-1. Get the connection string from the user.
-2. Run: `gbrain init --non-interactive --url "<connection_string>"`
-3. Verify: `gbrain doctor --json`
-
-If the connection fails with ECONNREFUSED and the URL contains `supabase.co`,
-the user probably pasted the direct connection (IPv6 only). Guide them to the
-Session pooler string instead (see Phase A step 4).
-
-## Phase C: First Import
-
-1. **Discover markdown repos.** Scan the environment for git repos with markdown content.
-
-```bash
-echo "=== GBrain Environment Discovery ==="
-for dir in /data/* ~/git/* ~/Documents/* 2>/dev/null; do
-  if [ -d "$dir/.git" ]; then
-    md_count=$(find "$dir" -name "*.md" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$md_count" -gt 10 ]; then
-      total_size=$(du -sh "$dir" 2>/dev/null | cut -f1)
-      echo "  $dir ($total_size, $md_count .md files)"
-    fi
-  fi
-done
-echo "=== Discovery Complete ==="
-```
-
-2. **Import the best candidate.** For large imports (>1000 files), use nohup to
-   survive session timeouts:
-   ```bash
-   nohup gbrain import <dir> --no-embed --workers 4 > /tmp/gbrain-import.log 2>&1 &
-   ```
-   Then check progress: `tail -1 /tmp/gbrain-import.log`
-
-   For smaller imports, run directly:
-   ```bash
-   gbrain import <dir> --no-embed
+     --scopes read,write \
+     --source engineering \
+     --federated-read engineering,default
    ```
 
-3. **Prove search works.** Pick a semantic query based on what you imported:
-   ```bash
-   gbrain search "<topic from the imported data>"
-   ```
-   This is the magical moment: the user sees search finding things grep couldn't.
+   Agent path: call `users_register_agent_client`.
 
-4. **Start embeddings.** Refresh stale embeddings (runs in background). Keyword
-   search works NOW, semantic search improves as embeddings complete.
-
-5. **Backfill the knowledge graph.** Populate typed links and structured timeline
-   from the imported pages. Auto-link maintains both going forward, but historical
-   pages need a one-time backfill.
+7. Fetch and inspect runtime packaging:
 
    ```bash
-   gbrain extract links --source db --dry-run | head -20    # preview
-   gbrain extract links --source db                         # commit
-   gbrain extract timeline --source db                      # dated events
-   gbrain stats                                             # verify links > 0
+   curl https://<tenant-host>/runtime-manifest.json
+   cortex runtime install cursor --manifest-url https://<tenant-host>/runtime-manifest.json
    ```
 
-   After this, `gbrain graph-query <slug> --depth 2` works and search ranks
-   well-connected entities higher. Idempotent — safe to re-run anytime.
-   Supports `--since YYYY-MM-DD` for incremental runs on huge brains.
+   Agent path: call `saas_runtime_manifest`.
 
-   Skip if Phase C imported zero pages (auto-link handles new writes).
+8. Run onboarding checks:
 
-6. **Offer file migration.** If the repo has binary files (.raw/ directories with
-   images, PDFs, audio):
-   > "You have N binary files (X GB) in your brain repo. Want to move them to cloud
-   > storage? Your git repo will drop from X GB to Y MB. All links keep working."
-
-   If the user agrees, configure storage and run migration:
    ```bash
-   # Configure storage backend (Supabase Storage recommended)
-   gbrain config set storage.backend supabase
-   gbrain config set storage.bucket brain-files
-   gbrain config set storage.projectUrl <supabase-url>
-   gbrain config set storage.serviceRoleKey <service-role-key>
-
-   # Migrate binary files to cloud (3-step lifecycle)
-   gbrain files mirror <brain-dir>       # Upload to cloud, keep local
-   gbrain files redirect <brain-dir>     # Replace local with .redirect.yaml pointers
-   # (optional) gbrain files clean <brain-dir> --yes   # Remove pointers too
+   cortex onboard --check --json
    ```
 
-   After migration, `gbrain files upload-raw` handles new files automatically:
-   small text/PDFs stay in git, large/media files go to cloud with `.redirect.yaml`
-   pointers. Files >= 100 MB use TUS resumable upload for reliability.
+   Agent path: call `run_onboard`.
 
-If no markdown repos are found, create a starter brain with a few template pages
-(a person page, a company page, a concept page) from docs/GBRAIN_RECOMMENDED_SCHEMA.md.
+## Supabase And Hosting Notes
 
-## Phase C.5: One-step autopilot + Minions install (v0.11.1+)
+Cortex talks to Postgres directly over the database connection string. The
+Supabase anon key is not enough for the server. Production deployments should
+store `CORTEX_DATABASE_URL`, `CORTEX_PUBLIC_URL`, the bootstrap token, email
+delivery secret, billing webhook secret, Composio webhook secret, and provider
+keys in the host secret manager.
 
-Run the migration runner once, then install autopilot. Two commands, done:
+Use Supabase for managed Postgres plus pgvector. Use Railway, Docker, or another
+host for the Cortex HTTP server. Public signup can run on a shared hosted brain;
+dedicated enterprise brains can be provisioned later as separate deployments.
 
-```bash
-gbrain apply-migrations --yes       # applies any pending migrations; idempotent on healthy installs
-gbrain autopilot --install          # supervises itself + forks the Minions worker; env-aware
-```
+## Agent Parity Checklist
 
-What `gbrain autopilot --install` does:
+Before considering onboarding done, verify both paths:
 
-- On **macOS**: writes a launchd plist at `~/Library/LaunchAgents/com.gbrain.autopilot.plist`.
-- On **Linux with systemd**: writes `~/.config/systemd/user/gbrain-autopilot.service`
-  with `Restart=on-failure`.
-- On **ephemeral containers** (Render / Railway / Fly / Docker): writes
-  `~/.gbrain/start-autopilot.sh` and prints the one-line your agent's
-  bootstrap should source to launch autopilot on every container start.
-  Auto-injects into OpenClaw's `hooks/bootstrap/ensure-services.sh` if
-  detected (use `--no-inject` to opt out).
-- On **Linux without systemd**: installs a crontab entry (every 5 min).
+- Human console can create orgs, brains, sources, invites, clients, skills, and
+  runtime setup.
+- Agent MCP can call `saas_signup_create`, `saas_orgs_list`,
+  `saas_brains_list`, `sources_list`, `users_create_invite`,
+  `users_register_agent_client`, `saas_skills_list`, `saas_skills_upsert`,
+  `saas_runtime_manifest`, and `run_onboard`.
+- Invite delivery records can be listed, claimed, marked, and drained through
+  the console or MCP worker operations.
+- Runtime configs contain the hosted MCP URL, not OAuth secrets.
+- Source access is enforced by OAuth scopes and federated-read lists, not by
+  local runtime conventions.
 
-Autopilot then supervises the Minions worker as a child process. Users get
-sync + extract + embed + backlinks + durable Postgres-backed job processing
-from ONE install step. No separate `gbrain jobs work` daemon to manage.
+## Troubleshooting
 
-On PGLite, autopilot runs inline (PGLite's exclusive file lock blocks a
-separate worker process). Everything else still works.
-
-If `apply-migrations` prints "N host-specific items need your agent's
-attention," read `~/.gbrain/migrations/pending-host-work.jsonl` + walk
-`skills/migrations/v0.11.0.md` + `docs/guides/plugin-handlers.md` to
-register host-specific handlers. Re-run `apply-migrations` after each
-batch.
-
-## Phase D: Brain-First Lookup Protocol
-
-Inject the brain-first lookup protocol into the project's AGENTS.md (or equivalent).
-This replaces grep-based knowledge lookups with structured gbrain queries.
-
-### BEFORE (grep) vs AFTER (gbrain)
-
-| Task | Before (grep) | After (gbrain) |
-|------|---------------|-----------------|
-| Find a person | `grep -r "Pedro" brain/` | `gbrain search "Pedro"` |
-| Understand a topic | `grep -rl "deal" brain/ \| head -5 && cat ...` | `gbrain query "what's the status of the deal"` |
-| Read a known page | `cat brain/people/pedro.md` | `gbrain get people/pedro` |
-| Find connections | `grep -rl "Brex" brain/ \| xargs grep "Pedro"` | `gbrain query "Pedro Brex relationship"` |
-
-### Lookup sequence (MANDATORY for every entity question)
-
-1. `gbrain search "name"` -- keyword match, fast, works without embeddings
-2. `gbrain query "what do we know about name"` -- hybrid search, needs embeddings
-3. `gbrain get <slug>` -- direct page read when you know the slug from steps 1-2
-4. `grep` fallback -- only if gbrain returns zero results AND the file may exist outside the indexed brain
-
-Stop at the first step that gives you what you need. Most lookups resolve at step 1.
-
-### Sync-after-write rule
-
-After creating or updating any brain page in the repo, sync immediately so the
-index stays current:
-
-```bash
-gbrain sync --no-pull --no-embed
-```
-
-This indexes new/changed files without pulling from git or regenerating embeddings.
-Embeddings can be refreshed later in batch (`gbrain embed --stale`).
-
-### gbrain vs memory_search
-
-| Layer | What it stores | When to use |
-|-------|---------------|-------------|
-| **gbrain** | World knowledge: people, companies, deals, meetings, concepts, media | "Who is Pedro?", "What happened at the board meeting?" |
-| **memory_search** | Agent operational state: preferences, decisions, session context | "How does the user like formatting?", "What did we decide about X?" |
-
-Both should be checked. gbrain for facts about the world. memory_search for how
-the agent should behave.
-
-## Phase E: Load the Production Agent Guide
-
-Read `docs/GBRAIN_SKILLPACK.md`. This is the reference architecture for how a
-production agent uses gbrain: the brain-agent loop, entity detection, enrichment
-pipeline, meeting ingestion, cron schedules, and the five operational disciplines.
-
-Inject the key patterns into the agent's system context or AGENTS.md:
-
-1. **Brain-agent loop** (Section 2): read before responding, write after learning
-2. **Entity detection** (Section 3): spawn on every message, capture people/companies/ideas
-3. **Source attribution** (Section 7): every fact needs `[Source: ...]`
-> **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
-
-Tell the user: "The production agent guide is at docs/GBRAIN_SKILLPACK.md. It covers
-the brain-agent loop, entity detection, enrichment, meeting ingestion, and cron
-schedules. Read it when you're ready to go from 'search works' to 'the brain
-maintains itself.'"
-
-## Phase F: Health Check
-
-Run `gbrain doctor --json` and report the results. Every check should be OK.
-If any check fails, the doctor output tells you exactly what's wrong and how to fix it.
-
-## Error Recovery
-
-**If any gbrain command fails, run `gbrain doctor --json` first.** Report the full
-output. It checks connection, pgvector, RLS, schema version, and embeddings.
-
-| What You See | Why | Fix |
-|---|---|---|
-| Connection refused | Supabase project paused, IPv6, or wrong URL | Use Session pooler (port 6543), or supabase.com/dashboard > Restore |
-| Password authentication failed | Wrong password | Project Settings > Database > Reset password |
-| pgvector not available | Extension not enabled | Run `CREATE EXTENSION vector;` in SQL Editor |
-| OpenAI key invalid | Expired or wrong key | platform.openai.com/api-keys > Create new |
-| No pages found | Query before import | Import files into gbrain first |
-| RLS not enabled | Security gap | Run `gbrain init` again (auto-enables RLS) |
-
-## Phase G: Auto-Update Check (if not already configured)
-
-If the user's install did NOT include setting up auto-update checks (e.g., they
-used the manual install path or an older version of the OpenClaw/Hermes paste), offer it:
-
-> "Would you like daily GBrain update checks? I'll let you know when there's a
-> new version worth upgrading to — including new skills and schema recommendations.
-> You'll always be asked before anything is installed."
-
-If they agree:
-1. Test: `gbrain check-update --json`
-2. Register daily cron (see GBRAIN_SKILLPACK.md Section 17)
-
-If already configured or user declines, skip.
-
-## Phase H: Live Sync Setup (MUST ADD)
-
-The brain repo is the source of truth. If sync doesn't run automatically, the
-vector DB falls behind and gbrain returns stale answers. This phase is not optional.
-
-Read `docs/GBRAIN_SKILLPACK.md` Section 18 for the full reference. Key points:
-
-1. **Check the connection pooler first.** Sync uses transactions on every import.
-   If `DATABASE_URL` uses Supabase's Transaction mode pooler, sync will throw
-   `.begin() is not a function` and silently skip most pages. Verify the connection
-   string uses Session mode (port 6543, Session mode) or direct (port 5432).
-
-2. **Set up automatic sync.** Choose the approach that fits your environment:
-   - **Cron** (recommended for agents): register a cron every 5-30 minutes:
-     `gbrain sync --repo /data/brain && gbrain embed --stale`
-   - **Watch mode**: `gbrain sync --watch --repo /data/brain` under a process
-     manager. Pair with a cron fallback (watch exits after 5 consecutive failures).
-   - **Webhook or git hook**: if available in your environment.
-
-3. **Verify sync works.** Don't just check that the command ran. Check that it
-   worked:
-   - `gbrain stats` should show page count close to syncable file count in the repo.
-   - If page count is way too low, the pooler bug is silently skipping pages.
-   - Push a test change and confirm it appears in `gbrain search`.
-
-4. **Chain sync + embed.** Always run both: `gbrain sync --repo <path> && gbrain
-   embed --stale`. For small syncs, embeddings are generated inline. The `embed
-   --stale` is a safety net for any stale chunks.
-
-Tell the user: "Live sync is configured. The brain will stay current automatically.
-I'll verify it's working in the next phase."
-
-## Phase I: Full Verification
-
-Run the full verification runbook to confirm the entire installation is working.
-
-1. Read `docs/GBRAIN_VERIFY.md`
-2. Execute each check in order
-3. Report results to the user
-4. Fix any failures before declaring setup complete
-
-Every check in the runbook should pass. The most important one is check 4 (live
-sync actually works): push a change, wait for sync, search for the corrected text.
-"Sync ran" is not the same as "sync worked."
-
-Tell the user: "I've verified the full GBrain installation. Here's the status of
-each check: [list results]. Everything is working / [specific item] needs attention."
-
-If already configured or user declines, skip.
-
-## Phase J: Cold Start — Populate Your Brain (AUTOMATIC)
-
-Setup is done. The brain works. But it's empty. **This is the most important
-moment** — an empty brain is useless. Transition directly to the cold-start
-skill to fill it with the user's actual data.
-
-**Do not end setup without offering cold-start.** The user just invested 15+
-minutes in setup. The payoff is seeing their brain come alive with their own
-data. Stopping here is like installing a phone and never adding contacts.
-
-Present this immediately after verification passes:
-
-> "✅ GBrain is set up and verified. Now let's fill it with your data.
->
-> I can connect your Google services (contacts, calendar, email), import
-> your existing notes, pull in conversations from ChatGPT/Claude, and
-> archive your tweets — all in one session. Each step is optional.
->
-> **Ready to populate your brain?**"
-
-If the user says yes (or anything affirmative):
-→ **Load and execute `skills/cold-start/SKILL.md`** immediately. Do not
-just print a reference — actually run the cold-start skill.
-
-If the user says no or wants to stop:
-→ Record in `~/.gbrain/cold-start-state.json`:
-```json
-{"deferred": true, "deferred_at": "ISO-timestamp", "phases_completed": []}
-```
-→ Tell them: "You can run cold-start anytime by asking me to 'fill my brain'
-or 'cold start'."
-
-## Schema State Tracking
-
-After presenting the recommended directories (Phase C/E) and the user selects which
-ones to create, write `~/.gbrain/update-state.json` recording:
-- `schema_version_applied`: current gbrain version
-- `skillpack_version_applied`: current gbrain version
-- `schema_choices.adopted`: directories the user created
-- `schema_choices.declined`: directories the user explicitly skipped
-- `schema_choices.custom`: directories the user added that aren't in the recommended schema
-
-This file enables future upgrades to suggest new schema additions without
-re-suggesting things the user already declined.
+| Symptom | Likely Cause | Fix |
+| --- | --- | --- |
+| Signup returns an onboarding URL without a client id | Old provisioning receipt or failed client creation | Re-run signup or create a client with `users_register_agent_client`. |
+| Runtime install cannot find an MCP URL | `cortex connect` was not run and no manifest URL was passed | Pass `--manifest-url` or run `cortex connect` first. |
+| Teammate can query the wrong source | Client has a broad `federated_read` list | Revoke and recreate the client with the intended sources. |
+| Skill runs for the wrong agent | Runtime did not pass `_skill_id` or policy allows too many clients | Update the runtime adapter and tighten the skill policy. |
+| Email delivery stays queued | Provider env is missing | Configure Resend and run invite delivery drain. |
 
 ## Anti-Patterns
 
-- **Ending setup without offering cold-start.** An empty brain is useless. Phase J (cold-start) is where setup pays off. Always present the "Ready to populate?" prompt after verification. Skipping this is like installing an app and never logging in.
-- **Asking for the Supabase anon key.** GBrain connects directly to Postgres over the wire protocol, not through the REST API. Only the database connection string is needed.
-- **Skipping live sync setup.** If sync doesn't run automatically, the vector DB falls behind and search returns stale answers. Phase H is not optional.
-- **Declaring setup complete without verification.** "The command ran" is not the same as "it worked." Push a test change, wait for sync, search for the corrected text.
-- **Using Transaction mode pooler.** Sync uses transactions on every import. Transaction mode pooler causes `.begin() is not a function` errors and silently skips pages. Always use Session mode (port 6543).
-- **Importing without proving search.** The magical moment is the user seeing search find things grep couldn't. Don't skip it.
+- Do not create a local-only setup when the request is for a tenant.
+- Do not place the one-time client secret inside an onboarding URL.
+- Do not create a human-only console path without a matching MCP/control-plane operation.
+- Do not widen source access to make onboarding easier; issue the right scoped client.
+- Do not hand database credentials to agents that only need runtime onboarding.
 
 ## Output Format
 
-```
-GBRAIN SETUP COMPLETE
-=====================
+Return:
 
-Engine: [PGLite / Supabase Postgres]
-Connection: [verified / pooler mode confirmed]
-Pages imported: N
-Embeddings: N/N (keyword search active, semantic improving)
-Live sync: [configured / method]
-Health check: all OK / [specific failures]
-Verification: [GBRAIN_VERIFY.md results]
+- Signup URL or admin onboarding URL.
+- Organization id and default brain id when available.
+- Client id and scopes.
+- Whether the one-time secret was shown out of band.
+- Runtime manifest URL.
+- Verification commands the agent or teammate should run.
 
-🧠 Ready to populate your brain? I can connect your Google services,
-import your notes, and pull in your conversations — all in one session.
-→ Launching cold-start...
-```
+## Handoff
 
-**The output should transition directly into cold-start (Phase J), not end
-with a bullet list.** The bullet list is for when the user defers cold-start.
-
-## Tools Used
-
-- `gbrain init --non-interactive --url ...` -- create brain
-- `gbrain import <dir> --no-embed [--workers N]` -- import files
-- `gbrain search <query>` -- search brain
-- `gbrain doctor --json` -- health check
-- `gbrain check-update --json` -- check for updates
-- `gbrain embed refresh` -- generate embeddings
-- `gbrain embed --stale` -- backfill missing embeddings
-- `gbrain sync --repo <path>` -- one-shot sync from brain repo
-- `gbrain sync --watch --repo <path>` -- continuous sync polling
-- `gbrain config get sync.last_run` -- check last sync timestamp
-- `gbrain stats` -- page count + embed coverage
+Give the user the signup URL, the owner onboarding URL, and the admin invite
+screen. Give agents the same onboarding URL plus one-time secret and the runtime
+manifest URL. Do not give anyone database credentials unless they are operating
+the hosted Cortex deployment.

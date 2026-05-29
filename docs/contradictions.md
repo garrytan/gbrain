@@ -1,4 +1,4 @@
-# gbrain eval suspected-contradictions (v0.32.6)
+# cortex eval suspected-contradictions (v0.32.6)
 
 The contradiction probe samples retrieval results, asks an LLM judge whether
 any pair contradicts on a factual claim relevant to the user's query, and
@@ -8,7 +8,7 @@ how to interpret the headline number, and when to act.
 
 ## Why this exists
 
-gbrain handles contradictions for *curated* pages via compiled-truth-plus-
+cortex handles contradictions for *curated* pages via compiled-truth-plus-
 timeline and source-boost: when `companies/acme.md` says MRR is $2M and a
 chat transcript from 2024 says MRR was $50K, the curated page outranks the
 chat. `takes.active` filtering hides explicitly-superseded takes. Recency
@@ -23,7 +23,7 @@ change)" decision is vibes. The probe produces evidence.
 
 ```
         ┌──────────────────────────────────────┐
-        │ gbrain eval suspected-contradictions │
+        │ cortex eval suspected-contradictions │
         └──────────────────┬───────────────────┘
                            │
         ┌──────────────────▼───────────────────┐
@@ -108,15 +108,15 @@ Decision criteria for the bigger swing (chunk-level `revises` field):
 
 Each finding ships with a `resolution_command` field — paste-ready:
 
-- `gbrain takes supersede <slug> --row N` — newer take should replace
+- `cortex takes supersede <slug> --row N` — newer take should replace
   the older chunk text on the same page (intra_page kind).
-- `gbrain dream --phase synthesize --slug <slug>` — compiled_truth for
+- `cortex dream --phase synthesize --slug <slug>` — compiled_truth for
   the curated entity needs an update (cross_slug curated-vs-bulk).
-- `gbrain takes mark-debate <slug> --row N` — intentional disagreement
+- `cortex takes mark-debate <slug> --row N` — intentional disagreement
   (e.g., two opinions you want to keep both of).
 - `# manual review: <a> vs <b>` — judge wasn't sure; operator decides.
 
-Run `gbrain eval suspected-contradictions review --severity high` to
+Run `cortex eval suspected-contradictions review --severity high` to
 inspect findings without re-running the probe.
 
 ## Cost model
@@ -154,8 +154,8 @@ pay near-zero on re-runs (until you bump PROMPT_VERSION).
   negation_artifact`) and threaded `pages.effective_date` into the judge
   prompt so the probe stops crying wolf on legitimate change-over-time.
   v0.35.7 lands the trajectory substrate the probe pointed at:
-  `gbrain eval trajectory <entity>` shows the chronological typed-claim
-  history with regressions flagged inline; `gbrain founder scorecard
+  `cortex eval trajectory <entity>` shows the chronological typed-claim
+  history with regressions flagged inline; `cortex founder scorecard
   <entity>` rolls up four signals (accuracy, consistency, growth
   direction, red flags) into a stable JSON contract. MCP op
   `find_trajectory` (read scope, visibility-filtered for remote callers)

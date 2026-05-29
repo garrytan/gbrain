@@ -119,4 +119,4 @@ which are 10-40x cheaper than the main session model.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md).*

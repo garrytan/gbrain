@@ -1,5 +1,5 @@
 /**
- * gbrain code-callers <symbol>
+ * cortex code-callers <symbol>
  *
  * v0.20.0 Cathedral II Layer 10 (C4) — "who calls this symbol?" Reversed
  * view of the A1 call graph. Matches `to_symbol_qualified` in both
@@ -46,7 +46,7 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
       class: 'UsageError',
       code: 'code_callers_requires_symbol',
       message: 'code-callers requires a symbol name',
-      hint: 'gbrain code-callers <symbol> [--source S | --all-sources] [--limit N] [--json]',
+      hint: 'cortex code-callers <symbol> [--source S | --all-sources] [--limit N] [--json]',
     });
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify({ error: err.envelope }));

@@ -1,0 +1,18 @@
+storage:
+  # Directories that are version-controlled and human-curated.
+  db_tracked:
+    - people/
+    - companies/
+    - deals/
+    - concepts/
+    - yc/
+    - ideas/
+    - projects/
+
+  # Directories persisted through the Cortex brain database only. These are
+  # bulk machine-generated or sync-derived artifacts, and the CLI keeps them
+  # out of git history when it manages source exports.
+  db_only:
+    - media/x/
+    - media/articles/
+    - meetings/transcripts/

@@ -458,12 +458,12 @@ async function writeChunkerVersion(
 }
 
 /**
- * v0.40 Federated Sync v2: `gbrain sync trigger --source <id> [--priority high|normal|low]`
+ * v0.40 Federated Sync v2: `cortex sync trigger --source <id> [--priority high|normal|low]`
  *
  * Push-trigger entry point. Wraps `queue.add('sync', ...)` with priority -10
  * (above autopilot's 0) so push-triggered syncs preempt scheduled ones.
  * Use cases: GitHub webhook handler (POST /webhooks/github), CLI nudge after
- * a manual git pull, scripted dispatch from `gbrain sources federate`.
+ * a manual git pull, scripted dispatch from `cortex sources federate`.
  *
  * Sets `auto_embed_backfill: true` so the extended sync handler (T6/T7)
  * auto-enqueues an embed-backfill job after the sync settles.
@@ -472,7 +472,7 @@ async function writeChunkerVersion(
  */
 export async function runSyncTrigger(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: gbrain sync trigger --source <id> [--priority high|normal|low]
+    console.log(`Usage: cortex sync trigger --source <id> [--priority high|normal|low]
 
 Queue a push-triggered sync job for one source. Prints the resulting job id
 on stdout. The autopilot worker picks it up and runs performSync against the
@@ -480,13 +480,13 @@ named source; if the sync added/modified pages, an embed-backfill job is
 auto-enqueued (subject to D6 budget cap + D19 source-level cooldown).
 
 Use cases:
-  - GitHub webhook → 'gbrain sync trigger --source <repo>'
+  - GitHub webhook -> 'cortex sync trigger --source <repo>'
   - Manual nudge after 'git pull' inside a federated source
   - Programmatic triggers from CI / shell automation
 
 See also:
-  gbrain sources webhook set <id>   Set up GitHub-signed push webhook
-  gbrain sources status             Per-source sync + embed coverage
+  cortex sources webhook set <id>   Set up GitHub-signed push webhook
+  cortex sources status             Per-source sync + embed coverage
 `);
     return;
   }
@@ -494,7 +494,7 @@ See also:
   const sourceIdArg = args.find((a, i) => args[i - 1] === '--source') ?? null;
   if (!sourceIdArg) {
     console.error('Error: --source <id> is required');
-    console.error("Usage: gbrain sync trigger --source <id> [--priority high|normal|low]");
+    console.error("Usage: cortex sync trigger --source <id> [--priority high|normal|low]");
     process.exit(2);
   }
 
@@ -510,7 +510,7 @@ See also:
   const { fetchSource } = await import('../core/sources-load.ts');
   const source = await fetchSource(engine, sourceIdArg);
   if (!source) {
-    console.error(`Source "${sourceIdArg}" not found. List with: gbrain sources list`);
+    console.error(`Source "${sourceIdArg}" not found. List with: cortex sources list`);
     process.exit(1);
   }
 
@@ -601,14 +601,14 @@ async function formatLockBusyMessage(engine: BrainEngine, lockKey: string): Prom
   if (!snap) {
     return (
       `Another sync is in progress (lock ${lockKey} held). ` +
-      `Wait for it to finish, or run 'gbrain doctor' if it has been more than 30 minutes.`
+      `Wait for it to finish, or run 'cortex doctor' if it has been more than 30 minutes.`
     );
   }
 
   const ageHuman = formatAgeHuman(snap.age_ms);
   const breakHint = lockKey.startsWith('gbrain-sync:')
-    ? `gbrain sync --break-lock --source ${lockKey.slice('gbrain-sync:'.length)}`
-    : `gbrain sync --break-lock`;
+    ? `cortex sync --break-lock --source ${lockKey.slice('gbrain-sync:'.length)}`
+    : `cortex sync --break-lock`;
   const ttlNote = snap.ttl_expired ? ' [TTL expired]' : '';
   return (
     `Another sync is in progress (lock ${lockKey} held by pid ${snap.holder_pid} on ${snap.holder_host}, ` +
@@ -620,7 +620,7 @@ async function formatLockBusyMessage(engine: BrainEngine, lockKey: string): Prom
 }
 
 /**
- * v0.41.6.0 D3: `gbrain sync --break-lock` / `--force-break-lock` worker.
+ * v0.41.6.0 D3: `cortex sync --break-lock` / `--force-break-lock` worker.
  * Returns the process exit code (0 = lock cleared or absent; 1 = refused).
  *
  * Safe path (`force=false`): refuses unless the holder is on this host
@@ -706,7 +706,7 @@ async function runBreakLock(
       // Distinguish the two cases for the operator.
       if (snap.last_refreshed_at === null) {
         console.error(`Lock ${lockKey} has NULL last_refreshed_at (pre-v98 brain or migration window).`);
-        console.error('Run `gbrain apply-migrations --yes` to land v98, OR use --force-break-lock if you know the holder is dead.');
+        console.error('Run `cortex apply-migrations --yes` to land v98, OR use --force-break-lock if you know the holder is dead.');
       } else {
         const ageStr = snap.ms_since_last_refresh != null ? formatAgeHuman(snap.ms_since_last_refresh) : 'unknown';
         console.error(`Refusing to break lock ${lockKey}: last refresh was ${ageStr} ago, within --max-age=${opts.maxAgeSeconds}s window.`);
@@ -727,7 +727,7 @@ async function runBreakLock(
       }));
     } else if (deleted) {
       console.log(`Force-broke lock ${lockKey} (was held by pid ${snap.holder_pid} on ${snap.holder_host}, age ${formatAgeHuman(snap.age_ms)}).`);
-      console.log('WARNING: the holder may still be writing. Verify with `gbrain doctor` before re-running.');
+      console.log('WARNING: the holder may still be writing. Verify with `cortex doctor` before re-running.');
     } else {
       console.log(`Lock ${lockKey} was already cleared by another process between our check and DELETE (race-safe).`);
     }
@@ -855,21 +855,21 @@ function buildPartialResult(opts: {
 async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   // v0.41.8.0 (D9 / #1342): phase breadcrumbs. The #1342 reporter saw
   // ZERO stderr output before their sync hang, which made the bug
-  // impossible to triage. Mirror the existing `[gbrain phase] sync.git_pull`
+  // impossible to triage. Mirror the existing `[cortex phase] sync.git_pull`
   // pattern at the major phase boundaries so the next #1342-shaped
   // report names WHICH phase spun. Doesn't fix #1342 but converts
   // "hung with no output" into actionable diagnostic data.
-  serr(`[gbrain phase] sync.resolve_repo`);
+  serr(`[cortex phase] sync.resolve_repo`);
   // Resolve repo path
   const repoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (!repoPath) {
     const hint = opts.sourceId
-      ? `Source "${opts.sourceId}" has no local_path. Run: gbrain sources add ${opts.sourceId} --path <path>`
-      : `No repo path specified. Use --repo or run gbrain init with --repo first.`;
+      ? `Source "${opts.sourceId}" has no local_path. Run: cortex sources add ${opts.sourceId} --path <path>`
+      : `No repo path specified. Use --repo or run cortex init with --repo first.`;
     throw new Error(hint);
   }
 
-  serr(`[gbrain phase] sync.load_active_pack`);
+  serr(`[cortex phase] sync.load_active_pack`);
   // v0.39 T1.5: load active pack ONCE at sync entry; pass to every per-file
   // importFile call below. Codex perf finding #7: per-file loadActivePack adds
   // disk/YAML/hash overhead × thousands of files. Best-effort: pack load
@@ -894,7 +894,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // we recover from missing/no-git/not-a-dir by re-cloning, refuse on
   // url-drift or corruption with structured hints.
   if (opts.sourceId) {
-    serr(`[gbrain phase] sync.validate_repo_state`);
+    serr(`[cortex phase] sync.validate_repo_state`);
     const { validateRepoState } = await import('../core/git-remote.ts');
     const { recloneIfMissing } = await import('../core/sources-ops.ts');
     const cfgRows = await engine.executeRaw<{ config: unknown }>(
@@ -915,7 +915,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         case 'no-git':
         case 'not-a-dir':
           serr(
-            `[gbrain] auto-recovery: re-cloning "${opts.sourceId}" (clone state: ${state}).`,
+            `[cortex] auto-recovery: re-cloning "${opts.sourceId}" (clone state: ${state}).`,
           );
           await recloneIfMissing(engine, opts.sourceId);
           break;
@@ -923,14 +923,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           throw new Error(
             `Source "${opts.sourceId}" clone at ${repoPath} is corrupted ` +
               `(\`git remote get-url origin\` failed). Run: ` +
-              `gbrain sources remove ${opts.sourceId} --confirm-destructive && ` +
-              `gbrain sources add ${opts.sourceId} --url ${remoteUrl}`,
+              `cortex sources remove ${opts.sourceId} --confirm-destructive && ` +
+              `cortex sources add ${opts.sourceId} --url ${remoteUrl}`,
           );
         case 'url-drift':
           throw new Error(
             `Source "${opts.sourceId}" clone at ${repoPath} has a remote ` +
               `that differs from config.remote_url=${remoteUrl}. ` +
-              `Re-clone with: gbrain sources rebase-clone ${opts.sourceId} ` +
+              `Re-clone with: cortex sources rebase-clone ${opts.sourceId} ` +
               `(if available, else: sources remove + sources add).`,
           );
       }
@@ -939,10 +939,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // Validate git repo
   if (!existsSync(join(repoPath, '.git'))) {
-    throw new Error(`Not a git repository: ${repoPath}. GBrain sync requires a git-initialized repo.`);
+    throw new Error(`Not a git repository: ${repoPath}. Cortex sync requires a git-initialized repo.`);
   }
 
-  serr(`[gbrain phase] sync.detect_head`);
+  serr(`[cortex phase] sync.detect_head`);
   // Detect detached HEAD up front so the working-tree fallback fires for both
   // the default sync and `--no-pull` callers. Only the actual git pull is
   // gated on opts.noPull.
@@ -988,7 +988,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   if (!opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
-    serr(`[gbrain phase] sync.git_pull start`);
+    serr(`[cortex phase] sync.git_pull start`);
     try {
       const { pullRepo } = await import('../core/git-remote.ts');
       // v0.41.13.0 (T3 / D-V4-mech-7): if the operator set --timeout,
@@ -998,10 +998,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // timeout (ETIMEDOUT / SIGTERM on err.cause) from ordinary pull
       // failure.
       pullRepo(repoPath);
-      serr(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
+      serr(`[cortex phase] sync.git_pull done ${Date.now() - _t0}ms`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      serr(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 80)})`);
+      serr(`[cortex phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 80)})`);
       // v0.41.13.0 (T3 / D-V4-mech-7): pullRepo wraps execFileSync errors
       // in GitOperationError, so `error.code === 'ETIMEDOUT'` and
       // `error.signal === 'SIGTERM'` live on `.cause`, NOT on the top-
@@ -1664,7 +1664,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         `\nSync blocked: ${failedFiles.length} file(s) failed to parse:\n` +
         `${codeBreakdown}\n\n` +
         `Fix the YAML frontmatter in the files above and re-run, or use ` +
-        `'gbrain sync --skip-failed' to acknowledge and move on.`,
+        `'cortex sync --skip-failed' to acknowledge and move on.`,
       );
       // Update last_run + repo_path (progress on infra) but NOT last_commit.
       await engine.setConfig('sync.last_run', new Date().toISOString());
@@ -1792,12 +1792,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       if (e instanceof EmbeddingDimMismatchError) {
         serr('\n' + e.recipeMessage + '\n');
         serr(`Tip: pass --no-embed to sync without embedding, then`);
-        serr(`run 'gbrain embed --stale' after fixing the schema.\n`);
+        serr(`run 'cortex embed --stale' after fixing the schema.\n`);
       }
       // Other errors stay best-effort — rate limits, transient network.
     }
   } else if (noEmbed || totalChanges > 100) {
-    slog(`Text imported. Run 'gbrain embed --stale' to generate embeddings.`);
+    slog(`Text imported. Run 'cortex embed --stale' to generate embeddings.`);
   }
 
   return {
@@ -1867,14 +1867,14 @@ async function performFullSync(
   // v0.30.x: thread sourceId so performFullSync routes pages to the named
   // source (incremental path already does this).
   const _fullImportT0 = Date.now();
-  serr(`[gbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
+  serr(`[cortex phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
   const result = await runImport(engine, importArgs, {
     commit: headCommit,
     strategy: opts.strategy,
     sourceId: opts.sourceId,
   });
   serr(
-    `[gbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
+    `[cortex phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
     `imported=${result.imported} skipped=${result.skipped} errors=${result.errors}`,
   );
 
@@ -1937,7 +1937,7 @@ async function performFullSync(
       if (e instanceof EmbeddingDimMismatchError) {
         serr('\n' + e.recipeMessage + '\n');
         serr(`Tip: pass --no-embed to sync without embedding, then`);
-        serr(`run 'gbrain embed --stale' after fixing the schema.\n`);
+        serr(`run 'cortex embed --stale' after fixing the schema.\n`);
       }
       // Other errors stay best-effort.
     }
@@ -1958,7 +1958,7 @@ async function performFullSync(
 }
 
 export async function runSync(engine: BrainEngine, args: string[]) {
-  // v0.40 Federated Sync v2: `gbrain sync trigger` subcommand
+  // v0.40 Federated Sync v2: `cortex sync trigger` subcommand
   // Routes to runSyncTrigger which queues a 'sync' minion job with
   // auto_embed_backfill=true. Falls through to the normal sync path
   // if 'trigger' isn't the first arg.
@@ -1970,21 +1970,21 @@ export async function runSync(engine: BrainEngine, args: string[]) {
   // passed. Pre-fix this was unreachable because the dispatcher's generic
   // CLI-only short-circuit fired first; sync is now in CLI_ONLY_SELF_HELP.
   if (args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: gbrain sync [options]
+    console.log(`Usage: cortex sync [options]
 
 Sync the brain repo's text content into the engine, then embed.
 
 Options:
   --no-embed           Skip the embed step. Use this when the embed
                        provider is misconfigured or you want to defer
-                       embedding (run 'gbrain embed --stale' later).
+                       embedding (run 'cortex embed --stale' later).
   --workers N          Run the import phase with N parallel workers
                        (alias: --concurrency). Default: 4 when the
                        diff is >100 files, else serial.
   --source <id>        Scope sync to a single source. Defaults to the
                        brain's default source.
   --repo <path>        Path to the brain repo. Defaults to the path
-                       saved by 'gbrain init'.
+                       saved by 'cortex init'.
   --full               Force a full re-sync (rare; usually incremental).
   --dry-run            Show what would be synced without writing.
   --skip-failed        Acknowledge previously-recorded sync failures so
@@ -2012,8 +2012,8 @@ Options:
   --yes                Accept any interactive prompts (CI / non-TTY).
 
 See also:
-  gbrain embed --stale    Re-embed all stale chunks (post --no-embed).
-  gbrain doctor           Diagnose dim mismatches and other sync issues.
+  cortex embed --stale    Re-embed all stale chunks (post --no-embed).
+  cortex doctor           Diagnose dim mismatches and other sync issues.
 `);
     return;
   }
@@ -2235,7 +2235,7 @@ See also:
       `SELECT id, name, local_path, config FROM sources WHERE local_path IS NOT NULL`,
     );
     if (!sources || sources.length === 0) {
-      console.log('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
+      console.log('No sources with local_path configured. Use `cortex sources add <id> --path <path>` first.');
       return;
     }
 
@@ -2440,7 +2440,7 @@ See also:
         `Error: ${flag} is not supported under parallel sync.\n` +
         `       (the sync-failures log is brain-global and parallel acks race).\n` +
         `       Re-run with --serial for the recovery flow:\n` +
-        `         gbrain sync --all --serial ${flag}`,
+        `         cortex sync --all --serial ${flag}`,
       );
       process.exit(1);
     }
@@ -2753,7 +2753,7 @@ export async function syncOneSource(
 }
 
 /**
- * v0.40.3.0 — read-only per-source dashboard for `gbrain sources status`.
+ * v0.40.3.0 - read-only per-source dashboard for `cortex sources status`.
  *
  * Aggregates from existing tables (no schema changes):
  *   - sources:        last_commit, last_sync_at, archived, config.syncEnabled
@@ -2767,7 +2767,7 @@ export async function syncOneSource(
  *   - sync-failures.jsonl: unacknowledged failures (brain-global; the
  *     JSONL log isn't per-source. v0.40.4 TODO source-scopes it.)
  *
- * Staleness thresholds match `gbrain doctor`'s sync-freshness rule
+ * Staleness thresholds match `cortex doctor`'s sync-freshness rule
  * (24h / 72h). Sources that have NEVER synced (last_sync_at IS NULL)
  * report `staleness_hours: null` so callers can disambiguate "first run
  * pending" from "32h since last successful sync".
@@ -2953,7 +2953,7 @@ export async function buildSyncStatusReport(
 /**
  * v0.40.3.0 — render a `SyncStatusReport` as a human-readable table.
  *
- * `sink` defaults to `process.stdout` so the bare `gbrain sources status`
+ * `sink` defaults to `process.stdout` so the bare `cortex sources status`
  * invocation writes its table to stdout. `--json` callers don't use
  * this — they emit `JSON.stringify(report)` to stdout directly.
  */
@@ -3000,7 +3000,7 @@ export function printSyncStatusReport(
   write(`\nUnacknowledged sync failures (brain-wide): ${report.unacknowledged_failures}`);
   const severe = report.sources.filter((s) => s.staleness_class === 'severe').length;
   if (severe > 0) {
-    write(`WARNING: ${severe} source(s) are SEVERELY stale (>72h). Run \`gbrain sync --all\` to refresh.`);
+    write(`WARNING: ${severe} source(s) are SEVERELY stale (>72h). Run \`cortex sync --all\` to refresh.`);
   }
 }
 
@@ -3014,7 +3014,7 @@ export function printSyncStatusReport(
  * a stable comment header so it's grep-able and editable.
  *
  * Skipped (with actionable warning) when:
- *   - GBRAIN_NO_GITIGNORE=1 — D23 escape hatch for shared-repo setups
+ *   - CORTEX_NO_GITIGNORE=1 - D23 escape hatch for shared-repo setups
  *   - The repo is a git submodule (`.git` is a file not a directory) —
  *     D49 lock; submodule .gitignore changes don't survive parent updates
  *
@@ -3035,7 +3035,7 @@ export function manageGitignore(
   repoPath: string,
   engineKind?: 'pglite' | 'postgres',
 ): void {
-  if (process.env.GBRAIN_NO_GITIGNORE === '1') {
+  if (process.env.CORTEX_NO_GITIGNORE === '1' || process.env.GBRAIN_NO_GITIGNORE === '1') {
     return;
   }
 
@@ -3127,7 +3127,7 @@ export function manageGitignore(
   if (gitignoreContent && !gitignoreContent.endsWith('\n')) {
     gitignoreContent += '\n';
   }
-  gitignoreContent += '\n# Auto-managed by gbrain (db_only directories)\n';
+  gitignoreContent += '\n# Auto-managed by Cortex (db_only directories)\n';
   gitignoreContent += linesToAdd.join('\n') + '\n';
 
   try {
@@ -3167,8 +3167,8 @@ function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.
       break; // already printed in performSync
     case 'blocked_by_failures':
       write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed to parse.`);
-      write(`  See ~/.gbrain/sync-failures.jsonl for details, or run 'gbrain doctor'.`);
-      write(`  Fix the files then re-run 'gbrain sync', or 'gbrain sync --skip-failed' to move on.`);
+      write(`  See ~/.cortex/sync-failures.jsonl for details, or run 'cortex doctor'.`);
+      write(`  Fix the files then re-run 'cortex sync', or 'cortex sync --skip-failed' to move on.`);
       break;
     case 'partial':
       // v0.41.13.0 (T7 / D-V3-5): --timeout fired before the bookmark write
@@ -3181,7 +3181,7 @@ function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.
         `imported ${result.filesImported ?? 0} of ${result.added + result.modified} file(s), ` +
         `reason=${result.reason ?? 'timeout'}.`,
       );
-      write(`  Re-run 'gbrain sync' to continue (last_commit unchanged; safe to retry).`);
+      write(`  Re-run 'cortex sync' to continue (last_commit unchanged; safe to retry).`);
       break;
   }
 }

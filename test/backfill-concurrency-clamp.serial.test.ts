@@ -5,10 +5,17 @@ const { clampConcurrency } = _internal;
 
 describe('backfill --concurrency clamp (X5)', () => {
   let original: string | undefined;
-  beforeEach(() => { original = process.env.GBRAIN_DIRECT_POOL_SIZE; });
+  let originalCortex: string | undefined;
+  beforeEach(() => {
+    original = process.env.GBRAIN_DIRECT_POOL_SIZE;
+    originalCortex = process.env.CORTEX_DIRECT_POOL_SIZE;
+    delete process.env.CORTEX_DIRECT_POOL_SIZE;
+  });
   afterEach(() => {
     if (original === undefined) delete process.env.GBRAIN_DIRECT_POOL_SIZE;
     else process.env.GBRAIN_DIRECT_POOL_SIZE = original;
+    if (originalCortex === undefined) delete process.env.CORTEX_DIRECT_POOL_SIZE;
+    else process.env.CORTEX_DIRECT_POOL_SIZE = originalCortex;
   });
 
   test('default with pool=3 → effective=2 (always reserve 1)', () => {
@@ -30,7 +37,7 @@ describe('backfill --concurrency clamp (X5)', () => {
     const r = clampConcurrency(5);
     expect(r.effective).toBe(2); // 3 - 1 (reserved)
     expect(r.warning).toContain('clamped to 2');
-    expect(r.warning).toContain('GBRAIN_DIRECT_POOL_SIZE');
+    expect(r.warning).toContain('CORTEX_DIRECT_POOL_SIZE');
   });
 
   test('default + small pool → minimum effective=1', () => {

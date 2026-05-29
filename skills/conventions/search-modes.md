@@ -13,14 +13,14 @@ type: convention
 
 ## When this fires
 
-Any agent doing search-adjacent work in a gbrain brain consults this convention:
+Any agent doing search-adjacent work in a cortex brain consults this convention:
 
 - `brain-ops` / `query` / `signal-detector` skills: respect the active mode at
   search time. Per-call `SearchOpts` overrides win when set; mode is the default.
 - Skills that recommend tuning ("the cache hit rate is high — raise threshold?"):
-  route operators to `gbrain search tune` rather than rolling their own logic.
+  route operators to `cortex search tune` rather than rolling their own logic.
 - New skills that add per-call retrieval overrides: name them explicitly so
-  the resolved-knob attribution dashboard (`gbrain search modes`) reads cleanly.
+  the resolved-knob attribution dashboard (`cortex search modes`) reads cleanly.
 
 ## Mode bundle (read-only constants)
 
@@ -55,12 +55,12 @@ Don't redefine them per-install; that breaks the public methodology numbers.
 
 Agents tuning a brain's retrieval should call these directly:
 
-    gbrain search modes              # dashboard + per-knob source attribution
-    gbrain search modes --reset      # clear search.* overrides (mode is canonical)
-    gbrain search stats [--days N]   # hit rate, intent mix, budget drops
-    gbrain search tune [--apply]     # data-driven recommendations
+    cortex search modes              # dashboard + per-knob source attribution
+    cortex search modes --reset      # clear search.* overrides (mode is canonical)
+    cortex search stats [--days N]   # hit rate, intent mix, budget drops
+    cortex search tune [--apply]     # data-driven recommendations
 
-`gbrain search tune` reads the `search_telemetry` rollup (sums + counts of
+`cortex search tune` reads the `search_telemetry` rollup (sums + counts of
 last 7 days) + brain size + configured `models.tier.subagent` to suggest
 mode + per-key changes. With `--apply`, it mutates config via `setConfig`
 and prints a paste-ready revert command.
@@ -79,13 +79,13 @@ Legacy NULL-knobs_hash rows from pre-v0.32.3 are silently excluded
 
 ## Trigger phrases
 
-If an operator or agent asks any of these, route to `gbrain search …`:
+If an operator or agent asks any of these, route to `cortex search …`:
 
-- "what search mode is active?" → `gbrain search modes`
-- "is my cache hot?" → `gbrain search stats`
-- "tune my retrieval" → `gbrain search tune`
-- "clear search overrides" → `gbrain search modes --reset`
-- "compare modes" → `gbrain eval compare`
+- "what search mode is active?" → `cortex search modes`
+- "is my cache hot?" → `cortex search stats`
+- "tune my retrieval" → `cortex search tune`
+- "clear search overrides" → `cortex search modes --reset`
+- "compare modes" → `cortex eval compare`
 
 ## Don't
 
@@ -95,7 +95,7 @@ If an operator or agent asks any of these, route to `gbrain search …`:
   operator approval. Mutation is a trust-boundary crossing
   (`tune --apply` stays CLI-only in v0.32.3 per `[CDX-21]`).
 - Don't add per-call `tokenBudget` overrides on the production `query` op
-  without naming them in `gbrain search modes` output.
+  without naming them in `cortex search modes` output.
 
 ## See also
 

@@ -1,5 +1,5 @@
 /**
- * v0.28: system prompt + structured-output schema for `gbrain think`.
+ * v0.28: system prompt + structured-output schema for `cortex think`.
  *
  * The pipeline is GATHER → MERGE → SYNTHESIZE. The model sees:
  *   - <pages>: page chunks from hybrid search (the existing retrieval surface)
@@ -37,7 +37,7 @@ export interface ThinkSystemPromptOpts {
   withCalibration?: boolean;
 }
 
-export const THINK_SYSTEM_PROMPT_BASE = `You are gbrain's synthesis engine. You answer questions by reasoning across the user's personal knowledge brain. Your inputs are wrapped in structural tags:
+export const THINK_SYSTEM_PROMPT_BASE = `You are Cortex's synthesis engine. You answer questions by reasoning across the tenant knowledge brain. Your inputs are wrapped in structural tags:
 
 <pages>...</pages>      Page-level retrieval hits. Each <page slug="..."> contains an excerpt.
 <takes>...</takes>      Typed/weighted/attributed claims. Each <take id="slug#row"> has metadata

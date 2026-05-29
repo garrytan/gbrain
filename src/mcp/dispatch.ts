@@ -78,9 +78,9 @@ export interface DispatchOpts {
  *
  * The previous default of `JSON.stringify(params)` wrote raw payloads —
  * page bodies, search queries, file paths — into `mcp_request_log` and
- * broadcast them to every connected admin browser. For a personal-knowledge
- * brain those payloads include private notes about real people / deals /
- * companies, retained indefinitely.
+ * broadcast them to every connected admin browser. For a company brain those
+ * payloads include private notes about real people / deals / companies,
+ * retained indefinitely.
  *
  * The redactor returns the SHAPE of the request (what op was called, which
  * declared params were passed, approximate size) without any of the values.
@@ -213,6 +213,54 @@ export function buildOperationContext(
   };
 }
 
+function skillPolicyIdFromParams(params: Record<string, unknown>): string | null {
+  const direct = params._skill_id ?? params.skill_id ?? params.skill;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  const meta = params._meta;
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    const value = (meta as Record<string, unknown>).skill_id ?? (meta as Record<string, unknown>).skill;
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+async function enforceSaasSkillPolicy(
+  engine: BrainEngine,
+  ctx: OperationContext,
+  params: Record<string, unknown>,
+): Promise<void> {
+  if (ctx.remote === false) return;
+  const skillId = skillPolicyIdFromParams(params);
+  if (!skillId) return;
+  const { getSkillPolicy } = await import('../core/saas-control-plane.ts');
+  const policy = await getSkillPolicy(engine, skillId);
+  if (!policy) return;
+  if (!ctx.auth?.clientId) {
+    throw new OperationError(
+      'skill_policy_denied',
+      `Skill policy ${policy.id} requires an authenticated OAuth client.`,
+    );
+  }
+  if (policy.status === 'draft') {
+    throw new OperationError(
+      'skill_policy_denied',
+      `Skill policy ${policy.id} is still draft and cannot run remotely.`,
+    );
+  }
+  if (policy.allowed_clients.length > 0 && !policy.allowed_clients.includes(ctx.auth.clientId)) {
+    throw new OperationError(
+      'skill_policy_denied',
+      `OAuth client ${ctx.auth.clientId} is not allowed to run skill ${policy.id}.`,
+    );
+  }
+  if (policy.source_access.length > 0 && !policy.source_access.includes(ctx.sourceId)) {
+    throw new OperationError(
+      'skill_policy_denied',
+      `Skill ${policy.id} is not allowed to run against source ${ctx.sourceId}.`,
+    );
+  }
+}
+
 /**
  * Resolve operation, validate params, build context, invoke handler, format result.
  *
@@ -250,6 +298,7 @@ export async function dispatchToolCall(
   const ctx = buildOperationContext(engine, safeParams, opts);
 
   try {
+    await enforceSaasSkillPolicy(engine, ctx, safeParams);
     const result = await op.handler(ctx, safeParams);
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.

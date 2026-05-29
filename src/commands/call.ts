@@ -3,17 +3,17 @@ import { handleToolCall } from '../mcp/server.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 
 /**
- * `gbrain call <tool> <json>` — trusted local op-dispatch surface.
+ * `cortex call <tool> <json>` - trusted local op-dispatch surface.
  *
  * v0.31.8 (D22): grammar accepts an optional `--source <id>` flag before the
  * tool name. The flag is the highest-priority tier in resolveSourceId()'s
- * 6-tier chain (--source > GBRAIN_SOURCE > .gbrain-source dotfile > path-match
+ * 6-tier chain (--source > CORTEX_SOURCE/GBRAIN_SOURCE > source dotfile > path-match
  * > brain default > 'default'). Without --source, the chain still resolves —
  * env / dotfile / path-match all work.
  */
 export async function runCall(engine: BrainEngine, args: string[]) {
   // Parse --source <id> from anywhere in args (must come before tool/json
-  // tokens to keep the existing `gbrain call <tool> <json>` shape readable,
+  // tokens to keep the existing `cortex call <tool> <json>` shape readable,
   // but the parser is positional-tolerant for ergonomics).
   let explicitSource: string | null = null;
   const rest: string[] = [];
@@ -40,7 +40,7 @@ export async function runCall(engine: BrainEngine, args: string[]) {
   const jsonStr = rest[1];
 
   if (!tool) {
-    console.error("Usage: gbrain call [--source <id>] <tool> '<json>'");
+    console.error("Usage: cortex call [--source <id>] <tool> '<json>'");
     process.exit(1);
   }
 

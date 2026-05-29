@@ -30,7 +30,7 @@ import type { BrainEngine } from '../engine.ts';
 // ---------------------------------------------------------------------------
 
 export interface ReserveInput {
-  /** Partition for multi-tenant teams; single-user installs use 'default'. */
+  /** Partition for multi-tenant teams; small/dev installs use 'default'. */
   scope?: string;
   resolverId: string;
   /** Pre-call cost estimate in USD. */

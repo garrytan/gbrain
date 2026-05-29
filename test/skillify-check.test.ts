@@ -11,7 +11,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { join } from 'path';
+import { delimiter, join } from 'path';
 
 const REPO = join(__dirname, '..');
 const SCRIPT = join(REPO, 'scripts', 'skillify-check.ts');
@@ -118,7 +118,7 @@ function runWithPath(opts: { path: string }): { stdout: string; stderr: string }
   };
 }
 
-describe('skillify-check ↔ gbrain check-resolvable wiring', () => {
+describe('skillify-check ↔ cortex check-resolvable wiring', () => {
   const created: string[] = [];
   afterEach(() => {
     while (created.length) {
@@ -127,12 +127,12 @@ describe('skillify-check ↔ gbrain check-resolvable wiring', () => {
     }
   });
 
-  test('loud failure when gbrain binary is not on PATH (no silent pass)', () => {
-    const emptyPath = mkdtempSync(join(tmpdir(), 'no-gbrain-'));
+  test('loud failure when cortex binary is not on PATH (no silent pass)', () => {
+    const emptyPath = mkdtempSync(join(tmpdir(), 'no-cortex-'));
     created.push(emptyPath);
     const r = runWithPath({ path: emptyPath });
     // Loud warning must appear on stderr.
-    expect(r.stderr).toContain('gbrain check-resolvable not runnable');
+    expect(r.stderr).toContain('cortex check-resolvable not runnable');
     const parsed = JSON.parse(r.stdout);
     const gate = parsed[0].items.find((i: any) => i.name === 'check-resolvable gate');
     expect(gate).toBeDefined();
@@ -141,22 +141,26 @@ describe('skillify-check ↔ gbrain check-resolvable wiring', () => {
     expect(gate.detail).toContain('unavailable');
   });
 
-  test('happy path: synthetic gbrain on PATH returns ok=true, gate passes', () => {
-    const fakeBinDir = mkdtempSync(join(tmpdir(), 'fake-gbrain-'));
+  test('happy path: synthetic cortex on PATH returns ok=true, gate passes', () => {
+    const fakeBinDir = mkdtempSync(join(tmpdir(), 'fake-cortex-'));
     created.push(fakeBinDir);
-    const fakeBin = join(fakeBinDir, 'gbrain');
+    const fakeBin = join(fakeBinDir, process.platform === 'win32' ? 'cortex.cmd' : 'cortex');
     writeFileSync(
       fakeBin,
-      `#!/bin/sh
+      process.platform === 'win32'
+        ? `@echo off
+echo {"ok":true,"skillsDir":"/fake","report":{"ok":true,"issues":[],"summary":{"total_skills":0,"reachable":0,"unreachable":0,"overlaps":0,"gaps":0}},"autoFix":null,"deferred":[{"check":5,"name":"trigger_routing_eval","issue":""},{"check":6,"name":"brain_filing","issue":""}],"error":null,"message":null}
+`
+        : `#!/bin/sh
 cat <<'JSON'
 {"ok":true,"skillsDir":"/fake","report":{"ok":true,"issues":[],"summary":{"total_skills":0,"reachable":0,"unreachable":0,"overlaps":0,"gaps":0}},"autoFix":null,"deferred":[{"check":5,"name":"trigger_routing_eval","issue":""},{"check":6,"name":"brain_filing","issue":""}],"error":null,"message":null}
 JSON
 `,
     );
     chmodSync(fakeBin, 0o755);
-    const r = runWithPath({ path: `${fakeBinDir}:${process.env.PATH}` });
+    const r = runWithPath({ path: `${fakeBinDir}${delimiter}${process.env.PATH}` });
     // No silent-pass warning.
-    expect(r.stderr).not.toContain('gbrain check-resolvable not runnable');
+    expect(r.stderr).not.toContain('cortex check-resolvable not runnable');
     const parsed = JSON.parse(r.stdout);
     const gate = parsed[0].items.find((i: any) => i.name === 'check-resolvable gate');
     expect(gate).toBeDefined();

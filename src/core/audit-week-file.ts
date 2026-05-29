@@ -48,12 +48,13 @@ export function isoWeekFilename(prefix: string, now: Date = new Date()): string 
 }
 
 /**
- * Resolve the audit directory: honors `GBRAIN_AUDIT_DIR` env override,
- * falls back to `gbrainPath('audit')`. The directory may not exist yet;
- * callers `mkdirSync({recursive:true})` before writing.
+ * Resolve the audit directory: honors the canonical `CORTEX_AUDIT_DIR` env
+ * override, then the legacy `GBRAIN_AUDIT_DIR` alias, and falls back to
+ * `gbrainPath('audit')`. The directory may not exist yet; callers
+ * `mkdirSync({recursive:true})` before writing.
  */
 export function resolveAuditDir(): string {
-  const override = process.env.GBRAIN_AUDIT_DIR;
+  const override = process.env.CORTEX_AUDIT_DIR || process.env.GBRAIN_AUDIT_DIR;
   if (override && override.length > 0) return override;
   return gbrainPath('audit');
 }

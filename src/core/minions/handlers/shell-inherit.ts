@@ -33,18 +33,18 @@ export const INHERIT_NAME_RE = /^[a-z][a-z0-9_]*$/;
 /**
  * Optional env-key overrides. For most config keys we derive `ENV_KEY` by
  * uppercasing the name (`anthropic_api_key` → `ANTHROPIC_API_KEY`). For a few
- * gbrain-flavored names we use a gbrain-prefixed form so they don't collide
- * with provider conventions: `database_url` becomes `GBRAIN_DATABASE_URL`
+ * Cortex-flavored names we use a Cortex-prefixed form so they don't collide
+ * with provider conventions: `database_url` becomes `CORTEX_DATABASE_URL`
  * because plain `DATABASE_URL` is ambiguous (every Postgres app uses it).
  */
 const ENV_KEY_OVERRIDES: Readonly<Record<string, string>> = Object.freeze({
-  database_url: 'GBRAIN_DATABASE_URL',
+  database_url: 'CORTEX_DATABASE_URL',
 });
 
 /**
  * Derive the child-env key name for a given config key. Falls back to
  * `name.toUpperCase()` when no override is set. Example:
- *   deriveEnvKey('database_url')     === 'GBRAIN_DATABASE_URL'
+ *   deriveEnvKey('database_url')     === 'CORTEX_DATABASE_URL'
  *   deriveEnvKey('anthropic_api_key') === 'ANTHROPIC_API_KEY'
  *   deriveEnvKey('voyage_api_key')   === 'VOYAGE_API_KEY'
  */

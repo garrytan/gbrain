@@ -240,7 +240,7 @@ async function classifyBatch(paragraphs: string[]): Promise<Array<'high' | 'medi
   const { chat } = await import('../core/ai/gateway.ts');
 
   const system = [
-    'Classify each paragraph into HIGH, MEDIUM, or LOW notability for personal-knowledge memory:',
+    'Classify each paragraph into HIGH, MEDIUM, or LOW notability for tenant knowledge memory:',
     '- HIGH: Life events (separation, death, birth, hospitalization), major commitments,',
     '  relationship status changes, health changes, emotional breakthroughs, financial decisions.',
     '- MEDIUM: Durable preferences, beliefs, strong opinions that reveal character.',

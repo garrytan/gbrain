@@ -2,9 +2,9 @@
  * Embedding credential preflight.
  *
  * v0.41.6.0 D1 — fail fast at sync/embed/import entry when the configured
- * embedding provider can't be reached. Without this, gbrain proceeds into
+ * embedding provider can't be reached. Without this, cortex proceeds into
  * the import phase, hits 565 per-file embed errors, writes 565 identical
- * "OpenAI embedding requires OPENAI_API_KEY." rows to `~/.gbrain/sync-failures.jsonl`,
+ * "OpenAI embedding requires OPENAI_API_KEY." rows to `~/.cortex/sync-failures.jsonl`,
  * and blocks the sync bookmark from advancing.
  *
  * Routes through `gateway.diagnoseEmbedding()` so the structured reason
@@ -23,7 +23,7 @@ import { diagnoseEmbedding, type EmbeddingDiagnosis } from './ai/gateway.ts';
  * Tagged error thrown by validateEmbeddingCreds. CLI catch sites format
  * `.userMessage` to stderr and exit non-zero. The structured fields
  * (`provider`, `model`, `missingEnvVars`, `reason`) enable programmatic
- * consumers (`gbrain doctor --json`, future autopilot health checks) to
+ * consumers (`cortex doctor --json`, future autopilot health checks) to
  * read state without parsing the human message.
  */
 export class EmbeddingCredentialError extends Error {
@@ -63,14 +63,14 @@ export function formatEmbeddingCredsError(d: EmbeddingDiagnosis): string {
       return [
         'Embedding gateway is not configured.',
         'This is usually a startup-order bug. Re-run with --no-embed to import',
-        'without embedding, then file an issue at https://github.com/garrytan/gbrain/issues',
+        'without embedding, then file an issue at https://github.com/Versatly/Cortex/issues',
       ].join('\n');
 
     case 'no_model_configured':
       return [
         'No embedding model is configured for this brain.',
         '',
-        '  Set one: gbrain config set embedding_model openai:text-embedding-3-small',
+        '  Set one: cortex config set embedding_model openai:text-embedding-3-small',
         '  Or skip embedding now: re-run with --no-embed',
       ].join('\n');
 
@@ -80,14 +80,14 @@ export function formatEmbeddingCredsError(d: EmbeddingDiagnosis): string {
         '',
         `  ${d.message}`,
         '',
-        '  Pick a known provider: gbrain config set embedding_model openai:text-embedding-3-small',
+        '  Pick a known provider: cortex config set embedding_model openai:text-embedding-3-small',
       ].join('\n');
 
     case 'no_touchpoint':
       return [
         `Provider "${d.provider}" does not offer an embedding touchpoint.`,
         '',
-        '  Switch providers: gbrain config set embedding_model openai:text-embedding-3-small',
+        '  Switch providers: cortex config set embedding_model openai:text-embedding-3-small',
         '  Or run with --no-embed to import-only and embed later.',
       ].join('\n');
 
@@ -95,7 +95,7 @@ export function formatEmbeddingCredsError(d: EmbeddingDiagnosis): string {
       return [
         `Provider "${d.provider}" requires a specific model name to be configured.`,
         '',
-        `  Set one: gbrain config set embedding_model ${d.provider}:<model-name>`,
+        `  Set one: cortex config set embedding_model ${d.provider}:<model-name>`,
         '  Or run with --no-embed to import-only and embed later.',
       ].join('\n');
 
@@ -111,9 +111,9 @@ export function formatEmbeddingCredsError(d: EmbeddingDiagnosis): string {
       // Only offer a provider-switch hint when the current provider isn't openai
       // (otherwise we'd be suggesting they switch to the thing they already have).
       if (d.provider !== 'openai') {
-        lines.push(`  • Switch providers: gbrain config set embedding_model openai:text-embedding-3-small`);
+        lines.push(`  • Switch providers: cortex config set embedding_model openai:text-embedding-3-small`);
       } else {
-        lines.push(`  • Switch providers: gbrain config set embedding_model voyage:voyage-3-large`);
+        lines.push(`  • Switch providers: cortex config set embedding_model voyage:voyage-3-large`);
       }
       lines.push('');
       lines.push(`Example shell setup:`);

@@ -2,7 +2,7 @@
 name: skill-creator
 version: 1.0.0
 description: |
-  Create new skills following the GBrain conformance standard. Generates SKILL.md
+  Create new skills following the Cortex conformance standard. Generates SKILL.md
   with frontmatter, Contract, Phases, Output Format, and Anti-Patterns. Checks
   MECE against existing skills. Updates manifest and resolver.
 triggers:
@@ -62,7 +62,7 @@ mutating: {true|false}
 {What NOT to do — 3-5 items}
 
 ## Tools Used
-{GBrain operations used, with descriptions}
+{Cortex operations used, with descriptions}
 ```
 
 4. **Add to manifest.** Update `skills/manifest.json` with name, path, description.

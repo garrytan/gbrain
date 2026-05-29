@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "companion": "_brain-filing-rules.md",
-  "description": "Canonical (machine-readable) brain filing rules. The .md companion is the human explainer; this JSON is what `gbrain check-resolvable` audits against. Keep both in sync.",
+  "description": "Canonical (machine-readable) brain filing rules. The .md companion is the human explainer; this JSON is what `cortex check-resolvable` audits against. Keep both in sync.",
   "rules": [
     {
       "kind": "person",
@@ -106,10 +106,10 @@
       "description": "Voice-note transcript holders, especially when the content is a random thought that doesn't cleanly fit originals/, concepts/, or another subject directory. voice-note-ingest is the primary writer."
     },
     {
-      "kind": "openclaw",
-      "directory": "openclaw/",
+      "kind": "cortex",
+      "directory": "cortex/",
       "examples": ["agent-state notes"],
-      "description": "Notes about the host OpenClaw agent itself, not the underlying entities."
+      "description": "Notes about the host Cortex agent itself, not the underlying entities."
     },
     {
       "kind": "synthesis-output",

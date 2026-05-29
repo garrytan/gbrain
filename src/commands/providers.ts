@@ -1,8 +1,8 @@
 /**
- * `gbrain providers` CLI — list, test, env, explain.
+ * `cortex providers` CLI — list, test, env, explain.
  *
  * This command operates WITHOUT a brain connection (no engine needed) so
- * users can verify provider setup before `gbrain init`.
+ * users can verify provider setup before `cortex init`.
  */
 
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
@@ -51,7 +51,7 @@ export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): 
 }
 
 /**
- * Pure formatter for the recipe matrix shown by `gbrain providers list` and
+ * Pure formatter for the recipe matrix shown by `cortex providers list` and
  * the new `init-provider-picker` (D1+D2 — picker reuses this so its display
  * stays in sync with `providers list` and can't drift).
  *
@@ -113,25 +113,25 @@ export async function runProviders(subcommand: string | undefined, args: string[
 }
 
 function printHelp(): void {
-  console.log(`gbrain providers — AI provider status and testing
+  console.log(`cortex providers — AI provider status and testing
 
 USAGE
-  gbrain providers list                                   List all known providers + status
-  gbrain providers test [--touchpoint T] [--model ID]     Smoke-test configured (or specified) providers
-  gbrain providers env <id>                               Show env vars required/optional for a provider
-  gbrain providers explain [--json]                       Emit a provider choice matrix (agent-friendly)
+  cortex providers list                                   List all known providers + status
+  cortex providers test [--touchpoint T] [--model ID]     Smoke-test configured (or specified) providers
+  cortex providers env <id>                               Show env vars required/optional for a provider
+  cortex providers explain [--json]                       Emit a provider choice matrix (agent-friendly)
 
 TOUCHPOINTS
   --touchpoint embedding (default)  Probes embed_one("...")
   --touchpoint chat                 Probes chat({messages: [{role:'user', content:'ping'}]})
 
 EXAMPLES
-  gbrain providers list
-  gbrain providers test --model openai:text-embedding-3-large
-  gbrain providers test --touchpoint chat --model anthropic:claude-haiku-4-5
-  gbrain providers test --touchpoint chat --model deepseek:deepseek-chat
-  gbrain providers env ollama
-  gbrain providers explain --json
+  cortex providers list
+  cortex providers test --model openai:text-embedding-3-large
+  cortex providers test --touchpoint chat --model anthropic:claude-haiku-4-5
+  cortex providers test --touchpoint chat --model deepseek:deepseek-chat
+  cortex providers env ollama
+  cortex providers explain --json
 `);
 }
 
@@ -170,11 +170,11 @@ async function runTest(args: string[]): Promise<void> {
         console.error(
           `Note: tested ${modelArg} in isolation; this brain has no configured ${tpArg}_model yet. ` +
           `\`providers test\` does NOT verify your brain's active path. ` +
-          `Set the active provider with \`gbrain config set ${tpArg}_model <id>\` after running init.`,
+          `Set the active provider with \`cortex config set ${tpArg}_model <id>\` after running init.`,
         );
       } else if (configuredModel !== modelArg) {
         console.error(
-          `Note: tested ${modelArg} in isolation; gbrain's configured ${tpArg} is ${configuredModel}. ` +
+          `Note: tested ${modelArg} in isolation; cortex's configured ${tpArg} is ${configuredModel}. ` +
           `\`providers test\` does NOT verify your brain's active path.`,
         );
       }
@@ -197,7 +197,7 @@ async function runTest(args: string[]): Promise<void> {
   }
 
   if (!gwIsAvailable(tpArg)) {
-    console.error(`${tpArg[0]?.toUpperCase()}${tpArg.slice(1)} provider not configured or not ready. Run \`gbrain providers list\` to see status.`);
+    console.error(`${tpArg[0]?.toUpperCase()}${tpArg.slice(1)} provider not configured or not ready. Run \`cortex providers list\` to see status.`);
     process.exit(1);
   }
 
@@ -205,7 +205,7 @@ async function runTest(args: string[]): Promise<void> {
   const start = Date.now();
   try {
     if (tpArg === 'embedding') {
-      const v = await embedOne('gbrain smoke test');
+      const v = await embedOne('cortex smoke test');
       const ms = Date.now() - start;
       console.log(`  ✓ ${ms}ms, ${v.length} dims`);
     } else {
@@ -238,12 +238,12 @@ async function runTest(args: string[]): Promise<void> {
 function runEnv(args: string[]): void {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain providers env <id>');
+    console.error('Usage: cortex providers env <id>');
     process.exit(1);
   }
   const recipe = getRecipe(id);
   if (!recipe) {
-    console.error(`Unknown provider: ${id}. Run \`gbrain providers list\` to see known providers.`);
+    console.error(`Unknown provider: ${id}. Run \`cortex providers list\` to see known providers.`);
     process.exit(1);
   }
   console.log(`${recipe.name} (${recipe.id})`);
@@ -390,7 +390,7 @@ async function runExplain(args: string[]): Promise<void> {
   console.log(`  ${matrix.recommended_reason}`);
   console.log('');
   console.log('Re-invoke:');
-  console.log(`  gbrain init --embedding-model ${matrix.recommended.split(':')[0]}:${matrix.recommended.split(':').slice(1).join(':')}`);
+  console.log(`  cortex init --embedding-model ${matrix.recommended.split(':')[0]}:${matrix.recommended.split(':').slice(1).join(':')}`);
 }
 
 function prosFor(r: Recipe, touchpoint: TouchpointFilter): string[] {

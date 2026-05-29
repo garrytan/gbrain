@@ -67,10 +67,10 @@ function scratchGbrain(opts: { withPairedSource?: boolean } = {}): GbrainFixture
 
   // bundle manifest
   writeFileSync(
-    join(root, 'openclaw.plugin.json'),
+    join(root, 'cortex.plugin.json'),
     JSON.stringify(
       {
-        name: 'gbrain-test',
+        name: 'cortex-test',
         version: '0.33.0-test',
         skills: ['skills/book-mirror', 'skills/query'],
         shared_deps: ['skills/conventions', 'skills/_brain-filing-rules.md'],

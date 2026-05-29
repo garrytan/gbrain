@@ -25,11 +25,33 @@ if [ ! -d admin ]; then
   exit 0
 fi
 
+resolve_bun() {
+  for candidate in \
+    "${BUN_BIN:-}" \
+    "$(command -v bun 2>/dev/null || true)" \
+    "$(command -v bun.exe 2>/dev/null || true)" \
+    "$HOME/.bun/bin/bun" \
+    "$HOME/.bun/bin/bun.exe" \
+    "/mnt/c/Users/${USER:-}/.bun/bin/bun.exe" \
+    "/mnt/c/Users/itzOn/.bun/bin/bun.exe"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+BUN_PATH="$(resolve_bun)" || {
+  echo "[check:admin-build] bun not found; install Bun or set BUN_BIN=/path/to/bun." >&2
+  exit 1
+}
+
 cd admin
 
 # Idempotent install — bun is fast enough on no-op (~50ms).
-bun install --silent >/dev/null 2>&1 || bun install
+"$BUN_PATH" install --silent >/dev/null 2>&1 || "$BUN_PATH" install
 
-# Build runs `tsc -b && vite build`. Output to admin/dist/. Exit non-zero
-# on TS error, missing symbol, or Vite bundling error.
-bun run build
+# Build runs Next export into admin/dist/. Exit non-zero on TS errors,
+# missing symbols, or bundling/export failures.
+"$BUN_PATH" run build

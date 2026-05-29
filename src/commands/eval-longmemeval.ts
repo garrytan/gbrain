@@ -1,11 +1,11 @@
 /**
- * v0.28.1: `gbrain eval longmemeval <dataset.jsonl>` — public LongMemEval
+ * v0.28.1: `cortex eval longmemeval <dataset.jsonl>` — public LongMemEval
  * benchmark adapter. Spins up an in-memory PGLite, imports each question's
  * haystack, runs hybridSearch, optionally generates an answer via Anthropic,
  * emits hypothesis JSONL on stdout for downstream `evaluate_qa.py`.
  *
  * Hermetic by design: cli.ts skips connectEngine() when this subcommand
- * is invoked, so the user's ~/.gbrain brain is never opened. Tests stub
+ * is invoked, so the user's ~/.cortex brain is never opened. Tests stub
  * ThinkLLMClient so the full pipeline runs without any API key.
  */
 
@@ -41,7 +41,7 @@ import { formatTrajectoryBlock } from '../core/trajectory-format.ts';
  * JSON envelope when trajectory routing is enabled so downstream
  * readers see the preprocessing step is in the pipeline. Per the
  * Codex D1 decision: the temporal-reasoning delta we publish is
- * "gbrain + Haiku-preprocess pipeline" vs "gbrain alone", not directly
+ * "cortex + Haiku-preprocess pipeline" vs "cortex alone", not directly
  * comparable to LongMemEval's published baselines without this
  * disclosure.
  */
@@ -138,8 +138,8 @@ function parseArgs(args: string[]): ParsedArgs {
 
 function printHelp(): void {
   process.stderr.write(
-    `gbrain eval longmemeval <dataset.jsonl> [options]\n\n` +
-    `Run the LongMemEval benchmark against gbrain's hybrid retrieval. Spins up an\n` +
+    `cortex eval longmemeval <dataset.jsonl> [options]\n\n` +
+    `Run the LongMemEval benchmark against cortex's hybrid retrieval. Spins up an\n` +
     `in-memory PGLite per benchmark run; the user's brain is never opened.\n\n` +
     `Arguments:\n` +
     `  <dataset.jsonl>           LongMemEval dataset file (one question per line).\n` +
@@ -379,7 +379,7 @@ export interface RunOpts {
   extractorModel?: string;
   /**
    * v0.41.10 — inject a pre-built benchmark brain instead of creating
-   * one inside this call. Production callers (the gbrain CLI) leave this
+   * one inside this call. Production callers (the cortex CLI) leave this
    * undefined and pay the PGLite cold-create cost (~1-3s) per invocation.
    * Tests that loop runEvalLongMemEval many times can create one brain
    * via createBenchmarkBrain() in beforeAll() and pass it on every call
@@ -464,7 +464,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   const model = await resolveModel(null, {
     cliFlag: opts.model,
     configKey: 'models.eval.longmemeval',
-    envVar: 'GBRAIN_MODEL',
+    envVar: 'CORTEX_MODEL',
     fallback: 'sonnet',
   });
 
@@ -550,7 +550,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       }
       // Per-question latency surfaced in stderr at debug level only — keeps
       // CI logs grep-able without spamming a 500-question run.
-      if (process.env.GBRAIN_LME_DEBUG === '1') {
+      if (process.env.CORTEX_LME_DEBUG === '1') {
         process.stderr.write(`[longmemeval] ${q.question_id} ${Date.now() - qStart}ms\n`);
       }
     }

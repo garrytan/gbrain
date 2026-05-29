@@ -44,7 +44,7 @@ describe('whoami op contract', () => {
         remote: false,
         auth: {
           token: 'x',
-          clientId: 'gbrain_cl_123',
+          clientId: 'cortex_cl_123',
           scopes: ['admin'],
           expiresAt: 999999,
         } as AuthInfo,
@@ -57,8 +57,8 @@ describe('whoami op contract', () => {
 
   test('oauth transport returns full client identity', async () => {
     const auth: AuthInfo = {
-      token: 'gbrain_at_xxx',
-      clientId: 'gbrain_cl_abc',
+      token: 'cortex_at_xxx',
+      clientId: 'cortex_cl_abc',
       clientName: 'gstack-test',
       scopes: ['read', 'sources_admin'],
       expiresAt: 1234567890,
@@ -68,13 +68,13 @@ describe('whoami op contract', () => {
       {},
     )) as any;
     expect(result.transport).toBe('oauth');
-    expect(result.client_id).toBe('gbrain_cl_abc');
+    expect(result.client_id).toBe('cortex_cl_abc');
     expect(result.client_name).toBe('gstack-test');
     expect(result.scopes).toEqual(['read', 'sources_admin']);
     expect(result.expires_at).toBe(1234567890);
   });
 
-  test('legacy transport (token name as clientId, no gbrain_cl_ prefix)', async () => {
+  test('legacy transport (token name as clientId, no cortex_cl_ prefix)', async () => {
     const auth: AuthInfo = {
       token: 'legacy-token',
       clientId: 'my-personal-token',

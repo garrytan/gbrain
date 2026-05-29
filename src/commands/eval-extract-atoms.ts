@@ -1,7 +1,7 @@
-// v0.41 T11 — `gbrain eval extract-atoms` command (minimal scaffold).
+// v0.41 T11 — `cortex eval extract-atoms` command (minimal scaffold).
 //
 // v0.41 ships the COMMAND SURFACE. Full parity baseline against
-// your OpenClaw's existing 13K atoms on a 500-page subset (the codex T4
+// an existing Cortex agent atoms/ export on a 500-page subset (the codex T4
 // requirement) lands in v0.41.1. The scaffold here surfaces the command
 // so users can discover it and the v0.41.1 work has a clear extension
 // point.
@@ -32,7 +32,7 @@ export async function runEvalExtractAtoms(
       parity_baseline_path: opts.parityBaseline ?? null,
       sample_size: opts.sample ?? null,
       v0_41_1_followup:
-        'Compare extract_atoms output against your OpenClaw atoms/ on a sample subset; ' +
+        'Compare extract_atoms output against a Cortex agent atoms/ export on a sample subset; ' +
         'compute precision/recall over atom_type classifications + virality_score correlation.',
     },
   };

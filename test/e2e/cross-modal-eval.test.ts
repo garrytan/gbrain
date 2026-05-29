@@ -1,5 +1,5 @@
 /**
- * E2E for `gbrain eval cross-modal` runner via mocked gateway chat().
+ * E2E for `cortex eval cross-modal` runner via mocked gateway chat().
  *
  * Lives under test/e2e/ so the test-isolation lint (R2 — mock.module quarantine)
  * does not require a *.serial.test.ts rename: test/e2e/* is exempt from the
@@ -22,7 +22,7 @@ import { configureGateway } from '../../src/core/ai/gateway.ts';
 let tempDir: string;
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), 'gbrain-cme-e2e-'));
+  tempDir = mkdtempSync(join(tmpdir(), 'cortex-cme-e2e-'));
   // Configure the gateway so our mock can pretend providers are available.
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
@@ -71,7 +71,7 @@ function makeChatStub(scoresBySlot: Record<string, number[]>) {
   });
 }
 
-describe('gbrain eval cross-modal — runner verdict contract', () => {
+describe('cortex eval cross-modal — runner verdict contract', () => {
   test('PASS: 3 happy responses, all dims >=7', async () => {
     const chatStub = makeChatStub({
       'openai:gpt-4o': [9, 8],

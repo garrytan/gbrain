@@ -1,52 +1,32 @@
-# Credential Gateway (ClawVisor / Hermes)
+# Credential Gateway
 
+Cortex should receive third-party data through scoped connectors and webhooks,
+not through agent runtimes holding raw provider credentials.
 
-Three integrations that make the agent real. Without these, the brain is a static
-database. With them, it's alive.
+## Recommended Model
 
-### 14a. Credential Gateway (ClawVisor / Hermes Gateway)
+- Store provider credentials in the provider, Composio, Supabase, Railway, or a
+  dedicated secret manager.
+- Send ingestion events to Cortex webhooks with shared webhook secrets.
+- Map every event to an organization, brain, and source.
+- Keep OAuth client secrets separate from connector secrets.
 
-The EA workflow needs Gmail, Calendar, Contacts, and messaging access. The agent
-should never hold API keys directly. Use a credential gateway that enforces policies
-and injects credentials at request time.
+## Composio
 
-**OpenClaw: ClawVisor.** [ClawVisor](https://clawvisor.com) is a credential vaulting
-and authorization gateway with task-scoped authorization.
+Composio is the first ingestion integration for the SaaS MVP. The webhook posts
+tool events into Cortex:
 
-**Services:** Gmail (list, read, send, draft), Google Calendar (CRUD), Google Drive
-(list, search, read), Google Contacts (list, search), Apple iMessage (list, read,
-search, send), GitHub, Slack.
+```http
+POST /webhooks/composio
+x-cortex-webhook-secret: <secret>
+content-type: application/json
+```
 
-**Task-scoped authorization:** Every request must include a `task_id` from an approved
-standing task. Tasks declare: purpose (verbose, 2-3 sentences), authorized actions with
-expected use patterns, auto-execute flag, lifetime (standing vs ephemeral).
+The endpoint queues ingestion into a Cortex source and is covered by
+`scripts/saas-live-smoke.ts`.
 
-**Why this matters for GBrain:** The EA workflow needs Gmail (sender lookup before
-triage), Calendar (meeting prep, attendee pages), Contacts (enrichment trigger), and
-iMessage (direct instructions). ClawVisor gives the agent access without giving it
-raw credentials.
+## Agent Rule
 
-**Setup:**
-
-1. Create agent in ClawVisor dashboard, copy agent token
-2. Set `CLAWVISOR_URL` and `CLAWVISOR_AGENT_TOKEN` in env
-3. Activate services (Google, iMessage, etc.) in the dashboard
-4. Create standing tasks with expansive scopes (narrow purposes cause false blocks)
-5. Store standing task IDs in agent memory for reuse
-
-**Critical scoping rule:** Be expansive in task purposes. "Full executive assistant
-email management including inbox triage, searching by any criteria, reading emails,
-tracking threads" works. "Email triage" gets rejected. The intent verification model
-uses the purpose to judge whether each request is consistent -- if your purpose is
-narrow, legitimate requests fail verification.
-
-**Hermes Agent: Built-in gateway.** Hermes has multi-platform messaging (Telegram,
-Discord, Slack, WhatsApp, Signal, Email) and tool access built into its gateway. Use
-`config.yaml` to configure API credentials. The gateway daemon manages connections
-and routes webhooks to agent sessions. For Google services, configure OAuth credentials
-in the gateway config. Hermes's scheduled automations can run the same EA workflows
-(email triage, calendar prep, contact enrichment) through the gateway's tool system.
-
----
-
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md). See also: [Getting Data In](README.md)*
+Agents may request connector setup, inspect integration status, and trigger
+approved ingestion flows. They should not receive raw OAuth refresh tokens or
+provider API keys in chat, runtime config, or onboarding URLs.

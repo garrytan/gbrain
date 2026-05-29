@@ -1,5 +1,5 @@
 /**
- * `gbrain eval brainstorm` — three-axis evaluation gate for the v0.37.0
+ * `cortex eval brainstorm` — three-axis evaluation gate for the v0.37.0
  * brainstorm + LSD wave (D3 + codex round 2 #11).
  *
  * Three independent axes (conjunctive pass — ALL three must clear):
@@ -26,7 +26,7 @@
  * Optional `expected_far_prefixes` for spot-check assertions on which
  * brain regions the domain-bank should surface.
  *
- * Exit codes mirror gbrain's eval convention:
+ * Exit codes mirror cortex's eval convention:
  *   0 = pass (all three thresholds clear)
  *   1 = fail (at least one axis below threshold)
  *   2 = inconclusive (fewer than 2 fixtures produced parseable results)
@@ -151,9 +151,9 @@ function parseArgs(args: string[]): EvalBrainstormCliArgs {
   return out;
 }
 
-const HELP = `Usage: gbrain eval brainstorm <fixture.jsonl> [options]
+const HELP = `Usage: cortex eval brainstorm <fixture.jsonl> [options]
 
-Three-axis evaluation gate for \`gbrain brainstorm\`. Runs the fixture's
+Three-axis evaluation gate for \`cortex brainstorm\`. Runs the fixture's
 questions through the brainstorm orchestrator, then scores DISTANCE +
 USEFULNESS + GROUNDING against pass thresholds. All three must clear.
 
@@ -305,12 +305,12 @@ export async function runEvalBrainstorm(engine: BrainEngine, args: string[]): Pr
     return 0;
   }
   if (parsed.error) {
-    console.error(`gbrain eval brainstorm: ${parsed.error}`);
+    console.error(`cortex eval brainstorm: ${parsed.error}`);
     console.error(HELP);
     return 2;
   }
   if (!parsed.fixture) {
-    console.error('gbrain eval brainstorm: fixture path required');
+    console.error('cortex eval brainstorm: fixture path required');
     console.error(HELP);
     return 2;
   }
@@ -318,7 +318,7 @@ export async function runEvalBrainstorm(engine: BrainEngine, args: string[]): Pr
   try {
     fixtures = readBrainstormEvalFixture(parsed.fixture);
   } catch (err) {
-    console.error(`gbrain eval brainstorm: ${err instanceof Error ? err.message : err}`);
+    console.error(`cortex eval brainstorm: ${err instanceof Error ? err.message : err}`);
     return 2;
   }
   const thresholds: BrainstormEvalThresholds = {
@@ -382,7 +382,7 @@ export async function runEvalBrainstorm(engine: BrainEngine, args: string[]): Pr
   if (parsed.json) {
     console.log(JSON.stringify(report, null, 2));
   } else {
-    console.log(`\n=== gbrain eval brainstorm ===`);
+    console.log(`\n=== cortex eval brainstorm ===`);
     console.log(`Fixture: ${parsed.fixture}`);
     console.log(`Parseable: ${report.parseable_fixtures}/${report.total_fixtures}`);
     console.log(`Distance:   ${aggregate.distance.toFixed(3)} (threshold ${thresholds.distance_min})`);

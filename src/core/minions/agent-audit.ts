@@ -63,7 +63,7 @@ export function computeAuditFilename(now: Date = new Date()): string {
 }
 
 function resolveAuditDir(): string {
-  const env = process.env.GBRAIN_AUDIT_DIR;
+  const env = process.env.CORTEX_AUDIT_DIR || process.env.GBRAIN_AUDIT_DIR;
   if (env && env.trim()) return env.trim();
   return gbrainPath('audit');
 }

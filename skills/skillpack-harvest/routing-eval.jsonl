@@ -1,17 +1,16 @@
 // Routing eval fixtures for skills/skillpack-harvest.
 // Positive cases: every intent contains a trigger substring (the
-// trigger set was broadened from 5 to 10 in v0.41.11 per
-// kylma-code's PR #1331 to cover realistic user phrasings).
-{"intent": "lift this skill back into gbrain so others can use it", "expected_skill": "skillpack-harvest"}
+// trigger set was broadened to cover realistic user phrasings).
+{"intent": "lift this skill back into cortex so others can use it", "expected_skill": "skillpack-harvest"}
 {"intent": "publish my fork-only skill upstream", "expected_skill": "skillpack-harvest"}
-{"intent": "share this skill with the gbrain bundle", "expected_skill": "skillpack-harvest"}
-{"intent": "harvest my skill into gbrain for the other clients", "expected_skill": "skillpack-harvest"}
-{"intent": "promote this skill to gbrain so neuromancer can scaffold it", "expected_skill": "skillpack-harvest"}
-{"intent": "I want this skill in the gbrain bundle", "expected_skill": "skillpack-harvest"}
-{"intent": "move my custom skill into the gbrain core", "expected_skill": "skillpack-harvest"}
+{"intent": "share this skill with the cortex bundle", "expected_skill": "skillpack-harvest"}
+{"intent": "harvest my skill into cortex for the other clients", "expected_skill": "skillpack-harvest"}
+{"intent": "promote this skill to cortex so other clients can scaffold it", "expected_skill": "skillpack-harvest"}
+{"intent": "I want this skill in the cortex bundle", "expected_skill": "skillpack-harvest"}
+{"intent": "move my custom skill into the cortex core", "expected_skill": "skillpack-harvest"}
 // Negative cases (v0.41.11): the broader trigger set contains generic
-// substrings ("publish this skill to gbrain", "skill upstream",
-// "gbrain bundle", "into the gbrain core") that could match unrelated
+// substrings ("publish this skill to cortex", "skill upstream",
+// "cortex bundle", "into the cortex core") that could match unrelated
 // user intents under substring routing. expected_skill=null asserts
 // NO specific skill (skillpack-harvest OR any other) matches these.
 // "save this report as PDF" and "share this article with the channel"

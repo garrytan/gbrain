@@ -18,6 +18,8 @@ import { callRemoteTool, RemoteMcpError, unpackToolResult } from './mcp-client.t
 import { safeCompare, driftLevel, loadPromptState } from './thin-client-upgrade-prompt.ts';
 import { VERSION } from '../version.ts';
 
+const CORTEX_RELEASES_URL = process.env.CORTEX_RELEASES_URL || 'https://github.com/Versatly/Cortex/releases';
+
 export interface RemoteCheck {
   name: string;
   status: 'ok' | 'warn' | 'fail';
@@ -62,7 +64,7 @@ export async function runRemoteDoctor(config: GBrainConfig, args: string[]): Pro
  * by the scope probe hangs on shape mismatch and doesn't always honor
  * AbortSignal. Production callers always run the probe.
  *
- * Also honors GBRAIN_DOCTOR_SKIP_SCOPE_PROBE=1 for ops bypass; explicit
+ * Also honors CORTEX_DOCTOR_SKIP_SCOPE_PROBE=1 for ops bypass; explicit
  * opts.skipScopeProbe wins.
  */
 export interface CollectRemoteDoctorOpts {
@@ -119,8 +121,8 @@ export async function collectRemoteDoctorReport(
   }
 
   // Resolve the secret: env var wins, then config file value.
-  const clientSecret = process.env.GBRAIN_REMOTE_CLIENT_SECRET ?? remote.oauth_client_secret;
-  const clientSecretSource: 'env' | 'config' | 'none' = process.env.GBRAIN_REMOTE_CLIENT_SECRET
+  const clientSecret = process.env.CORTEX_REMOTE_CLIENT_SECRET ?? remote.oauth_client_secret;
+  const clientSecretSource: 'env' | 'config' | 'none' = process.env.CORTEX_REMOTE_CLIENT_SECRET
     ? 'env'
     : remote.oauth_client_secret
       ? 'config'
@@ -130,7 +132,7 @@ export async function collectRemoteDoctorReport(
     checks.push({
       name: 'oauth_credentials',
       status: 'fail',
-      message: 'No client_secret available. Set GBRAIN_REMOTE_CLIENT_SECRET or rerun `gbrain init --mcp-only` with --oauth-client-secret.',
+      message: 'No client_secret available. Set CORTEX_REMOTE_CLIENT_SECRET or rerun `cortex init --mcp-only` with --oauth-client-secret.',
     });
     return {
       schema_version: 2,
@@ -206,15 +208,15 @@ export async function collectRemoteDoctorReport(
   // safe), then a representative admin op (also read-only, no side effects).
   // Reports per-tier status with a pinpoint remediation hint when admin is
   // missing — the v0.29.2/v0.30.0 thin-clients without admin scope hit
-  // `gbrain stats` / `gbrain history` and fail today; this check surfaces
-  // the gap during `gbrain remote doctor` instead of mid-command.
+  // `cortex stats` / `cortex history` and fail today; this check surfaces
+  // the gap during `cortex remote doctor` instead of mid-command.
   //
   // Skippable via opts.skipScopeProbe (preferred for tests) OR
-  // GBRAIN_DOCTOR_SKIP_SCOPE_PROBE=1 (env-flag for ops bypass) — the MCP
+  // CORTEX_DOCTOR_SKIP_SCOPE_PROBE=1 (env-flag for ops bypass) — the MCP
   // SDK Client hangs on JSON-RPC shape mismatch in fixtures that don't
   // implement full tools/call.
   const grantedScope = tokenRes.token.scope ?? '';
-  const skipProbe = opts.skipScopeProbe || process.env.GBRAIN_DOCTOR_SKIP_SCOPE_PROBE === '1';
+  const skipProbe = opts.skipScopeProbe || process.env.CORTEX_DOCTOR_SKIP_SCOPE_PROBE === '1';
   if (!skipProbe) {
     const scopeResult = await probeScopes(config);
     checks.push(buildScopeCheck(grantedScope, scopeResult));
@@ -225,7 +227,7 @@ export async function collectRemoteDoctorReport(
   // Mirrors the local runDoctor `orphan_ratio` check but routes through
   // the find_orphans MCP op (same canonical findOrphans() data fn under
   // the hood) and emits an OPERATOR-POINTING hint instead of the
-  // self-fix hint — thin-client users can't run `gbrain extract links
+  // self-fix hint: thin-client users can't run `cortex extract links
   // --by-mention` against a brain they don't host. Hint asks them to
   // ping the brain operator at the configured public URL.
   //
@@ -241,7 +243,7 @@ export async function collectRemoteDoctorReport(
   //   - 'ok' when local >= remote OR drift is 'patch' (D8 policy: only
   //     minor/major drift is meaningful enough to flag in doctor)
   //   - 'warn' when minor/major drift detected; fix hint points at
-  //     `gbrain upgrade` (or, if state shows a prior 'failed' attempt,
+  //     `cortex upgrade` (or, if state shows a prior 'failed' attempt,
   //     points at the manual install path)
   //   - 'ok' (informational) when network unreachable / fetch throws —
   //     doctor MUST NOT fail loud on transient network issues; this check
@@ -258,10 +260,10 @@ export async function collectRemoteDoctorReport(
  * v0.42.0.0 D11: thin-client orphan_ratio check.
  *
  * Calls `find_orphans` MCP op (read scope) to get the same data the
- * local `gbrain doctor` `orphan_ratio` check uses. Computes the ratio,
+ * local `cortex doctor` `orphan_ratio` check uses. Computes the ratio,
  * applies the same thresholds (vacuous <100 entity, warn >0.5, fail
  * >0.8), but emits an OPERATOR-POINTING hint: thin-client users can't
- * run `gbrain extract links --by-mention` themselves — they need to
+ * run `cortex extract links --by-mention` themselves; they need to
  * ping whoever runs the brain server.
  *
  * Errors non-fatal — informational check.
@@ -306,9 +308,9 @@ export async function runOrphanRatioCheck(config: GBrainConfig): Promise<RemoteC
   const pct = (ratio * 100).toFixed(0);
   // Operator-pointing hint per D11 — thin-client users can't run the fix
   // locally; point them at the brain server's operator.
-  const url = config.remote_mcp?.mcp_url ?? '<your brain server>';
+  const url = config.remote_mcp?.mcp_url ?? '<your Cortex brain server>';
   const hint =
-    `Ask the brain operator at ${url} to run: gbrain extract links --by-mention ` +
+    `Ask the Cortex brain operator at ${url} to run: cortex extract links --by-mention ` +
     `(auto-links entity mentions in body text).`;
   if (ratio > 0.8) {
     return {
@@ -333,7 +335,7 @@ export async function runOrphanRatioCheck(config: GBrainConfig): Promise<RemoteC
 
 /**
  * v0.31.11: thin-client version-drift check. Surfaces remote-brain drift in
- * `gbrain doctor` so quiet/non-TTY users (who don't see the interactive
+ * `cortex doctor` so quiet/non-TTY users (who don't see the interactive
  * prompt) still learn about minor/major bumps. Pure data fetch + compare.
  *
  * Errors are non-fatal: any failure returns an 'ok' status with a
@@ -395,8 +397,8 @@ export async function runUpgradeDriftCheck(config: GBrainConfig): Promise<Remote
   } catch { /* state read is best-effort */ }
 
   const fixHint = priorFailed
-    ? `Prior \`gbrain upgrade\` did not advance the binary. See https://github.com/garrytan/gbrain/releases for manual install.`
-    : `Run \`gbrain upgrade\` to install v${remoteVersion}.`;
+    ? `Prior \`cortex upgrade\` did not advance the binary. See ${CORTEX_RELEASES_URL} for manual install.`
+    : `Run \`cortex upgrade\` to install v${remoteVersion}.`;
 
   return {
     name: 'thin_client_upgrade_drift',
@@ -486,7 +488,7 @@ export function buildScopeCheck(grantedScope: string, probe: ScopeProbeResult): 
       status: 'warn',
       message:
         'admin scope MISSING (read works). On the host, re-register: ' +
-        '`gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin`',
+        '`cortex auth register-client <name> --grant-types client_credentials --scopes read,write,admin`',
       detail: {
         granted: grantedScope || null,
         read_ok: true,
@@ -548,7 +550,7 @@ function finalize(
 }
 
 function printHumanReport(report: RemoteDoctorReport): void {
-  console.log('\nGBrain Health Check (thin-client)');
+  console.log('\nCortex Health Check (thin-client)');
   console.log('=================================');
   console.log(`Mode:        ${report.mode}`);
   console.log(`Issuer URL:  ${report.issuer_url}`);
@@ -564,14 +566,14 @@ function printHumanReport(report: RemoteDoctorReport): void {
   console.log('');
 
   if (report.status === 'ok') {
-    console.log('All checks passed. Thin-client connectivity to remote brain is healthy.');
+    console.log('All checks passed. Thin-client connectivity to the remote Cortex brain is healthy.');
   } else if (report.status === 'warn') {
     console.log('Connectivity has warnings — review above.');
   } else {
     console.log('Connectivity check FAILED — see error above.');
     console.log('Common fixes:');
-    console.log('  - Confirm the host is reachable + `gbrain serve --http` is running.');
-    console.log('  - Confirm OAuth credentials are valid (have the host operator re-mint via `gbrain auth register-client`).');
+    console.log('  - Confirm the host is reachable + `cortex serve --http` is running.');
+    console.log('  - Confirm OAuth credentials are valid (have the host operator re-mint via `cortex auth register-client`).');
     console.log('  - Confirm `mcp_url` matches the path the host serves /mcp on (default: <issuer_url>/mcp).');
   }
 }

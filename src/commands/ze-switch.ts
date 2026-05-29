@@ -1,20 +1,20 @@
 /**
- * v0.36.0.0 — `gbrain ze-switch` CLI lever for the ZeroEntropy default switch.
+ * v0.36.0.0 — `cortex ze-switch` CLI lever for the ZeroEntropy default switch.
  *
  * Subcommands / flags:
- *   gbrain ze-switch                        Run the interactive prompt
- *   gbrain ze-switch --dry-run              Plan only; change nothing
- *   gbrain ze-switch --json                 Machine-readable envelope
- *   gbrain ze-switch --non-interactive      Switch without prompting
+ *   cortex ze-switch                        Run the interactive prompt
+ *   cortex ze-switch --dry-run              Plan only; change nothing
+ *   cortex ze-switch --json                 Machine-readable envelope
+ *   cortex ze-switch --non-interactive      Switch without prompting
  *                                           (errors if ZEROENTROPY_API_KEY missing
  *                                            unless --ignore-missing-key is also set)
- *   gbrain ze-switch --resume               Finish a half-applied switch (recovery)
- *   gbrain ze-switch --force                Bypass the `prompt_shown` gate
+ *   cortex ze-switch --resume               Finish a half-applied switch (recovery)
+ *   cortex ze-switch --force                Bypass the `prompt_shown` gate
  *                                           (use after `n` / never-ask-again)
- *   gbrain ze-switch --undo                 Reverse: restore prior model + dim
+ *   cortex ze-switch --undo                 Reverse: restore prior model + dim
  *                                           + reranker state. Cost-warning prompt
  *                                           appears before any change.
- *   gbrain ze-switch --undo --non-interactive --confirm-reembed
+ *   cortex ze-switch --undo --non-interactive --confirm-reembed
  *                                           Scripted undo path (also pays for re-embed)
  */
 
@@ -61,7 +61,7 @@ function parseFlags(args: string[]): Flags {
 }
 
 function printHelp() {
-  process.stdout.write(`Usage: gbrain ze-switch [flags]
+  process.stdout.write(`Usage: cortex ze-switch [flags]
 
 Switch the brain's embedding + reranker defaults to ZeroEntropy.
 

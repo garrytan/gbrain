@@ -1,8 +1,8 @@
 /**
- * `gbrain agent logs <job_id> [--follow] [--since <spec>]`
+ * `cortex agent logs <job_id> [--follow] [--since <spec>]`
  *
  * Reads two sources and merges them chronologically:
- *   - ~/.gbrain/audit/subagent-jobs-*.jsonl  (heartbeat + submission events
+ *   - ~/.cortex/audit/subagent-jobs-*.jsonl  (heartbeat + submission events
  *     — lives on the WORKER's filesystem, so this CLI's effectiveness is
  *     host-local today; see docs/guides/plugin-authors.md caveat #2)
  *   - subagent_messages (DB rows, authoritative for persisted conversation)
@@ -51,7 +51,7 @@ export async function runAgentLogs(
     // Break on terminal job status so --follow exits once the run is done.
     const status = await readJobStatus(engine, jobId);
     if (status && TERMINAL_STATUSES.has(status)) {
-      write(`\n[gbrain agent] job ${jobId} reached terminal state: ${status}\n`);
+      write(`\n[cortex agent] job ${jobId} reached terminal state: ${status}\n`);
       return;
     }
   }

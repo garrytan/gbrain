@@ -260,7 +260,7 @@ export function buildJudgePrompt(opts: {
   const aDateTag = opts.a.effective_date ? `(from: ${opts.a.effective_date})` : '(date unknown)';
   const bDateTag = opts.b.effective_date ? `(from: ${opts.b.effective_date})` : '(date unknown)';
   return [
-    'You are a contradiction judge for a personal knowledge brain. The user',
+    'You are a contradiction judge for a tenant knowledge brain. The user',
     'ran a search and got two results back. Decide whether the two statements',
     "contradict each other in a way that would mislead someone trying to",
     "answer the user's query.",

@@ -1,5 +1,5 @@
 /**
- * gbrain code-def <symbol>
+ * cortex code-def <symbol>
  *
  * v0.19.0 Layer 7 — look up the definition site(s) of a named symbol
  * (function, class, type, interface, enum) across every code page the
@@ -35,7 +35,7 @@ export async function findCodeDef(
   // v0.41 D2: SQL DDL targets (table/view/index/procedure/schema/database/
   // trigger) are first-class definitions in the SQL sense. The chunker's
   // normalizeSymbolType maps create_table → 'table' etc, so adding the SQL
-  // kinds here is what makes `gbrain code-def users` work against SQL.
+  // kinds here is what makes `cortex code-def users` work against SQL.
   const DEF_TYPES = [
     'function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract',
     'table', 'view', 'index', 'procedure', 'schema', 'database', 'trigger',
@@ -97,7 +97,7 @@ function shouldEmitJson(args: string[]): boolean {
 
 export async function runCodeDef(engine: BrainEngine, args: string[]): Promise<void> {
   const symbol = args.find((a) => !a.startsWith('--') && args.indexOf(a) > 0);
-  // args[0] is the symbol when invoked as `gbrain code-def <symbol>`
+  // args[0] is the symbol when invoked as `cortex code-def <symbol>`
   const positional = args.filter((a) => !a.startsWith('--'));
   const sym = positional[0];
   if (!sym) {
@@ -105,7 +105,7 @@ export async function runCodeDef(engine: BrainEngine, args: string[]): Promise<v
       class: 'UsageError',
       code: 'code_def_requires_symbol',
       message: 'code-def requires a symbol name',
-      hint: 'gbrain code-def <symbol> [--lang <language>] [--json]',
+      hint: 'cortex code-def <symbol> [--lang <language>] [--json]',
     });
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify({ error: err.envelope }));

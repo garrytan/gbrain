@@ -1,31 +1,31 @@
 ---
 name: schema-author
-description: Evolve your brain's schema pack. Add page types, propose new ones from corpus scans, backfill page.type on existing pages, audit pack health. Triggers when an agent notices untyped pages, custom domains needing typed entities (researcher, contract, deposition), or wants to see what types the pack declares.
+description: Evolve a Cortex tenant brain's schema pack with agent-proposed, admin-approved page types, prefixes, link verbs, facts extraction, and expert routing
 tools:
-  - gbrain schema active
-  - gbrain schema list
-  - gbrain schema stats
-  - gbrain schema review-orphans
-  - gbrain schema detect
-  - gbrain schema suggest
-  - gbrain schema lint
-  - gbrain schema graph
-  - gbrain schema explain
-  - gbrain schema fork
-  - gbrain schema use
-  - gbrain schema add-type
-  - gbrain schema remove-type
-  - gbrain schema update-type
-  - gbrain schema add-alias
-  - gbrain schema remove-alias
-  - gbrain schema add-prefix
-  - gbrain schema remove-prefix
-  - gbrain schema add-link-type
-  - gbrain schema remove-link-type
-  - gbrain schema set-extractable
-  - gbrain schema set-expert-routing
-  - gbrain schema sync
-  - gbrain schema reload
+  - cortex schema active
+  - cortex schema list
+  - cortex schema stats
+  - cortex schema review-orphans
+  - cortex schema detect
+  - cortex schema suggest
+  - cortex schema lint
+  - cortex schema graph
+  - cortex schema explain
+  - cortex schema fork
+  - cortex schema use
+  - cortex schema add-type
+  - cortex schema remove-type
+  - cortex schema update-type
+  - cortex schema add-alias
+  - cortex schema remove-alias
+  - cortex schema add-prefix
+  - cortex schema remove-prefix
+  - cortex schema add-link-type
+  - cortex schema remove-link-type
+  - cortex schema set-extractable
+  - cortex schema set-expert-routing
+  - cortex schema sync
+  - cortex schema reload
   - mcp:get_active_schema_pack
   - mcp:list_schema_packs
   - mcp:schema_stats
@@ -38,16 +38,13 @@ tools:
 triggers:
   - "add a page type"
   - "add a type to my schema"
-  - "my brain has untyped pages"
-  - "schema isn't matching my notes"
-  - "propose new types from my corpus"
+  - "tenant brain has untyped pages"
+  - "schema is not matching our sources"
+  - "propose new types from our corpus"
   - "backfill page types"
-  - "evolve my schema"
+  - "evolve the schema"
   - "extend the schema pack"
-  - "create a custom type for"
-  - "researcher type"
   - "make X an expert type"
-  - "schema pack add"
   - "schema mutate"
   - "schema sync"
   - "schema author"
@@ -55,251 +52,192 @@ brain_first: exempt
 writes_pages: []
 ---
 
-# schema-author — evolve your schema pack
+# Schema Author
 
-## Non-goals (use these other skills instead)
+Use this skill when a Cortex tenant needs a better knowledge shape: new page
+types, prefixes, link verbs, extraction flags, expert-routing flags, or a
+backfill of existing content into the right types.
 
-This skill AUTHORS the schema pack (adds page types, link verbs, prefixes,
-flags). For these adjacent jobs, route elsewhere:
+Schema authoring is part of SaaS onboarding and customization. The agent can
+detect a gap, propose mutations, and apply them through MCP when it has the
+right admin scope. Humans can perform the same work from the console or CLI.
 
-- **Filing one specific page** → `skills/brain-taxonomist/SKILL.md`. Brain-
-  taxonomist routes at WRITE TIME ("where does this note go?"). schema-author
-  changes the rules at AUTHORING TIME ("what types and prefixes exist?").
-- **Schema-check as part of EIIRP iteration** → `skills/eiirp/SKILL.md`
-  already has a schema-check phase. Don't duplicate.
-- **Just looking up a type's settings** → `gbrain schema explain <type>`
-  directly. This skill is for CHANGING the pack, not READING from it.
-- **Querying who knows about X** → `skills/expert-routing/SKILL.md` (or
-  `gbrain whoknows` directly). schema-author makes a type expert-routable;
-  it does not run the query.
+## Non-Goals
 
-## Convention
+- Filing one specific page belongs to the page-writing or source-ingestion
+  workflow.
+- Querying who knows about a topic belongs to search or expert routing.
+- Creating a team boundary belongs to source management.
+- Creating a hard isolation boundary belongs to brain management.
 
-> **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md) for the lookup chain (search → query → get_page → external).
-
-> **Convention:** see [conventions/schema-evolution.md](../conventions/schema-evolution.md) for "when to add a type vs alias vs prefix" — the heuristic.
-
-## When to invoke
-
-Invoke when the user (or a sibling skill) says any of:
-- "Add a `researcher` type to my schema"
-- "I have 4000 untyped pages under `meetings/`"
-- "My brain doesn't know that `journal-article` is a type"
-- "Set `paper` to be extractable"
-- "Propose types from what I've ingested"
-- "Sync the new types to backfill existing pages"
-
-DON'T invoke for "where does THIS note go" (use brain-taxonomist) or
-"who knows about X" (use expert-routing / `gbrain whoknows`).
-
-## Tutorial + vision
-
-- **Why this matters:** [`docs/what-schemas-unlock.md`](../../docs/what-schemas-unlock.md) — 7 killer use cases (4000 invisible meetings made queryable, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) plus the structural argument for why types matter at query time. Read this before pitching schema authoring to a user — it's the doc that explains the difference between a pile of notes and a brain with structure.
-- **5-minute walkthrough:** [`docs/schema-author-tutorial.md`](../../docs/schema-author-tutorial.md) — fork the bundled pack, add a researcher type, sync, prove the T1.5 wiring via `gbrain whoknows`. Use placeholder pages so it runs against any brain without affecting real content.
-
-## Workflow
-
-### Phase 1 — Brain (know which pack is active)
-
-```
-gbrain schema active --json
-```
-
-Output gives you `pack_name`, `version`, `sha8`, `page_types_count`, `source_tier`.
-If `source_tier === "default"`, the user is on bundled `gbrain-base` and any
-mutation will need a fork first (Phase 4).
-
-### Phase 2 — Assess (what does the current pack cover?)
-
-```
-gbrain schema stats --json
-```
-
-Returns per-type page counts, untyped count, and `dead_prefixes` (pack-
-declared prefixes with zero matching pages — probable mis-declarations).
-If coverage < 90%, there's untyped content worth typing.
-
-```
-gbrain schema review-orphans --limit 50 --json
-```
-
-Untyped pages drilldown. Look for shared path prefixes (e.g. "12 of these
-are under `research/papers/`") — those are candidates for a new type.
-
-### Phase 3 — Propose (what types should the pack add?)
-
-```
-gbrain schema detect --json
-```
-
-Clusters pages by `source_path` and proposes candidate types. Heuristic
-only (no LLM call).
-
-```
-gbrain schema suggest --json
-```
-
-LLM-refined candidates with confidence scores. Use the top-3 hit rate as
-the signal for which to promote.
-
-### Phase 4 — Apply (mutate the pack)
-
-If the active pack is bundled (`gbrain-base` or `gbrain-recommended`),
-fork it first:
-
-```
-gbrain schema fork gbrain-base mine
-gbrain schema use mine
-```
-
-Then add the types one at a time:
-
-```
-gbrain schema add-type researcher \
-  --primitive entity \
-  --prefix people/researchers/ \
-  --extractable \
-  --expert
-```
-
-For complex multi-mutation refactors (e.g. add a type AND the link verb
-that points to it), agents reaching this surface over MCP can use the
-batched `schema_apply_mutations` op:
-
-```jsonl
-{"op": "add_type", "name": "researcher", "primitive": "entity", "prefix": "people/researchers/", "extractable": true, "expert_routing": true}
-{"op": "add_type", "name": "paper", "primitive": "annotation", "prefix": "research/papers/", "extractable": true}
-{"op": "add_link_type", "name": "authored", "inference": {"page_type": "researcher", "target_type": "paper"}}
-```
-
-Validate before sync:
-
-```
-gbrain schema lint --with-db
-```
-
-The `--with-db` flag opts into the 2 DB-aware rules
-(`extractable_empty_corpus`, `mutation_count_anomaly`) that detect
-mis-declared types you'd otherwise discover only at runtime.
-
-### Phase 5 — Sync (backfill existing pages with the new types)
-
-Dry-run first:
-
-```
-gbrain schema sync --json
-```
-
-Returns per-prefix `would_apply` counts + sample slugs. If the numbers
-look right:
-
-```
-gbrain schema sync --apply
-```
-
-Chunked UPDATE in 1000-row batches; never wedges concurrent writers.
-Idempotent on re-run (second `--apply` finds nothing to backfill).
-
-### Phase 6 — Verify
-
-```
-gbrain schema stats --json
-```
-
-Coverage should be ≥95% now. Spot-check the new type:
-
-```
-gbrain whoknows "machine learning"
-```
-
-If `researcher` was declared `--expert`, results should include
-researcher-typed pages. (The pack-aware wiring at the query path was
-added in v0.40.6.0 — pre-v0.40.6 brains silently ignored custom
-expert-routed types.)
-
-### Phase 7 — Commit (preserve the change)
-
-If the pack is in source control, commit:
-
-```
-cd ~/.gbrain/schema-packs/mine
-git add pack.json
-git commit -m "schema: add researcher + paper types + authored link"
-git push
-```
-
-If the brain daemon is running (`gbrain serve --http`), other processes
-pick up the change within 1 second (stat-mtime TTL gate in
-loadActivePack — v0.40.6.0 closed the cross-process invalidation gap).
-
-## Outputs
-
-- Mutated pack file at `~/.gbrain/schema-packs/<name>/pack.{json,yaml}`.
-- Audit row in `~/.gbrain/audit/schema-mutations-YYYY-Www.jsonl` per mutation.
-- `pages.type` backfilled on matching rows after `sync --apply`.
-- Query paths (`whoknows`, `find_experts`) now route through the new
-  expert types.
+Schema authoring changes the tenant's type system. Treat it as a durable product
+configuration change.
 
 ## Contract
 
-- **Inputs:** a natural-language request that names a type / prefix / link verb / flag change, OR the result of `gbrain schema review-orphans` showing untyped pages that need a new type.
-- **Outputs:** mutated pack file at `~/.gbrain/schema-packs/<name>/pack.{json,yaml}` + an audit row in `~/.gbrain/audit/schema-mutations-YYYY-Www.jsonl` + (if `sync --apply` ran) backfilled `pages.type` on matching rows.
-- **Side effects:** invalidates the in-process pack cache + the query cache for the source. Other processes pick up the change within 1 second (stat-mtime TTL).
-- **Idempotency:** every primitive is idempotent. `add-alias`/`add-prefix` no-op on duplicate; `sync --apply` finds nothing to update on second run.
-- **Trust:** CLI = local trust (no scope check). MCP = OAuth `admin` scope (write ops). Audit log captures `actor: mcp:<clientId8>` per mutation.
-- **Atomicity:** every mutation is wrapped in `withMutation`'s atomic write (`.tmp + fsync + rename`) + per-pack `O_CREAT|O_EXCL` lock. Crash mid-write leaves the original file untouched.
+Schema authoring is complete only when:
 
-## Anti-Patterns
+- The active tenant pack has been inspected.
+- Proposed mutations name the affected sources, prefixes, and expected backfill.
+- A writable pack has been selected or forked.
+- Lint passes before mutation.
+- Backfill is dry-run before apply.
+- The matching MCP/control-plane mutation path is available for agents.
+- A query or graph check proves the new type is usable.
 
-- **Don't mutate `gbrain-base` or `gbrain-recommended`.** Fork first (`gbrain schema fork gbrain-base mine`). These are bundled packs; edits would be lost on upgrade. The mutation primitives refuse with `PACK_READONLY`.
-- **Don't add a type for a directory you imported once for triage.** Pack types are permanent decisions; one-time imports are not. See `skills/conventions/schema-evolution.md` for the <20-pages-don't-pack-codify heuristic.
-- **Don't add `--expert` to a type with no `path_prefixes`.** The `expert_routing_without_prefix` lint warns about this — expert-routed types with no prefix never match a put_page inference, so `whoknows` silently never surfaces them.
-- **Don't promote a `schema suggest` candidate without verifying the prefix matches real content.** Run `lint --with-db` before `add-type` to catch prefix collisions pre-write.
-- **Don't conflate "filing one page" with "evolving the schema."** Filing routes via `brain-taxonomist`; schema-author is for authoring the type taxonomy itself. The Non-goals section above names the boundary.
-- **Don't skip the dry-run before `sync --apply`.** Always run `sync` first to see `would_apply` counts + sample slugs. A pack prefix that matches 50,000 pages is recoverable but slow; verifying first is cheap.
-- **Don't remove a type without checking references.** `remove-type` refuses with `STILL_REFERENCED` if another type's `aliases` / `enrichable_types` / `link_types` / `frontmatter_links` references it. Break the references first; don't add `--force`.
+## When To Invoke
+
+Invoke when you see any of these:
+
+- A source has many untyped pages under the same prefix.
+- A team repeatedly asks questions that should route through a domain-specific
+  type such as `incident`, `runbook`, `account`, `ticket`, `policy`, `customer`,
+  `renewal`, `case`, or `meeting`.
+- A skill should target a typed class of content.
+- An admin asks an agent to propose schema improvements from connected sources.
+- A migration needs to backfill `page.type` after adding a type.
+
+## Workflow
+
+### Phase 1: Inspect The Active Pack
+
+```bash
+cortex schema active --json
+cortex schema stats --json
+cortex schema review-orphans --limit 50 --json
+```
+
+Look for coverage gaps, shared prefixes, dead prefixes, and source-specific
+clusters. If a source contains a stable operational concept, propose a type.
+
+### Phase 2: Propose Changes
+
+Use deterministic detection first:
+
+```bash
+cortex schema detect --json
+cortex schema suggest --json
+```
+
+Turn the candidate into a concise proposal:
+
+- Type name.
+- Primitive.
+- Source and prefix.
+- Whether it should be extractable.
+- Whether it should be expert-routed.
+- Link verbs it should support.
+- Expected backfill count.
+- Skills or agent workflows that benefit.
+
+### Phase 3: Mutate A Writable Pack
+
+If the active pack is bundled or read-only, fork the active base pack before
+mutation. Use the pack id returned by `cortex schema active --json`:
+
+```bash
+cortex schema fork <active-pack> acme-company
+cortex schema use acme-company
+```
+
+Add the type and links:
+
+```bash
+cortex schema add-type incident \
+  --primitive event \
+  --prefix engineering/incidents/ \
+  --extractable \
+  --expert
+
+cortex schema add-link-type mitigated-by \
+  --page-type incident \
+  --target-type runbook
+```
+
+Agent path: call `schema_apply_mutations` with an admin-scoped OAuth client.
+
+### Phase 4: Lint And Backfill
+
+Always dry-run before applying:
+
+```bash
+cortex schema lint --with-db
+cortex schema sync --json
+cortex schema sync --apply
+```
+
+Check the affected count and sample slugs. A prefix that unexpectedly matches a
+large set should be corrected before apply.
+
+### Phase 5: Verify Query Behavior
+
+```bash
+cortex schema stats --json
+cortex whoknows "latest production outage"
+cortex graph-query engineering/incidents/example --depth 2
+```
+
+In the console, verify the Quality and Skills pages show the new type's impact
+on source coverage and skill targeting.
+
+## MCP Batch Shape
+
+Agents should prefer one atomic batch when applying multiple related changes:
+
+```json
+{
+  "pack": "acme-company",
+  "mutations": [
+    {
+      "op": "add_type",
+      "name": "incident",
+      "primitive": "event",
+      "prefix": "engineering/incidents/",
+      "extractable": true,
+      "expert_routing": true
+    },
+    {
+      "op": "add_link_type",
+      "name": "mitigated-by",
+      "page_type": "incident",
+      "target_type": "runbook"
+    }
+  ]
+}
+```
+
+The server validates, locks, writes, audits, and invalidates caches before the
+mutation is visible to query paths.
 
 ## Output Format
 
-When invoked, this skill produces structured output suitable for both human + JSON consumption:
+Report:
 
-**Per-mutation result (JSON):**
-```json
-{"schema_version": 1, "pack": "mine", "path": "/Users/.../pack.json", "format": "json", "prev_sha8": "a1b2c3d4", "new_sha8": "e5f6g7h8"}
-```
+- Pack name and new version/hash.
+- Types, prefixes, and link verbs changed.
+- Lint result.
+- Backfill dry-run count and applied count.
+- A query or graph check proving the new type is usable.
+- Any skills or clients that need policy updates after the schema change.
 
-**Per-batch result (from `schema_apply_mutations` MCP op):**
-```json
-{"schema_version": 1, "pack": "mine", "batch_id": "batch-1716491400-abc123", "mutations_applied": 3, "results": [{...}, {...}, {...}]}
-```
+## Anti-Patterns
 
-**Stats JSON (per-source + aggregate + dead-prefix hints):**
-```json
-{"schema_version": 1, "pack_identity": "mine@1.0.0+abc12345", "aggregate": {"total_pages": 4823, "typed_pages": 4710, "untyped_pages": 113, "coverage": 0.9766, "by_type": [{"type": "person", "count": 2104}, ...]}, "per_source": [...], "dead_prefixes": [{"type": "researcher", "prefix": "people/researchers/"}]}
-```
+- Do not add a type for a one-time import.
+- Do not add expert routing without a real prefix.
+- Do not apply a backfill without a dry-run.
+- Do not mutate a bundled pack directly.
+- Do not widen source access just to make schema mutation easier; use the right
+  admin client.
+- Do not let runtime adapters invent their own type filters. Keep schema,
+  source access, and skill policy enforced by Cortex.
 
-**Sync dry-run JSON:**
-```json
-{"schema_version": 1, "apply": false, "pack_identity": "mine@1.0.0+abc12345", "per_prefix": [{"type": "meeting", "prefix": "meetings/", "would_apply": 4000, "sample_slugs": ["meetings/2026-01-01-foo", ...], "dead_prefix": false, "applied": 0}], "total_would_apply": 4000, "total_applied": 0}
-```
+## Failure Modes
 
-**Human output (the agent's final summary):**
-- One line per mutation: `Pack: <name> (<format>)` and `Sha8: <prev> → <new>`
-- Stats: total pages, typed %, untyped count, per-type breakdown, dead-prefix list
-- Sync: per-prefix `would_apply`/`applied` count + sample slugs in dry-run mode
-
-On failure, the error envelope follows the standard `StructuredAgentError` shape from `src/core/errors.ts`: `{error, code, message, details?}`. Codes from the mutation primitives: `PACK_NOT_FOUND`, `PACK_READONLY`, `PACK_CORRUPT`, `TYPE_EXISTS`, `TYPE_NOT_FOUND`, `INVALID_PRIMITIVE`, `INVALID_RESULT`, `IO_ERROR`, `STILL_REFERENCED`, `LOCK_BUSY`.
-
-## Failure modes
-
-- `PACK_READONLY` → you tried to mutate `gbrain-base` or `gbrain-recommended`. Fork first.
-- `INVALID_RESULT` → the mutation would create a dangling reference or
-  prefix collision. The pre-write lint gate caught it. Read the error
-  message; the lint rule name names the problem.
-- `STILL_REFERENCED` → you tried to remove a type that another type's
-  `aliases` / `enrichable_types` / `link_types` / `frontmatter_links`
-  references. The error names every reference. Remove those first.
-- `LOCK_BUSY` → another process is mid-mutation. Wait 30s and retry, or
-  pass `--force` if you know the holder is wedged.
-- `permission_denied` (MCP only) → your OAuth client doesn't have `admin`
-  scope. Re-register with `gbrain auth register-client --scopes admin`.
+- `PACK_READONLY`: fork the pack first.
+- `TYPE_EXISTS`: update the existing type or choose a more specific name.
+- `INVALID_RESULT`: lint found a dangling reference or prefix collision.
+- `STILL_REFERENCED`: remove aliases, link verbs, or enrichable references
+  before removing a type.
+- `LOCK_BUSY`: another mutation is running; retry after it completes.
+- `permission_denied`: the OAuth client lacks the admin scope needed for schema
+  mutation.

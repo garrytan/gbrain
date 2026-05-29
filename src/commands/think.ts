@@ -1,5 +1,5 @@
 /**
- * v0.28: `gbrain think <question>` CLI.
+ * v0.28: `cortex think <question>` CLI.
  *
  * Thin wrapper around runThink + persistSynthesis. Local CLI = remote=false,
  * so --save and --take are honored. Reads ANTHROPIC_API_KEY from the env;
@@ -22,7 +22,7 @@ function flagPresent(args: string[], name: string): boolean {
 
 export async function runThinkCli(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-    console.log(`Usage: gbrain think "<question>" [options]
+    console.log(`Usage: cortex think "<question>" [options]
 
 Options:
   --anchor <slug>          Pull the entity subgraph around this slug
@@ -55,7 +55,7 @@ the gather phase still runs and prints what would have been the input.
   }
   const question = positional.join(' ').trim();
   if (!question) {
-    console.error('Missing question. Try: gbrain think "What do we know about acme-example?"');
+    console.error('Missing question. Try: cortex think "What do we know about acme-example?"');
     process.exit(1);
   }
 

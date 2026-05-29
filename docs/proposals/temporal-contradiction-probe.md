@@ -2,11 +2,11 @@
 
 **Status:** Report / RFC
 **Date:** 2026-05-14
-**Context:** A large production run of `gbrain eval suspected-contradictions` surfaced ~115 HIGH findings. Walking through them by hand exposed a structural limitation in the probe.
+**Context:** A large production run of `cortex eval suspected-contradictions` surfaced ~115 HIGH findings. Walking through them by hand exposed a structural limitation in the probe.
 
 ## The Problem
 
-The contradiction probe (`gbrain eval suspected-contradictions`) treats all claims as timeless. When two chunks make conflicting statements, the judge flags a contradiction regardless of whether both statements were true at their respective points in time.
+The contradiction probe (`cortex eval suspected-contradictions`) treats all claims as timeless. When two chunks make conflicting statements, the judge flags a contradiction regardless of whether both statements were true at their respective points in time.
 
 This worked fine when the brain was mostly static wiki pages. It breaks now that the brain contains:
 - Conversation transcripts with claims that were true when spoken
@@ -91,7 +91,7 @@ Founder: John Smith (WidgetCo)
   → Moat narrative changed 3x in 6 months — flag for review
 ```
 
-This isn't adversarial. It's the kind of pattern an experienced operator notices intuitively across hundreds of conversations. GBrain can make it systematic.
+This isn't adversarial. It's the kind of pattern an experienced operator notices intuitively across hundreds of conversations. Cortex can make it systematic.
 
 ## Scenario #2: Event Disambiguation
 
@@ -168,9 +168,9 @@ The judge could output a `temporal_supersession` verdict instead of `contradicti
 ### Phase 2: Claim trajectory view (new command)
 
 ```bash
-gbrain eval trajectory "Acme Corp MRR"
-gbrain eval trajectory "advisor-example role"
-gbrain eval trajectory "deal-x status"
+cortex eval trajectory "Acme Corp MRR"
+cortex eval trajectory "advisor-example role"
+cortex eval trajectory "deal-x status"
 ```
 
 Pull all time-stamped claims about an entity+attribute, sort chronologically, detect:

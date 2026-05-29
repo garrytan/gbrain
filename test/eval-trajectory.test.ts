@@ -1,5 +1,5 @@
 /**
- * v0.35.4 — `gbrain eval trajectory` CLI (T6) tests.
+ * v0.35.4 — `cortex eval trajectory` CLI (T6) tests.
  *
  * Pins:
  *   - argv parser: positional entity-slug required; --metric / --since /
@@ -74,7 +74,7 @@ async function captureRun(args: string[]): Promise<{ out: string; err: string }>
 describe('eval-trajectory CLI — arg parsing', () => {
   test('--help prints usage and returns without DB call', async () => {
     const { out } = await captureRun(['--help']);
-    expect(out).toContain('Usage: gbrain eval trajectory');
+    expect(out).toContain('Usage: cortex eval trajectory');
     expect(out).toContain('--metric');
   });
 

@@ -14,9 +14,9 @@ on email_batch(emails):
     for email in emails:
         # Step 1: Search sender BEFORE reading the email body
         #   Brain context makes triage 10x better
-        sender_page = gbrain search "{email.sender_name}"
+        sender_page = cortex search "{email.sender_name}"
         if sender_page:
-            context = gbrain get <sender_slug>
+            context = cortex get <sender_slug>
             #   Now you know: who they are, relationship history,
             #   what they care about, open threads
 
@@ -45,15 +45,15 @@ on upcoming_meeting(meeting):
     briefing = {}
     for attendee in meeting.attendees:
         # Search brain for each attendee
-        results = gbrain search "{attendee.name}"
+        results = cortex search "{attendee.name}"
         if results:
-            page = gbrain get <attendee_slug>
+            page = cortex get <attendee_slug>
             briefing[attendee] = {
                 "compiled_truth": page.compiled_truth,
                 "last_interaction": page.timeline[0],     # most recent
                 "open_threads": page.open_threads,
                 "relationship_temperature": page.relationship,
-                "relevant_deals": gbrain get_links <attendee_slug>,
+                "relevant_deals": cortex get_links <attendee_slug>,
             }
         else:
             briefing[attendee] = "No brain page -- consider enriching"
@@ -67,20 +67,20 @@ on inbox_cleared():
     for email in processed_emails:
         if email.contained_new_information:
             # Update the sender's brain page with new signal
-            gbrain add_timeline_entry <sender_slug> \
+            cortex add_timeline_entry <sender_slug> \
                 --entry "Email re: {subject}. Key info: {extracted_signal}" \
                 --source "email from {sender} re {subject}, {date}"
 
             # Update any mentioned entity pages too
             for entity in email.mentioned_entities:
-                gbrain add_timeline_entry <entity_slug> \
+                cortex add_timeline_entry <entity_slug> \
                     --entry "{what_was_said_about_them}" \
                     --source "email from {sender}, {date}"
 
 # WORKFLOW 4: Scheduling Nudges
 on schedule_request(meeting):
     for attendee in meeting.attendees:
-        page = gbrain get <attendee_slug>
+        page = cortex get <attendee_slug>
         if page.last_interaction > 6_weeks_ago:
             nudge("You haven't met with {attendee} in {weeks} weeks")
         if page.has_open_threads:
@@ -92,18 +92,18 @@ on schedule_request(meeting):
 ## Tricky Spots
 
 1. **Search sender BEFORE reading the email.** This is counterintuitive but critical. Loading brain context first means you know who they are, what you're working on together, and what they care about -- before you even see the subject line. The triage is informed, not mechanical.
-2. **Unknown senders with no brain page are almost always noise.** If `gbrain search` returns nothing for a sender, they're probably not important. Classify as low priority unless the email content signals otherwise.
+2. **Unknown senders with no brain page are almost always noise.** If `cortex search` returns nothing for a sender, they're probably not important. Classify as low priority unless the email content signals otherwise.
 3. **Meeting prep is the highest-leverage EA workflow.** The user walks into every meeting already briefed on each attendee: last interaction, open threads, relationship history. This is the difference between "you have a meeting at 3" and "you have a meeting at 3 with Pedro -- last time you discussed the Series B, he was concerned about burn rate."
 4. **Post-inbox brain updates are where the brain compounds.** Every email is signal. If you clear the inbox without updating brain pages, the information is lost. This is the step most agents skip.
 5. **Scheduling nudges require timeline data.** "You haven't met with Diana in 6 weeks" only works if meeting pages have been ingested with proper entity propagation (see meeting-ingestion guide).
 
 ## How to Verify
 
-1. Run meeting prep for tomorrow's calendar. For each attendee, confirm the agent ran `gbrain search` and loaded their brain page before generating the briefing.
+1. Run meeting prep for tomorrow's calendar. For each attendee, confirm the agent ran `cortex search` and loaded their brain page before generating the briefing.
 2. Triage 5 emails. Confirm the agent searched for each sender in the brain before classifying the email.
-3. After clearing an inbox, check 2 sender brain pages with `gbrain get <slug>`. Confirm new timeline entries were added with information from the emails.
+3. After clearing an inbox, check 2 sender brain pages with `cortex get <slug>`. Confirm new timeline entries were added with information from the emails.
 4. Check a scheduling suggestion. Confirm the agent referenced the attendee's brain page (last interaction date, open threads) in the nudge.
 5. Send a test email from someone with a brain page. Confirm the triage response references their relationship context, not just the email content.
 
 ---
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md).*

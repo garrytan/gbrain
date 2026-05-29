@@ -2,15 +2,15 @@
 #
 # Set secrets once (never commit them):
 #   fly secrets set DATABASE_URL='postgresql://user:pass@host:6543/db?prepare=false'
-#   fly secrets set GBRAIN_ALLOW_SHELL_JOBS=1   # only if submitting shell jobs
+#   fly secrets set CORTEX_ALLOW_SHELL_JOBS=1   # only if submitting shell jobs
 #   fly secrets set ANTHROPIC_API_KEY=...       # optional
 #
 # Two-layer supervision: Fly restarts the VM on host events; the
-# `gbrain jobs supervisor` process restarts the worker on in-process
+# `cortex jobs supervisor` process restarts the worker on in-process
 # crashes with exponential backoff and a structured audit trail.
 
 [processes]
-  worker = "gbrain jobs supervisor --concurrency 2"
+  worker = "cortex jobs supervisor --concurrency 2"
 
 # Scale the worker process to 1 machine (job queue serializes work; more
 # machines means higher concurrency but also more Postgres connections).

@@ -39,7 +39,7 @@ mutating: true
 writes_pages: true
 # EIIRP files across the full canonical set — the actual destination
 # per page is decided by brain-taxonomist consulting the active schema
-# pack via `gbrain schema show --json`. List the gbrain-recommended set
+# pack via `cortex schema show --json`. List the cortex-recommended set
 # of canonical directories here so the filing-audit gate passes; on
 # brains with custom packs, the routing surface is broader and routes
 # through loadActivePack at write time.
@@ -134,7 +134,7 @@ Produce a manifest:
 filing decisions in v0.39+):
 
 ```bash
-gbrain schema show --json
+cortex schema show --json
 ```
 
 The pack's `page_types[]` lists every directory the brain accepts plus
@@ -164,17 +164,17 @@ adding a new type via the v0.39 cathedral:
 
 ```bash
 # What's emerging in the brain that the active pack doesn't cover?
-gbrain schema detect --json
+cortex schema detect --json
 
 # LLM-refined suggestions (heuristic when no API key set).
-gbrain schema suggest --json
+cortex schema suggest --json
 
 # Review what's pending; promote or ignore each candidate.
-gbrain schema review-candidates --json
-gbrain schema review-candidates --apply <prefix-or-type-name>
+cortex schema review-candidates --json
+cortex schema review-candidates --apply <prefix-or-type-name>
 ```
 
-**Confidence floor (codex finding #9):** when `gbrain schema suggest`
+**Confidence floor (codex finding #9):** when `cortex schema suggest`
 returns confidence < 0.6 on a proposed type, DO NOT auto-apply. Surface
 the suggestion to the user and let them choose. The schema-cathedral
 ships the primitives; EIIRP enforces the human-in-the-loop gate.
@@ -183,8 +183,8 @@ If schema needs change:
 - Propose the addition to the user before running `review-candidates --apply`.
 - Document the change in the commit message of the next sync.
 - The schema-pack engine writes the delta to
-  `~/.gbrain/schema-pack-deltas/` — review and merge into the active
-  pack via `gbrain schema edit` (or hand-edit the YAML).
+  `~/.cortex/schema-pack-deltas/` — review and merge into the active
+  pack via `cortex schema edit` (or hand-edit the YAML).
 
 ## Phase 4: FILE — Create enriched brain pages
 
@@ -201,12 +201,12 @@ Use the brain page template. MUST include:
 
 ### 4b. Entity pages (people, companies)
 For each entity mentioned:
-- Check if a brain page exists (`gbrain search "<name>"` or `gbrain get_page people/<slug>`).
+- Check if a brain page exists (`cortex search "<name>"` or `cortex get_page people/<slug>`).
 - If exists: update State, append Timeline entry citing this research.
 - If not: create with enrichment.
 
 ### 4c. Commit and verify
-After ALL pages are written, run `gbrain sync` (or commit + push in the
+After ALL pages are written, run `cortex sync` (or commit + push in the
 brain repo). Verify every link resolves.
 
 ## Phase 5: SKILL GRAPH AUDIT — DRY + MECE on capabilities
@@ -232,7 +232,7 @@ Ask: did this work reveal REPEATABLE patterns that will recur?
    - Filing logic → already covered by brain-taxonomist + active pack
 2. DRY check via the v0.19 resolver:
    ```bash
-   gbrain check-resolvable
+   cortex check-resolvable
    ```
    Look for overlapping triggers or unreachable skills.
 
@@ -270,10 +270,10 @@ On approval: invoke `/skillify` for each new/modified skill.
 After all filing and skillification:
 
 ```bash
-gbrain check-resolvable                         # routing-table reachability
-gbrain doctor --json                            # health surface
-gbrain search "<topic keywords>"                # brain pages findable
-gbrain orphans                                  # any pages without inbound links?
+cortex check-resolvable                         # routing-table reachability
+cortex doctor --json                            # health surface
+cortex search "<topic keywords>"                # brain pages findable
+cortex orphans                                  # any pages without inbound links?
 ```
 
 Confirm:
@@ -283,7 +283,7 @@ Confirm:
 - [ ] No DRY violations (no duplicated logic across skills)
 - [ ] No MECE violations (no ambiguous routing between skills)
 - [ ] Active schema pack updated if new content types emerged
-- [ ] `gbrain doctor` reports `schema_pack_consistency: ok`
+- [ ] `cortex doctor` reports `schema_pack_consistency: ok`
 
 ## Phase 7: REPORT — Summary
 
@@ -345,11 +345,11 @@ reads it; doctor cross-references the pack version).
 ## Anti-Patterns
 
 - **Hardcoding directory tables in EIIRP's logic.** Every filing decision
-  reads `gbrain schema show --json`. Users on `gbrain-recommended` AND
+  reads `cortex schema show --json`. Users on `cortex-recommended` AND
   custom packs MUST get the right behavior automatically. Pinned by D9
   from /plan-eng-review.
 - **Auto-applying low-confidence schema suggestions.** Confidence < 0.6
-  from `gbrain schema suggest` is "manual review required" per codex
+  from `cortex schema suggest` is "manual review required" per codex
   finding #9. EIIRP surfaces it; the user accepts.
 - **Skipping Phase 5 SKILL GRAPH AUDIT because "this was a one-off."**
   If the work took >10 minutes, the methodology is probably reusable.
@@ -378,17 +378,17 @@ reads it; doctor cross-references the pack version).
 
 ### Meta
 - **EIIRP is idempotent.** Running it twice on the same work should produce no changes the second time.
-- **EIIRP consumes the active schema pack as data.** Never hard-code directory tables in EIIRP's logic — read from `gbrain schema show --json` so users who picked `gbrain-recommended` OR custom packs get the right behavior automatically.
+- **EIIRP consumes the active schema pack as data.** Never hard-code directory tables in EIIRP's logic — read from `cortex schema show --json` so users who picked `cortex-recommended` OR custom packs get the right behavior automatically.
 
 ## Changelog
 
-### v1.0.0 — gbrain v0.39.0.0
-- Initial port from upstream OpenClaw. Genericized — no references to
+### v1.0.0 — cortex v0.39.0.0
+- Initial port from upstream Cortex. Genericized — no references to
   private fork names per CLAUDE.md privacy rules.
 - Phase 3 SCHEMA CHECK rewritten to consume the v0.39 cathedral CLI
   (`detect | suggest | review-candidates`) instead of a private
   `brain/schema.md`.
-- Phase 5 SKILL GRAPH AUDIT calls `gbrain check-resolvable` instead of
+- Phase 5 SKILL GRAPH AUDIT calls `cortex check-resolvable` instead of
   upstream `scripts/skill-dry-check.mjs`.
-- Phase 6 verification uses `gbrain doctor`'s schema_pack_consistency
+- Phase 6 verification uses `cortex doctor`'s schema_pack_consistency
   check (T7) for the persistent surface.

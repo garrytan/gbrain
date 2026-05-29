@@ -4,7 +4,7 @@
  * Issue #2: function was defined but never invoked. Now wired into runSync
  * after a successful sync (skips on dry_run / blocked_by_failures / failure).
  *
- * Tests cover: happy path, idempotency, GBRAIN_NO_GITIGNORE escape hatch,
+ * Tests cover: happy path, idempotency, CORTEX_NO_GITIGNORE escape hatch,
  * submodule detection, write-error graceful degradation, and the "no
  * config — no-op" path.
  */
@@ -19,7 +19,8 @@ import { __resetMissingStorageWarning } from '../src/core/storage-config.ts';
 let tmp: string;
 let warnings: string[];
 let originalWarn: typeof console.warn;
-let originalEnv: string | undefined;
+let originalLegacyEnv: string | undefined;
+let originalCortexEnv: string | undefined;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-mgi-test-'));
@@ -29,14 +30,18 @@ beforeEach(() => {
   console.warn = (...args: unknown[]) => {
     warnings.push(args.map(String).join(' '));
   };
-  originalEnv = process.env.GBRAIN_NO_GITIGNORE;
+  originalLegacyEnv = process.env.GBRAIN_NO_GITIGNORE;
+  originalCortexEnv = process.env.CORTEX_NO_GITIGNORE;
   delete process.env.GBRAIN_NO_GITIGNORE;
+  delete process.env.CORTEX_NO_GITIGNORE;
 });
 
 afterEach(() => {
   console.warn = originalWarn;
-  if (originalEnv === undefined) delete process.env.GBRAIN_NO_GITIGNORE;
-  else process.env.GBRAIN_NO_GITIGNORE = originalEnv;
+  if (originalLegacyEnv === undefined) delete process.env.GBRAIN_NO_GITIGNORE;
+  else process.env.GBRAIN_NO_GITIGNORE = originalLegacyEnv;
+  if (originalCortexEnv === undefined) delete process.env.CORTEX_NO_GITIGNORE;
+  else process.env.CORTEX_NO_GITIGNORE = originalCortexEnv;
   // Restore permissions for cleanup.
   try {
     chmodSync(tmp, 0o755);
@@ -83,7 +88,7 @@ describe('manageGitignore', () => {
     writeStorageConfig();
     manageGitignore(tmp);
     const content = readFileSync(join(tmp, '.gitignore'), 'utf-8');
-    expect(content).toContain('# Auto-managed by gbrain');
+    expect(content).toContain('# Auto-managed by Cortex');
     expect(content).toContain('media/x/');
     expect(content).toContain('media/articles/');
   });
@@ -110,7 +115,14 @@ describe('manageGitignore', () => {
     expect(content).toContain('media/x/');
   });
 
-  test('GBRAIN_NO_GITIGNORE=1 skips entirely', () => {
+  test('CORTEX_NO_GITIGNORE=1 skips entirely', () => {
+    writeStorageConfig();
+    process.env.CORTEX_NO_GITIGNORE = '1';
+    manageGitignore(tmp);
+    expect(existsSync(join(tmp, '.gitignore'))).toBe(false);
+  });
+
+  test('legacy GBRAIN_NO_GITIGNORE=1 still skips entirely', () => {
     writeStorageConfig();
     process.env.GBRAIN_NO_GITIGNORE = '1';
     manageGitignore(tmp);

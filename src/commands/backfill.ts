@@ -1,5 +1,5 @@
 /**
- * gbrain backfill — first-class bulk operations (v0.30.1 Fix 3).
+ * cortex backfill — first-class bulk operations (v0.30.1 Fix 3).
  *
  * Generalizes the keyset+checkpoint pattern from backfill-effective-date.ts
  * so future backfills (embedding_voyage in v0.30.2, etc.) reuse one tested
@@ -8,11 +8,11 @@
  * the emotional_weight predicate via a new recomputed_at column.
  *
  * Usage:
- *   gbrain backfill <kind> [--batch-size N] [--concurrency N] [--resume]
+ *   cortex backfill <kind> [--batch-size N] [--concurrency N] [--resume]
  *                          [--dry-run] [--keep-index] [--max-errors N]
- *   gbrain backfill list
+ *   cortex backfill list
  *
- * X5: --concurrency clamps to GBRAIN_DIRECT_POOL_SIZE - 1 with a warning,
+ * X5: --concurrency clamps to CORTEX_DIRECT_POOL_SIZE - 1 with a warning,
  * always reserving 1 connection for HNSW + heartbeat + doctor probes.
  */
 
@@ -73,11 +73,11 @@ function parseArgs(args: string[]): BackfillArgs {
 }
 
 function printHelp(): void {
-  console.log(`gbrain backfill — first-class bulk operations.
+  console.log(`cortex backfill — first-class bulk operations.
 
 Usage:
-  gbrain backfill <kind> [flags]      Run a registered backfill.
-  gbrain backfill list                 Show registered backfills + checkpoints.
+  cortex backfill <kind> [flags]      Run a registered backfill.
+  cortex backfill list                 Show registered backfills + checkpoints.
 
 Backfills (v0.30.1):
   effective_date     Compute effective_date for pages imported pre-v0.29.1.
@@ -87,7 +87,7 @@ Backfills (v0.30.1):
 
 Flags:
   --batch-size N     Initial batch size before adaptive halving (default 1000).
-  --concurrency N    Parallel batches; clamped to GBRAIN_DIRECT_POOL_SIZE - 1
+  --concurrency N    Parallel batches; clamped to CORTEX_DIRECT_POOL_SIZE - 1
                      (default 3 - 1 = 2). Always reserves 1 conn for HNSW +
                      heartbeat + doctor probes.
   --resume           Pick up from last checkpoint (auto-detected; default on).
@@ -108,7 +108,7 @@ function clampConcurrency(requested: number | undefined): { effective: number; w
   if (requested > ceiling) {
     return {
       effective: ceiling,
-      warning: `[backfill] --concurrency ${requested} clamped to ${ceiling} (pool size ${poolSize}, reserved 1 for HNSW/heartbeat). Bump GBRAIN_DIRECT_POOL_SIZE if you need more concurrency.`,
+      warning: `[backfill] --concurrency ${requested} clamped to ${ceiling} (pool size ${poolSize}, reserved 1 for HNSW/heartbeat). Bump CORTEX_DIRECT_POOL_SIZE if you need more concurrency.`,
     };
   }
   return { effective: requested };
@@ -130,13 +130,13 @@ export async function runBackfillCommand(args: string[]): Promise<void> {
   }
 
   if (!cli.kind) {
-    console.error('Usage: gbrain backfill <kind> [flags]   |   gbrain backfill list');
+    console.error('Usage: cortex backfill <kind> [flags]   |   cortex backfill list');
     process.exit(2);
   }
 
   const reg = getBackfill(cli.kind);
   if (!reg) {
-    console.error(`No backfill registered with name "${cli.kind}". Run \`gbrain backfill list\`.`);
+    console.error(`No backfill registered with name "${cli.kind}". Run \`cortex backfill list\`.`);
     process.exit(2);
   }
   if (reg.v030_1_status === 'declared-only') {
@@ -146,7 +146,7 @@ export async function runBackfillCommand(args: string[]): Promise<void> {
 
   const config = loadConfig();
   if (!config) {
-    console.error('No brain configured. Run: gbrain init');
+    console.error('No brain configured. Run: cortex init');
     process.exit(2);
   }
 

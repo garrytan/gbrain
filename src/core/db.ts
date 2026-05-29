@@ -153,7 +153,7 @@ export function getConnection(): ReturnType<typeof postgres> {
     throw new GBrainError(
       'No database connection',
       'connect() has not been called',
-      'Run gbrain init --supabase or gbrain init --url <connection_string>',
+      'Run cortex init --supabase or cortex init --url <connection_string>',
     );
   }
   return sql;
@@ -163,7 +163,7 @@ export async function connect(config: EngineConfig): Promise<void> {
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
-      console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
+      console.warn('[cortex] connect() called with a different database_url but a connection already exists. Using existing connection.');
     }
     return;
   }
@@ -173,7 +173,7 @@ export async function connect(config: EngineConfig): Promise<void> {
     throw new GBrainError(
       'No database URL',
       'database_url is missing from config',
-      'Run gbrain init --supabase or gbrain init --url <connection_string>',
+      'Run cortex init --supabase or cortex init --url <connection_string>',
     );
   }
 
@@ -191,8 +191,8 @@ export async function connect(config: EngineConfig): Promise<void> {
       // Silence postgres NOTICE-level messages by default ("relation already
       // exists, skipping" floods stdout under idempotent CREATE statements
       // during migrations + initSchema, and breaks stdout-parsing callers like
-      // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
-      onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
+      // `cortex jobs submit --json | ...`). Opt back in with CORTEX_PG_NOTICES=1.
+      onnotice: (process.env.CORTEX_PG_NOTICES === '1' || process.env.GBRAIN_PG_NOTICES === '1') ? undefined : () => {},
     };
     if (Object.keys(timeouts).length > 0) {
       opts.connection = timeouts;
@@ -201,7 +201,7 @@ export async function connect(config: EngineConfig): Promise<void> {
       opts.prepare = prepare;
       if (!prepare) {
         console.warn(
-          '[gbrain] Prepared statements disabled (PgBouncer transaction-mode convention on port 6543). Override with GBRAIN_PREPARE=true if your pooler runs in session mode.',
+          '[cortex] Prepared statements disabled (Supabase transaction-pooler convention on port 6543). Use a session-pooler URL on port 5432 if you need prepared statements.',
         );
       }
     }
@@ -219,7 +219,7 @@ export async function connect(config: EngineConfig): Promise<void> {
     throw new GBrainError(
       'Cannot connect to database',
       msg,
-      'Check your connection URL in ~/.gbrain/config.json',
+      'Check your connection URL in the Cortex config file or CORTEX_DATABASE_URL',
     );
   }
 }

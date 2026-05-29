@@ -1,5 +1,5 @@
 /**
- * v0.34 pre-w0 — `gbrain eval code-retrieval` CLI.
+ * v0.34 pre-w0 — `cortex eval code-retrieval` CLI.
  *
  * Subcommands:
  *   --baseline           Capture pre-v0.34 retrieval quality. Saves the number
@@ -52,7 +52,7 @@ function parseArgs(args: string[]): ParsedArgs {
     help: false,
     baseline: false,
     withCodeIntel: false,
-    corpus: 'gbrain',
+    corpus: 'cortex',
     questionsPath: DEFAULT_QUESTIONS_PATH,
     k: 5,
     json: false,
@@ -68,7 +68,7 @@ function parseArgs(args: string[]): ParsedArgs {
       const bPath = args[++i];
       if (!aPath || !bPath) throw new Error('--compare requires two file paths');
       out.compare = { a: aPath, b: bPath };
-    } else if (a === '--corpus') out.corpus = args[++i] ?? 'gbrain';
+    } else if (a === '--corpus') out.corpus = args[++i] ?? 'cortex';
     else if (a === '--questions') out.questionsPath = args[++i] ?? DEFAULT_QUESTIONS_PATH;
     else if (a === '--source') out.source = args[++i];
     else if (a === '--k') out.k = parseInt(args[++i] ?? '5', 10);
@@ -81,22 +81,22 @@ function parseArgs(args: string[]): ParsedArgs {
 
 function printHelp(): void {
   process.stdout.write(`
-gbrain eval code-retrieval — v0.34 retrieval baseline + gate
+cortex eval code-retrieval — v0.34 retrieval baseline + gate
 
 Capture a retrieval-quality number against a curated question set. The
 baseline captured here is what v0.34 must beat (precision@5 +10pp OR
 answered_rate +15pp on >=15/30 questions).
 
 USAGE:
-  gbrain eval code-retrieval --baseline [--corpus NAME] [--save PATH] [--json]
-  gbrain eval code-retrieval --with-code-intel [--corpus NAME] [--save PATH] [--json]
-  gbrain eval code-retrieval --compare BASELINE.json WITH_CODE_INTEL.json [--json]
+  cortex eval code-retrieval --baseline [--corpus NAME] [--save PATH] [--json]
+  cortex eval code-retrieval --with-code-intel [--corpus NAME] [--save PATH] [--json]
+  cortex eval code-retrieval --compare BASELINE.json WITH_CODE_INTEL.json [--json]
 
 OPTIONS:
   --baseline               Capture pre-v0.34 retrieval (query + search only)
   --with-code-intel        Capture v0.34 mode (code_blast / code_flow / etc.)
   --compare A B            Compare two saved reports; emits gate pass/fail
-  --corpus NAME            Brain corpus to query (default: gbrain)
+  --corpus NAME            Brain corpus to query (default: cortex)
   --questions PATH         Question file (default: ${DEFAULT_QUESTIONS_PATH})
   --source SOURCE_ID       Source to scope queries to (default: brain default)
   --k N                    Top-k cutoff (default: 5)
@@ -106,14 +106,14 @@ OPTIONS:
 
 PRE-V0.34 BASELINE WORKFLOW (the assignment):
   # Capture baseline 3x for noise floor
-  gbrain eval code-retrieval --baseline --save /tmp/baseline-1.json
-  gbrain eval code-retrieval --baseline --save /tmp/baseline-2.json
-  gbrain eval code-retrieval --baseline --save /tmp/baseline-3.json
+  cortex eval code-retrieval --baseline --save /tmp/baseline-1.json
+  cortex eval code-retrieval --baseline --save /tmp/baseline-2.json
+  cortex eval code-retrieval --baseline --save /tmp/baseline-3.json
 
 V0.34 SHIP GATE:
   # After v0.34 ships, capture the with-code-intel run and compare
-  gbrain eval code-retrieval --with-code-intel --save /tmp/v034.json
-  gbrain eval code-retrieval --compare /tmp/baseline-1.json /tmp/v034.json
+  cortex eval code-retrieval --with-code-intel --save /tmp/v034.json
+  cortex eval code-retrieval --compare /tmp/baseline-1.json /tmp/v034.json
 `);
 }
 

@@ -1,92 +1,119 @@
-# Install
+# Install And Connect Cortex
 
-Three install paths. Pick one. Mix later if needed.
+Cortex is a hosted multi-tenant SaaS. The normal path is not a personal local
+install; it is a tenant signup or invite that gives a human or agent a scoped
+OAuth client and runtime manifest.
 
-## 1. Run with an agent platform (recommended)
+## 1. Create A Tenant
 
-Already running [OpenClaw](https://github.com/garrytan/openclaw) or [Hermes](https://github.com/garrytan/hermes)?
-
-```bash
-bun install -g github:garrytan/gbrain
-gbrain init --pglite                  # 2 seconds; no server
-gbrain skillpack scaffold --all       # 43 skills scaffolded into your agent workspace
-gbrain doctor                         # green checks all the way down
-```
-
-Your agent now reads `skills/RESOLVER.md` once per request, routes intent to the right skill, executes. New entity mentions create new pages. Daily cron runs enrichment overnight.
-
-Scaffolded skills are first-class files in your agent repo — edit freely. To pull upstream gbrain improvements later, `gbrain skillpack reference <name>` diffs your local copy vs the bundle. The legacy `skillpack install` managed-block model was retired in v0.36.0.0; if you're upgrading from an older release, run `gbrain skillpack migrate-fence` once to strip the legacy fence and keep your existing skill rows.
-
-To upgrade later: `gbrain upgrade` runs schema migrations + post-upgrade prompts (chunker bumps, the v0.36.2.0 ZeroEntropy switch). Always TTY-only; non-TTY upgrades skip prompts with informational stderr lines.
-
-## 2. CLI standalone
-
-No agent platform, just shell + MCP-aware editor.
+Use the public signup endpoint or `/admin/signup`:
 
 ```bash
-bun install -g github:garrytan/gbrain
-gbrain init --pglite
+curl -s https://<tenant-host>/admin/api/signup \
+  -H 'content-type: application/json' \
+  -d '{"orgName":"Company name","email":"owner@company.com","domain":"company.com"}'
 ```
 
-> **If `bun install -g` hits a postinstall error** (Bun blocks postinstall hooks in some environments), the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain doctor` to diagnose, then `gbrain apply-migrations --yes` manually. The deterministic fallback is `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+The response includes:
 
-The init flow detects your repo size and suggests Supabase for brains > 1000 markdown files. To switch later:
+- organization
+- first brain
+- owner member
+- OAuth client id
+- one-time client secret
+- onboarding URL
+- runtime manifest
+- `cortex connect` command
+- invite delivery outbox record
+
+## 2. Connect An Agent Runtime
 
 ```bash
-gbrain migrate --to supabase     # PGLite → Postgres
-gbrain migrate --to pglite       # Postgres → PGLite (rare)
+cortex connect '<onboarding-url>' --client-secret '<one-time-secret>'
+cortex runtime install cursor --manifest-url https://<tenant-host>/runtime-manifest.json
+cortex runtime install claude-desktop --manifest-url https://<tenant-host>/runtime-manifest.json
+cortex runtime install claude-code --manifest-url https://<tenant-host>/runtime-manifest.json
 ```
 
-For shared / large / multi-machine deployments (a team or company brain with multiple users hitting one server over HTTP MCP with OAuth scoping per user), follow the dedicated walkthrough: **[Tutorial: set up GBrain as your company brain](tutorials/company-brain.md)**.
+The onboarding URL never contains the secret. Runtime config files should point
+at the hosted MCP URL and rely on OAuth token exchange.
 
-API keys live in `~/.gbrain/config.json` (file plane) or env vars (`OPENAI_API_KEY`, `ZEROENTROPY_API_KEY`, `VOYAGE_API_KEY`, `ANTHROPIC_API_KEY`). Set via CLI:
+## 3. Invite Teammates
+
+Use the admin console or agent-callable APIs:
+
+- `/admin/team`
+- `/admin/invites`
+- `/admin/agents`
+- MCP `users_create_invite`
+- MCP `users_register_agent_client`
+
+Every invite should specify role, write source, federated-read sources, and
+scopes. Cortex queues owner onboarding and teammate invite delivery records in
+the outbox; production deployments can drain that table through Resend with
+`CORTEX_EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `CORTEX_EMAIL_FROM`, and a
+worker guarded by `CORTEX_EMAIL_DELIVERY_SECRET`. Most teams should create more
+sources inside the company brain rather than more brains. Create another brain
+only when ownership, lifecycle, backup, residency, or admin boundaries differ.
+
+## 4. Operator Deployment
+
+Production operators deploy Cortex with Supabase Postgres and a web service:
 
 ```bash
-gbrain config set zeroentropy_api_key sk-...
-gbrain config set anthropic_api_key sk-ant-...
+CORTEX_DATABASE_URL='postgresql://...'
+CORTEX_PUBLIC_URL='https://<tenant-host>'
+CORTEX_HTTP_CORS_ORIGIN='https://<tenant-host>'
+CORTEX_HTTP_TRUST_PROXY=1
+CORTEX_ADMIN_BOOTSTRAP_TOKEN='<random-hex>'
+CORTEX_SUPPRESS_BOOTSTRAP_TOKEN=1
+CORTEX_EMAIL_PROVIDER=resend
+RESEND_API_KEY='re_...'
+CORTEX_EMAIL_FROM='Cortex <onboarding@your-domain.com>'
+CORTEX_EMAIL_DELIVERY_SECRET='<random-hex>'
+CORTEX_HOME=/data/cortex
+cortex serve --http --public-url https://<tenant-host>
 ```
 
-Common follow-ups:
+For Supabase pooler URLs, set:
 
 ```bash
-gbrain import ~/my-knowledge      # bulk-import a markdown folder
-gbrain sync --watch               # live-sync a git repo (autopilot mode)
-gbrain autopilot --install        # background daemon for nightly enrichment
+CORTEX_DISABLE_DIRECT_POOL=1
+CORTEX_PREPARE=false
 ```
 
-## 3. MCP server (any MCP client)
+See [Deploy Cortex as a Multi-Tenant SaaS](deploy/multi-tenant-saas.md).
+
+## 5. Verify
 
 ```bash
-gbrain serve                      # stdio MCP (Claude Desktop / Code / Cursor)
-gbrain serve --http               # HTTP MCP with OAuth 2.1 + admin dashboard
+CORTEX_PUBLIC_URL=https://<tenant-host> \
+CORTEX_ADMIN_BOOTSTRAP_TOKEN=<token> \
+CORTEX_COMPOSIO_WEBHOOK_SECRET=<secret> \
+CORTEX_BILLING_WEBHOOK_SECRET=<secret> \
+bun run smoke:saas-live -- --json
 ```
 
-Per-client setup guides live in [`docs/mcp/`](mcp/):
+The smoke verifies public marketing, signup, owner onboarding, admin session,
+tenant plan controls, billing webhook reconciliation, teammate invite, invite
+delivery outbox records, delivery claim/result updates, provider drain
+readiness, source creation, skill policy update, agent OAuth client, Composio
+webhook ingestion, token exchange, and MCP `tools/list`.
 
-- [`docs/mcp/CLAUDE_CODE.md`](mcp/CLAUDE_CODE.md)
-- [`docs/mcp/CLAUDE_DESKTOP.md`](mcp/CLAUDE_DESKTOP.md)
-- [`docs/mcp/CHATGPT.md`](mcp/CHATGPT.md)
-- [`docs/mcp/PERPLEXITY.md`](mcp/PERPLEXITY.md)
-- [`docs/mcp/DEPLOY.md`](mcp/DEPLOY.md) — production deploy patterns
-
-The HTTP server ships with an admin SPA at `/admin`, an SSE activity feed at `/admin/events`, DCR-style client registration, scope-gated `read`/`write`/`admin` access, and rate limiting.
-
-## Thin-client mode
-
-Connect to someone else's brain without running a local engine:
+For local operator diagnostics:
 
 ```bash
-gbrain init --mcp-only            # configures remote MCP, skips local DB
+cortex doctor --json
+cortex models doctor
 ```
 
-Useful for: team mounts, brain-as-a-service deployments, dev machines without disk space. Most local commands refuse with a paste-ready hint. See [`docs/architecture/topologies.md`](architecture/topologies.md).
+## Runtime Contract
 
-## Verifying the install
+The same setup metadata is available through:
 
-```bash
-gbrain doctor --json              # full health check
-gbrain models                     # which AI models are configured for what
-gbrain models doctor              # 1-token probe per configured model
-```
+- `GET /runtime-manifest.json`
+- `GET /admin/api/runtime-manifest`
+- MCP `saas_runtime_manifest`
+- MCP `saas_plan_get` / `saas_plan_update`
 
-If anything's yellow, `gbrain doctor` names the fix command in the message. Most issues are missing API keys or stale schema (`gbrain upgrade --force-schema`).
+See [SaaS Runtime Packaging](deploy/saas-runtime-packaging.md).

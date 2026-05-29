@@ -1,8 +1,8 @@
 /**
- * v0.32.3 — `gbrain eval compare` — render the per-mode comparison.
+ * v0.32.3 — `cortex eval compare` — render the per-mode comparison.
  *
- * Reads `<repo>/.gbrain-evals/eval-results.jsonl` (the audit trail from
- * `gbrain eval run-all` plus any manually-logged completions), groups by
+ * Reads `<repo>/.cortex-evals/eval-results.jsonl` (the audit trail from
+ * `cortex eval run-all` plus any manually-logged completions), groups by
  * (suite, mode), and produces a side-by-side table.
  *
  * Statistical-significance discipline per [CDX-14]: paired bootstrap
@@ -69,8 +69,8 @@ function parseCompareArgs(args: string[]): CompareOpts {
 
 function printHelp(): void {
   process.stderr.write(
-    `gbrain eval compare [flags]\n\n` +
-    `Render a per-mode comparison from <repo>/.gbrain-evals/eval-results.jsonl\n\n` +
+    `cortex eval compare [flags]\n\n` +
+    `Render a per-mode comparison from <repo>/.cortex-evals/eval-results.jsonl\n\n` +
     `Flags:\n` +
     `  --runs id1,id2,id3      Pick specific run_ids (default: all).\n` +
     `  --modes M1,M2,M3        Filter to these modes (default: all).\n` +
@@ -98,7 +98,7 @@ interface ParsedRecord {
 function readEvalResults(repoRoot: string, override?: string): ParsedRecord[] {
   const path = override
     ? (override.endsWith('.jsonl') ? override : join(override, 'eval-results.jsonl'))
-    : join(repoRoot, '.gbrain-evals', 'eval-results.jsonl');
+    : join(repoRoot, '.cortex-evals', 'eval-results.jsonl');
   if (!existsSync(path)) return [];
   const content = readFileSync(path, 'utf-8');
   const records: ParsedRecord[] = [];
@@ -149,7 +149,7 @@ function renderMarkdown(grouped: Record<string, Record<SearchMode, ParsedRecord 
   const lines: string[] = [];
   lines.push('# Search Mode Comparison');
   lines.push('');
-  lines.push('_Auto-generated from `<repo>/.gbrain-evals/eval-results.jsonl`. Industry terms preserved verbatim so users searching the literature find what we report._');
+  lines.push('_Auto-generated from `<repo>/.cortex-evals/eval-results.jsonl`. Industry terms preserved verbatim so users searching the literature find what we report._');
   lines.push('');
 
   for (const [suite, modes] of Object.entries(grouped)) {
@@ -247,8 +247,8 @@ export async function runEvalCompare(args: string[]): Promise<void> {
   }
 
   if (records.length === 0) {
-    process.stdout.write(`_No eval-results.jsonl found at <repo>/.gbrain-evals/eval-results.jsonl._\n`);
-    process.stdout.write(`_Run: gbrain eval run-all --modes conservative,balanced,tokenmax --suites longmemeval,replay --seed 42_\n`);
+    process.stdout.write(`_No eval-results.jsonl found at <repo>/.cortex-evals/eval-results.jsonl._\n`);
+    process.stdout.write(`_Run: cortex eval run-all --modes conservative,balanced,tokenmax --suites longmemeval,replay --seed 42_\n`);
     return;
   }
 

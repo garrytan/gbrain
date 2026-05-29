@@ -1,6 +1,6 @@
 # gbrain-recommended — the recommended starter pack.
 #
-# v0.39 T8 — converts the prose taxonomy in docs/GBRAIN_RECOMMENDED_SCHEMA.md
+# v0.39 T8 — converts the prose taxonomy in docs/CORTEX_RECOMMENDED_SCHEMA.md
 # into a real, activatable schema pack. Users who like the documented
 # "operational brain" pattern can:
 #
@@ -27,8 +27,8 @@ version: 1.0.0
 gbrain_min_version: 0.39.0
 extends: gbrain-base
 description: |
-  The recommended starter pack for an operational personal brain.
-  Based on docs/GBRAIN_RECOMMENDED_SCHEMA.md — Karpathy's LLM wiki
+  The recommended starter pack for an operational company brain.
+  Based on docs/CORTEX_RECOMMENDED_SCHEMA.md — Karpathy's LLM wiki
   pattern extended into a full operational knowledge base. Use this
   when you want the documented behavior immediately instead of
   authoring your own pack from scratch.

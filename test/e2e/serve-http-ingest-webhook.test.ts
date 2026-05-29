@@ -57,8 +57,8 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
       'bun run src/cli.ts auth register-client e2e-webhook-test --grant-types client_credentials --scopes "read write"',
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
     );
-    const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
-    const secretMatch = regOutput.match(/Client Secret:\s+(gbrain_cs_\S+)/);
+    const idMatch = regOutput.match(/Client ID:\s+(cortex_cl_\S+)/);
+    const secretMatch = regOutput.match(/Client Secret:\s+(cortex_cs_\S+)/);
     if (!idMatch || !secretMatch) {
       throw new Error('Failed to register webhook test client:\n' + regOutput);
     }

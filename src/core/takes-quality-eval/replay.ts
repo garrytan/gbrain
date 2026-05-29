@@ -23,8 +23,8 @@ export function loadReceiptFromDisk(receiptPath: string): TakesQualityReceipt {
     throw new Error(
       `Receipt file not found: ${receiptPath}. ` +
       `If the disk artifact was lost but the run was recorded in DB, ` +
-      `use \`gbrain eval takes-quality trend --json\` to find the row and ` +
-      `re-export with \`gbrain eval takes-quality replay --from-db <id>\` (v0.33+).`,
+      `use \`cortex eval takes-quality trend --json\` to find the row and ` +
+      `re-export with \`cortex eval takes-quality replay --from-db <id>\` (v0.33+).`,
     );
   }
   const raw = readFileSync(receiptPath, 'utf-8');
@@ -43,7 +43,7 @@ export function loadReceiptFromDisk(receiptPath: string): TakesQualityReceipt {
   if (r.schema_version !== 1) {
     throw new Error(
       `Unsupported receipt schema_version=${r.schema_version} (expected 1). ` +
-      `Receipt was likely produced by a newer gbrain; upgrade to read it.`,
+      `Receipt was likely produced by a newer Cortex runtime; upgrade to read it.`,
     );
   }
   return parsed as TakesQualityReceipt;

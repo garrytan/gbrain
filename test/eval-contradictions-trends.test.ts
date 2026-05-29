@@ -138,7 +138,7 @@ describe('renderTrendChart', () => {
   test('empty input prints a friendly message, not an empty table', () => {
     const out = renderTrendChart([]);
     expect(out).toContain('No contradiction-probe runs');
-    expect(out).toContain('gbrain eval suspected-contradictions');
+    expect(out).toContain('cortex eval suspected-contradictions');
   });
 
   test('single row produces a header + one data row', () => {

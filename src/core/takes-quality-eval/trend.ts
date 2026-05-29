@@ -65,7 +65,7 @@ export async function loadTrend(engine: BrainEngine, opts: TrendOpts = {}): Prom
 /** Render the trend table as plain text for stdout. */
 export function renderTrendTable(rows: TrendRow[]): string {
   if (rows.length === 0) {
-    return 'No takes-quality runs recorded yet. Run `gbrain eval takes-quality run` to get started.';
+    return 'No takes-quality runs recorded yet. Run `cortex eval takes-quality run` to get started.';
   }
   const header = ['ts', 'rubric', 'verdict', 'overall', 'cost', 'corpus'].join('  ');
   const sep = '─'.repeat(header.length + 8);

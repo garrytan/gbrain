@@ -88,8 +88,14 @@ export class HarvestError extends Error {
   }
 }
 
-const PLUGIN_JSON = 'openclaw.plugin.json';
+const PLUGIN_JSON = 'cortex.plugin.json';
+const LEGACY_PLUGIN_JSON = 'openclaw.plugin.json';
 const DEFAULT_PRIVATE_PATTERNS_PATH = join(
+  homedir(),
+  '.cortex',
+  'harvest-private-patterns.txt',
+);
+const LEGACY_PRIVATE_PATTERNS_PATH = join(
   homedir(),
   '.gbrain',
   'harvest-private-patterns.txt',
@@ -177,7 +183,7 @@ export function runHarvest(opts: HarvestOptions): HarvestResult {
     try {
       runPrivacyLint(
         filesCopied,
-        opts.privatePatternsPath ?? DEFAULT_PRIVATE_PATTERNS_PATH,
+        opts.privatePatternsPath ?? defaultPrivatePatternsPath(),
       );
     } catch (err) {
       if (err instanceof PrivacyLintError) {
@@ -250,7 +256,9 @@ function rollbackHarvest(gbrainSkillDir: string, pairedTargets: string[]): void 
  * Returns true if the manifest was modified.
  */
 export function addToBundleManifest(gbrainRoot: string, slug: string): boolean {
-  const manifestPath = join(gbrainRoot, PLUGIN_JSON);
+  const manifestPath = existsSync(join(gbrainRoot, PLUGIN_JSON))
+    ? join(gbrainRoot, PLUGIN_JSON)
+    : join(gbrainRoot, LEGACY_PLUGIN_JSON);
   if (!existsSync(manifestPath)) return false;
   const raw = readFileSync(manifestPath, 'utf-8');
   let manifest;
@@ -266,4 +274,10 @@ export function addToBundleManifest(gbrainRoot: string, slug: string): boolean {
   manifest.skills.sort();
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
   return true;
+}
+
+function defaultPrivatePatternsPath(): string {
+  if (existsSync(DEFAULT_PRIVATE_PATTERNS_PATH)) return DEFAULT_PRIVATE_PATTERNS_PATH;
+  if (existsSync(LEGACY_PRIVATE_PATTERNS_PATH)) return LEGACY_PRIVATE_PATTERNS_PATH;
+  return DEFAULT_PRIVATE_PATTERNS_PATH;
 }

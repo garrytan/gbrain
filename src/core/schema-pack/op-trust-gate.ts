@@ -57,8 +57,8 @@ export function validateSchemaPackTrustGate(
   if (ctx.remote !== false) {
     throw new SchemaPackTrustGateError(
       'per-call schema_pack opt is rejected for remote/MCP callers. ' +
-      'Pass via gbrain.yml `schema:` section, ~/.gbrain/config.json `schema_pack`, ' +
-      'GBRAIN_SCHEMA_PACK env var, or `gbrain config set schema_pack <name>`. ' +
+      'Pass via cortex.yml `schema:` section, ~/.cortex/config.json `schema_pack`, ' +
+      'CORTEX_SCHEMA_PACK env var, or `cortex config set schema_pack <name>`. ' +
       'CLI callers (ctx.remote === false) can pass per-call.',
     );
   }
@@ -102,7 +102,10 @@ export async function loadActivePackForOp(
       for (const sid of scope.sourceIds) {
         const res = resolveActivePackName({
           remote: ctx.remote ?? true,
-          envVar: process.env.GBRAIN_SCHEMA_PACK?.trim() || undefined,
+          envVar:
+            process.env.CORTEX_SCHEMA_PACK?.trim() ||
+            process.env.GBRAIN_SCHEMA_PACK?.trim() ||
+            undefined,
           sourceId: sid,
           homeConfig: cfg?.schema_pack?.trim() || undefined,
         });

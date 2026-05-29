@@ -44,7 +44,7 @@ llm_analyze():
   digest = read("data/digests/today.md")  // links already baked in
   classify_urgency(digest)                 // judgment call
   add_commentary(digest)                   // contextual analysis
-  run_brain_enrichment(notable_entities)   // gbrain search + update
+  run_brain_enrichment(notable_entities)   // cortex search + update
   draft_replies(urgent_items)              // creative work
   surface_to_user(final_output)            // delivery
 
@@ -143,4 +143,4 @@ the same pass.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md).*

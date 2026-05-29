@@ -92,7 +92,7 @@ export function renderJudgePrompt(takesText: string): { prompt: string; sha8: st
   }).join('\n\n');
 
   const prompt = `You are evaluating a sample of "takes" — typed, weighted, attributed ` +
-    `claims pulled from a personal knowledge base. Score the sample on the 5 ` +
+    `claims pulled from a tenant knowledge base. Score the sample on the 5 ` +
     `dimensions below. Return STRICT JSON shaped exactly like this:\n\n` +
     `{\n  "scores": {\n    "accuracy": {"score": <1-10>, "feedback": "<one short sentence>"},\n` +
     `    "attribution": {"score": <1-10>, "feedback": "..."},\n` +

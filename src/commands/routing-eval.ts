@@ -1,5 +1,5 @@
 /**
- * gbrain routing-eval — Standalone CLI verb for Check 5 (W2).
+ * cortex routing-eval — Standalone CLI verb for Check 5 (W2).
  *
  * Runs the structural routing eval against every `routing-eval.jsonl`
  * fixture in the skills tree. Exits:
@@ -50,7 +50,7 @@ export interface RoutingEvalEnvelope {
   message: string | null;
 }
 
-const HELP = `gbrain routing-eval [options]
+const HELP = `cortex routing-eval [options]
 
 Run the structural routing eval (Check 5) against every skills/<name>/
 routing-eval.jsonl fixture. Reports top-1 accuracy, ambiguity, and
@@ -103,7 +103,7 @@ function resolveSkillsDir(
       source: null,
       error: 'no_skills_dir',
       message:
-        'Could not auto-detect skills/ with a resolver file. Set $OPENCLAW_WORKSPACE or pass --skills-dir.',
+        'Could not auto-detect skills/ with a resolver file. Set $CORTEX_WORKSPACE or pass --skills-dir.',
     };
   }
   return { dir: detected.dir, source: detected.source, error: null, message: null };
@@ -149,7 +149,7 @@ export async function runRoutingEvalCli(args: string[]): Promise<void> {
   // declarations into RESOLVER.md / AGENTS.md rows with UNION semantics.
   // Before this fix, this CLI built its own resolver-content string from
   // RESOLVER.md files only — closing the v0.41 drift bug class where
-  // doctor said "fine" but `gbrain routing-eval --strict` still failed.
+  // doctor said "fine" but `cortex routing-eval --strict` still failed.
   const triggerEntries = loadSkillTriggerIndex(skillsDir);
   const resolverFile = findPrimaryResolverPath(skillsDir);
   // Allow operation when frontmatter triggers populate the index even

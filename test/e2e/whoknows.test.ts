@@ -2,7 +2,7 @@
  * v0.33 whoknows E2E — full pipeline against a seeded PGLite brain.
  *
  * Seeds a synthetic brain matching test/fixtures/whoknows-eval.jsonl,
- * runs gbrain eval whoknows --skip-replay over the fixture, asserts
+ * runs cortex eval whoknows --skip-replay over the fixture, asserts
  * the quality gate passes >= 80% top-3 hit rate. Also exercises:
  *
  *   - findExperts() directly with --types filter

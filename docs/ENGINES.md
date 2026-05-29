@@ -2,9 +2,9 @@
 
 ## The idea
 
-Every GBrain operation goes through `BrainEngine`. The engine is the contract between "what the brain can do" and "how it's stored." Swap the engine, keep everything else.
+Every Cortex operation goes through `BrainEngine`. The engine is the contract between "what the brain can do" and "how it's stored." Swap the engine, keep everything else.
 
-v0 shipped `PostgresEngine` backed by Supabase. v0.7 adds `PGLiteEngine` -- embedded Postgres 17.5 via WASM (@electric-sql/pglite), zero-config default. The interface is designed so a `DuckDBEngine`, `TursoEngine`, or any custom backend could slot in without touching the CLI, MCP server, skills, or any consumer code.
+v0 shipped `PostgresEngine` backed by Supabase. v0.7 adds `PGLiteEngine` -- embedded Postgres 17.5 via WASM (@electric-sql/pglite), useful for local development and small embedded runtimes. The interface is designed so a `DuckDBEngine`, `TursoEngine`, or any custom backend could slot in without touching the CLI, MCP server, skills, or any consumer code.
 
 ## Why this matters
 
@@ -12,14 +12,14 @@ Different users have different constraints:
 
 | User | Needs | Best engine |
 |------|-------|-------------|
-| Getting started | Zero-config, no accounts, no server | PGLiteEngine (default since v0.7) |
-| Power user (you) | World-class search, 7K+ pages, zero-ops | PostgresEngine + Supabase |
-| Open source hacker | Single file, no server, git-friendly | PGLiteEngine |
-| Team/enterprise | Multi-user, RLS, audit trail | PostgresEngine + self-hosted |
+| Local development | Zero-config, no accounts, no server | PGLiteEngine |
+| Hosted SaaS tenant | World-class search, multi-user access, managed ops | PostgresEngine + Supabase |
+| Embedded runtime | Single-file local state, git-friendly workflows | PGLiteEngine |
+| Enterprise deployment | Multi-user, RLS, audit trail, custom network controls | PostgresEngine + dedicated Supabase project |
 | Researcher | Analytics, bulk exports, embeddings | DuckDBEngine (someday) |
 | Edge/mobile | Offline-first, sync later | PGLiteEngine + sync (someday) |
 
-The engine interface means we don't have to choose. PGLite is the zero-friction default. Supabase is the production scale path. `gbrain migrate --to supabase/pglite` moves between them.
+The engine interface means we don't have to choose. Supabase is the production SaaS path. PGLite keeps local development and tests cheap. `cortex migrate --to supabase/pglite` moves between them.
 
 ## The interface
 
@@ -142,11 +142,11 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 - Recursive CTEs for graph traversal
 - Trigger-based search_vector (spans pages + timeline_entries)
 - JSONB for frontmatter with GIN index
-- Connection pooling via Supabase Supavisor (port 6543)
+- Connection pooling via Supabase Supavisor (session mode on pooler port 5432, transaction mode on pooler port 6543)
 
-**Hosting:** Supabase Pro ($25/mo). Zero-ops. Managed Postgres with pgvector built in.
+**Hosting:** Supabase Pro ($25/mo). Managed Postgres with pgvector built in.
 
-**Why not self-hosted for v0:** The brain should be infrastructure agents use, not something you maintain. Self-hosted Postgres with Docker is a welcome community PR, but v0 optimizes for zero ops.
+**Production SaaS posture:** Cortex's commercial path is a hosted Supabase-backed tenant brain with managed backups, RLS, audit history, and a public OAuth/MCP surface. Docker and PGLite are useful for development, CI, and private demos, but they are not the customer-facing deployment story.
 
 ## PGLiteEngine (v0.7, ships)
 
@@ -158,7 +158,7 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 - Uses `pglite-schema.ts` for DDL (pgvector extension, pg_trgm, triggers, indexes)
 - Parameterized queries throughout (shared utilities in `src/core/utils.ts`)
 - `hybridSearch` keyword-only fallback when `OPENAI_API_KEY` is not set
-- Data stored at `~/.gbrain/brain.db` (configurable)
+- Data stored at `~/.cortex/brain.db` (configurable)
 - pgvector HNSW index for cosine similarity vector search (same as Postgres)
 - tsvector + ts_rank for full-text search (same as Postgres)
 - pg_trgm for fuzzy slug resolution (same as Postgres)
@@ -167,14 +167,14 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 
 | Factor | PGLite | PostgresEngine + Supabase |
 |--------|--------|--------------------------|
-| Setup | `gbrain init` (zero-config) | Account + connection string |
+| Setup | `cortex init` (zero-config) | Account + connection string |
 | Scale | Good for < 1,000 files | Production-proven at 10K+ |
 | Multi-device | Single machine only | Any device via remote MCP |
 | Cost | Free | Supabase Pro ($25/mo) |
 | Concurrency | Single process | Connection pooling |
 | Backups | Manual (file copy) | Managed by Supabase |
 
-**Migration:** `gbrain migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline) and imports into Supabase. `gbrain migrate --to pglite` goes the other direction. Bidirectional, lossless.
+**Migration:** `cortex migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline) and imports into Supabase. `cortex migrate --to pglite` goes the other direction. Bidirectional, lossless.
 
 ## Adding a new engine
 
@@ -191,7 +191,7 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
    }
    ```
    The factory uses dynamic imports so engines are only loaded when selected.
-3. Store engine type in `~/.gbrain/config.json`: `{ "engine": "myengine", ... }`
+3. Store engine type in `~/.cortex/config.json`: `{ "engine": "myengine", ... }`
 4. Add tests. The test suite should be engine-agnostic where possible... same test cases, different engine constructor.
 5. Document in this file + add a design doc in `docs/`
 
@@ -220,7 +220,7 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 | Transactions | Full ACID | Full ACID | Both support this |
 | JSONB queries | GIN index | GIN index | Identical |
 | Concurrent access | Connection pooling | Single process | PGLite limitation |
-| Hosting | Supabase, self-hosted, Docker | Local file | |
+| Hosting | Supabase-backed hosted service | Development/test file | |
 | Migration methods | runMigration, getChunksWithEmbeddings | Same | Added v0.7 |
 
 ## Future engine ideas

@@ -56,9 +56,9 @@ broken brain. See `skills/conventions/quality.md` for format.
 
 Before using ANY external API to research a person, company, or topic:
 
-1. `gbrain search "name"` — keyword search for existing pages
-2. `gbrain query "natural question about name"` — hybrid search for context
-3. `gbrain get <slug>` — if you know the slug, read the full page
+1. `cortex search "name"` — keyword search for existing pages
+2. `cortex query "natural question about name"` — hybrid search for context
+3. `cortex get <slug>` — if you know the slug, read the full page
 4. Check backlinks: who references this entity?
 5. Check timeline: recent events involving this entity
 
@@ -89,9 +89,9 @@ to the graph (`links` table) with inferred relationship types. Stale links
   `founded`, `advises`, `source` (frontmatter), `mentions` (default).
 - The `put_page` MCP response includes `auto_links: { created, removed, errors }`
   so the agent can verify outcomes.
-- To disable: `gbrain config set auto_link false`. Default is on.
-- Timeline entries with specific dates still need explicit `gbrain timeline-add`
-  (or batch via `gbrain extract timeline --source db`).
+- To disable: `cortex config set auto_link false`. Default is on.
+- Timeline entries with specific dates still need explicit `cortex timeline-add`
+  (or batch via `cortex extract timeline --source db`).
 
 ### Phase 3: On Every Outbound Response (READ → PULL → RESPOND)
 
@@ -125,11 +125,11 @@ The output is updated brain pages and enriched responses.
 
 ## Cross-source citation format (v0.18.0+)
 
-When a brain has multiple sources (wiki, gstack, yc-media, etc.), every
+When a brain has multiple sources (wiki, cortex, yc-media, etc.), every
 citation MUST include the source id: `[source-id:slug]`. Example:
 
 > You told me about the retry budget approach — see
-> [wiki:topics/resilience] and [gstack:plans/retry-policy] for where
+> [wiki:topics/resilience] and [cortex:plans/retry-policy] for where
 > this came from.
 
 Rules:
@@ -139,8 +139,8 @@ Rules:
 - Every page payload returned by `search`, `query`, `get_page`, `list_pages`
   carries `source_id` — always use it when citing, never guess.
 
-If a search result has `source_id: "gstack"` and `slug: "plans/foo"`,
-the citation is `[gstack:plans/foo]`. That's the whole rule.
+If a search result has `source_id: "cortex"` and `slug: "plans/foo"`,
+the citation is `[cortex:plans/foo]`. That's the whole rule.
 
 ## Anti-Patterns
 

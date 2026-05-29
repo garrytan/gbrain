@@ -58,17 +58,17 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.stdout + r.stderr).toMatch(/schema|active|list|show|validate|use/i);
   });
 
-  test('schema list shows gbrain-base bundled', () => {
+  test('schema list shows cortex-base bundled', () => {
     const r = gbrain(['schema', 'list']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('Bundled packs:');
-    expect(r.stdout).toContain('gbrain-base');
+    expect(r.stdout).toContain('cortex-base');
   });
 
-  test('schema show gbrain-base prints manifest details', () => {
-    const r = gbrain(['schema', 'show', 'gbrain-base']);
+  test('schema show cortex-base prints manifest details', () => {
+    const r = gbrain(['schema', 'show', 'cortex-base']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('gbrain-base v1.0.0');
+    expect(r.stdout).toContain('cortex-base v1.0.0');
     // v0.41.11.0: page types extended from 22 to 24 by promoting
     // `conversation` and `atom` into gbrain-base.
     // v0.41.23.0: extended to 25 by adding `extract_receipt` for the
@@ -80,11 +80,12 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.stdout).toContain('company :: entity');
   });
 
-  test('schema validate gbrain-base passes', () => {
-    const r = gbrain(['schema', 'validate', 'gbrain-base']);
+  test('schema validate cortex-base passes', () => {
+    const r = gbrain(['schema', 'validate', 'cortex-base']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('✓');
     expect(r.stdout).toContain('valid manifest');
+    expect(r.stdout).toContain('bundled:cortex-base');
   });
 
   test('schema active reports default resolution', () => {
@@ -126,14 +127,14 @@ describe('gbrain schema use (Phase C, gap-fill T3)', () => {
   });
 
   test('writes schema_pack to ~/.gbrain/config.json on happy path', () => {
-    const r = gbrain(['schema', 'use', 'gbrain-base'], { GBRAIN_HOME: home });
+    const r = gbrain(['schema', 'use', 'cortex-base'], { GBRAIN_HOME: home });
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('Active schema pack set to: gbrain-base');
+    expect(r.stdout).toContain('Active schema pack set to: cortex-base');
     expect(r.stdout).toContain('schema active');
     const cfgPath = join(home, '.gbrain', 'config.json');
     expect(existsSync(cfgPath)).toBe(true);
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
-    expect(cfg.schema_pack).toBe('gbrain-base');
+    expect(cfg.schema_pack).toBe('cortex-base');
   });
 
   test('preserves pre-existing config fields when writing schema_pack', () => {
@@ -141,12 +142,12 @@ describe('gbrain schema use (Phase C, gap-fill T3)', () => {
     mkdirSync(join(home, '.gbrain'), { recursive: true });
     const cfgPath = join(home, '.gbrain', 'config.json');
     writeFileSync(cfgPath, JSON.stringify({ engine: 'pglite', openai_key: 'sk-fake' }, null, 2), 'utf-8');
-    const r = gbrain(['schema', 'use', 'gbrain-base'], { GBRAIN_HOME: home });
+    const r = gbrain(['schema', 'use', 'cortex-base'], { GBRAIN_HOME: home });
     expect(r.code).toBe(0);
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
     expect(cfg.engine).toBe('pglite');
     expect(cfg.openai_key).toBe('sk-fake');
-    expect(cfg.schema_pack).toBe('gbrain-base');
+    expect(cfg.schema_pack).toBe('cortex-base');
   });
 
   test('overwrites prior schema_pack value on re-run', () => {
@@ -154,10 +155,10 @@ describe('gbrain schema use (Phase C, gap-fill T3)', () => {
     mkdirSync(join(home, '.gbrain'), { recursive: true });
     const cfgPath = join(home, '.gbrain', 'config.json');
     writeFileSync(cfgPath, JSON.stringify({ engine: 'pglite', schema_pack: 'something-else' }, null, 2), 'utf-8');
-    const r = gbrain(['schema', 'use', 'gbrain-base'], { GBRAIN_HOME: home });
+    const r = gbrain(['schema', 'use', 'cortex-base'], { GBRAIN_HOME: home });
     expect(r.code).toBe(0);
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
-    expect(cfg.schema_pack).toBe('gbrain-base');
+    expect(cfg.schema_pack).toBe('cortex-base');
   });
 
   test('unknown pack rejected with exit 1 + paste-ready hint', () => {

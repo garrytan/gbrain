@@ -1,4 +1,4 @@
-# Install GBrain (Deprecated)
+# Install Cortex (Deprecated)
 
 This skill has been replaced by the **setup** skill. See `skills/setup/SKILL.md`.
 

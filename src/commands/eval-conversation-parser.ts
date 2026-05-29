@@ -1,5 +1,5 @@
 /**
- * v0.41.16.0 — `gbrain eval conversation-parser <fixture.jsonl>` CLI verb.
+ * v0.41.16.0 — `cortex eval conversation-parser <fixture.jsonl>` CLI verb.
  *
  * Per Layer 4a: fixture-corpus CI gate. Deterministic; runs in PR CI
  * with `--no-llm` so built-in regex regressions block PRs WITHOUT
@@ -58,7 +58,7 @@ function parseArgs(args: string[]): CliArgs {
     } else if (a === '--help' || a === '-h') {
       out.help = true;
     } else if (!out.fixtures && !a.startsWith('--')) {
-      // Positional fixture path (e.g. `gbrain eval conversation-parser path.jsonl`).
+      // Positional fixture path (e.g. `cortex eval conversation-parser path.jsonl`).
       out.fixtures = a;
     }
   }
@@ -66,7 +66,7 @@ function parseArgs(args: string[]): CliArgs {
 }
 
 function printHelp(): void {
-  process.stdout.write(`Usage: gbrain eval conversation-parser [options] <fixture.jsonl>
+  process.stdout.write(`Usage: cortex eval conversation-parser [options] <fixture.jsonl>
 
 Run the v0.41.16.0 conversation parser against a JSONL fixture
 corpus and report per-fixture quality + an aggregate verdict.

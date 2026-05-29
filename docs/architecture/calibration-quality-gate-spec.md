@@ -155,7 +155,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_takes_falsifiability
 ## Evidence Retrieval (v0.36.1.0 → v0.37 enhancement)
 
 The current `grade_takes` evidence retriever returns a stub placeholder. In
-production testing, we wired real evidence retrieval via `gbrain query` (hybrid
+production testing, we wired real evidence retrieval via `cortex query` (hybrid
 search). The pattern that works:
 
 1. Extract the core claim from the take (first 150 chars)

@@ -1,10 +1,10 @@
 /**
- * GBRAIN_PLUGIN_PATH loader for host-repo subagent definitions (v0.15).
+ * CORTEX_PLUGIN_PATH loader for host-repo subagent definitions (v0.15).
  *
  * Your OpenClaw (and future downstream agents) ship custom subagent defs
- * from their own repos. gbrain discovers them at worker startup via
- * GBRAIN_PLUGIN_PATH = colon-separated absolute paths (like $PATH). Each
- * path must contain a gbrain.plugin.json manifest describing the plugin
+ * from their own repos. Cortex discovers them at worker startup via
+ * CORTEX_PLUGIN_PATH = colon-separated absolute paths (like $PATH). Each
+ * path must contain a cortex.plugin.json manifest describing the plugin
  * and a subagents/ subdirectory holding `*.md` definition files.
  *
  * Path policy is strict on purpose:
@@ -27,14 +27,17 @@
  *
  * Manifest version (`plugin_version`) locks the contract shape. Unknown
  * versions are rejected so the authoritative definition is whatever this
- * version of gbrain understands.
+ * version of Cortex understands.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import matter from 'gray-matter';
 
-export const SUPPORTED_PLUGIN_VERSION = 'gbrain-plugin-v1';
+export const SUPPORTED_PLUGIN_VERSION = 'cortex-plugin-v1';
+const LEGACY_PLUGIN_VERSION = 'gbrain-plugin-v1';
+const SUPPORTED_PLUGIN_VERSIONS = new Set([SUPPORTED_PLUGIN_VERSION, LEGACY_PLUGIN_VERSION]);
+const MANIFEST_FILENAMES = ['cortex.plugin.json', 'gbrain.plugin.json'] as const;
 
 export interface PluginManifest {
   name: string;
@@ -77,10 +80,10 @@ export interface LoadOpts {
   envPath?: string;
 }
 
-/** Public entry point: load every plugin directory from GBRAIN_PLUGIN_PATH. */
+/** Public entry point: load every plugin directory from CORTEX_PLUGIN_PATH. */
 export function loadPluginsFromEnv(opts: LoadOpts = {}): PluginLoadResult {
-  const raw = opts.envPath ?? process.env.GBRAIN_PLUGIN_PATH ?? '';
-  const paths = raw.split(':').map(s => s.trim()).filter(Boolean);
+  const raw = opts.envPath ?? process.env.CORTEX_PLUGIN_PATH ?? process.env.GBRAIN_PLUGIN_PATH ?? '';
+  const paths = splitPluginPath(raw);
   const result: PluginLoadResult = { plugins: [], warnings: [] };
 
   // Left-wins collision tracking.
@@ -142,6 +145,15 @@ function rejectIfNotAbsolute(p: string): string | null {
   return null;
 }
 
+function splitPluginPath(raw: string): string[] {
+  if (!raw.trim()) return [];
+  if (path.delimiter === ';') {
+    const chunks = raw.includes(';') ? raw.split(';') : raw.split(/:(?=[A-Za-z]:[\\/])/);
+    return chunks.map(s => s.trim()).filter(Boolean);
+  }
+  return raw.split(':').map(s => s.trim()).filter(Boolean);
+}
+
 export interface LoadedPlugin {
   manifest: PluginManifest;
   subagents: SubagentDefinition[];
@@ -156,9 +168,9 @@ export function loadSinglePlugin(
   rootDir: string,
   opts: LoadOpts = {},
 ): LoadedPlugin | { error: string } {
-  const manifestPath = path.join(rootDir, 'gbrain.plugin.json');
-  if (!fs.existsSync(manifestPath)) {
-    return { error: 'missing gbrain.plugin.json' };
+  const manifestPath = MANIFEST_FILENAMES.map(name => path.join(rootDir, name)).find(candidate => fs.existsSync(candidate));
+  if (!manifestPath) {
+    return { error: 'missing cortex.plugin.json (legacy gbrain.plugin.json is also accepted)' };
   }
 
   let manifest: PluginManifest;
@@ -172,9 +184,9 @@ export function loadSinglePlugin(
   if (typeof manifest.name !== 'string' || manifest.name.length === 0) {
     return { error: 'manifest missing required "name" field' };
   }
-  if (manifest.plugin_version !== SUPPORTED_PLUGIN_VERSION) {
+  if (!SUPPORTED_PLUGIN_VERSIONS.has(manifest.plugin_version)) {
     return {
-      error: `unsupported plugin_version "${manifest.plugin_version}" (gbrain supports "${SUPPORTED_PLUGIN_VERSION}")`,
+      error: `unsupported plugin_version "${manifest.plugin_version}" (Cortex supports "${SUPPORTED_PLUGIN_VERSION}" and legacy "${LEGACY_PLUGIN_VERSION}")`,
     };
   }
 
@@ -231,5 +243,7 @@ export function loadSinglePlugin(
 /** Testing surface. */
 export const __testing = {
   rejectIfNotAbsolute,
+  splitPluginPath,
   SUPPORTED_PLUGIN_VERSION,
+  LEGACY_PLUGIN_VERSION,
 };

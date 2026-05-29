@@ -1,5 +1,5 @@
 /**
- * gbrain eval whoknows — v0.33 two-layer eval gate (ENG-D2).
+ * cortex eval whoknows — v0.33 two-layer eval gate (ENG-D2).
  *
  * Layer 1 (PRIMARY, ship-blocking): hand-labeled fixture.
  *   For each {query, expected_top_3_slugs}, run `findExperts` and check
@@ -26,9 +26,9 @@
  *   default    human-readable table + verdict
  *
  * Usage:
- *   gbrain eval whoknows test/fixtures/whoknows-eval.jsonl
- *   gbrain eval whoknows test/fixtures/whoknows-eval.jsonl --json
- *   gbrain eval whoknows test/fixtures/whoknows-eval.jsonl --skip-replay
+ *   cortex eval whoknows test/fixtures/whoknows-eval.jsonl
+ *   cortex eval whoknows test/fixtures/whoknows-eval.jsonl --json
+ *   cortex eval whoknows test/fixtures/whoknows-eval.jsonl --skip-replay
  */
 
 import { readFileSync, existsSync } from 'fs';
@@ -124,9 +124,9 @@ function parseArgs(args: string[]): CliOpts {
   return opts;
 }
 
-const HELP = `Usage: gbrain eval whoknows <fixture.jsonl> [options]
+const HELP = `Usage: cortex eval whoknows <fixture.jsonl> [options]
 
-Two-layer eval gate (v0.33 ENG-D2) for naive gbrain whoknows:
+Two-layer eval gate (v0.33 ENG-D2) for naive cortex whoknows:
   Layer 1 (PRIMARY): hand-labeled fixture, pass at >= 80% top-3 hit rate
   Layer 2 (REGRESSION): eval_candidates replay set-Jaccard@3 >= 0.4
                         (auto-skipped if < 20 replay-eligible rows)
@@ -294,7 +294,7 @@ async function runRegressionGate(
   if (captured.length < MIN_REPLAY_ROWS) {
     return {
       status: 'skipped',
-      reason: `only ${captured.length} replay-eligible eval_candidates rows (< ${MIN_REPLAY_ROWS} threshold); GBRAIN_CONTRIBUTOR_MODE may have been off`,
+      reason: `only ${captured.length} replay-eligible eval_candidates rows (< ${MIN_REPLAY_ROWS} threshold); CORTEX_CONTRIBUTOR_MODE may have been off`,
       total: captured.length,
       mean_jaccard: 0,
       threshold: REGRESSION_THRESHOLD,
@@ -332,7 +332,7 @@ export async function runEvalWhoknows(
     return 0;
   }
   if (!opts.fixturePath) {
-    console.error('gbrain eval whoknows: fixture path required');
+    console.error('cortex eval whoknows: fixture path required');
     console.error(HELP);
     return 2;
   }
@@ -341,11 +341,11 @@ export async function runEvalWhoknows(
   try {
     fixture = readFixture(opts.fixturePath);
   } catch (e: unknown) {
-    console.error(`gbrain eval whoknows: ${(e as Error).message}`);
+    console.error(`cortex eval whoknows: ${(e as Error).message}`);
     return 2;
   }
   if (fixture.length === 0) {
-    console.error('gbrain eval whoknows: fixture file is empty');
+    console.error('cortex eval whoknows: fixture file is empty');
     return 2;
   }
 
@@ -356,7 +356,7 @@ export async function runEvalWhoknows(
   const cfg = loadConfig();
   const thinClient = isThinClient(cfg);
   if (!thinClient && !engine) {
-    console.error('gbrain eval whoknows: local engine required (not thin-client and no engine connected)');
+    console.error('cortex eval whoknows: local engine required (not thin-client and no engine connected)');
     return 2;
   }
   const whoknows: WhoknowsFn = thinClient

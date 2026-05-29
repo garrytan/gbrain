@@ -1,5 +1,5 @@
 /**
- * Tests for `gbrain sync trigger` CLI (v0.40 D18).
+ * Tests for `cortex sync trigger` CLI (v0.40 D18).
  *
  * Validates the push-trigger entry point:
  *   - Help text renders
@@ -65,7 +65,7 @@ describe('runSyncTrigger', () => {
   test('--help prints usage and returns', async () => {
     const { stdout, exitCode } = await capture(['--help']);
     expect(exitCode).toBeNull();
-    expect(stdout).toContain('gbrain sync trigger');
+    expect(stdout).toContain('cortex sync trigger');
     expect(stdout).toContain('--source');
     expect(stdout).toContain('--priority');
   });

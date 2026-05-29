@@ -1,12 +1,12 @@
 /**
- * Tests for env-aware `gbrain autopilot --install`.
+ * Tests for env-aware `cortex autopilot --install`.
  *
  * Covers:
  *   - detectInstallTarget picks the right target based on env vars +
  *     filesystem sentinels.
  *   - --target flag overrides detection.
  *   - Ephemeral-container path writes the start script + executable bit.
- *   - OpenClaw bootstrap injection is idempotent + creates .bak.
+ *   - Agent bootstrap injection is idempotent + creates .bak.
  *   - Uninstall mirrors all four targets and is a no-op when nothing is
  *     installed.
  *
@@ -31,7 +31,7 @@ function envKeys() {
 
 beforeEach(() => {
   for (const k of envKeys()) envSnapshot[k] = process.env[k];
-  tmp = mkdtempSync(join(tmpdir(), 'gbrain-install-test-'));
+  tmp = mkdtempSync(join(tmpdir(), 'cortex-install-test-'));
   process.env.HOME = tmp;
   // Start each test with a clean slate for ephemeral env vars.
   delete process.env.RENDER;
@@ -83,7 +83,7 @@ describe('detectInstallTarget', () => {
 // ~/.zshenv BEFORE ~/.zshrc. zshenv is the canonical place for env vars in
 // non-interactive zsh; zshrc only fires for interactive shells, so vars
 // exported in zshrc never reach the LaunchAgent subprocess. Operators who
-// exported GBRAIN_DATABASE_URL or {OPENAI,ANTHROPIC}_API_KEY in zshrc and
+// exported CORTEX_DATABASE_URL or {OPENAI,ANTHROPIC}_API_KEY in zshrc and
 // expected autopilot to inherit them hit silent missing-secret failures.
 describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () => {
   test('wrapper sources ~/.zshenv before ~/.zshrc', async () => {

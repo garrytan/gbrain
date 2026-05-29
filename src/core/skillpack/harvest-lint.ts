@@ -112,7 +112,7 @@ export function runPrivacyLint(
 
   if (hits.length > 0) {
     throw new PrivacyLintError(
-      `Privacy lint found ${hits.length} match(es) in harvested content. Harvest rolled back. Edit your skill, run the editorial genericization, or add a pattern exception to ${patternsPath ?? '~/.gbrain/harvest-private-patterns.txt'}.`,
+        `Privacy lint found ${hits.length} match(es) in harvested content. Harvest rolled back. Edit your skill, run the editorial genericization, or add a pattern exception to ${patternsPath ?? '~/.cortex/harvest-private-patterns.txt'}.`,
       hits,
     );
   }

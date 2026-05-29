@@ -133,7 +133,7 @@ export const DEFAULT_RUBRICS: Record<VoiceGateMode, string> = {
 
 const DEFAULT_MAX_ATTEMPTS = 2;
 
-const HAIKU_GATE_PROMPT = `You are the voice gate for a personal AI brain. A surface wants to show
+const HAIKU_GATE_PROMPT = `You are the voice gate for a company brain. A surface wants to show
 this candidate text to the user. Decide whether it sounds conversational
 (friend talking to friend) or academic (clinical / corporate).
 

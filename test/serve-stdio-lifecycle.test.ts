@@ -297,7 +297,7 @@ describe('runServe stdio lifecycle', () => {
 
     // Watchdog NOT installed — message matches behavior.
     expect(h.timers.active()).toBe(0);
-    expect(h.logs.some(l => l.includes('[gbrain serve] watchdog disabled: ps unavailable'))).toBe(true);
+    expect(h.logs.some(l => l.includes('[cortex serve] watchdog disabled: ps unavailable'))).toBe(true);
 
     // Sanity: the other lifecycle paths still work — the shutdown still
     // funnels through stdin EOF / signals, just not via the watchdog.
@@ -398,9 +398,19 @@ describe('runServe stdio lifecycle', () => {
     expect(h.engine.disconnectCalls).toBe(0);
 
     // Now stop pulsing and wait for the timer to actually fire end-to-end
-    // (it ought to elapse within ~1s of the last reset). Awaiting
-    // h.exited rather than a wall-clock race makes this deterministic.
-    await h.exited;
+    // (it ought to elapse within ~1s of the last reset). Keep a referenced
+    // test timeout alive while awaiting the production timer: the production
+    // idle timer is intentionally unref'ed so it does not keep real servers
+    // alive on its own.
+    let failTimer: ReturnType<typeof setTimeout> | null = null;
+    const code = await Promise.race([
+      h.exited,
+      new Promise<never>((_, reject) => {
+        failTimer = setTimeout(() => reject(new Error('idle timer did not fire')), 1500);
+      }),
+    ]);
+    if (failTimer) clearTimeout(failTimer);
+    expect(code).toBe(0);
     expect(h.engine.disconnectCalls).toBe(1);
     expect(h.logs.some(l => l.includes('stdio-idle-timeout (1s)'))).toBe(true);
   }, 5000);
@@ -442,7 +452,7 @@ describe('runServe stdio lifecycle', () => {
     expect(h.logs.some(l => l.includes('cleanup error: synthetic disconnect failure'))).toBe(true);
   });
 
-  // v0.34.1 (#870): OpenClaw gateway / bundle-mcp wrappers pipe the
+  // v0.34.1 (#870): MCP gateway / bundle-mcp wrappers pipe the
   // JSON-RPC handshake on stdin then close their stdin half. Without
   // MCP_STDIO=1 the server treats that as a permanent disconnect and
   // exits before handling tools/call. The guard skips the stdin 'end' /
@@ -488,7 +498,7 @@ describe('runServe stdio lifecycle', () => {
     test('mcpStdio=false (default) preserves stdin EOF shutdown', async () => {
       // Regression guard: the guard must not over-trigger. With the env
       // unset, stdin EOF must still drive shutdown so existing CLI usage
-      // (gbrain serve under launchd, claude-desktop's stdio MCP) is
+      // (cortex serve under launchd, claude-desktop's stdio MCP) is
       // unchanged.
       const h = makeHarness({ mcpStdio: false });
       await startInBackground(h.engine, [], h.opts);

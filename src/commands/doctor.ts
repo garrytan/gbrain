@@ -3858,7 +3858,7 @@ export async function buildChecks(
   // invisible. See docs/guides/rls-and-you.md.
   progress.heartbeat('rls');
   if (engine.kind === 'pglite') {
-    // PGLite is embedded and single-user — no PostgREST exposure,
+    // PGLite is embedded — no PostgREST exposure,
     // RLS is not a meaningful security boundary here.
     checks.push({
       name: 'rls',

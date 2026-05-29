@@ -146,8 +146,8 @@ describe('A2 — maybeRewriteSourceFkError (friendly FK violation hint)', () => 
     );
     const hint = maybeRewriteSourceFkError(err, 'dept-x');
     expect(hint).toContain("source 'dept-x' is not registered");
-    expect(hint).toContain('gbrain sources add dept-x');
-    expect(hint).toContain('gbrain sources list');
+    expect(hint).toContain('cortex sources add dept-x');
+    expect(hint).toContain('cortex sources list');
   });
 
   test('rewrites a wrapped OperationError-style message containing the FK constraint name', () => {

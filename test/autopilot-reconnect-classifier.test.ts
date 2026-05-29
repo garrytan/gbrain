@@ -35,12 +35,12 @@ describe('classifyReconnectError (#1162)', () => {
   });
 
   test('auth failure → unrecoverable (creds don\'t fix themselves)', () => {
-    expect(classifyReconnectError(new Error('password authentication failed for user "gbrain"'))).toBe('unrecoverable');
+    expect(classifyReconnectError(new Error('password authentication failed for user "cortex"'))).toBe('unrecoverable');
     expect(classifyReconnectError(new Error('role "ghost" does not exist'))).toBe('unrecoverable');
   });
 
   test('no brain configured → unrecoverable', () => {
-    expect(classifyReconnectError(new Error('No brain configured. Run: gbrain init'))).toBe('unrecoverable');
+    expect(classifyReconnectError(new Error('No brain configured. Run: cortex init'))).toBe('unrecoverable');
   });
 
   test('network blip → recoverable', () => {

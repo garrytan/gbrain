@@ -241,7 +241,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // registration entry points share one allow-list.
     const authMethod = validateTokenEndpointAuthMethod(client.token_endpoint_auth_method);
 
-    const clientId = generateToken('gbrain_cl_');
+    const clientId = generateToken('cortex_cl_');
     // v0.34.1 (#909): RFC 7591 §2 — clients that authenticate at the token
     // endpoint via PKCE alone declare `token_endpoint_auth_method: "none"`.
     // For those clients the authorization server MUST NOT issue a client
@@ -255,7 +255,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // `client_secret_post` and explicit `client_secret_basic`) still mint
     // a secret as before.
     const isPublicClient = authMethod === 'none';
-    const clientSecret = isPublicClient ? undefined : generateToken('gbrain_cs_');
+    const clientSecret = isPublicClient ? undefined : generateToken('cortex_cs_');
     const secretHash = clientSecret ? hashToken(clientSecret) : null;
     const now = Math.floor(Date.now() / 1000);
 
@@ -377,7 +377,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    const code = generateToken('gbrain_code_');
+    const code = generateToken('cortex_code_');
     const codeHash = hashToken(code);
     const expiresAt = Math.floor(Date.now() / 1000) + 600; // 10 minute TTL
 
@@ -832,7 +832,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // Default is `client_secret_post` (RFC 7591 §2).
     const authMethod = validateTokenEndpointAuthMethod(tokenEndpointAuthMethod);
 
-    const clientId = generateToken('gbrain_cl_');
+    const clientId = generateToken('cortex_cl_');
     // v0.41.3 (T2): atomic public-client INSERT. When the caller declares
     // `tokenEndpointAuthMethod: 'none'` we mint NO secret and INSERT with
     // client_secret_hash = NULL in a single statement. Pre-fix, the admin
@@ -841,7 +841,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // (`client_secret_post` / `client_secret_basic`) get the secret minted
     // and hashed as before.
     const isPublicClient = authMethod === 'none';
-    const clientSecret = isPublicClient ? undefined : generateToken('gbrain_cs_');
+    const clientSecret = isPublicClient ? undefined : generateToken('cortex_cs_');
     const secretHash = clientSecret ? hashToken(clientSecret) : null;
     const now = Math.floor(Date.now() / 1000);
 
@@ -914,7 +914,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     includeRefresh: boolean,
     ttlOverride?: number,
   ): Promise<OAuthTokens> {
-    const accessToken = generateToken('gbrain_at_');
+    const accessToken = generateToken('cortex_at_');
     const accessHash = hashToken(accessToken);
     const now = Math.floor(Date.now() / 1000);
     const effectiveTtl = ttlOverride || this.tokenTtl;
@@ -934,7 +934,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     };
 
     if (includeRefresh) {
-      const refreshToken = generateToken('gbrain_rt_');
+      const refreshToken = generateToken('cortex_rt_');
       const refreshHash = hashToken(refreshToken);
       const refreshExpiry = now + this.refreshTtl;
 

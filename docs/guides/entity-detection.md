@@ -59,7 +59,7 @@ STEP 2 — ENTITIES:
 Extract all person names, company names, media titles.
 
 For each entity:
-  a. Run: gbrain search "{name}"
+  a. Run: cortex search "{name}"
   b. If page exists AND new info: append timeline entry
      Format: - YYYY-MM-DD | {what happened} [Source: {who}, {context}, {date}]
   c. If no page AND entity is notable: create page with web enrichment
@@ -71,7 +71,7 @@ An unlinked mention is a broken brain.
 Format: - **YYYY-MM-DD** | Referenced in [{page title}]({path}) — {context}
 
 STEP 4 — SYNC:
-Run: gbrain sync --no-pull --no-embed
+Run: cortex sync --no-pull --no-embed
 
 If nothing to capture, reply "No signals detected" and exit.
 `
@@ -161,7 +161,7 @@ to Pedro" only works if Pedro's page links back to every mention.
    search, build out the compiled truth, add context. A stub page with just
    a name is worse than no page (it gives false confidence).
 
-5. **Dedup before creating.** Always `gbrain search` before creating a page.
+5. **Dedup before creating.** Always `cortex search` before creating a page.
    Variant spellings, nicknames, and company abbreviations cause duplicates.
    "Pedro Franceschi" and "Pedro" might be the same person.
 
@@ -187,4 +187,4 @@ to Pedro" only works if Pedro's page links back to every mention.
 
 ---
 
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md).*

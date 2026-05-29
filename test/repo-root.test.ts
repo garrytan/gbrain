@@ -29,7 +29,7 @@ describe('findRepoRoot', () => {
     mkdirSync(join(dir, 'skills'), { recursive: true });
     writeFileSync(join(dir, 'skills', 'RESOLVER.md'), '# RESOLVER\n');
     mkdirSync(join(dir, 'src'), { recursive: true });
-    writeFileSync(join(dir, 'src', 'cli.ts'), '// gbrain marker\n');
+    writeFileSync(join(dir, 'src', 'cli.ts'), '// cortex marker\n');
   }
 
   function seedSkillsDir(dir: string): void {
@@ -64,21 +64,21 @@ describe('findRepoRoot', () => {
     expect(findRepoRoot()).toBe(findRepoRoot(process.cwd()));
   });
 
-  it('auto-detect: falls back to $OPENCLAW_WORKSPACE/skills when repo root is absent', () => {
+  it('auto-detect: falls back to $CORTEX_WORKSPACE/skills when repo root is absent', () => {
     const cwd = scratch();
     const workspace = scratch();
     seedSkillsDir(join(workspace, 'skills'));
-    const found = autoDetectSkillsDir(cwd, { OPENCLAW_WORKSPACE: workspace });
+    const found = autoDetectSkillsDir(cwd, { CORTEX_WORKSPACE: workspace });
     expect(found.dir).toBe(join(workspace, 'skills'));
     expect(found.source).toBe('openclaw_workspace_env');
   });
 
-  it('auto-detect: falls back to ~/.openclaw/workspace/skills when env var is not set', () => {
+  it('auto-detect: falls back to ~/.cortex/workspace/skills when env var is not set', () => {
     const cwd = scratch();
     const home = scratch();
-    seedSkillsDir(join(home, '.openclaw', 'workspace', 'skills'));
+    seedSkillsDir(join(home, '.cortex', 'workspace', 'skills'));
     const found = autoDetectSkillsDir(cwd, { HOME: home });
-    expect(found.dir).toBe(join(home, '.openclaw', 'workspace', 'skills'));
+    expect(found.dir).toBe(join(home, '.cortex', 'workspace', 'skills'));
     expect(found.source).toBe('openclaw_workspace_home');
   });
 
@@ -93,8 +93,8 @@ describe('findRepoRoot', () => {
     expect(found.source).toBe('cwd_walk_up');
   });
 
-  it('D-CX-4: $OPENCLAW_WORKSPACE wins over repo-root walk when explicitly set', () => {
-    // Prior priority (shadow bug): walking up from cwd found gbrain's
+  it('D-CX-4: $CORTEX_WORKSPACE wins over repo-root walk when explicitly set', () => {
+    // Prior priority (shadow bug): walking up from cwd found Cortex's
     // repo root first and silently ignored the env var. Post-D-CX-4:
     // explicit env wins. Unset env → repo-root walk still wins
     // (tested below).
@@ -104,7 +104,7 @@ describe('findRepoRoot', () => {
     seedSkillsDir(join(workspace, 'skills'));
     const nested = join(root, 'a', 'b');
     mkdirSync(nested, { recursive: true });
-    const found = autoDetectSkillsDir(nested, { OPENCLAW_WORKSPACE: workspace });
+    const found = autoDetectSkillsDir(nested, { CORTEX_WORKSPACE: workspace });
     expect(found.dir).toBe(join(workspace, 'skills'));
     expect(found.source).toBe('openclaw_workspace_env');
   });
@@ -123,7 +123,7 @@ describe('findRepoRoot', () => {
     expect(found.source).toBe('cwd_walk_up');
   });
 
-  it('W1: AGENTS.md at skills dir is accepted (OpenClaw skills-subdir variant)', () => {
+  it('W1: AGENTS.md at skills dir is accepted (Cortex workspace skills-subdir variant)', () => {
     const workspace = scratch();
     const skillsDir = join(workspace, 'skills');
     mkdirSync(skillsDir, { recursive: true });
@@ -132,13 +132,13 @@ describe('findRepoRoot', () => {
       join(skillsDir, 'AGENTS.md'),
       '# AGENTS\n\n| Trigger | Skill |\n|---|---|\n',
     );
-    const found = autoDetectSkillsDir(scratch(), { OPENCLAW_WORKSPACE: workspace });
+    const found = autoDetectSkillsDir(scratch(), { CORTEX_WORKSPACE: workspace });
     expect(found.dir).toBe(skillsDir);
     expect(found.source).toBe('openclaw_workspace_env');
   });
 
-  it('W1: AGENTS.md at workspace root (OpenClaw-native layout)', () => {
-    // The reference OpenClaw deployment places AGENTS.md at
+  it('W1: AGENTS.md at workspace root (Cortex workspace-root layout)', () => {
+    // The reference Cortex workspace places AGENTS.md at
     // workspace/AGENTS.md, with skills in workspace/skills/. Auto-detect
     // must find the skills dir and flag this as the workspace-root variant.
     const workspace = scratch();
@@ -148,13 +148,13 @@ describe('findRepoRoot', () => {
       join(workspace, 'AGENTS.md'),
       '# AGENTS\n\n| Trigger | Skill |\n|---|---|\n',
     );
-    const found = autoDetectSkillsDir(scratch(), { OPENCLAW_WORKSPACE: workspace });
+    const found = autoDetectSkillsDir(scratch(), { CORTEX_WORKSPACE: workspace });
     expect(found.dir).toBe(skillsDir);
     expect(found.source).toBe('openclaw_workspace_env_root');
   });
 
   it('W1: both RESOLVER.md and AGENTS.md present — RESOLVER.md wins', () => {
-    // Policy: when both exist at the same location, gbrain-native wins.
+    // Policy: when both exist at the same location, Cortex-native wins.
     const workspace = scratch();
     const skillsDir = join(workspace, 'skills');
     mkdirSync(skillsDir, { recursive: true });
@@ -166,7 +166,7 @@ describe('findRepoRoot', () => {
       join(skillsDir, 'AGENTS.md'),
       '# AGENTS\n\n| Trigger | Skill |\n|---|---|\n',
     );
-    const found = autoDetectSkillsDir(scratch(), { OPENCLAW_WORKSPACE: workspace });
+    const found = autoDetectSkillsDir(scratch(), { CORTEX_WORKSPACE: workspace });
     expect(found.dir).toBe(skillsDir);
     // Source is still `env` — the distinction is which file was found,
     // and RESOLVER.md takes precedence inside resolveWorkspaceSkillsDir.
@@ -174,35 +174,35 @@ describe('findRepoRoot', () => {
   });
 
   // -----------------------------------------------------------------------
-  // v0.31.7 #128 adaptation: tier-0 GBRAIN_SKILLS_DIR + read-only
+  // v0.31.7 #128 adaptation: tier-0 CORTEX_SKILLS_DIR + read-only
   // install-path fallback. Locked in eng-review D3 + D5.
   // -----------------------------------------------------------------------
 
-  it('v0.31.7 D3-1: tier-0 $GBRAIN_SKILLS_DIR valid path returns env_explicit source', () => {
+  it('v0.31.7 D3-1: tier-0 $CORTEX_SKILLS_DIR valid path returns env_explicit source', () => {
     const cwd = scratch();
     const explicit = scratch();
     seedSkillsDir(explicit);
-    const found = autoDetectSkillsDir(cwd, { GBRAIN_SKILLS_DIR: explicit });
+    const found = autoDetectSkillsDir(cwd, { CORTEX_SKILLS_DIR: explicit });
     expect(found.dir).toBe(explicit);
     expect(found.source).toBe('env_explicit');
   });
 
   it('v0.31.7 D3-2: tier-0 invalid path falls through to lower tiers', () => {
-    // GBRAIN_SKILLS_DIR points to a directory with no resolver file. Must
-    // not crash; must continue to the next tier (OPENCLAW_WORKSPACE here).
+    // CORTEX_SKILLS_DIR points to a directory with no resolver file. Must
+    // not crash; must continue to the next tier (CORTEX_WORKSPACE here).
     const cwd = scratch();
     const invalid = scratch(); // no RESOLVER.md / AGENTS.md inside
     const workspace = scratch();
     seedSkillsDir(join(workspace, 'skills'));
     const found = autoDetectSkillsDir(cwd, {
-      GBRAIN_SKILLS_DIR: invalid,
-      OPENCLAW_WORKSPACE: workspace,
+      CORTEX_SKILLS_DIR: invalid,
+      CORTEX_WORKSPACE: workspace,
     });
     expect(found.dir).toBe(join(workspace, 'skills'));
     expect(found.source).toBe('openclaw_workspace_env');
   });
 
-  it('v0.31.7 D3-3: tier-0 wins over $OPENCLAW_WORKSPACE precedence', () => {
+  it('v0.31.7 D3-3: tier-0 wins over $CORTEX_WORKSPACE precedence', () => {
     // Both env vars set. Tier-0 (explicit operator override) MUST win.
     const cwd = scratch();
     const explicit = scratch();
@@ -210,26 +210,26 @@ describe('findRepoRoot', () => {
     const workspace = scratch();
     seedSkillsDir(join(workspace, 'skills'));
     const found = autoDetectSkillsDir(cwd, {
-      GBRAIN_SKILLS_DIR: explicit,
-      OPENCLAW_WORKSPACE: workspace,
+      CORTEX_SKILLS_DIR: explicit,
+      CORTEX_WORKSPACE: workspace,
     });
     expect(found.dir).toBe(explicit);
     expect(found.source).toBe('env_explicit');
   });
 
   it('v0.31.7 D3-4: autoDetectSkillsDirReadOnly install-path walk finds bundled skills', () => {
-    // When primary detection returns null (no env, no openclaw, no repo
+    // When primary detection returns null (no env, no workspace, no repo
     // root walk-up, no ./skills), the read-only variant walks up from
-    // import.meta.url (the gbrain module's install path) and finds the
+    // import.meta.url (the Cortex module's install path) and finds the
     // bundled skills/. This test runs from a tempdir cwd with no env vars
     // set; the only path that can succeed is the install-path fallback.
     const cwd = scratch();
     const found = autoDetectSkillsDirReadOnly(cwd, {});
-    // We're inside the gbrain repo when running the test, so the install
+    // We're inside the Cortex repo when running the test, so the install
     // path resolves to the repo's skills dir.
     expect(found.dir).not.toBeNull();
     expect(found.source).toBe('install_path');
-    expect(found.dir).toMatch(/\/skills$/);
+    expect(found.dir).toMatch(/[\\/]skills$/);
   });
 
   it('v0.31.7 D3-5: autoDetectSkillsDirReadOnly returns same primary detection on success', () => {
@@ -238,7 +238,7 @@ describe('findRepoRoot', () => {
     const cwd = scratch();
     const workspace = scratch();
     seedSkillsDir(join(workspace, 'skills'));
-    const env = { OPENCLAW_WORKSPACE: workspace };
+    const env = { CORTEX_WORKSPACE: workspace };
     const primary = autoDetectSkillsDir(cwd, env);
     const readOnly = autoDetectSkillsDirReadOnly(cwd, env);
     expect(readOnly.dir).toBe(primary.dir);
@@ -247,27 +247,27 @@ describe('findRepoRoot', () => {
     expect(readOnly.source).toBe('openclaw_workspace_env');
   });
 
-  it('v0.31.7 D3-6: AUTO_DETECT_HINT documents tier-0 GBRAIN_SKILLS_DIR', () => {
+  it('v0.31.7 D3-6: AUTO_DETECT_HINT documents tier-0 CORTEX_SKILLS_DIR', () => {
     // Hint string is what users see when auto-detect fails — must list the
     // tier-0 explicit override so they know to set it.
-    expect(AUTO_DETECT_HINT).toContain('$GBRAIN_SKILLS_DIR');
+    expect(AUTO_DETECT_HINT).toContain('$CORTEX_SKILLS_DIR');
     expect(AUTO_DETECT_HINT).toContain('explicit operator override');
   });
 
   it('v0.31.7 D3-7: AUTO_DETECT_HINT_READ_ONLY adds install-path tier', () => {
     // Read-only hint must mention the install-path fallback so doctor's
-    // user can understand what gbrain found and where.
+    // user can understand what Cortex found and where.
     expect(AUTO_DETECT_HINT_READ_ONLY).toContain('install path');
     expect(AUTO_DETECT_HINT_READ_ONLY).toContain('read-only');
     // And must include everything from the base hint.
-    expect(AUTO_DETECT_HINT_READ_ONLY).toContain('$GBRAIN_SKILLS_DIR');
-    expect(AUTO_DETECT_HINT_READ_ONLY).toContain('$OPENCLAW_WORKSPACE');
+    expect(AUTO_DETECT_HINT_READ_ONLY).toContain('$CORTEX_SKILLS_DIR');
+    expect(AUTO_DETECT_HINT_READ_ONLY).toContain('$CORTEX_WORKSPACE');
   });
 
   // ─── v0.33 cwd_walk_up tier (D3) ──────────────────────────────
-  // Non-OpenClaw hosts (any agent repo with a bare skills/ dir) own
+  // Agent hosts with a bare skills/ dir own
   // their skills/ directly. The new tier resolves these without
-  // requiring a resolver file or gbrain-shape `src/cli.ts`.
+  // requiring a resolver file or Cortex-shape `src/cli.ts`.
 
   it('v0.33 cwd_walk_up: cwd has skills/ but no resolver, no src/cli.ts (bare-skills-dir shape)', () => {
     const agentRepo = scratch();
@@ -288,17 +288,17 @@ describe('findRepoRoot', () => {
     expect(found.source).toBe('cwd_walk_up');
   });
 
-  it('R5 regression: $OPENCLAW_WORKSPACE still wins when both env and cwd-skills exist', () => {
+  it('R5 regression: $CORTEX_WORKSPACE still wins when both env and cwd-skills exist', () => {
     // Pre-v0.33 R5: explicit env beats implicit cwd. The new cwd_walk_up
     // tier MUST NOT regress this — explicit operator intent always wins.
     const agentRepo = scratch();
     mkdirSync(join(agentRepo, 'skills'));
-    const openclawWs = scratch();
-    mkdirSync(join(openclawWs, 'skills'));
-    writeFileSync(join(openclawWs, 'skills', 'AGENTS.md'), '# agents\n');
+    const cortexWs = scratch();
+    mkdirSync(join(cortexWs, 'skills'));
+    writeFileSync(join(cortexWs, 'skills', 'AGENTS.md'), '# agents\n');
 
-    const found = autoDetectSkillsDir(agentRepo, { OPENCLAW_WORKSPACE: openclawWs });
-    expect(found.dir).toBe(join(openclawWs, 'skills'));
+    const found = autoDetectSkillsDir(agentRepo, { CORTEX_WORKSPACE: cortexWs });
+    expect(found.dir).toBe(join(cortexWs, 'skills'));
     expect(found.source).toBe('openclaw_workspace_env');
   });
 
@@ -316,7 +316,7 @@ describe('findRepoRoot', () => {
     // autoDetectSkillsDir is used by write-path callers (skillpack install,
     // skillify scaffold, post-install-advisory). If a future edit adds the
     // install-path fallback to the SHARED function, those write-path
-    // callers running from `~` would silently retarget the bundled gbrain
+    // callers running from `~` would silently retarget the bundled Cortex
     // repo's skills/ instead of the user's actual workspace — a quiet
     // data-flow regression. This test asserts the shared function returns
     // null (not an install_path source) when no env or repo-root signal
@@ -324,7 +324,7 @@ describe('findRepoRoot', () => {
     const cwd = scratch(); // empty tempdir; no resolver anywhere up
     const found = autoDetectSkillsDir(cwd, {});
     // Either null (no skills dir found) or repo_root if test runs inside
-    // the gbrain repo. In either case, NEVER 'install_path' on the shared
+    // the Cortex repo. In either case, NEVER 'install_path' on the shared
     // function — that variant is reserved for autoDetectSkillsDirReadOnly.
     expect(found.source).not.toBe('install_path');
   });

@@ -45,7 +45,7 @@ import { runContradictionProbe } from '../src/core/eval-contradictions/runner.ts
 
 async function connectLocalEngine(): Promise<BrainEngine> {
   const cfg = loadConfig();
-  if (!cfg) throw new Error('No brain configured. Run `gbrain init` first.');
+  if (!cfg) throw new Error('No Cortex brain configured. Run `cortex init` or connect a hosted tenant first.');
   const engineCfg = toEngineConfig(cfg);
   const engine = await createEngine(engineCfg);
   await connectWithRetry(engine, engineCfg, { noRetry: false });

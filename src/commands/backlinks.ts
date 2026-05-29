@@ -1,13 +1,13 @@
 /**
- * gbrain check-backlinks — Check and fix missing back-links across brain pages.
+ * cortex check-backlinks — Check and fix missing back-links across brain pages.
  *
  * Deterministic: zero LLM calls. Scans pages for entity mentions,
  * checks if back-links exist, and optionally creates them.
  *
  * Usage:
- *   gbrain check-backlinks check [--dir <brain-dir>]     # report missing back-links
- *   gbrain check-backlinks fix [--dir <brain-dir>]        # create missing back-links
- *   gbrain check-backlinks fix --dry-run                  # preview fixes
+ *   cortex check-backlinks check [--dir <brain-dir>]     # report missing back-links
+ *   cortex check-backlinks fix [--dir <brain-dir>]        # create missing back-links
+ *   cortex check-backlinks fix --dry-run                  # preview fixes
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
@@ -242,7 +242,7 @@ export async function runBacklinks(args: string[]) {
   const dryRun = args.includes('--dry-run');
 
   if (!subcommand || !['check', 'fix'].includes(subcommand)) {
-    console.error('Usage: gbrain check-backlinks <check|fix> [--dir <brain-dir>] [--dry-run]');
+    console.error('Usage: cortex check-backlinks <check|fix> [--dir <brain-dir>] [--dry-run]');
     console.error('  check    Report missing back-links');
     console.error('  fix      Create missing back-links (appends to Timeline)');
     console.error('  --dir    Brain directory (default: current directory)');
@@ -274,7 +274,7 @@ export async function runBacklinks(args: string[]) {
       console.log(`  ${gap.targetPage} <- ${gap.sourcePage}`);
       console.log(`    "${gap.entityName}" mentioned in "${gap.sourceTitle}"`);
     }
-    console.log(`\nRun 'gbrain check-backlinks fix --dir ${brainDir}' to create them.`);
+    console.log(`\nRun 'cortex check-backlinks fix --dir ${brainDir}' to create them.`);
   } else {
     const label = result.dryRun ? '(dry run) ' : '';
     console.log(`${label}Fixed ${result.fixed} missing back-link(s) across ${result.pages_affected} page(s).`);

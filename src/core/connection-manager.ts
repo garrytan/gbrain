@@ -1,17 +1,17 @@
 /**
  * Connection Manager — route Postgres queries by query type (v0.30.1, Fix 1).
  *
- * Three pools, one decision: read() goes to the pooler (port 6543, fast,
- * many connections); ddl() and bulk() go to a direct connection (port 5432,
- * 30min statement_timeout, capped at 3 conns) so DDL doesn't time out on
- * the Supabase pooler's 2-min statement_timeout.
+ * Three pools, one decision: read() goes to the Supabase pooler (session
+ * mode on port 5432 or transaction mode on port 6543); ddl() and bulk() go
+ * to a direct connection (db.<ref>.supabase.co:5432, capped at 3 conns) so
+ * DDL doesn't time out on the pooler's shorter statement_timeout.
  *
  * The connection-manager is the URL-routing layer. It layers on top of
  * postgres.js's existing pool primitives + PostgresEngine.withReservedConnection.
  *
  *   ┌─────────────────────────────┐
- *   │ GBRAIN_DATABASE_URL         │   GBRAIN_DIRECT_DATABASE_URL (override)
- *   │ (pooler, port 6543)         │
+ *   │ CORTEX_DATABASE_URL        │   CORTEX_DIRECT_DATABASE_URL (override)
+ *   │ (pooler host)               │
  *   └────────┬────────────────────┘
  *            │
  *            ▼ auto-detect Supabase
@@ -29,11 +29,11 @@
  *    via constructor option `parent`. transaction() clones share the parent's.
  *  - Lazy direct pool init via cached Promise<Sql> (A1): concurrent first
  *    callers await the same Promise, so no double-init.
- *  - Kill-switch (F1): GBRAIN_DISABLE_DIRECT_POOL=1 falls back to single-pool
+ *  - Kill-switch (F1): CORTEX_DISABLE_DIRECT_POOL=1 falls back to single-pool
  *    legacy path. With parent set, inherit parent's kill-switch state (A2).
  *  - Audit (F8): every acquire/release/error logs to connection-events.jsonl.
  *  - Non-Supabase passthrough: if URL isn't a Supabase pooler and no
- *    GBRAIN_DIRECT_DATABASE_URL override, ddl()/bulk() share the read pool.
+ *    CORTEX_DIRECT_DATABASE_URL override, ddl()/bulk() share the read pool.
  */
 
 import postgres from 'postgres';
@@ -44,11 +44,11 @@ import { logConnectionEvent } from './connection-audit.ts';
 export type Sql = ReturnType<typeof postgres>;
 
 export interface ConnectionManagerOpts {
-  /** Primary URL — usually the pooler (port 6543) on Supabase. */
+  /** Primary URL — usually a Supabase pooler URL. */
   url: string;
   /**
    * Override for the direct URL. When set, takes precedence over auto-derivation.
-   * Sourced from GBRAIN_DIRECT_DATABASE_URL or explicit caller config.
+   * Sourced from CORTEX_DIRECT_DATABASE_URL or explicit caller config.
    */
   directUrl?: string | null;
   /**
@@ -62,7 +62,7 @@ export interface ConnectionManagerOpts {
    */
   readPoolSize?: number;
   /**
-   * Direct pool size override (defaults to GBRAIN_DIRECT_POOL_SIZE env or 3).
+   * Direct pool size override (defaults to CORTEX_DIRECT_POOL_SIZE env or 3).
    */
   directPoolSize?: number;
   /**
@@ -119,7 +119,7 @@ export function isSupabasePoolerUrl(url: string): boolean {
 /**
  * Derive a direct (non-pooler) URL from a Supabase pooler URL. Two known shapes:
  *
- *   Pooler hostname: aws-N-region.pooler.supabase.com on port 6543
+ *   Pooler hostname: aws-N-region.pooler.supabase.com
  *      → swap to db.<project-ref>.supabase.co on port 5432
  *      (project-ref encoded in the user component as postgres.<ref>)
  *   Direct hostname: db.<ref>.supabase.co already on port 5432 → returned as-is
@@ -172,7 +172,9 @@ export function deriveDirectUrl(url: string): string | null {
  * when present (A2 inheritance).
  */
 export function readKillSwitchEnv(): boolean {
-  return process.env.GBRAIN_DISABLE_DIRECT_POOL === '1' ||
+  return process.env.CORTEX_DISABLE_DIRECT_POOL === '1' ||
+    process.env.CORTEX_DISABLE_DIRECT_POOL === 'true' ||
+    process.env.GBRAIN_DISABLE_DIRECT_POOL === '1' ||
     process.env.GBRAIN_DISABLE_DIRECT_POOL === 'true';
 }
 
@@ -181,7 +183,7 @@ export function readKillSwitchEnv(): boolean {
  */
 export function resolveDirectPoolSize(explicit?: number): number {
   if (typeof explicit === 'number' && explicit > 0) return explicit;
-  const raw = process.env.GBRAIN_DIRECT_POOL_SIZE;
+  const raw = process.env.CORTEX_DIRECT_POOL_SIZE || process.env.GBRAIN_DIRECT_POOL_SIZE;
   if (raw) {
     const parsed = parseInt(raw, 10);
     if (Number.isFinite(parsed) && parsed > 0 && parsed <= 20) return parsed;
@@ -214,7 +216,7 @@ export class ConnectionManager {
       this._killSwitch = readKillSwitchEnv();
       this._isSupabase = isSupabasePoolerUrl(opts.url);
       // Direct URL: explicit override > env > derive > null
-      const envOverride = process.env.GBRAIN_DIRECT_DATABASE_URL;
+      const envOverride = process.env.CORTEX_DIRECT_DATABASE_URL || process.env.GBRAIN_DIRECT_DATABASE_URL;
       this._directUrl = opts.directUrl ?? envOverride ?? deriveDirectUrl(opts.url);
     }
   }

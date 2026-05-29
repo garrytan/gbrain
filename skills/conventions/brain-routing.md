@@ -1,184 +1,113 @@
 # Brain Routing Convention
 
 Cross-cutting rules for which brain and which source an operation targets.
-Applies to every skill that reads or writes brain pages. **Full mental model
-lives in `docs/architecture/brains-and-sources.md` — read it once.**
+Applies to every skill that reads or writes brain pages. Read
+`docs/architecture/brains-and-sources.md` once for the full SaaS model.
 
-## The two axes (one-line summary)
+## Axes
 
-- **Brain** = which DATABASE. `--brain`, `GBRAIN_BRAIN_ID`, `.gbrain-mount`.
-- **Source** = which REPO INSIDE the database. `--source`, `GBRAIN_SOURCE`,
-  `.gbrain-source`.
+- **Brain** = which database/deployment boundary. In SaaS terms, this is the
+  tenant brain.
+- **Source** = which team, repo, or domain boundary inside that brain.
 
-Orthogonal. Pick one on each axis per operation.
+Pick one brain and one source per operation. For hosted agents, OAuth source
+bindings are authoritative:
 
-## Default behavior (ALWAYS)
+- `source_id` is the write source.
+- `federated_read` is the readable source set.
 
-Start in the brain + source resolved by the environment:
+## Default Behavior
 
-1. Run `gbrain mounts list` if you haven't seen the user's mounts yet.
-2. Trust the resolver. If the user is in `~/team-brains/media/`, their
-   `.gbrain-mount` pins brain=media-team. Don't override that silently.
-3. For every brain op, pass the resolved brain id explicitly when calling
-   tools (even if it matches the default). Makes routing visible in logs.
+Start in the brain and source resolved by the environment or OAuth context.
+Do not cross the boundary without a reason.
 
-Bare `gbrain query "X"` routes to the default brain's default source. That
-is the right answer 90% of the time. Don't cross the boundary without a
-reason.
+For remote/MCP callers, trust the authenticated client context rather than
+local dotfiles:
 
-## When to switch brain
+- `ctx.auth.sourceId`
+- `ctx.auth.allowedSources`
+- `ctx.sourceId`
 
-Switch brain (`--brain <id>`) when:
+For local developer workflows, the runtime can still resolve:
 
-- The user's question is specifically about a team the user belongs to
-  ("what did team X decide?", "what's the status of project Y at team X?").
-  Switch BEFORE searching, not after a failed search in host.
-- The user is asking you to ingest data that belongs to a specific team
-  (meeting notes from a team meeting, letters from a team's pipeline). The
-  data owner determines the brain.
-- The user explicitly names a team/brain ("check the media-team brain
-  for...").
+- `--brain`
+- `CORTEX_BRAIN_ID`
+- `.cortex-mount`
+- `--source`
+- `CORTEX_SOURCE`
+- `.cortex-source`
 
-Do NOT switch brain when:
+These are compatibility mechanics, not the SaaS product model.
 
-- The user asks a general question that might pull from anywhere. Start in
-  host, then cross-query on-demand if host doesn't have it.
-- You're unsure. Stay in host, surface what you found, let the user point
-  you at a specific brain.
+## When To Switch Brain
 
-## Source resolution chain (7-tier, v0.41.13+)
+Switch brain when:
 
-`gbrain` resolves the active source via `resolveSourceId()` in
-`src/core/source-resolver.ts`. Seven tiers, highest priority first:
+- The user explicitly names another tenant brain.
+- The data owner, lifecycle, residency, backup, or admin boundary changes.
+- The task is customer-facing or externally isolated from the main company
+  brain.
 
-| # | Tier | Signal |
-|---|---|---|
-| 1 | `flag` | Explicit `--source <id>` CLI flag (or `--source-id <id>` on `gbrain extract` / `gbrain import`) |
-| 2 | `env` | `GBRAIN_SOURCE` environment variable |
-| 3 | `dotfile` | `.gbrain-source` file in CWD or any ancestor directory |
-| 4 | `local_path` | A registered source whose `local_path` contains CWD (longest prefix wins) |
-| 5 | `brain_default` | Brain-level `sources.default` config key (explicit user intent) |
-| 5.5 | `sole_non_default` | When tiers 1–5 missed AND exactly one registered source has a `local_path` AND isn't `'default'`, auto-route to it. Fires a one-time stderr nudge per CLI invocation. Suppress with `GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1`. |
-| 6 | `seed_default` | Literal `'default'` (always exists post-migration v16) |
+Do not switch brain when:
 
-**v0.41.13 tier 5.5 (`sole_non_default`):** added for single-source brains
-(typical for users with one Obsidian vault, one notes folder, one project).
-Pre-fix, `gbrain sync` from `/tmp` against a brain registering only
-`studiovault` silently routed to `'default'` and every edit failed at
-`createVersion` because the slug didn't exist there. The tier auto-routes
-to the obvious single answer. Multi-source brains (2+ non-default registered)
-still fall through to `seed_default` and require explicit `--source`.
+- The task only needs a different team/topic/repo inside the same company
+  brain. Use a source.
+- You are unsure. Ask or stay inside the authenticated scope.
 
-Placement AFTER `brain_default` is deliberate: a user who explicitly set
-`sources.default` via `gbrain sources default <id>` has stated intent that
-wins over the auto-route. Archived sources are excluded from the count.
+## When To Switch Source
 
-**v0.37.7.0 tooling:**
+Switch source when:
 
-- `gbrain sources current [--json]` echoes the resolved source AND
-  which tier won. Run this before any destructive op to verify what
-  you're about to target.
-- `gbrain sources current --source X` shows what an explicit flag
-  WOULD resolve to (validates X exists in the sources table).
+- The user asks about a specific team, repo, customer set, or domain inside
+  the current brain.
+- You are writing a page that logically belongs to one team/repo/domain.
+- The OAuth client has the needed write/read scope.
 
-CLI commands honoring this chain: `gbrain sync`, `gbrain import`,
-`gbrain search`, `gbrain extract` (via `--source-id <id>` since
-`--source` is the fs|db data-source axis), `gbrain graph-query`
-(via `--include-foreign` for cross-source traversal).
+Do not switch source when:
 
-**Trust boundary (v0.34.1.0):** the resolver is CLI-layer only.
-Operations.ts handlers do NOT read `.gbrain-source` or
-`GBRAIN_SOURCE`. MCP/remote callers go through
-`ctx.auth.sourceId` / `ctx.auth.allowedSources` instead. A remote
-caller cannot inherit the server process's CLI source context.
+- The OAuth client is not allowed to read or write that source.
+- The user intent crosses sources and the client has `federated_read` access.
 
-## When to switch source
+## Writing Rules
 
-Switch source (`--source <id>`) when:
+Writing is stricter than reading.
 
-- The user is working in a specific repo (the `.gbrain-source` dotfile
-  usually handles this — don't fight it).
-- The user asks about something scoped to a repo ("what's in my gstack
-  notes about retry policy?").
-- You're writing a page that logically belongs to one repo. The data
-  origin determines the source.
+- A fact about a team's work goes to that team's source.
+- Shared company context goes to the tenant's shared/default source.
+- Sensitive domains should use their dedicated source or separate brain.
+- If a write would cross the authenticated client's scope, ask for a scoped
+  invite/client change instead of silently broadening access.
 
-Do NOT switch source when:
+## Citations
 
-- The user's intent crosses repos. Keep `federated=true` sources for
-  cross-source search.
-- You'd lose a cross-repo match by isolating.
+Standard citation format stays the same (`[Source: ...]`). For cross-brain
+synthesis, include enough context for traceability:
 
-## Cross-brain queries (latent-space federation)
+- Single-brain query: `[Source: Meeting, 2026-04-10]`
+- Cross-brain synthesis: `[Source: company:engineering:meetings/2026-04-10]`
 
-v0.19 does NOT do deterministic cross-brain federation. No SQL fan-out. No
-unified ranking. The AGENT federates.
-
-Pattern when the user asks something that might span brains:
-
-1. Query host with the obvious query.
-2. Check `gbrain mounts list` for relevant brain ids.
-3. If you think another brain has the answer, re-query THAT brain
-   explicitly (`--brain <id>`).
-4. Synthesize across results. Cite `<brain>:<source>:<slug>` so the user
-   can trace.
-
-Never silently mix brains. Every finding is citable to its brain.
-
-## Writing across brains
-
-Writing is stricter than reading. ASK before writing cross-brain.
-
-- A fact about a team's work → team's brain, not host.
-- A fact the user confirmed about a person ONLY they know → host/personal,
-  not a team brain.
-- An enrichment discovered from public data → usually host unless the user
-  says otherwise.
-
-If you're about to `put_page --brain <team-brain>`, confirm with the user
-unless they explicitly said "save this to team-X". Default brain for
-writes is the user's personal brain.
-
-## Citations with brain context
-
-Standard citation format stays the same (`[Source: ...]`), but when pages
-come from a mounted brain, add the brain context for human traceability:
-
-- Single-brain query: `[Source: Meeting, 2026-04-10]` (unchanged).
-- Cross-brain synthesis: `[Source: media-team:meetings/2026-04-10]` or
-  `[Source: policy-team:research/retry-budgets]`.
-
-This matches v0.18.0's source-aware citation (`[source-id:slug]`) extended
-with a brain prefix when relevant.
-
-## Decision table
+## Decision Table
 
 | Situation | Brain | Source |
-|---|---|---|
-| User cd's into a team-brain checkout and asks a general question | dotfile-resolved team brain | dotfile-resolved source |
-| User asks "what did team X decide?" | `team-x` explicitly | resolver default |
-| User asks "what are we doing across all teams?" | fan out across mounts, agent-driven | resolver default |
-| User asks "add this to my gstack notes" | host | `gstack` |
-| User asks "save this meeting note for team X" | `team-x` (confirm if ambiguous) | team's meetings source |
-| User asks "write me an essay" | host (personal) | `essays` |
-| Unknown — can't classify | stay in host, ask the user | resolver default |
+| --- | --- | --- |
+| User asks about a team in the current company | current tenant brain | team source |
+| User asks about a separate customer-facing workspace | named customer brain | relevant source |
+| User asks "what are we doing across all teams?" | current tenant brain | federated read set |
+| User asks "add this to the cortex notes" | current tenant brain | `cortex` |
+| User asks "save this meeting note for team X" | current tenant brain unless a separate brain is named | team's meetings source |
+| Unknown or ambiguous | ask before writing | ask before writing |
 
-## Anti-patterns
+## Anti-Patterns
 
-- Silently jumping brains to "find" an answer when the user clearly meant
-  host. That's an audit-trail hole.
-- Writing to host when the data is clearly team-owned ("the team's plans
-  are now in your personal brain" = bad surprise).
-- Cross-brain federation in a single query without citations that name the
-  source brain. The user cannot trace the answer back.
-- Ignoring `.gbrain-mount` / `.gbrain-source` dotfiles. They're load-bearing
-  context — the user set them up for a reason.
+- Silently jumping brains to find an answer when the authenticated scope is
+  clear.
+- Writing to the wrong brain/source when the data is clearly team-owned.
+- Cross-brain synthesis without citations that name the source brain.
+- Ignoring OAuth `source_id` and `federated_read` bindings for remote callers.
 
-## Read more
+## Read More
 
-- `docs/architecture/brains-and-sources.md` — the full mental model with
-  topology diagrams (single-person, personal-with-repos, CEO-class with
-  multiple team brains).
-- `skills/conventions/brain-first.md` — reads the brain BEFORE asking.
-- `skills/conventions/quality.md` — citation format (extended here with
-  brain prefix).
+- `docs/architecture/brains-and-sources.md` - organization, brain, source, and
+  agent routing model.
+- `skills/conventions/brain-first.md` - reads the brain before asking.
+- `skills/conventions/quality.md` - citation format.

@@ -1,6 +1,6 @@
-// v0.41 T11 — `gbrain eval synthesize-concepts` command (minimal scaffold).
+// v0.41 T11 — `cortex eval synthesize-concepts` command (minimal scaffold).
 //
-// v0.41 ships the command surface. Parity baseline against your OpenClaw's
+// v0.41 ships the command surface. Parity baseline against a Cortex agent's
 // ~11K concepts (tier agreement + cluster stability) lands in v0.41.1.
 
 export interface EvalSynthesizeConceptsOpts {
@@ -29,7 +29,7 @@ export async function runEvalSynthesizeConcepts(
       parity_baseline_path: opts.parityBaseline ?? null,
       sample_size: opts.sample ?? null,
       v0_41_1_followup:
-        'Compare synthesize_concepts output against your OpenClaw concepts/ on a sample ' +
+        'Compare synthesize_concepts output against a Cortex agent concepts/ export on a sample ' +
         'subset; compute tier agreement (T1/T2/T3) + cluster stability via set Jaccard.',
     },
   };

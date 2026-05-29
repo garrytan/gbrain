@@ -1,17 +1,17 @@
 /**
- * gbrain eval export — stream captured eval_candidates rows as NDJSON (v0.21.0).
+ * cortex eval export — stream captured eval_candidates rows as NDJSON (v0.21.0).
  *
- * Consumer: sibling gbrain-evals repo, which imports the NDJSON as a
+ * Consumer: sibling cortex-evals repo, which imports the NDJSON as a
  * BrainBench-Real fixture alongside the fictional amara-life corpus.
  *
  * Output contract (stable from v0.21.0 — schema_version:1 on every row):
  *   { "schema_version": 1, "id": N, "tool_name": "query"|"search", ... }\n
  *
- * The schema_version prefix lets gbrain-evals detect format drift and
+ * The schema_version prefix lets cortex-evals detect format drift and
  * warn on unknown versions instead of silently misparsing.
  *
  * Usage:
- *   gbrain eval export [--since 7d] [--limit N] [--tool query|search] > rows.ndjson
+ *   cortex eval export [--since 7d] [--limit N] [--tool query|search] > rows.ndjson
  */
 
 import type { BrainEngine } from '../core/engine.ts';
@@ -27,7 +27,7 @@ interface ExportOpts {
 }
 
 function parseDurationToMs(s: string): number | null {
-  // Accepts "30d", "7d", "1h", "90m", "3600s". Same shape as gbrain eval prune + jobs prune.
+  // Accepts "30d", "7d", "1h", "90m", "3600s". Same shape as cortex eval prune + jobs prune.
   const m = s.match(/^(\d+)\s*(ms|s|m|h|d)$/);
   if (!m) return null;
   const n = parseInt(m[1]!, 10);
@@ -83,10 +83,10 @@ function parseArgs(args: string[]): ExportOpts {
 }
 
 function printHelp(): void {
-  console.error(`gbrain eval export — emit captured eval_candidates as NDJSON to stdout
+  console.error(`cortex eval export — emit captured eval_candidates as NDJSON to stdout
 
 USAGE:
-  gbrain eval export [--since DUR] [--limit N] [--tool query|search]
+  cortex eval export [--since DUR] [--limit N] [--tool query|search]
 
 FLAGS:
   --since DUR    Only rows created within DUR (e.g. 7d, 1h, 30m). Default: all.
@@ -96,13 +96,13 @@ FLAGS:
 
 OUTPUT:
   One JSON object per line on stdout. Every row begins with
-  "schema_version": 1 so downstream consumers (gbrain-evals) can
+  "schema_version": 1 so downstream consumers (cortex-evals) can
   detect format changes.
 
 EXAMPLES:
-  gbrain eval export > rows.ndjson
-  gbrain eval export --since 7d --tool query | jq '.query'
-  gbrain eval export --limit 100 | head
+  cortex eval export > rows.ndjson
+  cortex eval export --since 7d --tool query | jq '.query'
+  cortex eval export --limit 100 | head
 `);
 }
 
@@ -142,7 +142,7 @@ export async function runEvalExport(engine: BrainEngine, args: string[]): Promis
 
   let written = 0;
   for (const row of rows) {
-    // Prefix every line with schema_version:1 so gbrain-evals can detect
+    // Prefix every line with schema_version:1 so cortex-evals can detect
     // schema drift before parsing the rest of the fields.
     const line = JSON.stringify({ schema_version: SCHEMA_VERSION, ...row });
     if (!stdout.write(line + '\n')) {

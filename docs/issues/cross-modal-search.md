@@ -2,7 +2,7 @@
 
 ## Summary
 
-gbrain has a working multimodal embedding pipeline (Voyage multimodal-3, `embedding_image` column, 11K image chunks indexed) but search is siloed: text queries only search text embeddings, image queries don't exist. This proposal adds cross-modal query routing so text queries can surface images and image queries can surface text, using Voyage multimodal-3's shared embedding space.
+cortex has a working multimodal embedding pipeline (Voyage multimodal-3, `embedding_image` column, 11K image chunks indexed) but search is siloed: text queries only search text embeddings, image queries don't exist. This proposal adds cross-modal query routing so text queries can surface images and image queries can surface text, using Voyage multimodal-3's shared embedding space.
 
 ## Problem
 
@@ -47,7 +47,7 @@ Most image chunks have `embedding_image IS NOT NULL` but `modality` is not set t
 
 ### Voyage multimodal-3 is cross-modal by design
 
-From Voyage docs: voyage-multimodal-3 encodes text, images, and interleaved text+image into the same 1024-dimensional vector space. A text query embedded through this model can find relevant images, and vice versa. gbrain already uses it for the image column but never for query embedding.
+From Voyage docs: voyage-multimodal-3 encodes text, images, and interleaved text+image into the same 1024-dimensional vector space. A text query embedded through this model can find relevant images, and vice versa. cortex already uses it for the image column but never for query embedding.
 
 ### Search routing is text-only
 
@@ -151,7 +151,7 @@ This is a prerequisite for Phase 1 since result display needs to know which chun
 - PR #1106 adds dynamic text embedding column selection (prerequisite: the `embedding_columns` registry and provider routing from that PR make this easier to implement)
 - v0.27.1 introduced the dual-column schema (`embedding` + `embedding_image`)
 - `importImageFile` in `postgres-engine.ts` handles image ingestion and multimodal embedding
-- Voyage multimodal-3 is already configured as `embedding_multimodal_model` in gbrain config
+- Voyage multimodal-3 is already configured as `embedding_multimodal_model` in cortex config
 - The image OCR pipeline (`embedding_image_ocr: true`) extracts text from images before embedding, so image chunks have both visual and text representation
 
 ## Phasing

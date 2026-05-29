@@ -148,8 +148,8 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
         '--grant-types client_credentials --scopes "read sources_admin"',
       { cwd: process.cwd(), encoding: 'utf8', env: subprocessEnv },
     );
-    clientId = reg1.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
-    const clientSecret = reg1.match(/Client Secret:\s+(gbrain_cs_\S+)/)?.[1];
+    clientId = reg1.match(/Client ID:\s+(cortex_cl_\S+)/)?.[1];
+    const clientSecret = reg1.match(/Client Secret:\s+(cortex_cs_\S+)/)?.[1];
     if (!clientId || !clientSecret) throw new Error('Failed to register e2e client:\n' + reg1);
 
     // Register a read-only client (proves the scope-enforcement gate).
@@ -158,8 +158,8 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
         '--grant-types client_credentials --scopes "read"',
       { cwd: process.cwd(), encoding: 'utf8', env: subprocessEnv },
     );
-    readOnlyClientId = reg2.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
-    const readOnlySecret = reg2.match(/Client Secret:\s+(gbrain_cs_\S+)/)?.[1];
+    readOnlyClientId = reg2.match(/Client ID:\s+(cortex_cl_\S+)/)?.[1];
+    const readOnlySecret = reg2.match(/Client Secret:\s+(cortex_cs_\S+)/)?.[1];
     if (!readOnlyClientId || !readOnlySecret) throw new Error('Failed to register read-only client');
 
     // Start the HTTP server with the fake-git PATH and our GBRAIN_HOME.

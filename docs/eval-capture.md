@@ -1,142 +1,90 @@
-# Eval capture — NDJSON schema reference
+# Eval Capture Schema
 
-**Status:** stable from v0.21.0. Schema versioning via `schema_version`
-on every row; additive changes increment the minor version; removals
-are breaking-schema-v2.
+This document defines the tenant-safe NDJSON contract emitted by
+`cortex eval export`. The format is used by Cortex CI, private tenant
+benchmarks, and partner validation harnesses that replay real workflows without
+copying production data into public fixtures.
 
-**Audience:** downstream consumers (primarily the sibling
-[gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) that
-replay captured real-world queries as a BrainBench-Real fixture.
+## Pipeline
 
-## The pipeline
-
-```
-MCP / CLI / subagent tool-bridge caller
-     │
-     ▼
-src/core/operations.ts — query + search op handlers
-     │
-     │ (hybridSearch or searchKeyword)
-     │
-     ▼
-{results, meta: HybridSearchMeta}                 ┌── captureEvalCandidate
-     │                                             │    (fire-and-forget)
-     ▼                                             │
-return to caller                                   ▼
-                                            scrubPii(query) ←── src/core/eval-capture-scrub.ts
-                                                   │
-                                                   ▼
-                                           buildEvalCandidateInput
-                                                   │
-                                                   ▼
-                                           engine.logEvalCandidate
-                                                   │
-                                    ┌──────────────┴──────────────┐
-                                    │ success                     │ fail
-                                    ▼                             ▼
-                                INSERT into eval_candidates    engine.logEvalCaptureFailure
-                                                                 (reason: db_down | rls_reject |
-                                                                  check_violation |
-                                                                  scrubber_exception | other)
+```text
+MCP client, CLI, dashboard, or worker
+  -> query/search operation handler
+  -> retrieval result plus metadata
+  -> scrub sensitive query text
+  -> write eval_candidates row
+  -> export as NDJSON when requested
 ```
 
-## `gbrain eval export` — the consumer contract
+Capture is fire-and-forget. User-facing queries should not fail because an eval
+row could not be written; failures are stored in the companion audit table and
+surfaced by `cortex doctor`.
 
-```sh
-gbrain eval export [--since DUR] [--limit N] [--tool query|search]
+## Export Command
+
+```bash
+cortex eval export [--since DUR] [--limit N] [--tool query|search]
 ```
 
-Emits NDJSON to **stdout**. One JSON object per `\n`-terminated line.
-stderr receives progress heartbeats. Every line starts with
-`"schema_version": 1` so a forward-compat parser can fail loudly on
-schema v2 instead of silently misparsing.
+The command writes one JSON object per newline to stdout. Progress and warnings
+go to stderr so the stdout stream can be piped into a fixture file.
 
-Typical usage from gbrain-evals:
-
-```sh
-# Snapshot the last week of real traffic for replay
-gbrain eval export --since 7d > brainbench-real.ndjson
+```bash
+cortex eval export --since 7d --tool query > .ci/evals/retrieval.ndjson
+cortex eval export --tool search | jq -c 'select(.latency_ms > 500)'
 ```
 
-```sh
-# Stream through jq for ad-hoc analysis
-gbrain eval export --tool query | jq -c 'select(.latency_ms > 500)'
-```
+## Row Schema
 
-## Row schema (v1)
-
-Every exported row has this shape. Field order in JSON output is not
-guaranteed; consumers MUST key by name, not position.
+Every row starts with `schema_version: 1`. Consumers must branch on that field
+before parsing.
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | number | Always `1` on v1 rows. Forward-compat gate. |
-| `id` | number | Autoincrement primary key. Stable across exports. |
-| `tool_name` | `"query"` \| `"search"` | Which MCP operation captured this row. |
-| `query` | string | **Already PII-scrubbed** by `scrubPii` unless `eval.scrub_pii: false`. Emails / phones / SSN / Luhn-verified credit cards / JWTs / bearer tokens replaced with `[REDACTED]`. Max length 50KB (CHECK-enforced). |
-| `retrieved_slugs` | string[] | Deduplicated slugs that came back in `SearchResult[]`. |
-| `retrieved_chunk_ids` | number[] | Every chunk id in result order (duplicates preserved — one per hit). |
-| `source_ids` | string[] | Distinct `sources.id` values across the result set (v0.18 multi-source). Empty for pre-v0.18 rows that lacked the column. |
-| `expand_enabled` | boolean \| null | Whether the caller **requested** Haiku expansion. `null` for `search` (no expansion concept). |
-| `detail` | `"low"` \| `"medium"` \| `"high"` \| null | Detail level the caller **requested**. `null` when omitted. |
-| `detail_resolved` | `"low"` \| `"medium"` \| `"high"` \| null | What `hybridSearch` **actually used** after auto-detect. `null` when neither caller nor heuristic classified. |
-| `vector_enabled` | boolean | True iff vector search actually ran. `false` when `OPENAI_API_KEY` was missing or the embed call failed. **Replay MUST respect this** — rows with `false` only exercised the keyword path. |
-| `expansion_applied` | boolean | True iff Haiku expansion actually produced variants (not just "was requested"). |
-| `latency_ms` | number | Wall-clock duration of the op handler (includes capture itself — negligible since it's fire-and-forget). |
-| `remote` | boolean | `true` for MCP callers (untrusted), `false` for local CLI. Partitions "real agent traffic" from "operator probing." |
-| `job_id` | number \| null | `OperationContext.jobId` when the caller was a subagent tool-bridge. Null for MCP + CLI. |
-| `subagent_id` | number \| null | `OperationContext.subagentId` for subagent-owned runs. |
-| `created_at` | string (ISO 8601) | UTC timestamp of insert. |
+| `schema_version` | number | Always `1` for this contract |
+| `id` | number | Export-stable row id |
+| `tool_name` | `"query"` or `"search"` | Operation that produced the row |
+| `query` | string | Scrubbed query text unless tenant config explicitly disables scrubbing |
+| `retrieved_slugs` | string[] | Deduplicated result slugs in result order |
+| `retrieved_chunk_ids` | number[] | Chunk ids in result order, duplicates preserved |
+| `source_ids` | string[] | Distinct source ids represented in the result set |
+| `expand_enabled` | boolean or null | Whether expansion was requested |
+| `detail` | `"low"`, `"medium"`, `"high"`, or null | Caller-requested detail level |
+| `detail_resolved` | `"low"`, `"medium"`, `"high"`, or null | Detail level used after inference |
+| `vector_enabled` | boolean | Whether vector retrieval actually ran |
+| `expansion_applied` | boolean | Whether expansion produced variants |
+| `latency_ms` | number | Wall-clock operation duration |
+| `remote` | boolean | Whether the caller was a remote MCP or API client |
+| `job_id` | number or null | Worker job id when applicable |
+| `subagent_id` | number or null | Worker or agent id when applicable |
+| `created_at` | string | UTC ISO timestamp |
 
-## Ordering + determinism
+Field order is not guaranteed. Consumers must parse by key.
 
-`listEvalCandidates` orders by `created_at DESC, id DESC`. Same-
-millisecond inserts tie on `created_at`; `id DESC` is the stable
-tiebreaker. Replay tools can consume rows in order and assume:
-- no duplicate rows across calls with non-overlapping `--since` windows
-- no missed rows across calls that chain `--since` windows (window end
-  of run 1 is the strict upper bound, not a soft cursor)
+## Ordering
 
-## Schema versioning promise
+Rows are exported by `created_at DESC, id DESC`. The id tie-breaker keeps
+same-millisecond inserts deterministic.
 
-- **v1 (shipped v0.21.0)** — this document. All fields listed above.
-- **Additive changes** increment gbrain minor version (v0.25.0, v0.23.0
-  …) and ship with new optional fields. Consumers keyed on known fields
-  ignore unknown keys and keep working.
-- **Breaking changes** (rename, type change, removal) increment
-  `schema_version` to 2. Consumers MUST branch on `schema_version` to
-  stay compatible.
+## Sensitive Data Handling
 
-## `eval_capture_failures` — companion audit table
+By default, query text is scrubbed before it is persisted. The scrubber redacts:
 
-Not exported by `gbrain eval export`. Surfaced via `gbrain doctor`:
+- email addresses
+- phone numbers
+- payment card numbers that pass Luhn checks
+- bearer tokens, JWTs, and common API token formats
+- social-security-number-shaped strings
 
-```sh
-gbrain doctor   # warns when failures in last 24h > 0
-```
+Tenants can disable scrubbing only for controlled evaluation workspaces where
+the data distribution is explicitly approved.
 
-Reason enum (stable): `db_down` | `rls_reject` | `check_violation` |
-`scrubber_exception` | `other`. Cross-process visibility is the whole
-point — `gbrain doctor` runs in its own process and reads the table
-directly, so in-process counters wouldn't work.
+## Capture Configuration
 
-## Config + CONTRIBUTOR_MODE
-
-Capture is **off by default** as of v0.25.0 (was on for everyone in
-earlier drafts). Two paths to turn it on:
-
-**Path A — env var (contributor opt-in, the common case):**
-
-```bash
-export GBRAIN_CONTRIBUTOR_MODE=1     # in ~/.zshrc or ~/.bashrc
-```
-
-**Path B — explicit config (`~/.gbrain/config.json`, file-plane only):**
+Capture is opt-in for tenant-controlled environments:
 
 ```json
 {
-  "engine": "postgres",
-  "database_url": "...",
   "eval": {
     "capture": true,
     "scrub_pii": true
@@ -144,17 +92,36 @@ export GBRAIN_CONTRIBUTOR_MODE=1     # in ~/.zshrc or ~/.bashrc
 }
 ```
 
-Resolution order (most explicit wins):
+Environment overrides are reserved for CI and managed worker contexts:
 
-1. `eval.capture: true` in config → on
-2. `eval.capture: false` in config → off (overrides CONTRIBUTOR_MODE=1)
-3. `GBRAIN_CONTRIBUTOR_MODE === '1'` → on
-4. otherwise → off
+```bash
+CORTEX_EVAL_CAPTURE=1 cortex eval export --limit 100
+```
 
-`scrub_pii` defaults to `true` independent of capture. Set
-`eval.scrub_pii: false` to preserve raw query text (only if you control
-the brain's distribution).
+The most explicit tenant config wins. Managed production deployments should use
+tenant policy rather than ad-hoc host environment variables.
 
-`gbrain config set eval.capture false` does **not** work — that
-command writes the DB-plane config, and the MCP server reads the
-file-plane. Edit the JSON directly or use the env var.
+## Failure Audit
+
+Eval write failures are recorded with one of these stable reason codes:
+
+| Reason | Meaning |
+|---|---|
+| `db_down` | Storage was unavailable |
+| `rls_reject` | Tenant isolation policy rejected the write |
+| `check_violation` | The row failed a schema constraint |
+| `scrubber_exception` | Sensitive-data scrubber threw |
+| `other` | Unknown failure |
+
+Run:
+
+```bash
+cortex doctor
+```
+
+to surface recent failures before trusting a benchmark export.
+
+## Versioning
+
+Additive optional fields keep `schema_version: 1`. Renames, type changes, or
+removals require `schema_version: 2` and a compatibility runway.

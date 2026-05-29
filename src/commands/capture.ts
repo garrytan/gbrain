@@ -1,13 +1,13 @@
 /**
- * gbrain capture — the single human-facing entrypoint for getting content
+ * cortex capture — the single human-facing entrypoint for getting content
  * into the brain. Replaces the confusion of "do I call put_page, commit
  * a file, or wait for autopilot?" with one command that just works.
  *
- *   gbrain capture "thought to remember"
- *   gbrain capture --file ./notes/2026-05-20.md
- *   echo "from stdin" | gbrain capture --stdin
- *   gbrain capture "..." --slug inbox/specific
- *   gbrain capture "..." --quiet           # slug-only output for pipelines
+ *   cortex capture "thought to remember"
+ *   cortex capture --file ./notes/2026-05-20.md
+ *   echo "from stdin" | cortex capture --stdin
+ *   cortex capture "..." --slug inbox/specific
+ *   cortex capture "..." --quiet           # slug-only output for pipelines
  *
  * Behavior:
  *   - Local install: writes to ~/.gbrain/inbox/<slug>.md OR routes through
@@ -26,7 +26,7 @@
  *   - Default: 5-line receipt block (slug, ingested_at, source_kind,
  *     content_hash, queue job id where applicable).
  *   - --quiet: just the slug on stdout for shell pipelines like
- *     `JOB=$(gbrain capture "..." --quiet)`.
+ *     `JOB=$(cortex capture "..." --quiet)`.
  *   - --json: structured response for agents.
  */
 
@@ -89,22 +89,22 @@ function parseArgs(args: string[]): RunOpts | { help: true; positional: string |
   return opts;
 }
 
-const HELP = `Usage: gbrain capture [content] [options]
+const HELP = `Usage: cortex capture [content] [options]
 
 The single entrypoint for getting content into the brain. One command,
 local OR thin-client, synchronous receipt with the resulting page slug.
 
 Modes (mutually exclusive — first match wins):
-  gbrain capture "thought"          inline content
-  gbrain capture --file PATH        read content from a file
-  gbrain capture --stdin            read content from stdin (piped)
+  cortex capture "thought"          inline content
+  cortex capture --file PATH        read content from a file
+  cortex capture --stdin            read content from stdin (piped)
 
 Options:
   --slug SLUG          Override the default inbox/YYYY-MM-DD-<hash6> slug
   --type TYPE          Override the page type (default: note)
   --source ID          Multi-source brains: write under a non-default source.
-                       Resolution: --source flag > GBRAIN_SOURCE env >
-                       .gbrain-source dotfile (walk-up) > local_path >
+                       Resolution: --source flag > CORTEX_SOURCE env >
+                       .cortex-source dotfile (walk-up) > local_path >
                        brain_default > 'default'. NOT supported on
                        thin-client installs (server-side OAuth client
                        registration scopes the source).
@@ -126,10 +126,10 @@ Notes:
     overwrites the prior page.
 
 Examples:
-  gbrain capture "remember to follow up on the X deal"
-  echo "from a pipe" | gbrain capture --stdin
-  gbrain capture --file ./notes/today.md --slug daily/2026-05-20
-  JOB=$(gbrain capture "..." --quiet)
+  cortex capture "remember to follow up on the X deal"
+  echo "from a pipe" | cortex capture --stdin
+  cortex capture --file ./notes/today.md --slug daily/2026-05-20
+  JOB=$(cortex capture "..." --quiet)
 `;
 
 function defaultSlug(content: string, now: Date = new Date()): string {
@@ -207,7 +207,7 @@ export function maybeRewriteSourceFkError(err: unknown, sourceId: string | undef
   const matchesFk = msg.includes('pages_source_id_fk')
     || (msg.includes('foreign key constraint') && msg.includes('source'));
   if (!matchesFk) return null;
-  return `source '${sourceId}' is not registered. Register it first:\n  gbrain sources add ${sourceId} --path <path>\n\nList registered sources:\n  gbrain sources list`;
+  return `source '${sourceId}' is not registered. Register it first:\n  cortex sources add ${sourceId} --path <path>\n\nList registered sources:\n  cortex sources list`;
 }
 
 /**
@@ -349,10 +349,10 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
   // (server owns the source scope, client cannot override per-call).
   const cfg = loadConfig();
   if (parsed.source && isThinClient(cfg)) {
-    console.error(`gbrain capture: --source is not supported on thin-client installs.`);
+    console.error(`cortex capture: --source is not supported on thin-client installs.`);
     console.error(`Server-side OAuth client registration determines source scope.`);
     console.error(`On the server, run:`);
-    console.error(`  gbrain auth register-client <name> --source ${parsed.source} --scopes "read write"`);
+    console.error(`  cortex auth register-client <name> --source ${parsed.source} --scopes "read write"`);
     process.exit(1);
   }
 
@@ -371,7 +371,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
       rawBuffer = readFileSync(parsed.filePath);
     } catch (e) {
       console.error(
-        `gbrain capture: failed to read ${parsed.filePath}: ${e instanceof Error ? e.message : String(e)}`,
+        `cortex capture: failed to read ${parsed.filePath}: ${e instanceof Error ? e.message : String(e)}`,
       );
       process.exit(1);
     }
@@ -383,8 +383,8 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
     rawBuffer = Buffer.from(parsed.content, 'utf8');
     inputLabel = 'positional content';
   } else {
-    console.error('gbrain capture: provide content positionally, --file PATH, or --stdin');
-    console.error('Run `gbrain capture --help` for examples.');
+    console.error('cortex capture: provide content positionally, --file PATH, or --stdin');
+    console.error('Run `cortex capture --help` for examples.');
     process.exit(1);
   }
 
@@ -393,7 +393,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
   const nullByteOffset = detectBinaryNullByte(rawBuffer!);
   if (nullByteOffset !== -1) {
     console.error(
-      `gbrain capture: refusing to capture binary content from ${inputLabel}\n` +
+      `cortex capture: refusing to capture binary content from ${inputLabel}\n` +
       `  Found null byte at offset ${nullByteOffset} (first 8KB scan); ` +
       `text files (including UTF-8 CJK/emoji/BOM) never contain NUL bytes.\n` +
       `  Binary content (image/audio/video/pdf) is not yet supported via capture — ` +
@@ -410,7 +410,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
   // the put_page write so CRLF / BOM / trailing-newline tests pass.
   const normalizedBody = normalizeForHash(rawBody);
   if (normalizedBody.length === 0) {
-    console.error('gbrain capture: refusing to capture empty content');
+    console.error('cortex capture: refusing to capture empty content');
     process.exit(1);
   }
 
@@ -429,7 +429,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
       resolvedSourceId = source_id;
     } catch (e) {
       // assertSourceExists throws "Source 'X' not found. Available sources: ..."
-      console.error(`gbrain capture: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(`cortex capture: ${e instanceof Error ? e.message : String(e)}`);
       process.exit(1);
     }
   }
@@ -465,15 +465,15 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
       // PG message is in the wrapped string.
       const hint = maybeRewriteSourceFkError(e, parsed.source ?? resolvedSourceId);
       if (hint) {
-        console.error(`gbrain capture: ${hint}`);
+        console.error(`cortex capture: ${hint}`);
       } else if (e instanceof RemoteMcpError) {
-        console.error(`gbrain capture: remote put_page failed: ${e.message}`);
-        console.error('Run `gbrain remote doctor` to diagnose the connection.');
+        console.error(`cortex capture: remote put_page failed: ${e.message}`);
+        console.error('Run `cortex remote doctor` to diagnose the connection.');
       } else {
         console.error(
-          `gbrain capture: remote put_page failed: ${e instanceof Error ? e.message : String(e)}`,
+          `cortex capture: remote put_page failed: ${e instanceof Error ? e.message : String(e)}`,
         );
-        console.error('Run `gbrain remote doctor` to diagnose the connection.');
+        console.error('Run `cortex remote doctor` to diagnose the connection.');
       }
       process.exit(1);
     }
@@ -504,12 +504,12 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
   // Local install: route through put_page operation directly so we
   // exercise the same write-through path the MCP server uses.
   if (!engine) {
-    console.error('gbrain capture: engine not connected');
+    console.error('cortex capture: engine not connected');
     process.exit(1);
   }
   const putPageOp = operations.find((o) => o.name === 'put_page');
   if (!putPageOp) {
-    console.error('gbrain capture: put_page operation missing (gbrain build issue)');
+    console.error('cortex capture: put_page operation missing (Cortex build issue)');
     process.exit(1);
   }
   const ctx: OperationContext = {
@@ -571,10 +571,10 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
     // an explicit --source bypass would surface here.
     const hint = maybeRewriteSourceFkError(e, parsed.source ?? resolvedSourceId);
     if (hint) {
-      console.error(`gbrain capture: ${hint}`);
+      console.error(`cortex capture: ${hint}`);
     } else {
       console.error(
-        `gbrain capture: put_page failed: ${e instanceof Error ? e.message : String(e)}`,
+        `cortex capture: put_page failed: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
     process.exit(1);

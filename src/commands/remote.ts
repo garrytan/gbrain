@@ -1,5 +1,5 @@
 /**
- * `gbrain remote` subcommands (multi-topology v1, Tier B).
+ * `cortex remote` subcommands (multi-topology v1, Tier B).
  *
  * Two thin-client convenience commands that round-trip through the host's
  * HTTP MCP endpoint:
@@ -10,7 +10,7 @@
  *   - `gbrain remote doctor`: run_doctor MCP op → render the host's
  *                             DoctorReport → exit 0/1 based on status.
  *
- * Both require a thin-client install (~/.gbrain/config.json with remote_mcp).
+ * Both require a thin-client install with remote_mcp configured.
  * Local installs get a clear error pointing them at the local equivalents.
  *
  * Polling design (ping): backoff curve is 1s × 30s, then 5s × 5min, then 10s.
@@ -60,8 +60,8 @@ export async function runRemote(args: string[]): Promise<void> {
   const config = loadConfig();
   if (!isThinClient(config)) {
     console.error(
-      '`gbrain remote` requires thin-client mode. This install has no remote_mcp config.\n' +
-      'Run `gbrain init --mcp-only` to set up thin-client mode, or use the local CLI directly.',
+      '`cortex remote` requires thin-client mode. This install has no remote_mcp config.\n' +
+      'Run `cortex connect <onboarding-url>` to set up thin-client mode, or use the local CLI directly.',
     );
     process.exit(1);
   }
@@ -73,13 +73,13 @@ export async function runRemote(args: string[]): Promise<void> {
   if (sub === 'doctor') {
     return runRemoteDoctorCli(config!, subArgs);
   }
-  console.error(`Unknown subcommand: gbrain remote ${sub}\n`);
+  console.error(`Unknown subcommand: cortex remote ${sub}\n`);
   printHelp();
   process.exit(1);
 }
 
 function printHelp(): void {
-  console.log('Usage: gbrain remote <subcommand>');
+  console.log('Usage: cortex remote <subcommand>');
   console.log('');
   console.log('Subcommands:');
   console.log('  ping            Trigger an autopilot cycle on the remote host (sync + extract + embed).');
@@ -175,7 +175,7 @@ async function runRemotePing(config: NonNullable<ReturnType<typeof loadConfig>>,
     }));
   } else {
     console.error(`\nping timed out after ${Math.round(timeoutMs / 1000)}s. Job #${submitted.id} is still ${lastState}.`);
-    console.error(`Run \`gbrain jobs get ${submitted.id}\` on the host to inspect.`);
+    console.error(`Run \`cortex jobs get ${submitted.id}\` on the host to inspect.`);
   }
   process.exit(1);
 }
@@ -229,7 +229,7 @@ async function runRemoteDoctorCli(config: NonNullable<ReturnType<typeof loadConf
 }
 
 function renderDoctorReport(report: DoctorReport): void {
-  console.log('\nGBrain Health Check (remote host)');
+    console.log('\nCortex Health Check (remote host)');
   console.log('=================================');
   for (const c of report.checks) {
     const icon = c.status === 'ok' ? 'OK' : c.status === 'warn' ? 'WARN' : 'FAIL';

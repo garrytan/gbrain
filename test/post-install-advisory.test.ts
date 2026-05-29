@@ -1,8 +1,8 @@
 /**
  * Tests for src/core/skillpack/post-install-advisory.ts (v0.25.1).
  *
- * The advisory is meant to be read by the agent (openclaw, claude-code)
- * from the terminal output of `gbrain init` and `gbrain post-upgrade`.
+ * The advisory is meant to be read by the agent (Codex, Claude Code, Cursor)
+ * from the terminal output of `cortex init` and `cortex post-upgrade`.
  * These tests pin:
  *   - empty/no-workspace path renders a workspace-detection note
  *   - all-installed path returns null (no-op)
@@ -58,12 +58,12 @@ function scratchWorkspace(receiptSlugs: string[] | null): {
       '| Trigger | Skill |',
       '|---------|-------|',
       '',
-      '<!-- gbrain:skillpack:begin -->',
-      `<!-- gbrain:skillpack:manifest cumulative-slugs="${slugList}" version="0.25.1" -->`,
+      '<!-- cortex:skillpack:begin -->',
+      `<!-- cortex:skillpack:manifest cumulative-slugs="${slugList}" version="0.25.1" -->`,
       ...receiptSlugs.map(
         (s) => `| "${s}" | \`skills/${s}/SKILL.md\` |`,
       ),
-      '<!-- gbrain:skillpack:end -->',
+      '<!-- cortex:skillpack:end -->',
       '',
     ].join('\n');
     writeFileSync(join(skillsDir, 'RESOLVER.md'), block);
@@ -113,7 +113,7 @@ describe('buildAdvisory — partial-install path', () => {
     expect(advisory).toContain('book-mirror');
     expect(advisory).not.toContain('article-enrichment');
     expect(advisory).not.toContain('strategic-reading');
-    expect(advisory).toContain('gbrain skillpack install book-mirror');
+    expect(advisory).toContain('cortex skillpack install book-mirror');
   });
 
   it('uses --all command when ALL recommended are missing (fresh workspace)', () => {
@@ -125,7 +125,7 @@ describe('buildAdvisory — partial-install path', () => {
       targetSkillsDir: skillsDir,
     });
     expect(advisory).not.toBeNull();
-    expect(advisory).toContain('gbrain skillpack install --all');
+    expect(advisory).toContain('cortex skillpack install --all');
     expect(advisory).toContain('book-mirror');
     expect(advisory).toContain('article-enrichment');
     expect(advisory).toContain('strategic-reading');
@@ -213,8 +213,8 @@ describe('buildAdvisory — agent-readable framing', () => {
       targetWorkspace: workspace,
       targetSkillsDir: skillsDir,
     })!;
-    expect(advisory).toContain('gbrain skillpack install --all');
-    expect(advisory).toContain('gbrain skillpack list');
+    expect(advisory).toContain('cortex skillpack install --all');
+    expect(advisory).toContain('cortex skillpack list');
   });
 });
 
@@ -228,6 +228,6 @@ describe('buildAdvisory — no workspace detected', () => {
     });
     expect(advisory).not.toBeNull();
     // No workspace -> empty installed set -> all recommended treated as missing.
-    expect(advisory).toContain('gbrain skillpack install --all');
+    expect(advisory).toContain('cortex skillpack install --all');
   });
 });

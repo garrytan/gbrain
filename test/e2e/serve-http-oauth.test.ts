@@ -56,8 +56,8 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write admin"',
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
     );
-    const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
-    const secretMatch = regOutput.match(/Client Secret:\s+(gbrain_cs_\S+)/);
+    const idMatch = regOutput.match(/Client ID:\s+(cortex_cl_\S+)/);
+    const secretMatch = regOutput.match(/Client Secret:\s+(cortex_cs_\S+)/);
     if (!idMatch || !secretMatch) throw new Error('Failed to register test client:\n' + regOutput);
     clientId = idMatch[1];
     clientSecret = secretMatch[1];
@@ -146,7 +146,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
   test('mint token via client_credentials grant', async () => {
     const data = await mintToken('read write');
-    expect(data.access_token).toMatch(/^gbrain_at_/);
+    expect(data.access_token).toMatch(/^cortex_at_/);
     expect(data.expires_in).toBe(3600);
     expect(data.scope).toContain('read');
   });
@@ -179,7 +179,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }, 15_000);
 
   test('expired/invalid token is rejected at /mcp', async () => {
-    const res = await mcpCall('gbrain_at_totally_fake_token', 'tools/list');
+    const res = await mcpCall('cortex_at_totally_fake_token', 'tools/list');
     // Invalid tokens should not return 200 with tool results
     const body = await res.text();
     expect(body).not.toContain('"tools"');
@@ -400,7 +400,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const res = await fetch(`${BASE}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=client_credentials&client_id=${clientId}&client_secret=gbrain_cs_wrong_secret&scope=read`,
+      body: `grant_type=client_credentials&client_id=${clientId}&client_secret=cortex_cs_wrong_secret&scope=read`,
     });
     expect(res.ok).toBe(false);
     const data = await res.json() as any;
@@ -469,8 +469,8 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       'bun run src/cli.ts auth register-client e2e-revoke-cli --grant-types client_credentials --scopes read',
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
     );
-    const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
-    const secretMatch = regOutput.match(/Client Secret:\s+(gbrain_cs_\S+)/);
+    const idMatch = regOutput.match(/Client ID:\s+(cortex_cl_\S+)/);
+    const secretMatch = regOutput.match(/Client Secret:\s+(cortex_cs_\S+)/);
     expect(idMatch).not.toBeNull();
     expect(secretMatch).not.toBeNull();
     const id = idMatch![1];
@@ -656,8 +656,8 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
         'bun run src/cli.ts auth register-client e2e-test-ttl --grant-types client_credentials --scopes read',
         { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
       );
-      const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
-      const secretMatch = regOutput.match(/Client Secret:\s+(gbrain_cs_\S+)/);
+      const idMatch = regOutput.match(/Client ID:\s+(cortex_cl_\S+)/);
+      const secretMatch = regOutput.match(/Client Secret:\s+(cortex_cs_\S+)/);
       expect(idMatch).not.toBeNull();
       expect(secretMatch).not.toBeNull();
       const id = idMatch![1];

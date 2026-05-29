@@ -1,5 +1,5 @@
 /**
- * gbrain code-callees <symbol>
+ * cortex code-callees <symbol>
  *
  * v0.20.0 Cathedral II Layer 10 (C5) — "what does this symbol call?"
  * Forward view of the A1 call graph. Matches `from_symbol_qualified`
@@ -36,7 +36,7 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
       class: 'UsageError',
       code: 'code_callees_requires_symbol',
       message: 'code-callees requires a symbol name',
-      hint: 'gbrain code-callees <symbol> [--source S | --all-sources] [--limit N] [--json]',
+      hint: 'cortex code-callees <symbol> [--source S | --all-sources] [--limit N] [--json]',
     });
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify({ error: err.envelope }));

@@ -70,16 +70,16 @@ meetings, and concepts. An original without cross-links is a dead original.
 
 1. Extract entity mentions (people, companies, media titles)
 2. For each entity:
-   - `gbrain search "name"` — does a page exist?
+   - `cortex search "name"` — does a page exist?
    - If NO page → check notability. If notable, create page with enrichment.
    - If page exists but THIN → trigger enrich
    - If page exists and RICH → no action
-3. For new FACTS with specific dates → call `gbrain timeline-add <slug> <date> "<summary>"`
+3. For new FACTS with specific dates → call `cortex timeline-add <slug> <date> "<summary>"`
 
 **Auto-link (v0.10.1):** When you write/update an originals or ideas page that
 references a person or company, the auto-link post-hook on `put_page`
 automatically creates the link from the new page to that entity. You don't
-need to call `gbrain link` manually. Timeline entries still need explicit calls.
+need to call `cortex link` manually. Timeline entries still need explicit calls.
 
 ### Phase 3: Signal Logging
 

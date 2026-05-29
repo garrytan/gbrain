@@ -7,11 +7,10 @@
  * `import x from './path' with { type: 'file' }` reference (which Bun
  * resolves at runtime to a path that works inside the binary archive).
  *
- * Pre-v0.36.x, `serve-http.ts:780` resolved `admin/dist/` via
- * `process.cwd()` — fine in dev (`cd ~/gbrain && bun start serve --http`),
- * broken in every globally-installed binary (no admin/dist next to the
- * binary). Result: every fresh `bun install -g github:garrytan/gbrain`
- * user got 404 on /admin (issue #1090).
+ * Pre-embedded admin builds resolved `admin/dist/` via `process.cwd()` - fine
+ * in dev (`cd ~/cortex && cortex serve --http`), broken in compiled or
+ * globally-installed binaries where no admin/dist sits next to the binary.
+ * Result: fresh tenants got 404 on /admin.
  *
  * This generator emits one `import` line per file under admin/dist/,
  * plus a manifest map keyed by the request path the express handler

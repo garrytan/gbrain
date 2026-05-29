@@ -1,33 +1,41 @@
-# Connect GBrain to Claude Cowork
+# Connect Cortex To Claude Team Workspaces
 
-Two ways to get GBrain into Cowork sessions:
+For team-wide Claude deployments, use a Cortex organization invite or dedicated
+agent client per workspace. The connector should point at the hosted Cortex MCP
+endpoint, not a teammate's local machine.
 
-## Option 1: Remote (via self-hosted server + tunnel)
+## Setup
 
-For Team/Enterprise plans, an org Owner adds the connector:
+1. In Cortex, create an agent client for the workspace:
 
-1. Go to **Organization Settings > Connectors**
-2. Add a new connector with the MCP server URL:
+   ```bash
+   cortex auth register-client claude-workspace \
+     --grant-types client_credentials \
+     --scopes read,write \
+     --source default \
+     --federated-read default
    ```
-   https://YOUR-DOMAIN.ngrok.app/mcp
+
+   Agent path: `users_register_agent_client`.
+
+2. Fetch the runtime manifest:
+
+   ```bash
+   curl https://<tenant-host>/runtime-manifest.json
    ```
-3. Add Bearer token authentication in Advanced Settings
-   (create one with `gbrain auth create "cowork"`)
-4. Save
 
-Note: Cowork connects from Anthropic's cloud, not your device. Your server
-must be publicly reachable (ngrok, Tailscale Funnel, or cloud-hosted).
+3. Configure the Claude workspace connector with:
+   - Server URL: `https://<tenant-host>/mcp`
+   - Token URL: `https://<tenant-host>/token`
+   - Client id and secret from the Cortex agent client
+   - Scopes from the agent client
 
-## Option 2: Local Bridge (via Claude Desktop)
+## Verify
 
-If you already have GBrain configured in Claude Desktop (via `gbrain serve`
-stdio or a remote integration), Cowork gets access automatically. Claude
-Desktop bridges local MCP servers into Cowork via its SDK layer.
+Ask the workspace connector to query Cortex and confirm the Activity page shows
+the dedicated workspace client. Use the Agents page to revoke or rotate access.
 
-This means: if `gbrain serve` is running and configured in Claude Desktop,
-you don't need a separate server for Cowork.
+## Policy
 
-## Which to use?
-
-- **Remote server:** works even when your laptop is closed, available to all org members
-- **Local Bridge:** zero extra setup if Claude Desktop already has GBrain, but requires your machine to be running
+Create separate clients for separate departments or workspaces when source
+access differs. Do not share an owner/admin client for broad team usage.

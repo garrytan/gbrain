@@ -46,7 +46,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: gbrain_test
+          POSTGRES_DB: cortex_test
         ports:
           - 5432:5432
         options: >-
@@ -63,10 +63,10 @@ jobs:
 
       - name: Run heavy tests
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cortex_test
         run: bun run test:heavy
 
-      # The heavy runner writes per-script logs to ~/.gbrain/audit/ on every
+      # The heavy runner writes per-script logs to the Cortex audit directory on every
       # run. Upload those + the rss workload JSON on failure for triage
       # without re-running locally.
       #
@@ -77,7 +77,7 @@ jobs:
         if: always()
         run: |
           mkdir -p heavy-artifacts
-          cp -r "$HOME/.gbrain/audit"/heavy-* heavy-artifacts/ 2>/dev/null || true
+          cp -r "${CORTEX_HOME:-$HOME/.cortex}"/audit/heavy-* heavy-artifacts/ 2>/dev/null || true
           cp tests/heavy/rss-baseline.json heavy-artifacts/ 2>/dev/null || true
       - name: Upload heavy-test artifacts
         if: always()

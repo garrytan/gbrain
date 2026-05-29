@@ -38,7 +38,7 @@ import {
 const created: string[] = [];
 
 function scratchGbrain(): { gbrainRoot: string; skillsDir: string } {
-  const root = mkdtempSync(join(tmpdir(), 'skillpack-gbrain-'));
+  const root = mkdtempSync(join(tmpdir(), 'skillpack-cortex-'));
   created.push(root);
   mkdirSync(join(root, 'src'), { recursive: true });
   writeFileSync(join(root, 'src', 'cli.ts'), '// stub');
@@ -79,10 +79,10 @@ function scratchGbrain(): { gbrainRoot: string; skillsDir: string } {
 
   // Plugin manifest.
   writeFileSync(
-    join(root, 'openclaw.plugin.json'),
+    join(root, 'cortex.plugin.json'),
     JSON.stringify(
       {
-        name: 'gbrain-test',
+        name: 'cortex-test',
         version: '0.17.0-test',
         skills: ['skills/alpha', 'skills/beta'],
         shared_deps: ['skills/conventions', 'skills/_output-rules.md'],
@@ -116,14 +116,14 @@ afterEach(() => {
 });
 
 describe('findGbrainRoot', () => {
-  it('walks up to find openclaw.plugin.json + src/cli.ts', () => {
+  it('walks up to find cortex.plugin.json + src/cli.ts', () => {
     const { gbrainRoot } = scratchGbrain();
     const nested = join(gbrainRoot, 'a', 'b', 'c');
     mkdirSync(nested, { recursive: true });
     expect(findGbrainRoot(nested)).toBe(gbrainRoot);
   });
-  it('returns null when no gbrain root above', () => {
-    expect(findGbrainRoot('/tmp/definitely-not-a-gbrain-repo-XYZ')).toBeNull();
+  it('returns null when no Cortex root above', () => {
+    expect(findGbrainRoot('/tmp/definitely-not-a-cortex-repo-XYZ')).toBeNull();
   });
 });
 
@@ -141,7 +141,7 @@ describe('loadBundleManifest', () => {
   });
   it('throws BundleError on malformed JSON', () => {
     const { gbrainRoot } = scratchGbrain();
-    writeFileSync(join(gbrainRoot, 'openclaw.plugin.json'), '{ nope');
+    writeFileSync(join(gbrainRoot, 'cortex.plugin.json'), '{ nope');
     expect(() => loadBundleManifest(gbrainRoot)).toThrow(BundleError);
   });
 });
@@ -181,15 +181,15 @@ describe('buildManagedBlock + updateManagedBlock', () => {
   it('builds a block with all installed slugs as rows', () => {
     const m = loadBundleManifest(scratchGbrain().gbrainRoot);
     const block = buildManagedBlock(m, ['alpha', 'beta']);
-    expect(block).toContain('gbrain:skillpack:begin');
-    expect(block).toContain('gbrain:skillpack:end');
+    expect(block).toContain('cortex:skillpack:begin');
+    expect(block).toContain('cortex:skillpack:end');
     expect(block).toContain('`skills/alpha/SKILL.md`');
     expect(block).toContain('`skills/beta/SKILL.md`');
   });
   it('appends block when none exists', () => {
     const block = buildManagedBlock(loadBundleManifest(scratchGbrain().gbrainRoot), ['alpha']);
     const updated = updateManagedBlock('# AGENTS\n\nSome prose.\n', block);
-    expect(updated).toContain('gbrain:skillpack:begin');
+    expect(updated).toContain('cortex:skillpack:begin');
     expect(updated).toContain('Some prose.');
   });
   it('replaces existing block in place, keeping surrounding content', () => {
@@ -315,7 +315,7 @@ describe('planInstall + applyInstall', () => {
     const { gbrainRoot } = scratchGbrain();
     const { workspace, skillsDir } = scratchTarget();
     // Simulate a peer holding the lock.
-    writeFileSync(join(workspace, '.gbrain-skillpack.lock'), '99999');
+    writeFileSync(join(workspace, '.cortex-skillpack.lock'), '99999');
     const opts = {
       gbrainRoot,
       targetWorkspace: workspace,
@@ -332,7 +332,7 @@ describe('planInstall + applyInstall', () => {
     // Stale lock is handled by setting lockStaleMs small and sleeping
     // — simulate by writing the lock and passing lockStaleMs=0 so
     // any age looks stale.
-    writeFileSync(join(workspace, '.gbrain-skillpack.lock'), '99999');
+    writeFileSync(join(workspace, '.cortex-skillpack.lock'), '99999');
     const opts = {
       gbrainRoot,
       targetWorkspace: workspace,
@@ -354,7 +354,7 @@ describe('planInstall + applyInstall', () => {
     // the lock's mtime 10ms into the future.
     const { gbrainRoot } = scratchGbrain();
     const { workspace, skillsDir } = scratchTarget();
-    const lockFile = join(workspace, '.gbrain-skillpack.lock');
+    const lockFile = join(workspace, '.cortex-skillpack.lock');
     writeFileSync(lockFile, '99999');
     const future = (Date.now() + 10) / 1000;
     utimesSync(lockFile, future, future);
@@ -382,8 +382,8 @@ describe('planInstall + applyInstall', () => {
     };
     applyInstall(planInstall(opts), opts);
     const resolver = readFileSync(join(skillsDir, 'RESOLVER.md'), 'utf-8');
-    expect(resolver).toContain('gbrain:skillpack:begin');
-    expect(resolver).toContain('gbrain:skillpack:end');
+    expect(resolver).toContain('cortex:skillpack:begin');
+    expect(resolver).toContain('cortex:skillpack:end');
     expect(resolver).toContain('`skills/alpha/SKILL.md`');
     expect(resolver).toContain('`skills/beta/SKILL.md`');
   });
@@ -480,11 +480,11 @@ describe('managed-block receipt + cumulative semantics (v0.19)', () => {
 
     // Simulate "alpha removed from bundle" by rewriting the manifest.
     const pluginManifest = JSON.parse(
-      readFileSync(join(gbrainRoot, 'openclaw.plugin.json'), 'utf-8'),
+      readFileSync(join(gbrainRoot, 'cortex.plugin.json'), 'utf-8'),
     );
     pluginManifest.skills = ['skills/beta'];
     writeFileSync(
-      join(gbrainRoot, 'openclaw.plugin.json'),
+      join(gbrainRoot, 'cortex.plugin.json'),
       JSON.stringify(pluginManifest, null, 2),
     );
 
@@ -525,10 +525,10 @@ describe('managed-block receipt + cumulative semantics (v0.19)', () => {
 
     // Inject a hand-added row inside the fence (between begin/end).
     // We splice right before the fence end marker so the row is
-    // unambiguously within gbrain's managed block.
+    // unambiguously within Cortex's managed block.
     const path = join(skillsDir, 'RESOLVER.md');
     const orig = readFileSync(path, 'utf-8');
-    const endMarker = '<!-- gbrain:skillpack:end -->';
+    const endMarker = '<!-- cortex:skillpack:end -->';
     const endIdx = orig.indexOf(endMarker);
     expect(endIdx).toBeGreaterThan(-1);
     const splice =
@@ -562,7 +562,7 @@ describe('managed-block receipt + cumulative semantics (v0.19)', () => {
   /**
    * Pre-v0.19 fence (no receipt comment): the first install on it
    * must not destroy data and must not fire warnings (rows were
-   * gbrain-written before the receipt feature existed). Receipt is
+   * Cortex-written before the receipt feature existed). Receipt is
    * present after the rebuild.
    */
   it('pre-v0.19 fence (no receipt) → clean rebuild, receipt now present, no warnings', () => {
@@ -576,15 +576,15 @@ describe('managed-block receipt + cumulative semantics (v0.19)', () => {
       [
         '# Target RESOLVER',
         '',
-        '<!-- gbrain:skillpack:begin -->',
+        '<!-- cortex:skillpack:begin -->',
         '',
-        '<!-- Installed by gbrain 0.18.2 — do not hand-edit between markers. -->',
+        '<!-- Installed by Cortex 0.18.2 — do not hand-edit between markers. -->',
         '',
         '| Trigger | Skill |',
         '|---------|-------|',
         '| "alpha" | `skills/alpha/SKILL.md` |',
         '',
-        '<!-- gbrain:skillpack:end -->',
+        '<!-- cortex:skillpack:end -->',
         '',
       ].join('\n'),
     );

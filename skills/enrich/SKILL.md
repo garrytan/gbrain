@@ -93,7 +93,7 @@ Extract people, companies, concepts from the incoming signal.
 ### Step 2: Check brain state
 
 For each entity:
-- `gbrain search "name"` -- does a page already exist?
+- `cortex search "name"` -- does a page already exist?
 - **If yes:** UPDATE path (add new signal, update compiled truth if material)
 - **If no:** CREATE path (check notability gate first, then create)
 
@@ -116,7 +116,7 @@ Don't just capture facts. Capture texture:
 Priority order -- stop when you have enough signal for the entity's tier.
 
 **4a. Brain cross-reference (always, all tiers)**
-- `gbrain search "name"` and `gbrain query "what do we know about name"`
+- `cortex search "name"` and `cortex query "what do we know about name"`
 - Check related pages: company pages for person enrichment and vice versa
 - This is free and often the richest source
 
@@ -147,7 +147,7 @@ Priority order -- stop when you have enough signal for the entity's tier.
 
 ### Step 5: Save raw data (preserves provenance)
 
-Store raw API responses via `put_raw_data` in gbrain:
+Store raw API responses via `put_raw_data` in cortex:
 ```json
 {
   "source": "crustdata",
@@ -279,7 +279,7 @@ Active items, pending decisions, things to track.
 cross-references (updating related pages' compiled truth with new signal
 from this enrichment), not on creating links. Verify via the `auto_links`
 field in the put_page response (`{ created, removed, errors }`).
-Timeline entries still need explicit `gbrain timeline-add` calls.
+Timeline entries still need explicit `cortex timeline-add` calls.
 
 ## Bulk Enrichment Rules
 
@@ -339,11 +339,11 @@ Both page types have bidirectional back-links to every entity they mention.
 
 ## Tools Used
 
-- Read a page from gbrain (get_page)
-- Store/update a page in gbrain (put_page)
-- Add a timeline entry in gbrain (add_timeline_entry)
-- List pages in gbrain by type (list_pages)
-- Store raw API data in gbrain (put_raw_data)
-- Retrieve raw data from gbrain (get_raw_data)
-- Link entities in gbrain (add_link)
-- Check backlinks in gbrain (get_backlinks)
+- Read a page from cortex (get_page)
+- Store/update a page in cortex (put_page)
+- Add a timeline entry in cortex (add_timeline_entry)
+- List pages in cortex by type (list_pages)
+- Store raw API data in cortex (put_raw_data)
+- Retrieve raw data from cortex (get_raw_data)
+- Link entities in cortex (add_link)
+- Check backlinks in cortex (get_backlinks)

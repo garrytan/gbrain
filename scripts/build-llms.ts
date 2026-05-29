@@ -12,7 +12,8 @@
  * Warns (does not fail) if llms-full.txt exceeds FULL_SIZE_BUDGET. CI catches
  * drift via test/build-llms.test.ts.
  *
- * Fork override: set LLMS_REPO_BASE to regenerate with a different URL base.
+ * Brand override: set LLMS_REPO_BASE / LLMS_REPO_URL to regenerate with a
+ * different repository URL base.
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -77,7 +78,7 @@ function renderLlmsFullTxt(): { content: string; sizes: Array<{ path: string; by
   lines.push(`> ${PROJECT.summary}`);
   lines.push("");
   lines.push(
-    `This file concatenates core GBrain documentation for single-fetch ingestion.`,
+    `This file concatenates core Cortex SaaS documentation for single-fetch ingestion.`,
   );
   lines.push(
     `For the link-only index, see \`llms.txt\`. Source of truth: ${PROJECT.repoUrl}.`,

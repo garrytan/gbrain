@@ -2,10 +2,12 @@ import { describe, test, expect } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 
 // Read cli.ts source for structural checks
 const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
-const repoRoot = new URL('..', import.meta.url).pathname;
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+const BUN = process.execPath;
 
 function isolatedEnv(home: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -71,8 +73,8 @@ describe('ask alias', () => {
   });
 
   test('ask does NOT appear in --tools-json output', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', '--tools-json'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -86,19 +88,19 @@ describe('ask alias', () => {
 
 describe('CLI dispatch integration', () => {
   test('--version outputs version', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--version'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', '--version'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
     const stdout = await new Response(proc.stdout).text();
     await proc.exited;
-    expect(stdout.trim()).toMatch(/^gbrain \d+\.\d+\.\d+/);
+    expect(stdout.trim()).toMatch(/^cortex \d+\.\d+\.\d+/);
   });
 
   test('unknown command prints error and exits 1', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'notacommand'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', 'notacommand'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -109,26 +111,26 @@ describe('CLI dispatch integration', () => {
   });
 
   test('per-command --help prints usage without DB connection', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'get', '--help'], {
+    const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', 'get', '--help'], {
       cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(stdout).toContain('Usage: gbrain get');
+    expect(stdout).toContain('Usage: cortex get');
     expect(exitCode).toBe(0);
   });
 
   test('upgrade --help prints usage without running upgrade', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'upgrade', '--help'], {
+    const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', 'upgrade', '--help'], {
       cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(stdout).toContain('Usage: gbrain upgrade');
+    expect(stdout).toContain('Usage: cortex upgrade');
     expect(exitCode).toBe(0);
   });
 
@@ -140,7 +142,7 @@ describe('CLI dispatch integration', () => {
     // printed a header but never mentioned --no-embed.
     const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
     try {
-      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'sync', '--help'], {
+      const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', 'sync', '--help'], {
         cwd: repoRoot,
         stdout: 'pipe',
         stderr: 'pipe',
@@ -149,7 +151,7 @@ describe('CLI dispatch integration', () => {
       const stdout = await new Response(proc.stdout).text();
       const stderr = await new Response(proc.stderr).text();
       const exitCode = await proc.exited;
-      expect(stdout).toContain('Usage: gbrain sync');
+      expect(stdout).toContain('Usage: cortex sync');
       // D.4 regression: the user-visible flag that the bug report wanted
       // surfaced. Pre-v0.37 this string was unreachable.
       expect(stdout).toContain('--no-embed');
@@ -166,7 +168,7 @@ describe('CLI dispatch integration', () => {
   test('doctor --help short-circuits CLI-only dispatch without diagnostics', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
     try {
-      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'doctor', '--help'], {
+      const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', 'doctor', '--help'], {
         cwd: repoRoot,
         stdout: 'pipe',
         stderr: 'pipe',
@@ -175,7 +177,7 @@ describe('CLI dispatch integration', () => {
       const stdout = await new Response(proc.stdout).text();
       const stderr = await new Response(proc.stderr).text();
       const exitCode = await proc.exited;
-      expect(stdout).toContain('Usage: gbrain doctor');
+      expect(stdout).toContain('Usage: cortex doctor');
       expect(stdout).not.toContain('resolver_health');
       expect(stderr).not.toContain('No brain configured');
       expect(exitCode).toBe(0);
@@ -187,7 +189,7 @@ describe('CLI dispatch integration', () => {
   test('init --help short-circuits CLI-only dispatch without writing config', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
     try {
-      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'init', '--help'], {
+      const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', 'init', '--help'], {
         cwd: repoRoot,
         stdout: 'pipe',
         stderr: 'pipe',
@@ -195,7 +197,7 @@ describe('CLI dispatch integration', () => {
       });
       const stdout = await new Response(proc.stdout).text();
       const exitCode = await proc.exited;
-      expect(stdout).toContain('Usage: gbrain init');
+      expect(stdout).toContain('Usage: cortex init');
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
       expect(exitCode).toBe(0);
     } finally {
@@ -204,7 +206,7 @@ describe('CLI dispatch integration', () => {
   });
 
   test('--help prints global help', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--help'], {
+    const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', '--help'], {
       cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
@@ -212,12 +214,12 @@ describe('CLI dispatch integration', () => {
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
     expect(stdout).toContain('USAGE');
-    expect(stdout).toContain('gbrain <command>');
+    expect(stdout).toContain('cortex <command>');
     expect(exitCode).toBe(0);
   });
 
   test('--tools-json outputs valid JSON with operations', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
+    const proc = Bun.spawn([BUN, 'run', 'src/cli.ts', '--tools-json'], {
       cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',

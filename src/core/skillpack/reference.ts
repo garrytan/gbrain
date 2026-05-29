@@ -129,6 +129,16 @@ export function runReferenceAll(opts: Omit<ReferenceOptions, 'skillSlug'>): Refe
   };
 }
 
+export function runReferenceAllForCortex(opts: {
+  cortexRoot: string;
+  targetWorkspace: string;
+}): ReferenceAllResult {
+  return runReferenceAll({
+    gbrainRoot: opts.cortexRoot,
+    targetWorkspace: opts.targetWorkspace,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // `reference --apply-clean-hunks` (D15, TODO-3 folded)
 // ---------------------------------------------------------------------------

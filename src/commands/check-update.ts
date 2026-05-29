@@ -1,6 +1,8 @@
 import { VERSION } from '../version.ts';
 import { detectInstallMethod } from './upgrade.ts';
 
+const DEFAULT_RELEASE_REPO = 'Versatly/Cortex';
+
 interface CheckUpdateResult {
   current_version: string;
   current_source: 'package-json';
@@ -11,6 +13,18 @@ interface CheckUpdateResult {
   changelog_diff: string;
   published_at: string;
   error?: string;
+}
+
+function releaseRepo(): string {
+  return process.env.CORTEX_RELEASE_REPO || DEFAULT_RELEASE_REPO;
+}
+
+function releaseBaseUrl(): string {
+  return `https://github.com/${releaseRepo()}`;
+}
+
+function rawChangelogUrl(): string {
+  return `https://raw.githubusercontent.com/${releaseRepo()}/main/CHANGELOG.md`;
 }
 
 export function parseSemver(v: string): [number, number, number] | null {
@@ -33,17 +47,17 @@ export function isMinorOrMajorBump(current: string, latest: string): boolean {
 
 function upgradeCommandForMethod(method: string): string {
   switch (method) {
-    case 'bun': return 'bun update gbrain';
-    case 'clawhub': return 'clawhub update gbrain';
-    case 'binary': return 'Download from https://github.com/garrytan/gbrain/releases';
-    default: return 'gbrain upgrade';
+    case 'bun': return 'bun update cortex-brain';
+    case 'clawhub': return 'clawhub update cortex-brain';
+    case 'binary': return `Download from ${releaseBaseUrl()}/releases`;
+    default: return 'cortex upgrade';
   }
 }
 
 async function fetchLatestRelease(): Promise<{ tag: string; published_at: string; url: string } | null> {
   try {
-    const res = await fetch('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
-      headers: { 'User-Agent': `gbrain/${VERSION}` },
+    const res = await fetch(`https://api.github.com/repos/${releaseRepo()}/releases/latest`, {
+      headers: { 'User-Agent': `cortex/${VERSION}` },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
@@ -60,7 +74,7 @@ async function fetchLatestRelease(): Promise<{ tag: string; published_at: string
 
 async function fetchChangelog(currentVersion: string, latestVersion: string): Promise<string> {
   try {
-    const res = await fetch('https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md', {
+    const res = await fetch(rawChangelogUrl(), {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return '';
@@ -97,16 +111,12 @@ export function extractChangelogBetween(changelog: string, from: string, to: str
         continue;
       }
       if (!capturing) {
-        // Start capturing at any version newer than current
         if (semverGt(verParsed, fromParsed)) {
           capturing = true;
           entries.push(line);
         }
       } else {
-        // Stop capturing when we hit the current version or older
-        if (semverLte(verParsed, fromParsed)) {
-          break;
-        }
+        if (semverLte(verParsed, fromParsed)) break;
         entries.push(line);
       }
     } else if (capturing) {
@@ -119,14 +129,19 @@ export function extractChangelogBetween(changelog: string, from: string, to: str
 
 export async function runCheckUpdate(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain check-update [--json]\n\nCheck for new GBrain versions.\n\nOnly reports minor/major version bumps (v0.X.0), not patches.\nFails silently on network errors.');
+    console.log(
+      'Usage: cortex check-update [--json]\n\n' +
+      'Check for new Cortex versions.\n\n' +
+      'Only reports minor/major version bumps (v0.X.0), not patches.\n' +
+      'Set CORTEX_RELEASE_REPO=owner/repo to override the release source.\n' +
+      'Fails silently on network errors.',
+    );
     return;
   }
 
   const json = args.includes('--json');
   const method = detectInstallMethod();
   const upgradeCmd = upgradeCommandForMethod(method);
-
   const release = await fetchLatestRelease();
 
   if (!release) {
@@ -143,18 +158,14 @@ export async function runCheckUpdate(args: string[]) {
         error: 'no_releases',
       }, null, 2));
     } else {
-      console.log(`GBrain ${VERSION} — could not check for updates (no releases found or network unavailable).`);
+      console.log(`Cortex ${VERSION} - could not check for updates (no releases found or network unavailable).`);
     }
     return;
   }
 
   const latestVersion = release.tag.replace(/^v/, '');
   const updateAvailable = isMinorOrMajorBump(VERSION, latestVersion);
-
-  let changelogDiff = '';
-  if (updateAvailable) {
-    changelogDiff = await fetchChangelog(VERSION, latestVersion);
-  }
+  const changelogDiff = updateAvailable ? await fetchChangelog(VERSION, latestVersion) : '';
 
   const result: CheckUpdateResult = {
     current_version: VERSION,
@@ -170,10 +181,10 @@ export async function runCheckUpdate(args: string[]) {
   if (json) {
     console.log(JSON.stringify(result, null, 2));
   } else if (updateAvailable) {
-    console.log(`GBrain update available: ${VERSION} → ${latestVersion}`);
+    console.log(`Cortex update available: ${VERSION} -> ${latestVersion}`);
     console.log(`Run: ${upgradeCmd}`);
     console.log(`Release: ${release.url}`);
   } else {
-    console.log(`GBrain ${VERSION} is up to date.`);
+    console.log(`Cortex ${VERSION} is up to date.`);
   }
 }

@@ -1,93 +1,50 @@
-# Takes vs Facts — Architectural Distinction
+# Takes Vs Facts
 
-gbrain has two epistemological storage layers that serve different purposes.
-**Never conflate them.**
+Cortex keeps two epistemological layers because real company knowledge has both
+fast conversational memory and slower attributed beliefs.
 
-## Takes (cold storage — `takes` table)
+## Takes
 
-The epistemological layer. WHO believes WHAT, with confidence weight and time.
+Takes capture attributed beliefs, bets, hunches, and claims from source
+material. They are retrospective and source-grounded.
 
-- **Source:** Extracted from brain pages (markdown) by LLM analysis
-- **Scope:** Multi-holder — captures beliefs from *any* speaker, not just the brain owner
-- **Kinds:** `take` (opinion), `fact` (verifiable), `bet` (prediction), `hunch` (intuition)
-- **Lifecycle:** Cold storage, retrospective. Updated when pages change or re-extraction runs.
-- **Scale:** 100K+ rows across thousands of holders in a mature brain
+Examples:
 
-**Example takes:**
-- `holder=people/garry-tan kind=bet` "AI will replace 50% of coding by 2030" (w=0.75)
-- `holder=people/jared-friedman kind=take` "Momo has strong retention" (w=0.80)
-- `holder=world kind=fact` "Clipboard raised $100M Series C" (w=1.0)
-- `holder=brain kind=hunch` "Garry has a hero/rescuer pattern" (w=0.70)
+- `holder=people/alex-founder kind=bet` "AI will replace 50% of coding by 2030"
+- `holder=people/jordan-customer kind=take` "The renewal blocker is security review"
+- `holder=world kind=fact` "Clipboard raised a Series C"
+- `holder=brain kind=hunch` "The sales cycle is blocked by procurement"
 
-**Query surface:** `gbrain takes list`, `gbrain takes search`, `gbrain think`
+Query surface: `cortex takes list`, `cortex takes search`, `cortex think`.
 
-## Facts (hot memory — `facts` table, v0.31)
+## Facts
 
-Personal knowledge from the brain owner's conversations. Real-time capture.
+Facts are hot tenant memory captured from authenticated conversations.
 
-- **Source:** Extracted per-turn from conversation by the facts hook (Haiku)
-- **Scope:** Single-user — only the brain owner's stated knowledge
-- **Kinds:** `event`, `preference`, `commitment`, `belief`, `fact`
-- **Lifecycle:** Hot storage, real-time. Captured as conversations happen.
-- **Bridge:** Dream cycle `consolidate` phase promotes hot facts → cold takes nightly
+Examples:
 
-**Example facts:**
 - `kind=event` "I have a meeting with Brian tomorrow"
-- `kind=preference` "I don't drink coffee"
-- `kind=commitment` "We decided on nesting custody"
+- `kind=preference` "Use terse launch updates"
+- `kind=commitment` "We decided on nested custody"
 - `kind=belief` "I think the market is overheated"
 
-**Query surface:** `gbrain recall`, MCP `_meta.brain_hot_memory`
+Query surface: `cortex recall` and MCP hot-memory metadata.
 
-## The Category Error
+## Category Rule
 
-**Never dump takes into the facts table.** Takes include other people's attributed
-beliefs (Jared's assessment of a company, PG's view on schools, a founder's
-revenue claims). These are NOT the brain owner's personal facts.
+Do not dump takes into facts: takes may include other people's attributed
+beliefs. Do not dump facts into takes without attribution and consolidation.
 
-**Never dump facts into the takes table without transformation.** Facts are
-scoped to what the owner said in conversation. They become takes only through
-the dream cycle's consolidate phase, which adds proper attribution, deduplication,
-and temporal reasoning.
+## Bridge
 
-## The Bridge
+The consolidation cycle can promote durable facts into takes with holder,
+weight, deduplication, and temporal context.
 
-The dream cycle's `consolidate` phase (v0.31) is the one-way bridge:
+Key extraction lessons:
 
-```
-hot facts → [dream consolidate] → cold takes
-```
-
-Facts flow in ONE direction. The consolidate phase:
-1. Groups related facts by entity
-2. Deduplicates against existing takes
-3. Promotes durable facts to takes with proper holder/weight
-4. Marks consolidated facts with `consolidated_at` + `consolidated_into`
-
-## Production Extraction Data (2026-05-10)
-
-First full takes extraction run on a ~100K-page brain:
-- **Model:** Azure GPT-5.5 (ties Opus quality at 1/8th cost — $0.033 vs $0.260/page)
-- **Result:** 100,720 takes from 28,256 on-disk pages, $361.49, 83 errors (0.3%)
-- **Breakdown:** 70,960 takes / 24,342 facts / 2,875 bets / 2,649 hunches
-- **Holders:** 6,239 unique holders
-- **Cross-modal eval:** 6.8/10 overall (GPT-5.5 + Opus 4.6 scored independently)
-
-### Eval Dimensions
-
-| Dimension | Score | Notes |
-|-----------|-------|-------|
-| Accuracy | 7.5 | Claims faithfully represent sources |
-| Attribution | 6.5 | Holder/subject confusion was #1 issue |
-| Weight calibration | 7.0 | Good range usage, some false precision |
-| Kind classification | 6.5 | Occasional fact/take misclassification |
-| Signal density | 6.5 | Some trivial extractions pass through |
-
-### Key Learnings for Extraction Prompts
-
-1. **Holder ≠ subject.** "Garry has a hero/rescuer pattern" → holder=brain, NOT people/garry-tan
-2. **Atomic claims.** Split compound claims into separate rows
-3. **Amplification ≠ endorsement.** Retweet-only → max weight 0.55
-4. **Self-reported ≠ verified.** "Reports 7 figures" → holder=person, weight=0.75, NOT world/1.0
-5. **No false precision.** Use 0.05 increments (0.35, 0.55, 0.75), not 0.74 or 0.82
-6. **"So what" test.** Skip Twitter handles, follower counts, obvious metadata
+1. Holder is not always subject.
+2. Split compound claims.
+3. Amplification is not endorsement.
+4. Self-reported is not automatically verified.
+5. Use calibrated weights, not false precision.
+6. Skip trivia that fails the "so what" test.

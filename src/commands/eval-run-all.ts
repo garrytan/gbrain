@@ -1,9 +1,9 @@
 /**
- * v0.32.3 — `gbrain eval run-all` orchestrator.
+ * v0.32.3 — `cortex eval run-all` orchestrator.
  *
  * Sweeps every requested mode × suite combination and writes per-run
- * results to `<repo>/.gbrain-evals/eval-results.jsonl` [CDX-23]. Personal
- * brain (~/.gbrain) is never touched; the repo's git history is the
+ * results to `<repo>/.cortex-evals/eval-results.jsonl` [CDX-23]. Tenant
+ * brain data is never touched; the repo's git history is the
  * audit trail.
  *
  * Sequential default per D9: --parallel N is opt-in. Modes run one after
@@ -109,9 +109,9 @@ export function parseRunAllArgs(args: string[]): RunAllOpts {
 
 function printHelp(): void {
   process.stderr.write(
-    `gbrain eval run-all [flags]\n\n` +
+    `cortex eval run-all [flags]\n\n` +
     `Sweeps every requested search-lite mode × eval suite. Writes per-run results to\n` +
-    `<repo>/.gbrain-evals/eval-results.jsonl. Personal brain is never touched.\n\n` +
+    `<repo>/.cortex-evals/eval-results.jsonl. Tenant brain data is never touched.\n\n` +
     `Flags:\n` +
     `  --modes M1,M2,M3              Modes to evaluate (default: conservative,balanced,tokenmax).\n` +
     `  --suites S1,S2                Suites to run (default: longmemeval,replay).\n` +
@@ -122,7 +122,7 @@ function printHelp(): void {
     `  --budget-usd-retrieval N      Retrieval-side LLM/embedding spend cap (default: $${DEFAULT_BUDGET_USD_RETRIEVAL}).\n` +
     `  --budget-usd-answer N         Answer-gen LLM spend cap (default: $${DEFAULT_BUDGET_USD_ANSWER}).\n` +
     `  --yes                         Required (alongside --budget-usd-*) in non-TTY for over-cap runs.\n` +
-    `  --output DIR                  Override .gbrain-evals/ location.\n` +
+    `  --output DIR                  Override .cortex-evals/ location.\n` +
     `  --json                        Emit run summary as JSON.\n` +
     `  -h, --help                    Show this help.\n\n` +
     `Cost guard refuses non-TTY runs over the budget cap without --yes AND an\n` +
@@ -167,7 +167,7 @@ function evalResultsPath(repoRoot: string, outputDirOverride?: string): string {
   if (outputDirOverride) {
     return join(outputDirOverride, 'eval-results.jsonl');
   }
-  return join(repoRoot, '.gbrain-evals', 'eval-results.jsonl');
+  return join(repoRoot, '.cortex-evals', 'eval-results.jsonl');
 }
 
 export function persistRunRecord(repoRoot: string, record: EvalRunRecord, outputDirOverride?: string): void {
@@ -293,10 +293,10 @@ export async function runEvalRunAll(_engine: BrainEngine | null, args: string[])
   }
 
   // v0.32.3 Implementation note: per-suite execution is the operator's
-  // responsibility today — `gbrain eval run-all` is the orchestrator's
+  // responsibility today — `cortex eval run-all` is the orchestrator's
   // shape + cost guard + audit trail. The per-suite per-mode calls land
-  // as a follow-up: each suite's CLI is already exposed (gbrain eval
-  // longmemeval --mode X, gbrain eval replay --mode X), so wiring them
+  // as a follow-up: each suite's CLI is already exposed (cortex eval
+  // longmemeval --mode X, cortex eval replay --mode X), so wiring them
   // into a sequential or parallel sweep is mechanical glue once the
   // benchmarking environment + dataset paths are configured.
   //

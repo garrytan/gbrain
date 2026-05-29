@@ -16,9 +16,9 @@ mutating: false
 Share brain pages as beautiful, self-contained HTML documents. Optionally
 password-protected with client-side AES-256-GCM encryption. No server needed.
 
-This is a **code + skill pair**: the deterministic code (`gbrain publish`) does
+This is a **code + skill pair**: the deterministic code (`cortex publish`) does
 the stripping, encrypting, and HTML generation. This skill tells you when and
-how to use it. See [Thin Harness, Fat Skills](https://x.com/garrytan/status/2042925773300908103)
+how to use it. See [Thin Harness, Fat Skills](https://x.com/cortex/status/2042925773300908103)
 for the architecture philosophy.
 
 ## Contract
@@ -48,19 +48,19 @@ channel than the URL.
 
 ```bash
 # Basic publish (outputs local HTML file)
-gbrain publish brain/companies/acme.md
+cortex publish brain/companies/acme.md
 
 # Password protected (auto-generate password)
-gbrain publish brain/companies/acme.md --password
+cortex publish brain/companies/acme.md --password
 
 # Password protected (specific password)
-gbrain publish brain/companies/acme.md --password "secret123"
+cortex publish brain/companies/acme.md --password "secret123"
 
 # Custom title
-gbrain publish brain/companies/acme.md --password --title "Acme -- Deal Analysis"
+cortex publish brain/companies/acme.md --password --title "Acme -- Deal Analysis"
 
 # Custom output path
-gbrain publish brain/companies/acme.md --out /tmp/acme-share.html
+cortex publish brain/companies/acme.md --out /tmp/acme-share.html
 ```
 
 ## What Gets Stripped
@@ -83,7 +83,7 @@ The publish command automatically removes all private/internal data:
 ### Option A: Local file (simplest)
 
 ```bash
-gbrain publish brain/people/jane-doe.md --password --out ~/Desktop/jane-briefing.html
+cortex publish brain/people/jane-doe.md --password --out ~/Desktop/jane-briefing.html
 ```
 
 Share the HTML file via email, Slack, Airdrop. Share the password separately.
@@ -92,13 +92,13 @@ Share the HTML file via email, Slack, Airdrop. Share the password separately.
 
 ```bash
 # Publish locally first
-gbrain publish brain/companies/acme.md --password "secret" --out /tmp/acme.html
+cortex publish brain/companies/acme.md --password "secret" --out /tmp/acme.html
 
 # Upload to Supabase Storage
-gbrain files upload /tmp/acme.html --page shares/acme
+cortex files upload /tmp/acme.html --page shares/acme
 
 # Get a signed URL (1-hour expiry)
-gbrain files signed-url shares/acme/acme.html
+cortex files signed-url shares/acme/acme.html
 ```
 
 Share the signed URL + password. URL expires in 1 hour. Re-generate as needed.
@@ -112,7 +112,7 @@ Web Crypto API.
 ### Option D: GitHub Pages / Gist
 
 ```bash
-gbrain publish brain/trips/japan-2026.md --out trip.html
+cortex publish brain/trips/japan-2026.md --out trip.html
 # Upload to a GitHub Gist or Pages repo
 ```
 
@@ -133,7 +133,7 @@ not present anywhere in the file.
 
 Re-run the publish command with the same output path:
 ```bash
-gbrain publish brain/companies/acme.md --password "same-password" --out shares/acme.html
+cortex publish brain/companies/acme.md --password "same-password" --out shares/acme.html
 ```
 
 Same file, same URL (if hosted), updated content.
@@ -147,7 +147,7 @@ If using static hosting, remove the file from the host.
 
 - **Publishing without encryption.** Brain content is private. Default to password-protected unless the user explicitly says "open", "no password", or "public".
 - **Sharing password and URL in the same channel.** Always share the password via a different channel than the URL for security.
-- **Assuming the user wants raw markdown.** The publish command produces beautiful HTML. Don't copy-paste markdown when `gbrain publish` exists.
+- **Assuming the user wants raw markdown.** The publish command produces beautiful HTML. Don't copy-paste markdown when `cortex publish` exists.
 - **Including internal metadata.** Never manually share content that contains frontmatter, source citations, or timeline sections. Let the publish command strip it.
 
 ## Output Format
@@ -167,6 +167,6 @@ Share the password via: [a different channel]
 
 ## Tools Used
 
-- `gbrain publish` -- deterministic HTML generation (no LLM calls)
-- `gbrain files upload` -- upload to cloud storage (optional)
-- `gbrain files signed-url` -- generate access links (optional)
+- `cortex publish` -- deterministic HTML generation (no LLM calls)
+- `cortex files upload` -- upload to cloud storage (optional)
+- `cortex files signed-url` -- generate access links (optional)

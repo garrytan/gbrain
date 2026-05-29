@@ -10,13 +10,13 @@
 set -euo pipefail
 
 # Files to check: anything tracked under src/ + test/ that's a code/text file.
-# Also the top-level *.yml + *.md the repo controls. Portable to bash 3.2
+# Also the top-level Cortex YAML + *.md the repo controls. Portable to bash 3.2
 # (macOS default) — no mapfile, no associative arrays.
 files=$(
   git ls-files \
     'src/**/*.ts' 'src/**/*.js' 'src/**/*.json' 'src/**/*.sql' 'src/**/*.md' \
     'test/**/*.ts' 'test/**/*.js' 'test/**/*.json' 'test/**/*.md' \
-    'gbrain.yml' '*.md' \
+    'cortex.yml' '*.md' \
   2>/dev/null | sort -u
 )
 

@@ -9,7 +9,7 @@
  * No executor. No `agent:` / `show user:` / `ask user:` dispatch.
  * Just print the markdown with a header that signals to any agent
  * reading the output that these are SUGGESTED steps, not a runnable
- * script. The agent (Claude / OpenClaw / etc.) decides whether to
+ * script. The agent (Codex / Claude Code / Cursor / etc.) decides whether to
  * walk them and how.
  *
  * Stays pure-data: returns the framed text rather than writing
@@ -43,13 +43,13 @@ export interface BootstrapDisplayResult {
 const FRAME_HEADER = `══════════════════════════════════════════════════════════════════════
  BOOTSTRAP STEPS (read-only — agent decides what to run)
 ══════════════════════════════════════════════════════════════════════
-These are SUGGESTED next steps from the skillpack author. gbrain
+These are SUGGESTED next steps from the skillpack author. Cortex
 deliberately does NOT auto-execute them — third-party packs run in
 trusted-path mode and an automated walker would let a malicious pack
 mutate your brain on install.
 
 Read each step. Run what you understand. Skip what you don't. Use
-\`gbrain skillpack reference <name>\` later if you want to see what
+\`cortex skillpack reference <name>\` later if you want to see what
 the author changed in a new version.
 ══════════════════════════════════════════════════════════════════════
 `;

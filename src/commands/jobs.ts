@@ -1,5 +1,5 @@
 /**
- * CLI handler for `gbrain jobs` subcommands.
+ * CLI handler for `cortex jobs` subcommands.
  * Thin wrapper around MinionQueue and MinionWorker.
  */
 
@@ -73,7 +73,7 @@ export function resolveWorkerConcurrency(args: string[], env: NodeJS.ProcessEnv 
       ? '--concurrency flag'
       : 'GBRAIN_WORKER_CONCURRENCY env';
     process.stderr.write(
-      `[gbrain jobs] invalid concurrency from ${source} (${JSON.stringify(raw)}); ` +
+      `[cortex jobs] invalid concurrency from ${source} (${JSON.stringify(raw)}); ` +
       `falling back to 1. Set a positive integer.\n`
     );
     return 1;
@@ -117,10 +117,10 @@ export async function runJobs(engine: BrainEngine, args: string[]): Promise<void
   const sub = args[0];
 
   if (!sub || sub === '--help' || sub === '-h') {
-    console.log(`gbrain jobs — Minions job queue
+    console.log(`cortex jobs — Minions job queue
 
 USAGE
-  gbrain jobs submit <name> [--params JSON] [--follow] [--priority N]
+  cortex jobs submit <name> [--params JSON] [--follow] [--priority N]
                             [--delay Nms] [--max-attempts N] [--max-stalled N]
                             [--max-waiting N]
                             [--backoff-type fixed|exponential] [--backoff-delay Nms]
@@ -128,30 +128,30 @@ USAGE
                             [--idempotency-key K] [--queue Q] [--dry-run]
                             [--redact-secrets]   (shell only; scrubs inherit
                                                   values from stdout/stderr)
-  gbrain jobs list [--status S] [--queue Q] [--limit N]
-  gbrain jobs get <id>
-  gbrain jobs cancel <id>
-  gbrain jobs retry <id>
-  gbrain jobs prune [--older-than 30d]
-  gbrain jobs delete <id>
-  gbrain jobs stats
-  gbrain jobs smoke
-  gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
+  cortex jobs list [--status S] [--queue Q] [--limit N]
+  cortex jobs get <id>
+  cortex jobs cancel <id>
+  cortex jobs retry <id>
+  cortex jobs prune [--older-than 30d]
+  cortex jobs delete <id>
+  cortex jobs stats
+  cortex jobs smoke
+  cortex jobs work [--queue Q] [--concurrency N] [--max-rss MB]
                    [--health-interval MS]
-  gbrain jobs supervisor [start] [--detach] [--json]
+  cortex jobs supervisor [start] [--detach] [--json]
                          [--concurrency N] [--queue Q] [--pid-file PATH]
                          [--max-crashes N] [--health-interval N]
                          [--allow-shell-jobs] [--cli-path PATH]
                          [--max-rss MB]
-  gbrain jobs supervisor status [--json] [--pid-file PATH]
-  gbrain jobs supervisor stop [--json] [--pid-file PATH]
+  cortex jobs supervisor status [--json] [--pid-file PATH]
+  cortex jobs supervisor stop [--json] [--pid-file PATH]
 
-    Auto-restarting wrapper around 'gbrain jobs work'. Spawns the worker
+    Auto-restarting wrapper around 'cortex jobs work'. Spawns the worker
     as a child process and restarts on crash with exponential backoff
-    (1s -> 60s cap). Writes a PID file to ~/.gbrain/supervisor.pid by
+    (1s -> 60s cap). Writes a PID file to the local Cortex state dir by
     default (override via --pid-file or GBRAIN_SUPERVISOR_PID_FILE env).
     Lifecycle events are appended to
-      \${GBRAIN_AUDIT_DIR:-~/.gbrain/audit}/supervisor-YYYY-Www.jsonl
+      \${CORTEX_AUDIT_DIR:-/data/cortex/audit}/supervisor-YYYY-Www.jsonl
 
     SUBCOMMANDS
       start        (default) Launch the supervisor. --detach returns a
@@ -170,11 +170,11 @@ USAGE
       3  PID file unwritable (permission / path error)
 
     EXAMPLES
-      gbrain jobs supervisor --concurrency 4         # foreground (Ctrl-C stops)
-      gbrain jobs supervisor start --detach --json   # agent-friendly: fork + return JSON
-      gbrain jobs supervisor status --json           # machine-readable health check
-      gbrain jobs supervisor stop                    # graceful stop
-      gbrain jobs supervisor --json --allow-shell-jobs  # JSONL events + shell-exec on
+      cortex jobs supervisor --concurrency 4         # foreground (Ctrl-C stops)
+      cortex jobs supervisor start --detach --json   # agent-friendly: fork + return JSON
+      cortex jobs supervisor status --json           # machine-readable health check
+      cortex jobs supervisor stop                    # graceful stop
+      cortex jobs supervisor --json --allow-shell-jobs  # JSONL events + shell-exec on
 
 HANDLER TYPES (built in)
   sync              Pull and embed new pages from the repo
@@ -184,7 +184,7 @@ HANDLER TYPES (built in)
   extract           Extract links + timeline entries; '{"mode":"all"}'
   backlinks         Check or fix back-links; '{"action":"fix"}'
   autopilot-cycle   One autopilot pass (sync+extract+embed+backlinks)
-  shell             Run a command or argv. Requires GBRAIN_ALLOW_SHELL_JOBS=1
+  shell             Run a command or argv. Requires CORTEX_ALLOW_SHELL_JOBS=1
                     on the worker. Params: {cmd?, argv?, cwd, env?}.
                     See: docs/guides/minions-shell-jobs.md
 `);
@@ -197,7 +197,7 @@ HANDLER TYPES (built in)
     case 'submit': {
       const name = args[1];
       if (!name) {
-        console.error('Error: job name required. Usage: gbrain jobs submit <name>');
+        console.error('Error: job name required. Usage: cortex jobs submit <name>');
         process.exit(1);
       }
 
@@ -329,18 +329,18 @@ HANDLER TYPES (built in)
       } catch { /* audit failures never block submission */ }
 
       // Starvation warning (DX polish). Fire for every non-`--follow` shell submit
-      // regardless of the submitter's own `GBRAIN_ALLOW_SHELL_JOBS` — the submitter
+      // regardless of the submitter's own `CORTEX_ALLOW_SHELL_JOBS` — the submitter
       // env is a weak proxy for the worker env (they may run on different machines),
       // so the warning remains useful any time the job might sit in 'waiting'.
       if (!follow && name.trim() === 'shell') {
         process.stderr.write(
-          `\n⚠  Shell jobs require GBRAIN_ALLOW_SHELL_JOBS=1 on the worker process.\n` +
+          `\n⚠  Shell jobs require CORTEX_ALLOW_SHELL_JOBS=1 on the worker process.\n` +
           `   Your job was queued (id=${job.id}) but will sit in 'waiting' until a\n` +
           `   worker with the env flag starts. To run now:\n\n` +
-          `     GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \\\n` +
+          `     CORTEX_ALLOW_SHELL_JOBS=1 cortex jobs submit shell \\\n` +
           `       --params '...' --follow\n\n` +
           `   Or start a persistent worker (Postgres only — PGLite uses --follow):\n\n` +
-          `     GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work\n\n`,
+          `     CORTEX_ALLOW_SHELL_JOBS=1 cortex jobs work\n\n`,
         );
       }
 
@@ -432,7 +432,7 @@ HANDLER TYPES (built in)
 
     case 'get': {
       const id = parseInt(args[1], 10);
-      if (isNaN(id)) { console.error('Error: job ID required. Usage: gbrain jobs get <id>'); process.exit(1); }
+      if (isNaN(id)) { console.error('Error: job ID required. Usage: cortex jobs get <id>'); process.exit(1); }
 
       // v0.32: thin-client routing (mirrors `list` branch above).
       const cfg = loadConfig();
@@ -597,7 +597,7 @@ HANDLER TYPES (built in)
             console.log(`\n  Error clusters (24h):`);
             for (const c of clusters.slice(0, 5)) {
               const sample = c.sample_ids.length > 0
-                ? `  (e.g. \`gbrain jobs get ${c.sample_ids[0]}\`)` : '';
+                ? `  (e.g. \`cortex jobs get ${c.sample_ids[0]}\`)` : '';
               console.log(`    ${String(c.count).padStart(4)} × ${c.cluster.padEnd(22)}${sample}`);
             }
             if (clusters.length > 5) {
@@ -760,7 +760,7 @@ HANDLER TYPES (built in)
       const tag = tags.length > 0 ? ` + ${tags.join(' + ')}` : '';
       console.log(`SMOKE PASS — Minions healthy${tag} in ${elapsedSec}s (engine: ${engineLabel})`);
       if (engineLabel === 'pglite') {
-        console.log('Note: the `gbrain jobs work` daemon requires Postgres. PGLite');
+        console.log('Note: the `cortex jobs work` daemon requires Postgres. PGLite');
         console.log('supports inline execution only (`submit --follow`).');
       }
       try { await queue.removeJob(job.id); } catch { /* non-fatal cleanup */ }
@@ -772,7 +772,7 @@ HANDLER TYPES (built in)
       const config = (await import('../core/config.ts')).loadConfig();
       if (config?.engine === 'pglite') {
         console.error('Error: Worker daemon requires Postgres. PGLite uses an exclusive file lock that blocks other processes.');
-        console.error('Use --follow for inline execution: gbrain jobs submit <name> --follow');
+        console.error('Use --follow for inline execution: cortex jobs submit <name> --follow');
         process.exit(1);
       }
 
@@ -855,17 +855,17 @@ HANDLER TYPES (built in)
         // "engine ownership stays with the creator" invariant that broke
         // tests in earlier waves of this branch.
         try { await engine.disconnect(); }
-        catch (e) { console.error('[gbrain jobs work] engine disconnect failed during shutdown:', e); }
+        catch (e) { console.error('[cortex jobs work] engine disconnect failed during shutdown:', e); }
       }
       break;
     }
 
     case 'supervisor': {
       // Dispatcher for supervisor subcommands:
-      //   gbrain jobs supervisor                    → foreground start (back-compat)
-      //   gbrain jobs supervisor start [--detach]   → foreground or detached start
-      //   gbrain jobs supervisor status             → JSON liveness + queue stats
-      //   gbrain jobs supervisor stop               → SIGTERM + drain wait
+      //   cortex jobs supervisor                    → foreground start (back-compat)
+      //   cortex jobs supervisor start [--detach]   → foreground or detached start
+      //   cortex jobs supervisor status             → JSON liveness + queue stats
+      //   cortex jobs supervisor stop               → SIGTERM + drain wait
       const { MinionSupervisor, DEFAULT_PID_FILE } = await import('../core/minions/supervisor.ts');
       const { writeSupervisorEvent } = await import('../core/minions/handlers/supervisor-audit.ts');
 
@@ -897,7 +897,7 @@ HANDLER TYPES (built in)
 
         const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
         const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
-        // Shared classifier — same code path runs in `gbrain doctor` so the
+        // Shared classifier — same code path runs in `cortex doctor` so the
         // two surfaces cannot drift on what counts as a crash. Supersedes
         // v0.35.4.0's binary `classifyWorkerExit({code})` on this surface;
         // see doctor.ts for the layering rationale.
@@ -1019,7 +1019,8 @@ HANDLER TYPES (built in)
         healthInterval = parsed;
       }
       const allowShellJobs = hasFlag(args, '--allow-shell-jobs') ||
-                             !!process.env.GBRAIN_ALLOW_SHELL_JOBS;
+                             process.env.CORTEX_ALLOW_SHELL_JOBS === '1' ||
+                             process.env.GBRAIN_ALLOW_SHELL_JOBS === '1';
       const detach = hasFlag(args, '--detach');
       // Supervisor defaults --max-rss 2048 (MB) — main production path uses
       // the supervisor, so the watchdog is on by default here.
@@ -1082,7 +1083,7 @@ HANDLER TYPES (built in)
     }
 
     default:
-      console.error(`Unknown subcommand: ${sub}. Run 'gbrain jobs --help' for usage.`);
+      console.error(`Unknown subcommand: ${sub}. Run 'cortex jobs --help' for usage.`);
       process.exit(1);
   }
 }
@@ -1187,7 +1188,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   worker.register('embed', async (job) => {
     const { runEmbedCore } = await import('./embed.ts');
     // Primary Minion progress channel is job.updateProgress (DB-backed,
-    // readable via `gbrain jobs get <id>`). Stderr from the worker daemon
+    // readable via `cortex jobs get <id>`). Stderr from the worker daemon
     // only emits coarse job-start / job-done lines; per-page detail lives
     // in the DB. Per Codex review #20.
     await runEmbedCore(engine, {
@@ -1244,7 +1245,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
       maxCostUsd: typeof job.data.maxCostUsd === 'number' ? job.data.maxCostUsd : undefined,
       overrideDisabled: !!job.data.overrideDisabled,
       // v0.41.15.0 (D9): round-trip --workers via job.data.workers so
-      // `gbrain extract-conversation-facts --background --workers 20`
+      // `cortex extract-conversation-facts --background --workers 20`
       // works end-to-end.
       workers: typeof job.data.workers === 'number' ? job.data.workers : undefined,
     });
@@ -1307,7 +1308,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   });
 
   // Autopilot-cycle handler: delegates to runCycle. Shares the exact same
-  // phase set and ordering as `gbrain dream` and autopilot's inline path —
+  // phase set and ordering as `cortex dream` and autopilot's inline path —
   // one source of truth for what the brain does overnight.
   //
   // Yields the event loop between phases so the worker's lock-renewal
@@ -1330,7 +1331,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   }
 
   // derivation); the handler returns { partial, status, report } so
-  // `gbrain jobs get <id>` shows the full structured report. Does NOT
+  // `cortex jobs get <id>` shows the full structured report. Does NOT
   // throw on partial: a flaky phase must not block every future cycle.
   worker.register('autopilot-cycle', async (job) => {
     const { runCycle } = await import('../core/cycle.ts');
@@ -1417,14 +1418,14 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
 
   // Shell handler is always registered. Runtime env guard lives inside the
   // handler so claimed jobs emit a clear rejection log on workers missing
-  // GBRAIN_ALLOW_SHELL_JOBS=1.
+  // CORTEX_ALLOW_SHELL_JOBS=1.
   {
     const { shellHandler } = await import('../core/minions/handlers/shell.ts');
     worker.register('shell', shellHandler);
-    if (process.env.GBRAIN_ALLOW_SHELL_JOBS === '1') {
-      process.stderr.write('[minion worker] shell handler enabled (GBRAIN_ALLOW_SHELL_JOBS=1)\n');
+    if (process.env.CORTEX_ALLOW_SHELL_JOBS === '1' || process.env.GBRAIN_ALLOW_SHELL_JOBS === '1') {
+      process.stderr.write('[minion worker] shell handler enabled (CORTEX_ALLOW_SHELL_JOBS=1)\n');
     } else {
-      process.stderr.write('[minion worker] shell handler registered in guarded mode (set GBRAIN_ALLOW_SHELL_JOBS=1 to execute shell jobs)\n');
+      process.stderr.write('[minion worker] shell handler registered in guarded mode (set CORTEX_ALLOW_SHELL_JOBS=1 to execute shell jobs)\n');
     }
   }
 
@@ -1454,7 +1455,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
 
   // ============================================================
   // v0.36+ brain-health-100 wave: 11 new handlers for autonomous
-  // remediation via `gbrain doctor --remediate` and autopilot.
+  // remediation via `cortex doctor --remediate` and autopilot.
   //
   // PROTECTED via PROTECTED_JOB_NAMES (D11): synthesize, patterns,
   // consolidate — they internally submit `subagent` jobs with
@@ -1618,7 +1619,7 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   // migration that retypes 25K+ pages, creates alias rows, converts edge-
   // shaped pages to link rows, AND flips the active pack at end of run.
   // manual_only via src/core/onboard/render.ts:MANUAL_ONLY_PROTECTED_JOBS.
-  // Operator path: `gbrain jobs submit unify-types --allow-protected --params
+  // Operator path: `cortex jobs submit unify-types --allow-protected --params
   // '{"target_pack":"gbrain-base-v2"}'`.
   worker.register('unify-types', async (job) => {
     const { runUnifyTypes } = await import('../core/schema-pack/unify-types-handler.ts');

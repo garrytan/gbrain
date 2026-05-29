@@ -82,8 +82,8 @@ function findOp(name: string): Operation {
 
 function ctxRemote(scopes: string[]): OperationContext {
   const auth: AuthInfo = {
-    token: 'gbrain_at_xxx',
-    clientId: 'gbrain_cl_test',
+    token: 'cortex_at_xxx',
+    clientId: 'cortex_cl_test',
     clientName: 'test-client',
     scopes,
     expiresAt: Math.floor(Date.now() / 1000) + 3600,

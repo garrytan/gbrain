@@ -1,16 +1,16 @@
 /**
- * `gbrain agent` CLI: the user-facing entry point for the v0.15 subagent
+ * `cortex agent` CLI: the user-facing entry point for the v0.15 subagent
  * runtime.
  *
- *   gbrain agent run <prompt> [flags]
- *   gbrain agent logs <job_id> [--follow] [--since <spec>]
+ *   cortex agent run <prompt> [flags]
+ *   cortex agent logs <job_id> [--follow] [--since <spec>]
  *
  * `run` submits a subagent job (or fan-out of N subagents + aggregator)
  * under the trusted-submit flag so the PROTECTED_JOB_NAMES guard doesn't
  * reject. It does NOT execute the loop here — the handler runs in a
- * `gbrain jobs work` process. `--follow` tails status until terminal;
+ * `cortex jobs work` process. `--follow` tails status until terminal;
  * without `--follow` (or with `--detach`) the CLI prints the job id and
- * exits, leaving the user to check back with `gbrain agent logs`.
+ * exits, leaving the user to check back with `cortex agent logs`.
  */
 
 import * as fs from 'node:fs';
@@ -50,22 +50,22 @@ export async function runAgent(engine: BrainEngine, args: string[]): Promise<voi
       await runAgentLogsCmd(engine, args.slice(1));
       return;
     default:
-      console.error(`gbrain agent: unknown subcommand "${sub}"`);
+      console.error(`cortex agent: unknown subcommand "${sub}"`);
       printHelp();
       process.exit(2);
   }
 }
 
 function printHelp(): void {
-  console.log(`gbrain agent — durable LLM agent runs (v0.15)
+  console.log(`cortex agent — durable LLM agent runs (v0.15)
 
 USAGE
-  gbrain agent run <prompt> [flags]
-  gbrain agent logs <job_id> [--follow] [--since <spec>]
+  cortex agent run <prompt> [flags]
+  cortex agent logs <job_id> [--follow] [--since <spec>]
 
 SUBMITTING
-  gbrain agent run <prompt>
-    --subagent-def <name>        Named plugin subagent (from GBRAIN_PLUGIN_PATH)
+  cortex agent run <prompt>
+    --subagent-def <name>        Named plugin subagent (from CORTEX_PLUGIN_PATH)
     --model <id>                 Anthropic model id (defaults to sonnet)
     --max-turns <n>              Max assistant turns (default 20)
     --tools a,b,c                Subset of registered tool names (comma list)
@@ -78,7 +78,7 @@ SUBMITTING
   remainder is the prompt. Use \`--\` to explicitly terminate flag parsing.
 
 VIEWING
-  gbrain agent logs <job_id>
+  cortex agent logs <job_id>
     --follow                     Keep polling until the job reaches terminal
     --since <spec>               ISO-8601 timestamp OR relative ("5m","1h","2d")
 
@@ -89,7 +89,7 @@ NOTES
 `);
 }
 
-// ── `gbrain agent run` ────────────────────────────────────
+// ── `cortex agent run` ────────────────────────────────────
 
 interface RunFlags {
   subagentDef?: string;
@@ -123,7 +123,7 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
       case '--no-follow':    flags.follow = false; i++; break;
       case '--detach':       flags.detach = true; flags.follow = false; i++; break;
       default:
-        throw new Error(`unknown flag: ${a}. Run \`gbrain agent run --help\` for usage.`);
+        throw new Error(`unknown flag: ${a}. Run \`cortex agent run --help\` for usage.`);
     }
   }
   return { flags, rest: args.slice(i) };
@@ -145,7 +145,7 @@ export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<
 
   const prompt = rest.join(' ').trim();
   if (!prompt) {
-    console.error('gbrain agent run: prompt is required');
+    console.error('cortex agent run: prompt is required');
     process.exit(2);
   }
 
@@ -184,12 +184,12 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
     manifest = parsed as typeof manifest;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`gbrain agent run: invalid --fanout-manifest ${manifestPath}: ${msg}`);
+    console.error(`cortex agent run: invalid --fanout-manifest ${manifestPath}: ${msg}`);
     process.exit(2);
   }
 
   if (manifest.length === 0) {
-    console.error('gbrain agent run: --fanout-manifest is empty; nothing to run');
+    console.error('cortex agent run: --fanout-manifest is empty; nothing to run');
     process.exit(2);
   }
 
@@ -270,7 +270,7 @@ async function runFanout(engine: BrainEngine, queue: MinionQueue, flags: RunFlag
 // ── follow ────────────────────────────────────────────────
 
 async function followJob(engine: BrainEngine, queue: MinionQueue, jobId: number, timeoutMs?: number): Promise<void> {
-  process.stderr.write(`[gbrain agent] following job ${jobId} (Ctrl-C to detach)...\n`);
+  process.stderr.write(`[cortex agent] following job ${jobId} (Ctrl-C to detach)...\n`);
   const ac = new AbortController();
   const onSigint = () => ac.abort();
   process.once('SIGINT', onSigint);
@@ -286,12 +286,12 @@ async function followJob(engine: BrainEngine, queue: MinionQueue, jobId: number,
       });
       ac.abort();
       await logsP.catch(() => {});
-      process.stderr.write(`[gbrain agent] job ${jobId} terminal: ${job.status}\n`);
+      process.stderr.write(`[cortex agent] job ${jobId} terminal: ${job.status}\n`);
       if (job.result != null) process.stdout.write(JSON.stringify(job.result, null, 2) + '\n');
       if (job.status !== 'completed') process.exit(1);
     } catch (e) {
       if (e instanceof TimeoutError) {
-        process.stderr.write(`[gbrain agent] timeout after ${e.elapsedMs}ms — job is still running. Check with: gbrain jobs get ${jobId}\n`);
+        process.stderr.write(`[cortex agent] timeout after ${e.elapsedMs}ms — job is still running. Check with: cortex jobs get ${jobId}\n`);
         process.exit(3);
       }
       throw e;
@@ -301,17 +301,17 @@ async function followJob(engine: BrainEngine, queue: MinionQueue, jobId: number,
   }
 }
 
-// ── `gbrain agent logs` ────────────────────────────────────
+// ── `cortex agent logs` ────────────────────────────────────
 
 async function runAgentLogsCmd(engine: BrainEngine, args: string[]): Promise<void> {
   const jobIdStr = args.find(a => !isKnownFlag(a));
   if (!jobIdStr) {
-    console.error('gbrain agent logs: <job_id> is required');
+    console.error('cortex agent logs: <job_id> is required');
     process.exit(2);
   }
   const jobId = parseInt(jobIdStr, 10);
   if (!Number.isFinite(jobId) || jobId <= 0) {
-    console.error(`gbrain agent logs: "${jobIdStr}" is not a valid job id`);
+    console.error(`cortex agent logs: "${jobIdStr}" is not a valid job id`);
     process.exit(2);
   }
   const follow = hasFlag(args, '--follow');

@@ -1,0 +1,61 @@
+{
+  "name": "cortex",
+  "version": "0.41.26.0",
+  "description": "Cortex hosted company-brain runtime for multi-tenant SaaS customers and their agents",
+  "family": "cortex-runtime",
+  "configSchema": {
+    "cortex_public_url": {
+      "type": "string",
+      "required": true,
+      "description": "Hosted Cortex tenant origin"
+    },
+    "database_url": {
+      "type": "string",
+      "required": true,
+      "description": "PostgreSQL connection URL for the tenant brain",
+      "uiHints": {
+        "sensitive": true
+      }
+    },
+    "cortex_admin_bootstrap_token": {
+      "type": "string",
+      "required": true,
+      "description": "Admin bootstrap token for protected setup APIs",
+      "uiHints": {
+        "sensitive": true
+      }
+    },
+    "openai_api_key": {
+      "type": "string",
+      "required": false,
+      "description": "OpenAI API key for embeddings",
+      "uiHints": {
+        "sensitive": true
+      }
+    }
+  },
+  "mcpServers": {
+    "cortex": {
+      "command": "./bin/cortex",
+      "args": [
+        "serve"
+      ]
+    }
+  },
+  "runtimeManifest": "./runtime-manifest.json",
+  "skillsManifest": "skills/manifest.json",
+  "resolver": "skills/RESOLVER.md",
+  "skills": [
+    "skills/setup/SKILL.md",
+    "skills/schema-author/SKILL.md"
+  ],
+  "sharedDeps": [
+    "skills/_AGENT_README.md"
+  ],
+  "excludedFromInstall": [],
+  "contracts": {
+    "contextEngines": [
+      "cortex-context"
+    ]
+  }
+}

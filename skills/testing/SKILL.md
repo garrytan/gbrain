@@ -32,7 +32,7 @@ mutating: false
 
 This skill has two related but distinct modes:
 
-1. **Skill conformance validation** — gbrain's own conformance bar
+1. **Skill conformance validation** — cortex's own conformance bar
    (the original 1.0 scope). Validates every skill has SKILL.md with
    frontmatter, every reference exists, manifest + resolver coverage
    round-trips.
@@ -56,7 +56,7 @@ This mode guarantees:
   `test/skills-conformance.test.ts`
 - `skills/manifest.json` lists every skill directory
 - `skills/RESOLVER.md` references every skill in the manifest
-- `openclaw.plugin.json` `skills[]` round-trips with both
+- `cortex.plugin.json` `skills[]` round-trips with both
 - No MECE violations (duplicate triggers across skills)
 
 ### Phases
@@ -137,7 +137,7 @@ timeouts, not code bugs).
 #### 3. Run system health checks
 
 - Disk / memory / CPU
-- gbrain: `gbrain doctor --fast --json`
+- cortex: `cortex doctor --fast --json`
 - Database connection (if applicable)
 - Critical files exist (CLAUDE.md, AGENTS.md, etc.)
 
@@ -155,7 +155,7 @@ For each failing test:
 2. Check if the code it tests was modified recently (possible
    regression).
 3. Check if it's a known flake (API timeout, service down).
-4. Check if a dependency was updated (gbrain, bun, etc.).
+4. Check if a dependency was updated (cortex, bun, etc.).
 
 #### 5. Classify each failure
 
@@ -209,14 +209,14 @@ if there's a related PR or conversation, ask the user if still unclear.
 
 ### State (regression history)
 
-Track results in `~/.gbrain/test-state.json` for trend tracking:
+Track results in `~/.cortex/test-state.json` for trend tracking:
 
 ```json
 {
   "lastRun": "2026-04-16T13:37:00Z",
   "unit": { "passed": 1262, "failed": 31, "skipped": 8 },
   "evals": { "passed": 17, "failed": 0 },
-  "system": { "doctor": "ok", "gbrain": "0.25.1" },
+  "system": { "doctor": "ok", "cortex": "0.25.1" },
   "failureHistory": [
     { "test": "<name>", "since": "2026-04-14", "classification": "stale" }
   ]

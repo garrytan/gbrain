@@ -34,11 +34,11 @@ async function waitTerminal(queue: MinionQueue, id: number, timeoutMs = 15000): 
 }
 
 beforeAll(async () => {
-  // registerBuiltinHandlers gates shell handler on GBRAIN_ALLOW_SHELL_JOBS=1.
+  // registerBuiltinHandlers gates shell handler on CORTEX_ALLOW_SHELL_JOBS=1.
   // Mirror the real --follow path by setting the env var; restore on cleanup
   // so other tests see their original environment.
-  originalAllowShellJobs = process.env.GBRAIN_ALLOW_SHELL_JOBS;
-  process.env.GBRAIN_ALLOW_SHELL_JOBS = '1';
+  originalAllowShellJobs = process.env.CORTEX_ALLOW_SHELL_JOBS;
+  process.env.CORTEX_ALLOW_SHELL_JOBS = '1';
 
   engine = new PGLiteEngine();
   await engine.connect({}); // in-memory PGLite
@@ -48,9 +48,9 @@ beforeAll(async () => {
 afterAll(async () => {
   await engine.disconnect();
   if (originalAllowShellJobs === undefined) {
-    delete process.env.GBRAIN_ALLOW_SHELL_JOBS;
+    delete process.env.CORTEX_ALLOW_SHELL_JOBS;
   } else {
-    process.env.GBRAIN_ALLOW_SHELL_JOBS = originalAllowShellJobs;
+    process.env.CORTEX_ALLOW_SHELL_JOBS = originalAllowShellJobs;
   }
 });
 
@@ -75,7 +75,7 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     expect(job.status).toBe('waiting');
 
     // This is the exact dispatch path --follow takes (src/commands/jobs.ts:207).
-    // Gates shell on GBRAIN_ALLOW_SHELL_JOBS=1 (set in beforeAll above).
+    // Gates shell on CORTEX_ALLOW_SHELL_JOBS=1 (set in beforeAll above).
     const worker = new MinionWorker(engine, { pollInterval: 100, lockDuration: 30000 });
     await registerBuiltinHandlers(worker, engine);
     expect(worker.registeredNames).toContain('shell');
@@ -98,7 +98,7 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     // production submit flow runs `validateShellJobParams` pre-enqueue, but
     // here we exercise the handler-side resolution by submitting a row that
     // already passed pre-enqueue validation upstream. Validates that:
-    //   1. The child env carries GBRAIN_DATABASE_URL with the resolved value.
+    //   1. The child env carries CORTEX_DATABASE_URL with the resolved value.
     //   2. The persisted row's `data.inherit` is ["database_url"] (names only).
     //   3. The persisted row JSON does NOT contain the URL substring anywhere.
     const { writeFileSync, mkdirSync, rmSync, existsSync } = await import('node:fs');
@@ -114,14 +114,14 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     );
 
     const savedHome = process.env.GBRAIN_HOME;
-    const savedGbrainUrl = process.env.GBRAIN_DATABASE_URL;
+    const savedGbrainUrl = process.env.CORTEX_DATABASE_URL;
     const savedDbUrl = process.env.DATABASE_URL;
     process.env.GBRAIN_HOME = tmpHome;
     // loadConfig() merges env vars OVER config.json, so we must drop both env
     // names while the worker reads its own config. When the E2E suite runs
     // with a real DATABASE_URL set in the parent process, the inherited value
     // would otherwise be the suite's postgres URL, not the test's.
-    delete process.env.GBRAIN_DATABASE_URL;
+    delete process.env.CORTEX_DATABASE_URL;
     delete process.env.DATABASE_URL;
 
     try {
@@ -130,7 +130,7 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
         'shell',
         // `printenv` reflects the child env to stdout — proves the inherited
         // secret reached the child without us having to leak it via the test.
-        { cmd: 'printenv GBRAIN_DATABASE_URL', cwd: '/tmp', inherit: ['database_url'] },
+        { cmd: 'printenv CORTEX_DATABASE_URL', cwd: '/tmp', inherit: ['database_url'] },
         {},
         { allowProtectedSubmit: true },
       );
@@ -151,7 +151,7 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
         const status = await waitTerminal(queue, job.id, 20000);
         expect(status).toBe('completed');
         const final = await queue.getJob(job.id);
-        // The child saw GBRAIN_DATABASE_URL = the configured URL.
+        // The child saw CORTEX_DATABASE_URL = the configured URL.
         expect((final!.result as Record<string, unknown>).stdout_tail).toBe(testDbUrl + '\n');
       } finally {
         worker.stop();
@@ -160,8 +160,8 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     } finally {
       if (savedHome === undefined) delete process.env.GBRAIN_HOME;
       else process.env.GBRAIN_HOME = savedHome;
-      if (savedGbrainUrl === undefined) delete process.env.GBRAIN_DATABASE_URL;
-      else process.env.GBRAIN_DATABASE_URL = savedGbrainUrl;
+      if (savedGbrainUrl === undefined) delete process.env.CORTEX_DATABASE_URL;
+      else process.env.CORTEX_DATABASE_URL = savedGbrainUrl;
       if (savedDbUrl === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = savedDbUrl;
       if (existsSync(tmpHome)) rmSync(tmpHome, { recursive: true, force: true });
@@ -254,10 +254,10 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     );
 
     const savedHome = process.env.GBRAIN_HOME;
-    const savedDbUrl = process.env.GBRAIN_DATABASE_URL;
+    const savedDbUrl = process.env.CORTEX_DATABASE_URL;
     const savedAnth = process.env.ANTHROPIC_API_KEY;
     process.env.GBRAIN_HOME = tmpHome;
-    delete process.env.GBRAIN_DATABASE_URL;
+    delete process.env.CORTEX_DATABASE_URL;
     delete process.env.DATABASE_URL;
     delete process.env.ANTHROPIC_API_KEY;
 
@@ -266,7 +266,7 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
       const job = await queue.add(
         'shell',
         {
-          cmd: 'printenv GBRAIN_DATABASE_URL && printenv ANTHROPIC_API_KEY',
+          cmd: 'printenv CORTEX_DATABASE_URL && printenv ANTHROPIC_API_KEY',
           cwd: '/tmp',
           inherit: ['database_url', 'anthropic_api_key'],
           redact_secrets: true,
@@ -297,8 +297,8 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     } finally {
       if (savedHome === undefined) delete process.env.GBRAIN_HOME;
       else process.env.GBRAIN_HOME = savedHome;
-      if (savedDbUrl === undefined) delete process.env.GBRAIN_DATABASE_URL;
-      else process.env.GBRAIN_DATABASE_URL = savedDbUrl;
+      if (savedDbUrl === undefined) delete process.env.CORTEX_DATABASE_URL;
+      else process.env.CORTEX_DATABASE_URL = savedDbUrl;
       if (savedAnth === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = savedAnth;
       if (existsSync(tmpHome)) rmSync(tmpHome, { recursive: true, force: true });
@@ -323,10 +323,10 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     );
 
     const savedHome = process.env.GBRAIN_HOME;
-    const savedDbUrl = process.env.GBRAIN_DATABASE_URL;
+    const savedDbUrl = process.env.CORTEX_DATABASE_URL;
     const savedPlainDbUrl = process.env.DATABASE_URL;
     process.env.GBRAIN_HOME = tmpHome;
-    delete process.env.GBRAIN_DATABASE_URL;
+    delete process.env.CORTEX_DATABASE_URL;
     delete process.env.DATABASE_URL;
 
     try {
@@ -334,7 +334,7 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
       const job = await queue.add(
         'shell',
         {
-          cmd: 'printenv GBRAIN_DATABASE_URL',
+          cmd: 'printenv CORTEX_DATABASE_URL',
           cwd: '/tmp',
           inherit: ['database_url'],
           redact_secrets: false,
@@ -362,21 +362,21 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
     } finally {
       if (savedHome === undefined) delete process.env.GBRAIN_HOME;
       else process.env.GBRAIN_HOME = savedHome;
-      if (savedDbUrl === undefined) delete process.env.GBRAIN_DATABASE_URL;
-      else process.env.GBRAIN_DATABASE_URL = savedDbUrl;
+      if (savedDbUrl === undefined) delete process.env.CORTEX_DATABASE_URL;
+      else process.env.CORTEX_DATABASE_URL = savedDbUrl;
       if (savedPlainDbUrl === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = savedPlainDbUrl;
       if (existsSync(tmpHome)) rmSync(tmpHome, { recursive: true, force: true });
     }
   }, 30000);
 
-  test('GBRAIN_ALLOW_SHELL_JOBS unset → shellHandler rejects at execution time', async () => {
+  test('CORTEX_ALLOW_SHELL_JOBS unset → shellHandler rejects at execution time', async () => {
     // v0.20.3+: shell handler is always registered (so claimed jobs emit a clear
     // rejection log), but the runtime env guard lives inside the handler itself.
     // Prove the guard rejects when the env var is unset.
     const { shellHandler } = await import('../../src/core/minions/handlers/shell.ts');
-    const saved = process.env.GBRAIN_ALLOW_SHELL_JOBS;
-    delete process.env.GBRAIN_ALLOW_SHELL_JOBS;
+    const saved = process.env.CORTEX_ALLOW_SHELL_JOBS;
+    delete process.env.CORTEX_ALLOW_SHELL_JOBS;
     try {
       const ctx: any = {
         id: 1,
@@ -385,9 +385,9 @@ describe('E2E: Minions shell handler on PGLite (--follow inline path)', () => {
         attempt: 1,
         engine,
       };
-      await expect(shellHandler(ctx)).rejects.toThrow(/GBRAIN_ALLOW_SHELL_JOBS=1/);
+      await expect(shellHandler(ctx)).rejects.toThrow(/CORTEX_ALLOW_SHELL_JOBS=1/);
     } finally {
-      process.env.GBRAIN_ALLOW_SHELL_JOBS = saved;
+      process.env.CORTEX_ALLOW_SHELL_JOBS = saved;
     }
   });
 });

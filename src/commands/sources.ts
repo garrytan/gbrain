@@ -1,5 +1,5 @@
 /**
- * gbrain sources — manage multi-source brain configuration (v0.18.0).
+ * cortex sources - manage multi-source brain configuration (v0.18.0).
  *
  * A source is a logical brain-within-the-DB: wiki, gstack, yc-media, etc.
  * Every page/file/ingest_log row is scoped to a sources(id) row. Slugs
@@ -7,15 +7,15 @@
  * full story.
  *
  * Subcommands:
- *   gbrain sources add <id> --path <path> [--name <display>] [--federated|--no-federated]
- *   gbrain sources list [--json]
- *   gbrain sources remove <id> [--yes] [--dry-run] [--keep-storage]
- *   gbrain sources rename <id> <new-name>
- *   gbrain sources default <id>
- *   gbrain sources attach <id>   — write .gbrain-source in CWD
- *   gbrain sources detach        — remove .gbrain-source from CWD
- *   gbrain sources federate <id>   — sources.config.federated = true
- *   gbrain sources unfederate <id> — sources.config.federated = false
+ *   cortex sources add <id> --path <path> [--name <display>] [--federated|--no-federated]
+ *   cortex sources list [--json]
+ *   cortex sources remove <id> [--yes] [--dry-run] [--keep-storage]
+ *   cortex sources rename <id> <new-name>
+ *   cortex sources default <id>
+ *   cortex sources attach <id>   — write .cortex-source in CWD
+ *   cortex sources detach        — remove .cortex-source from CWD
+ *   cortex sources federate <id>   — sources.config.federated = true
+ *   cortex sources unfederate <id> — sources.config.federated = false
  *
  * NOT in scope for Step 6 (deferred per plan):
  *   - import-from-github (needs SSRF + clone integration)
@@ -118,7 +118,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url>] ' +
+      'Usage: cortex sources add <id> [--path <path> | --url <https-url>] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>]',
     );
     process.exit(2);
@@ -223,7 +223,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
 async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources remove <id> [--yes] [--confirm-destructive] [--dry-run] [--keep-storage]');
+    console.error('Usage: cortex sources remove <id> [--yes] [--confirm-destructive] [--dry-run] [--keep-storage]');
     process.exit(2);
   }
   const yes = args.includes('--yes');
@@ -297,7 +297,7 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
   const mode = args[1];
 
   if (!id || !mode) {
-    console.error('Usage: gbrain sources set-cr-mode <id> <none|title|per_chunk_synopsis>');
+    console.error('Usage: cortex sources set-cr-mode <id> <none|title|per_chunk_synopsis>');
     console.error('  Pass "unset" or "default" to clear the override (NULL falls through).');
     process.exit(2);
   }
@@ -321,7 +321,7 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
   );
   if (exists.length === 0) {
     console.error(`Error: source "${id}" not found.`);
-    console.error(`  Run 'gbrain sources list' to see registered sources.`);
+    console.error(`  Run 'cortex sources list' to see registered sources.`);
     process.exit(4);
   }
 
@@ -340,7 +340,7 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
 async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources archive <id>');
+    console.error('Usage: cortex sources archive <id>');
     process.exit(2);
   }
 
@@ -371,7 +371,7 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   const noFederate = args.includes('--no-federate');
   if (!id) {
-    console.error('Usage: gbrain sources restore <id> [--no-federate]');
+    console.error('Usage: cortex sources restore <id> [--no-federate]');
     process.exit(2);
   }
 
@@ -397,7 +397,7 @@ async function runRestore(engine: BrainEngine, args: string[]): Promise<void> {
     if (e instanceof SourceOpError) {
       console.error(`  WARN: could not re-clone: ${e.message}`);
       console.error(`  The DB row is restored but the on-disk clone is missing.`);
-      console.error(`  Try \`gbrain sync --source ${id}\` to recover, or remove + re-add.`);
+      console.error(`  Try \`cortex sync --source ${id}\` to recover, or remove + re-add.`);
     } else {
       throw e;
     }
@@ -459,7 +459,7 @@ async function runListArchived(engine: BrainEngine, args: string[]): Promise<voi
   console.log('───────────────────────────────');
   for (const a of archived) {
     const hours = Math.max(0, Math.round((a.expiresAt.getTime() - Date.now()) / (1000 * 60 * 60)));
-    console.log(`  ${a.id.padEnd(20)}  ${String(a.pageCount).padStart(6)} pages  expires in ${hours}h  (restore: gbrain sources restore ${a.id})`);
+    console.log(`  ${a.id.padEnd(20)}  ${String(a.pageCount).padStart(6)} pages  expires in ${hours}h  (restore: cortex sources restore ${a.id})`);
   }
 }
 
@@ -469,7 +469,7 @@ async function runRename(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   const newName = args[1];
   if (!id || !newName) {
-    console.error('Usage: gbrain sources rename <id> <new-display-name>');
+    console.error('Usage: cortex sources rename <id> <new-display-name>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -486,7 +486,7 @@ async function runRename(engine: BrainEngine, args: string[]): Promise<void> {
 async function runDefault(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources default <id>');
+    console.error('Usage: cortex sources default <id>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -505,24 +505,26 @@ async function runDefault(engine: BrainEngine, args: string[]): Promise<void> {
 function runAttach(args: string[]): void {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources attach <id>');
+    console.error('Usage: cortex sources attach <id>');
     process.exit(2);
   }
   validateSourceId(id);
-  const dotfile = join(process.cwd(), '.gbrain-source');
+  const dotfile = join(process.cwd(), '.cortex-source');
   writeFileSync(dotfile, id + '\n', 'utf8');
-  console.log(`Attached ${process.cwd()} to source "${id}" via .gbrain-source.`);
+  console.log(`Attached ${process.cwd()} to source "${id}" via .cortex-source.`);
   console.log(`Commands run from this directory (or any subdirectory) will default to this source.`);
 }
 
 function runDetach(): void {
-  const dotfile = join(process.cwd(), '.gbrain-source');
-  if (!existsSync(dotfile)) {
-    console.log(`No .gbrain-source file in ${process.cwd()}.`);
+  const dotfile = join(process.cwd(), '.cortex-source');
+  const legacyDotfile = join(process.cwd(), '.gbrain-source');
+  if (!existsSync(dotfile) && !existsSync(legacyDotfile)) {
+    console.log(`No .cortex-source file in ${process.cwd()}.`);
     return;
   }
-  unlinkSync(dotfile);
-  console.log(`Detached ${process.cwd()} (removed .gbrain-source).`);
+  if (existsSync(dotfile)) unlinkSync(dotfile);
+  if (existsSync(legacyDotfile)) unlinkSync(legacyDotfile);
+  console.log(`Detached ${process.cwd()} (removed .cortex-source).`);
 }
 
 // ── Subcommand: federate / unfederate ───────────────────────
@@ -530,7 +532,7 @@ function runDetach(): void {
 async function runFederate(engine: BrainEngine, args: string[], value: boolean): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error(`Usage: gbrain sources ${value ? 'federate' : 'unfederate'} <id>`);
+    console.error(`Usage: cortex sources ${value ? 'federate' : 'unfederate'} <id>`);
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -568,7 +570,7 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
       const missing = m.total_chunks - m.embedded_chunks;
       console.log(`  → embed-backfill job ${sub.jobId} queued for missing ${missing} chunks.`);
     } else if (sub.status === 'cooldown') {
-      console.log(`  → embed-backfill skipped (cooldown). Manually trigger with: gbrain jobs submit embed-backfill --params '{"sourceId":"${id}"}'`);
+      console.log(`  → embed-backfill skipped (cooldown). Manually trigger with: cortex jobs submit embed-backfill --params '{"sourceId":"${id}"}'`);
     } else if (sub.status === 'spend_capped') {
       console.log(`  → embed-backfill skipped (24h spend cap $${sub.spendCapUsd} reached for this source).`);
     }
@@ -588,7 +590,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
     if (json) {
       console.log(JSON.stringify({ schema_version: 1, sources: [] }, null, 2));
     } else {
-      console.log('No sources registered. Use `gbrain sources add <id> --path <path>` first.');
+      console.log('No sources registered. Use `cortex sources add <id> --path <path>` first.');
     }
     return;
   }
@@ -620,12 +622,12 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   for (const m of metrics) {
     const warns: string[] = [];
     if (!m.local_path) warns.push('no local_path');
-    if (m.lag_seconds === null) warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
+    if (m.lag_seconds === null) warns.push(`never synced — run \`cortex sync --source ${m.source_id}\``);
     if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
-      warns.push(`${(100 - m.embed_coverage_pct).toFixed(1)}% un-embedded — run \`gbrain embed --stale --source ${m.source_id}\``);
+      warns.push(`${(100 - m.embed_coverage_pct).toFixed(1)}% un-embedded — run \`cortex embed --stale --source ${m.source_id}\``);
     }
     if (m.failed_jobs_24h >= 3) {
-      warns.push(`${m.failed_jobs_24h} failures in 24h — check \`gbrain jobs list --status failed\``);
+      warns.push(`${m.failed_jobs_24h} failures in 24h — check \`cortex jobs list --status failed\``);
     }
     if (warns.length > 0) {
       console.log(`  ⚠ ${m.source_id}: ${warns.join('; ')}`);
@@ -652,7 +654,7 @@ async function runWebhook(engine: BrainEngine, args: string[]): Promise<void> {
     case undefined:
     case '--help':
     case '-h':
-      console.log(`Usage: gbrain sources webhook <subcommand> <source-id> [options]
+      console.log(`Usage: cortex sources webhook <subcommand> <source-id> [options]
 
 Subcommands:
   set <id>    [--secret VAL] [--github-repo owner/name]   One-time reveal
@@ -669,7 +671,7 @@ Subcommands:
 async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources webhook set <id> [--secret VAL] [--github-repo owner/name]');
+    console.error('Usage: cortex sources webhook set <id> [--secret VAL] [--github-repo owner/name]');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -703,19 +705,19 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   console.log(`  webhook_secret: ${secret}`);
   console.log('');
   console.log('--- Paste this into GitHub repo settings → Webhooks → Add webhook ---');
-  console.log('  Payload URL:  <your gbrain serve --http URL>/webhooks/github');
+  console.log('  Payload URL:  <your cortex serve --http URL>/webhooks/github');
   console.log('  Content type: application/json');
   console.log(`  Secret:       ${secret}`);
   console.log('  Events:       Just the push event');
   console.log('  Active:       checked');
   console.log('');
-  console.log('⚠ This secret is shown ONCE. Save it now; subsequent `gbrain sources webhook show` will NOT display it.');
+  console.log('This secret is shown ONCE. Save it now; subsequent `cortex sources webhook show` will NOT display it.');
 }
 
 async function runWebhookShow(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources webhook show <id>');
+    console.error('Usage: cortex sources webhook show <id>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -737,7 +739,7 @@ async function runWebhookShow(engine: BrainEngine, args: string[]): Promise<void
 async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources webhook rotate <id>');
+    console.error('Usage: cortex sources webhook rotate <id>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -762,7 +764,7 @@ async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<vo
 async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources webhook clear <id>');
+    console.error('Usage: cortex sources webhook clear <id>');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -784,7 +786,7 @@ async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<voi
 async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
-    console.error('Usage: gbrain sources tracked-branch <id> [--set <branch>] [--detect]');
+    console.error('Usage: cortex sources tracked-branch <id> [--set <branch>] [--detect]');
     process.exit(2);
   }
   const src = await fetchSource(engine, id);
@@ -900,14 +902,14 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
   const includeWarns = args.includes('--include-warns');
 
   if (!sourceId) {
-    console.error('Usage: gbrain sources audit <source-id> [--json] [--include-warns]');
+    console.error('Usage: cortex sources audit <source-id> [--json] [--include-warns]');
     process.exit(2);
   }
 
   const { fetchSource } = await import('../core/sources-load.ts');
   const src = await fetchSource(engine, sourceId);
   if (!src) {
-    console.error(`Source not found: ${sourceId} (run \`gbrain sources list\` to see registered sources)`);
+    console.error(`Source not found: ${sourceId} (run \`cortex sources list\` to see registered sources)`);
     process.exit(1);
   }
   if (!src.local_path) {
@@ -1068,7 +1070,7 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
     console.log(
       `Facts backfill estimate: ${factsBackfillEstimate.pages} eligible page(s), ` +
       `~${factsBackfillEstimate.est_segments} segments, ~$${factsBackfillEstimate.est_cost_usd}. ` +
-      `Run: gbrain extract-conversation-facts --source-id ${sourceId} --max-cost-usd ${Math.max(factsBackfillEstimate.est_cost_usd, 1)}`,
+      `Run: cortex extract-conversation-facts --source-id ${sourceId} --max-cost-usd ${Math.max(factsBackfillEstimate.est_cost_usd, 1)}`,
     );
   }
   if (wouldHardBlock.length > 0) {
@@ -1140,7 +1142,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
 }
 
 function printHelp(): void {
-  console.log(`gbrain sources — manage multi-source brain configuration (v0.26.5)
+  console.log(`cortex sources — manage multi-source brain configuration (v0.26.5)
 
 Subcommands:
   add <id> --path <p> [--name <n>] [--federated|--no-federated]
@@ -1164,8 +1166,8 @@ Subcommands:
                                     With <id>: force-purge (requires --confirm-destructive).
   rename <id> <new-name>            Rename display name (id is immutable).
   default <id>                      Set the brain-level default source.
-  attach <id>                       Write .gbrain-source in CWD (like kubectl context).
-  detach                            Remove .gbrain-source from CWD.
+  attach <id>                       Write .cortex-source in CWD (like kubectl context).
+  detach                            Remove .cortex-source from CWD.
   current [--source <id>] [--json]  Echo the resolved source id + which tier
                                     won (flag/env/dotfile/local_path/
                                     brain_default/seed_default). Run this

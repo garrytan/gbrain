@@ -1,5 +1,5 @@
 /**
- * llms-config — single source of truth for llms.txt + llms-full.txt.
+ * llms-config - single source of truth for llms.txt + llms-full.txt.
  *
  * Consumed by scripts/build-llms.ts (emits llms.txt, llms-full.txt) and
  * test/build-llms.test.ts (asserts paths resolve, content contract holds).
@@ -7,9 +7,8 @@
  * Adding a doc? Add it here and run `bun run build:llms`. The drift-detection
  * test fails CI if you forget.
  *
- * Fork-friendliness: `rawBaseUrl` reads from `LLMS_REPO_BASE` so forks can
- * regenerate without manual URL rewrites:
- *   LLMS_REPO_BASE=https://raw.githubusercontent.com/fork-org/gbrain/main bun run build:llms
+ * Brand override: `LLMS_REPO_BASE` and `LLMS_REPO_URL` let private/customer
+ * forks regenerate without manual URL rewrites.
  */
 
 export type DocEntry = {
@@ -26,222 +25,165 @@ export type DocSection = {
 };
 
 export const PROJECT = {
-  name: "GBrain",
+  name: "Cortex Company Brain",
   summary:
-    "GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.",
-  repoUrl: "https://github.com/garrytan/gbrain",
+    "Cortex is a hosted, multi-tenant company-brain SaaS. It gives each organization scoped brains, sources, team invites, invite delivery outbox records, OAuth agent clients, skills, runtime manifests, Composio ingestion, and MCP access through one Cortex-branded control plane.",
+  repoUrl:
+    process.env.LLMS_REPO_URL ??
+    "https://github.com/Versatly/CortexBrain",
   rawBaseUrl:
     process.env.LLMS_REPO_BASE ??
-    "https://raw.githubusercontent.com/garrytan/gbrain/master",
+    "https://raw.githubusercontent.com/Versatly/CortexBrain/main",
 };
 
 export const SECTIONS: DocSection[] = [
   {
-    heading: "Core entry points",
+    heading: "SaaS entry points",
     entries: [
+      {
+        title: "README.md",
+        description:
+          "Cortex product model, hosted quick start, CLI commands, UI tabs, and agent parity table.",
+        path: "README.md",
+      },
       {
         title: "AGENTS.md",
         description:
-          "Start here if you are not Claude Code. Install order, trust boundary, skill resolver, config/debug/migration pointers.",
+          "Agent operating protocol for the Cortex SaaS: signup, onboarding, invites, runtime install, and trust boundary.",
         path: "AGENTS.md",
       },
       {
-        title: "CLAUDE.md",
-        description:
-          "Architecture reference. Key files, trust boundaries, engine factory, test layout.",
-        path: "CLAUDE.md",
-      },
-      {
         title: "INSTALL_FOR_AGENTS.md",
-        description: "9-step agent installation.",
+        description:
+          "Hosted tenant onboarding guide for agents connecting a company to Cortex, including invite delivery outbox and claim/result expectations.",
         path: "INSTALL_FOR_AGENTS.md",
       },
       {
-        title: "skills/RESOLVER.md",
-        description: "Skill dispatcher. Read first for any task.",
-        path: "skills/RESOLVER.md",
+        title: "docs/tutorials/company-brain.md",
+        description:
+          "Company-brain walkthrough: organizations, brains, sources, scoped agents, team invites, and MCP OAuth.",
+        path: "docs/tutorials/company-brain.md",
       },
       {
-        title: "README.md",
-        description: "Project overview, benchmarks, 30-minute setup.",
-        path: "README.md",
+        title: "docs/CORTEX_AGENT_RUNTIME.md",
+        description:
+          "Agent runtime contract for Cortex SaaS: tenant operations, runtime manifests, source scoping, skills, integrations, and MCP parity.",
+        path: "docs/CORTEX_AGENT_RUNTIME.md",
+      },
+      {
+        title: "docs/CORTEX_PRODUCT_SPEC.md",
+        description:
+          "Cortex product spec covering first-class objects, required journeys, console tabs, agent parity, deployment requirements, and demo gates.",
+        path: "docs/CORTEX_PRODUCT_SPEC.md",
       },
     ],
   },
   {
-    heading: "Configuration",
+    heading: "Deployment and runtime",
     entries: [
       {
-        title: "docs/ENGINES.md",
-        description: "PGLite vs Postgres trade-off and when to migrate.",
-        path: "docs/ENGINES.md",
-      },
-      {
-        title: "docs/GBRAIN_RECOMMENDED_SCHEMA.md",
+        title: "docs/deploy/multi-tenant-saas.md",
         description:
-          "MECE directory structure (people/, companies/, concepts/).",
-        path: "docs/GBRAIN_RECOMMENDED_SCHEMA.md",
-        // v0.40.6.0: 64KB reference doc. Web index entry stays; the single-fetch
-        // bundle gets the README + setup guides instead. Keeps llms-full.txt
-        // under the 600KB budget as CLAUDE.md grows with each release.
-        includeInFull: false,
+          "Production SaaS deployment model: Supabase, Railway/Docker, admin console, signup, tenant isolation, and operations.",
+        path: "docs/deploy/multi-tenant-saas.md",
       },
       {
-        title: "docs/what-schemas-unlock.md",
+        title: "docs/deploy/saas-runtime-packaging.md",
         description:
-          "Why schemas matter: 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) + the structural argument for typed page kinds. Read this before pitching schema authoring (v0.40.7.0).",
-        path: "docs/what-schemas-unlock.md",
+          "Runtime packaging contract for agents: onboarding URLs, runtime manifests, `cortex connect`, and client setup.",
+        path: "docs/deploy/saas-runtime-packaging.md",
       },
       {
-        title: "docs/schema-author-tutorial.md",
+        title: "docs/guides/agent-to-cortex.md",
         description:
-          "5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `gbrain schema sync --apply`, prove the T1.5 wiring via `gbrain whoknows` (v0.40.7.0).",
-        path: "docs/schema-author-tutorial.md",
-      },
-      {
-        title: "docs/guides/live-sync.md",
-        description: "Incremental markdown sync setup.",
-        path: "docs/guides/live-sync.md",
-      },
-      {
-        title: "docs/guides/cron-schedule.md",
-        description: "Recurring job scheduling.",
-        path: "docs/guides/cron-schedule.md",
-      },
-      {
-        title: "docs/guides/minions-deployment.md",
-        description:
-          "Deploying the gbrain jobs worker: crontab + watchdog, inline --follow, systemd/Procfile/fly.toml, upgrade checklist.",
-        path: "docs/guides/minions-deployment.md",
-        // v0.41.8.0: 13KB deployment runbook. Web index entry stays;
-        // single-fetch bundle drops it to keep under FULL_SIZE_BUDGET
-        // (CLAUDE.md grew past 600KB once master's v0.41.2-v0.41.6 +
-        // this wave's annotations landed). Operators read this once;
-        // agents rarely need it in context.
-        includeInFull: false,
-      },
-      {
-        title: "docs/guides/quiet-hours.md",
-        description: "Notification hold + timezone-aware delivery.",
-        path: "docs/guides/quiet-hours.md",
-      },
-      {
-        title: "docs/guides/scaling-skills.md",
-        description:
-          "Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.",
-        path: "docs/guides/scaling-skills.md",
+          "How agent runtimes should call Cortex through hosted MCP, OAuth clients, source scoping, skill ids, and operator-only shell jobs.",
+        path: "docs/guides/agent-to-cortex.md",
       },
       {
         title: "docs/mcp/DEPLOY.md",
-        description: "MCP server deployment.",
+        description:
+          "Hosted HTTP MCP deployment with OAuth 2.1, scoped clients, runtime manifests, and client connection patterns.",
         path: "docs/mcp/DEPLOY.md",
       },
-    ],
-  },
-  {
-    heading: "AI providers",
-    entries: [
       {
-        title: "docs/ai-providers/zeroentropy.md",
+        title: "docs/operations/headless-install.md",
         description:
-          "ZeroEntropy zembed-1 embedding + zerank-2 reranker (hosted): API key, embedding switch, reranker config.",
-        path: "docs/ai-providers/zeroentropy.md",
-        // Setup walkthrough — discoverable in the index, not inlined in the
-        // single-fetch bundle (keeps llms-full.txt under FULL_SIZE_BUDGET).
+          "Headless deployment guide for hosted Cortex in Docker, Railway, CI, or other server environments.",
+        path: "docs/operations/headless-install.md",
         includeInFull: false,
       },
       {
-        title: "docs/ai-providers/llama-server-reranker.md",
+        title: ".env.saas.example",
         description:
-          "Local reranker via llama.cpp --reranking: Qwen3-Reranker or self-hosted ZE weights, --alias setup, gbrain config keys, cold-start timeout, budget-cap interaction.",
-        path: "docs/ai-providers/llama-server-reranker.md",
+          "Production-shaped environment template using Cortex-branded variables.",
+        path: ".env.saas.example",
         includeInFull: false,
       },
     ],
   },
   {
-    heading: "Debugging",
+    heading: "Product model",
     entries: [
       {
-        title: "docs/GBRAIN_VERIFY.md",
+        title: "docs/architecture/brains-and-sources.md",
         description:
-          "7-check post-setup verification. Start here when something feels off.",
-        path: "docs/GBRAIN_VERIFY.md",
+          "Decision model for organizations, brains, sources, sub-team boundaries, and cross-brain ownership.",
+        path: "docs/architecture/brains-and-sources.md",
       },
       {
-        title: "docs/guides/minions-fix.md",
-        description: "Troubleshooting the Minions job queue.",
-        path: "docs/guides/minions-fix.md",
-      },
-      {
-        title: "docs/integrations/reliability-repair.md",
-        description: "Data integrity recovery.",
-        path: "docs/integrations/reliability-repair.md",
-      },
-    ],
-  },
-  {
-    heading: "Migrations",
-    entries: [
-      {
-        title: "docs/UPGRADING_DOWNSTREAM_AGENTS.md",
+        title: "docs/CORTEX_RECOMMENDED_SCHEMA.md",
         description:
-          "Patches for downstream agent skill forks. One section per release.",
-        path: "docs/UPGRADING_DOWNSTREAM_AGENTS.md",
-        // Excluded from inlined bundle (v0.41.7.0): 25KB of release-by-release
-        // migration patches that are valuable as a reference but don't need
-        // to ride along in every llms-full.txt fetch. Pushes the bundle back
-        // under FULL_SIZE_BUDGET after the v0.41.7.0 scaling-skills guide
-        // landed.
+          "Recommended tenant schema for company brains: sources, starter types, link verbs, onboarding flow, and schema completion criteria.",
+        path: "docs/CORTEX_RECOMMENDED_SCHEMA.md",
+      },
+      {
+        title: "docs/architecture/topologies.md",
+        description:
+          "Topology guidance for single-brain, multi-source, and multi-brain company deployments.",
+        path: "docs/architecture/topologies.md",
         includeInFull: false,
       },
       {
-        title: "skills/migrations/",
+        title: "docs/integrations/README.md",
         description:
-          "Per-version (v0.5.0 - v0.14.1) agent-executable migration instructions.",
-        path: "skills/migrations/",
-      },
-      {
-        title: "CHANGELOG.md",
-        description:
-          "Release-summary voice + itemized changes + self-repair block per version.",
-        path: "CHANGELOG.md",
+          "Integration recipe model and ingestion surface, including third-party connector setup.",
+        path: "docs/integrations/README.md",
         includeInFull: false,
       },
     ],
   },
   {
-    heading: "Philosophy",
-    optional: true,
+    heading: "Console UI",
     entries: [
       {
-        title: "docs/ethos/THIN_HARNESS_FAT_SKILLS.md",
-        description: "Why skills live in markdown.",
-        path: "docs/ethos/THIN_HARNESS_FAT_SKILLS.md",
-        includeInFull: false,
-      },
-      {
-        title: "docs/ethos/MARKDOWN_SKILLS_AS_RECIPES.md",
-        description: "Homebrew for Personal AI.",
-        path: "docs/ethos/MARKDOWN_SKILLS_AS_RECIPES.md",
-        includeInFull: false,
+        title: "docs/deploy/v0-ui-mvp-prompt.md",
+        description:
+          "V0 prompt and implementation contract for the Next.js App Router admin console with shadcn components.",
+        path: "docs/deploy/v0-ui-mvp-prompt.md",
       },
     ],
   },
   {
-    heading: "Optional",
-    optional: true,
+    heading: "Verification",
     entries: [
       {
-        title: "docs/designs/",
-        description: "Forward-looking designs.",
-        path: "docs/designs/",
+        title: "docs/CORTEX_VERIFY.md",
+        description:
+          "Hosted Cortex verification runbook for SaaS smoke, runtime manifest, onboarding URLs, admin walkthrough, agent parity, and demo gates.",
+        path: "docs/CORTEX_VERIFY.md",
+      },
+      {
+        title: "scripts/saas-live-smoke.ts",
+        description:
+          "End-to-end hosted SaaS smoke: signup, invite delivery outbox claim/result, invite, source, skill policy, agent OAuth, Composio webhook, token, and MCP tools.",
+        path: "scripts/saas-live-smoke.ts",
         includeInFull: false,
       },
       {
-        title: "docs/architecture/infra-layer.md",
-        description: "Shared infra patterns.",
-        path: "docs/architecture/infra-layer.md",
+        title: "test/saas-live-smoke.test.ts",
+        description:
+          "Unit coverage for the live smoke harness and its failure reporting.",
+        path: "test/saas-live-smoke.test.ts",
         includeInFull: false,
       },
     ],
@@ -249,15 +191,12 @@ export const SECTIONS: DocSection[] = [
 ];
 
 export const INLINE_TIPS = [
-  "`gbrain doctor [--json] [--fast] [--fix]` - built-in health checks.",
-  "`gbrain orphans [--json]` - pages with zero inbound wikilinks.",
-  "`gbrain repair-jsonb [--dry-run]` - repair v0.12.0 double-encoded JSONB rows.",
-  "`gbrain upgrade` runs post-upgrade + apply-migrations.",
+  "`cortex connect '<onboarding-url>' --client-secret '<one-time-secret>'` - connect an invited agent or owner runtime.",
+  "`cortex runtime install cursor --manifest-url https://<tenant-host>/runtime-manifest.json` - configure a runtime without embedding secrets.",
+  "`bun run smoke:saas-live -- --json` - verify signup, invite delivery outbox claim/result, billing reconciliation, invites, Composio ingestion, OAuth token exchange, and MCP tools on a hosted tenant.",
+  "`cortex serve --http --public-url https://<tenant-host>` - run the hosted HTTP MCP server for a tenant brain.",
 ];
 
 // Target ~700KB so llms-full.txt fits in ~175k-token contexts with room to spare.
-// Bumped from 600KB in v0.41.9.0 — CLAUDE.md grew past 600KB after the wave's
-// new-file annotations + Conductor branch-name iron-rule landed; the bundle
-// still fits comfortably in modern long-context models.
 // Generator prints a WARN if exceeded; ship with includeInFull=false exclusions.
 export const FULL_SIZE_BUDGET = 700_000;

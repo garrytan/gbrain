@@ -19,11 +19,11 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 export const GET_RECENT_SALIENCE_DESCRIPTION =
-  "Returns pages recently touched and ranked by emotional + activity salience " +
-  "(deterministic 0..1 emotional_weight + take density + recency decay). " +
+  "Returns pages recently touched and ranked by signal + activity salience " +
+  "(deterministic 0..1 signal weight + take density + recency decay). " +
   "Use this when the user asks what's been going on, what's notable, what's hot, " +
   "anything crazy happening, or for any open-ended 'current state' question " +
-  "about themselves or their work. Do NOT run a semantic search for these — " +
+  "about the company, a team, or active work. Do NOT run a semantic search for these — " +
   "salience surfaces what's unusual without needing a search term.";
 
 export const FIND_ANOMALIES_DESCRIPTION =
@@ -35,7 +35,7 @@ export const FIND_ANOMALIES_DESCRIPTION =
   "Year cohort is deferred to a later release.";
 
 export const FIND_EXPERTS_DESCRIPTION =
-  "Answers 'who in my brain knows about <topic>'. Returns ranked person/company " +
+  "Answers 'who in the company brain knows about <topic>'. Returns ranked person/company " +
   "pages by expertise depth (sub-linear match score), relationship recency " +
   "(exp decay with 6-month half-life), and salience. Use this for questions " +
   "like 'who should I talk to about X', 'who knows about Y', 'find me someone " +
@@ -45,11 +45,11 @@ export const FIND_EXPERTS_DESCRIPTION =
 
 export const GET_RECENT_TRANSCRIPTS_DESCRIPTION =
   "Returns one-line summaries of recent raw conversation transcripts (NOT polished " +
-  "reflections). Use this FIRST for questions about 'what's going on with me', " +
-  "'what have I been thinking about', or anything personal/emotional. Raw " +
-  "transcripts are the canonical source for the user's own state — polished pages " +
-  "summarize and flatten. Local-only: rejects remote (MCP/HTTP) callers with a " +
-  "clear permission_denied; call via the gbrain CLI.";
+  "reflections). Use this FIRST for questions about recent meetings, operating " +
+  "context, team state, or what changed before polished pages summarize and " +
+  "flatten the source material. Raw transcripts are the canonical source for " +
+  "what was said. Local-only: rejects remote (MCP/HTTP) callers with a clear " +
+  "permission_denied; call via the Cortex CLI.";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Redirect hints appended to existing op descriptions
@@ -57,19 +57,19 @@ export const GET_RECENT_TRANSCRIPTS_DESCRIPTION =
 
 export const LIST_PAGES_DESCRIPTION =
   "List pages with optional filters. " +
-  "For 'what's recent / what did I touch this week' questions, use list_pages " +
+  "For 'what's recent / what changed this week' questions, use list_pages " +
   "with sort=updated_desc instead of semantic search.";
 
 export const QUERY_DESCRIPTION =
   "Hybrid search with vector + keyword + multi-query expansion. " +
-  "For personal/emotional questions ('what's going on with me', 'anything notable', " +
-  "'how am I feeling'), prefer get_recent_salience, find_anomalies, or " +
+  "For current-state questions ('what changed this week', 'anything notable', " +
+  "'what needs attention'), prefer get_recent_salience, find_anomalies, or " +
   "get_recent_transcripts. Semantic search returns polished pages and misses " +
   "recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' " +
-  "mean impressive — they often mean difficult or emotionally charged.";
+  "mean impressive — they often mean operationally difficult or high-signal.";
 
 export const SEARCH_DESCRIPTION =
-  "Keyword search using full-text search. For personal/emotional questions, " +
+  "Keyword search using full-text search. For current-state questions, " +
   "prefer get_recent_salience or find_anomalies — they surface activity bursts " +
   "without needing a search term. " +
   "For code-symbol questions (callers, callees, definitions, blast radius), use " +
@@ -82,13 +82,13 @@ export const SEARCH_DESCRIPTION =
 
 export const FIND_CONTRADICTIONS_DESCRIPTION =
   "v0.32.6 — return suspected-contradiction findings from the most recent " +
-  "`gbrain eval suspected-contradictions` probe run, optionally filtered by slug " +
-  "and/or severity. Use this when the user asks 'what's inconsistent in my " +
-  "brain', 'show me contradictions about Acme', 'high-severity issues only', or " +
+  "`cortex eval suspected-contradictions` probe run, optionally filtered by slug " +
+  "and/or severity. Use this when the user asks 'what's inconsistent in the " +
+  "company brain', 'show me contradictions about Acme', 'high-severity issues only', or " +
   "wants to act on the probe's findings without re-running it. Returns " +
   "{contradictions: [{a, b, severity, axis, confidence, resolution_command}]}. " +
   "Reads the cached run row — does NOT trigger a new probe; users run " +
-  "`gbrain eval suspected-contradictions` for that.";
+  "`cortex eval suspected-contradictions` for that.";
 
 export const FIND_TRAJECTORY_DESCRIPTION =
   "v0.35.4 — return the chronological claim trajectory for an entity (typed " +
@@ -102,7 +102,7 @@ export const FIND_TRAJECTORY_DESCRIPTION =
   "drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, " +
   "1 = every consecutive claim is unrelated; null when fewer than 3 typed points " +
   "exist. Visibility-filtered for remote callers (world-only); source-scoped by " +
-  "the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` " +
+  "the caller's OAuth source binding. Pair with `cortex founder scorecard <slug>` " +
   "for an aggregated rollup of the same data.";
 
 // ──────────────────────────────────────────────────────────────────────────────

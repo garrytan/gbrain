@@ -26,7 +26,7 @@ describe('v0.29 — get_recent_salience description', () => {
     expect(GET_RECENT_SALIENCE_DESCRIPTION).toContain("Use this when the user asks");
   });
 
-  test('lists the personal-query trigger keywords', () => {
+  test('lists the current-state trigger keywords', () => {
     expect(GET_RECENT_SALIENCE_DESCRIPTION).toContain("what's been going on");
     expect(GET_RECENT_SALIENCE_DESCRIPTION).toContain("anything crazy happening");
     expect(GET_RECENT_SALIENCE_DESCRIPTION).toContain("notable");
@@ -65,7 +65,7 @@ describe('v0.29 — get_recent_transcripts description', () => {
     expect(operationsByName['get_recent_transcripts'].description).toBe(GET_RECENT_TRANSCRIPTS_DESCRIPTION);
   });
 
-  test('mandates priority over query/search for personal questions', () => {
+  test('mandates priority over query/search for recent team-state questions', () => {
     expect(GET_RECENT_TRANSCRIPTS_DESCRIPTION).toContain("FIRST");
   });
 
@@ -84,10 +84,10 @@ describe('v0.29 — redirect hints on existing ops', () => {
   test('list_pages mentions sort=updated_desc as the recency-question answer', () => {
     expect(operationsByName['list_pages'].description).toBe(LIST_PAGES_DESCRIPTION);
     expect(LIST_PAGES_DESCRIPTION).toContain("sort=updated_desc");
-    expect(LIST_PAGES_DESCRIPTION).toContain("what did I touch this week");
+    expect(LIST_PAGES_DESCRIPTION).toContain("what changed this week");
   });
 
-  test('query redirects personal/emotional queries to the v0.29 ops', () => {
+  test('query redirects current-state queries to the v0.29 ops', () => {
     expect(operationsByName['query'].description).toBe(QUERY_DESCRIPTION);
     expect(QUERY_DESCRIPTION).toContain("get_recent_salience");
     expect(QUERY_DESCRIPTION).toContain("find_anomalies");
@@ -96,7 +96,7 @@ describe('v0.29 — redirect hints on existing ops', () => {
 
   test('query warns the LLM not to assume "crazy" means impressive', () => {
     expect(QUERY_DESCRIPTION).toContain("Do NOT assume");
-    expect(QUERY_DESCRIPTION).toContain("difficult or emotionally charged");
+    expect(QUERY_DESCRIPTION).toContain("operationally difficult or high-signal");
   });
 
   test('search has the shorter redirect hint', () => {
@@ -139,5 +139,28 @@ describe('v0.29 — operations array carries the three new ops', () => {
     expect(names).toContain('get_recent_salience');
     expect(names).toContain('find_anomalies');
     expect(names).toContain('get_recent_transcripts');
+  });
+});
+
+describe('Cortex SaaS branding on MCP metadata', () => {
+  test('operation and parameter descriptions avoid legacy/publicly confusing copy', () => {
+    const legacy = /\b(?:gbrain|GBrain|OpenClaw)\b|my brain|your brain|personal brain|personal\/emotional/i;
+    const visible: Array<{ op: string; field: string; text: string }> = [];
+
+    for (const op of operations) {
+      visible.push({ op: op.name, field: 'description', text: op.description });
+      for (const [paramName, param] of Object.entries(op.params ?? {})) {
+        const description = (param as { description?: unknown }).description;
+        if (typeof description === 'string') {
+          visible.push({ op: op.name, field: `params.${paramName}.description`, text: description });
+        }
+      }
+    }
+
+    const failures = visible
+      .filter((entry) => legacy.test(entry.text))
+      .map((entry) => `${entry.op}.${entry.field}: ${entry.text}`);
+
+    expect(failures).toEqual([]);
   });
 });

@@ -22,7 +22,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: gbrain_test
+          POSTGRES_DB: cortex_test
         ports:
           - 5432:5432
         options: >-
@@ -39,7 +39,7 @@ jobs:
       - name: Run Tier 1 E2E tests
         run: bun test test/e2e/mechanical.test.ts test/e2e/mcp.test.ts
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cortex_test
 
   tier2:
     name: Tier 2 (LLM Skills)
@@ -55,7 +55,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: gbrain_test
+          POSTGRES_DB: cortex_test
         ports:
           - 5432:5432
         options: >-
@@ -69,15 +69,13 @@ jobs:
         with:
           bun-version: 1.3.13
       - run: bun install
-      - name: Install OpenClaw
-        run: npm install -g openclaw@2026.4.9
-      - name: Configure OpenClaw MCP
+      - name: Configure Cortex MCP
         run: |
-          mkdir -p ~/.openclaw
-          cat > ~/.openclaw/config.json << 'EOF'
+          mkdir -p ~/.cortex
+          cat > ~/.cortex/mcp.json << 'EOF'
           {
             "mcpServers": {
-              "gbrain": {
+              "cortex": {
                 "command": "bun",
                 "args": ["run", "src/cli.ts", "serve"],
                 "env": {
@@ -90,7 +88,7 @@ jobs:
       - name: Run Tier 2 skill tests
         run: bun test test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cortex_test
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # v0.33.3.0: ZE live API tests skip gracefully when this is unset,

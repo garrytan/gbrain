@@ -10,7 +10,7 @@
  *   1. `MinionQueue.add()` rejects name='shell' unless the caller explicitly
  *      opts in via `trusted.allowProtectedSubmit`. CLI path and the `submit_job`
  *      operation (when `ctx.remote === false`) set the flag. MCP callers don't.
- *   2. This handler only registers when `process.env.GBRAIN_ALLOW_SHELL_JOBS === '1'`.
+ *   2. This handler only registers when `process.env.CORTEX_ALLOW_SHELL_JOBS === '1'`.
  *      Default: off. Without the flag the worker's `registeredNames` excludes
  *      shell and queued jobs stay in 'waiting'.
  *
@@ -58,14 +58,14 @@ export interface ShellJobParams {
    *  this; it's the trust boundary for what files the script can read/write. */
   cwd: string;
   /** Additional env vars to pass to the child. Merged on top of SHELL_ENV_ALLOWLIST.
-   *  Cannot contain secret env keys (GBRAIN_DATABASE_URL, DATABASE_URL, etc.) —
+   *  Cannot contain secret env keys (CORTEX_DATABASE_URL, DATABASE_URL, etc.) —
    *  use `inherit:` instead. Enforced pre-enqueue by `validateShellJobParams`. */
   env?: Record<string, string>;
   /**
    * Free-form list of config-key names to inherit from the worker's
    * `loadConfig()` into the child env (v0.36.5.0). Each name must match
    * `[a-z][a-z0-9_]*`; the env key is derived via `deriveEnvKey` (e.g.
-   * `database_url` → `GBRAIN_DATABASE_URL`, `anthropic_api_key` →
+   * `database_url` → `CORTEX_DATABASE_URL`, `anthropic_api_key` →
    * `ANTHROPIC_API_KEY`). Names persist to `minion_jobs.data` + the
    * shell-audit JSONL; values resolve at child-spawn time and never persist
    * anywhere from `inherit:` itself. Pre-enqueue validation fail-fasts when
@@ -96,7 +96,7 @@ export interface ShellJobResult {
  *   1. `SHELL_ENV_ALLOWLIST` picked from `process.env` (worker process env).
  *   2. Resolved `inherit:` values — each config-key name is looked up on the
  *      worker's `loadConfig()`. The child-env key is derived via
- *      `deriveEnvKey` (e.g. `database_url` → `GBRAIN_DATABASE_URL`).
+ *      `deriveEnvKey` (e.g. `database_url` → `CORTEX_DATABASE_URL`).
  *      Pre-enqueue validation fail-fasted on missing names, so we reach this
  *      branch only when every name resolves.
  *   3. Caller-supplied `job.data.env` overlay (free-form; trust model is
@@ -204,13 +204,13 @@ class TailBuffer {
 
 /** The shell handler itself. */
 export async function shellHandler(ctx: MinionJobContext): Promise<ShellJobResult> {
-  if (process.env.GBRAIN_ALLOW_SHELL_JOBS !== '1') {
+  if (process.env.CORTEX_ALLOW_SHELL_JOBS !== '1' && process.env.CORTEX_ALLOW_SHELL_JOBS !== '1') {
     const warning =
-      `[shell] Job #${ctx.id} rejected: GBRAIN_ALLOW_SHELL_JOBS=1 not set on this worker.\n` +
+      `[shell] Job #${ctx.id} rejected: CORTEX_ALLOW_SHELL_JOBS=1 not set on this worker.\n` +
       '        Shell jobs require the env var on the worker process.';
     console.warn(warning);
     throw new UnrecoverableError(
-      'shell handler disabled on this worker (set GBRAIN_ALLOW_SHELL_JOBS=1 to execute shell jobs)',
+      'shell handler disabled on this worker (set CORTEX_ALLOW_SHELL_JOBS=1 to execute shell jobs)',
     );
   }
 

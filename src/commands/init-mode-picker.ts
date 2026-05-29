@@ -1,12 +1,12 @@
 /**
  * v0.32.3 search-lite install-time mode picker.
  *
- * Runs as a phase inside `gbrain init` AFTER `engine.initSchema()` so DB
+ * Runs as a phase inside `cortex init` AFTER `engine.initSchema()` so DB
  * config writes work [CDX-7]. Idempotent: if `search.mode` is already set
  * (re-init / second run), the picker is skipped entirely.
  *
  * TTY flow shows the menu. Non-TTY (CI, scripted init, --mcp-only) writes
- * `balanced` and prints the one-line hint pointing at `gbrain config set
+ * `balanced` and prints the one-line hint pointing at `cortex config set
  * search.mode`. The mode picker NEVER blocks an init run — readLineSafe
  * caps at 60s and falls back to `balanced` on timeout / EOF.
  *
@@ -120,8 +120,8 @@ Search mode preference
 Three named modes. Cost depends on BOTH the mode AND your downstream model
 — the corner-to-corner spread is 25x. Pick the pairing intentionally.
 
-The "cost" isn't gbrain itself — it's the downstream agent's input cost
-reading the retrieved chunks back into its context window. gbrain's own
+The "cost" isn't Cortex itself — it's the downstream agent's input cost
+reading the retrieved chunks back into its context window. Cortex's own
 overhead is rounding-error (semantic cache is free; tokenmax adds ~$1.50
 per 1K queries for the Haiku expansion call).
 
@@ -152,8 +152,8 @@ discount on top of these numbers (cache hits skip downstream entirely).
                     Best for: Opus/frontier models, max retrieval quality,
                     low-volume high-stakes work.
 
-You can change this any time with: gbrain config set search.mode <mode>
-Per-knob tuning + recommendation engine ships at: gbrain search tune
+You can change this any time with: cortex config set search.mode <mode>
+Per-knob tuning + recommendation engine ships at: cortex search tune
 `;
 
 /**
@@ -219,13 +219,13 @@ export async function runModePicker(
     try { await engine.setConfig(SEARCH_MODE_KEY, rec.mode); } catch { /* swallow */ }
     console.log('');
     console.log('═══════════════════════════════════════════════════════════════');
-    console.log(`[gbrain] search mode tentatively set to: ${rec.mode}`);
-    console.log(`[gbrain] Reason: ${rec.reason}`);
+    console.log(`[cortex] search mode tentatively set to: ${rec.mode}`);
+    console.log(`[cortex] Reason: ${rec.reason}`);
     console.log('═══════════════════════════════════════════════════════════════');
     console.log('');
     console.log('[AGENT] Before continuing, SHOW this matrix to your operator and');
     console.log('[AGENT] ask which mode they want. The default above preserves the');
-    console.log('[AGENT] v0.31.x retrieval shape. Run `gbrain config set search.mode');
+    console.log('[AGENT] v0.31.x retrieval shape. Run `cortex config set search.mode');
     console.log('[AGENT] <conservative|balanced|tokenmax>` if the operator picks');
     console.log('[AGENT] differently. See INSTALL_FOR_AGENTS.md Step 3.5 for the');
     console.log('[AGENT] full protocol.');
@@ -241,8 +241,8 @@ export async function runModePicker(
     console.log('   (scales linearly: ×10 for 100K queries/mo, ÷10 for 1K)');
     console.log('   25x corner-to-corner spread. Natural diagonal pairings span ~4x.');
     console.log('');
-    console.log('To change later: gbrain config set search.mode <mode>');
-    console.log('To see what is running: gbrain search modes');
+    console.log('To change later: cortex config set search.mode <mode>');
+    console.log('To see what is running: cortex search modes');
     console.log('');
     return rec.mode;
   }
@@ -261,7 +261,7 @@ export async function runModePicker(
     // Worst case: config write fails. Mode resolution falls back to balanced
     // at search-time anyway, so we don't block init. Emit the failure to
     // stderr so the operator sees it.
-    console.error(`[gbrain] WARN: failed to persist search.mode (${(err as Error).message ?? 'unknown'}). Defaulting to ${picked} at search-time.`);
+    console.error(`[cortex] WARN: failed to persist search.mode (${(err as Error).message ?? 'unknown'}). Defaulting to ${picked} at search-time.`);
   }
 
   console.log(`Search mode set to: ${picked}`);

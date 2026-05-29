@@ -1,35 +1,37 @@
 import { describe, test, expect } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'url';
 import { resolveBunGlobalRoot } from '../src/commands/upgrade.ts';
 
 // We can't easily mock process.execPath in bun, so we test the upgrade
 // command's --help output and the detection logic via subprocess
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 describe('upgrade command', () => {
   test('--help prints usage and exits 0', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'upgrade', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([process.execPath, 'run', 'src/cli.ts', 'upgrade', '--help'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(stdout).toContain('Usage: gbrain upgrade');
+    expect(stdout).toContain('Usage: cortex upgrade');
     expect(stdout).toContain('Detects install method');
     expect(exitCode).toBe(0);
   });
 
   test('-h also prints usage', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'upgrade', '-h'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([process.execPath, 'run', 'src/cli.ts', 'upgrade', '-h'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(stdout).toContain('Usage: gbrain upgrade');
+    expect(stdout).toContain('Usage: cortex upgrade');
     expect(exitCode).toBe(0);
   });
 });
@@ -44,12 +46,12 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
 
   test('checks node_modules before binary', () => {
     const nodeModulesIdx = source.indexOf('node_modules');
-    const binaryIdx = source.indexOf("endsWith('/gbrain')");
+    const binaryIdx = source.indexOf("endsWith('/cortex')");
     expect(nodeModulesIdx).toBeLessThan(binaryIdx);
   });
 
   test('checks binary before clawhub', () => {
-    const binaryIdx = source.indexOf("endsWith('/gbrain')");
+    const binaryIdx = source.indexOf("endsWith('/cortex')");
     const clawhubIdx = source.indexOf("clawhub --version");
     expect(binaryIdx).toBeLessThan(clawhubIdx);
   });
@@ -77,9 +79,9 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
   });
 
   // v0.28.5 cluster D: 3-signal layered detection.
-  test('bun-link signal walks .git/config for garrytan/gbrain match', () => {
+  test('bun-link signal walks .git/config for Cortex repo match', () => {
     expect(source).toContain('function detectBunLink');
-    expect(source).toContain('GBRAIN_GITHUB_REPO');
+    expect(source).toContain('CORTEX_GITHUB_REPO');
     expect(source).toContain('toLowerCase()');
   });
 
@@ -110,7 +112,7 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
 
   test('bun global upgrade passes cwd to bun update', () => {
     expect(source).toContain('const bunGlobalRoot = resolveBunGlobalRoot()');
-    expect(source).toContain("execFileSync('bun', ['update', 'gbrain'], { cwd: bunGlobalRoot");
+    expect(source).toContain("execFileSync('bun', ['update', CORTEX_PACKAGE_NAME], { cwd: bunGlobalRoot");
   });
 
   test('classifyBunInstall checks repository.url AND src/cli.ts marker', () => {
@@ -122,11 +124,11 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(source).toContain("'src', 'cli.ts'");
   });
 
-  test('squatter recovery message names both source-clone AND release-binary paths', () => {
-    expect(source).toContain('printSquatterRecovery');
+  test('invalid package recovery message names both source-clone AND release-binary paths', () => {
+    expect(source).toContain('printInvalidPackageRecovery');
     expect(source).toContain('git clone');
     expect(source).toContain('releases');
-    expect(source).toContain('#658');
+    expect(source).toContain('CORTEX_GITHUB_REPO');
   });
 });
 
@@ -149,14 +151,14 @@ describe('resolveBunGlobalRoot', () => {
     try {
       process.env.BUN_INSTALL = '/custom/bun';
       process.env.HOME = '/ignored/home';
-      expect(resolveBunGlobalRoot()).toBe('/custom/bun/install/global');
+      expect(resolveBunGlobalRoot()).toBe(join('/custom/bun', 'install', 'global'));
     } finally {
       restoreEnv();
     }
   });
 
   test('uses canonical ~/.bun/install/global when present', () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-home-'));
+    const home = mkdtempSync(join(tmpdir(), 'cortex-upgrade-home-'));
     try {
       delete process.env.BUN_INSTALL;
       process.env.HOME = home;
@@ -171,13 +173,13 @@ describe('resolveBunGlobalRoot', () => {
     }
   });
 
-  test('falls back to the package root above node_modules/gbrain', () => {
-    const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-home-'));
-    const globalRoot = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-global-'));
+  test('falls back to the package root above node_modules/cortex-brain', () => {
+    const home = mkdtempSync(join(tmpdir(), 'cortex-upgrade-home-'));
+    const globalRoot = mkdtempSync(join(tmpdir(), 'cortex-upgrade-global-'));
     try {
       delete process.env.BUN_INSTALL;
       process.env.HOME = home;
-      const cliPath = join(globalRoot, 'node_modules', 'gbrain', 'src', 'cli.ts');
+      const cliPath = join(globalRoot, 'node_modules', 'cortex-brain', 'src', 'cli.ts');
       mkdirSync(dirname(cliPath), { recursive: true });
       mkdirSync(join(globalRoot, 'node_modules'), { recursive: true });
       writeFileSync(join(globalRoot, 'package.json'), '{}');
@@ -204,14 +206,14 @@ describe('post-upgrade behavior (post v0.12.0 merge)', () => {
   //   - --help still prints usage.
 
   test('--help prints usage', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'post-upgrade', '--help'], {
-      cwd: new URL('..', import.meta.url).pathname,
+    const proc = Bun.spawn([process.execPath, 'run', 'src/cli.ts', 'post-upgrade', '--help'], {
+      cwd: repoRoot,
       stdout: 'pipe',
       stderr: 'pipe',
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
-    expect(stdout).toContain('Usage: gbrain post-upgrade');
+    expect(stdout).toContain('Usage: cortex post-upgrade');
   });
 });

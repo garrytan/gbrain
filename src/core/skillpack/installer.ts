@@ -1,5 +1,5 @@
 /**
- * skillpack/installer.ts — copy bundle files into a target OpenClaw
+ * skillpack/installer.ts — copy bundle files into a target Cortex
  * workspace, atomically and with data-loss protection.
  *
  * Contracts (from codex outside-voice review):
@@ -9,7 +9,7 @@
  *     exists" gate.
  *   - Dependency closure (D-CX-10): every skill install pulls the
  *     full `shared_deps` set so cross-references don't break.
- *   - Concurrency / lockfile (D-CX-11): acquire `.gbrain-skillpack.lock`
+ *   - Concurrency / lockfile (D-CX-11): acquire `.cortex-skillpack.lock`
  *     before any write. Atomic AGENTS.md managed-block update via
  *     tmp + rename. Stale lock (>10 min PID mismatch) emits a warning
  *     and refuses to overwrite unless `--force-unlock`.
@@ -79,7 +79,7 @@ export interface InstallOptions {
   targetWorkspace: string;
   /** Absolute path to the target skills directory. */
   targetSkillsDir: string;
-  /** Gbrain repo root (source). Defaults to the one found by findGbrainRoot. */
+  /** Cortex repo root (source). Defaults to the one found by findCortexRoot. */
   gbrainRoot: string;
   /** Scope to a single skill slug, or `null` for --all. */
   skillSlug: string | null;
@@ -178,7 +178,7 @@ export function planInstall(opts: InstallOptions): InstallPlan {
 // ---------------------------------------------------------------------------
 
 function lockPath(workspace: string): string {
-  return join(workspace, '.gbrain-skillpack.lock');
+  return join(workspace, '.cortex-skillpack.lock');
 }
 
 interface LockInfo {
@@ -256,24 +256,42 @@ function releaseLock(workspace: string): void {
 // Managed block (AGENTS.md / RESOLVER.md)
 // ---------------------------------------------------------------------------
 
-const MANAGED_BEGIN = '<!-- gbrain:skillpack:begin -->';
-const MANAGED_END = '<!-- gbrain:skillpack:end -->';
+const MANAGED_BEGIN = '<!-- cortex:skillpack:begin -->';
+const MANAGED_END = '<!-- cortex:skillpack:end -->';
+const LEGACY_MANAGED_BEGIN = '<!-- gbrain:skillpack:begin -->';
+const LEGACY_MANAGED_END = '<!-- gbrain:skillpack:end -->';
 
 // Receipt comment embedded inside the fence on every write. Lets the
-// next install distinguish "row gbrain installed previously" from
+// next install distinguish "row Cortex installed previously" from
 // "row a user hand-added inside the fence." Format is intentionally
 // regex-friendly.
 //
-//   <!-- gbrain:skillpack:manifest cumulative-slugs="a,b,c" version="0.19.0" -->
+//   <!-- cortex:skillpack:manifest cumulative-slugs="a,b,c" version="0.19.0" -->
 //
-// Sorted, comma-separated slug list. version is the gbrain version
+// Sorted, comma-separated slug list. version is the Cortex version
 // that wrote this receipt.
 const RECEIPT_RE =
+  /<!-- cortex:skillpack:manifest cumulative-slugs="([^"]*)" version="([^"]*)" -->/;
+const LEGACY_RECEIPT_RE =
   /<!-- gbrain:skillpack:manifest cumulative-slugs="([^"]*)" version="([^"]*)" -->/;
+
+function findManagedBlock(content: string): { beginIdx: number; endIdx: number; endMarker: string } | null {
+  for (const [begin, end] of [
+    [MANAGED_BEGIN, MANAGED_END],
+    [LEGACY_MANAGED_BEGIN, LEGACY_MANAGED_END],
+  ] as const) {
+    const beginIdx = content.indexOf(begin);
+    const endIdx = content.indexOf(end);
+    if (beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx) {
+      return { beginIdx, endIdx, endMarker: end };
+    }
+  }
+  return null;
+}
 
 function buildReceipt(cumulativeSlugs: string[], version: string): string {
   const sorted = [...cumulativeSlugs].sort();
-  return `<!-- gbrain:skillpack:manifest cumulative-slugs="${sorted.join(',')}" version="${version}" -->`;
+  return `<!-- cortex:skillpack:manifest cumulative-slugs="${sorted.join(',')}" version="${version}" -->`;
 }
 
 /**
@@ -282,11 +300,10 @@ function buildReceipt(cumulativeSlugs: string[], version: string): string {
  * comma; an empty string returns an empty list.
  */
 export function parseReceipt(resolverContent: string): { cumulativeSlugs: string[]; version: string } | null {
-  const beginIdx = resolverContent.indexOf(MANAGED_BEGIN);
-  const endIdx = resolverContent.indexOf(MANAGED_END);
-  if (beginIdx === -1 || endIdx === -1 || endIdx <= beginIdx) return null;
-  const block = resolverContent.slice(beginIdx, endIdx);
-  const m = RECEIPT_RE.exec(block);
+  const managed = findManagedBlock(resolverContent);
+  if (!managed) return null;
+  const block = resolverContent.slice(managed.beginIdx, managed.endIdx);
+  const m = RECEIPT_RE.exec(block) ?? LEGACY_RECEIPT_RE.exec(block);
   if (!m) return null;
   const slugs = m[1].length === 0 ? [] : m[1].split(',');
   return { cumulativeSlugs: slugs, version: m[2] };
@@ -308,7 +325,7 @@ export function buildManagedBlock(
   return [
     MANAGED_BEGIN,
     '',
-    `<!-- Installed by gbrain ${manifest.version} — do not hand-edit between markers. -->`,
+    `<!-- Installed by Cortex ${manifest.version} — do not hand-edit between markers. -->`,
     receipt,
     '',
     '| Trigger | Skill |',
@@ -327,11 +344,10 @@ export function updateManagedBlock(
   resolverContent: string,
   newBlock: string,
 ): string {
-  const beginIdx = resolverContent.indexOf(MANAGED_BEGIN);
-  const endIdx = resolverContent.indexOf(MANAGED_END);
-  if (beginIdx !== -1 && endIdx !== -1 && endIdx > beginIdx) {
-    const before = resolverContent.slice(0, beginIdx);
-    const after = resolverContent.slice(endIdx + MANAGED_END.length);
+  const managed = findManagedBlock(resolverContent);
+  if (managed) {
+    const before = resolverContent.slice(0, managed.beginIdx);
+    const after = resolverContent.slice(managed.endIdx + managed.endMarker.length);
     return before + newBlock + after;
   }
   const needsNewline = resolverContent.endsWith('\n') ? '' : '\n';
@@ -458,10 +474,10 @@ function applyManagedBlock(
   }
   const existing = readFileSync(resolver, 'utf-8');
 
-  // Step 1: figure out what gbrain previously installed into this fence.
+  // Step 1: figure out what Cortex previously installed into this fence.
   //   - If receipt is present, trust it as the cumulative-slug history.
   //   - If receipt is absent (pre-v0.19 fence), fall back to the rows
-  //     currently in the fence — they were ALL gbrain-written before
+  //     currently in the fence — they were ALL Cortex-written before
   //     the receipt feature existed, so trust them as the prior set.
   const receipt = parseReceipt(existing);
   const priorCumulativeSlugs =
@@ -494,7 +510,7 @@ function applyManagedBlock(
 
   // Step 3: detect unknown rows. A row inside the fence whose slug
   // is NOT in newCumulative AND NOT in bundleSlugs AND NOT in the
-  // intentionally-pruned set is something gbrain never wrote: a user
+  // intentionally-pruned set is something Cortex never wrote: a user
   // hand-add, a typo, or stale debris from an unknown bundle.
   // Preserve it (do not destroy data) and emit a single stderr
   // warning per slug instructing the agent to investigate.
@@ -502,7 +518,7 @@ function applyManagedBlock(
   const bundleSet = new Set(bundleSlugs);
   const unknownSlugs: string[] = [];
   // Skip the unknown-row check on the very first v0.19 install (no
-  // receipt yet). All existing rows are presumed gbrain-written and
+  // receipt yet). All existing rows are presumed Cortex-written and
   // captured into newCumulative via the fallback above; warning here
   // would create false positives.
   if (receipt !== null) {
@@ -517,7 +533,7 @@ function applyManagedBlock(
   }
   for (const slug of unknownSlugs) {
     console.error(
-      `[skillpack] unknown row in managed block: "${slug}" at skills/${slug}/SKILL.md — not in gbrain's installed set. Investigate: user-added skill, hand-edited fence, or typo?`,
+      `[skillpack] unknown row in managed block: "${slug}" at skills/${slug}/SKILL.md — not in Cortex's installed set. Investigate: user-added skill, hand-edited fence, or typo?`,
     );
   }
 
@@ -535,10 +551,9 @@ function applyManagedBlock(
 }
 
 export function extractManagedSlugs(resolverContent: string): string[] {
-  const beginIdx = resolverContent.indexOf(MANAGED_BEGIN);
-  const endIdx = resolverContent.indexOf(MANAGED_END);
-  if (beginIdx === -1 || endIdx === -1 || endIdx <= beginIdx) return [];
-  const block = resolverContent.slice(beginIdx, endIdx);
+  const managed = findManagedBlock(resolverContent);
+  if (!managed) return [];
+  const block = resolverContent.slice(managed.beginIdx, managed.endIdx);
   const slugs: string[] = [];
   const re = /`skills\/([^/]+)\/SKILL\.md`/g;
   let m: RegExpExecArray | null;
@@ -602,12 +617,12 @@ export function diffSkill(
 // ---------------------------------------------------------------------------
 
 /**
- * `gbrain skillpack uninstall <name>` is the inverse of install. Two
+ * `cortex skillpack uninstall <name>` is the inverse of install. Two
  * data-loss safeguards mirror install's existing posture:
  *
  *   D8 (refuse-and-warn for user-added rows):
  *     If the slug isn't in the managed-block's cumulative-slugs receipt,
- *     gbrain didn't install it; gbrain won't uninstall it either. Exit
+ *     Cortex didn't install it; Cortex won't uninstall it either. Exit
  *     1 with a message instructing the user to remove it manually.
  *
  *   D11 (content-hash guard, symmetric to install's
@@ -650,7 +665,7 @@ export interface UninstallOptions {
   targetWorkspace: string;
   /** Absolute path to the target skills directory. */
   targetSkillsDir: string;
-  /** Gbrain repo root (source-of-truth bundle). */
+  /** Cortex repo root (source-of-truth bundle). */
   gbrainRoot: string;
   /** Required: a single skill slug. v0.25.1 has no --all uninstall. */
   skillSlug: string;
@@ -702,21 +717,21 @@ export function applyUninstall(opts: UninstallOptions): UninstallResult {
     const receipt = parseReceipt(resolverContent);
     if (!receipt) {
       // Pre-v0.19 fence with no receipt: every existing row is presumed
-      // gbrain-installed. Trust it, but warn.
+      // Cortex-installed. Trust it, but warn.
       const existingRowSlugs = extractManagedSlugs(resolverContent);
       if (!existingRowSlugs.includes(opts.skillSlug)) {
         throw new UninstallError(
-          `Skill '${opts.skillSlug}' is not in the managed block. Either it was never installed by gbrain, or the slug is mistyped. Inspect ${resolver} and the skills/${opts.skillSlug}/ directory before retrying.`,
+          `Skill '${opts.skillSlug}' is not in the managed block. Either it was never installed by Cortex, or the slug is mistyped. Inspect ${resolver} and the skills/${opts.skillSlug}/ directory before retrying.`,
           'unknown_skill',
         );
       }
       // Otherwise proceed; we'll write a fresh receipt on the way out.
     } else if (!receipt.cumulativeSlugs.includes(opts.skillSlug)) {
       // D8 — slug IS NOT in the receipt's cumulative set. Either
-      // user-added (not gbrain's row) or the slug doesn't exist at all.
+      // user-added (not Cortex's row) or the slug doesn't exist at all.
       // Either way, refuse-and-warn.
       throw new UninstallError(
-        `Skill '${opts.skillSlug}' is not in gbrain's installed set (cumulative-slugs receipt has no record of it). gbrain refuses to uninstall what it didn't install. If you hand-added this row to ${resolver}, remove it manually. If the slug is mistyped, run \`gbrain skillpack list\` to see what's installed.`,
+        `Skill '${opts.skillSlug}' is not in Cortex's installed set (cumulative-slugs receipt has no record of it). Cortex refuses to uninstall what it didn't install. If you hand-added this row to ${resolver}, remove it manually. If the slug is mistyped, run \`cortex skillpack list\` to see what's installed.`,
         'user_added_slug',
       );
     }
@@ -734,7 +749,7 @@ export function applyUninstall(opts: UninstallOptions): UninstallResult {
 
     if (entries.length === 0) {
       throw new UninstallError(
-        `Skill '${opts.skillSlug}' has no bundle entries — likely an unknown slug or stale receipt. Verify with \`gbrain skillpack list\`.`,
+        `Skill '${opts.skillSlug}' has no bundle entries — likely an unknown slug or stale receipt. Verify with \`cortex skillpack list\`.`,
         'unknown_skill',
       );
     }
@@ -775,7 +790,7 @@ export function applyUninstall(opts: UninstallOptions): UninstallResult {
     // Refuse loudly BEFORE any filesystem mutation if anything blocked.
     if (blockedByLocalMod.length > 0) {
       throw new UninstallError(
-        `Refusing to uninstall '${opts.skillSlug}': ${blockedByLocalMod.length} file(s) differ from the bundle (you've hand-edited them):\n  ${blockedByLocalMod.join('\n  ')}\n\nPass --overwrite-local to drop your edits, or run \`gbrain skillpack diff ${opts.skillSlug}\` to inspect first.`,
+        `Refusing to uninstall '${opts.skillSlug}': ${blockedByLocalMod.length} file(s) differ from the bundle (you've hand-edited them):\n  ${blockedByLocalMod.join('\n  ')}\n\nPass --overwrite-local to drop your edits, or run \`cortex skillpack diff ${opts.skillSlug}\` to inspect first.`,
         'locally_modified',
       );
     }
@@ -885,7 +900,7 @@ function applyManagedBlockUninstall(
   }
   for (const slug of unknownSlugs) {
     console.error(
-      `[skillpack] unknown row in managed block: "${slug}" at skills/${slug}/SKILL.md — not in gbrain's installed set. Investigate: user-added skill, hand-edited fence, or typo?`,
+      `[skillpack] unknown row in managed block: "${slug}" at skills/${slug}/SKILL.md — not in Cortex's installed set. Investigate: user-added skill, hand-edited fence, or typo?`,
     );
   }
 

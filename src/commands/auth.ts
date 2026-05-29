@@ -1,19 +1,19 @@
 #!/usr/bin/env bun
 /**
- * GBrain token management.
+ * Cortex token management.
  *
  * Wired into the CLI as of v0.22.5:
- *   gbrain auth create "claude-desktop"
- *   gbrain auth list
- *   gbrain auth revoke "claude-desktop"
- *   gbrain auth test <url> --token <token>
+ *   cortex auth create "claude-desktop"
+ *   cortex auth list
+ *   cortex auth revoke "claude-desktop"
+ *   cortex auth test <url> --token <token>
  *
  * Also runs standalone (no compiled binary required):
  *   DATABASE_URL=... bun run src/commands/auth.ts create "claude-desktop"
  *
  * DB-backed commands route through the active BrainEngine (PGLite or
  * Postgres), so they work regardless of which engine the user's brain is
- * configured for. The env-var DATABASE_URL / GBRAIN_DATABASE_URL still
+ * configured for. The env-var DATABASE_URL / CORTEX_DATABASE_URL still
  * picks Postgres via loadConfig() (config.ts DbUrlSource inference),
  * but the SQL itself goes through engine.executeRaw — never through a
  * postgres.js singleton. `test` only hits a remote URL and doesn't need
@@ -30,7 +30,7 @@ function hashToken(token: string): string {
 }
 
 function generateToken(): string {
-  return 'gbrain_' + randomBytes(32).toString('hex');
+  return 'cortex_' + randomBytes(32).toString('hex');
 }
 
 /**
@@ -44,7 +44,7 @@ async function withConfiguredSql<T>(
 ): Promise<T> {
   const config = loadConfig();
   if (!config) {
-    console.error('No GBrain config found. Run `gbrain init` first, or set DATABASE_URL / GBRAIN_DATABASE_URL.');
+    console.error('No Cortex config found. Run `cortex init` first, or set DATABASE_URL / CORTEX_DATABASE_URL.');
     process.exit(1);
   }
   const engineConfig = toEngineConfig(config);
@@ -94,8 +94,8 @@ async function create(name: string, opts: { takesHolders?: string[] } = {}) {
       console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}):\n`);
       console.log(`  ${token}\n`);
       console.log('Save this token — it will not be shown again.');
-      console.log(`Revoke with: gbrain auth revoke "${name}"`);
-      console.log(`Update visibility: gbrain auth permissions "${name}" set-takes-holders world,garry`);
+      console.log(`Revoke with: cortex auth revoke "${name}"`);
+      console.log(`Update visibility: cortex auth permissions "${name}" set-takes-holders world,garry`);
     });
   } catch (e: any) {
     if (e.code === '23505') {
@@ -150,7 +150,7 @@ async function list() {
       ORDER BY created_at DESC
     `;
     if (rows.length === 0) {
-      console.log('No tokens found. Create one: gbrain auth create "my-client"');
+      console.log('No tokens found. Create one: cortex auth create "my-client"');
       return;
     }
     console.log('Name                  Created              Last Used            Status');
@@ -205,7 +205,7 @@ async function test(url: string, token: string) {
         params: {
           protocolVersion: '2025-03-26',
           capabilities: {},
-          clientInfo: { name: 'gbrain-smoke-test', version: '1.0' },
+          clientInfo: { name: 'cortex-smoke-test', version: '1.0' },
         },
         id: 1,
       }),
@@ -298,7 +298,7 @@ async function test(url: string, token: string) {
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`\n🧠 Your brain is live! (${elapsed}s)`);
+  console.log(`\nCortex is live. (${elapsed}s)`);
 }
 
 async function revokeClient(clientId: string) {
@@ -329,7 +329,7 @@ async function revokeClient(clientId: string) {
 }
 
 /**
- * Parse `gbrain auth register-client` argv. Walks the array once instead of
+ * Parse `cortex auth register-client` argv. Walks the array once instead of
  * the prior `indexOf`-based pattern which (a) silently took only the FIRST
  * occurrence of a repeatable flag (defeated `--redirect-uri https://a
  * --redirect-uri https://b` — only `https://a` made it through), and (b)
@@ -447,7 +447,7 @@ async function registerClient(name: string, args: string[]) {
       } else {
         console.log('Public client (PKCE-only) — no secret needed.');
       }
-      console.log(`Revoke with: gbrain auth revoke-client "${clientId}"`);
+      console.log(`Revoke with: cortex auth revoke-client "${clientId}"`);
     });
   } catch (e: any) {
     console.error('Error:', e.message);
@@ -456,7 +456,7 @@ async function registerClient(name: string, args: string[]) {
 }
 
 /**
- * Entry point for the `gbrain auth` CLI subcommand. Also reused by the
+ * Entry point for the `cortex auth` CLI subcommand. Also reused by the
  * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
  * still works.
  */
@@ -476,7 +476,7 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'list': await list(); return;
     case 'revoke': await revoke(rest[0]); return;
     case 'permissions': {
-      // gbrain auth permissions <name> set-takes-holders world,garry
+      // cortex auth permissions <name> set-takes-holders world,garry
       await permissions(rest[0] || '', rest[1] || '', rest[2]);
       return;
     }
@@ -490,19 +490,19 @@ export async function runAuth(args: string[]): Promise<void> {
       return;
     }
     default:
-      console.log(`GBrain Token Management
+      console.log(`Cortex Token Management
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain]
+  cortex auth create <name> [--takes-holders world,garry,brain]
                                                           Create a legacy bearer token. v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
                                                           takes_list / takes_search / query filter by this.
-  gbrain auth list                                         List all tokens
-  gbrain auth revoke <name>                                Revoke a legacy token
-  gbrain auth permissions <name> set-takes-holders <h1,h2,h3>
+  cortex auth list                                         List all tokens
+  cortex auth revoke <name>                                Revoke a legacy token
+  cortex auth permissions <name> set-takes-holders <h1,h2,h3>
                                                           Update visibility for an existing token
-  gbrain auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
+  cortex auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
      --grant-types <client_credentials,authorization_code>  (default: client_credentials;
                                                             auto-set to authorization_code,refresh_token
                                                             when --redirect-uri is passed)
@@ -512,8 +512,8 @@ Usage:
      --redirect-uri <https://...>                          (v0.41.3+; repeatable; required for authorization_code)
      --token-endpoint-auth-method <method>                 (v0.41.3+; client_secret_post | client_secret_basic | none;
                                                             'none' = public PKCE-only client, no secret minted)
-  gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
-  gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
+  cortex auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
+  cortex auth test <url> --token <token>                  Smoke-test a remote MCP server
 `);
   }
 }

@@ -56,7 +56,7 @@ original is never lost.
 ```
 1. READ      → Open the article brain page; parse frontmatter + body.
 2. SCAN      → Look for ## Content (raw dump) and absence of ## Executive Summary.
-3. CONTEXT   → gbrain query the article's key entities to ground "Why It Matters".
+3. CONTEXT   → cortex query the article's key entities to ground "Why It Matters".
 4. ENRICH    → Sonnet (default) or Opus (for high-value content) restructures.
 5. WRITE     → Replace ## Content with the structured sections; preserve raw
                source in <details>; clear needs_enrichment in frontmatter.
@@ -67,15 +67,15 @@ original is never lost.
 ## Invocation
 
 The skill itself is markdown instructions to the agent. It does NOT ship a
-deterministic CLI command in v0.25.1. The agent uses gbrain's existing
+deterministic CLI command in v0.25.1. The agent uses cortex's existing
 operations:
 
 ```bash
 # 1. Find candidate pages
-gbrain query "needs_enrichment: true type:article" --limit 50
+cortex query "needs_enrichment: true type:article" --limit 50
 
 # 2. For each candidate, read the page
-gbrain get media/articles/<slug>
+cortex get media/articles/<slug>
 
 # 3. Enrich via the agent's LLM (Sonnet by default; Opus for high-value)
 #    The agent reads the raw content + brain context + writes the structured page.

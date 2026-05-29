@@ -1,6 +1,6 @@
 # Progress events
 
-Canonical reference for the JSONL progress stream that `gbrain` writes to
+Canonical reference for the JSONL progress stream that `cortex` writes to
 `stderr` when a bulk command runs with `--progress-json`. Stable from
 v0.15.2. Additive changes only; no renames or removals without a major
 version bump.
@@ -11,22 +11,22 @@ Most humans won't read this page. Agents parsing progress will.
 
 Any of these commands stream events when `--progress-json` is set:
 
-- `gbrain doctor` (DB checks, JSONB integrity, markdown body completeness,
+- `cortex doctor` (DB checks, JSONB integrity, markdown body completeness,
   integrity sample)
-- `gbrain orphans`
-- `gbrain embed`
-- `gbrain files sync`
-- `gbrain export`
-- `gbrain extract [links|timeline|all]` (fs or db source)
-- `gbrain import`
-- `gbrain sync`
-- `gbrain migrate --to …`
-- `gbrain repair-jsonb`
-- `gbrain check-backlinks`
-- `gbrain lint`
-- `gbrain integrity auto`
-- `gbrain eval`
-- `gbrain apply-migrations` (the orchestrator + every child command)
+- `cortex orphans`
+- `cortex embed`
+- `cortex files sync`
+- `cortex export`
+- `cortex extract [links|timeline|all]` (fs or db source)
+- `cortex import`
+- `cortex sync`
+- `cortex migrate --to …`
+- `cortex repair-jsonb`
+- `cortex check-backlinks`
+- `cortex lint`
+- `cortex integrity auto`
+- `cortex eval`
+- `cortex apply-migrations` (the orchestrator + every child command)
 
 Non-bulk commands (`stats`, `graph-query`, `get`, `put`, etc.) don't emit
 events — they return in under a second.
@@ -50,8 +50,8 @@ separately for progress.
 | `--progress-interval=<ms>` | Override the minimum interval between tick emits (default 1000). |
 
 Global flags: parsed by `src/core/cli-options.ts` before command dispatch,
-so `gbrain --progress-json doctor` works the same as
-`gbrain doctor --progress-json` (the latter also works — per-command
+so `cortex --progress-json doctor` works the same as
+`cortex doctor --progress-json` (the latter also works — per-command
 parsers see the flag via the shared `CliOptions` singleton).
 
 ## Event types
@@ -155,7 +155,7 @@ Sub-phases exposed via `child()`:
 
 ## Subprocess inheritance
 
-When a parent CLI spawns `gbrain …` child processes (mostly in
+When a parent CLI spawns `cortex …` child processes (mostly in
 `src/commands/migrations/*`), global flags (`--quiet`, `--progress-json`,
 `--progress-interval`) are propagated to the child's argv via the
 `childGlobalFlags()` helper in `src/core/cli-options.ts`. Child stderr
@@ -170,11 +170,11 @@ breaking the orchestrator's `JSON.parse`. Its stdio is explicit:
 
 ## Minion jobs
 
-`gbrain jobs work` (the Minion worker daemon) keeps progress in the DB,
+`cortex jobs work` (the Minion worker daemon) keeps progress in the DB,
 not on stderr. Each Minion handler that runs a bulk core (embed, sync,
 extract, import, backlinks) calls `job.updateProgress({done, total,
 …})` per iteration. Agents read per-job progress via the
-`get_job_progress` MCP operation or `gbrain jobs get <id>`.
+`get_job_progress` MCP operation or `cortex jobs get <id>`.
 
 The `jobs work` daemon itself emits coarse one-line-per-job stderr output
 for liveness only. Per-page detail lives in the DB.

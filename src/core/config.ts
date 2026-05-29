@@ -5,14 +5,15 @@ import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
- * attempt. Used by `gbrain doctor --fast` so the user gets a precise message
- * instead of the misleading "No database configured" when GBRAIN_DATABASE_URL
- * (or DATABASE_URL) is actually set.
+ * attempt. Used by `cortex doctor --fast` so the user gets a precise message
+ * instead of the misleading "No database configured" when CORTEX_DATABASE_URL
+ * (or the legacy aliases) is actually set.
  *
  * Precedence matches loadConfig(): env vars win over config-file URL. Returns
  * null only when NO source provides a URL at all.
  */
 export type DbUrlSource =
+  | 'env:CORTEX_DATABASE_URL'
   | 'env:GBRAIN_DATABASE_URL'
   | 'env:DATABASE_URL'
   | 'config-file'
@@ -21,7 +22,8 @@ export type DbUrlSource =
 
 // Internal aliases retained for backwards compatibility with the existing call
 // sites below. They forward to the exported configDir()/configPath() so
-// GBRAIN_HOME is honored uniformly. Lazy: never call homedir() at module scope.
+// CORTEX_HOME/GBRAIN_HOME are honored uniformly. Lazy: never call homedir()
+// at module scope.
 function getConfigDir() { return configDir(); }
 function getConfigPath() { return configPath(); }
 
@@ -34,7 +36,7 @@ export interface GBrainConfig {
   /**
    * ZeroEntropy API key. v0.37 fix wave (CDX2-5+6): ZE became the default
    * embedding + reranker provider in v0.36 but lacked a file-plane config
-   * slot. `gbrain config set zeroentropy_api_key X` wrote DB plane,
+   * slot. `cortex config set zeroentropy_api_key X` wrote DB plane,
    * `loadConfig` only merged OpenAI/Anthropic, and `buildGatewayConfig`
    * at cli.ts:1401 only mapped those two — so the key never reached the
    * embed pipeline. Now wired through: file plane → loadConfig env
@@ -46,8 +48,8 @@ export interface GBrainConfig {
   embedding_dimensions?: number;
   /**
    * v0.37 (D9): user opted into deferred-setup mode at init time via
-   * `gbrain init --no-embedding`. When true, embed callsites and `gbrain
-   * import` refuse with a `gbrain config set embedding_model <id>` hint
+   * `cortex init --no-embedding`. When true, embed callsites and `cortex
+   * import` refuse with a `cortex config set embedding_model <id>` hint
    * rather than proceeding with a default that may not match a real key.
    * Mutually exclusive with `embedding_model` being set — init writes one
    * or the other, never both.
@@ -76,8 +78,8 @@ export interface GBrainConfig {
   storage?: unknown;
   /**
    * v0.25.0 — session capture settings. Read via file-plane `loadConfig()`
-   * at process boot (NOT `gbrain config set` which writes the DB plane —
-   * those are different stores). Edit `~/.gbrain/config.json` directly.
+   * at process boot (NOT `cortex config set` which writes the DB plane -
+   * those are different stores). Edit the local Cortex config file directly.
    * All fields default to ON — capture and scrubbing both opt-out.
    */
   /**
@@ -109,7 +111,7 @@ export interface GBrainConfig {
    *
    * Unlike `embedding_model` / `embedding_dimensions` (which size the
    * schema and must be set before initSchema), these flags only affect
-   * runtime behavior. They live in the DB plane primarily — `gbrain config
+   * runtime behavior. They live in the DB plane primarily - `cortex config
    * set embedding_multimodal true` flips the gate without touching the file.
    * loadConfigWithEngine() merges DB config on top of file/env. Env vars
    * still win as the operator escape hatch.
@@ -123,7 +125,7 @@ export interface GBrainConfig {
   /**
    * v0.36 — embedding-column registry (D7). Maps a content_chunks column
    * name to its provider + dimensions + pgvector type. Both keys live in
-   * the DB plane (`gbrain config set ...`) so users can flip without
+   * the DB plane (`cortex config set ...`) so users can flip without
    * editing files. Resolver merges this with `BUILTIN_EMBEDDING_COLUMNS`
    * (which derive their provider from `embedding_model` /
    * `embedding_multimodal_model`).
@@ -147,24 +149,24 @@ export interface GBrainConfig {
    * env > file > DB > defaults from `src/core/content-sanity.ts`.
    *
    * Both lint AND ingest go through the same effective resolution so a
-   * `gbrain config set content_sanity.bytes_block N` flips both surfaces
-   * uniformly. CI without `~/.gbrain/` falls through to env/defaults.
+   * `cortex config set content_sanity.bytes_block N` flips both surfaces
+   * uniformly. CI without local Cortex config falls through to env/defaults.
    */
   content_sanity?: {
     /** Stderr warn + lint `huge-page` rule fires above this (UTF-8 bytes
      *  of compiled_truth + timeline). Default: 50_000. Env override:
-     *  `GBRAIN_PAGE_WARN_BYTES`. */
+     *  `CORTEX_PAGE_WARN_BYTES` (legacy `GBRAIN_PAGE_WARN_BYTES` accepted). */
     bytes_warn?: number;
     /** Soft-block: page writes with `frontmatter.embed_skip` set but
      *  embedder skips on next sweep. Default: 500_000. Env override:
-     *  `GBRAIN_PAGE_BLOCK_BYTES`. */
+     *  `CORTEX_PAGE_BLOCK_BYTES` (legacy `GBRAIN_PAGE_BLOCK_BYTES` accepted). */
     bytes_block?: number;
     /** Master switch for the built-in junk-pattern set. Default: true.
-     *  Env override: `GBRAIN_NO_JUNK_PATTERNS=1` flips to false. */
+     *  Env override: `CORTEX_NO_JUNK_PATTERNS=1` flips to false. */
     junk_patterns_enabled?: boolean;
     /** Master kill-switch for all sanity checks. When true, ingest emits
      *  loud stderr per page but lets everything through. Default: false.
-     *  Env override: `GBRAIN_NO_SANITY=1` flips to true. */
+     *  Env override: `CORTEX_NO_SANITY=1` flips to true. */
     disabled?: boolean;
   };
 
@@ -199,7 +201,7 @@ export interface GBrainConfig {
 
   /**
    * Thin-client mode (multi-topology v1). When set, this install does NOT
-   * have a local DB; it talks to a remote `gbrain serve --http` over MCP.
+   * have a local DB; it talks to a remote `cortex serve --http` over MCP.
    * The CLI dispatch guard in `src/cli.ts` checks for this field BEFORE
    * `connectEngine` and refuses any DB-bound subcommand. The `engine` field
    * above is still populated (default-inferred) but never used.
@@ -210,8 +212,8 @@ export interface GBrainConfig {
    * topologies work.
    *
    * `oauth_client_secret` can also be supplied via the
-   * `GBRAIN_REMOTE_CLIENT_SECRET` env var (preferred for headless agents);
-   * env-var value wins when both are present.
+   * `CORTEX_REMOTE_CLIENT_SECRET` env var (preferred for headless agents);
+   * env-var value wins when present. Legacy GBRAIN_* remains accepted.
    */
   remote_mcp?: {
     issuer_url: string;
@@ -224,18 +226,18 @@ export interface GBrainConfig {
    * v0.38 — active schema pack name (D13 tier 6 in the 7-tier resolution
    * chain). The pack drives type inference, alias closure for search,
    * link-verb regexes, expert-routing flags, and enrichment dispatch.
-   * Default: `gbrain-base` (reproduces pre-v0.38 hardcoded behavior).
+   * Default: `cortex-base` (reproduces the pre-v0.38 built-in behavior).
    *
    * Resolution priority (highest → lowest, per D13):
    *   1. Per-call SearchOpts.schema_pack (CLI-only; rejected for remote callers)
-   *   2. GBRAIN_SCHEMA_PACK env var
+   *   2. CORTEX_SCHEMA_PACK env var (legacy GBRAIN_SCHEMA_PACK accepted)
    *   3. Per-source DB config `schema_pack.source.<id>`
    *   4. Brain-wide DB config `schema_pack`
-   *   5. gbrain.yml `schema:` section
-   *   6. THIS field (~/.gbrain/config.json)
-   *   7. Default 'gbrain-base'
+   *   5. cortex.yml `schema:` section
+   *   6. THIS field (local Cortex config file)
+   *   7. Default 'cortex-base'
    *
-   * `gbrain config set schema_pack <name>` writes the DB plane (tier 4);
+   * `cortex config set schema_pack <name>` writes the DB plane (tier 4);
    * editing this file directly writes tier 6. Env var (tier 2) is the
    * operator escape hatch.
    */
@@ -244,7 +246,7 @@ export interface GBrainConfig {
 
 /**
  * True when this install is configured as a thin client of a remote
- * `gbrain serve --http`. Single source of truth for the "is this a
+ * `cortex serve --http`. Single source of truth for the "is this a
  * thin-client install?" check used by the CLI dispatch guard, doctor
  * branch, and remote subcommands.
  */
@@ -274,17 +276,17 @@ function migrateLegacyEmbeddingConfig(raw: Record<string, unknown>): Record<stri
   rest.embedding_model = `${provider}:${model}`;
   console.warn(
     `[config] legacy "provider" + "model" detected; using "${rest.embedding_model}".` +
-    ` Rewrite ~/.gbrain/config.json to: "embedding_model": "${rest.embedding_model}".`,
+    ` Rewrite the local Cortex config file to: "embedding_model": "${rest.embedding_model}".`,
   );
   return rest;
 }
 
 /**
- * File-only config loader. Reads ~/.gbrain/config.json and applies the
+ * File-only config loader. Reads the local Cortex config file and applies the
  * legacy embedding-config migration shim. Does NOT merge env vars, does
  * NOT infer engine kind from DATABASE_URL.
  *
- * Used by `gbrain init`'s config-merge path (B.4) where loading
+ * Used by `cortex init`'s config-merge path (B.4) where loading
  * `loadConfig()` would poison the saved file with transient env state
  * (e.g. a CI run with DATABASE_URL set writes a Postgres config.json
  * for a PGLite brain). Read-path callers should keep using `loadConfig()`
@@ -310,8 +312,19 @@ export function loadConfig(): GBrainConfig | null {
     fileConfig = migrateLegacyEmbeddingConfig(parsed) as unknown as GBrainConfig;
   } catch { /* no config file */ }
 
-  // Try env vars
-  const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  // Try env vars. Cortex names are canonical; GBRAIN_* remains a legacy alias
+  // for older installs and compatibility wrappers.
+  const dbUrl = process.env.CORTEX_DATABASE_URL || process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
+  const embeddingModel = process.env.CORTEX_EMBEDDING_MODEL || process.env.GBRAIN_EMBEDDING_MODEL;
+  const embeddingDimensions = process.env.CORTEX_EMBEDDING_DIMENSIONS || process.env.GBRAIN_EMBEDDING_DIMENSIONS;
+  const expansionModel = process.env.CORTEX_EXPANSION_MODEL || process.env.GBRAIN_EXPANSION_MODEL;
+  const chatModel = process.env.CORTEX_CHAT_MODEL || process.env.GBRAIN_CHAT_MODEL;
+  const chatFallbackChain = process.env.CORTEX_CHAT_FALLBACK_CHAIN || process.env.GBRAIN_CHAT_FALLBACK_CHAIN;
+  const embeddingMultimodal = process.env.CORTEX_EMBEDDING_MULTIMODAL || process.env.GBRAIN_EMBEDDING_MULTIMODAL;
+  const embeddingImageOcr = process.env.CORTEX_EMBEDDING_IMAGE_OCR || process.env.GBRAIN_EMBEDDING_IMAGE_OCR;
+  const embeddingMultimodalModel = process.env.CORTEX_EMBEDDING_MULTIMODAL_MODEL || process.env.GBRAIN_EMBEDDING_MULTIMODAL_MODEL;
+  const embeddingImageOcrModel = process.env.CORTEX_EMBEDDING_IMAGE_OCR_MODEL || process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL;
+  const remoteClientSecret = process.env.CORTEX_REMOTE_CLIENT_SECRET || process.env.GBRAIN_REMOTE_CLIENT_SECRET;
 
   if (!fileConfig && !dbUrl) return null;
 
@@ -334,48 +347,50 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
     ...(process.env.ZEROENTROPY_API_KEY ? { zeroentropy_api_key: process.env.ZEROENTROPY_API_KEY } : {}),
-    ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
-    ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
-    ...(process.env.GBRAIN_EXPANSION_MODEL ? { expansion_model: process.env.GBRAIN_EXPANSION_MODEL } : {}),
-    ...(process.env.GBRAIN_CHAT_MODEL ? { chat_model: process.env.GBRAIN_CHAT_MODEL } : {}),
-    ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN
-      ? { chat_fallback_chain: process.env.GBRAIN_CHAT_FALLBACK_CHAIN.split(',').map(s => s.trim()).filter(Boolean) }
+    ...(embeddingModel ? { embedding_model: embeddingModel } : {}),
+    ...(embeddingDimensions ? { embedding_dimensions: parseInt(embeddingDimensions, 10) } : {}),
+    ...(expansionModel ? { expansion_model: expansionModel } : {}),
+    ...(chatModel ? { chat_model: chatModel } : {}),
+    ...(chatFallbackChain
+      ? { chat_fallback_chain: chatFallbackChain.split(',').map(s => s.trim()).filter(Boolean) }
       : {}),
-    ...(process.env.GBRAIN_EMBEDDING_MULTIMODAL
-      ? { embedding_multimodal: process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true' }
+    ...(embeddingMultimodal
+      ? { embedding_multimodal: embeddingMultimodal === 'true' }
       : {}),
-    ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR
-      ? { embedding_image_ocr: process.env.GBRAIN_EMBEDDING_IMAGE_OCR === 'true' }
+    ...(embeddingImageOcr
+      ? { embedding_image_ocr: embeddingImageOcr === 'true' }
       : {}),
-    ...(process.env.GBRAIN_EMBEDDING_MULTIMODAL_MODEL
-      ? { embedding_multimodal_model: process.env.GBRAIN_EMBEDDING_MULTIMODAL_MODEL }
+    ...(embeddingMultimodalModel
+      ? { embedding_multimodal_model: embeddingMultimodalModel }
       : {}),
-    ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL
-      ? { embedding_image_ocr_model: process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL }
+    ...(embeddingImageOcrModel
+      ? { embedding_image_ocr_model: embeddingImageOcrModel }
       : {}),
-    ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
-      ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
+    ...(remoteClientSecret && fileConfig?.remote_mcp
+      ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: remoteClientSecret } }
       : {}),
   };
 
   // v0.41 content-sanity env overrides. Built up as a sparse object so
   // env presence wins over file/DB only for the specific keys set,
   // matching the precedence pattern used elsewhere in loadConfig.
-  // The env vars use natural names (GBRAIN_NO_SANITY=1 is more
-  // operator-friendly than GBRAIN_CONTENT_SANITY_DISABLED=true).
+  // Cortex env names are canonical; GBRAIN_* remains accepted for older
+  // agents and deployment wrappers.
   const envContentSanity: GBrainConfig['content_sanity'] = {};
-  if (process.env.GBRAIN_PAGE_WARN_BYTES) {
-    const n = parseInt(process.env.GBRAIN_PAGE_WARN_BYTES, 10);
+  const pageWarnBytes = process.env.CORTEX_PAGE_WARN_BYTES || process.env.GBRAIN_PAGE_WARN_BYTES;
+  const pageBlockBytes = process.env.CORTEX_PAGE_BLOCK_BYTES || process.env.GBRAIN_PAGE_BLOCK_BYTES;
+  if (pageWarnBytes) {
+    const n = parseInt(pageWarnBytes, 10);
     if (Number.isFinite(n) && n > 0) envContentSanity.bytes_warn = n;
   }
-  if (process.env.GBRAIN_PAGE_BLOCK_BYTES) {
-    const n = parseInt(process.env.GBRAIN_PAGE_BLOCK_BYTES, 10);
+  if (pageBlockBytes) {
+    const n = parseInt(pageBlockBytes, 10);
     if (Number.isFinite(n) && n > 0) envContentSanity.bytes_block = n;
   }
-  if (process.env.GBRAIN_NO_JUNK_PATTERNS === '1') {
+  if (process.env.CORTEX_NO_JUNK_PATTERNS === '1' || process.env.GBRAIN_NO_JUNK_PATTERNS === '1') {
     envContentSanity.junk_patterns_enabled = false;
   }
-  if (process.env.GBRAIN_NO_SANITY === '1') {
+  if (process.env.CORTEX_NO_SANITY === '1' || process.env.GBRAIN_NO_SANITY === '1') {
     envContentSanity.disabled = true;
   }
   // Only attach the field when at least one env var was set, so the
@@ -393,8 +408,8 @@ export function loadConfig(): GBrainConfig | null {
 
 /**
  * v0.27.1 — async config loader that overlays DB-plane config on top of the
- * file/env config. Used by `gbrain` CLI's connectEngine() AFTER engine.connect()
- * so flags written via `gbrain config set` actually take effect. Unlike the
+ * file/env config. Used by `cortex` CLI's connectEngine() AFTER engine.connect()
+ * so flags written via `cortex config set` actually take effect. Unlike the
  * sync loadConfig(), this needs an engine handle to read the config table.
  *
  * Precedence: env > file > DB > defaults. Env stays the operator escape hatch;
@@ -412,7 +427,7 @@ export async function loadConfigWithEngine(
   // loadConfig() returns null and the DB merge would be skipped — env-only
   // installs (engine wired via direct SDK pass) wouldn't see DB-plane
   // overrides like `embedding_columns` / `search_embedding_column` set via
-  // `gbrain config set`. Since we have a live engine here, synthesize a
+  // `cortex config set`. Since we have a live engine here, synthesize a
   // minimal base config so the DB-plane merge still runs. The synthesized
   // config has no auth or model fields; DB-plane keys overlay correctly
   // and downstream callers either find them or fall through to defaults.
@@ -476,10 +491,10 @@ export async function loadConfigWithEngine(
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         merged.embedding_columns = parsed as Record<string, EmbeddingColumnConfig>;
       } else {
-        console.warn('[gbrain] config: embedding_columns DB value is not a JSON object; ignoring');
+        console.warn('[cortex] config: embedding_columns DB value is not a JSON object; ignoring');
       }
     } catch (err) {
-      console.warn(`[gbrain] config: embedding_columns DB value is not valid JSON; ignoring (${(err as Error).message})`);
+      console.warn(`[cortex] config: embedding_columns DB value is not valid JSON; ignoring (${(err as Error).message})`);
     }
   }
   if (merged.search_embedding_column === undefined && dbSearchEmbeddingColumn !== undefined) {
@@ -524,7 +539,7 @@ export async function loadConfigWithEngine(
   // per key (NO env layer; see GBrainConfig.dream JSDoc). Without this,
   // `extract-atoms.ts` and any other consumer that reads the merged config
   // (vs calling `engine.getConfig()` directly) silently misses dream.*
-  // config set via `gbrain config set`.
+  // config set via `cortex config set`.
   const dbSessionCorpusDir = await dbStr('dream.synthesize.session_corpus_dir');
   const dbMeetingTranscriptsDir = await dbStr('dream.synthesize.meeting_transcripts_dir');
   const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
@@ -575,7 +590,7 @@ export async function loadConfigWithEngine(
 }
 
 /**
- * v0.37 (D6): canonical list of known config keys for `gbrain config set`
+ * v0.37 (D6): canonical list of known config keys for `cortex config set`
  * validation. Includes both the static GBrainConfig fields (file plane)
  * and well-known DB-plane keys.
  *
@@ -586,7 +601,7 @@ export async function loadConfigWithEngine(
  * When adding a new persistent config key:
  *   1. Add it to the GBrainConfig interface (if file-plane) OR document it
  *      below (if DB-plane).
- *   2. Add the canonical name to this list so `gbrain config set` accepts it
+ *   2. Add the canonical name to this list so `cortex config set` accepts it
  *      without `--force`.
  */
 export const KNOWN_CONFIG_KEYS: readonly string[] = [
@@ -678,7 +693,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
 /**
  * v0.37 (D6): well-known prefix patterns for DB-plane keys that have
  * unbounded sub-keys. Used as a softer gate before falling back to
- * Levenshtein suggestion in `gbrain config set`.
+ * Levenshtein suggestion in `cortex config set`.
  */
 export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'search.',           // search.* (mode, cache.*, etc.)
@@ -700,22 +715,22 @@ export function saveConfig(config: GBrainConfig): void {
   }
   // v0.35.8.0: ensure the per-home `.gitignore` exists on every config-write
   // path. Cheap, idempotent, doesn't clobber user edits. Catches the case
-  // where `~/.gbrain/` lives inside a git worktree (Conductor + gstack
-  // workspaces hit this) so `git add` doesn't accidentally stage the brain.
+  // where local Cortex config lives inside a git worktree so `git add`
+  // doesn't accidentally stage runtime state.
   // The doctor check `home_dir_in_worktree` surfaces vectors this can't
   // close (already-tracked files, screenshots, backups, `git add -f`).
   ensureGitignore();
 }
 
 /**
- * Idempotently lay down `~/.gbrain/.gitignore` containing the single line `*`.
- * Honors GBRAIN_HOME via `configDir()`. Best-effort: errors are logged to
+ * Idempotently lay down the Cortex home `.gitignore` containing the single line `*`.
+ * Honors CORTEX_HOME/GBRAIN_HOME via `configDir()`. Best-effort: errors are logged to
  * stderr and never block the caller. Never clobbers a `.gitignore` whose
  * content the user has customized.
  *
  * Called from:
  *   - `saveConfig()` so any config-writing path lays it down.
- *   - `gbrain post-upgrade` so existing users get it on next upgrade.
+ *   - `cortex post-upgrade` so existing users get it on next upgrade.
  *
  * What this DOES cover: a casual `git add ~/.gbrain` from inside an enclosing
  * worktree — the directory-local `.gitignore` blocks everything below it.
@@ -723,7 +738,7 @@ export function saveConfig(config: GBrainConfig): void {
  * What this does NOT cover (the CHANGELOG names these honestly):
  *   - Files already tracked before the .gitignore landed (no remediation here).
  *   - Screenshots, sync folders (Dropbox/iCloud), Time Machine backups.
- *   - `git add -f ~/.gbrain` (deliberate force-add bypasses .gitignore).
+ *   - `git add -f` against local Cortex config (deliberate force-add bypasses .gitignore).
  *   - Out-of-band copy operations (rsync, cp -r, scp).
  *
  * The doctor check `home_dir_in_worktree` surfaces these vectors at audit
@@ -750,7 +765,7 @@ export function ensureGitignore(): void {
   } catch (e) {
     // Best-effort: log to stderr, never block the caller.
     const msg = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`[gbrain] ensureGitignore failed (${msg}); continuing\n`);
+    process.stderr.write(`[cortex] ensureGitignore failed (${msg}); continuing\n`);
   }
 }
 
@@ -764,17 +779,22 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
 
 export function configDir(): string {
   // Allow override for tests, Docker, and multi-tenant deployments.
-  // GBRAIN_HOME is a parent dir; we always append '.gbrain' ourselves so
-  // setting GBRAIN_HOME=/tmp/x yields configDir() === '/tmp/x/.gbrain'.
+  // CORTEX_HOME/GBRAIN_HOME are parent dirs; we always append '.gbrain'
+  // ourselves so setting CORTEX_HOME=/tmp/x yields
+  // configDir() === '/tmp/x/.gbrain'. The on-disk suffix stays stable for
+  // backwards compatibility; user-facing env and commands are Cortex-first.
   // Validates the override: must be absolute, no '..' segments.
-  const override = process.env.GBRAIN_HOME;
+  const overrideName = process.env.CORTEX_HOME && process.env.CORTEX_HOME.trim()
+    ? 'CORTEX_HOME'
+    : (process.env.GBRAIN_HOME && process.env.GBRAIN_HOME.trim() ? 'GBRAIN_HOME' : undefined);
+  const override = overrideName ? process.env[overrideName] : undefined;
   if (override && override.trim()) {
     const trimmed = override.trim();
     if (!isAbsolute(trimmed)) {
-      throw new Error(`GBRAIN_HOME must be an absolute path; got: ${trimmed}`);
+      throw new Error(`${overrideName} must be an absolute path; got: ${trimmed}`);
     }
     if (trimmed.split(/[\\/]/).includes('..')) {
-      throw new Error(`GBRAIN_HOME must not contain '..' segments; got: ${trimmed}`);
+      throw new Error(`${overrideName} must not contain '..' segments; got: ${trimmed}`);
     }
     return join(trimmed, '.gbrain');
   }
@@ -786,10 +806,10 @@ export function configPath(): string {
 }
 
 /**
- * Sugar for joining paths under the active gbrain home. Use this anywhere you
+ * Sugar for joining paths under the active Cortex home. Use this anywhere you
  * would otherwise write `join(homedir(), '.gbrain', ...rest)`. Honors
- * GBRAIN_HOME, validates input, and centralizes the convention so future
- * audits stay simple.
+ * CORTEX_HOME/GBRAIN_HOME, validates input, and centralizes the convention so
+ * future audits stay simple.
  */
 export function gbrainPath(...segments: string[]): string {
   return join(configDir(), ...segments);
@@ -800,6 +820,7 @@ export function gbrainPath(...segments: string[]): string {
  * Never throws, never connects. Env vars take precedence (matches loadConfig).
  */
 export function getDbUrlSource(): DbUrlSource {
+  if (process.env.CORTEX_DATABASE_URL) return 'env:CORTEX_DATABASE_URL';
   if (process.env.GBRAIN_DATABASE_URL) return 'env:GBRAIN_DATABASE_URL';
   if (process.env.DATABASE_URL) return 'env:DATABASE_URL';
   if (!existsSync(configPath())) return null;

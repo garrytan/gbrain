@@ -1,25 +1,25 @@
 /**
- * gbrain dream — run one brain maintenance cycle.
+ * cortex dream — run one brain maintenance cycle.
  *
  * The README brand promise: "the agent runs while I sleep, the dream
  * cycle ... I wake up and the brain is smarter." Cron-friendly, JSON
  * report, phase-selectable.
  *
  * Thin alias over runCycle (src/core/cycle.ts). Both this command and
- * `gbrain autopilot` converge on the same primitive so there's one
+ * `cortex autopilot` converge on the same primitive so there's one
  * source of truth for what "overnight maintenance" means.
  *
  * Usage:
- *   gbrain dream                       # full 6-phase cycle
- *   gbrain dream --dry-run             # preview, no writes
- *   gbrain dream --json                # CycleReport JSON (for agents)
- *   gbrain dream --phase lint          # run a single phase
- *   gbrain dream --pull                # also git pull the brain repo
- *   gbrain dream --dir /path/to/brain  # explicit brain location
+ *   cortex dream                       # full 6-phase cycle
+ *   cortex dream --dry-run             # preview, no writes
+ *   cortex dream --json                # CycleReport JSON (for agents)
+ *   cortex dream --phase lint          # run a single phase
+ *   cortex dream --pull                # also git pull the brain repo
+ *   cortex dream --dir /path/to/brain  # explicit brain location
  *
- * Cron: 0 2 * * * gbrain dream --json >> /var/log/gbrain-dream.log
+ * Cron: 0 2 * * * cortex dream --json >> /var/log/cortex-dream.log
  *
- * Related: `gbrain autopilot --install` for continuous daemonized
+ * Related: `cortex autopilot --install` for continuous daemonized
  * maintenance. dream is the one-shot, autopilot is the scheduler.
  */
 
@@ -59,7 +59,7 @@ interface DreamArgs {
   /**
    * v0.41.13: per-source cycle scoping. Threaded into runCycle as
    * `sourceId` so `cycle.ts:1947-1967` writes `last_full_cycle_at`
-   * to `sources.config` on success — without it, `gbrain doctor`'s
+   * to `sources.config` on success — without it, `cortex doctor`'s
    * `cycle_freshness` check stays stale forever. Accepts `--source
    * <id>` and the alias `--source-id <id>` (the v0.37.7.0 #1167
    * canonical name across import/extract/graph-query); both work
@@ -153,11 +153,11 @@ function parseArgs(args: string[]): DreamArgs {
   const sourceValues = collectFlagValues(args, '--source');
   const sourceIdValues = collectFlagValues(args, '--source-id');
   if (sourceValues === null) {
-    console.error('--source <id>: missing value. Usage: gbrain dream --source <source-id>');
+    console.error('--source <id>: missing value. Usage: cortex dream --source <source-id>');
     process.exit(2);
   }
   if (sourceIdValues === null) {
-    console.error('--source-id <id>: missing value. Usage: gbrain dream --source-id <source-id>');
+    console.error('--source-id <id>: missing value. Usage: cortex dream --source-id <source-id>');
     process.exit(2);
   }
   const uniqSource = Array.from(new Set(sourceValues));
@@ -202,7 +202,7 @@ function parseArgs(args: string[]): DreamArgs {
  * happily run lint + sync against an unrelated git repo the user happened
  * to be cd'd into. This resolver only trusts two sources:
  *   1. An explicit --dir argument.
- *   2. The `sync.repo_path` config key set by `gbrain init` (engine-backed).
+ *   2. The `sync.repo_path` config key set by `cortex init` (engine-backed).
  *
  * If neither is available, we error out instead of guessing.
  */
@@ -228,13 +228,13 @@ async function resolveBrainDir(
   }
 
   console.error(
-    'No brain directory found. Pass --dir <path> or configure one via `gbrain init`.',
+    'No brain directory found. Pass --dir <path> or configure one via `cortex init`.',
   );
   process.exit(1);
 }
 
 function printHelp() {
-  console.log(`Usage: gbrain dream [options]
+  console.log(`Usage: cortex dream [options]
 
 Run one brain maintenance cycle. Eight phases:
   lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
@@ -255,7 +255,7 @@ Options:
 
   --source <id>       Scope the cycle to one source so doctor's
                       cycle_freshness check sees a fresh stamp on
-                      completion. Without this, gbrain dream's
+                      completion. Without this, cortex dream's
                       timestamp never lands and federated brains
                       see "stale cycle" forever.
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
@@ -276,20 +276,20 @@ Options:
   --help, -h          Show this help
 
 Examples:
-  gbrain dream
-  gbrain dream --dry-run --json
-  gbrain dream --phase lint
-  gbrain dream --phase synthesize --input ~/transcripts/2026-04-25.txt
-  gbrain dream --phase synthesize --from 2026-04-01 --to 2026-04-25
-  0 2 * * * gbrain dream --json         # nightly via cron
+  cortex dream
+  cortex dream --dry-run --json
+  cortex dream --phase lint
+  cortex dream --phase synthesize --input ~/transcripts/2026-04-25.txt
+  cortex dream --phase synthesize --from 2026-04-01 --to 2026-04-25
+  0 2 * * * cortex dream --json         # nightly via cron
 
 Configure synthesize:
-  gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
-  gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
+  cortex config set dream.synthesize.session_corpus_dir /path/to/transcripts
+  cortex config set dream.synthesize.session_corpus_dir /path/to/transcripts
 
 Related:
-  gbrain autopilot --install            # continuous maintenance as a daemon
-  gbrain autopilot                      # same maintenance cycle, scheduled
+  cortex autopilot --install            # continuous maintenance as a daemon
+  cortex autopilot                      # same maintenance cycle, scheduled
 `);
 }
 
@@ -362,6 +362,7 @@ function isResolverUserError(e: unknown): boolean {
   const m = e.message;
   return (m.startsWith('Source "') && m.includes(' not found.'))
       || m.startsWith('Invalid --source value')
+      || m.startsWith('Invalid CORTEX_SOURCE value')
       || m.startsWith('Invalid GBRAIN_SOURCE value');
 }
 
@@ -369,7 +370,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   const opts = parseArgs(args);
 
   // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─
-  // Tests pin this ordering so `gbrain dream --help --source whatever`
+  // Tests pin this ordering so `cortex dream --help --source whatever`
   // ALWAYS prints help and exits 0, never reaching the engine-null gate
   // below. If you reorder this, dream-cli-flags.test.ts will fail.
   if (opts.help) {
@@ -390,8 +391,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   if (opts.source !== null) {
     if (engine === null) {
       console.error(
-        'gbrain dream --source <id> requires a connected brain ' +
-        '(no engine available); omit --source or run `gbrain init` first',
+        'cortex dream --source <id> requires a connected brain ' +
+        '(no engine available); omit --source or run `cortex init` first',
       );
       process.exit(1);
     }
@@ -414,7 +415,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     if (src?.archived === true) {
       console.error(
         `source ${resolvedSourceId} is archived; restore with ` +
-        `\`gbrain sources restore ${resolvedSourceId}\` before cycling`,
+        `\`cortex sources restore ${resolvedSourceId}\` before cycling`,
       );
       process.exit(1);
     }

@@ -1,7 +1,7 @@
 ---
 name: archive-crawler
 version: 0.1.0
-description: Universal archivist for personal file archives (Dropbox/B2/Gmail-takeout/local-mount/hard-drive-dump). Filters for high-value content (the user's own writing, ideas, relationships) and surfaces it interactively. REFUSES TO RUN without an explicit gbrain.yml `archive-crawler.scan_paths:` allow-list.
+description: Universal archivist for personal file archives (Dropbox/B2/Gmail-takeout/local-mount/hard-drive-dump). Filters for high-value content (the user's own writing, ideas, relationships) and surfaces it interactively. REFUSES TO RUN without an explicit cortex.yml `archive-crawler.scan_paths:` allow-list.
 triggers:
   - "crawl my archive"
   - "find gold in my archive"
@@ -29,12 +29,12 @@ writes_to:
 ## Safety gate (REQUIRED, no exceptions)
 
 archive-crawler refuses to run unless `archive-crawler.scan_paths:` is
-explicitly set in `gbrain.yml`. This is a deliberate safety fence against
+explicitly set in `cortex.yml`. This is a deliberate safety fence against
 the agent over-scoping a scan and ingesting sensitive content (tax PDFs,
 medical records, credentials).
 
 ```yaml
-# gbrain.yml — the allow-list is mandatory
+# cortex.yml — the allow-list is mandatory
 archive-crawler:
   scan_paths:
     - ~/Documents/writing/
@@ -50,7 +50,7 @@ If `scan_paths` is empty or missing, the skill exits with:
 
 ```
 archive-crawler: refusing to run. No `archive-crawler.scan_paths:` allow-list
-in gbrain.yml. Add explicit paths the agent is permitted to scan, then re-run.
+in cortex.yml. Add explicit paths the agent is permitted to scan, then re-run.
 This is a safety fence — the agent will not infer what's safe to read.
 ```
 
@@ -244,14 +244,14 @@ type: project
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 source_type: "[local|dropbox|...]"
-scan_paths: ["paths from gbrain.yml"]
+scan_paths: ["paths from cortex.yml"]
 ---
 
 # [Archive Name] — Ingestion Status
 
 ## Source
 - **Type:** [local|dropbox|...]
-- **Allow-listed paths:** [from gbrain.yml]
+- **Allow-listed paths:** [from cortex.yml]
 - **Total files:** [N]
 - **Total size:** [X GB]
 - **Date range:** [earliest] — [latest]

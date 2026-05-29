@@ -1,6 +1,7 @@
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { isAbsolute, join, resolve as resolvePath } from 'path';
+import { homedir } from 'os';
 import { RESOLVER_FILENAMES, hasResolverFile } from './resolver-filenames.ts';
 
 /**
@@ -25,13 +26,13 @@ export function findRepoRoot(startDir: string = process.cwd()): string | null {
 
 /**
  * Where auto-detect found the skills directory.
- *   - `env_explicit`                 — $GBRAIN_SKILLS_DIR (operator override; v0.31.7)
- *   - `openclaw_workspace_env`       — $OPENCLAW_WORKSPACE/skills
- *   - `openclaw_workspace_env_root`  — $OPENCLAW_WORKSPACE/ (AGENTS.md at
+ *   - `env_explicit`                 — $CORTEX_SKILLS_DIR (legacy GBRAIN alias accepted)
+ *   - `openclaw_workspace_env`       — $CORTEX_WORKSPACE/skills (legacy workspace alias accepted)
+ *   - `openclaw_workspace_env_root`  — $CORTEX_WORKSPACE/ (AGENTS.md at
  *                                      workspace root; skills in subdir)
- *   - `openclaw_workspace_home`      — ~/.openclaw/workspace/skills
- *   - `openclaw_workspace_home_root` — ~/.openclaw/workspace (root AGENTS.md)
- *   - `repo_root`                    — walked up from cwd, found gbrain repo
+ *   - `openclaw_workspace_home`      — ~/.cortex/workspace/skills (legacy path also accepted)
+ *   - `openclaw_workspace_home_root` — ~/.cortex/workspace (root AGENTS.md)
+ *   - `repo_root`                    — walked up from cwd, found Cortex repo
  *   - `cwd_skills`                   — ./skills fallback
  *   - `install_path`                 — walked up from this module's install
  *                                      path; READ-ONLY callers only (v0.31.7)
@@ -66,12 +67,12 @@ function resolveWorkspaceSkillsDir(
   sourceSubdir: SkillsDirSource,
   sourceRoot: SkillsDirSource,
 ): SkillsDirDetection | null {
-  // Preferred: workspace/skills with a resolver file inside it (gbrain-native).
+  // Preferred: workspace/skills with a resolver file inside it (Cortex-native).
   const subdir = join(workspace, 'skills');
   if (hasResolverFile(subdir)) {
     return { dir: subdir, source: sourceSubdir };
   }
-  // Fallback: resolver file at workspace root (OpenClaw-native layout).
+  // Fallback: resolver file at workspace root (agent workspace-root layout).
   // The skills/ subtree still governs file layout even when routing lives
   // at workspace root. Return the skills subdir so downstream file lookups
   // work; the resolver parser knows how to look one level up.
@@ -83,27 +84,27 @@ function resolveWorkspaceSkillsDir(
 
 /**
  * Auto-detect the skills directory. Priority (v0.31.7 read+write-safe order):
- *   0. $GBRAIN_SKILLS_DIR explicit operator override (any caller)
- *   1. $OPENCLAW_WORKSPACE when explicitly set (env > repo-root walk)
- *   2. ~/.openclaw/workspace/ (user's default OpenClaw deployment)
- *   3. findRepoRoot() walk from cwd (gbrain's own repo)
+ *   0. $CORTEX_SKILLS_DIR explicit operator override (any caller)
+ *   1. $CORTEX_WORKSPACE when explicitly set (env > repo-root walk)
+ *   2. ~/.cortex/workspace/ (user's default Cortex deployment)
+ *   3. findRepoRoot() walk from cwd (Cortex's own repo)
  *   4. ./skills fallback (dev scratch, fixtures)
  *
- * Tier 0 ($GBRAIN_SKILLS_DIR) is safe for both read and write paths because
+ * Tier 0 ($CORTEX_SKILLS_DIR) is safe for both read and write paths because
  * the operator explicitly set the variable — opt-in retargeting is fine. The
  * silent retargeting risk that motivates `autoDetectSkillsDirReadOnly` is
  * about implicit fallback to install-path when no explicit signal is set.
  *
  * The prior order put `findRepoRoot` first, which meant
- * `export OPENCLAW_WORKSPACE=...; gbrain check-resolvable` run from
- * inside the gbrain repo silently shadowed the env var by walking up
- * to gbrain's own skills/. Explicit env should win. Unset env → behavior
+ * `export CORTEX_WORKSPACE=...; cortex check-resolvable` run from
+ * inside the Cortex repo silently shadowed the env var by walking up
+ * to Cortex's own skills/. Explicit env should win. Unset env → behavior
  * is unchanged from before.
  *
  * Write-path callers (skillpack install, skillify scaffold,
  * post-install-advisory) MUST use this function, not the read-only variant —
- * a write-path install-path fallback would let `gbrain skillpack install`
- * from `~` silently target the bundled gbrain repo's skills/ instead of the
+ * a write-path install-path fallback would let `cortex skillpack install`
+ * from `~` silently target the bundled Cortex repo's skills/ instead of the
  * user's workspace.
  *
  * `startDir` + `env` params keep tests hermetic.
@@ -112,25 +113,27 @@ export function autoDetectSkillsDir(
   startDir: string = process.cwd(),
   env: NodeJS.ProcessEnv = process.env,
 ): SkillsDirDetection {
-  // 0. $GBRAIN_SKILLS_DIR explicit operator override. Safe for all callers
+  // 0. $CORTEX_SKILLS_DIR explicit operator override. Safe for all callers
   //    because the operator explicitly set the env var. Does NOT support the
   //    `workspace-root with AGENTS.md + skills/ sibling` shape — operator who
   //    wants that should point the env var at the skills/ dir directly.
-  if (env.GBRAIN_SKILLS_DIR) {
-    const explicit = isAbsolute(env.GBRAIN_SKILLS_DIR)
-      ? env.GBRAIN_SKILLS_DIR
-      : resolvePath(startDir, env.GBRAIN_SKILLS_DIR);
+  const explicitSkillsDir = env.CORTEX_SKILLS_DIR || env.GBRAIN_SKILLS_DIR;
+  if (explicitSkillsDir) {
+    const explicit = isAbsolute(explicitSkillsDir)
+      ? explicitSkillsDir
+      : resolvePath(startDir, explicitSkillsDir);
     if (hasResolverFile(explicit)) {
       return { dir: explicit, source: 'env_explicit' };
     }
     // Fall through — invalid env override doesn't crash, lets lower tiers try.
   }
 
-  // 1. $OPENCLAW_WORKSPACE wins when explicitly set.
-  if (env.OPENCLAW_WORKSPACE) {
-    const workspace = isAbsolute(env.OPENCLAW_WORKSPACE)
-      ? env.OPENCLAW_WORKSPACE
-      : resolvePath(startDir, env.OPENCLAW_WORKSPACE);
+  // 1. $CORTEX_WORKSPACE wins when explicitly set (legacy workspace alias accepted).
+  const explicitWorkspace = env.CORTEX_WORKSPACE || env.OPENCLAW_WORKSPACE;
+  if (explicitWorkspace) {
+    const workspace = isAbsolute(explicitWorkspace)
+      ? explicitWorkspace
+      : resolvePath(startDir, explicitWorkspace);
     const resolved = resolveWorkspaceSkillsDir(
       workspace,
       'openclaw_workspace_env',
@@ -140,30 +143,48 @@ export function autoDetectSkillsDir(
   }
 
   // 1b. (v0.33) Walk up from cwd looking for any `skills/` dir. No
-  //     resolver-file gating — this is for non-OpenClaw hosts (any
+  //     resolver-file gating — this is for any agent host (any
   //     agent repo with a bare `skills/` directory, before a resolver
   //     file is written). Stops at the first ancestor with a `skills/`
-  //     subdirectory. Comes after $OPENCLAW_WORKSPACE so R5
+  //     subdirectory. Comes after explicit workspace env so R5
   //     (precedence regression) holds: explicit env still wins. Comes
-  //     before ~/.openclaw/workspace so that `cd ~/git/your-agent-repo
-  //     && gbrain skillpack scaffold X` finds the agent repo, not an
-  //     implicit fallback to OpenClaw's default install.
+  //     before the user-level workspace fallback so that
+  //     `cd ~/git/your-agent-repo && cortex skillpack scaffold X` finds
+  //     the agent repo, not an implicit fallback to the default install.
   {
     let dir = startDir;
+    const homeBoundaries = Array.from(
+      new Set([env.HOME, process.env.HOME, homedir()].filter(Boolean).map((p) => resolvePath(p!))),
+    );
+    const resolvedStart = resolvePath(startDir);
     for (let i = 0; i < 10; i++) {
+      const resolvedDir = resolvePath(dir);
+      if (homeBoundaries.includes(resolvedDir) && resolvedDir !== resolvedStart) {
+        break;
+      }
       const candidate = join(dir, 'skills');
       if (existsSync(candidate)) {
         return { dir: candidate, source: 'cwd_walk_up' };
       }
       const parent = join(dir, '..');
       const resolvedParent = resolvePath(parent);
-      const resolvedDir = resolvePath(dir);
       if (resolvedParent === resolvedDir) break;
       dir = resolvedParent;
     }
   }
 
-  // 2. ~/.openclaw/workspace as the default user-level OpenClaw deployment.
+  // 2. ~/.cortex/workspace as the default user-level Cortex deployment.
+  if (env.HOME) {
+    const workspace = join(env.HOME, '.cortex', 'workspace');
+    const resolved = resolveWorkspaceSkillsDir(
+      workspace,
+      'openclaw_workspace_home',
+      'openclaw_workspace_home_root',
+    );
+    if (resolved) return resolved;
+  }
+
+  // Legacy default workspace location for already-installed agents.
   if (env.HOME) {
     const workspace = join(env.HOME, '.openclaw', 'workspace');
     const resolved = resolveWorkspaceSkillsDir(
@@ -174,7 +195,7 @@ export function autoDetectSkillsDir(
     if (resolved) return resolved;
   }
 
-  // 3. gbrain repo walk from cwd.
+  // 3. Cortex repo walk from cwd.
   const repoRoot = findRepoRoot(startDir);
   if (repoRoot && isGbrainRepoRoot(repoRoot)) {
     return { dir: join(repoRoot, 'skills'), source: 'repo_root' };
@@ -204,22 +225,22 @@ function isGbrainRepoRoot(dir: string): boolean {
 /**
  * Read-only skills-dir detection (v0.31.7). Wraps `autoDetectSkillsDir` and
  * adds an install-path fallback when the primary detection returns null —
- * walks up from this module's install location to find a gbrain repo root,
+ * walks up from this module's install location to find a Cortex repo root,
  * gated by `isGbrainRepoRoot` to avoid false-positive on unrelated repos.
  *
- * Use this from READ-ONLY callers only: `gbrain doctor`,
- * `gbrain check-resolvable`, `gbrain routing-eval`. Never from write paths.
+ * Use this from READ-ONLY callers only: `cortex doctor`,
+ * `cortex check-resolvable`, `cortex routing-eval`. Never from write paths.
  *
  * Why a separate function? `autoDetectSkillsDir` is shared with write paths
  * (`skillpack install`, `skillify scaffold`, `post-install-advisory`).
  * Adding the install-path fallback to the shared function would let
- * `gbrain skillpack install` from `~` silently target the bundled gbrain
+ * `cortex skillpack install` from `~` silently target the bundled Cortex
  * repo's skills/ instead of the user's actual workspace — a quiet data-flow
  * regression. Read-only callers don't write anything to the resolved path,
  * so the install-path fallback is safe for them.
  *
  * Closes the install-path footgun for hosted-CLI installs (`bun install -g
- * github:garrytan/gbrain && cd ~ && gbrain doctor`) without expanding the
+ * the hosted runtime and running `cortex doctor`) without expanding the
  * blast radius to write-path callers.
  */
 export function autoDetectSkillsDirReadOnly(
@@ -232,7 +253,7 @@ export function autoDetectSkillsDirReadOnly(
   // Tier-5 install-path fallback: walk up from this module's install
   // location. Gate with isGbrainRepoRoot so we don't false-positive when
   // the install path lives inside an unrelated repo (e.g., a monorepo
-  // that vendored gbrain in a subdir).
+  // that vendored the runtime in a subdir).
   try {
     const moduleDir = fileURLToPath(import.meta.url);
     const installRoot = findRepoRoot(moduleDir);
@@ -255,20 +276,20 @@ export function autoDetectSkillsDirReadOnly(
  */
 export const AUTO_DETECT_HINT = [
   `  1. --skills-dir flag`,
-  `  2. $GBRAIN_SKILLS_DIR (explicit operator override)`,
-  `  3. $OPENCLAW_WORKSPACE/{skills/,}{${RESOLVER_FILENAMES.join(',')}}`,
-  `  4. cwd + walk-up for any skills/ directory (v0.33; for non-OpenClaw hosts)`,
-  `  5. ~/.openclaw/workspace/{skills/,}{${RESOLVER_FILENAMES.join(',')}}`,
+  `  2. $CORTEX_SKILLS_DIR (explicit operator override)`,
+  `  3. $CORTEX_WORKSPACE/{skills/,}{${RESOLVER_FILENAMES.join(',')}}`,
+  `  4. cwd + walk-up for any skills/ directory (v0.33; for any agent host)`,
+  `  5. ~/.cortex/workspace/{skills/,}{${RESOLVER_FILENAMES.join(',')}}`,
   `  6. repo root with skills/${RESOLVER_FILENAMES.join(' or skills/')}`,
   `  7. ./skills/${RESOLVER_FILENAMES.join(' or ./skills/')}`,
 ].join('\n');
 
 /**
  * Read-only auto-detect hint. Includes the install-path fallback that
- * `autoDetectSkillsDirReadOnly` adds for `gbrain doctor` /
- * `gbrain check-resolvable` / `gbrain routing-eval`.
+ * `autoDetectSkillsDirReadOnly` adds for `cortex doctor` /
+ * `cortex check-resolvable` / `cortex routing-eval`.
  */
 export const AUTO_DETECT_HINT_READ_ONLY = [
   AUTO_DETECT_HINT,
-  `  7. (read-only) walk up from gbrain's install path`,
+  `  7. (read-only) walk up from Cortex's install path`,
 ].join('\n');

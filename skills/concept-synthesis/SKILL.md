@@ -72,12 +72,12 @@ Phase 4: Cluster + map (LLM)
 
 ## Invocation
 
-The skill is markdown agent instructions. The agent uses gbrain's
+The skill is markdown agent instructions. The agent uses cortex's
 existing operations + LLM passes:
 
 ```bash
 # 1. List all concept pages
-gbrain query "type:concept" --limit 10000 --json
+cortex query "type:concept" --limit 10000 --json
 
 # 2. Phase 1 dedup — agent applies Jaccard + substring locally,
 #    then LLM passes to identify semantic duplicates.
@@ -196,7 +196,7 @@ Testing in public.
 ### Dedup quality
 - No two concept pages should be "the same idea in different words."
 - Aliases preserved in frontmatter for search.
-- Run `gbrain query "type:concept"` and spot-check the count reduction.
+- Run `cortex query "type:concept"` and spot-check the count reduction.
 
 ### Tier quality
 - T1 should feel like "yes, that IS one of my recurring frameworks" —

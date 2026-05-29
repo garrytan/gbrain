@@ -36,7 +36,7 @@ on brain_write(page, fact):
         # [Source: Captain API funding data, 2026-04-07 2:00 PM PT]
 
     # Attach citation inline with the fact
-    gbrain put <slug> --content "...fact [Source: ...]..."
+    cortex put <slug> --content "...fact [Source: ...]..."
 
     # When sources conflict, note BOTH -- never silently pick one
     if conflicts_exist(fact, existing_page):
@@ -65,11 +65,11 @@ SOURCE_PRIORITY = [
 
 ## How to Verify
 
-1. Open any brain page with `gbrain get <slug>`. Read the compiled truth section above the bar. Every factual claim should have an inline `[Source: ...]` citation.
-2. Search for tweet references: `gbrain search "X/@"`. Every result should have a full URL, not just an @handle.
+1. Open any brain page with `cortex get <slug>`. Read the compiled truth section above the bar. Every factual claim should have an inline `[Source: ...]` citation.
+2. Search for tweet references: `cortex search "X/@"`. Every result should have a full URL, not just an @handle.
 3. Find a page with data from multiple sources (e.g., a person enriched via API + mentioned in a meeting). Confirm both sources are cited independently.
 4. Check timeline entries on 3 random pages. Each entry should have a source citation with date and context.
 5. Look for a page where the user stated something that contradicts an API result. Confirm the contradiction is noted, not silently resolved.
 
 ---
-*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+*Part of the [Cortex Agent Runtime](../CORTEX_AGENT_RUNTIME.md).*

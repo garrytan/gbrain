@@ -1,5 +1,5 @@
 /**
- * gbrain eval prune — retention cleanup (v0.21.0).
+ * cortex eval prune — retention cleanup (v0.21.0).
  *
  * Verifies:
  *   - --older-than parses duration strings (30d, 1h, 90m, 3600s)
@@ -74,7 +74,7 @@ async function withSilencedStdout<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-describe('gbrain eval prune', () => {
+describe('cortex eval prune', () => {
   test('--older-than 30d deletes rows older than 30 days, keeps recent', async () => {
     await insertAged(60); // old
     await insertAged(45); // old

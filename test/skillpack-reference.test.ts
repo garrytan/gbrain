@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 function scratchGbrain(opts: { paired?: boolean } = {}): string {
-  const root = mkdtempSync(join(tmpdir(), 'sp-ref-gbrain-'));
+  const root = mkdtempSync(join(tmpdir(), 'sp-ref-cortex-'));
   created.push(root);
   mkdirSync(join(root, 'src', 'commands'), { recursive: true });
   writeFileSync(join(root, 'src', 'cli.ts'), '// stub');
@@ -50,10 +50,10 @@ function scratchGbrain(opts: { paired?: boolean } = {}): string {
   );
 
   writeFileSync(
-    join(root, 'openclaw.plugin.json'),
+    join(root, 'cortex.plugin.json'),
     JSON.stringify(
       {
-        name: 'gbrain-test',
+        name: 'cortex-test',
         version: '0.33.0-test',
         skills: ['skills/demo', 'skills/other'],
         shared_deps: [],
@@ -181,7 +181,7 @@ describe('runReference — binary files', () => {
     const gbrainRoot = scratchGbrain();
     const ws = scratchWorkspace();
 
-    // Plant a binary file in gbrain's bundle and a different one on host.
+    // Plant a binary file in Cortex's bundle and a different one on host.
     const binPath = join(gbrainRoot, 'skills', 'demo', 'icon.png');
     writeFileSync(binPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00]));
     runScaffold({ gbrainRoot, targetWorkspace: ws, skillSlug: 'demo' });
