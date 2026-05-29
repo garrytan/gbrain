@@ -106,8 +106,8 @@ describe('assessContentSanity — size boundaries', () => {
 // ─── 6 BUILT-IN PATTERNS ──────────────────────────────────────
 
 describe('assessContentSanity — built-in junk patterns', () => {
-  test('built-in pattern count is locked at 6 (D3 dropped empty_body_with_source_url)', () => {
-    expect(BUILT_IN_JUNK_PATTERNS.length).toBe(6);
+  test('built-in pattern count is locked at 7 (v0.41.13 added cloudflare_challenge_title)', () => {
+    expect(BUILT_IN_JUNK_PATTERNS.length).toBe(7);
     const names = BUILT_IN_JUNK_PATTERNS.map((p) => p.name);
     expect(names).toContain('cloudflare_attention_required');
     expect(names).toContain('cloudflare_just_a_moment');
@@ -115,8 +115,10 @@ describe('assessContentSanity — built-in junk patterns', () => {
     expect(names).toContain('access_denied');
     expect(names).toContain('captcha_required');
     expect(names).toContain('error_page_title');
+    // v0.41.13: distinct name from error_page_title (audit-name distinctness).
+    expect(names).toContain('cloudflare_challenge_title');
     // D3 regression: this rule was dropped. If it ever returns, the test
-    // count above bumps to 7 deliberately.
+    // count above bumps deliberately.
     expect(names).not.toContain('empty_body_with_source_url');
   });
 
@@ -217,6 +219,120 @@ describe('assessContentSanity — built-in junk patterns', () => {
       title: 'ATTENTION REQUIRED! | CLOUDFLARE',
     });
     expect(r.junk_pattern_matches).toContain('cloudflare_attention_required');
+  });
+
+  // ─── v0.41.13: expanded error_page_title + cloudflare_challenge_title ─
+  //
+  // Supersedes PR #1561. Scraper titles like "Forbidden", "Access Denied",
+  // "Service Unavailable", "Robot Check" were slipping through the
+  // bare-numeric-codes-only regex; the expanded matcher catches them
+  // without false-positiving on longer-form essays about those topics.
+
+  describe('error_page_title — v0.41.13 expanded matches', () => {
+    // Phrases that MUST match (exact-title scraper junk).
+    test.each([
+      'Forbidden',
+      'Access Denied',
+      'Service Unavailable',
+      'Robot Check',
+      'Verify You Are Human',
+      // Existing matches still work
+      '403',
+      '404',
+      'Error 500',
+      'Page Not Found',
+      // Anchored with optional trailing whitespace
+      'Forbidden ',
+      'access denied  ',
+      // Case-insensitive
+      'forbidden',
+      'ROBOT CHECK',
+    ])('matches scraper title %j', (title) => {
+      const r = assessContentSanity({ compiled_truth: '', timeline: '', title });
+      expect(r.junk_pattern_matches).toContain('error_page_title');
+      expect(r.shouldHardBlock).toBe(true);
+    });
+
+    // Over-match regression guard: these must NOT trip (the gate
+    // motivating the PR #1561 review-and-reshape).
+    test.each([
+      'How to Handle Access Denied Errors',
+      'Error Boundary in React',
+      'Service Unavailable Pattern',
+      'Forbidden Knowledge',
+      'Forbidden City', // legitimate place name
+      'Designing the Perfect Robot Check', // long-form essay
+      'Verify You Are Human (a poem)',
+    ])('does NOT match legitimate prose title %j (over-match regression)', (title) => {
+      const r = assessContentSanity({ compiled_truth: '', timeline: '', title });
+      expect(r.junk_pattern_matches).not.toContain('error_page_title');
+    });
+
+    // Bare-`error` matcher was DELIBERATELY dropped from PR #1561's
+    // expansion. A page titled just "Error" (e.g. a programming
+    // taxonomy node) must NOT be hard-blocked.
+    test('bare title "Error" does NOT match (PR #1561 bare-`error` matcher dropped)', () => {
+      const r = assessContentSanity({ compiled_truth: '', timeline: '', title: 'Error' });
+      expect(r.junk_pattern_matches).not.toContain('error_page_title');
+      expect(r.shouldHardBlock).toBe(false);
+    });
+  });
+
+  describe('cloudflare_challenge_title — v0.41.13 distinct-name pattern', () => {
+    test.each([
+      'Just a moment...',
+      'Just a moment',         // zero dots
+      'Just a moment.',        // one dot
+      'Just a moment..',       // two dots
+      'just a moment...',      // case-insensitive
+      'JUST A MOMENT...',
+    ])('matches Cloudflare title %j', (title) => {
+      const r = assessContentSanity({ compiled_truth: '', timeline: '', title });
+      expect(r.junk_pattern_matches).toContain('cloudflare_challenge_title');
+      expect(r.shouldHardBlock).toBe(true);
+    });
+
+    test('regex is strict-anchored — trailing whitespace does NOT match (no \\s*$ in the new pattern)', () => {
+      // Distinct from error_page_title which allows trailing whitespace
+      // (\s*$). The Cloudflare title is observed in the wild as exactly
+      // "Just a moment...", so we keep strict anchoring to avoid
+      // accidentally trapping titles with trailing content.
+      const r = assessContentSanity({ compiled_truth: '', timeline: '', title: 'Just a moment...   ' });
+      expect(r.junk_pattern_matches).not.toContain('cloudflare_challenge_title');
+    });
+
+    test('does NOT match longer prose with "Just a moment..." prefix', () => {
+      const r = assessContentSanity({
+        compiled_truth: '',
+        timeline: '',
+        title: 'Just a moment, please — checking with the team',
+      });
+      expect(r.junk_pattern_matches).not.toContain('cloudflare_challenge_title');
+    });
+
+    test('records as cloudflare_challenge_title, NOT error_page_title (audit-name distinctness)', () => {
+      const r = assessContentSanity({
+        compiled_truth: '',
+        timeline: '',
+        title: 'Just a moment...',
+      });
+      expect(r.junk_pattern_matches).toContain('cloudflare_challenge_title');
+      expect(r.junk_pattern_matches).not.toContain('error_page_title');
+    });
+
+    test('body-scoped cloudflare_just_a_moment is independent (BOTH may fire on same content)', () => {
+      // Body needs both phrase + cdn-cgi/challenge-platform URL; title needs
+      // exactly "Just a moment[...]". A real Cloudflare interstitial would
+      // trip both (different scopes, different names — operator sees both
+      // in the audit log).
+      const r = assessContentSanity({
+        compiled_truth: 'Just a moment... please wait\ncdn-cgi/challenge-platform/h/blah',
+        timeline: '',
+        title: 'Just a moment...',
+      });
+      expect(r.junk_pattern_matches).toContain('cloudflare_challenge_title');
+      expect(r.junk_pattern_matches).toContain('cloudflare_just_a_moment');
+    });
   });
 });
 

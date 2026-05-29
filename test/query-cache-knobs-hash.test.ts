@@ -19,6 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SemanticQueryCache, cacheRowId } from '../src/core/search/query-cache.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { knobsHash, resolveSearchMode } from '../src/core/search/mode.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -27,6 +28,19 @@ const balancedHash = knobsHash(resolveSearchMode({ mode: 'balanced' }));
 const tokenmaxHash = knobsHash(resolveSearchMode({ mode: 'tokenmax' }));
 
 beforeAll(async () => {
+  // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1280 (ZE Matryoshka).
+  // The makeEmbedding fixture below emits 1536-dim unit vectors. If we let
+  // initSchema() inherit the default, query_cache.embedding gets sized at
+  // halfvec(1280) and the inserts throw "expected 1280 dimensions, not 1536".
+  // Pin the gateway to 1536d so this file is hermetic regardless of
+  // gateway state from other tests in the shard. Pattern matches
+  // test/consolidate-valid-until.test.ts.
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-fake' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -34,6 +48,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 beforeEach(async () => {

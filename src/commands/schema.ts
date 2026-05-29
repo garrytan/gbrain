@@ -84,6 +84,7 @@ export async function runSchema(args: string[]): Promise<void> {
     case 'remove-link-type': return runRemoveLinkTypeCmd(args.slice(1));
     case 'set-extractable': return runSetExtractableCmd(args.slice(1));
     case 'set-expert-routing': return runSetExpertRoutingCmd(args.slice(1));
+    case 'scaffold-extractable': return runScaffoldExtractableCmd(args.slice(1));
     case undefined:
     case '--help':
     case '-h':
@@ -132,6 +133,13 @@ Authoring (v0.40.6.0):
   remove-link-type <name>       [--pack <name>]
   set-extractable <type> <true|false>      [--pack <name>]
   set-expert-routing <type> <true|false>   [--pack <name>]
+  scaffold-extractable <type> [--pack <name>] [--dims a,b,c] [--force]
+                          v0.42: declare a pack-supplied prompt + fixtures
+                          + eval dimensions for an LLM-backed extractor.
+                          Generates prompts/extract/<type>.md and
+                          fixtures/extract/<type>.jsonl stubs the
+                          pack-author edits, then pairs with
+                          \`gbrain extract benchmark\` for the iteration loop.
 
 Discovery + repair:
   detect                  Cluster pages by source_path → candidate page_types
@@ -1163,4 +1171,53 @@ async function runSetExpertRoutingCmd(args: string[]): Promise<void> {
   if (v === null) { console.error('Second argument must be true|false'); process.exit(2); }
   try { emitMutateResult(await setExpertRoutingOnType(packName, pos[0]!, v), json); }
   catch (e) { handleMutationError(e); }
+}
+
+async function runScaffoldExtractableCmd(args: string[]): Promise<void> {
+  const { json } = parseFlags(args);
+  const packName = pickPackName({}, args);
+  const pos = args.filter((a) => !a.startsWith('--'));
+  if (pos.length < 1) {
+    console.error('Usage: gbrain schema scaffold-extractable <type> [--pack <name>] [--dims a,b,c] [--force]');
+    process.exit(2);
+  }
+  const typeName = pos[0]!;
+  const force = args.includes('--force');
+  let dims: string[] | undefined;
+  const dimsIdx = args.indexOf('--dims');
+  if (dimsIdx >= 0 && dimsIdx + 1 < args.length) {
+    dims = args[dimsIdx + 1]!
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+  }
+  try {
+    const { scaffoldExtractable } = await import('../core/schema-pack/scaffold-extractable.ts');
+    const result = await scaffoldExtractable({
+      packName,
+      typeName,
+      evalDimensions: dims,
+      force,
+    });
+    if (json) {
+      console.log(JSON.stringify({ schema_version: 1, ...result }, null, 2));
+    } else {
+      console.log(`Scaffolded extractable type '${typeName}' on pack '${packName}'`);
+      if (result.filesWritten.length > 0) {
+        console.log('  Files written:');
+        for (const f of result.filesWritten) console.log(`    ${f}`);
+      }
+      if (result.filesSkipped.length > 0) {
+        console.log('  Files skipped (already exist; pass --force to overwrite):');
+        for (const f of result.filesSkipped) console.log(`    ${f}`);
+      }
+      console.log('');
+      console.log('Next steps:');
+      console.log(`  1. Edit prompts/extract/${typeName}.md to specify your domain.`);
+      console.log(`  2. Replace fixture placeholders in fixtures/extract/${typeName}.jsonl with real cases.`);
+      console.log(`  3. Run: gbrain extract benchmark --pack ${packName} --kind ${typeName}`);
+    }
+  } catch (e) {
+    handleMutationError(e);
+  }
 }

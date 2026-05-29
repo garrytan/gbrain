@@ -368,6 +368,76 @@ export async function runPostFusionStages(
       // Non-fatal; preserves the per-stage contract.
     }
   }
+
+  // v0.42 (T19, plan D6) — alias_resolved stage (5th post-fusion stage).
+  // Runs LAST so its 1.05x multiplier stacks on top of every other boost.
+  // Fires when the result's slug is a canonical_slug in slug_aliases —
+  // the page is the authoritative version of one or more aliases. Signal
+  // intent: "user explicitly disambiguated this as canonical." Defense-
+  // in-depth: pre-v105 brains don't have slug_aliases table; the lookup
+  // throws isUndefinedTableError and the stage no-ops.
+  try {
+    await applyAliasResolvedBoost(results, engine);
+  } catch {
+    // Non-fatal; preserves the per-stage contract.
+  }
+}
+
+/**
+ * v0.42 (T19) — apply 1.05x boost to results whose slug is a canonical_slug
+ * in slug_aliases. Stamps `alias_resolved_boost` on touched results so
+ * --explain can render the contribution.
+ *
+ * Single index-hit query bounded by top-K (slug_aliases is small relative
+ * to the result set; ALIASES <<< PAGES even on the 186K-page production
+ * brain where 5.5K aliases is ~3% of pages).
+ *
+ * Source-scoped (codex F9: keyed by {source_id, slug} not just slug).
+ */
+const ALIAS_RESOLVED_BOOST = 1.05;
+
+async function applyAliasResolvedBoost(
+  results: SearchResult[],
+  engine: import('../engine.ts').BrainEngine,
+): Promise<void> {
+  if (results.length === 0) return;
+  // Build the (source_id, slug) composite list for the lookup.
+  const refs = Array.from(
+    new Map(
+      results.map(r => [
+        `${r.source_id ?? 'default'}::${r.slug}`,
+        { slug: r.slug, source_id: r.source_id ?? 'default' },
+      ]),
+    ).values(),
+  );
+  if (refs.length === 0) return;
+  // Find which refs are canonical of any slug_aliases row.
+  // Two-array unnest for source-scoped composite lookup.
+  const sourceIds = refs.map(r => r.source_id);
+  const slugs = refs.map(r => r.slug);
+  let rows: Array<{ source_id: string; canonical_slug: string }> = [];
+  try {
+    rows = await engine.executeRaw<{ source_id: string; canonical_slug: string }>(
+      `SELECT DISTINCT source_id, canonical_slug
+       FROM slug_aliases
+       WHERE (source_id, canonical_slug) IN (
+         SELECT * FROM unnest($1::text[], $2::text[])
+       )`,
+      [sourceIds, slugs],
+    );
+  } catch {
+    // Pre-v104 brain or other SQL miss; no-op.
+    return;
+  }
+  if (rows.length === 0) return;
+  const canonicalSet = new Set(rows.map(r => `${r.source_id}::${r.canonical_slug}`));
+  for (const r of results) {
+    const key = `${r.source_id ?? 'default'}::${r.slug}`;
+    if (canonicalSet.has(key)) {
+      r.score *= ALIAS_RESOLVED_BOOST;
+      r.alias_resolved_boost = ALIAS_RESOLVED_BOOST;
+    }
+  }
 }
 
 export interface HybridSearchOpts extends SearchOpts {

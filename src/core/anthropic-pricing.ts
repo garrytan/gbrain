@@ -11,6 +11,8 @@
  * unbounded for those models.
  */
 
+import { splitProviderModelId } from './model-id.ts';
+
 export interface ModelPricing {
   /** USD per 1M input tokens. */
   input: number;
@@ -41,8 +43,8 @@ export const OPENAI_PRICING: Record<string, ModelPricing> = {
 
 function lookupChatPricing(modelId: string): ModelPricing | null {
   let p = ANTHROPIC_PRICING[modelId] ?? OPENAI_PRICING[modelId];
-  if (!p && modelId.includes(':')) {
-    const tail = modelId.split(':', 2)[1];
+  if (!p) {
+    const { model: tail } = splitProviderModelId(modelId);
     if (tail) p = ANTHROPIC_PRICING[tail] ?? OPENAI_PRICING[tail];
   }
   return p ?? null;
@@ -56,15 +58,19 @@ function lookupChatPricing(modelId: string): ModelPricing | null {
  *
  * Returns null when the model isn't in the pricing maps. Callers warn-once
  * and treat as zero-cost (the cycle runs unbounded for that submit).
+ *
+ * Accepts bare (`claude-opus-4-7`), colon-prefixed (`anthropic:claude-opus-4-7`),
+ * and slash-prefixed (`anthropic/claude-opus-4-7`) ids. Routes through
+ * `splitProviderModelId` so the slash-form (which arrives via CLI `--judge-model`
+ * and OpenRouter recipe lists) hits the pricing table. Pre-v0.41.21.0 the inline
+ * `:`-only split missed slash form → BudgetTracker no_pricing hard-fail with
+ * `--max-cost N` (closes #1540).
  */
 export function estimateMaxCostUsd(
   modelId: string,
   estimatedInputTokens: number,
   maxOutputTokens: number,
 ): number | null {
-  // Accept both bare (`claude-opus-4-7`, `gpt-4o-mini`) and provider-prefixed
-  // (`anthropic:claude-opus-4-7`, `openai:gpt-4o-mini`) ids. Required since
-  // cebu-v4's model-config rewrite (commit c4f03a9d) prefixes every default.
   const p = lookupChatPricing(modelId);
   if (!p) return null;
   return (

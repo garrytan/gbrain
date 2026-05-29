@@ -47,7 +47,10 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
+import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat } from '../ai/gateway.ts';
+import { writeReceipt } from '../extract/receipt-writer.ts';
+import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 
@@ -88,6 +91,25 @@ export interface ExtractAtomsOpts {
    * explicitly suppresses page discovery (for transcript-only tests).
    */
   _pages?: Array<{ slug: string; content: string; contentHash: string }>;
+  /**
+   * v0.41.19.0 (T3): cooperative yield hook fired from inside the work
+   * loop on a 30s throttle AND immediately after every `await chat()`
+   * LLM call. Cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
+   * each fire refreshes the cycle DB lock + the existing external hook
+   * (Minion job-lock renewal). Without it a long phase loses the lock
+   * after the v0.41.19.0 TTL drop 30→5min.
+   */
+  yieldDuringPhase?: () => Promise<void>;
+  /**
+   * v0.41.19.0 (T4): progress reporter for in-phase ticks. Cycle.ts
+   * passes the SAME reporter (not a child — codex caught the path-
+   * collision bug where `progress.child('extract_atoms')` under parent
+   * state `cycle.extract_atoms` would produce
+   * `cycle.extract_atoms.extract_atoms.work`). Cycle.ts owns the
+   * phase-level start/finish; phases only call `tick()` and
+   * `heartbeat()` on the passed reporter.
+   */
+  progress?: ProgressReporter;
 }
 
 interface ExtractedAtom {
@@ -198,36 +220,42 @@ export async function discoverExtractablePages(
 }
 
 /**
- * v0.41.2.1 — Source-hash idempotency check (D1). Returns true if ANY
- * atom row exists for the (sourceId, contentHash16) pair.
+ * Batch source-hash idempotency check. Returns the set of contentHash16
+ * values that already have an atom row for this source. One SQL
+ * roundtrip; migration v104 adds the partial expression index that
+ * keeps this O(log n) on big brains.
  *
- * Used by the transcript path to close the pre-existing date-stamp
- * duplicate bug. Page-side idempotency is folded into the discovery
- * SQL's NOT EXISTS subquery — this helper is just for transcripts
- * which don't go through that query.
+ * Replaces the prior per-hash helper (`atomsExistForHash`) — for ~7K
+ * conversation transcripts the per-hash loop was 7K round trips before
+ * extraction began (~5-10 min of pure overhead on a 322K-page brain).
+ *
+ * Empty input short-circuits without a query. Fail-open on error so
+ * extraction proceeds (same posture as the prior per-hash helper).
+ *
+ * Exported so the unit test can drive it directly without orchestrating
+ * the full phase.
  */
-async function atomsExistForHash(
+export async function atomsExistingForHashes(
   engine: BrainEngine,
   sourceId: string,
-  contentHash16: string,
-): Promise<boolean> {
+  contentHash16s: string[],
+): Promise<Set<string>> {
+  if (contentHash16s.length === 0) return new Set();
   try {
-    const rows = await engine.executeRaw<{ existing: number }>(
-      `SELECT 1 AS existing FROM pages
+    const rows = await engine.executeRaw<{ h: string }>(
+      `SELECT frontmatter->>'source_hash' AS h
+         FROM pages
         WHERE type = 'atom'
           AND source_id = $1
-          AND frontmatter->>'source_hash' = $2
           AND deleted_at IS NULL
-        LIMIT 1`,
-      [sourceId, contentHash16],
+          AND frontmatter->>'source_hash' = ANY($2::text[])`,
+      [sourceId, contentHash16s],
     );
-    return rows.length > 0;
+    return new Set(rows.map(r => r.h));
   } catch (err) {
-    // Fail-open: if the check breaks, prefer re-extraction over silent skip.
-    // Cost is bounded by the daily budget cap; correctness wins over LLM cost.
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[extract_atoms] idempotency check failed (assuming not extracted): ${msg}`);
-    return false;
+    console.error(`[extract_atoms] batch idempotency check failed (assuming none extracted): ${msg}`);
+    return new Set();
   }
 }
 
@@ -289,13 +317,18 @@ export async function runPhaseExtractAtoms(
     pages = await discoverExtractablePages(engine, sourceId, opts.affectedSlugs);
   }
 
-  // 2. Apply transcript-side source-hash idempotency (D1 — closes the
-  //    pre-existing date-stamp duplicate bug). Page-side idempotency
-  //    lives in the discovery SQL's NOT EXISTS subquery.
+  // 2. Apply transcript-side source-hash idempotency in ONE batch query
+  //    instead of N per-hash round trips. Page-side idempotency lives in
+  //    the discovery SQL's NOT EXISTS subquery (already batched).
   const transcriptsLive: typeof transcripts = [];
   let duplicatesSkipped = 0;
+  const allHashes16 = transcripts.map(t => t.contentHash.slice(0, 16));
+  // Surface a heartbeat before the batch query so even an instant
+  // short-circuit shows a sign of life (closes Issue 2 silent-phase pain).
+  opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
+  const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
   for (const t of transcripts) {
-    if (await atomsExistForHash(engine, sourceId, t.contentHash.slice(0, 16))) {
+    if (existingHashes.has(t.contentHash.slice(0, 16))) {
       duplicatesSkipped++;
       continue;
     }
@@ -358,7 +391,31 @@ export async function runPhaseExtractAtoms(
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
 
+  // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
+  // every 30s. Cycle.ts threads `buildYieldDuringPhase(lock, outer)` so
+  // each fire refreshes the cycle DB lock. Combined with TTL=5min: a
+  // healthy long phase keeps the lock alive (10× refresh budget before
+  // TTL expires); a crash releases the lock within 5min instead of 30.
+  //
+  // Called both inside the work loop (cheap iterations) AND immediately
+  // after every `await chat()` (long LLM await is the main TTL hazard
+  // codex flagged).
+  let lastYieldMs = Date.now();
+  async function maybeYield(): Promise<void> {
+    if (!opts.yieldDuringPhase) return;
+    const now = Date.now();
+    if (now - lastYieldMs < 30_000) return;
+    lastYieldMs = now;
+    try {
+      await opts.yieldDuringPhase();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[extract_atoms] yieldDuringPhase failed (non-fatal): ${msg}`);
+    }
+  }
+
   for (const item of work) {
+    await maybeYield();
     if (estimatedSpendUsd >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
       else pagesSkipped++;
@@ -377,6 +434,10 @@ export async function runPhaseExtractAtoms(
         ],
         maxTokens: 2000,
       });
+      // Post-await yield: closes the "long LLM call past TTL" hazard
+      // codex flagged. The 30s throttle inside maybeYield bounds the
+      // actual refresh rate so this is cheap when calls are fast.
+      await maybeYield();
 
       // Rough cost estimate — Haiku at ~$0.80/M input + $4/M output
       estimatedSpendUsd +=
@@ -428,12 +489,47 @@ export async function runPhaseExtractAtoms(
       }
       if (item.kind === 'transcript') transcriptsProcessed++;
       else pagesProcessed++;
+      // v0.41.19.0 (T4): one tick per processed item, with a count note.
+      // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
+      opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
       failures.push({
         source: originLabel,
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  // v0.42 Wave B2: write extract receipt + rollup row when the phase
+  // actually extracted atoms. Both are best-effort per F-OUT-19 —
+  // audit-trail / search-visibility surfaces don't block the phase result.
+  if (!opts.dryRun && totalAtomsExtracted > 0) {
+    const runId = `atoms-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
+    try {
+      await writeReceipt(engine, {
+        kind: 'atoms',
+        source_id: sourceId,
+        run_id: runId,
+        round: 'single',
+        extracted_at: new Date().toISOString(),
+        total_rows: totalAtomsExtracted,
+        cost_usd: estimatedSpendUsd,
+        summary:
+          `Extracted ${totalAtomsExtracted} atoms from ` +
+          `${transcriptsProcessed} transcripts + ${pagesProcessed} pages.`,
+      });
+    } catch (err) {
+      console.error(`[extract_atoms] receipt write failed: ${(err as Error).message}`);
+    }
+  }
+  if (!opts.dryRun) {
+    await upsertExtractRollup(engine, {
+      kind: 'atoms',
+      source_id: sourceId,
+      cost_delta: estimatedSpendUsd,
+      round_completed_delta: failures.length === 0 ? 1 : 0,
+      halt_delta: failures.length > 0 ? 1 : 0,
+    });
   }
 
   return {

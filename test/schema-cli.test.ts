@@ -4,13 +4,30 @@
 // the public CLI entrypoint. Hermetic — uses Bun's subprocess to run
 // the CLI like a user would.
 
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const REPO_ROOT = join(import.meta.dir, '..');
+
+// Default-isolated GBRAIN_HOME for every gbrain() call. Without this,
+// tests that read `~/.gbrain/config.json` inherit the developer's real
+// brain config — and sibling Conductor worktrees writing to the same
+// config (e.g. via `schema use` or `config set` during their own tests)
+// cause flakes (the failing test pre-fix saw `schema_pack: "gbrain-base-v2"`
+// from another worktree, which doesn't exist in the bundle, and got
+// exit 1 instead of the asserted 0).
+let DEFAULT_GBRAIN_HOME: string;
+
+beforeAll(() => {
+  DEFAULT_GBRAIN_HOME = mkdtempSync(join(tmpdir(), 'gbrain-schema-cli-default-'));
+});
+
+afterAll(() => {
+  rmSync(DEFAULT_GBRAIN_HOME, { recursive: true, force: true });
+});
 
 function gbrain(
   args: string[],
@@ -19,10 +36,11 @@ function gbrain(
   // bun's spawnSync does NOT inherit env mutations done via process.env = ...,
   // so pass env explicitly. CLAUDE.md flags this pattern as load-bearing for
   // any subprocess test that needs GBRAIN_HOME isolation.
+  const env = { ...process.env, GBRAIN_HOME: DEFAULT_GBRAIN_HOME, ...extraEnv };
   const result = spawnSync('bun', ['run', 'src/cli.ts', ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
-    env: { ...process.env, ...extraEnv },
+    env,
   });
   return {
     stdout: result.stdout ?? '',
@@ -53,7 +71,9 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.stdout).toContain('gbrain-base v1.0.0');
     // v0.41.11.0: page types extended from 22 to 24 by promoting
     // `conversation` and `atom` into gbrain-base.
-    expect(r.stdout).toContain('Page types (24)');
+    // v0.41.23.0: extended to 25 by adding `extract_receipt` for the
+    // unified extract receipt-writer surface (D-EXTRACT-19 belt+suspenders).
+    expect(r.stdout).toContain('Page types (25)');
     expect(r.stdout).toContain('Link verbs (12)');
     expect(r.stdout).toContain('Takes kinds: fact, take, bet, hunch');
     expect(r.stdout).toContain('person :: entity');

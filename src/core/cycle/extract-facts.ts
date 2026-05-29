@@ -32,6 +32,8 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { writeReceipt } from '../extract/receipt-writer.ts';
+import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
 import {
@@ -251,6 +253,38 @@ export async function runExtractFacts(
 
     const inserted = await engine.insertFacts(extracted, { source_id: sourceId }); // gbrain-allow-direct-insert: extract_facts cycle phase reconciles fence → DB
     result.factsInserted += inserted.inserted;
+  }
+
+  // v0.42 Wave B3: receipt + rollup. extract_facts is deterministic
+  // (fence reconcile, no LLM cost); receipt only when facts were
+  // actually inserted; rollup always fires.
+  if (!opts.dryRun && result.factsInserted > 0) {
+    const runId = `efacts-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
+    try {
+      await writeReceipt(engine, {
+        kind: 'facts.fence',
+        source_id: sourceId,
+        run_id: runId,
+        round: 'single',
+        extracted_at: new Date().toISOString(),
+        total_rows: result.factsInserted,
+        cost_usd: 0,
+        summary:
+          `Reconciled ${result.factsInserted} facts (and deleted ${result.factsDeleted}) ` +
+          `across ${result.pagesScanned} scanned pages.`,
+      });
+    } catch (err) {
+      console.error(`[extract_facts] receipt write failed: ${(err as Error).message}`);
+    }
+  }
+  if (!opts.dryRun) {
+    await upsertExtractRollup(engine, {
+      kind: 'facts.fence',
+      source_id: sourceId,
+      cost_delta: 0,
+      round_completed_delta: result.guardTriggered ? 0 : 1,
+      halt_delta: result.guardTriggered ? 1 : 0,
+    });
   }
 
   return result;

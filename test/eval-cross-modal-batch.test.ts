@@ -56,17 +56,26 @@ function makeStubRunEval(verdicts: Array<'pass' | 'fail' | 'inconclusive' | 'thr
 // 1. runWithLimit semaphore primitive (T4)
 // ---------------------------------------------------------------------------
 
-describe('runWithLimit semaphore (v0.40.1.0 Track D / T4, per D6)', () => {
+describe('runWithLimit semaphore (v0.41.15.0 — migrated to shared helper)', () => {
+  // v0.41.15.0 T4 (codex #15): migrated to opts-object API from
+  // src/core/worker-pool.ts. Result shape gains an additive `idx` field;
+  // error field widened from `Error` to `unknown`. The `limit < 1`
+  // throw is no longer raised — the helper clamps to 1 silently,
+  // matching the permissive contract of runSlidingPool.
   test('never exceeds the in-flight limit', async () => {
     let inFlight = 0;
     let maxObserved = 0;
     const items = Array.from({ length: 20 }, (_, i) => i);
-    await runWithLimit(items, 3, async (_item) => {
-      inFlight++;
-      if (inFlight > maxObserved) maxObserved = inFlight;
-      await new Promise(r => setTimeout(r, 5));
-      inFlight--;
-      return 1;
+    await runWithLimit({
+      items,
+      limit: 3,
+      fn: async (_item) => {
+        inFlight++;
+        if (inFlight > maxObserved) maxObserved = inFlight;
+        await new Promise(r => setTimeout(r, 5));
+        inFlight--;
+        return 1;
+      },
     });
     expect(maxObserved).toBeLessThanOrEqual(3);
     expect(maxObserved).toBeGreaterThanOrEqual(1);
@@ -74,53 +83,79 @@ describe('runWithLimit semaphore (v0.40.1.0 Track D / T4, per D6)', () => {
 
   test('per-item errors do not abort the whole batch', async () => {
     const items = [0, 1, 2, 3, 4];
-    const results = await runWithLimit(items, 2, async (item) => {
-      if (item === 2) throw new Error(`fail-${item}`);
-      return item * 10;
+    const results = await runWithLimit({
+      items,
+      limit: 2,
+      fn: async (item) => {
+        if (item === 2) throw new Error(`fail-${item}`);
+        return item * 10;
+      },
     });
     expect(results.length).toBe(5);
-    expect(results[0]).toEqual({ ok: true, value: 0 });
-    expect(results[1]).toEqual({ ok: true, value: 10 });
+    expect(results[0]).toMatchObject({ ok: true, value: 0, idx: 0 });
+    expect(results[1]).toMatchObject({ ok: true, value: 10, idx: 1 });
     expect(results[2].ok).toBe(false);
-    expect(results[3]).toEqual({ ok: true, value: 30 });
-    expect(results[4]).toEqual({ ok: true, value: 40 });
+    expect(results[2].idx).toBe(2);
+    expect(results[3]).toMatchObject({ ok: true, value: 30, idx: 3 });
+    expect(results[4]).toMatchObject({ ok: true, value: 40, idx: 4 });
   });
 
   test('preserves input order in results array', async () => {
     const items = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-    const results = await runWithLimit(items, 4, async (item) => {
-      // Intentional non-uniform sleep to scramble completion order.
-      await new Promise(r => setTimeout(r, (10 - item) * 2));
-      return item * item;
+    const results = await runWithLimit({
+      items,
+      limit: 4,
+      fn: async (item) => {
+        await new Promise(r => setTimeout(r, (10 - item) * 2));
+        return item * item;
+      },
     });
     for (let i = 0; i < items.length; i++) {
-      expect(results[i]).toEqual({ ok: true, value: i * i });
+      expect(results[i]).toMatchObject({ ok: true, value: i * i, idx: i });
     }
   });
 
   test('limit=1 = serial', async () => {
     const order: number[] = [];
     const items = [0, 1, 2, 3];
-    await runWithLimit(items, 1, async (item) => {
-      const start = Date.now();
-      await new Promise(r => setTimeout(r, 5));
-      order.push(item);
-      return Date.now() - start;
+    await runWithLimit({
+      items,
+      limit: 1,
+      fn: async (item) => {
+        const start = Date.now();
+        await new Promise(r => setTimeout(r, 5));
+        order.push(item);
+        return Date.now() - start;
+      },
     });
     expect(order).toEqual([0, 1, 2, 3]);
   });
 
   test('limit > items.length still completes correctly', async () => {
-    const results = await runWithLimit([0, 1, 2], 100, async (x) => x + 1);
-    expect(results).toEqual([
-      { ok: true, value: 1 },
-      { ok: true, value: 2 },
-      { ok: true, value: 3 },
-    ]);
+    const results = await runWithLimit({
+      items: [0, 1, 2],
+      limit: 100,
+      fn: async (x) => x + 1,
+    });
+    expect(results.length).toBe(3);
+    expect(results[0]).toMatchObject({ ok: true, value: 1, idx: 0 });
+    expect(results[1]).toMatchObject({ ok: true, value: 2, idx: 1 });
+    expect(results[2]).toMatchObject({ ok: true, value: 3, idx: 2 });
   });
 
-  test('limit < 1 throws (defensive)', async () => {
-    await expect(runWithLimit([1, 2, 3], 0, async (x) => x)).rejects.toThrow(/limit must be >= 1/);
+  test('limit < 1 silently clamps to 1 worker (v0.41.15.0 permissive contract)', async () => {
+    // Prior behavior threw "limit must be >= 1". The shared helper
+    // clamps via Math.max(1, ...) to match runSlidingPool's permissive
+    // shape. Callers passing 0 get serial execution, not an exception.
+    const results = await runWithLimit({
+      items: [1, 2, 3],
+      limit: 0,
+      fn: async (x) => x,
+    });
+    expect(results.length).toBe(3);
+    for (let i = 0; i < 3; i++) {
+      expect(results[i]).toMatchObject({ ok: true, value: i + 1, idx: i });
+    }
   });
 });
 

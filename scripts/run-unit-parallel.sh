@@ -181,28 +181,88 @@ bun_summary_count() {
   ' "$file"
 }
 
+# shard_total_files: parse the "[unit-shard N/M] running X files" line that
+# run-unit-shard.sh echoes before invoking bun test. Returns the file count
+# the shard was given, or 0 if the line isn't there yet (shard still
+# bootstrapping). Uses sed-then-grep so it's portable to macOS awk (BSD awk
+# doesn't support `match($0, /re/, arr)` with the array sink — that's gawk-only).
+shard_total_files() {
+  local file="$1"
+  [ -f "$file" ] || { echo 0; return; }
+  local n
+  n=$(sed -n 's/^\[unit-shard [0-9][0-9]*\/[0-9][0-9]*\] running \([0-9][0-9]*\) files.*/\1/p' "$file" 2>/dev/null | head -1)
+  echo "${n:-0}"
+}
+
+# shard_pglite_init_count: count "Schema version" lines as a proxy for "test
+# files initialized so far." Each PGLite-using test file's beforeAll triggers
+# one initSchema() which prints this. Undercounts because not every test file
+# opens a PGLite engine, but it's the only real-time progress signal bun's
+# default reporter leaves in the log (bun has no per-file progress markers,
+# only a final shard-end summary).
+shard_pglite_init_count() {
+  local file="$1"
+  [ -f "$file" ] || { echo 0; return; }
+  grep -cE 'Schema version [0-9]+ → [0-9]+' "$file" 2>/dev/null || echo 0
+}
+
+# log_size_kb: total stderr+stdout written by the shard so far. Strictly
+# monotonic — useful as a "definitely alive" signal when other heuristics
+# read 0 (e.g. very early in shard startup before initSchema fires).
+log_size_kb() {
+  local file="$1"
+  [ -f "$file" ] || { echo 0; return; }
+  local b
+  b=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
+  echo $(( ${b:-0} / 1024 ))
+}
+
+# fmt_elapsed: pretty-print seconds → "Mm:SS" or "SSs" for short.
+fmt_elapsed() {
+  local s=$1
+  if [ "$s" -ge 60 ]; then
+    printf '%dm%02ds' $((s / 60)) $((s % 60))
+  else
+    printf '%ds' "$s"
+  fi
+}
+
 heartbeat() {
+  local hb_start=$(date +%s)
   while true; do
     sleep 10
     local line=""
+    local now; now=$(date +%s)
+    local hb_elapsed=$((now - hb_start))
     for i in $(seq 1 "$N"); do
       if [ -f "$LOG_DIR/shard-$i.exit" ]; then
         local rc; rc=$(cat "$LOG_DIR/shard-$i.exit" 2>/dev/null || echo "?")
         local status="✓"
         [ "$rc" != "0" ] && status="✗"
-        line="$line [s$i: done $status]"
+        local f
+        f=$(bun_summary_count "fail" "$LOG_DIR/shard-$i.log")
+        local p
+        p=$(bun_summary_count "pass" "$LOG_DIR/shard-$i.log")
+        line="$line [s$i: done $status ${p}p ${f}f]"
       else
         local lf="$LOG_DIR/shard-$i.log"
         if [ -f "$lf" ]; then
-          # Heartbeat: prefer Bun's per-test "✓" (passed) and "(fail)" markers
-          # so we see live progress; the "N pass" summary line only appears at
-          # the very end of the shard and would always show 0 mid-run.
-          local p f
-          p=$(grep_count '^[[:space:]]+✓' "$lf")
-          f=$(grep_count '^\(fail\)' "$lf")
-          line="$line [s$i: ${p}p ${f}f ...]"
+          # Bun's default reporter has no per-file progress markers, only a
+          # final shard-end summary, so we surface three complementary signals
+          # mid-run: (1) PGLite initSchema() count as a "files started" proxy,
+          # (2) total files this shard was assigned (from the runner banner),
+          # (3) log size in KB as a strictly-monotonic liveness signal.
+          local total; total=$(shard_total_files "$lf")
+          local pglite; pglite=$(shard_pglite_init_count "$lf")
+          local kb; kb=$(log_size_kb "$lf")
+          local et; et=$(fmt_elapsed "$hb_elapsed")
+          if [ "$total" -gt 0 ]; then
+            line="$line [s$i: ~${pglite}/${total}f ${kb}KB ${et}]"
+          else
+            line="$line [s$i: starting ${kb}KB ${et}]"
+          fi
         else
-          line="$line [s$i: starting]"
+          line="$line [s$i: spawning]"
         fi
       fi
     done

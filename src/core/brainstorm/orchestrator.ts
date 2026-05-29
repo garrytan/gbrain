@@ -1,4 +1,14 @@
 /**
+ * v0.41.13.0 T16 retrofit note: brainstorm already wraps in
+ * `withBudgetTracker` AND has its own pre-run cost estimate + TTY grace
+ * window (the patterns the `src/core/progressive-batch/` primitive
+ * extracts). Routing the existing per-cross-call loop through the
+ * primitive would duplicate that machinery without observable value
+ * (the primitive's audit JSONL covers a different shape: ramp-then-full,
+ * not per-cross). The cleaner retrofit waits for v0.41.14.0+ when the
+ * primitive grows a "fan-out audit" mode that captures per-call
+ * telemetry from gateway.chat. Filed in TODOS.md.
+ *
  * v0.37.0 — brainstorm + LSD orchestrator.
  *
  * Shared 4-phase pipeline driven by a `BrainstormProfile` config object

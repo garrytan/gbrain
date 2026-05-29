@@ -88,6 +88,14 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalTrajectory } = await import('./eval-trajectory.ts');
     return runEvalTrajectory(engine, args.slice(1));
   }
+  if (sub === 'conversation-parser') {
+    // v0.41.13.0 — fixture-corpus CI gate for the 12-pattern built-in
+    // registry + opt-in LLM polish/fallback. Pure-function eval; no
+    // DB access, no API keys when --no-llm is passed. Wired into
+    // bun run verify so built-in regressions block PRs.
+    const { runEvalConversationParser } = await import('./eval-conversation-parser.ts');
+    process.exit(await runEvalConversationParser(args.slice(1)));
+  }
   // v0.32.3 search-lite — per-mode orchestrator + comparison report.
   if (sub === 'run-all') {
     const { runEvalRunAll } = await import('./eval-run-all.ts');
