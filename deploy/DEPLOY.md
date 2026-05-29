@@ -80,10 +80,11 @@ DB blips; the pinned UPSTREAM_REF includes it.
   `curl … || wget … || exit 1` probe. ⚠️ **The image MUST contain `curl`** — the base
   `oven/bun` image does not, so on an image without it the probe fails every tick and the
   container is flagged `unhealthy` (no crash-loop: Docker doesn't restart on unhealthy and
-  Coolify has no restart-unhealthy scheduler, but it's a landmine). `deploy/Dockerfile` now
-  `apt-get install`s curl — build + ship sp1a-v12 (or later) for the healthcheck to pass.
-  Until then, keep `health_check_enabled=false` to avoid a false `unhealthy`, OR accept the
-  cosmetic unhealthy on the curl-less image.
+  Coolify has no restart-unhealthy scheduler, but it's a landmine). `deploy/Dockerfile`
+  `apt-get install`s curl — **DONE 2026-05-29 in sp1a-v12** (live on app 108 + the worker);
+  serve verified `health=healthy`, in-container `curl -f /health` exits 0. Any future image
+  built from this Dockerfile keeps the probe working; if you ever ship a curl-less image,
+  set `health_check_enabled=false` to avoid a false `unhealthy`.
 - A complex `--health-cmd` via `custom_docker_run_options` is **rejected** by Coolify's
   validator (422 "format is invalid"), so a bun-based probe can't be injected that way —
   curl-in-image is the supported path.
