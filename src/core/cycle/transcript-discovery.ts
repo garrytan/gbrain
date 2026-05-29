@@ -183,7 +183,9 @@ function listTextFiles(dir: string): string[] {
       try {
         const st = statSync(full);
         if (st.isDirectory()) {
-          if (!pruneDir(name)) continue;
+          // v0.37.7.0 #1169: pass parentDir so submodule pointers are
+          // skipped at descent time.
+          if (!pruneDir(name, d)) continue;
           walk(full);
         } else if (st.isFile() && (name.endsWith('.txt') || name.endsWith('.md'))) {
           out.push(full);

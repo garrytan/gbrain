@@ -8,11 +8,16 @@ description: |
   judgment-heavy genericization (scrub real names, generalize triggers,
   lift fork-specific conventions to references).
 triggers:
-  - "harvest this skill into gbrain"
+  - "harvest this skill"
+  - "harvest my skill"
   - "publish this skill to gbrain"
-  - "lift this skill upstream"
-  - "share this skill with other gbrain clients"
-  - "promote my skill to gbrain"
+  - "lift this skill"
+  - "share this skill"
+  - "promote this skill"
+  - "promote my skill"
+  - "skill upstream"
+  - "into the gbrain core"
+  - "gbrain bundle"
 mutating: true
 writes_pages: false
 writes_to:

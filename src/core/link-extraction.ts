@@ -96,7 +96,7 @@ const QUALIFIED_WIKILINK_RE = new RegExp(
  * for any caller that cares about positions; for our extractors this is just
  * defense-in-depth — slugs inside code are not real entity references.
  */
-function stripCodeBlocks(content: string): string {
+export function stripCodeBlocks(content: string): string {
   let out = '';
   let i = 0;
   while (i < content.length) {

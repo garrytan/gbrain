@@ -86,7 +86,10 @@ Ask the user this BEFORE running `gbrain init`:
 >     calls it over MCP. No local DB on this machine.
 >  3. **Per-worktree code + shared remote artifacts** — Conductor users with
 >     multiple worktrees indexing the same code repo. Each worktree owns its
->     own code engine; artifacts live on a shared remote brain.
+>     own code engine; artifacts live on a shared remote brain. For code
+>     engines, configure Voyage's code-tuned model:
+>     `gbrain init --pglite --embedding-model voyage:voyage-code-3 --embedding-dimensions 1024`
+>     (full guidance in `docs/architecture/topologies.md` Topology 3).
 >
 >  Which fits?"
 

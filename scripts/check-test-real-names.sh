@@ -68,6 +68,16 @@ ALLOWLIST=(
   "test/skillpack-harvest.test.ts:Wintermute"
   "test/skillpack-harvest-lint.test.ts:Wintermute"
   "test/e2e/skillpack-flow.test.ts:Wintermute"
+  # v0.40.1.0 Track D: eval-replay-gate.test.ts has a privacy-grep regression
+  # guard whose block list necessarily SPELLS the real names so the test can
+  # assert they're NOT in the qrels fixture. Same meta-rule exception as the
+  # skillpack-harvest privacy tests above.
+  "test/eval-replay-gate.test.ts:Pedro Franceschi"
+  "test/eval-replay-gate.test.ts:Brex"
+  "test/eval-replay-gate.test.ts:Wintermute"
+  "test/eval-replay-gate.test.ts:Garry Tan"
+  "test/eval-replay-gate.test.ts:Y Combinator"
+  "test/eval-replay-gate.test.ts:YC"
 )
 
 # Build the combined regex. Names matched as whole words (\b), emails matched

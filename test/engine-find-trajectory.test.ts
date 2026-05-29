@@ -203,6 +203,7 @@ function makePoint(args: {
     value: args.value,
     unit: 'USD',
     period: 'monthly',
+    event_type: null,
     text: `${args.metric} = ${args.value}`,
     source_session: null,
     source_markdown_slug: null,

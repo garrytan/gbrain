@@ -53,7 +53,7 @@ import {
   type ParsedFact,
 } from '../facts-fence.ts';
 import { parseMarkdown, splitBody, serializeMarkdown } from '../markdown.ts';
-import { tryAcquireDbLock, SYNC_LOCK_ID, type DbLockHandle } from '../db-lock.ts';
+import { tryAcquireDbLock, syncLockId, type DbLockHandle } from '../db-lock.ts';
 import { logPhantomEvent, type PhantomOutcome } from '../facts/phantom-audit.ts';
 
 /** Tagged-union outcome of a single phantom-redirect attempt. */
@@ -529,7 +529,9 @@ export async function runPhantomRedirectPass(
 
   // Bounded-retry lock acquisition. tryAcquireDbLock returns null on
   // contention; we loop with 1s backoff up to 30s total.
-  const lock = await acquireLockWithRetry(engine, SYNC_LOCK_ID);
+  // v0.40 D16: per-source lock matching performSync's posture. Phantom + same-
+  // source sync still serialize; cross-source parallel sync proceeds unblocked.
+  const lock = await acquireLockWithRetry(engine, syncLockId(sourceId));
   if (!lock) {
     logPhantomEvent({ outcome: 'pass_skipped_lock_busy', source_id: sourceId });
     result.lock_busy = true;

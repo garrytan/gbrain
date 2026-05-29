@@ -84,25 +84,34 @@ export class MinionQueue {
         `(pass {allowProtectedSubmit: true} as the 4th arg to MinionQueue.add)`,
       );
     }
-    // v0.31.12 subagent runtime enforcement (Layer 1 of 3 — Codex F1+F2 in
-    // plan review). The subagent loop in handlers/subagent.ts uses Anthropic's
-    // Messages API with prompt caching on system + tools. Routing it elsewhere
-    // silently breaks. Reject non-Anthropic data.model at the queue boundary
-    // so the job never enters waiting state.
+    // v0.38 (S1.7 + D6) — capability-based gate replaces the v0.31.12 Anthropic
+    // pin. The subagent loop now routes through `gateway.toolLoop()` so any
+    // provider with native tool calling works. Only refuse-at-submit when
+    // the requested model literally cannot run a tool loop. The handler
+    // (`subagent.ts`) does a defense-in-depth check at dispatch time too.
     if (jobName === 'subagent' && data && typeof data === 'object') {
       const submittedModel = (data as { model?: unknown }).model;
       if (typeof submittedModel === 'string' && submittedModel.length > 0) {
-        // Lazy import to avoid pulling model-config (which imports engine types)
-        // into the queue module's eager-load surface.
-        const { isAnthropicProvider } = await import('../model-config.ts');
-        if (!isAnthropicProvider(submittedModel)) {
+        const { classifyCapabilities } = await import('../ai/capabilities.ts');
+        const verdict = classifyCapabilities(submittedModel);
+        if (verdict === 'unusable:no_tools') {
           throw new Error(
-            `subagent job rejected: data.model "${submittedModel}" is non-Anthropic. ` +
-            `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
-            `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model ` +
-            `to use the configured default.`,
+            `subagent job rejected: data.model "${submittedModel}" lacks native tool calling. ` +
+            `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run. ` +
+            `Pick a provider that supports tools (anthropic, openai, google, openrouter, litellm-proxy, deepseek, groq, together, azure-openai).`,
           );
         }
+        if (verdict === 'unknown') {
+          throw new Error(
+            `subagent job rejected: data.model "${submittedModel}" references an unknown provider. ` +
+            `Use format provider:model where provider matches a recipe in src/core/ai/recipes/. ` +
+            `Known providers: anthropic, openai, google, openrouter, litellm-proxy, ollama, llama-server, ` +
+            `together, azure-openai, deepseek, groq, dashscope, minimax, zhipu, voyage, zeroentropyai.`,
+          );
+        }
+        // 'degraded:no_caching' and 'degraded:no_parallel' pass through — the
+        // gateway prints a once-per-(source, model) cost warning at first
+        // dispatch. 'ok' passes through silently.
       }
     }
     await this.ensureSchema();
@@ -954,6 +963,51 @@ export class MinionQueue {
 
       return failed;
     });
+  }
+
+  /**
+   * v0.41 Bug 2 — release a job back to `delayed` after a
+   * `RateLeaseUnavailableError` bounce, WITHOUT incrementing `attempts_made`.
+   *
+   * The field-report bug: pre-v0.41, lease-full bounces routed through
+   * `failJob` which bumps `attempts_made`. After 3 bounces the job hit
+   * `max_attempts` (default 3) and dead-lettered with message
+   * `rate lease "anthropic:messages" full (8/8)`. Operators saw a dead
+   * job and assumed a real failure.
+   *
+   * This method is the workhorse fix: status → `delayed`, jittered backoff
+   * via `delay_until`, `attempts_made` UNCHANGED. The handler comment at
+   * `src/core/minions/handlers/subagent.ts:425` ("treat as renewable
+   * error so the worker re-claims") is now actually true.
+   *
+   * Audit row write to `minion_lease_pressure_log` is the caller's
+   * responsibility (the worker has the model/queue context); this method
+   * stays focused on the state-machine flip. Same `lock_token + status='active'`
+   * idempotency guard as `failJob` so a racing stall sweep / cancel still
+   * wins. Returns `null` on lock_token mismatch.
+   *
+   * Returns the updated `MinionJob` row on success so the caller can stamp
+   * the audit row with provenance from the SAME row that just flipped.
+   */
+  async releaseLeaseFullJob(
+    id: number,
+    lockToken: string,
+    errorText: string,
+    backoffMs: number,
+  ): Promise<MinionJob | null> {
+    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+      `UPDATE minion_jobs SET
+        status = 'delayed',
+        error_text = $1,
+        stacktrace = COALESCE(stacktrace, '[]'::jsonb) || to_jsonb($1::text),
+        delay_until = now() + ($2::double precision * interval '1 millisecond'),
+        lock_token = NULL, lock_until = NULL, updated_at = now()
+       WHERE id = $3 AND status = 'active' AND lock_token = $4
+       RETURNING *`,
+      [errorText, backoffMs, id, lockToken],
+    );
+    if (rows.length === 0) return null;
+    return rowToMinionJob(rows[0]);
   }
 
   /** Update job progress (token-fenced). */

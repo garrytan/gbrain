@@ -32,7 +32,14 @@ export async function findCodeDef(
   opts: { limit?: number; language?: string } = {},
 ): Promise<CodeDefResult[]> {
   const limit = opts.limit ?? 20;
-  const DEF_TYPES = ['function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract'];
+  // v0.41 D2: SQL DDL targets (table/view/index/procedure/schema/database/
+  // trigger) are first-class definitions in the SQL sense. The chunker's
+  // normalizeSymbolType maps create_table → 'table' etc, so adding the SQL
+  // kinds here is what makes `gbrain code-def users` work against SQL.
+  const DEF_TYPES = [
+    'function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract',
+    'table', 'view', 'index', 'procedure', 'schema', 'database', 'trigger',
+  ];
   const params: unknown[] = [symbol, limit];
   let whereLang = '';
   if (opts.language) {

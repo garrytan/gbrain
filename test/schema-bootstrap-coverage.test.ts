@@ -134,6 +134,30 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // have pages without this column; bootstrap adds it before SCHEMA_SQL
   // replay creates the index.
   { kind: 'column', table: 'pages', column: 'last_retrieved_at' },
+  // v0.38.0 (v81) — pages_provenance_columns adds four nullable columns
+  // (ingested_via, ingested_at, source_uri, source_kind) to track WHERE
+  // every page came from (capture-cli, webhook, put_page, dream, etc.).
+  // No SCHEMA_SQL index/FK references them today, but bootstrap probes
+  // are added defense-in-depth so future schema work that does reference
+  // them doesn't wedge pre-v81 brains. Renumbered v80→v81 during master
+  // merge with v0.37.2.0 takes_unresolvable_quality hotfix.
+  { kind: 'column', table: 'pages', column: 'ingested_via' },
+  { kind: 'column', table: 'pages', column: 'ingested_at' },
+  { kind: 'column', table: 'pages', column: 'source_uri' },
+  { kind: 'column', table: 'pages', column: 'source_kind' },
+  // v0.40.3.0 (v90, renumbered from v0.40.3.0 v81 on master merge) —
+  // contextual_retrieval_columns adds five additive columns wiring the
+  // three-tier wrapper ladder. Bootstrap probes added defense-in-depth
+  // for future schema work.
+  { kind: 'column', table: 'pages', column: 'contextual_retrieval_mode' },
+  { kind: 'column', table: 'pages', column: 'corpus_generation' },
+  { kind: 'column', table: 'sources', column: 'contextual_retrieval_mode' },
+  { kind: 'column', table: 'sources', column: 'trust_frontmatter_overrides' },
+  // v0.40.3.0 (v91) — pages.generation BIGINT bumped by the
+  // bump_page_generation_fn trigger. Forward-referenced by
+  // pages_generation_idx (CREATE INDEX ON pages (generation)) so bootstrap
+  // probes guard pre-v91 brains.
+  { kind: 'column', table: 'pages', column: 'generation' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -206,6 +230,19 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
       ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
       ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
+
+      -- v0.40.3.0 v90 + v91 column strips so applyForwardReferenceBootstrap
+      -- has work to do. Only strip pages columns + the trigger; sources
+      -- columns were already nuked by the earlier DROP TABLE IF EXISTS
+      -- sources CASCADE, and the bootstrap needsPagesBootstrap branch
+      -- recreates sources from schema-embedded.ts (which now includes the
+      -- CR columns inline). Same convention as the sources.archived note.
+      DROP TRIGGER IF EXISTS bump_page_generation_trg ON pages;
+      DROP FUNCTION IF EXISTS bump_page_generation_fn;
+      DROP INDEX IF EXISTS pages_generation_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS generation;
+      ALTER TABLE pages DROP COLUMN IF EXISTS contextual_retrieval_mode;
+      ALTER TABLE pages DROP COLUMN IF EXISTS corpus_generation;
     `);
 
     // Note: we don't strip sources.archived* here because they're inline in the
@@ -645,6 +682,18 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'pages.source_path',
   'content_chunks.edges_backfilled_at',
   'query_cache.knobs_hash',
+  // v0.40.3.0 (migration v90, renumbered from v0.40.3.0 v81 on master merge)
+  // — query_cache is migration-only (added in v55), not in PGLITE_SCHEMA_SQL.
+  // The v90 ALTER TABLE query_cache ADD COLUMN page_generations runs after
+  // v55 in the migration sequence, so fresh installs get it correctly. No
+  // forward-reference exists for PGLITE_SCHEMA_SQL to trip on because
+  // query_cache isn't in the schema blob to begin with. Same exemption
+  // rationale as knobs_hash.
+  'query_cache.page_generations',
+  // v0.40.3.0 (migration v91) — same exemption rationale: query_cache is
+  // migration-only; max_generation_at_store is added by v91 ALTER and never
+  // forward-referenced by PGLITE_SCHEMA_SQL.
+  'query_cache.max_generation_at_store',
   // v0.35.6 (migration v67) — typed-claim columns + facts_typed_claim_idx
   // partial index are co-defined in the same migration, so the schema-blob
   // forward-reference path isn't tripped. Bootstrap is only required when an
@@ -653,6 +702,35 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'facts.claim_value',
   'facts.claim_unit',
   'facts.claim_period',
+  // v0.40.2.0 (migration v89) — event_type column. Same precedent as
+  // facts.claim_metric et al: no forward-reference index in
+  // PGLITE_SCHEMA_SQL, no downstream filter breaks on old brains
+  // (existing callers — founder-scorecard, eval-trajectory,
+  // gbrain think trajectory injection — all defensively skip
+  // NULL-metric rows in per-metric math, so event_type=NULL on old
+  // brains is invisible to them). Migration is column-only, no FK,
+  // no index — bootstrap probe would be pure overhead.
+  'facts.event_type',
+  // v0.39.1.0 (migration v88) — schema-pack provenance per-source captured as
+  // inline canonical closure snapshot on every eval_candidates row. NULL by
+  // default; no index in PGLITE_SCHEMA_SQL references it. Migration handles
+  // both fresh installs and pre-existing brains via ADD COLUMN IF NOT EXISTS.
+  // Schema-pack codegen (scripts/generate-gbrain-base.ts) consumes the value
+  // only via the eval-replay CLI, not via SQL filters that would force a
+  // bootstrap probe.
+  'eval_candidates.schema_pack_per_source',
+  // v0.41 (migration v94) — minions cathedral budget columns. Same precedent
+  // as facts.claim_metric and friends: column-only additions on `minion_jobs`,
+  // no forward-reference index in PGLITE_SCHEMA_SQL (the partial indexes
+  // `minion_jobs_budget_owner_idx` + `minion_jobs_budget_root_owner_idx`
+  // live INSIDE the same v93 migration, not in the schema blob), and
+  // downstream callers explicitly handle NULL via the Eng D10 NULL-bypass
+  // branch in budget-tracker (jobs without `budget_owner_job_id` skip
+  // reservation entirely). Old brains pre-v93 silently get NULL on these
+  // columns; the budget enforcement path treats NULL as "no budget."
+  'minion_jobs.budget_remaining_cents',
+  'minion_jobs.budget_owner_job_id',
+  'minion_jobs.budget_root_owner_id',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {

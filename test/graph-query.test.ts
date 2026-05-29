@@ -44,6 +44,24 @@ function captureStdout(fn: () => Promise<void>): Promise<string[]> {
   })();
 }
 
+function captureBoth(fn: () => Promise<void>): Promise<{ out: string[]; err: string[] }> {
+  return (async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const origLog = console.log;
+    const origErr = console.error;
+    console.log = (msg: unknown) => { out.push(String(msg)); };
+    console.error = (msg: unknown) => { err.push(String(msg)); };
+    try {
+      await fn();
+    } finally {
+      console.log = origLog;
+      console.error = origErr;
+    }
+    return { out, err };
+  })();
+}
+
 describe('graph-query command', () => {
   beforeEach(async () => {
     await truncateAll();
@@ -110,5 +128,80 @@ describe('graph-query command', () => {
     });
     const joined = lines.join('\n');
     expect(joined.toLowerCase()).toContain('no edges found');
+  });
+});
+
+// v0.37.7.0 #1153 — foreign-edge footer + --include-foreign flag.
+describe('graph-query foreign-edge footer (#1153)', () => {
+  beforeEach(async () => {
+    await truncateAll();
+    // Two sources. Default source has alice + bob; second source has
+    // carol. Edge from alice (default) to carol (other) is the foreign
+    // edge the footer should surface.
+    // sources table requires an 'id' entry per source; pglite-engine
+    // initSchema seeds 'default'. Add the other one.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('other-src', 'other-src') ON CONFLICT DO NOTHING`,
+    );
+    await engine.putPage('people/alice', { type: 'person', title: 'Alice', compiled_truth: '', timeline: '' });
+    await engine.putPage('people/bob', { type: 'person', title: 'Bob', compiled_truth: '', timeline: '' });
+    // Carol lives in other-src. Use raw SQL because putPage doesn't
+    // expose source_id directly via its options.
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('people/carol', 'other-src', 'person', 'Carol', '', '')`,
+    );
+    // Edge: alice (default) → carol (other-src) = foreign edge
+    // Edge: alice (default) → bob (default) = same-source edge
+    await engine.addLink('people/alice', 'people/carol', '', 'mentions', undefined, undefined, undefined, {
+      fromSourceId: 'default', toSourceId: 'other-src',
+    });
+    await engine.addLink('people/alice', 'people/bob', '', 'mentions');
+  });
+
+  test('default scoped traversal emits footer with foreign-edge count', async () => {
+    const { err } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/alice', '--depth', '1']);
+    });
+    const joined = err.join('\n');
+    // Footer text contract: counts the foreign edge (alice → carol)
+    // and tells the user how to include them.
+    expect(joined).toMatch(/1 edge to foreign-source pages hidden/);
+    expect(joined).toMatch(/--include-foreign/);
+  });
+
+  test('--include-foreign suppresses the footer', async () => {
+    const { err } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/alice', '--depth', '1', '--include-foreign']);
+    });
+    const joined = err.join('\n');
+    // No footer when the flag is set.
+    expect(joined).not.toMatch(/foreign-source pages hidden/);
+  });
+
+  test('no footer when there are zero foreign edges', async () => {
+    // Single-source brain — carol is removed; only same-source edge remains.
+    await engine.executeRaw(`DELETE FROM pages WHERE slug = 'people/carol'`);
+    const { err } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/alice', '--depth', '1']);
+    });
+    const joined = err.join('\n');
+    expect(joined).not.toMatch(/foreign-source pages hidden/);
+  });
+
+  test('footer pluralizes correctly for 2+ foreign edges', async () => {
+    // Add a second foreign target in other-src so the count is plural.
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('people/dave', 'other-src', 'person', 'Dave', '', '')`,
+    );
+    await engine.addLink('people/alice', 'people/dave', '', 'mentions', undefined, undefined, undefined, {
+      fromSourceId: 'default', toSourceId: 'other-src',
+    });
+    const { err } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/alice', '--depth', '1']);
+    });
+    const joined = err.join('\n');
+    expect(joined).toMatch(/2 edges to foreign-source pages hidden/);
   });
 });

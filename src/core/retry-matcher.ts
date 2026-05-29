@@ -20,12 +20,20 @@ const CONN_PATTERNS = [
   /connection.*closed/i,
   /server closed the connection/i,
   /could not connect to server/i,
+  // v0.41.2.1: gbrain's own GBrainError thrown by getConnection() when
+  // the singleton pool was nulled (engine.disconnect mid-cycle, or
+  // postgres.js's auto-recovery between queries). Matches the literal
+  // message shape from PR #1416's reported batch-loss incident.
+  /No database connection/i,
 ];
 
 interface PgError {
   code?: string;
   message?: string;
   cause?: unknown;
+  // v0.41.2.1: gbrain's GBrainError uses `problem` (typed) + `detail` so
+  // callers can switch on the engine-state class without string matching.
+  problem?: string;
 }
 
 function getCode(err: unknown): string | undefined {
@@ -85,6 +93,15 @@ export function isRetryableConnError(err: unknown): boolean {
   //   08001 sqlclient_unable_to_establish_sqlconnection
   //   08004 sqlserver_rejected_establishment_of_sqlconnection
   if (code && /^08/.test(code)) return true;
+  // v0.41.2.1: typed-shape match for gbrain's own GBrainError
+  // (problem === 'No database connection'). Avoids brittle string match
+  // when the error wrapper is gbrain-internal.
+  if (
+    err && typeof err === 'object' &&
+    (err as PgError).problem === 'No database connection'
+  ) {
+    return true;
+  }
   const msg = getMessage(err);
   return CONN_PATTERNS.some(p => p.test(msg));
 }

@@ -291,7 +291,7 @@ function renderPageToMarkdown(page: Page, tags: string[]): string {
     page.compiled_truth ?? '',
     page.timeline ?? '',
     {
-      type: (page.type as PageType) ?? 'note',
+      type: (page.type as string) ?? 'note',
       title: page.title ?? '',
       tags,
     },

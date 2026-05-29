@@ -224,4 +224,192 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     const pgliteChanged = pgliteDefault.map((r: SearchResult) => r.slug).join(',') !== pgliteHigh.map((r: SearchResult) => r.slug).join(',');
     expect(pgChanged || pgliteChanged).toBe(true);
   });
+
+  // v0.39.3.0 T3 — provenance write+read parity (WARN-8 + CV5).
+  // Both engines must write the same 4 provenance columns (source_kind,
+  // source_uri, ingested_via, ingested_at) on putPage AND surface them
+  // on getPage. A drift here would mean `gbrain migrate --to supabase`
+  // silently loses half a user's provenance audit trail.
+  test('provenance columns: putPage writes + getPage returns identical shape on both engines', async () => {
+    const slug = 'wiki/provenance-parity';
+    const input = {
+      type: 'note' as const,
+      title: 'Provenance Parity Test',
+      compiled_truth: 'body',
+      timeline: '',
+      source_kind: 'capture-cli',
+      source_uri: 'file:///tmp/parity.md',
+      ingested_via: 'put_page',
+    };
+    await pgEngine.putPage(slug, input);
+    await pgliteEngine.putPage(slug, input);
+
+    const pgPage = await pgEngine.getPage(slug);
+    const pglitePage = await pgliteEngine.getPage(slug);
+
+    expect(pgPage).not.toBeNull();
+    expect(pglitePage).not.toBeNull();
+
+    // All 4 provenance fields must match across engines.
+    expect(pgPage!.source_kind).toBe('capture-cli');
+    expect(pglitePage!.source_kind).toBe('capture-cli');
+    expect(pgPage!.source_uri).toBe('file:///tmp/parity.md');
+    expect(pglitePage!.source_uri).toBe('file:///tmp/parity.md');
+    expect(pgPage!.ingested_via).toBe('put_page');
+    expect(pglitePage!.ingested_via).toBe('put_page');
+    // ingested_at is server-stamped; both engines must populate a Date
+    // (not Date drift across engines — the assertion is structural).
+    expect(pgPage!.ingested_at).toBeInstanceOf(Date);
+    expect(pglitePage!.ingested_at).toBeInstanceOf(Date);
+  });
+
+  test('provenance COALESCE-preserve UPDATE: parity on both engines (CV12)', async () => {
+    // First write with provenance.
+    const slug = 'wiki/provenance-preserve-parity';
+    await pgEngine.putPage(slug, {
+      type: 'note',
+      title: 'V1',
+      compiled_truth: 'body v1',
+      timeline: '',
+      source_kind: 'capture-cli',
+      ingested_via: 'put_page',
+    });
+    await pgliteEngine.putPage(slug, {
+      type: 'note',
+      title: 'V1',
+      compiled_truth: 'body v1',
+      timeline: '',
+      source_kind: 'capture-cli',
+      ingested_via: 'put_page',
+    });
+
+    // Second write WITHOUT provenance — both engines must preserve
+    // the first-write audit trail via COALESCE-preserve UPDATE.
+    await pgEngine.putPage(slug, {
+      type: 'note',
+      title: 'V2',
+      compiled_truth: 'body v2',
+      timeline: '',
+    });
+    await pgliteEngine.putPage(slug, {
+      type: 'note',
+      title: 'V2',
+      compiled_truth: 'body v2',
+      timeline: '',
+    });
+
+    const pgPage = await pgEngine.getPage(slug);
+    const pglitePage = await pgliteEngine.getPage(slug);
+
+    // Provenance preserved on BOTH engines (CV12 first-write-wins).
+    expect(pgPage!.source_kind).toBe('capture-cli');
+    expect(pglitePage!.source_kind).toBe('capture-cli');
+    expect(pgPage!.ingested_via).toBe('put_page');
+    expect(pglitePage!.ingested_via).toBe('put_page');
+    // Page title updated (proves the UPDATE actually fired).
+    expect(pgPage!.title).toBe('V2');
+    expect(pglitePage!.title).toBe('V2');
+  });
+
+  test('v0.41.19.0 deletePages parity: both engines return same confirmed-deleted slugs', async () => {
+    const realSlugs = ['wiki/dpp-1', 'wiki/dpp-2', 'wiki/dpp-3'];
+    for (const slug of realSlugs) {
+      await pgEngine.putPage(slug, {
+        type: 'note', title: slug, compiled_truth: 'body', timeline: '',
+      });
+      await pgliteEngine.putPage(slug, {
+        type: 'note', title: slug, compiled_truth: 'body', timeline: '',
+      });
+    }
+
+    // Mix real + ghost slugs. D6: only real ones come back.
+    const allSlugs = [...realSlugs, 'wiki/dpp-ghost-a', 'wiki/dpp-ghost-b'];
+    const pgDeleted = await pgEngine.deletePages(allSlugs, { sourceId: 'default' });
+    const pgliteDeleted = await pgliteEngine.deletePages(allSlugs, { sourceId: 'default' });
+
+    expect(pgDeleted.sort()).toEqual(realSlugs.sort());
+    expect(pgliteDeleted.sort()).toEqual(realSlugs.sort());
+
+    // Pages actually gone on both engines.
+    for (const slug of realSlugs) {
+      const pg = await pgEngine.getPage(slug);
+      const pglite = await pgliteEngine.getPage(slug);
+      expect(pg).toBeNull();
+      expect(pglite).toBeNull();
+    }
+  });
+
+  test('v0.41.19.0 resolveSlugsByPaths parity: same Map on both engines', async () => {
+    const seedSql = `
+      INSERT INTO pages (source_id, slug, source_path, type, title, compiled_truth, timeline, frontmatter)
+        VALUES ('default', $1, $2, 'note', 't', 'b', '', '{}'::jsonb)
+        ON CONFLICT (source_id, slug) DO UPDATE SET source_path = EXCLUDED.source_path
+    `;
+    await pgEngine.executeRaw(seedSql, ['wiki/rsp-1', 'wiki/rsp-1.md']);
+    await pgEngine.executeRaw(seedSql, ['wiki/rsp-2', 'wiki/rsp-2.md']);
+    await pgliteEngine.executeRaw(seedSql, ['wiki/rsp-1', 'wiki/rsp-1.md']);
+    await pgliteEngine.executeRaw(seedSql, ['wiki/rsp-2', 'wiki/rsp-2.md']);
+
+    const paths = ['wiki/rsp-1.md', 'wiki/rsp-2.md', 'wiki/rsp-missing.md'];
+    const pgMap = await pgEngine.resolveSlugsByPaths(paths, { sourceId: 'default' });
+    const pgliteMap = await pgliteEngine.resolveSlugsByPaths(paths, { sourceId: 'default' });
+
+    expect(pgMap.size).toBe(2);
+    expect(pgliteMap.size).toBe(2);
+    expect(pgMap.get('wiki/rsp-1.md')).toBe('wiki/rsp-1');
+    expect(pgliteMap.get('wiki/rsp-1.md')).toBe('wiki/rsp-1');
+    expect(pgMap.get('wiki/rsp-2.md')).toBe('wiki/rsp-2');
+    expect(pgliteMap.get('wiki/rsp-2.md')).toBe('wiki/rsp-2');
+    expect(pgMap.get('wiki/rsp-missing.md')).toBeUndefined();
+    expect(pgliteMap.get('wiki/rsp-missing.md')).toBeUndefined();
+  });
+
+  // v0.41.29.0 — findOrphanPages source scoping parity. Real Postgres
+  // coverage for the postgres.js `sql` scalar fragment + `= ANY(${arr}::text[])`
+  // array binding (a documented footgun class — the jsonb double-encode saga).
+  // PGLite logic is pinned in test/orphans-source-scope.test.ts; this asserts
+  // the Postgres SQL produces the same scoped sets. Cross-source inbound
+  // (src-b → src-a) must NOT make the target an orphan of src-a (A2).
+  test('v0.41.29.0 findOrphanPages source scoping parity (scalar + federated)', async () => {
+    const srcSql = `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{}'::jsonb) ON CONFLICT DO NOTHING`;
+    const pageSql = `
+      INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter)
+        VALUES ($1, $2, 'person', 't', 'b', '', '{}'::jsonb)
+        ON CONFLICT (source_id, slug) DO NOTHING
+    `;
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(srcSql, ['orphan-src-a']);
+      await eng.executeRaw(srcSql, ['orphan-src-b']);
+      await eng.executeRaw(pageSql, ['orphan-src-a', 'people/op-orphan-a']);
+      await eng.executeRaw(pageSql, ['orphan-src-a', 'people/op-target-a']);
+      await eng.executeRaw(pageSql, ['orphan-src-b', 'people/op-linker-b']);
+      // Cross-source inbound: src-b page → src-a target (A2).
+      await eng.addLink(
+        'people/op-linker-b', 'people/op-target-a', '', 'mentions', 'markdown',
+        undefined, undefined, { fromSourceId: 'orphan-src-b', toSourceId: 'orphan-src-a' },
+      );
+    }
+
+    const scoped = async (eng: BrainEngine, opts: { sourceId?: string; sourceIds?: string[] }) =>
+      (await eng.findOrphanPages(opts)).map(r => r.slug).filter(s => s.startsWith('people/op-')).sort();
+
+    // Scalar scope to src-a: op-orphan-a is an orphan; op-target-a is saved
+    // by the cross-source inbound (A2). Parity on both engines.
+    const pgA = await scoped(pgEngine, { sourceId: 'orphan-src-a' });
+    const pgliteA = await scoped(pgliteEngine, { sourceId: 'orphan-src-a' });
+    expect(pgA).toEqual(['people/op-orphan-a']);
+    expect(pgliteA).toEqual(pgA);
+
+    // Scalar scope to src-b.
+    const pgB = await scoped(pgEngine, { sourceId: 'orphan-src-b' });
+    const pgliteB = await scoped(pgliteEngine, { sourceId: 'orphan-src-b' });
+    expect(pgB).toEqual(['people/op-linker-b']);
+    expect(pgliteB).toEqual(pgB);
+
+    // Federated array scope (= ANY binding) → union.
+    const pgFed = await scoped(pgEngine, { sourceIds: ['orphan-src-a', 'orphan-src-b'] });
+    const pgliteFed = await scoped(pgliteEngine, { sourceIds: ['orphan-src-a', 'orphan-src-b'] });
+    expect(pgFed).toEqual(['people/op-linker-b', 'people/op-orphan-a']);
+    expect(pgliteFed).toEqual(pgFed);
+  });
 });

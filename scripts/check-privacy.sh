@@ -96,6 +96,11 @@ fi
 # against recipes/ all reference the banned name by necessity.
 ALLOW_LIST=(
   'scripts/check-privacy.sh'
+  # v0.41.16.0: sibling rule-enforcement script for test/fixtures/
+  # conversation-formats/. Same meta-exception as check-privacy.sh
+  # itself — the script's BANNED_TOKENS array literally names the
+  # tokens it forbids.
+  'scripts/check-fixture-privacy.sh'
   'CLAUDE.md'
   'llms-full.txt'
   'docs/UPGRADING_DOWNSTREAM_AGENTS.md'
@@ -158,6 +163,11 @@ ALLOW_LIST=(
   'test/skillpack-harvest.test.ts'
   'test/e2e/skillpack-flow.test.ts'
   'skills/skillpack-harvest/SKILL.md'
+  # v0.40.1.0 Track D / T5: the qrels gate test contains a privacy-grep
+  # regression guard whose block list names the banned literal to assert
+  # it's NOT in the qrels fixture. Same meta-rule-enforcement exception
+  # as the other test entries above.
+  'test/eval-replay-gate.test.ts'
 )
 
 is_allowed() {

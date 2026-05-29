@@ -48,15 +48,47 @@ import {
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
 import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
+import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
+import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
+import { classifyCapabilities } from '../../ai/capabilities.ts';
+import { randomUUIDv7 } from 'bun';
 
 // ── Defaults ────────────────────────────────────────────────
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_MAX_TURNS = 20;
 const DEFAULT_RATE_KEY = 'anthropic:messages';
-const DEFAULT_MAX_CONCURRENT = Number(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT ?? '8');
+
+/**
+ * Resolve the rate-lease cap from the env var.
+ *
+ *   undefined       → 32 (default; was 8 pre-v0.41, starved 10-concurrency batches)
+ *   "unlimited"     → POSITIVE_INFINITY (Azure / Bedrock / self-hosted with no upstream cap)
+ *   "none"          → POSITIVE_INFINITY (alias)
+ *   positive number → that number
+ *   anything else   → throws (NaN / "0" / negative / typo — fail loud, NOT silent uncap)
+ *
+ * Codex pass-1 #7 caught the original `=0` and `NaN` silently uncapping;
+ * "0 means disabled" is the universal convention, so we use an explicit
+ * `unlimited` sentinel instead. Misconfig fails at startup with a hint.
+ */
+export function resolveLeaseCap(raw: string | undefined): number {
+  if (raw === undefined) return 32;
+  if (raw === 'unlimited' || raw === 'none') return Number.POSITIVE_INFINITY;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  throw new Error(
+    `GBRAIN_ANTHROPIC_MAX_INFLIGHT="${raw}" is invalid. ` +
+    `Use a positive integer, "unlimited" (or "none"), or omit for default 32.`,
+  );
+}
+const DEFAULT_MAX_CONCURRENT = resolveLeaseCap(process.env.GBRAIN_ANTHROPIC_MAX_INFLIGHT);
 const DEFAULT_LEASE_TTL_MS = 120_000;
-const DEFAULT_SYSTEM = 'You are a helpful assistant running as a gbrain subagent.';
+// v0.41 Approach C: DEFAULT_SUBAGENT_SYSTEM lives in ./system-prompt.ts
+// so the renderer and the handler share one source of truth. Kept as
+// a re-export alias here for back-compat with any external importer.
+const DEFAULT_SYSTEM = DEFAULT_SUBAGENT_SYSTEM;
 
 // ── Injectable surfaces (for tests) ─────────────────────────
 
@@ -146,18 +178,32 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       throw new Error('subagent job data.prompt is required (string)');
     }
 
-    // v0.31.12 subagent runtime enforcement (Layer 2 of 3 — see plan/Codex F1+F2+F13).
-    // - If `data.model` is set and non-Anthropic, reject (Layer 1 fallback if the
-    //   submit-time guard in MinionQueue.add didn't fire — defense in depth).
-    // - Otherwise route through resolveModel with tier=subagent. The resolver
-    //   warns + falls back to TIER_DEFAULTS.subagent if models.default or
-    //   models.tier.subagent resolved to non-Anthropic.
-    if (data.model && !isAnthropicProvider(data.model)) {
-      throw new Error(
-        `subagent job rejected: data.model "${data.model}" is non-Anthropic. ` +
-        `The subagent loop is Anthropic-only (Messages API + prompt caching). ` +
-        `Pass an Anthropic model id (e.g. claude-sonnet-4-6) or omit data.model to use the configured default.`,
-      );
+    // v0.38 (S1.5 + S1.7) — capability-based gate replaces the v0.31.12
+    // Anthropic-only check. The handler now routes between two paths:
+    //   1. Gateway path (gateway.toolLoop, provider-agnostic) — opt in via
+    //      `gbrain config set agent.use_gateway_loop true`
+    //   2. Legacy Anthropic-direct path (existing code below)
+    // Default is the legacy path so v0.38 patch releases ship the same
+    // behavior as v0.37. Users dogfood the gateway path by flipping the flag.
+    //
+    // Refuse-at-handler-entry when the model literally lacks tool calling
+    // OR is from an unknown provider. The queue.ts gate already catches this
+    // for queue-submitted jobs; the check here covers direct `gbrain agent run`
+    // invocations and any code path that bypasses the queue's capability check.
+    if (data.model) {
+      const verdict = classifyCapabilities(data.model);
+      if (verdict === 'unusable:no_tools') {
+        throw new Error(
+          `subagent job rejected: data.model "${data.model}" lacks native tool calling. ` +
+          `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run.`,
+        );
+      }
+      if (verdict === 'unknown') {
+        throw new Error(
+          `subagent job rejected: data.model "${data.model}" references an unknown provider. ` +
+          `Use format provider:model where provider matches a recipe in src/core/ai/recipes/.`,
+        );
+      }
     }
     const model = data.model
       ?? await resolveModel(engine, {
@@ -166,7 +212,27 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         fallback: TIER_DEFAULTS.subagent,
       });
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
-    const systemPrompt = data.system ?? DEFAULT_SYSTEM;
+    // v0.41 Approach C: systemPrompt is now built AFTER toolDefs (a few
+    // lines below) so the renderer can splice a tool-usage preamble
+    // listing each available tool's usage_hint. The renderer is
+    // deterministic so the Anthropic prompt-cache marker on the system
+    // block stays a hit across turns.
+
+    // v0.38 S1.10 — feature flag for the gateway-native tool loop. When ON,
+    // route ALL subagent jobs through gateway.toolLoop() (works for every
+    // provider in src/core/ai/recipes/). When OFF, route through the legacy
+    // Anthropic-direct path AND refuse non-Anthropic models loudly.
+    const useGatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
+    const useGatewayLoop = typeof useGatewayLoopRaw === 'string' &&
+      (useGatewayLoopRaw === 'true' || useGatewayLoopRaw === '1');
+    if (!useGatewayLoop && !isAnthropicProvider(model)) {
+      throw new Error(
+        `subagent job: resolved model "${model}" is non-Anthropic but agent.use_gateway_loop is not enabled. ` +
+        `Enable the gateway-native loop to run on this provider: ` +
+        `\`gbrain config set agent.use_gateway_loop true\`. ` +
+        `Or use an Anthropic model (e.g. anthropic:claude-sonnet-4-6).`,
+      );
+    }
 
     // Build the tool registry bound to THIS job as the owning subagent.
     // brain_id (per-call brain override; children inherit parent's unless
@@ -185,6 +251,13 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       ? filterAllowedTools(registry, data.allowed_tools)
       : registry;
 
+    // v0.41 Approach C: render the final system prompt now that toolDefs
+    // is known. Splices a deterministic tool-usage preamble listing each
+    // tool's usage_hint. Caller can opt out via data.system_no_tool_preamble.
+    const systemPrompt = buildSystemPrompt(toolDefs, data.system, {
+      no_tool_preamble: data.system_no_tool_preamble,
+    });
+
     logSubagentSubmission({
       caller: 'worker',
       remote: true,
@@ -193,6 +266,19 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       tools_count: toolDefs.length,
       allowed_tools: toolDefs.map(t => t.name),
     });
+
+    // v0.38 S1.5 — gateway path. Route here when the feature flag is on.
+    if (useGatewayLoop) {
+      return await runSubagentViaGateway({
+        engine,
+        ctx,
+        data,
+        model,
+        systemPrompt,
+        toolDefs,
+        maxTurns,
+      });
+    }
 
     // ── Load prior state (replay) ───────────────────────────
     const priorMessages = await loadPriorMessages(engine, ctx.id);
@@ -238,12 +324,33 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // AND no subsequent user message has been synthesized yet, we crashed
     // mid-tool-dispatch. Finish those tools now so the next LLM call sees
     // a consistent conversation.
+    //
+    // v0.37.7.0 #1151: if the last persisted message is an assistant
+    // with NO tool_use blocks, the prior run already reached terminal
+    // end_turn. Sonnet 4.6+ rejects assistant-prefill, so calling
+    // messages.create here would dead-letter the job despite the work
+    // being already committed. Return immediately with the persisted
+    // text as finalText. Mirrors the live-loop terminal logic below.
     const last = priorMessages[priorMessages.length - 1];
     if (last && last.role === 'assistant') {
       const pendingToolUses = last.content_blocks.filter(
         (b): b is { type: 'tool_use'; id: string; name: string; input: unknown } & Record<string, unknown> =>
           b.type === 'tool_use',
       );
+      if (pendingToolUses.length === 0) {
+        const finalText = last.content_blocks
+          .filter((b): b is { type: 'text'; text: string } & Record<string, unknown> =>
+            b.type === 'text' && typeof (b as { text?: unknown }).text === 'string',
+          )
+          .map(b => b.text)
+          .join('\n');
+        return {
+          result: finalText,
+          turns_count: assistantTurns,
+          stop_reason: 'end_turn',
+          tokens: tokenTotals,
+        };
+      }
       if (pendingToolUses.length > 0) {
         const synthesizedResults: ContentBlock[] = [];
         for (const use of pendingToolUses) {
@@ -327,6 +434,31 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       }
 
       // 1. Acquire rate lease for the outbound call.
+      //
+      // A1 ORDERING (v0.37.x budget cathedral):
+      //
+      //   +----------------------------------+
+      //   | gateway.chat() inside subagent   |
+      //   +-----+----------------------------+
+      //         |
+      //   1. getCurrentBudgetTracker()?.reserve(...)
+      //         |  (runs via the gateway's AsyncLocalStorage scope,
+      //         |   set by the upstream caller of the subagent.
+      //         |   On BudgetExhausted: throw BEFORE we touch the lease.)
+      //         v
+      //   2. acquireLease(...)  <-- the line below
+      //         |  (only attempted if the budget gate passed)
+      //         v
+      //   3. provider HTTP call
+      //         |
+      //         v
+      //   4. tracker.record(actual usage)
+      //
+      // The handler body intentionally does NOT thread `BudgetTracker`
+      // explicitly. Gateway-layer composition (TX5) handles it. The
+      // ordering is load-bearing: a budget throw must NOT consume a
+      // lease slot, because the lease is the rate-limit pacer for the
+      // entire fleet.
       const lease = await acquireLease(engine, rateLeaseKey, ctx.id, maxConcurrent, { ttlMs: leaseTtlMs });
       if (!lease.acquired) {
         // No slots — treat as a renewable error so the worker re-claims
@@ -344,7 +476,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // complexity; for v0.15 we lean on the 120s TTL + abort-on-signal.
       try {
         const params: Anthropic.MessageCreateParamsNonStreaming = {
-          model,
+          // v0.41 Bug 3: strip `provider:` prefix at the SDK call site only.
+          // `model` stays qualified everywhere else (persistence, recipe
+          // lookup at recipeIdFromModel(), capability gate).
+          model: stripProviderPrefix(model),
           max_tokens: 4096,
           system: [
             { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
@@ -576,6 +711,353 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   };
 }
 
+// ── v0.38 Gateway-native subagent path ──────────────────────
+
+interface GatewayRunArgs {
+  engine: BrainEngine;
+  ctx: MinionJobContext;
+  data: SubagentHandlerData;
+  model: string;
+  systemPrompt: string;
+  toolDefs: ToolDef[];
+  maxTurns: number;
+}
+
+/**
+ * v0.38 S1.5 — provider-agnostic subagent loop via `gateway.toolLoop()`.
+ *
+ * Adapts the existing brain-tool registry (anthropic-shaped ToolDef) to the
+ * gateway's provider-neutral `ChatToolDef` + `ToolHandler` shapes, wires
+ * persistence callbacks that use the v0.38 stable-ID columns (ordinal +
+ * gbrain_tool_use_id from migration v81), and invokes the gateway loop.
+ *
+ * Replay semantics: loads prior `subagent_messages` + `subagent_tool_executions`,
+ * builds a `ToolLoopReplayState` keyed by `gbrain_tool_use_id`. For pre-v81
+ * legacy rows (ordinal NULL), the D5 read-time shim synthesizes a stable key
+ * from `(job_id, message_idx, content_blocks index, tool_name)` so the
+ * reconciler sees both shapes uniformly.
+ */
+async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResult> {
+  const { engine, ctx, data, model, systemPrompt, toolDefs, maxTurns } = args;
+
+  // Map ToolDef → ChatToolDef (gateway shape). The gateway's chat() bridges
+  // this to provider-specific tool definitions via the Vercel AI SDK.
+  const chatTools: ChatToolDef[] = toolDefs.map(t => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.input_schema as Record<string, unknown>,
+  }));
+
+  // Map ToolDef → ToolHandler (gateway shape). Each handler is a thin wrapper
+  // that invokes the existing brain-tool dispatch.
+  const toolHandlers = new Map<string, ToolHandler>();
+  for (const t of toolDefs) {
+    toolHandlers.set(t.name, {
+      idempotent: t.idempotent === true,
+      async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
+        return await t.execute(input, {
+          engine,
+          jobId: ctx.id,
+          remote: true,
+          signal,
+        });
+      },
+    });
+  }
+
+  // Load prior state (replay support via D5 shim for legacy v1 rows).
+  const priorMessages = await loadPriorMessages(engine, ctx.id);
+  const priorTools = await loadPriorToolsV2(engine, ctx.id);
+  const priorToolsByStableKey = new Map<string, { status: 'pending' | 'complete' | 'failed'; output?: unknown; error?: string }>();
+  for (const row of priorTools) {
+    priorToolsByStableKey.set(row.stableKey, {
+      status: row.status,
+      output: row.output,
+      error: row.error ?? undefined,
+    });
+  }
+
+  // Convert prior Anthropic-shape messages → ChatMessage with ChatBlock content.
+  // v1 rows store Anthropic content blocks ({type:'tool_use'|'tool_result'|...});
+  // we adapt them to ChatBlock shape (type: 'tool-call' | 'tool-result' | 'text').
+  const priorChatMessages: ChatMessage[] = priorMessages.map(m => ({
+    role: m.role as 'user' | 'assistant',
+    content: adaptContentBlocksToChatBlocks(m.content_blocks),
+  }));
+
+  // Initial seed message if no prior state.
+  const initialMessages: ChatMessage[] = priorChatMessages.length === 0
+    ? [{ role: 'user', content: data.prompt }]
+    : [];
+
+  // Persist seed user message at idx 0 if fresh start.
+  let nextMessageIdx = priorChatMessages.length;
+  if (nextMessageIdx === 0) {
+    await persistMessage(engine, ctx.id, {
+      message_idx: 0,
+      role: 'user',
+      content_blocks: [{ type: 'text', text: data.prompt }] as ContentBlock[],
+      tokens_in: null,
+      tokens_out: null,
+      tokens_cache_read: null,
+      tokens_cache_create: null,
+      model: null,
+    });
+    nextMessageIdx = 1;
+  }
+
+  // Capability detection drives cache_control injection.
+  const verdict = classifyCapabilities(model);
+  const cacheSystem = verdict === 'ok' || verdict === 'degraded:no_parallel';
+
+  // Heartbeat bridge.
+  const heartbeat = (event: string, payload: Record<string, unknown>) => {
+    logSubagentHeartbeat({
+      job_id: ctx.id,
+      event: event as any,
+      ...payload,
+    } as any);
+  };
+
+  // Run the loop.
+  const result = await gatewayToolLoop({
+    model,
+    system: systemPrompt,
+    initialMessages,
+    tools: chatTools,
+    toolHandlers,
+    maxTurns,
+    abortSignal: ctx.signal,
+    cacheSystem,
+    // ALWAYS pass replayState (even on fresh runs) so the gateway loop's
+    // messageIdx counter starts at `nextMessageIdx` (1 on fresh, after the
+    // seed user write above). Without this, the loop defaults to messageIdx=0
+    // on fresh runs and the first onAssistantTurn callback tries to write
+    // role='assistant' at idx 0, colliding with the seed user message at idx 0
+    // (unique constraint on (job_id, message_idx)). Pinned by
+    // test/e2e/subagent-gateway-path.test.ts ("happy path 1-turn" + "write-
+    // ordering invariant").
+    replayState: {
+      priorMessages: priorChatMessages,
+      priorTools: priorToolsByStableKey,
+      nextTurnIdx: priorChatMessages.filter(m => m.role === 'assistant').length,
+      nextMessageIdx,
+    },
+    onAssistantTurn: async (turnIdx, messageIdx, blocks, usage, modelStr) => {
+      // Convert ChatBlock[] back to ContentBlock-shaped JSONB for persistence.
+      // Storing the gateway's provider-neutral shape is the v2 content_blocks
+      // contract; the D5 shim handles legacy reads from v1 rows.
+      await persistMessage(engine, ctx.id, {
+        message_idx: messageIdx,
+        role: 'assistant',
+        content_blocks: blocks as unknown as ContentBlock[],
+        tokens_in: usage.input_tokens,
+        tokens_out: usage.output_tokens,
+        tokens_cache_read: usage.cache_read_tokens,
+        tokens_cache_create: usage.cache_creation_tokens,
+        model: modelStr,
+      });
+      await ctx.updateTokens({
+        input: usage.input_tokens,
+        output: usage.output_tokens,
+        cache_read: usage.cache_read_tokens,
+      });
+      heartbeat('llm_call_completed', { turn_idx: turnIdx, tokens: usage });
+    },
+    onToolCallStart: async (turnIdx, messageIdx, ordinal, toolName, input, providerToolCallId) => {
+      // CRITICAL — read back the canonical gbrain_tool_use_id from RETURNING,
+      // NOT the locally-generated UUID. On crash-replay the (job_id,
+      // message_idx, ordinal) row already exists with the ORIGINAL UUID from
+      // the pre-crash run; the ON CONFLICT DO UPDATE keeps it. If we
+      // returned the freshly-generated `candidateId` instead, the gateway
+      // loop's `replayState.priorTools.get(stableKey)` lookup would miss
+      // because priorTools is keyed by the original UUID — the short-
+      // circuit silently breaks and the tool re-executes. Pinned by
+      // test/e2e/subagent-crash-replay-multi-provider.test.ts.
+      const candidateId = randomUUIDv7();
+      const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
+        `INSERT INTO subagent_tool_executions
+           (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
+         VALUES ($1, $2, $3, $4, $5::jsonb, 'pending', 2, $6, $7, $8)
+         ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
+           SET status = subagent_tool_executions.status
+         RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
+        [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, candidateId, recipeIdFromModel(model)],
+      );
+      const gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
+      heartbeat('tool_called', { turn_idx: turnIdx, tool_name: toolName });
+      return { gbrainToolUseId };
+    },
+    onToolCallComplete: async (gbrainToolUseId, output) => {
+      await engine.executeRaw(
+        `UPDATE subagent_tool_executions
+           SET status = 'complete', output = $1::jsonb, ended_at = now()
+         WHERE gbrain_tool_use_id::text = $2`,
+        [JSON.stringify(output ?? null), gbrainToolUseId],
+      );
+    },
+    onToolCallFailed: async (gbrainToolUseId, errorMsg) => {
+      await engine.executeRaw(
+        `UPDATE subagent_tool_executions
+           SET status = 'failed', error = $1, ended_at = now()
+         WHERE gbrain_tool_use_id::text = $2`,
+        [errorMsg, gbrainToolUseId],
+      );
+    },
+    onHeartbeat: heartbeat,
+  });
+
+  // Map gateway stop reason to SubagentStopReason. SubagentStopReason has
+  // {end_turn, max_turns, refusal, error}; aborted maps to error.
+  const stopReason: SubagentStopReason = result.stopReason === 'end'
+    ? 'end_turn'
+    : result.stopReason === 'max_turns'
+      ? 'max_turns'
+      : result.stopReason === 'refusal'
+        ? 'refusal'
+        : result.stopReason === 'content_filter'
+          ? 'refusal'
+          : result.stopReason === 'aborted'
+            ? 'error'
+            : 'end_turn';
+
+  return {
+    result: result.finalText,
+    turns_count: result.totalTurns,
+    stop_reason: stopReason,
+    tokens: {
+      in: result.totalUsage.input_tokens,
+      out: result.totalUsage.output_tokens,
+      cache_read: result.totalUsage.cache_read_tokens,
+      cache_create: result.totalUsage.cache_creation_tokens,
+    },
+  };
+}
+
+function recipeIdFromModel(modelString: string): string {
+  const idx = modelString.indexOf(':');
+  return idx > 0 ? modelString.slice(0, idx) : 'anthropic';
+}
+
+/**
+ * Strip the `provider:` prefix from a model string. Returns the bare
+ * model id the Anthropic Messages API expects. Idempotent on already-bare
+ * strings.
+ *
+ *   stripProviderPrefix('anthropic:claude-sonnet-4-6') === 'claude-sonnet-4-6'
+ *   stripProviderPrefix('claude-sonnet-4-6') === 'claude-sonnet-4-6'
+ *
+ * v0.41 Bug 3 — pre-fix, `gbrain agent run --model anthropic:claude-sonnet-4-6`
+ * sent the prefixed string straight into `client.messages.create()`, which
+ * Anthropic rejects with "model not found." Omitting `--model` worked because
+ * `resolveModel()` returns the bare id; explicit-model users hit the bug.
+ *
+ * Used ONLY at the SDK call site. The wider `model` variable stays
+ * qualified everywhere else (persistence, recipe lookup, capability gate)
+ * because those readers want the provider info.
+ */
+export function stripProviderPrefix(modelString: string): string {
+  const idx = modelString.indexOf(':');
+  return idx > 0 ? modelString.slice(idx + 1) : modelString;
+}
+
+/**
+ * D5 — adapt v1 Anthropic content blocks to v2 ChatBlock shape on read.
+ * Symmetric in the other direction is handled by persisting ChatBlock[] as-is
+ * (the JSONB column accepts both shapes; v2 writes carry the new vocabulary).
+ */
+function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
+  if (typeof blocks === 'string') return blocks;
+  if (!Array.isArray(blocks)) return [];
+  const out: ChatBlock[] = [];
+  for (const b of blocks) {
+    if (!b || typeof b !== 'object') continue;
+    const block = b as Record<string, unknown>;
+    const t = block.type;
+    if (t === 'text' && typeof block.text === 'string') {
+      out.push({ type: 'text', text: block.text });
+    } else if (t === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
+      // v1 Anthropic shape
+      out.push({
+        type: 'tool-call',
+        toolCallId: block.id,
+        toolName: block.name,
+        input: block.input ?? {},
+      });
+    } else if (t === 'tool-call' && typeof block.toolCallId === 'string' && typeof block.toolName === 'string') {
+      // v2 gateway shape (re-read of own writes)
+      out.push({
+        type: 'tool-call',
+        toolCallId: block.toolCallId,
+        toolName: block.toolName,
+        input: block.input ?? {},
+      });
+    } else if (t === 'tool_result' && typeof block.tool_use_id === 'string') {
+      // v1 Anthropic shape — tool result block (no toolName in v1; synthesize)
+      out.push({
+        type: 'tool-result',
+        toolCallId: block.tool_use_id,
+        toolName: '__legacy__',
+        output: block.content ?? null,
+        isError: block.is_error === true,
+      });
+    } else if (t === 'tool-result' && typeof block.toolCallId === 'string') {
+      out.push({
+        type: 'tool-result',
+        toolCallId: block.toolCallId,
+        toolName: typeof block.toolName === 'string' ? block.toolName : '__legacy__',
+        output: block.output ?? null,
+        isError: block.isError === true,
+      });
+    }
+  }
+  return out;
+}
+
+interface PriorToolV2Row {
+  stableKey: string;
+  status: 'pending' | 'complete' | 'failed';
+  output: unknown;
+  error: string | null;
+}
+
+/**
+ * Load prior tool executions keyed by a stable key.
+ *
+ *   - v2 rows: gbrain_tool_use_id is the stable key (set at first observation
+ *     by onToolCallStart).
+ *   - v1 legacy rows: D5 shim synthesizes a stable key from
+ *     (job_id, message_idx, ordinal-position-by-array-index, tool_name).
+ *
+ * Both forms resolve to the same Map<stableKey, outcome> the gateway loop
+ * consults during replay.
+ */
+async function loadPriorToolsV2(engine: BrainEngine, jobId: number): Promise<PriorToolV2Row[]> {
+  const rows = await engine.executeRaw<Record<string, unknown>>(
+    `SELECT message_idx, tool_use_id, tool_name, ordinal, gbrain_tool_use_id::text AS gbrain_tool_use_id,
+            status, output, error
+       FROM subagent_tool_executions
+      WHERE job_id = $1
+      ORDER BY message_idx, COALESCE(ordinal, 0), id`,
+    [jobId],
+  );
+  return rows.map(r => {
+    const gbrainId = r.gbrain_tool_use_id as string | null;
+    const stableKey = gbrainId
+      ? gbrainId
+      // D5 legacy shim: derive a stable key from (job, msg_idx, tool_name, tool_use_id).
+      // Pre-v81 rows don't have ordinal; the provider tool_use_id is stable
+      // within a single Anthropic turn so it's safe as a fallback hash input.
+      : `legacy:${jobId}:${r.message_idx}:${r.tool_use_id}:${r.tool_name}`;
+    return {
+      stableKey,
+      status: r.status as 'pending' | 'complete' | 'failed',
+      output: r.output,
+      error: (r.error as string | null) ?? null,
+    };
+  });
+}
+
 // ── Internal: persistence ───────────────────────────────────
 
 async function loadPriorMessages(engine: BrainEngine, jobId: number): Promise<PersistedMessage[]> {
@@ -784,4 +1266,9 @@ export const __testing = {
   persistToolExecFailed,
   asStringIfNotObject,
   DEFAULT_MODEL,
+  // v0.38 Slice 1 D5 — read-time shim for crash-replay across the v1→v2
+  // content_blocks shape boundary. Exposed for test/subagent-v1-v2-shim.test.ts
+  // which pins legacy-row adaptation correctness.
+  adaptContentBlocksToChatBlocks,
+  loadPriorToolsV2,
 };

@@ -22,6 +22,13 @@ export interface CliOptions {
    * current invocation.
    */
   timeoutMs: number | null;
+  /**
+   * v0.40.4 — `--explain` flag for `gbrain search/query`. Switches the
+   * default formatter to a per-stage attribution view that shows
+   * base_score + each boost stage's multiplier + rank delta from
+   * the reranker. Has no effect on other commands.
+   */
+  explain: boolean;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
@@ -29,6 +36,7 @@ export const DEFAULT_CLI_OPTIONS: CliOptions = {
   progressJson: false,
   progressInterval: 1000,
   timeoutMs: null,
+  explain: false,
 };
 
 /**
@@ -99,6 +107,11 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
         continue;
       }
       rest.push(a);
+      continue;
+    }
+    // v0.40.4 — --explain for `gbrain search/query` per-stage attribution.
+    if (a === '--explain') {
+      cliOpts.explain = true;
       continue;
     }
     rest.push(a);

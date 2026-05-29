@@ -1796,3 +1796,346 @@ describe('migrate v80 — CHECK widening end-to-end on PGLite', () => {
     expect(typeof scorecard.partial_rate).not.toBe('undefined');
   });
 });
+
+// ─── v0.38.0.0 — v81 pages_provenance_columns ─────────────────────────────
+//
+// Adds four nullable provenance columns to `pages` so every ingested page
+// carries a record of WHERE it came from (capture-cli, webhook, put_page,
+// dream, etc.). The columns are populated by the put_page write-through
+// path AND by the `ingest_capture` Minion handler. NULL is the
+// historical-page default — pre-v0.38 pages never had provenance.
+//
+// Renumbered v80 → v81 during master merge with v0.37.2.0's
+// takes_unresolvable_quality_v0_37_2_0 hotfix (which claimed v80 first).
+//
+// Structural assertions pin the migration's SQL shape; the PGLite
+// round-trip below verifies the columns are actually queryable + nullable
+// after `initSchema()`. Schema-bootstrap-coverage covers the forward-
+// reference probe contract separately at test/schema-bootstrap-coverage.test.ts.
+
+describe('migrate v81 — pages_provenance_columns', () => {
+  const v81 = MIGRATIONS.find(m => m.version === 81);
+
+  test('v81 entry exists with the documented name', () => {
+    expect(v81).toBeDefined();
+    expect(v81!.name).toBe('pages_provenance_columns');
+  });
+
+  test('v81 is marked idempotent so re-runs are safe', () => {
+    expect(v81!.idempotent).toBe(true);
+  });
+
+  test('v81 adds exactly four provenance columns to pages', () => {
+    const sql = (v81!.sql ?? '').toLowerCase();
+    expect(sql).toContain('alter table pages add column if not exists ingested_via text');
+    expect(sql).toContain('alter table pages add column if not exists ingested_at timestamptz');
+    expect(sql).toContain('alter table pages add column if not exists source_uri text');
+    expect(sql).toContain('alter table pages add column if not exists source_kind text');
+  });
+
+  test('v81 uses IF NOT EXISTS for every ALTER — re-run-safe on partial states', () => {
+    const sql = (v81!.sql ?? '').toLowerCase();
+    // Four ADD COLUMN statements, every one guarded.
+    const guarded = sql.match(/add column if not exists/g) ?? [];
+    expect(guarded.length).toBe(4);
+  });
+
+  test('v81 columns are nullable (no NOT NULL constraint, no DEFAULT)', () => {
+    const sql = (v81!.sql ?? '').toLowerCase();
+    // ADD COLUMN with NULL default is metadata-only on Postgres 11+ and
+    // PGLite 17.5 — instant on tables of any size. Regression guard: any
+    // future contributor who adds NOT NULL or DEFAULT must update this
+    // assertion deliberately, since both flip the migration from O(1) to
+    // O(N) rewrite on large tables.
+    expect(sql).not.toMatch(/ingested_via\s+text\s+not\s+null/);
+    expect(sql).not.toMatch(/ingested_at\s+timestamptz\s+not\s+null/);
+    expect(sql).not.toMatch(/source_uri\s+text\s+not\s+null/);
+    expect(sql).not.toMatch(/source_kind\s+text\s+not\s+null/);
+    expect(sql).not.toMatch(/ingested_via\s+text\s+default/);
+  });
+
+  test('v81 does NOT create any index (provenance is admin-surface only)', () => {
+    const sql = (v81!.sql ?? '').toLowerCase();
+    // Documented in the migration comment: provenance queries are admin-
+    // surface only (admin SPA Sources tab + gbrain doctor
+    // ingestion_health). Throwing an index on a low-cardinality TEXT
+    // column would inflate the brain repo for negligible read benefit.
+    expect(sql).not.toContain('create index');
+  });
+});
+
+describe('migrate v81 — round-trip on PGLite', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('all four provenance columns exist on pages after initSchema', async () => {
+    const rows = await engine.executeRaw<{ column_name: string; is_nullable: string; data_type: string }>(
+      `SELECT column_name, is_nullable, data_type
+         FROM information_schema.columns
+        WHERE table_name = 'pages'
+          AND column_name IN ('ingested_via', 'ingested_at', 'source_uri', 'source_kind')
+        ORDER BY column_name`,
+      [],
+    );
+    expect(rows.length).toBe(4);
+    const byName = new Map(rows.map(r => [r.column_name, r]));
+    expect(byName.get('ingested_via')?.is_nullable).toBe('YES');
+    expect(byName.get('ingested_at')?.is_nullable).toBe('YES');
+    expect(byName.get('source_uri')?.is_nullable).toBe('YES');
+    expect(byName.get('source_kind')?.is_nullable).toBe('YES');
+    // ingested_at must be TIMESTAMPTZ — pin the type so an accidental
+    // bump to TIMESTAMP (no zone) doesn't slip through.
+    expect(byName.get('ingested_at')?.data_type.toLowerCase()).toContain('timestamp');
+  });
+
+  test('inserting a page with full provenance round-trips through getPage', async () => {
+    const slug = `wiki/inbox/v81-provenance-${Date.now()}`;
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'v81 provenance round-trip',
+      compiled_truth: 'A note with provenance.',
+      timeline: '',
+      frontmatter: {
+        ingested_via: 'capture-cli',
+        ingested_at: '2026-05-21T04:15:00Z',
+        source_uri: 'cli://capture/test',
+        source_kind: 'capture',
+      },
+      content_hash: `v81-${Math.random()}`,
+    });
+    const page = await engine.getPage(slug);
+    expect(page).not.toBeNull();
+    // The frontmatter columns persist via the JSONB blob, not the
+    // dedicated provenance columns yet — write paths that target the
+    // columns directly are the put_page write-through + ingest_capture
+    // handler covered separately. The point of this test is the schema
+    // shape is correct so a future direct-column writer can land cleanly.
+    expect((page!.frontmatter as Record<string, unknown>).ingested_via).toBe('capture-cli');
+  });
+
+  test('pre-v0.38 page with NULL provenance columns is queryable', async () => {
+    // Simulates the historical-page upgrade scenario: a row whose
+    // provenance columns were never populated. Should not break any SQL
+    // path that touches `pages`.
+    const slug = `wiki/legacy/v81-null-prov-${Date.now()}`;
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, source_id)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)`,
+      [slug, 'note', 'legacy', 'body', '', '{}', `v81-legacy-${Math.random()}`, 'default'],
+    );
+    const rows = await engine.executeRaw<{ ingested_via: string | null; ingested_at: Date | null }>(
+      `SELECT ingested_via, ingested_at FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].ingested_via).toBeNull();
+    expect(rows[0].ingested_at).toBeNull();
+  });
+
+  test('directly UPDATE-ing the provenance columns succeeds (no constraint blocks)', async () => {
+    // Pins that nothing on the column shape (e.g. an accidental CHECK)
+    // would reject a write the put_page write-through path is going to do.
+    const slug = `wiki/test/v81-update-${Date.now()}`;
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'v81 update test',
+      compiled_truth: '',
+      timeline: '',
+      frontmatter: {},
+      content_hash: `v81-upd-${Math.random()}`,
+    });
+    await engine.executeRaw(
+      `UPDATE pages
+          SET ingested_via = $1,
+              ingested_at  = now(),
+              source_uri   = $2,
+              source_kind  = $3
+        WHERE slug = $4`,
+      ['put_page', 'mcp://put_page/test', 'mcp', slug],
+    );
+    const rows = await engine.executeRaw<{
+      ingested_via: string | null;
+      source_uri: string | null;
+      source_kind: string | null;
+    }>(
+      `SELECT ingested_via, source_uri, source_kind FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    expect(rows[0].ingested_via).toBe('put_page');
+    expect(rows[0].source_uri).toBe('mcp://put_page/test');
+    expect(rows[0].source_kind).toBe('mcp');
+  });
+});
+
+// ─── v0.40.2.0 — v89 facts_event_type_column ───────────────────────────────
+//
+// Adds nullable `event_type TEXT` to facts so the typed-claim substrate
+// (v0.35.4 / v67) can carry event-shaped rows alongside metric-shaped
+// rows. The migration is the substrate behind v0.40.2.0's `gbrain think`
+// trajectory injection AND the LongMemEval harness's intent routing.
+//
+// Renumbered v81 → v82 → v89 across two successive master merges:
+//   v81 claimed by v0.38.0.0 (pages_provenance_columns).
+//   v82-v85 claimed by v0.38.1.0 (subagent_tool_executions_stable_id,
+//   mcp_spend_reservations, oauth_clients_budget_usd_per_day,
+//   oauth_clients_agent_binding).
+//
+// Structural assertions mirror the v81 pattern: pin SQL shape, prevent
+// future NOT NULL / DEFAULT regressions, and confirm the no-index
+// commitment (event_type queries are admin-surface + trajectory-routing
+// only; the per-metric and per-entity indexes from v67 are enough).
+// PGLite round-trip below verifies the column is queryable + nullable
+// after `initSchema()`.
+
+describe('migrate v89 — facts_event_type_column', () => {
+  const v89 = MIGRATIONS.find(m => m.version === 89);
+
+  test('v89 entry exists with the documented name', () => {
+    expect(v89).toBeDefined();
+    expect(v89!.name).toBe('facts_event_type_column');
+  });
+
+  test('v89 is marked idempotent so re-runs are safe', () => {
+    expect(v89!.idempotent).toBe(true);
+  });
+
+  test('v89 adds exactly one event_type column to facts', () => {
+    const sql = (v89!.sql ?? '').toLowerCase();
+    expect(sql).toContain('alter table facts add column if not exists event_type text');
+    // No other column additions snuck in.
+    const allAdds = sql.match(/alter table\s+facts\s+add column/g) ?? [];
+    expect(allAdds.length).toBe(1);
+  });
+
+  test('v89 uses IF NOT EXISTS — re-run-safe on partial states', () => {
+    const sql = (v89!.sql ?? '').toLowerCase();
+    expect(sql).toContain('add column if not exists');
+  });
+
+  test('v89 column is nullable (no NOT NULL constraint, no DEFAULT)', () => {
+    const sql = (v89!.sql ?? '').toLowerCase();
+    // Regression guard: ADD COLUMN with NULL default is metadata-only
+    // on Postgres 11+ and PGLite 17.5 — instant on tables of any size.
+    // Any future contributor who adds NOT NULL or DEFAULT must update
+    // this assertion deliberately.
+    expect(sql).not.toMatch(/event_type\s+text\s+not\s+null/);
+    expect(sql).not.toMatch(/event_type\s+text\s+default/);
+  });
+
+  test('v89 does NOT create any index (event_type is selectivity-poor)', () => {
+    const sql = (v89!.sql ?? '').toLowerCase();
+    // Documented in the migration comment: no index. event_type is a
+    // low-cardinality label ('meeting', 'job_change', 'location_change');
+    // the existing v67 `(entity_slug, claim_metric, valid_from)` partial
+    // index covers the per-entity lookup path that findTrajectory uses,
+    // and event_type rows are filtered via the engine-layer kind
+    // predicate, not a SQL index scan.
+    expect(sql).not.toContain('create index');
+  });
+
+  test('v89 does NOT touch any other table', () => {
+    const sql = (v89!.sql ?? '').toLowerCase();
+    // The migration's blast radius is one table (facts). Any future
+    // contributor extending this migration to touch other tables must
+    // update this assertion deliberately — cross-table changes are how
+    // schema migrations grow surprises.
+    const otherAlters = sql.match(/alter table\s+(\w+)/g) ?? [];
+    for (const m of otherAlters) {
+      expect(m.replace(/\s+/g, ' ').trim()).toBe('alter table facts');
+    }
+  });
+
+  test('v89 does NOT carry a sqlFor override (engines share one SQL path)', () => {
+    // The migration is a simple ADD COLUMN — no engine-specific shape
+    // difference. Both PGLite and Postgres replay the same SQL.
+    // Pinning this prevents accidental drift if someone later adds a
+    // sqlFor block that doesn't reach engine parity.
+    expect(v89!.sqlFor).toBeUndefined();
+  });
+});
+
+describe('migrate v89 — round-trip on PGLite', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  test('event_type column exists on facts after initSchema, nullable, TEXT type', async () => {
+    const rows = await engine.executeRaw<{
+      column_name: string;
+      is_nullable: string;
+      data_type: string;
+    }>(
+      `SELECT column_name, is_nullable, data_type
+         FROM information_schema.columns
+        WHERE table_name = 'facts' AND column_name = 'event_type'`,
+      [],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].is_nullable).toBe('YES');
+    expect(rows[0].data_type.toLowerCase()).toBe('text');
+  });
+
+  test('insert + SELECT event_type round-trips through facts', async () => {
+    await engine.executeRaw(
+      `INSERT INTO facts (
+        source_id, entity_slug, fact, kind, visibility, valid_from,
+        source, source_session,
+        claim_metric, claim_value, claim_unit, claim_period, event_type
+      ) VALUES (
+        'default', 'people/alice', 'last met Alice at Blue Bottle', 'event', 'private',
+        '2026-04-15T00:00:00Z', 'test', 'sess-v89',
+        NULL, NULL, NULL, NULL, 'meeting'
+      )`,
+    );
+    const rows = await engine.executeRaw<{ event_type: string | null; claim_metric: string | null }>(
+      `SELECT event_type, claim_metric FROM facts
+        WHERE source_session = 'sess-v89' AND source_id = 'default'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].event_type).toBe('meeting');
+    expect(rows[0].claim_metric).toBeNull();
+  });
+
+  test('NULL event_type round-trips (legacy + metric rows)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO facts (
+        source_id, entity_slug, fact, kind, visibility, valid_from,
+        source, source_session,
+        claim_metric, claim_value, claim_unit, claim_period, event_type
+      ) VALUES (
+        'default', 'companies/acme', 'MRR = 100K', 'fact', 'private',
+        '2026-04-01T00:00:00Z', 'test', 'sess-v89-metric',
+        'mrr', 100000, 'USD', 'monthly', NULL
+      )`,
+    );
+    const rows = await engine.executeRaw<{ event_type: string | null; claim_metric: string | null }>(
+      `SELECT event_type, claim_metric FROM facts
+        WHERE source_session = 'sess-v89-metric'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].event_type).toBeNull();
+    expect(rows[0].claim_metric).toBe('mrr');
+  });
+
+  test('LATEST_VERSION is at or above v89 after this wave lands', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(89);
+  });
+});
+

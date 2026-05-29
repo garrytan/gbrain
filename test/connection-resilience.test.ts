@@ -284,18 +284,28 @@ describe('Eng-review D3 — executeRaw has no per-call retry wrapper', () => {
     const src = readFileSync(resolve('src/core/postgres-engine.ts'), 'utf-8');
 
     // Find the executeRaw method in the class (not the helper inside withReservedConnection)
-    // Pattern: must be a method on the class taking (sql, params)
-    const fnMatch = src.match(/async executeRaw<T = Record<string, unknown>>\(sql: string, params\?: unknown\[\]\): Promise<T\[\]> \{([\s\S]*?)\n  \}/);
+    // v0.41.18.0 (T5/A20): signature extended with optional `opts?: { signal?: AbortSignal }`
+    // 3rd arg + multi-line shape for real query cancellation. Regex updated to
+    // tolerate both the legacy single-line and the new multi-line signatures.
+    const fnMatch = src.match(/async executeRaw<T = Record<string, unknown>>\(\s*sql: string,\s*params\?: unknown\[\][^)]*\):\s*Promise<T\[\]>\s*\{([\s\S]*?)\n  \}/);
     expect(fnMatch).not.toBeNull();
     const body = fnMatch![1];
 
-    // Must not have any try/catch
-    expect(body).not.toContain('try {');
-    expect(body).not.toContain('catch');
-    // Must not call reconnect() from this method
+    // Must not call reconnect() from this method (D3 intent: no per-call
+    // retry — recovery is supervisor-driven via reconnect()).
     expect(body).not.toContain('this.reconnect()');
-    // Must call conn.unsafe directly
+    // Must call conn.unsafe directly, exactly ONCE (no retry re-issue).
     expect(body).toContain('conn.unsafe(');
+    const unsafeCallCount = (body.match(/conn\.unsafe\(/g) || []).length;
+    expect(unsafeCallCount).toBe(1);
+    // The try/catch present here is ONLY for AbortSignal cancellation
+    // swallow (v0.41.18.0 A20), NOT for connection retry. Confirm by checking
+    // the swallowed throws are .cancel() not network re-issue.
+    if (body.includes('catch')) {
+      // If catch exists, it must be the cancel-swallow shape, NOT a retry shape.
+      expect(body).not.toMatch(/catch[^{]*\{[\s\S]*?conn\.unsafe/);
+      expect(body).not.toMatch(/catch[^{]*\{[\s\S]*?setTimeout/);
+    }
   });
 
   it('PostgresEngine.reconnect() still exists for supervisor-driven recovery', () => {

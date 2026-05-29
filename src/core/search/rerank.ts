@@ -117,6 +117,10 @@ export async function applyReranker(
       // (telemetry, debug) can see the new ordering signal. Doesn't
       // replace `score` — that's RRF and other consumers may depend on it.
       (item as any).rerank_score = r.relevanceScore;
+      // v0.40.4 attribution stamp (D12=A) — rank delta. Positive means
+      // rank improved (moved closer to top). new_index is the next
+      // push position in reorderedHead; original index was r.index.
+      item.reranker_delta = r.index - reorderedHead.length;
       reorderedHead.push(item);
     }
   }

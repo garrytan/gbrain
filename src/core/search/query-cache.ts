@@ -32,6 +32,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
+import { buildPageGenerationsSnapshot, CACHE_GATE_WHERE_CLAUSE } from './query-cache-gate.ts';
 
 /** Default cosine similarity threshold for cache hits. */
 export const DEFAULT_SIMILARITY_THRESHOLD = 0.92;
@@ -144,6 +145,9 @@ export class SemanticQueryCache {
       // A tokenmax write (expansion=on, limit=50) and a conservative read
       // (no expansion, limit=10) have distinct knobs hashes and miss each
       // other. Rows with NULL knobs_hash (pre-v0.32.3) are excluded.
+      // v0.40.3.0: query_cache row aliased `qc` so the two-layer gate
+      // fragment in CACHE_GATE_WHERE_CLAUSE can reference qc.max_generation_at_store
+      // + qc.page_generations against the live pages table.
       const rows = await this.engine.executeRaw<{
         id: string;
         results: unknown;
@@ -151,16 +155,17 @@ export class SemanticQueryCache {
         distance: number;
         age_seconds: number;
       }>(
-        `SELECT id, results, meta,
-                embedding <=> $1::vector AS distance,
-                EXTRACT(EPOCH FROM (now() - created_at))::int AS age_seconds
-         FROM query_cache
-         WHERE source_id = $2
-           AND knobs_hash = $4
-           AND embedding IS NOT NULL
-           AND embedding <=> $1::vector < $3
-           AND created_at + (ttl_seconds || ' seconds')::interval > now()
-         ORDER BY embedding <=> $1::vector
+        `SELECT qc.id, qc.results, qc.meta,
+                qc.embedding <=> $1::vector AS distance,
+                EXTRACT(EPOCH FROM (now() - qc.created_at))::int AS age_seconds
+         FROM query_cache qc
+         WHERE qc.source_id = $2
+           AND qc.knobs_hash = $4
+           AND qc.embedding IS NOT NULL
+           AND qc.embedding <=> $1::vector < $3
+           AND qc.created_at + (qc.ttl_seconds || ' seconds')::interval > now()
+           AND ${CACHE_GATE_WHERE_CLAUSE}
+         ORDER BY qc.embedding <=> $1::vector
          LIMIT 1`,
         [vec, sourceId, distanceThreshold, knobsHash],
       );
@@ -209,14 +214,29 @@ export class SemanticQueryCache {
     const id = cacheRowId(queryText, sourceId, knobsHash);
     const vec = embeddingToPgVector(queryEmbedding);
 
+    // v0.40.3.0: capture the per-page snapshot + corpus-state bookmark
+    // for the two-layer cache gate. Pure helper from query-cache-gate.ts
+    // handles the pre-v91 brain fallback (empty snapshot, zero bookmark
+    // \u2014 legacy compat preserved).
+    const pageIds = results
+      .map((r) => r.page_id)
+      .filter((id): id is number => typeof id === 'number' && Number.isFinite(id));
+    const snapshot = await buildPageGenerationsSnapshot(this.engine, pageIds);
+
     try {
       // v0.32.3 [CDX-4]: knobs_hash threaded into the row so concurrent
       // tokenmax + conservative writes for the same query+source live as
       // distinct rows. The PK is `id` (which already encodes the hash),
       // so ON CONFLICT (id) DO UPDATE just refreshes the same-mode row.
+      //
+      // v0.40.3.0: page_generations JSONB + max_generation_at_store BIGINT
+      // stamped per D11 (cache invalidation gate). page_generations is
+      // sent as a JSON.stringify and cast to JSONB inside the SQL; pre-v91
+      // brains store an empty `{}` + zero bookmark (legacy compat per
+      // the v0.40.3.0 IRON-RULE).
       await this.engine.executeRaw(
-        `INSERT INTO query_cache (id, query_text, source_id, knobs_hash, embedding, results, meta, ttl_seconds, created_at)
-         VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7::jsonb, $8, now())
+        `INSERT INTO query_cache (id, query_text, source_id, knobs_hash, embedding, results, meta, ttl_seconds, page_generations, max_generation_at_store, created_at)
+         VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7::jsonb, $8, $9::jsonb, $10, now())
          ON CONFLICT (id) DO UPDATE SET
            query_text = EXCLUDED.query_text,
            knobs_hash = EXCLUDED.knobs_hash,
@@ -224,6 +244,8 @@ export class SemanticQueryCache {
            results    = EXCLUDED.results,
            meta       = EXCLUDED.meta,
            ttl_seconds = EXCLUDED.ttl_seconds,
+           page_generations = EXCLUDED.page_generations,
+           max_generation_at_store = EXCLUDED.max_generation_at_store,
            created_at  = now()`,
         [
           id,
@@ -234,6 +256,8 @@ export class SemanticQueryCache {
           JSON.stringify(results),
           JSON.stringify(meta),
           ttl,
+          JSON.stringify(snapshot.page_generations),
+          snapshot.max_generation_at_store,
         ],
       );
     } catch {

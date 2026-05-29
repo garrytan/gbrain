@@ -142,16 +142,22 @@ export function deriveDirectUrl(url: string): string | null {
     const decodedUser = decodeURIComponent(user);
     const refMatch = decodedUser.match(/^postgres\.([a-z0-9]+)$/i);
     let directHost = hostname;
+    let directUser = parsed.username;
     if (refMatch && refMatch[1] && isPoolerHost) {
       directHost = `db.${refMatch[1]}.supabase.co`;
+      // Supabase direct connections use bare `postgres`; the `postgres.<ref>`
+      // form is pooler-only (Supavisor uses the suffix for tenant routing).
+      // Without this strip, direct auth fails with `password authentication
+      // failed for user "postgres.<ref>"` even though the password is correct.
+      directUser = 'postgres';
     }
     // Compose direct URL by swapping host + port. Preserve auth, db, query.
     parsed.hostname = directHost;
     parsed.port = '5432';
     // Reconstruct with the original scheme.
     const scheme = url.match(/^postgres(?:ql)?:\/\//i)?.[0] ?? 'postgres://';
-    const auth = parsed.username
-      ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@`
+    const auth = directUser
+      ? `${directUser}${parsed.password ? `:${parsed.password}` : ''}@`
       : '';
     const search = parsed.search ?? '';
     const path = parsed.pathname ?? '';

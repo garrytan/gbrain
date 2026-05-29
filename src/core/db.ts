@@ -188,6 +188,11 @@ export async function connect(config: EngineConfig): Promise<void> {
         // Register pgvector type
         bigint: postgres.BigInt,
       },
+      // Silence postgres NOTICE-level messages by default ("relation already
+      // exists, skipping" floods stdout under idempotent CREATE statements
+      // during migrations + initSchema, and breaks stdout-parsing callers like
+      // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
+      onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
     };
     if (Object.keys(timeouts).length > 0) {
       opts.connection = timeouts;
@@ -220,6 +225,17 @@ export async function connect(config: EngineConfig): Promise<void> {
 }
 
 export async function disconnect(): Promise<void> {
+  // v0.41.25.0 (#1570) — instrument every disconnect call site so v0.41.26
+  // can identify the caller that's nulling the module singleton mid-cycle.
+  // Best-effort: audit failure must never block the actual disconnect.
+  // The audit module is lazy-imported to keep db.ts cold-path-free for
+  // tools that import db without ever calling disconnect.
+  try {
+    const { logDbDisconnect } = await import('./audit/db-disconnect-audit.ts');
+    // db.ts is always the module-singleton path by construction; no
+    // instance-pool callers go through here.
+    logDbDisconnect('postgres', 'module');
+  } catch { /* best-effort; never block disconnect on audit failure */ }
   if (sql) {
     await sql.end();
     sql = null;

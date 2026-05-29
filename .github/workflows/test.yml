@@ -10,7 +10,62 @@ permissions:
   contents: read
 
 jobs:
+  # ──────────────────────────────────────────────────────────────────────
+  # cache-check: runs first, computes the content hash of every tracked
+  # file EXCEPT the deny-list (CHANGELOG.md, README.md, docs/**/*.md, etc.
+  # — see scripts/ci-cache-hash.sh for the full list). Looks up
+  # `ci-pass-<hash>` in actions/cache; if hit, the test matrix + verify
+  # + serial jobs all skip and test-status reports green immediately.
+  # If miss, the full suite runs and cache-write seals it on success.
+  #
+  # Hit rate covers re-pushes (same SHA twice), branch rebases that
+  # don't touch tracked code, and any branch update that touches only
+  # the deny-listed doc files.
+  # ──────────────────────────────────────────────────────────────────────
+  cache-check:
+    runs-on: ubuntu-latest
+    outputs:
+      hit: ${{ steps.lookup.outputs.cache-hit }}
+      hash: ${{ steps.compute.outputs.hash }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Compute content hash
+        id: compute
+        run: |
+          # --verbose writes the "X/Y files in hash" diagnostic to stderr;
+          # stdout carries the 16-char hash. Capture both.
+          HASH=$(bash scripts/ci-cache-hash.sh --verbose 2>/tmp/cache-diag)
+          cat /tmp/cache-diag
+          echo "Computed cache hash: $HASH"
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+      - name: Lookup actions/cache for ci-pass-<hash>
+        id: lookup
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          key: ci-pass-${{ steps.compute.outputs.hash }}
+          path: .ci-cache-marker
+          # `lookup-only: true` means we only probe whether the cache
+          # entry exists — we don't download it (the marker contents
+          # don't matter, only the key match does). `cache-hit` returns
+          # true only on EXACT key match (per actions/cache docs); a
+          # restore-keys prefix fallback would set cache-hit=false, so
+          # it's deliberately omitted here. Cross-branch scoping works
+          # naturally: PR branches can read default-branch (master)
+          # cache entries via exact key match when the content hash
+          # matches, which happens whenever the tree is doc-only
+          # different from a green master run.
+          lookup-only: true
+      - name: Cache status
+        run: |
+          if [ "${{ steps.lookup.outputs.cache-hit }}" = "true" ]; then
+            echo "✓ cache HIT for hash ${{ steps.compute.outputs.hash }} — test jobs will skip"
+          else
+            echo "✗ cache MISS for hash ${{ steps.compute.outputs.hash }} — full suite will run"
+          fi
+
   gitleaks:
+    needs: cache-check
+    if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -20,29 +75,189 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  test:
-    # ubuntu-latest is free 2-core/7GB. Larger runners (16-cores, etc.) require
-    # a provisioned runner pool in repo settings. Falling back to default keeps
-    # the matrix shard speedup (~5-6x via parallelism) at zero cost.
+  verify:
+    # Pre-test gates: privacy/jsonb/source-id/etc + typecheck + admin-build.
+    # Lives in its own runner so the matrix shards aren't carrying ~2-3min
+    # of verify work in addition to their test files (the old shape stuffed
+    # this into `test (1)` via `if: matrix.shard == 1`, which made shard 1
+    # the slowest matrix worker). scripts/run-verify-parallel.sh fans out
+    # the 20 checks via & + wait (~5s vs ~15-25s sequential).
+    needs: cache-check
+    if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: latest
+          bun-version: 1.3.13
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install
-      - name: Pre-test gates (shard 1 only — they're not test files)
-        if: matrix.shard == 1
-        run: bun run verify
-      - name: Run test shard ${{ matrix.shard }}/4
-        run: scripts/test-shard.sh ${{ matrix.shard }} 4
-      - name: Run *.serial.test.ts at --max-concurrency=1 (shard 1 only)
-        # Serial files share file-wide state (top-level mock.module, module
-        # singletons) that leaks across files in the same bun-test process.
-        # test-shard.sh excludes them; this step runs them at concurrency=1.
-        if: matrix.shard == 1
-        run: bun run test:serial
+      - run: bun run verify
+
+  serial-tests:
+    # *.serial.test.ts at --max-concurrency=1. Lives in its own runner so
+    # the matrix shards aren't carrying the serial-pass tail (the old shape
+    # stuffed this into `test (1)` after the matrix work, which compounded
+    # shard 1's overload).
+    needs: cache-check
+    if: needs.cache-check.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - run: bun install
+      - run: bun run test:serial
+
+  slow-eval-longmemeval:
+    # Dedicated runner for the LongMemEval end-to-end test file. The file
+    # was originally 359s. TODO #1 (engine-sharing in runEvalLongMemEval
+    # via RunOpts.engine) cut it to ~200s by amortizing PGLite cold-create
+    # across all 13 runEvalLongMemEval calls in one beforeAll-shared brain.
+    # Pulled out of the matrix (see scripts/test-shard.sh) so a single 200s
+    # atom doesn't dominate a shard's wallclock. Companion file
+    # test/eval-longmemeval.slow.test.ts (the pure-bucket half) stays in
+    # the matrix because it's light (~42s).
+    needs: cache-check
+    if: needs.cache-check.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - run: bun install
+      - run: bun test test/eval-longmemeval-e2e.slow.test.ts --timeout=60000
+
+  slow-entity-resolve-perf:
+    # Dedicated runner for the entity-resolve perf test (~159s, single perf
+    # describe with one test that builds 5000+ pages and asserts the NEW
+    # tryPrefixExpansion shape is 5x faster than the OLD shape — not
+    # subdivisible without weakening the perf guarantee). Pulled out of the
+    # matrix (see scripts/test-shard.sh) so a single 159s atom doesn't
+    # dominate a shard's wallclock. Runs in parallel with the matrix.
+    needs: cache-check
+    if: needs.cache-check.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - run: bun install
+      - run: bun test test/entity-resolve-perf.slow.test.ts --timeout=300000
+
+  test:
+    # Pure matrix shard — no verify, no serial. Each shard runs its slice
+    # of the unit test set under one `bun test` invocation.
+    #
+    # 10 shards (was 6) drops per-shard total from 532s → 287s. With the two
+    # dedicated jobs (slow-eval-longmemeval, slow-entity-resolve-perf) also
+    # pulled out, the matrix is bounded by ~287s ≈ 4.8 min. Total CI ≈ max
+    # of matrix + slow-eval (~3.3 min after engine-sharing in TODO #1) +
+    # slow-entity-resolve-perf (~2.6 min) ≈ 4.8 min.
+    #
+    # Concurrency budget: 10 shards + verify + serial + slow-eval +
+    # slow-entity-resolve-perf + gitleaks + cache-check + cache-write +
+    # test-status = ~18 jobs × 2 concurrent PRs = 36. GitHub free-tier
+    # caps at ~20 concurrent jobs, so multi-PR days will see some queue
+    # pressure. Single-PR runs are unaffected.
+    #
+    # Partition policy is weight-aware LPT bin-packing via scripts/sharding.ts
+    # (replaces FNV-1a path hash). Weights live in scripts/test-weights.json,
+    # mined from real CI logs via scripts/mine-shard-weights.ts. Missing
+    # weights fall back to corpus median — new test files work immediately.
+    needs: cache-check
+    if: needs.cache-check.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - run: bun install
+      - name: Run test shard ${{ matrix.shard }}/10
+        run: scripts/test-shard.sh ${{ matrix.shard }} 10
+
+  # ──────────────────────────────────────────────────────────────────────
+  # cache-write: ONLY runs when every gated job succeeded. Writes the
+  # cache entry under `ci-pass-<hash>` so future runs at the same hash
+  # hit cache. Codex's load-bearing correctness point: writing the
+  # cache before the matrix completes would permanently bless bad states
+  # (a future run at the same hash would skip tests because of a cache
+  # entry written when tests hadn't actually passed).
+  # ──────────────────────────────────────────────────────────────────────
+  cache-write:
+    needs: [cache-check, gitleaks, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, test]
+    if: success() && needs.cache-check.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create cache marker
+        run: |
+          mkdir -p .ci-cache-marker
+          echo "${{ needs.cache-check.outputs.hash }}" > .ci-cache-marker/hash
+          echo "$GITHUB_SHA" > .ci-cache-marker/sha
+          echo "$GITHUB_REF" > .ci-cache-marker/ref
+      - uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          key: ci-pass-${{ needs.cache-check.outputs.hash }}
+          path: .ci-cache-marker
+
+  # ──────────────────────────────────────────────────────────────────────
+  # test-status: the single user-visible "did CI pass?" check.
+  # Runs always (if: always()), succeeds when EITHER cache-check.hit==true
+  # OR all gated jobs (gitleaks, verify, serial-tests, test) succeeded.
+  # Branch protection (when configured) gates on this single job name.
+  # ──────────────────────────────────────────────────────────────────────
+  test-status:
+    needs: [cache-check, gitleaks, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate result
+        run: |
+          HIT="${{ needs.cache-check.outputs.hit }}"
+          GITLEAKS="${{ needs.gitleaks.result }}"
+          VERIFY="${{ needs.verify.result }}"
+          SERIAL="${{ needs.serial-tests.result }}"
+          SLOW_EVAL="${{ needs.slow-eval-longmemeval.result }}"
+          SLOW_PERF="${{ needs.slow-entity-resolve-perf.result }}"
+          TEST="${{ needs.test.result }}"
+          echo "cache-check.hit=$HIT"
+          echo "gitleaks=$GITLEAKS  verify=$VERIFY  serial-tests=$SERIAL  slow-eval-longmemeval=$SLOW_EVAL  slow-entity-resolve-perf=$SLOW_PERF  test=$TEST"
+          if [ "$HIT" = "true" ]; then
+            echo "✓ cache HIT for hash ${{ needs.cache-check.outputs.hash }} — CI green"
+            exit 0
+          fi
+          # Cache miss: every gated job must have succeeded.
+          for r in "$GITLEAKS" "$VERIFY" "$SERIAL" "$SLOW_EVAL" "$SLOW_PERF" "$TEST"; do
+            if [ "$r" != "success" ]; then
+              echo "✗ gated job did not succeed (got $r) — CI fail"
+              exit 1
+            fi
+          done
+          echo "✓ all gated jobs succeeded — CI green"

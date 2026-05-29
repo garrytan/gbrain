@@ -4,6 +4,11 @@ import type { ChunkInput } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
+import { loadConfig } from '../core/config.ts';
+import { slog, serr } from '../core/console-prefix.ts';
+import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
+import { runSlidingPool } from '../core/worker-pool.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -33,6 +38,29 @@ export interface EmbedOpts {
    * in the DB where `gbrain jobs get` can read it.
    */
   onProgress?: (done: number, total: number, embedded: number) => void;
+  /**
+   * v0.41.18.0 (A13): override the hardcoded PAGE_SIZE=2000 page-batch.
+   * Smaller batches give finer progress granularity; larger batches
+   * reduce per-batch coordination cost. Caps internally to 10K to
+   * keep memory bounded.
+   */
+  batchSize?: number;
+  /**
+   * v0.41.18.0 (A13): when 'recent', walks the stale-chunk pool in
+   * page.updated_at DESC order (recent-modified pages first) instead
+   * of the legacy stable (page_id, chunk_index) order. Threads through
+   * to listStaleChunks orderBy='updated_desc'. Backed by the
+   * content_chunks_stale_idx partial + idx_pages_updated_at_desc indexes
+   * (v100).
+   */
+  priority?: 'recent';
+  /**
+   * v0.41.18.0 (A13): catch-up mode removes the wall-clock cap and loops
+   * until countStaleChunks() returns 0. Used by `gbrain embed --stale
+   * --catch-up` and by the embed-catch-up Minion handler that the onboard
+   * remediation submits on big stale backlogs.
+   */
+  catchUp?: boolean;
 }
 
 /**
@@ -66,7 +94,88 @@ export interface EmbedResult {
  * Returns EmbedResult with accurate counts so callers (runCycle, sync
  * auto-embed step) can report embeddings in their own structured output.
  */
+/**
+ * Tagged error class thrown when the schema column dim disagrees with
+ * the gateway's resolved dim. Caught by `runEmbed` (the CLI wrapper) to
+ * emit a paste-ready recipe instead of raw Postgres errors page by page.
+ *
+ * v0.37 fix wave (Lane D.2 + CDX2-9). Pre-fix the worker pool ran the
+ * whole queue past the first dim mismatch because per-page errors were
+ * silently logged + skipped. Now `runEmbedCore` pre-flights at entry +
+ * the worker pool catches per-page mismatches and surfaces them.
+ */
+export class EmbeddingDimMismatchError extends Error {
+  readonly kind = 'embedding_dim_mismatch' as const;
+  constructor(public readonly recipeMessage: string) {
+    super(recipeMessage);
+    this.name = 'EmbeddingDimMismatchError';
+  }
+}
+
+/**
+ * Pre-flight check: read the actual schema column dim and compare to the
+ * gateway's resolved dim. Throws `EmbeddingDimMismatchError` on mismatch
+ * so the entry-point catch surfaces the recipe. Catches the headline
+ * fresh-install bug class at the very first invocation instead of letting
+ * the worker pool hammer N pages with raw 22000 errors.
+ */
+async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promise<void> {
+  if (dryRun) return; // dry-run never embeds, no risk
+  const { readContentChunksEmbeddingDim, embeddingMismatchMessage } = await import('../core/embedding-dim-check.ts');
+  const { getEmbeddingDimensions, getEmbeddingModel } = await import('../core/ai/gateway.ts');
+  let existing;
+  try {
+    existing = await readContentChunksEmbeddingDim(engine);
+  } catch {
+    return; // probe failure shouldn't block embed; the worker pool will surface real errors
+  }
+  if (!existing.exists || existing.dims === null) return;
+  let resolvedDims: number;
+  let resolvedModel: string;
+  try {
+    resolvedDims = getEmbeddingDimensions();
+    resolvedModel = getEmbeddingModel();
+  } catch {
+    return; // gateway unconfigured — worker pool will error informatively
+  }
+  if (existing.dims === resolvedDims) return;
+  const databasePath = (engine as { _savedConfig?: { database_path?: string } })._savedConfig?.database_path;
+  const recipe = embeddingMismatchMessage({
+    currentDims: existing.dims,
+    requestedDims: resolvedDims,
+    requestedModel: resolvedModel,
+    source: 'embed',
+    engineKind: engine.kind,
+    databasePath,
+  });
+  throw new EmbeddingDimMismatchError(recipe);
+}
+
 export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promise<EmbedResult> {
+  // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
+  // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
+  if (!opts.dryRun) {
+    assertEmbeddingEnabled(loadConfig());
+  }
+
+  // v0.41.6.0 D1: preflight embedding credentials. Skipped in dryRun mode
+  // so plan-mode introspection still works (no provider calls needed).
+  //
+  // runEmbedCore is a LIBRARY function called from both the CLI (runEmbed)
+  // and the cycle (runCycle's embed phase + autopilot-cycle handler). THROW
+  // EmbeddingCredentialError so the cycle's per-phase try/catch can
+  // gracefully fail-the-phase without killing the worker process. The CLI
+  // wrapper at src/commands/embed.ts:runEmbed catches and exits.
+  if (!opts.dryRun) {
+    const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
+    validateEmbeddingCreds();
+  }
+
+  // v0.37.11.0 (Lane D.2): pre-flight dim-mismatch check. Catches the headline
+  // fresh-install bug class before the worker pool spends 20 parallel calls
+  // hitting raw Postgres dimension errors.
+  await preflightDimMismatch(engine, !!opts.dryRun);
+
   const result: EmbedResult = {
     embedded: 0,
     skipped: 0,
@@ -81,13 +190,17 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
       try {
         await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId);
       } catch (e: unknown) {
-        console.error(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
+        serr(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
     }
     return result;
   }
   if (opts.all || opts.stale) {
-    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId);
+    await embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
+      batchSize: opts.batchSize,
+      priority: opts.priority,
+      catchUp: opts.catchUp,
+    });
     return result;
   }
   if (opts.slug) {
@@ -130,19 +243,27 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   // v0.31.12: --source <id> scopes to a single source.
   const sourceIdx = args.indexOf('--source');
   const sourceId = sourceIdx >= 0 ? args[sourceIdx + 1] : undefined;
+  // v0.41.18.0 (A13): --batch-size N, --priority recent, --catch-up flags.
+  const batchSizeIdx = args.indexOf('--batch-size');
+  const batchSizeRaw = batchSizeIdx >= 0 ? args[batchSizeIdx + 1] : undefined;
+  const batchSize = batchSizeRaw ? Math.max(1, Math.min(10_000, parseInt(batchSizeRaw, 10) || 0)) : undefined;
+  const priorityIdx = args.indexOf('--priority');
+  const priorityRaw = priorityIdx >= 0 ? args[priorityIdx + 1] : undefined;
+  const priority = priorityRaw === 'recent' ? 'recent' as const : undefined;
+  const catchUp = args.includes('--catch-up');
 
   let opts: EmbedOpts;
   if (slugsIdx >= 0) {
-    opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun, sourceId };
+    opts = { slugs: args.slice(slugsIdx + 1).filter(a => !a.startsWith('--')), dryRun, sourceId, batchSize, priority, catchUp };
   } else if (all || stale) {
-    opts = { all, stale, dryRun, sourceId };
+    opts = { all, stale, dryRun, sourceId, batchSize, priority, catchUp };
   } else {
     const slug = args.find(a => !a.startsWith('--'));
     if (!slug) {
-      console.error('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run]');
+      serr('Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...] [--dry-run] [--batch-size N] [--priority recent] [--catch-up]');
       process.exit(1);
     }
-    opts = { slug, dryRun, sourceId };
+    opts = { slug, dryRun, sourceId, batchSize, priority, catchUp };
   }
 
   // CLI path: wire a reporter so --progress-json / --quiet / TTY rendering
@@ -164,7 +285,20 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
     return result;
   } catch (e) {
     if (progressStarted) progress.finish();
-    console.error(e instanceof Error ? e.message : String(e));
+    // v0.41.6.0 D1: preflight throws EmbeddingCredentialError; surface the
+    // paste-ready userMessage instead of the bare exception text.
+    const { EmbeddingCredentialError } = await import('../core/embed-preflight.ts');
+    if (e instanceof EmbeddingCredentialError) {
+      serr('');
+      serr(e.userMessage);
+      serr('');
+    } else if (e instanceof EmbeddingDimMismatchError) {
+      // D.2: surface dim-mismatch failures with the paste-ready recipe
+      // instead of the raw Postgres error message.
+      serr('\n' + e.recipeMessage + '\n');
+    } else {
+      serr(e instanceof Error ? e.message : String(e));
+    }
     process.exit(1);
   }
 }
@@ -219,7 +353,7 @@ async function embedPage(
   result.skipped += chunks.length - toEmbed.length;
 
   if (toEmbed.length === 0) {
-    console.log(`${slug}: all ${chunks.length} chunks already embedded`);
+    slog(`${slug}: all ${chunks.length} chunks already embedded`);
     result.pages_processed++;
     return;
   }
@@ -246,7 +380,7 @@ async function embedPage(
   await engine.upsertChunks(slug, updated, opts);
   result.embedded += toEmbed.length;
   result.pages_processed++;
-  console.log(`${slug}: embedded ${toEmbed.length} chunks`);
+  slog(`${slug}: embedded ${toEmbed.length} chunks`);
 }
 
 async function embedAll(
@@ -256,6 +390,11 @@ async function embedAll(
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
   sourceId?: string,
+  staleOpts?: {
+    batchSize?: number;
+    priority?: 'recent';
+    catchUp?: boolean;
+  },
 ) {
   // ─────────────────────────────────────────────────────────────
   // Stale-only fast path: avoid the listPages + per-page getChunks
@@ -272,11 +411,23 @@ async function embedAll(
   // ─────────────────────────────────────────────────────────────
   if (staleOnly) {
     // D7: thread sourceId so `gbrain embed --stale --source X` actually scopes.
-    return await embedAllStale(engine, sourceId, dryRun, result, onProgress);
+    // v0.41.18.0 (A13): thread batchSize/priority/catchUp into the stale path.
+    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts);
   }
 
   // v0.31.12: when sourceId is set, scope listPages to that source.
-  const pages = await engine.listPages({ limit: 100000, ...(sourceId && { sourceId }) });
+  // v0.41 (D8 + Codex r2 #11): apply embed-skip filter via the shared
+  // helper so the `--all` path honors `frontmatter.embed_skip` the same
+  // way the `--stale` path does. Without this filter, `gbrain embed --all`
+  // (common after model swaps) re-embeds every soft-blocked page,
+  // defeating the soft-block. Filtering JS-side here mirrors the SQL-side
+  // filter that listStaleChunks/countStaleChunks apply on --stale.
+  const allPages = await engine.listPages({ limit: 100000, ...(sourceId && { sourceId }) });
+  const pages = filterOutEmbedSkipped(allPages);
+  const skippedByEmbedSkip = allPages.length - pages.length;
+  if (skippedByEmbedSkip > 0) {
+    serr(`[embed] skipped ${skippedByEmbedSkip} page(s) with frontmatter.embed_skip set`);
+  }
   let processed = 0;
 
   // Concurrency limit for parallel page embedding.
@@ -333,7 +484,7 @@ async function embedAll(
       await engine.upsertChunks(page.slug, updated, pageOpts);
       result.embedded += toEmbed.length;
     } catch (e: unknown) {
-      console.error(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
+      serr(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
     }
 
     processed++;
@@ -341,27 +492,25 @@ async function embedAll(
     onProgress?.(processed, pages.length, result.embedded);
   }
 
-  // Sliding worker pool: N workers share a queue and each pulls the
-  // next page as soon as it finishes its current one. This handles
-  // uneven per-page workloads (some pages have 1 chunk, others have 50)
-  // much better than a fixed-window Promise.all, since fast workers
-  // don't wait for slow workers to finish an entire window.
-  let nextIdx = 0;
-  async function worker() {
-    while (nextIdx < pages.length) {
-      const idx = nextIdx++;
-      await embedOnePage(pages[idx]);
-    }
-  }
-
-  const numWorkers = Math.min(CONCURRENCY, pages.length);
-  await Promise.all(Array.from({ length: numWorkers }, () => worker()));
+  // v0.41.15.0: sliding worker pool extracted into src/core/worker-pool.ts.
+  // Throughput characteristics unchanged from the prior inline pool — N
+  // workers atomically claim the next page; the helper is the canonical
+  // primitive. embedOnePage handles its own per-page errors via try/catch
+  // and stderr log (no rethrow), so we don't need failures[] here and
+  // omitting onError means the default 'continue' policy applies cleanly
+  // even though no errors should reach the pool's catch.
+  await runSlidingPool({
+    items: pages,
+    workers: CONCURRENCY,
+    onItem: (page) => embedOnePage(page),
+    failureLabel: (page) => page.slug,
+  });
 
   // Stdout summary preserved for scripts/tests that grep for counts.
   if (dryRun) {
-    console.log(`[dry-run] Would embed ${result.would_embed} chunks across ${pages.length} pages`);
+    slog(`[dry-run] Would embed ${result.would_embed} chunks across ${pages.length} pages`);
   } else {
-    console.log(`Embedded ${result.embedded} chunks across ${pages.length} pages`);
+    slog(`Embedded ${result.embedded} chunks across ${pages.length} pages`);
   }
 }
 
@@ -389,6 +538,11 @@ async function embedAllStale(
   dryRun: boolean,
   result: EmbedResult,
   onProgress?: (done: number, total: number, embedded: number) => void,
+  staleOpts?: {
+    batchSize?: number;
+    priority?: 'recent';
+    catchUp?: boolean;
+  },
 ) {
   // D7: thread sourceId so source-scoped runs only count + visit
   // that source's NULL embeddings.
@@ -398,9 +552,9 @@ async function embedAllStale(
   const staleCount = await engine.countStaleChunks(sourceOpt);
   if (staleCount === 0) {
     if (dryRun) {
-      console.log('[dry-run] Would embed 0 chunks (0 stale found)');
+      slog('[dry-run] Would embed 0 chunks (0 stale found)');
     } else {
-      console.log('Embedded 0 chunks (0 stale found)');
+      slog('Embedded 0 chunks (0 stale found)');
     }
     return;
   }
@@ -409,7 +563,7 @@ async function embedAllStale(
     result.would_embed += staleCount;
     result.total_chunks += staleCount;
     if (onProgress) onProgress(1, 1, 0);
-    console.log(`[dry-run] Would embed ${staleCount} stale chunks`);
+    slog(`[dry-run] Would embed ${staleCount} stale chunks`);
     return;
   }
 
@@ -417,23 +571,34 @@ async function embedAllStale(
   // rows in one query (which times out on Supabase's 2-min pooler timeout),
   // we page through 2000 rows at a time via keyset pagination on
   // (page_id, chunk_index). Each query finishes in <1s.
-  const PAGE_SIZE = 2000;
+  // v0.41.18.0 (A13): --batch-size N CLI flag overrides hardcoded 2000 default.
+  const PAGE_SIZE = staleOpts?.batchSize ?? 2000;
   const CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
 
   // D3 + D3a + D8: wall-clock budget. 30 min default; env override.
-  // The old single-shot `LIMIT 100000` query implicitly capped runtime
-  // by failing on timeout; pagination removed that cap. AbortController
-  // threads cancellation into (a) the retry sleep below, (b) the worker
-  // claim loop, and (c) the gateway embed call so an in-flight HTTP
-  // request also unwinds.
-  const BUDGET_MS = parseInt(process.env.GBRAIN_EMBED_TIME_BUDGET_MS || `${30 * 60 * 1000}`, 10);
+  // v0.41.18.0 (A13): --catch-up removes the wall-clock cap entirely so the
+  // handler runs until countStaleChunks() returns 0. Use Number.MAX_SAFE_INTEGER
+  // (effectively unbounded) instead of the 30-min default. The AbortController
+  // still wraps for SIGINT propagation; just the timer never fires.
+  const BUDGET_MS = staleOpts?.catchUp
+    ? Number.MAX_SAFE_INTEGER
+    : parseInt(process.env.GBRAIN_EMBED_TIME_BUDGET_MS || `${30 * 60 * 1000}`, 10);
   const budgetController = new AbortController();
   const budgetTimer = setTimeout(() => budgetController.abort(), BUDGET_MS);
   const budgetSignal = budgetController.signal;
 
+  // v0.41.18.0 (A13): --priority recent threads orderBy='updated_desc' to
+  // listStaleChunks. Composite cursor tracks (updated_at, page_id, chunk_index)
+  // instead of just (page_id, chunk_index); first-page cursor is sentinel
+  // (null, 0, -1).
+  const orderBy: 'page_id' | 'updated_desc' = staleOpts?.priority === 'recent'
+    ? 'updated_desc'
+    : 'page_id';
+
   let totalProcessedPages = 0;
   let afterPageId = 0;
   let afterChunkIndex = -1;
+  let afterUpdatedAt: string | null = null;
   let totalChunksLoaded = 0;
   let budgetExitNotified = false;
 
@@ -442,7 +607,7 @@ async function embedAllStale(
     while (true) {
       if (budgetSignal.aborted) {
         if (!budgetExitNotified) {
-          console.error(`\n  [embed] wall-clock budget (${BUDGET_MS}ms) exceeded; exiting cleanly. Re-run picks up via partial index.`);
+          serr(`\n  [embed] wall-clock budget (${BUDGET_MS}ms) exceeded; exiting cleanly. Re-run picks up via partial index.`);
           budgetExitNotified = true;
         }
         break;
@@ -452,6 +617,10 @@ async function embedAllStale(
         batchSize: PAGE_SIZE,
         afterPageId,
         afterChunkIndex,
+        ...(orderBy === 'updated_desc' && {
+          orderBy,
+          afterUpdatedAt,
+        }),
         ...(sourceId && { sourceId }),
       });
       if (batch.length === 0) break;
@@ -461,6 +630,14 @@ async function embedAllStale(
       const last = batch[batch.length - 1];
       afterPageId = last.page_id;
       afterChunkIndex = last.chunk_index;
+      if (orderBy === 'updated_desc') {
+        // engine returns `updated_at` as Date or ISO string; normalize to ISO.
+        const lastRow = last as unknown as { updated_at?: string | Date | null };
+        const u = lastRow.updated_at;
+        afterUpdatedAt = u instanceof Date ? u.toISOString()
+          : typeof u === 'string' ? u
+          : null;
+      }
 
       // Group by composite key (source_id::slug).
       const byKey = new Map<string, typeof batch>();
@@ -474,7 +651,6 @@ async function embedAllStale(
       const keys = Array.from(byKey.keys());
       result.total_chunks += batch.length;
 
-      let nextIdx = 0;
       async function embedOneKey(key: string) {
         const stale = byKey.get(key)!;
         const keySourceId = stale[0]?.source_id ?? 'default';
@@ -500,7 +676,7 @@ async function embedAllStale(
           // Budget-fired aborts are expected on the way out; don't spam
           // per-page "Error embedding" lines when we're shutting down.
           if (budgetSignal.aborted) return;
-          console.error(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
+          serr(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
         }
         totalProcessedPages++;
         result.pages_processed++;
@@ -509,18 +685,18 @@ async function embedAllStale(
         onProgress?.(totalProcessedPages, Math.ceil(staleCount / PAGE_SIZE) * keys.length, result.embedded);
       }
 
-      async function worker() {
-        // D3a: workers check the budget before claiming the next key.
-        // A stuck mid-fetch worker also has the abortSignal threaded into
-        // its embedBatch call, so the in-flight HTTP cancels too.
-        while (nextIdx < keys.length && !budgetSignal.aborted) {
-          const idx = nextIdx++;
-          await embedOneKey(keys[idx]);
-        }
-      }
-
-      const numWorkers = Math.min(CONCURRENCY, keys.length);
-      await Promise.all(Array.from({ length: numWorkers }, () => worker()));
+      // v0.41.15.0: migrated to shared runSlidingPool. The pool checks
+      // its `signal` argument before each claim (mirrors the pre-migration
+      // `!budgetSignal.aborted` gate) AND threads abort into in-flight
+      // onItem via the local-abort composition for D13. embedOneKey
+      // already handles its own per-key errors via try/catch + stderr.
+      await runSlidingPool({
+        items: keys,
+        workers: CONCURRENCY,
+        signal: budgetSignal,
+        onItem: (key) => embedOneKey(key),
+        failureLabel: (key) => key,
+      });
 
       // If we got fewer rows than PAGE_SIZE, we've reached the end.
       if (batch.length < PAGE_SIZE) break;
@@ -529,7 +705,7 @@ async function embedAllStale(
     clearTimeout(budgetTimer);
   }
 
-  console.log(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);
+  slog(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);
 }
 
 /**
@@ -655,7 +831,7 @@ export async function embedBatchWithBackoff(
       if (!isRateLimit || attempt === MAX_RATE_LIMIT_RETRIES) throw e;
 
       const delayMs = parseRetryDelayMs(msg);
-      console.error(`  [rate-limit] attempt ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES}, waiting ${delayMs}ms...`);
+      serr(`  [rate-limit] attempt ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES}, waiting ${delayMs}ms...`);
       await abortableSleep(delayMs, signal);
     }
   }

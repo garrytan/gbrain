@@ -15,6 +15,7 @@ import type {
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
+  AdjacencyRow,
 } from './types.ts';
 
 /**
@@ -22,6 +23,46 @@ import type {
  * shape on both engines (Postgres has had it since v0.18; PGLite gets it
  * via migration v36).
  */
+/**
+ * Options for `traverseGraph`.
+ *
+ * `frontierCap`: when set, the BFS recursive term applies a parenthesized
+ * `LIMIT N ORDER BY slug,id` so each iteration emits at most N rows. This
+ * is the "approximately per-layer" cap discussed in the T8 plan — Postgres'
+ * recursive CTE caps per ITERATION, not strictly per BFS LAYER (BFS layer
+ * boundaries map to recursive iterations only when fan-out is bounded).
+ * For hub-fanout graphs the cap fires early and bounds the work. Default:
+ * unset = no cap (back-compat; existing callers see no change).
+ *
+ * NOTE: a truncation-detection signal (`onTruncation` callback) was
+ * designed but the v1 algorithm had both false-positive (organic count ==
+ * cap) and false-negative (LIMIT-before-DISTINCT in diamond graphs) cases
+ * caught by adversarial review. The signal is deferred until a
+ * dedupe-then-cap SQL rewrite + real Postgres parity coverage lands. See
+ * TODOS.md → "T8 truncation signal" entry. Callers that need to detect
+ * truncation can compare `result.length` against expected fanout bounds
+ * as a coarse-but-honest signal in the interim.
+ */
+/**
+ * v0.38: bare row shape returned by `BrainEngine.listAllSources()`.
+ * Kept lean (no per-source page_count) so the autopilot tick stays O(1)
+ * SQL queries regardless of source count. `sources-ops.SourceListEntry`
+ * is the enriched application-layer shape.
+ */
+export interface SourceRow {
+  id: string;
+  name: string | null;
+  local_path: string | null;
+  last_sync_at: Date | null;
+  config: Record<string, unknown>;
+}
+
+export interface TraverseGraphOpts {
+  sourceId?: string;
+  sourceIds?: string[];
+  frontierCap?: number;
+}
+
 export interface FileRow {
   id: number;
   source_id: string;
@@ -51,6 +92,31 @@ export interface FileSpec {
   size_bytes?: number | null;
   content_hash: string;
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * v0.41.18.0 — shared opts for engine batch primitives that self-retry on
+ * transient connection errors. Threaded through addLinksBatch /
+ * addTimelineEntriesBatch / upsertChunks.
+ *
+ * Retry semantics: each batch primitive wraps its internal SQL in
+ * `withRetry(BULK_RETRY_OPTS)` (default `{maxRetries:3, delayMs:1000,
+ * delayMaxMs:10000, jitter:'decorrelated'}`). Callers MUST NOT add their own
+ * `withRetry` wrapper around these methods — that produces 3×3=9 retry
+ * attempts under failure, amplifying load on a recovering circuit breaker.
+ * CI lint guard `scripts/check-no-double-retry.sh` enforces the rule.
+ *
+ * - `auditSite`: typed label for the JSONL audit emission (`~/.gbrain/audit/
+ *   batch-retry-YYYY-Www.jsonl`). Must be a member of `BATCH_AUDIT_SITES`
+ *   in `src/core/retry.ts`. The CI lint guard `scripts/check-batch-audit-
+ *   site.sh` validates every string-literal value at build time.
+ * - `signal`: AbortSignal that aborts mid-retry-sleep on SIGTERM/SIGINT.
+ *   `MinionWorker.shutdownAbort.signal` is the canonical source.
+ */
+import type { BatchAuditSite } from './retry.ts';
+export interface BatchOpts {
+  auditSite?: BatchAuditSite;
+  signal?: AbortSignal;
 }
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -85,6 +151,15 @@ export interface LinkBatchInput {
   from_source_id?: string;
   to_source_id?: string;
   origin_source_id?: string;
+  /**
+   * v0.41.18.0 (A10, codex finding #12): distinguishes "plain body mention"
+   * (NULL or 'plain') from "verb-pattern-derived typed NER" ('typed_ner')
+   * within link_source='mentions'. Backed by v98 schema column. NOT in
+   * the links UNIQUE constraint — same (from, to, type, source, origin)
+   * tuple with different link_kind collides DO NOTHING. Default NULL =
+   * legacy / unknown / pre-v98 semantics.
+   */
+  link_kind?: string;
 }
 
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -124,7 +199,19 @@ export interface TimelineBatchInput {
  * transaction itself is waiting to write.
  */
 export interface ReservedConnection {
-  executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /**
+   * v0.41.18.0 (A20, codex #7): optional 3rd-arg `opts.signal` lets callers
+   * actually cancel a running query. Init nudge (3s wallclock cap) wires an
+   * AbortController whose timer fires at 3s; queries that haven't returned
+   * by then get cancelled (Postgres: query.cancel(); PGLite: in-process,
+   * Promise.race against signal-rejection — documented gap because PGLite
+   * has no kernel-level cancellation).
+   */
+  executeRaw<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]>;
 }
 
 /**
@@ -133,8 +220,19 @@ export interface ReservedConnection {
  * derived index. Page-scoped via page_id (NOT slug — slug is unique only
  * within a source). `(page_id, row_num)` is the natural unique key.
  */
-export interface TakeKindLiteral { kind: 'fact' | 'take' | 'bet' | 'hunch' }
-export type TakeKind = TakeKindLiteral['kind'];
+// v0.38: TakeKind opens from closed 4-element union to string (T3/T10).
+// Pre-v0.38, kinds {fact|take|bet|hunch} were enforced by DB CHECK
+// (migrations v41/v48) AND by this TS closed union. Codex outside-voice
+// review caught that dropping the CHECK without also widening the TS
+// type "moves inconsistency around" — raw SQL and old clients could
+// poison rows that runtime-validate cleanly. v0.38 migration v76 drops
+// the CHECK; this widens the type. Runtime validation moves to the
+// active schema pack's `takes_kinds:` declaration. The annotation
+// primitive's seed list in gbrain-base reproduces {fact|take|bet|hunch}
+// so existing behavior is unchanged; packs can extend to {finding|
+// hypothesis|observation|...} per domain.
+export interface TakeKindLiteral { kind: string }
+export type TakeKind = string;
 
 /** Input row for addTakesBatch. */
 export interface TakeBatchInput {
@@ -411,6 +509,14 @@ export interface NewFact {
   claim_value?: number | null;
   claim_unit?: string | null;
   claim_period?: string | null;
+  /**
+   * v0.40.2.0 — event-shaped row marker ('meeting', 'job_change',
+   * 'location_change', etc). Mutually informational with `claim_metric`:
+   * a row can have either, both, or neither. Persisted into
+   * `facts.event_type` (migration v89). Existing callers don't need to
+   * set this — leaving it undefined preserves pre-v0.40 behavior.
+   */
+  event_type?: string | null;
 }
 
 /** Options shared by list-facts methods. */
@@ -467,6 +573,19 @@ export interface TrajectoryOpts {
   remote?: boolean;
   /** Metric filter. When set, only facts with this canonical metric label participate. */
   metric?: string;
+  /**
+   * v0.40.2.0 — kind filter. Default 'all'. Defensive opt that future-proofs
+   * the API now that event_type rows live alongside metric rows in the same
+   * table. Existing callers (founder-scorecard, eval-trajectory) pass
+   * 'metric' explicitly for clarity (no behavior change since their
+   * downstream math already skips NULL-metric rows). Richer event-shape
+   * filtering (job_change vs meeting vs location) is a v0.40.3+ TODO once
+   * the event schema gets structured fields.
+   *   - 'metric': only rows with claim_metric IS NOT NULL
+   *   - 'event':  only rows with event_type IS NOT NULL
+   *   - 'all':    both (default)
+   */
+  kind?: 'metric' | 'event' | 'all';
   /** Lower bound on valid_from (inclusive). YYYY-MM-DD or full ISO. */
   since?: string | Date;
   /** Upper bound on valid_from (inclusive). YYYY-MM-DD or full ISO. */
@@ -489,6 +608,17 @@ export interface TrajectoryPoint {
   value: number | null;
   unit: string | null;
   period: string | null;
+  /**
+   * v0.40.2.0 — event-shaped row marker (e.g. 'meeting', 'job_change',
+   * 'location_change'). Mutually informational with metric: a row can have
+   * (a) metric set + event_type null (typed claim like MRR=$50K),
+   * (b) metric null + event_type set (event like "last met Marco"), or
+   * (c) both null (legacy free-text fact row from pre-v0.35.4 brains).
+   * Both founder-scorecard's per-metric math and eval-trajectory's
+   * regression analysis already skip null-metric rows, so event-only
+   * rows ride through invisibly to those callers.
+   */
+  event_type: string | null;
   text: string;
   source_session: string | null;
   source_markdown_slug: string | null;
@@ -540,6 +670,35 @@ export interface BrainEngine {
    */
   putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page>;
   /**
+   * v0.41.13 (#1309) — identity-based dedup pre-check for the import pipeline.
+   *
+   * Returns the first matching `{slug, id}` whose `(source_id, …)` matches
+   * the supplied identity signal, OR null when nothing matches.
+   *
+   * Identity precedence (a row matches if EITHER fires):
+   *   - `content_hash = $hash` AND `deleted_at IS NULL`
+   *   - `frontmatter->>'id' = $frontmatterId` AND `$frontmatterId IS NOT NULL`
+   *     AND `deleted_at IS NULL`
+   *
+   * Background: the overlapping-ingest-roots bug class (infiniteGameExp,
+   * issue #1309) created two pages per file when a user ran `gbrain import
+   * /vault/Subdir/` then `gbrain import /vault/` — the slug-shape changed
+   * but the content + external ID were identical. Pre-fix, the import
+   * pipeline dedup-checked by `getPage(slug)` alone and missed the
+   * cross-slug duplicate. This method gives the importer a deterministic
+   * way to identify true duplicates BEFORE insert.
+   *
+   * Per codex review: the optional `?` shape lets existing test doubles
+   * compile without changes. Callers must defensively check
+   * `engine.findDuplicatePage?.(...)` and fall through on undefined.
+   * `deleted_at IS NULL` is deliberate — a soft-deleted page should NOT
+   * block a legitimate re-import under a new slug.
+   */
+  findDuplicatePage?(
+    sourceId: string,
+    opts: { hash: string; frontmatterId?: string | null },
+  ): Promise<{ slug: string; id: number } | null>;
+  /**
    * Hard-delete a page row. Cascades to content_chunks, page_links,
    * chunk_relations via existing FK ON DELETE CASCADE.
    *
@@ -553,8 +712,67 @@ export interface BrainEngine {
    * delete doesn't hard-delete the same-slug pages in sources B/C/D. Without
    * it, the bare DELETE matches every row with that slug across all sources.
    * Cascades through content_chunks / page_links / chunk_relations via FKs.
+   *
+   * v0.41.19.0 (CDX-11): single-row primitive used by `purgeDeletedPages`,
+   * `gbrain sync` (one path per call), test setup teardown, and the v0.41.19.0
+   * sync-delete decompose path (when `deletePages` throws on a 500-row batch,
+   * the sync loop falls back to per-slug `deletePage` to log unrecoverable
+   * failures to `failedFiles`). `gbrain sync` calls this on EVERY run that
+   * sees a deleted file — it is NOT admin-only.
    */
   deletePage(slug: string, opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * v0.41.19.0 — batch delete: single SQL round-trip via
+   * `DELETE FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2
+   *  RETURNING slug`. Cascades through content_chunks / page_links (×3) /
+   * tags / raw_data / timeline_entries / page_versions via FKs declared in
+   * `src/schema.sql`. `files.page_id` and `links.origin_page_id` go SET
+   * NULL per their FK definitions.
+   *
+   * SINGLE-BATCH PRIMITIVE: caller is responsible for chunking the input to
+   * `<= DELETE_BATCH_SIZE` entries per call (see
+   * `src/core/engine-constants.ts`). Matches the `addLinksBatch` convention
+   * — engine assumes well-behaved input, caller owns the slicing.
+   *
+   * Returns the slugs of rows ACTUALLY DELETED (order undefined). Callers
+   * use this to filter their own `pagesAffected` tracking so downstream
+   * phases don't waste lookups on phantom slugs (paths that were in the
+   * deletion list but had no DB row).
+   *
+   * ATOMICITY: one statement, one transaction. The whole batch commits or
+   * the whole batch rolls back. Coarser than the per-row `deletePage`
+   * cadence — a mid-loop abort or transient connection failure can roll
+   * back up to `DELETE_BATCH_SIZE - 1` successful deletes from the
+   * in-flight batch. `gbrain sync` is idempotent (next run picks them up
+   * via git diff); other callers should account for the contract.
+   *
+   * sourceId is REQUIRED (no `'default'` fallback). This is asymmetric with
+   * `deletePage` (which keeps the optional/'default' fallback for back-
+   * compat). Filed as v0.42+ TODO to tighten `deletePage` to match once a
+   * full caller audit confirms every site threads `sourceId`.
+   */
+  deletePages(slugs: string[], opts: { sourceId: string }): Promise<string[]>;
+  /**
+   * v0.41.19.0 — batch path → slug resolution. Single SQL round-trip via
+   * `SELECT slug, source_path FROM pages WHERE source_path = ANY($1::text[])
+   *  AND source_id = $2`. Returns `Map<path, slug>`; paths NOT in the map
+   * have no `source_path` row in the DB and the caller is expected to fall
+   * back to `resolveSlugForPath(path)` for the path-derived slug.
+   *
+   * Mirrors the contract of the single-call `resolveSlugByPathOrSourcePath`
+   * helper in `src/commands/sync.ts`, batched. As of v0.41.19.0, that
+   * single-call helper is implemented on top of this method (one Map
+   * allocation per single-path call; negligible cost; one owner of the SQL
+   * + fallback semantics).
+   *
+   * SINGLE-BATCH PRIMITIVE: caller chunks to `<= DELETE_BATCH_SIZE`.
+   *
+   * Empty `paths` short-circuits to an empty Map without touching the DB.
+   */
+  resolveSlugsByPaths(
+    paths: string[],
+    opts: { sourceId: string },
+  ): Promise<Map<string, string>>;
   /**
    * v0.26.5 — set `deleted_at = now()` on a page. Returns the slug if a row
    * was soft-deleted, null if no row matched (already soft-deleted OR not found).
@@ -579,7 +797,20 @@ export interface BrainEngine {
    * `filters.includeDeleted: true` to surface them.
    */
   listPages(filters?: PageFilters): Promise<Page[]>;
-  resolveSlugs(partial: string): Promise<string[]>;
+  /**
+   * Fuzzy slug resolver.
+   *
+   * v0.41.13 (#1436): `opts.sourceId` scopes the search to a single source;
+   * `opts.sourceIds` to an array (federated_read OAuth tier). Pre-fix the
+   * resolver was unscoped, so MCP `get_page` with `fuzzy: true` would
+   * return candidates from sources the caller couldn't actually access.
+   * Source-bleed via fuzzy resolution was the bug class infiniteGameExp
+   * reported as #1436. When neither opt is set, the original unscoped
+   * behavior is preserved for back-compat with internal callers (the
+   * `gbrain query --resolve` CLI path, etc.). Field names match the
+   * `sourceScopeOpts(ctx)` helper output so callers can spread directly.
+   */
+  resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]>;
   /**
    * Returns the slug of every page in the brain. Used by batch commands as a
    * mutation-immune iteration source (alternative to listPages OFFSET pagination,
@@ -605,6 +836,44 @@ export interface BrainEngine {
    * `forEachPage` from src/core/engine-iter.ts instead.
    */
   listAllPageRefs(): Promise<Array<{ slug: string; source_id: string }>>;
+
+  /**
+   * v0.38 — lean per-source enumeration for hot-loop callers (autopilot
+   * dispatch, doctor freshness check). Returns the bare row shape sources-ops
+   * needs without the N+1 per-source page_count enrichment in
+   * `sources-ops.listSources`.
+   *
+   * Defaults filter out archived sources. When `localPathOnly` is true,
+   * also filters `local_path IS NOT NULL` so the autopilot fan-out doesn't
+   * dispatch jobs for pure-DB sources whose handler would fall back to
+   * the global sync.repo_path (codex r1 P1-4).
+   *
+   * `config` is returned as `Record<string, unknown>` — both engines
+   * already parse the JSONB at the boundary (Postgres-js returns
+   * parsed objects; PGLite returns objects via its built-in JSONB
+   * codec). Callers reading `config['last_full_cycle_at']` get a string.
+   */
+  listAllSources(opts?: {
+    includeArchived?: boolean;
+    localPathOnly?: boolean;
+  }): Promise<SourceRow[]>;
+
+  /**
+   * v0.38 — atomic JSONB merge into sources.config. Uses Postgres's
+   * `config || $patch::jsonb` operator so concurrent writers don't
+   * stomp each other (last write wins, but no read-modify-write race).
+   *
+   * Primary caller: runCycle's exit hook writes
+   *   { last_full_cycle_at: '<ISO>' }
+   * after a successful per-source cycle so autopilot's freshness gate
+   * can read it next tick. Resolves codex round-1 P0-5 (write site for
+   * last_full_cycle_at was unspecified pre-PR).
+   *
+   * Returns true if a row was updated (source exists), false otherwise
+   * (silently no-ops on unknown sourceId — caller decides whether that's
+   * a problem).
+   */
+  updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean>;
 
   /**
    * v0.37.0 — prefix-stratified page sampling for `gbrain brainstorm` / `gbrain lsd`
@@ -661,7 +930,15 @@ export interface BrainEngine {
    * matches and bare-slug lookup blows up if the same slug exists in
    * multiple sources (Postgres 21000).
    */
-  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void>;
+  /**
+   * v0.41.18.0: internal SQL wrapped in `withRetry(BULK_RETRY_OPTS)` against
+   * transient connection errors (Supavisor circuit-breaker recovery).
+   * Idempotent under replay via single-statement DELETE+INSERT in implicit tx
+   * — Postgres rolls back automatically on conn drop, so commit-ambiguous
+   * failure replays to the same end state. Callers MUST NOT wrap externally;
+   * see {@link BatchOpts} retry-contract block.
+   */
+  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string } & BatchOpts): Promise<void>;
   /**
    * Read every chunk for a page. `opts.sourceId` source-scopes the page
    * lookup; without it, multi-source brains return chunks from every
@@ -701,6 +978,16 @@ export interface BrainEngine {
     afterPageId?: number;
     afterChunkIndex?: number;
     sourceId?: string;
+    // v0.41.18.0 (A13, codex #9): pagination order. Default 'page_id'
+    // (legacy stable cursor). 'updated_desc' joins pages and orders by
+    // p.updated_at DESC NULLS LAST, p.id, cc.chunk_index — backed by
+    // idx_pages_updated_at_desc + content_chunks_stale_idx partial.
+    orderBy?: 'page_id' | 'updated_desc';
+    // For 'updated_desc' cursor: previous row's updated_at, page_id, chunk_index.
+    // ISO-8601 string for cross-engine compatibility (postgres.js + PGLite
+    // both round-trip TIMESTAMPTZ as Date | string; ISO string is the
+    // common denominator on the wire).
+    afterUpdatedAt?: string | null;
   }): Promise<StaleChunkRow[]>;
   /**
    * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
@@ -737,7 +1024,16 @@ export interface BrainEngine {
    * (RETURNING clause excludes conflicts and JOIN-dropped rows whose slugs don't exist).
    * Used by extract.ts to avoid 47K sequential round-trips on large brains.
    */
-  addLinksBatch(links: LinkBatchInput[]): Promise<number>;
+  /**
+   * v0.41.18.0: internal SQL wrapped in `withRetry(BULK_RETRY_OPTS)`.
+   * Idempotent via `ON CONFLICT (from_page_id, to_page_id, link_type,
+   * link_source, origin_page_id) DO NOTHING` — composite key is the semantic
+   * uniqueness. Replay-after-partial-success: 2nd attempt finds conflicts,
+   * returns 0 from RETURNING. Caller-visible edge: linksCreated undercounts
+   * on commit-ambiguous replay. Cosmetic (audit JSONL captures the truth).
+   * Callers MUST NOT wrap externally; see {@link BatchOpts} retry contract.
+   */
+  addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number>;
   /**
    * Remove links from `from` to `to`. If linkType is provided, only that specific
    * (from, to, type) row is removed. If omitted, ALL link types between the pair
@@ -795,7 +1091,7 @@ export interface BrainEngine {
   traverseGraph(
     slug: string,
     depth?: number,
-    opts?: { sourceId?: string; sourceIds?: string[] },
+    opts?: TraverseGraphOpts,
   ): Promise<GraphNode[]>;
   /**
    * Edge-based graph traversal with optional type and direction filters.
@@ -816,6 +1112,32 @@ export interface BrainEngine {
    * Slugs with zero inbound links are present in the map with value 0.
    */
   getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
+  /**
+   * v0.40.4 — for a list of page_ids, return adjacency aggregates
+   * restricted to the subgraph induced by them. Returns ALL pages with
+   * `hits >= 1` (callers apply their own threshold). Empty input → empty
+   * Map, no SQL.
+   *
+   * Returned shape per page (AdjacencyRow):
+   *   - `hits`: distinct from_page_id count, in-set
+   *   - `cross_source_hits`: distinct OTHER source_ids count (excluding
+   *     target's own source), in-set
+   *
+   * SOURCE-SCOPE CONTRACT: pageIds MUST already be source-scoped by the
+   * caller. This method does NOT filter by source_id. Adjacency is
+   * page-id keyed and the in-set restriction makes cross-source leakage
+   * impossible BY CONSTRUCTION (a leaked-in page_id from another source
+   * would have to also appear in the caller's input set, which the
+   * caller is responsible for preventing). The only consumer in v0.40.4
+   * is hybridSearch via runPostFusionStages, which is source-scoped
+   * upstream. Same trust posture as `cosineReScore`'s chunk_id handling.
+   *
+   * Known limitation: cross_source_hits doesn't distinguish "genuinely
+   * linked from another team" from "mirrored imports from another
+   * source" (codex outside-voice #15). T-todo-4 captures the v0.41+
+   * sync-topology-aware refinement.
+   */
+  getAdjacencyBoosts(pageIds: number[]): Promise<Map<number, AdjacencyRow>>;
   /**
    * v0.27.0: for a list of slugs, return their updated_at timestamps (or created_at fallback).
    * Used by hybrid search recency boost. Single SQL query, not N+1.
@@ -846,12 +1168,23 @@ export interface BrainEngine {
    */
   getSalienceScores(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, number>>;
   /**
-   * Return every page with no inbound links (from any source).
+   * Return every page with no inbound links.
    * Domain comes from the frontmatter `domain` field (null if unset).
    * The caller filters pseudo-pages + derives display domain.
    * Used by `gbrain orphans` and `runCycle`'s orphan sweep phase.
+   *
+   * v0.41.29.0: scopes the CANDIDATE set to one source (`sourceId`, from
+   * `gbrain doctor/orphans --source` + single-source MCP clients) or a
+   * federated set (`sourceIds`, from `allowedSources` MCP clients). The
+   * inbound-link side is NOT scoped — a page in source X linked FROM
+   * source Y is genuinely reachable, so it is not an orphan of X. Omit
+   * `opts` for the brain-wide behavior (unchanged). When both are set,
+   * `sourceIds` wins (mirrors `sourceScopeOpts` precedence).
    */
-  findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
+  findOrphanPages(opts?: {
+    sourceId?: string;
+    sourceIds?: string[];
+  }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags
   /**
@@ -889,7 +1222,13 @@ export interface BrainEngine {
    * actually inserted (RETURNING excludes conflicts and JOIN-dropped rows whose
    * slugs don't exist). Used by extract.ts to avoid sequential round-trips.
    */
-  addTimelineEntriesBatch(entries: TimelineBatchInput[]): Promise<number>;
+  /**
+   * v0.41.18.0: internal SQL wrapped in `withRetry(BULK_RETRY_OPTS)`.
+   * Idempotent via composite-key conflict (page_id, kind, when_text, body).
+   * Same caller-visible undercount caveat as {@link addLinksBatch}.
+   * Callers MUST NOT wrap externally; see {@link BatchOpts} retry contract.
+   */
+  addTimelineEntriesBatch(entries: TimelineBatchInput[], opts?: BatchOpts): Promise<number>;
   getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]>;
 
   // Raw data
@@ -1328,6 +1667,32 @@ export interface BrainEngine {
   rewriteLinks(oldSlug: string, newSlug: string): Promise<void>;
 
   /**
+   * v0.42 type-unification (T2, plan D1+F10). Returns the canonical slug if
+   * `slug` is registered in `slug_aliases` for any of the provided source(s);
+   * otherwise returns `slug` unchanged. Defense-in-depth: also returns the
+   * input when the table doesn't exist yet (pre-v104 brains).
+   *
+   * Accepts either a single sourceId (scalar) OR a sourceIds array
+   * (federated reads). Multi-source ambiguity: when the same alias_slug
+   * exists in two registered sources, returns the first match in array
+   * order and emits a once-per-process stderr `multi_match` warning.
+   *
+   * Callers (the cluster the alias-table primitive is meant for):
+   *   - src/core/entities/resolve.ts: wikilink resolver short-circuit
+   *     (alias-table is authoritative; runs BEFORE fuzzy/prefix cascade)
+   *   - MCP `read_page` op (canonical lookup)
+   *   - Search rank stage `applyAliasResolvedBoost` (knows whether a
+   *     top-K result was reached via an alias)
+   *
+   * Source-scoped throughout per F12 (codex outside voice) — no cross-source
+   * false-positive resolution. v0.42 ships this method on both engines.
+   */
+  resolveSlugWithAlias(
+    slug: string,
+    sourceOrSources: string | readonly string[],
+  ): Promise<string>;
+
+  /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
    * `pages.content_hash` for a single slug+source. NO chunking, NO embedding,
    * NO link reconcile, NO `updated_at` advance beyond the trivial bump.
@@ -1349,6 +1714,30 @@ export interface BrainEngine {
     compiledTruth: string,
     timeline: string,
     contentHash: string,
+  ): Promise<void>;
+
+  /**
+   * v0.40.3.0 — narrow UPDATE that stamps the two CR-state columns
+   * (`contextual_retrieval_mode`, `corpus_generation`) plus
+   * `updated_at = now()` and nothing else.
+   *
+   * Used by `src/core/contextual-retrieval-service.ts:reembedPageWithContextualRetrieval`
+   * at the end of its PHASE 2 transaction. Why narrow instead of routing
+   * through `putPage`: stamping the CR state alone shouldn't trigger the
+   * full page-version snapshot machinery (createVersion fires on every
+   * putPage with an existing row, which would bloat page_versions on every
+   * tier upgrade).
+   *
+   * Skips soft-deleted rows (deleted_at filter). Idempotent — same args
+   * twice produces the same row state. Both columns are NULL-tolerant
+   * (callers pass NULL for `corpusGeneration` only on the 'none' tier
+   * path; 'title' and 'per_chunk_synopsis' always supply a hash).
+   */
+  updatePageContextualRetrievalState(
+    slug: string,
+    sourceId: string,
+    mode: string,
+    corpusGeneration: string | null,
   ): Promise<void>;
 
   /**
@@ -1392,7 +1781,19 @@ export interface BrainEngine {
   getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]>;
 
   // Raw SQL (for Minions job queue and other internal modules)
-  executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /**
+   * v0.41.18.0 (A20, codex #7): optional 3rd-arg `opts.signal` lets callers
+   * actually cancel a running query. Init nudge (3s wallclock cap) wires an
+   * AbortController whose timer fires at 3s; queries that haven't returned
+   * by then get cancelled (Postgres: query.cancel(); PGLite: in-process,
+   * Promise.race against signal-rejection — documented gap because PGLite
+   * has no kernel-level cancellation).
+   */
+  executeRaw<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]>;
 
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)

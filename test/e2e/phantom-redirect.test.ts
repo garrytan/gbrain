@@ -20,7 +20,8 @@ import { tmpdir } from 'os';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { runExtractFacts } from '../../src/core/cycle/extract-facts.ts';
-import { tryAcquireDbLock, SYNC_LOCK_ID } from '../../src/core/db-lock.ts';
+// v0.40: per-source lock id replaces the legacy bare SYNC_LOCK_ID constant.
+// Tests below hand-craft the lock row via SQL to simulate contention.
 
 const SKIP = !hasDatabase();
 const describeMaybe = SKIP ? describe.skip : describe;
@@ -41,7 +42,8 @@ beforeEach(async () => {
   // Per-test cleanup: truncate the tables this suite mutates.
   await engine.executeRaw('TRUNCATE TABLE facts RESTART IDENTITY CASCADE');
   await engine.executeRaw('DELETE FROM pages');
-  await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id='gbrain-sync'`);
+  // v0.40: phantom redirect now uses per-source lock id (gbrain-sync:<source>).
+  await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id='gbrain-sync:default'`);
 });
 
 function tempBrain(): string {
@@ -154,9 +156,10 @@ describeMaybe('phantom-redirect E2E (Postgres)', () => {
       // would still see the row as held (different "logical" holder via the
       // pid check, but the TTL is what really gates re-acquire). Override
       // by inserting a row with a different pid + future TTL.
+      // v0.40 D16: phantom acquires per-source lock; default source = gbrain-sync:default.
       await engine.executeRaw(
         `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
-         VALUES ('gbrain-sync', 9999, 'simulated-other-host', now(), now() + interval '1 hour')
+         VALUES ('gbrain-sync:default', 9999, 'simulated-other-host', now(), now() + interval '1 hour')
          ON CONFLICT (id) DO UPDATE SET holder_pid=9999, ttl_expires_at=now() + interval '1 hour'`,
       );
 
@@ -180,7 +183,8 @@ describeMaybe('phantom-redirect E2E (Postgres)', () => {
       expect(existsSync(join(brainDir, 'alice.md'))).toBe(true);
 
       // Cleanup
-      await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id='gbrain-sync'`);
+      // v0.40: phantom redirect now uses per-source lock id (gbrain-sync:<source>).
+  await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id='gbrain-sync:default'`);
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
     }

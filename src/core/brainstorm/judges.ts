@@ -22,9 +22,90 @@
  * `chatFn` injection point.
  */
 
-import { chat as defaultChat, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
+import { chat as defaultChat, getChatModel, type ChatResult, type ChatOpts } from '../ai/gateway.ts';
+import { splitProviderModelId } from '../model-id.ts';
 
 export const PROMPT_VERSION = 'brainstorm-judge-v1';
+
+// ---------------------------------------------------------------------------
+// v0.41.20.0 — maxTokens scaling constants
+//
+// The judge emits ~100 tokens of JSON per idea (id + 5 axis scores +
+// one-sentence note). With 36-96 ideas the response was consistently
+// truncated mid-JSON when maxTokens was hard-coded at 4000 (closes #1540).
+// The formula scales output budget with idea count while respecting the
+// resolved model's actual output cap.
+//
+// Realistic chunks under default `maxIdeasPerCall=100` produce ≤15,500
+// tokens — comfortably under every supported modern Anthropic model. The
+// per-model cap binds before any opaque provider HTTP 400 fires.
+// ---------------------------------------------------------------------------
+
+/** Observed ~100 tok/idea; 1.5× headroom keeps malformed-row retries cheap. */
+export const TOKEN_BUDGET_PER_IDEA = 150;
+/** JSON outer wrapper + leading/trailing markers + per-call overhead. */
+export const TOKEN_BUDGET_ENVELOPE = 500;
+/** Pre-v0.41.20.0 hard-coded floor; preserved so 1-idea batches still get headroom. */
+export const LEGACY_MIN_MAX_TOKENS = 4000;
+/** Fallback cap when the resolved model isn't in ANTHROPIC_OUTPUT_CAPS. Matches Opus 4.7's cap. */
+export const MAX_OUTPUT_TOKENS_CEIL = 32_000;
+
+/**
+ * Per-model max output tokens. Anthropic's published caps as of 2026-05.
+ * Lookup keyed on the bare model name (after parseModelId strip), so both
+ * `claude-sonnet-4-6` and `anthropic:claude-sonnet-4-6` and
+ * `anthropic/claude-sonnet-4-6` resolve to the same entry.
+ *
+ * Unknown models fall back to MAX_OUTPUT_TOKENS_CEIL — safe for every
+ * current Anthropic model but tight enough that misconfig hits OUR bound
+ * (with a readable error) instead of the provider's opaque HTTP 400.
+ */
+export const ANTHROPIC_OUTPUT_CAPS: Record<string, number> = {
+  'claude-opus-4-7': 32_000,
+  'claude-sonnet-4-6': 64_000,
+  'claude-haiku-4-5': 64_000,
+  'claude-haiku-4-5-20251001': 64_000,
+  // Legacy 3.5 generation caps at 8,192 — much smaller. Without these
+  // entries, a `--judge-model anthropic:claude-3-5-haiku-20241022` with
+  // 96 ideas would request 14,900 tokens > 8K cap → HTTP 400.
+  'claude-3-5-sonnet-20241022': 8_192,
+  'claude-3-5-haiku-20241022': 8_192,
+};
+
+/**
+ * Resolve the per-model output cap for a (possibly provider-prefixed) model id.
+ *
+ * v0.41.21.0: when no explicit `modelId` is passed, resolve the actual default
+ * chat model via the gateway so the cap matches what `chat()` will use, not
+ * whatever the override hints at. Pre-fix the undefined-override case fell
+ * back to MAX_OUTPUT_TOKENS_CEIL=32K, which would request 14_900 tokens for
+ * a 96-idea batch even if the configured default was a legacy 8K model →
+ * provider HTTP 400.
+ */
+function resolveOutputCap(modelId: string | undefined): number {
+  let resolved = modelId;
+  if (!resolved) {
+    // Try the gateway's configured chat model. Wrap in try/catch because
+    // judges.ts is sometimes called in test contexts where the gateway
+    // isn't configured yet (`configureGateway` not called); fall through
+    // to the safe ceiling.
+    try {
+      resolved = getChatModel();
+    } catch {
+      return MAX_OUTPUT_TOKENS_CEIL;
+    }
+  }
+  if (!resolved) return MAX_OUTPUT_TOKENS_CEIL;
+  const bare = splitProviderModelId(resolved).model;
+  return ANTHROPIC_OUTPUT_CAPS[bare] ?? MAX_OUTPUT_TOKENS_CEIL;
+}
+
+/** Compute the maxTokens budget for a judge call given idea count + resolved model id. */
+export function computeJudgeMaxTokens(ideaCount: number, modelId: string | undefined): number {
+  const cap = resolveOutputCap(modelId);
+  const scaled = ideaCount * TOKEN_BUDGET_PER_IDEA + TOKEN_BUDGET_ENVELOPE;
+  return Math.min(cap, Math.max(LEGACY_MIN_MAX_TOKENS, scaled));
+}
 
 /** One idea handed to the judge. The orchestrator builds these from the cross output. */
 export interface JudgeIdea {
@@ -347,12 +428,28 @@ export interface RunJudgeOptions {
   activeBiasTags?: string[];
   /** AbortSignal for Ctrl-C / shutdown propagation. */
   abortSignal?: AbortSignal;
+  /**
+   * Maximum ideas to send in a single judge LLM call. Defaults to 100.
+   * Large idea sets (e.g. 15K ideas from a 13K-page brain) blow past the
+   * model's context window when sent as one batch. We chunk into batches
+   * of `maxIdeasPerCall` and concatenate the results.
+   */
+  maxIdeasPerCall?: number;
+  /** Stderr sink for chunk-progress reporting. Defaults to process.stderr.write. */
+  stderrWrite?: (s: string) => void;
 }
 
+/** Default judge chunk size. ~350 tokens/idea × 100 ideas ≈ 35K input tokens, safely under any model context. */
+const DEFAULT_JUDGE_CHUNK_SIZE = 100;
+
 /**
- * Single batch — caller chunks large idea sets to keep prompt size bounded.
- * Throws on parse failure (caller maps to judge_failed:true + saves unscored,
- * per D12).
+ * Judge a batch of ideas. Automatically chunks large idea sets into
+ * `maxIdeasPerCall`-sized sub-batches (default 100) to avoid blowing past
+ * the model's context window. Each chunk is a separate LLM call; results
+ * are concatenated. Throws on parse failure of *any* chunk (caller maps to
+ * judge_failed:true + saves unscored, per D12), but on a partial failure
+ * (some chunks succeed, one fails) we still throw — callers who want
+ * partial-result resilience should call `runJudge` per-chunk themselves.
  */
 export async function runJudge(
   config: JudgeConfig,
@@ -364,6 +461,56 @@ export async function runJudge(
     // returning a well-formed empty result is more ergonomic.
     return { ideas: [], pass_count: 0, model: 'noop', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } };
   }
+  const chunkSize = Math.max(1, options.maxIdeasPerCall ?? DEFAULT_JUDGE_CHUNK_SIZE);
+  const stderr = options.stderrWrite ?? ((s: string) => { process.stderr.write(s); });
+
+  // Split ideas into chunks. For small idea sets (<= chunkSize) this is a
+  // single chunk and behaves identically to the pre-fix single-call path.
+  const chunks: JudgeIdea[][] = [];
+  for (let i = 0; i < ideas.length; i += chunkSize) {
+    chunks.push(ideas.slice(i, i + chunkSize));
+  }
+  if (chunks.length > 1) {
+    stderr(`[${config.label}-judge] chunking ${ideas.length} ideas into ${chunks.length} batches of ≤${chunkSize}\n`);
+  }
+
+  const allIdeaResults: JudgeIdeaResult[] = [];
+  let lastModel = 'noop';
+  const totalUsage: ChatResult['usage'] = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+  };
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const chunk = chunks[ci];
+    const chunkResult = await runJudgeChunk(config, chunk, options);
+    allIdeaResults.push(...chunkResult.ideas);
+    lastModel = chunkResult.model;
+    totalUsage.input_tokens += chunkResult.usage.input_tokens;
+    totalUsage.output_tokens += chunkResult.usage.output_tokens;
+    if (typeof chunkResult.usage.cache_read_tokens === 'number') {
+      totalUsage.cache_read_tokens = (totalUsage.cache_read_tokens ?? 0) + chunkResult.usage.cache_read_tokens;
+    }
+    if (typeof chunkResult.usage.cache_creation_tokens === 'number') {
+      totalUsage.cache_creation_tokens = (totalUsage.cache_creation_tokens ?? 0) + chunkResult.usage.cache_creation_tokens;
+    }
+  }
+
+  return {
+    ideas: allIdeaResults,
+    pass_count: allIdeaResults.filter((i) => i.passes).length,
+    model: lastModel,
+    usage: totalUsage,
+  };
+}
+
+/** Single-chunk inner loop. Extracted so `runJudge` can chunk + concatenate. */
+async function runJudgeChunk(
+  config: JudgeConfig,
+  ideas: JudgeIdea[],
+  options: RunJudgeOptions
+): Promise<JudgeResult> {
   const chat = options.chatFn ?? defaultChat;
   const prompt = buildJudgePrompt(config, ideas);
 
@@ -382,7 +529,11 @@ export async function runJudge(
     // knob isn't on ChatOpts (it's set per-provider in instantiateChat),
     // so we rely on the default. If we ever need temperature control here
     // we'd extend ChatOpts.
-    maxTokens: 4000,
+    //
+    // v0.41.20.0: maxTokens scales with idea count + per-model cap.
+    // See computeJudgeMaxTokens / ANTHROPIC_OUTPUT_CAPS above. Closes #1540
+    // (judge truncation at default 36-96 idea batches).
+    maxTokens: computeJudgeMaxTokens(ideas.length, options.modelOverride),
     abortSignal: options.abortSignal,
   });
 
@@ -401,15 +552,15 @@ export async function runJudge(
       continue;
     }
     const weighted_score = weightedScore(validated.scores, config.weights);
-    const result: JudgeIdeaResult = {
+    const ir: JudgeIdeaResult = {
       id: validated.id,
       scores: validated.scores,
       weighted_score,
       passes: false, // filled below
       note: validated.note,
     };
-    result.passes = ideaPasses(result, config);
-    ideaResults.push(result);
+    ir.passes = ideaPasses(ir, config);
+    ideaResults.push(ir);
   }
 
   return {

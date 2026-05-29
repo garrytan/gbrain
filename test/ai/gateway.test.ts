@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import {
   configureGateway,
   resetGateway,
@@ -9,6 +9,14 @@ import {
   getExpansionModel,
   VoyageResponseTooLargeError,
 } from '../../src/core/ai/gateway.ts';
+
+// v0.39.x ship-wave fix: gateway module is process-scoped. Without an
+// afterAll cleanup, the last test's configureGateway({env: {OPENAI_API_KEY:
+// 'openai-fake'}}) state leaked into sibling files in the same bun shard
+// (capture / ingest-capture tests), where it produced "Incorrect API key
+// provided: openai-fake" against the real OpenAI endpoint and wedged
+// the shard. Reset once at file teardown so no caller sees the residue.
+afterAll(() => resetGateway());
 import { parseModelId, resolveRecipe } from '../../src/core/ai/model-resolver.ts';
 import {
   dimsProviderOptions,

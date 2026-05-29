@@ -97,6 +97,52 @@ function isBareName(raw: string): boolean {
 const PREFIX_EXPANSION_DIRS = ['people', 'companies'] as const;
 
 /**
+ * v0.40.2.0 — resolution-source-tagged variant for trajectory routing.
+ *
+ * Same resolution chain as `resolveEntitySlug` but returns the source
+ * (`exact_page` | `fuzzy_match` | `fallback_slugify`) alongside the slug
+ * so trajectory callers can gate on `resolution_source !==
+ * 'fallback_slugify'` — querying findTrajectory on an invented slug
+ * always returns [] and wastes a SQL round-trip. Codex Problem 5 from
+ * v0.40.2.0 outside-voice review.
+ *
+ * The original `resolveEntitySlug` keeps its existing contract (returns
+ * just the slug) for all pre-v0.40 call sites — no caller-side churn.
+ */
+export type ResolutionSource = 'exact_page' | 'fuzzy_match' | 'fallback_slugify';
+
+export interface ResolveResult {
+  slug: string;
+  source: ResolutionSource;
+}
+
+export async function resolveEntitySlugWithSource(
+  engine: BrainEngine,
+  source_id: string,
+  raw: string,
+): Promise<ResolveResult | null> {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  // Mirror resolveEntitySlug's resolution chain but tag each branch.
+  if (looksLikeSlug(trimmed)) {
+    const exact = await tryExactSlug(engine, source_id, trimmed);
+    if (exact) return { slug: exact, source: 'exact_page' };
+  }
+
+  const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
+  if (fuzzy) return { slug: fuzzy, source: 'fuzzy_match' };
+
+  if (isBareName(trimmed)) {
+    const expanded = await tryPrefixExpansion(engine, source_id, slugify(trimmed));
+    if (expanded) return { slug: expanded, source: 'fuzzy_match' };
+  }
+
+  return { slug: slugify(trimmed), source: 'fallback_slugify' };
+}
+
+/**
  * v0.35.5 — phantom-canonical resolver. Variant of `resolveEntitySlug` that
  * SKIPS the exact-slug step at the top: a phantom slug like `'alice'` would
  * always exact-match itself (the phantom page exists as that exact slug),

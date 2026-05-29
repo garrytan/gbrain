@@ -37,6 +37,14 @@ mock.module('../src/core/embedding.ts', () => ({
 // Import AFTER mocking.
 const { runEmbed } = await import('../src/commands/embed.ts');
 
+// v0.41.6.0 D1: runEmbedCore now preflights embedding credentials. This
+// test stack uses the LEGACY embedBatch mock path, not the gateway,
+// so the preflight would throw before our mocks see anything. Install
+// the gateway embed transport seam so diagnoseEmbedding's fast-path
+// flags the preflight as ok without touching real env vars.
+const { __setEmbedTransportForTests } = await import('../src/core/ai/gateway.ts');
+__setEmbedTransportForTests(async () => ({ embeddings: [], usage: { tokens: 0 } } as any));
+
 // Proxy-based mock engine that matches test/import-file.test.ts pattern.
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const calls: { method: string; args: any[] }[] = [];

@@ -49,11 +49,100 @@ export async function runImport(
   const noEmbed = args.includes('--no-embed');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
+
+  // T7 (D9): refuse cleanly when init persisted the deferred-setup sentinel,
+  // unless the user is explicitly skipping embedding via `--no-embed` (in
+  // which case the chunks land without vectors and the user can backfill
+  // later with `gbrain embed --stale` after configuring a provider).
+  if (!noEmbed) {
+    const { assertEmbeddingEnabled } = await import('../core/embedding-dim-check.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    try {
+      assertEmbeddingEnabled(loadConfig());
+    } catch (e) {
+      console.error(`\n${e instanceof Error ? e.message : e}`);
+      console.error('Tip: run `gbrain import <dir> --no-embed` to import without embedding now.');
+      process.exit(1);
+    }
+
+    // v0.41.6.0 D1: preflight embedding credentials. Closes the bug class
+    // where `gbrain import` per-file embed writes N identical
+    // "missing OPENAI_API_KEY" failures into sync-failures.jsonl.
+    const { validateEmbeddingCreds, EmbeddingCredentialError } = await import('../core/embed-preflight.ts');
+    try {
+      validateEmbeddingCreds();
+    } catch (e) {
+      if (e instanceof EmbeddingCredentialError) {
+        if (jsonOutput) {
+          console.log(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: e.diagnosis }));
+        } else {
+          console.error('');
+          console.error(e.userMessage);
+          console.error('');
+        }
+        process.exit(1);
+      }
+      throw e;
+    }
+  }
+  // v0.39 T1.5: load active pack ONCE at runImport entry; thread to every
+  // per-file importFile call below. Codex perf finding #7 — never per-file.
+  let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
+  try {
+    const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
+    const { loadConfig } = await import('../core/config.ts');
+    const resolved = await loadActivePack({
+      cfg: loadConfig(),
+      remote: false, // CLI import is trusted
+      sourceId: opts.sourceId,
+    });
+    importActivePack = { page_types: resolved.manifest.page_types };
+  } catch {
+    importActivePack = undefined;
+  }
+
   // v0.30.x follow-up to PR #707: programmatic sourceId support so internal
   // callers (performFullSync, future Step 6 paths) can route to a named
-  // source. The CLI `gbrain import` deliberately has no --source flag per
-  // PR #707's design intent — only programmatic callers thread sourceId.
-  const sourceId = opts.sourceId;
+  // source.
+  //
+  // v0.37.7.0 #1167+#1222: the CLI surface now also accepts a
+  // `--source-id <id>` flag (named to avoid colliding with `--source`
+  // which other commands use for different axes). Pre-fix, users
+  // passing `gbrain import --source dept-x ...` silently fell back to
+  // default because the parser ignored the flag. Now an explicit
+  // `--source-id <id>` opt-in routes the import to that source.
+  // Programmatic callers continue passing `opts.sourceId` directly;
+  // CLI callers' flag wins over opts when both are set.
+  const sourceIdIdx = args.indexOf('--source-id');
+  const flagSourceId = sourceIdIdx !== -1 ? args[sourceIdIdx + 1] : null;
+  let sourceId: string | undefined = flagSourceId ?? opts.sourceId;
+
+  // v0.41.13 (#1434): when no explicit source / env / opts.sourceId is set,
+  // fall through to the resolver so the new sole_non_default tier (5.5) can
+  // auto-route to the only registered non-default source. Pre-fix, import
+  // followed the explicit-only design from PR #707 and silently routed
+  // every import to 'default', mirroring the sync bug class.
+  //
+  // Resolution chain (full 7 tiers): flag → env → dotfile → local_path →
+  // brain_default → sole_non_default → seed_default. The nudge fires only
+  // when the resolver returns tier='sole_non_default', so explicit users
+  // see no behavior change.
+  if (!sourceId && process.env.GBRAIN_SOURCE) {
+    const { resolveSourceId } = await import('../core/source-resolver.ts');
+    sourceId = await resolveSourceId(engine, null);
+  } else if (!sourceId) {
+    const { resolveSourceWithTier, formatSoleNonDefaultNudge } = await import('../core/source-resolver.ts');
+    const resolved = await resolveSourceWithTier(engine, null);
+    // Only adopt the resolution when it improves on the seed_default
+    // fallback — that preserves the v0.30.x "default-only when unset"
+    // contract for the common case AND opens the sole_non_default
+    // auto-route for the single-source-brain case.
+    if (resolved.tier === 'sole_non_default') {
+      sourceId = resolved.source_id;
+      const nudge = formatSoleNonDefaultNudge(sourceId);
+      if (nudge) process.stderr.write(nudge + '\n');
+    }
+  }
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
@@ -70,10 +159,11 @@ export async function runImport(
   // Find dir: first non-flag arg that isn't a value for --workers
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
+  if (sourceIdIdx !== -1) flagValues.add(sourceIdIdx + 1);
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--json]');
     process.exit(1);
   }
   const dir: string = dirArg;  // narrowed; survives closure capture
@@ -148,7 +238,7 @@ export async function runImport(
       // unreachable when the gate is off; defense-in-depth check anyway.
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, relativePath, { noEmbed, sourceId })
-        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId });
+        : await importFile(eng, filePath, relativePath, { noEmbed, sourceId, activePack: importActivePack });
       const _fileMs = Date.now() - _fileT0;
       if (_fileMs > 5000) {
         console.error(`[gbrain phase] import.process_file slow ${_fileMs}ms ${relativePath}`);
@@ -293,6 +383,38 @@ export async function runImport(
     console.log(`  ${imported} pages imported`);
     console.log(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
     console.log(`  ${chunksCreated} chunks created`);
+  }
+
+  // v0.39 T7 — end-of-run schema mismatch warn. Fires ONCE per import,
+  // not per page. Counts untyped pages in the affected source AND
+  // compares to import size; warns at >=10% untyped. The doctor
+  // schema_pack_consistency check (also T7) gives the persistent surface.
+  // Best-effort: query failure is non-fatal.
+  if (imported > 0) {
+    try {
+      const sid = sourceId ?? 'default';
+      const rows = await engine.executeRaw<{ total: string | number; untyped: string | number }>(
+        `SELECT
+           COUNT(*)::text AS total,
+           COUNT(*) FILTER (WHERE type IS NULL OR type = '')::text AS untyped
+         FROM pages
+         WHERE source_id = $1 AND deleted_at IS NULL`,
+        [sid],
+      );
+      const total = Number(rows[0]?.total ?? 0);
+      const untyped = Number(rows[0]?.untyped ?? 0);
+      if (total > 0 && untyped / total >= 0.1) {
+        const pct = ((untyped / total) * 100).toFixed(1);
+        console.error(
+          `\n[schema] ${untyped} of ${total} pages (${pct}%) in source \`${sid}\` ` +
+          `have no \`type\` matching the active schema pack. Run \`gbrain schema detect\` ` +
+          `to propose a pack matching your content shape, or \`gbrain doctor --json\` ` +
+          `for the persistent surface (schema_pack_consistency check).`,
+        );
+      }
+    } catch {
+      // best-effort
+    }
   }
 
   // Log the ingest
