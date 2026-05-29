@@ -2019,21 +2019,40 @@ export async function expand(query: string): Promise<string[]> {
   if (!query || !query.trim()) return [query];
   if (!isAvailable('expansion')) return [query];
 
+  const expansionPrompt = [
+    'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
+    'Return ONLY a JSON object with a "queries" array. Do NOT include the original query in the result.',
+    'Each rewrite should emphasize different aspects, synonyms, or framings.',
+    '',
+    `Query: ${query}`,
+  ].join('\n');
+
   try {
     const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
-    const result = await generateObject({
-      model,
-      schema: ExpansionSchema,
-      prompt: [
-        'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
-        'Return ONLY the JSON object. Do NOT include the original query in the result.',
-        'Each rewrite should emphasize different aspects, synonyms, or framings.',
-        '',
-        `Query: ${query}`,
-      ].join('\n'),
-    });
 
-    const expansions = result.object?.queries ?? [];
+    let expansions: string[] = [];
+
+    // Providers that don't support structured outputs (e.g. zhipu/GLM via
+    // openai-compatible) fail silently with generateObject. Fall back to
+    // generateText + manual JSON parse for openai-compat recipes.
+    if (recipe.implementation === 'openai-compatible') {
+      const textResult = await generateText({ model, prompt: expansionPrompt });
+      const raw = textResult.text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      try {
+        const parsed = JSON.parse(raw);
+        expansions = Array.isArray(parsed.queries) ? parsed.queries.filter((q: any) => typeof q === 'string') : [];
+      } catch {
+        // JSON parse failed — treat as no expansion
+      }
+    } else {
+      const result = await generateObject({
+        model,
+        schema: ExpansionSchema,
+        prompt: expansionPrompt,
+      });
+      expansions = result.object?.queries ?? [];
+    }
+
     // Deduplicate + include the original query
     const seen = new Set<string>();
     const all = [query, ...expansions].filter(q => {
