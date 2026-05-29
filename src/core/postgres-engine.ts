@@ -1897,7 +1897,16 @@ export class PostgresEngine implements BrainEngine {
         jitter: BULK_RETRY_OPTS.jitter,
         auditSite,
         signal,
-        onRetry: (attempt, err) => {
+        onRetry: async (attempt, err) => {
+          // v0.41.x: reconnect the pool before retrying. Handles both
+          // postgres.js pool death (transient network blip / Supavisor
+          // circuit-breaker) and module-level db.sql nullification.
+          // reconnect() has its own _reconnecting mutex and no-ops if the
+          // pool is healthy, so this is safe to call unconditionally.
+          const { isRetryableConnError } = await import('./retry.ts');
+          if (isRetryableConnError(err)) {
+            try { await this.reconnect(); } catch { /* best-effort */ }
+          }
           // Compute delay for this attempt for the audit record. withRetry
           // re-computes internally; this mirrors the math so the audit value
           // matches what actually sleeps.

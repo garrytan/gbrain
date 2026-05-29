@@ -112,8 +112,12 @@ export interface WithRetryOpts {
   signal?: AbortSignal;
   /** Audit-site label for observability. Must be in BATCH_AUDIT_SITES. */
   auditSite?: BatchAuditSite;
-  /** Per-attempt callback fires on each retry (attempt is 1-based). */
-  onRetry?: (attempt: number, err: unknown) => void;
+  /**
+   * Per-attempt callback fires on each retry (attempt is 1-based).
+   * Async callbacks are fully awaited before the inter-attempt delay begins.
+   * Backward-compatible: non-async callbacks resolve immediately via void.
+   */
+  onRetry?: (attempt: number, err: unknown) => void | Promise<void>;
 }
 
 /**
@@ -227,7 +231,7 @@ export async function withRetry<T>(
       if (!isRetryableConnError(err)) throw err;
       lastErr = err;
       if (attempt >= maxRetries) break;
-      opts.onRetry?.(attempt + 1, err);
+      await opts.onRetry?.(attempt + 1, err);
       const delay = computeNextDelay(attempt, prevDelay, baseDelay, maxDelay, jitter);
       prevDelay = delay;
       await abortableSleep(delay, signal);
