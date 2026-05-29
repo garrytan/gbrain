@@ -139,18 +139,18 @@ For `--limit 8`, vector pulls ~100 candidate chunks brain-wide. Against ~100K pa
 
 ## 4. Boil-the-Ocean Fix Menu
 
-Ordered cheapest → most ambitious. Recommendation: ship **Tier 1** first, **measure** (§5), and only build higher tiers if the evals don't clear the bar. Tiers are independent unless noted.
+Ordered cheapest → most ambitious. **The actual fix is Tiers 1 + 2 + 4 together** (see §6) — Tier 1 is the proximate bug, but it's necessary-not-sufficient; Tiers 2 and 4 close the structural gap (store-by-name vs. retrieve-by-literal-proximity). Tiers 3, 5, 6 are genuinely measure-first. Ship Tier 1 first because it's contained, then complete with 2 + 4, measuring (§5) at each step. Tiers are independent unless noted.
 
 ### Tier 1 — Per-page max-pool in `searchVector` (the actual bug)
 
 - Mirror `searchKeyword`'s `best_per_page` into both engines' `searchVector`: `DISTINCT ON (slug) … ORDER BY slug, score DESC`, pooling over the **full candidate set before** the user-facing `LIMIT`. Keep the stable tiebreaker (`page_id ASC, chunk_id ASC`).
 - Ensure pooling happens over a candidate set large enough that a page's best chunk isn't truncated pre-pool. Either (a) raise vector `innerLimit`, or (b) restructure so pooling precedes truncation, or (c) two-stage: pull top-N chunks, pool to pages, then re-expand each surviving page's best chunk.
 - **Cost:** ~a day incl. tests + dual-engine parity. **Risk:** low — copies a proven in-repo pattern. **Expected:** "Greek amphitheater" → Mingtang at ~0.9 (its title chunk), because we know that chunk embeds at 0.9866.
-- **This may fully resolve the symptom.** Everything below is conditional on evals showing residual gaps.
+- **Necessary but NOT sufficient.** Max-pool only rescues pages whose best chunk is *already somewhere* in the candidate set. It does nothing when the title chunk never makes top-k for a short query (§3.4), and nothing for true synonyms where no chunk lexically/semantically overlaps the query. Those are exactly the cases that produced this incident. Tier 1 alone leaves the structural gap open. See §6.
 
-### Tier 2 — Title/summary as first-class retrieval signal
+### Tier 2 — Title/summary as first-class retrieval signal  *(load-bearing, not optional)*
 
-The deeper reason "Greek amphitheater" matched a body chunk and not the title: the **title is just another chunk** competing on equal footing. Names of things deserve weight.
+The deeper reason "Greek amphitheater" matched a body chunk and not the title: the **title is just another chunk** competing on equal footing. Names of things deserve weight. This is the difference between a page being found *by luck* (its best body chunk happened to survive) and found *by design* (a query that is a substring of the title cannot miss). For a brain whose pages are organized around chosen names, this tier is part of the actual fix, not a maybe-later.
 - **2a. Dedicated title/summary embedding** per page (separate column or a synthetic high-priority chunk), fused into candidate generation so a query matching the title is strongly favored.
 - **2b. Title/heading boost factor** at scoring time (analogous to the existing `source_factor` multiplier) when the matched chunk is `chunk_source = 'title'`/heading or the page title is a lexical superstring of the query.
 - **Cost:** medium (schema touch + ingest + scoring). **Risk:** medium — needs eval to avoid over-boosting titles on thematic queries.
@@ -161,9 +161,9 @@ The deeper reason "Greek amphitheater" matched a body chunk and not the title: t
 - Confirm/repair that `reranker_enabled` and `expansion` actually fire on the default path (the §2.3 no-op suggests they don't).
 - **Cost:** medium–high. **Risk:** medium — this is the path BrainBench supposedly already measures, so it may be largely wiring + ensuring the CLI uses it.
 
-### Tier 4 — Alias / named-entity resolution layer
+### Tier 4 — Alias / named-entity resolution layer  *(required for this brain)*
 
-For true synonyms where neither vector nor lexical helps (e.g. "the Hall of Light" ↔ "Mingtang" ↔ "Greek amphitheater" ↔ "the buildings other people won't build"):
+The brain is organized around **chosen names that are load-bearing identity** — Mingtang, Baku, Argus, Sanctum, the Hall of Light. Literal embedding proximity structurally cannot bridge "Hall of Light" → the Mingtang page when no body chunk shares those tokens or their semantic neighborhood. No amount of pooling or title-boosting fixes a true synonym with zero surface overlap. This tier is the only one that does, and for this brain it is **required**, not measure-first. For true synonyms where neither vector nor lexical helps (e.g. "the Hall of Light" ↔ "Mingtang" ↔ "Greek amphitheater" ↔ "the buildings other people won't build"):
 - **4a. Project `aliases:` frontmatter into a searchable structure at ingest** (many pages already declare `aliases:`; today it's dead metadata for the query path). Normalize (lowercase/trim/collapse-ws). Backfill existing pages.
 - **4b. Deterministic alias hop in query:** if the normalized query (or an n-gram) matches a stored alias, hard-inject the canonical page into candidates at high score — no LLM call, works with expansion off. Source-aware like the existing `resolveSlugWithAlias`.
 - Note: today's `slug_aliases` table is exact slug→slug redirect used only by `get <slug>`; it does **not** participate in search. Decide: extend it for free-text aliases or add a `page_aliases` table.
@@ -240,12 +240,22 @@ Run baseline 3× for a noise floor (the code-retrieval harness already documents
 
 ## 6. Recommendation
 
-1. **Ship Tier 1** (per-page max-pool, both engines) as a focused PR with the §5 baseline + regression eval. High confidence it resolves the incident symptom.
-2. **Measure** against NamedThingBench. Publish the before/after numbers.
-3. **Decide Tiers 2–6 by data.** Build title-boost / hybrid / alias / graph layers only where the evals show residual gaps. Cheap fix first, measure, then spend.
-4. **Resolve the doc/reality question** in §3.5: confirm whether the CLI default exercises the documented hybrid stack; if not, that's its own correctness issue independent of this bug.
+**The actual remediation is Tiers 1 + 2 + 4 together, not Tier 1 alone.** An earlier draft of this doc said "ship Tier 1, then decide the rest by data." That was too cautious and mis-diagnosed the disease. Tier 1 fixes the proximate bug; it does not close the structural gap the incident exposed. The disease is: **the brain is stored by *meaning and chosen name*, but retrieved by *literal embedding proximity to a body chunk*.** Three layers are needed to actually treat that:
 
-The discipline this incident teaches: a benchmark that scores 97.9 R@5 while the production default returns a flagship page at 0.64 means the benchmark and the shipped path have diverged. The eval work above exists to make that divergence impossible to reintroduce silently.
+1. **Tier 1 — per-page max-pool (both engines).** The proximate bug. Without it, a page is scored by an arbitrary surviving chunk. Necessary, fast (~1 day), low-risk, copies a proven in-repo pattern. But it only helps when the right chunk is *already* in the candidate set.
+2. **Tier 2 — title/summary as a first-class, weighted signal.** Makes a query that is a substring of a page's title *unable to miss*, instead of relying on a body chunk surviving by luck. For a brain organized around chosen names, this is load-bearing, not optional.
+3. **Tier 4 — alias / named-entity resolution.** The only layer that bridges true synonyms with zero surface overlap ("Hall of Light" → Mingtang, "the photo app" → Baku). Many pages already carry `aliases:` frontmatter that is dead metadata to the query path today. Projecting it into search is cheap, deterministic, and the only structural fix for the named-entity class. **Required for this brain.**
+
+**Genuinely measure-first (build only where evals show residual gaps):** Tier 3 (full hybrid + RRF wiring), Tier 5 (query understanding / multi-vector), Tier 6 (graph-assisted recall). These are real and valuable but larger, and 1+2+4 may make them unnecessary or re-scope them.
+
+### Sequencing
+1. **Ship Tier 1** first as a focused PR with the §5 baseline + regression eval — it's contained and unblocks everything.
+2. **Immediately follow with Tiers 2 + 4** as the completion of the fix, each with its own NamedThingBench family passing the gate (title-substring → Tier 2; alias/synonym → Tier 4).
+3. **Measure continuously** against NamedThingBench; publish before/after at each step.
+4. **Resolve the doc/reality question** in §3.5: confirm whether the CLI default exercises the documented hybrid stack; if not, that's its own correctness issue independent of this bug — and likely folds into Tier 3.
+5. **Decide Tiers 3/5/6 by data**, in that priority order.
+
+The discipline this incident teaches: a benchmark that scores 97.9 R@5 while the production default returns a flagship page at 0.64 means the benchmark and the shipped path have diverged. And shipping only the proximate-bug fix would have left the real disease — retrieval-by-literal-string against a store-by-name brain — fully intact. The eval work above exists to make both failures impossible to reintroduce silently.
 
 ---
 
