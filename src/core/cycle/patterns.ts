@@ -33,6 +33,7 @@ export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
   yieldDuringPhase?: () => Promise<void>;
+  sourceId?: string;
 }
 
 export async function runPhasePatterns(
@@ -81,6 +82,7 @@ export async function runPhasePatterns(
       model: config.model,
       max_turns: 30,
       allowed_slug_prefixes: allowedSlugPrefixes,
+      source_id: opts.sourceId,
     };
     const submitOpts: Partial<MinionJobInput> = {
       max_stalled: 3,
@@ -116,7 +118,7 @@ export async function runPhasePatterns(
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id]);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, opts.sourceId ?? 'default');
 
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, {
       reflections_considered: reflections.length,
@@ -231,25 +233,26 @@ async function collectChildPutPageSlugs(
   childIds: number[],
 ): Promise<Array<{ slug: string; source_id: string }>> {
   if (childIds.length === 0) return [];
-  // v0.32.8: subagent put_page tool schema doesn't expose source_id (subagents
-  // are scoped to a single source). Default to 'default' here; multi-source
-  // dream cycles are a v0.33 follow-up. The point of threading source_id is
-  // so reverseWriteRefs can pass it through getPage and pick the correct
-  // (source_id, slug) row instead of whatever the DB happens to return.
-  const rows = await engine.executeRaw<{ slug: string }>(
+  // v0.43: source_id is pinned on the child job data by the parent cycle,
+  // not exposed to the model as a tool arg.
+  const rows = await engine.executeRaw<{ slug: string; source_id: string | null }>(
     `SELECT DISTINCT
-            COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
-       FROM subagent_tool_executions
-      WHERE job_id = ANY($1::int[])
-        AND tool_name = 'brain_put_page'
-        AND status = 'complete'
-      ORDER BY 1`,
+            COALESCE(e.input->>'slug', (e.input #>> '{}')::jsonb->>'slug') AS slug,
+            COALESCE(j.data->>'source_id', 'default') AS source_id
+       FROM subagent_tool_executions e
+       JOIN minion_jobs j ON j.id = e.job_id
+      WHERE e.job_id = ANY($1::int[])
+        AND e.tool_name = 'brain_put_page'
+        AND e.status = 'complete'
+      ORDER BY 2, 1`,
     [childIds],
   );
   return rows
-    .map(r => r.slug)
-    .filter((s): s is string => typeof s === 'string' && s.length > 0)
-    .map(slug => ({ slug, source_id: 'default' }));
+    .filter((r): r is { slug: string; source_id: string | null } => typeof r.slug === 'string' && r.slug.length > 0)
+    .map(r => ({
+      slug: r.slug,
+      source_id: typeof r.source_id === 'string' && r.source_id.length > 0 ? r.source_id : 'default',
+    }));
 }
 
 // ── Reverse-write ────────────────────────────────────────────────────
@@ -260,6 +263,7 @@ async function reverseWriteRefs(
   engine: BrainEngine,
   brainDir: string,
   refs: Array<{ slug: string; source_id: string }>,
+  rootSourceId: string = 'default',
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
@@ -275,7 +279,7 @@ async function reverseWriteRefs(
       // so same-slug-different-source pages don't collide on disk. Default-source
       // pages stay at brainDir/<slug>.md so single-source brains see no change.
       // `.sources/` is a reserved prefix; walkBrainRepo skips dot-dirs.
-      const filePath = source_id === 'default'
+      const filePath = source_id === rootSourceId
         ? join(brainDir, `${slug}.md`)
         : join(brainDir, '.sources', source_id, `${slug}.md`);
       mkdirSync(dirname(filePath), { recursive: true });

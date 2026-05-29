@@ -127,6 +127,30 @@ describe('buildBrainTools', () => {
     expect(res).toBeTruthy();
   });
 
+  test('execute() on put_page honors a sourceId pinned by the parent job', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('sawyer-brain', 'sawyer-brain', '/tmp/brain', '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    const tools = buildBrainTools({
+      subagentId: 42,
+      engine,
+      config,
+      allowedSlugPrefixes: ['wiki/reflections/*'],
+      sourceId: 'sawyer-brain',
+    });
+    const putPage = tools.find(t => t.name === 'brain_put_page');
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await putPage!.execute(
+      { slug: 'wiki/reflections/source-aware', content: '---\ntitle: Source Aware\n---\nbody' },
+      ctx,
+    );
+
+    expect(await engine.getPage('wiki/reflections/source-aware', { sourceId: 'sawyer-brain' })).toBeTruthy();
+    expect(await engine.getPage('wiki/reflections/source-aware', { sourceId: 'default' })).toBeNull();
+  });
+
   test('execute() on put_page with out-of-namespace slug throws permission_denied', async () => {
     const tools = buildBrainTools({ subagentId: 42, engine, config });
     const putPage = tools.find(t => t.name === 'brain_put_page');

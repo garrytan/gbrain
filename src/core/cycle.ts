@@ -1420,6 +1420,7 @@ export async function runCycle(
           from: opts.synthFrom,
           to: opts.synthTo,
           bypassDreamGuard: opts.synthBypassDreamGuard,
+          sourceId: opts.sourceId,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -1595,6 +1596,7 @@ export async function runCycle(
           brainDir: opts.brainDir,
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
+          sourceId: opts.sourceId,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

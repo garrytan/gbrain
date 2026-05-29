@@ -297,6 +297,47 @@ describe('E2E synthesize chunking — fan-out shape', () => {
     }
   }, 30_000);
 
+  test('sourceId is pinned onto submitted Dream subagent jobs', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+         VALUES ('sawyer-brain', 'sawyer-brain', $1, '{}'::jsonb)
+         ON CONFLICT (id) DO NOTHING`,
+        [rig.brainDir],
+      );
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+
+      const basename = '2026-04-25-source-aware.txt';
+      const filePath = corpusPath(rig.corpusDir, basename);
+      const content = 'source aware transcript\n'.repeat(200);
+      writeFileSync(filePath, content);
+      await seedVerdict(rig.engine, filePath, content);
+
+      await withoutAnthropicKey(async () => {
+        await withSubagentAutoCancel(rig.engine, async () => {
+          const result = await runPhaseSynthesize(rig.engine, {
+            brainDir: rig.brainDir,
+            dryRun: false,
+            sourceId: 'sawyer-brain',
+          });
+          expect(result.status).toBe('ok');
+        });
+      });
+
+      const jobs = await rig.engine.executeRaw<{ source_id: string | null }>(
+        `SELECT data->>'source_id' AS source_id
+           FROM minion_jobs
+          WHERE name = 'subagent'
+          ORDER BY id`,
+      );
+      expect(jobs.map(j => j.source_id)).toEqual(['sawyer-brain']);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
   test('multi-chunk transcript spawns N children with chunk-suffixed idempotency keys', async () => {
     const rig = await setupRig();
     try {

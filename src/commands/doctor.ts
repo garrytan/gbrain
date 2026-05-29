@@ -1639,6 +1639,104 @@ export function checkAutopilotLockScope(): Check {
 }
 
 /**
+ * v0.43 — local PGLite backup retention visibility.
+ *
+ * Recovery dirs are useful immediately after a DB rebuild, but known-bad
+ * `brain.pglite.corrupt-*` / `brain.pglite.bad-dim-*` dirs become confusing
+ * rollback bait once the active DB is healthy. Doctor does not delete them;
+ * it makes the retention decision visible with a paste-ready cleanup rule.
+ */
+export function checkPgliteBackupRetention(home: string = gbrainPath()): Check {
+  try {
+    if (!existsSync(home)) {
+      return { name: 'pglite_backup_retention', status: 'ok', message: 'gbrain home not found; no PGLite backup dirs to check' };
+    }
+    const entries = readdirSync(home, { withFileTypes: true })
+      .filter(e => e.isDirectory() && /^brain\.pglite\./.test(e.name))
+      .map(e => e.name)
+      .sort();
+    const knownBad = entries.filter(name =>
+      /^brain\.pglite\.(corrupt|bad-dim)-/.test(name));
+    const backups = entries.filter(name =>
+      /^brain\.pglite\.(bak|bak\.|corrupt-|bad-dim-)/.test(name));
+    if (knownBad.length > 0) {
+      return {
+        name: 'pglite_backup_retention',
+        status: 'warn',
+        message:
+          `${knownBad.length} known-bad PGLite recovery dir(s): ${knownBad.join(', ')}. ` +
+          `Keep briefly for rollback evidence; after one clean scheduled Dream run, archive/delete them. ` +
+          `Active DB is ${join(home, 'brain.pglite')}.`,
+      };
+    }
+    if (backups.length > 2) {
+      return {
+        name: 'pglite_backup_retention',
+        status: 'warn',
+        message:
+          `${backups.length} PGLite backup dir(s) found: ${backups.join(', ')}. ` +
+          `Keep the active DB plus one recent known-good backup; archive/delete older backups after verification.`,
+      };
+    }
+    return {
+      name: 'pglite_backup_retention',
+      status: 'ok',
+      message: backups.length === 0
+        ? 'No extra PGLite backup dirs found'
+        : `${backups.length} PGLite backup dir(s) present; below retention warning threshold`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'pglite_backup_retention', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
+/**
+ * v0.43 — default source story check.
+ *
+ * In a multi-source brain, `default` with no local_path is a DB-only bucket.
+ * If it still has pages, operators may read it as an active local source even
+ * though new real-source writes should route to the named source.
+ */
+export async function checkDefaultSourceStory(engine: BrainEngine): Promise<Check> {
+  try {
+    const rows = await engine.executeRaw<{
+      default_local_path: string | null;
+      non_default_sources: string | number;
+      default_pages: string | number;
+    }>(
+      `SELECT
+          (SELECT local_path FROM sources WHERE id = 'default') AS default_local_path,
+          (SELECT COUNT(*)::text FROM sources WHERE id <> 'default') AS non_default_sources,
+          (SELECT COUNT(*)::text FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_pages`,
+    );
+    const row = rows[0];
+    const nonDefaultSources = Number(row?.non_default_sources ?? 0);
+    const defaultPages = Number(row?.default_pages ?? 0);
+    const defaultHasLocalPath = typeof row?.default_local_path === 'string' && row.default_local_path.length > 0;
+    if (nonDefaultSources > 0 && !defaultHasLocalPath && defaultPages > 0) {
+      return {
+        name: 'default_source_story',
+        status: 'warn',
+        message:
+          `default is DB-only but still has ${defaultPages} page(s) while ${nonDefaultSources} named source(s) exist. ` +
+          `Future local Dream writes should use the named source; later cleanup can rehome/delete intentional default rows.`,
+      };
+    }
+    return {
+      name: 'default_source_story',
+      status: 'ok',
+      message: nonDefaultSources === 0
+        ? 'Single-source/default-only brain'
+        : 'default source is not presenting as an active local source',
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { name: 'default_source_story', status: 'warn', message: `Check failed: ${msg}` };
+  }
+}
+
+/**
  * v0.41.6.0 D3 — stale_locks doctor check.
  *
  * Surfaces every row in `gbrain_cycle_locks` whose `ttl_expires_at < NOW()`.
@@ -2976,6 +3074,8 @@ export async function buildChecks(
   } catch {
     // Best-effort filesystem-hygiene check; never block doctor.
   }
+
+  checks.push(checkPgliteBackupRetention());
 
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
@@ -5080,6 +5180,8 @@ export async function buildChecks(
     // 5K — source_routing_health (D5 lock: 200-page total cap)
     progress.heartbeat('source_routing_health');
     checks.push(await checkSourceRoutingHealth(engine));
+    progress.heartbeat('default_source_story');
+    checks.push(await checkDefaultSourceStory(engine));
     // 5L — oauth_confidential_client_health (success-path probe per codex CF8)
     progress.heartbeat('oauth_confidential_client_health');
     checks.push(await checkOauthConfidentialHealth(engine));

@@ -254,6 +254,8 @@ export interface SynthesizePhaseOpts {
    * the synthesize loop. Caller must opt in explicitly.
    */
   bypassDreamGuard?: boolean;
+  /** Source that Dream DB writes should target. Defaults to legacy default. */
+  sourceId?: string;
 }
 
 export async function runPhaseSynthesize(
@@ -487,6 +489,7 @@ export async function runPhaseSynthesize(
           model: subagentModel,
           max_turns: 30,
           allowed_slug_prefixes: allowedSlugPrefixes,
+          source_id: opts.sourceId,
         };
         // Idempotency key parity:
         //   - single-chunk → legacy `dream:synth:<filePath>:<hash16>` (byte-
@@ -553,7 +556,7 @@ export async function runPhaseSynthesize(
     const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo);
 
     // Dual-write: reverse-render each DB row → markdown file.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, opts.sourceId ?? 'default');
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
@@ -562,7 +565,7 @@ export async function runPhaseSynthesize(
     // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
-      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes);
+      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes, opts.sourceId ?? 'default');
     }
 
     // Write completion timestamp ON SUCCESS only.
@@ -1352,28 +1355,30 @@ async function collectChildPutPageSlugs(
   // properly-stored jsonb objects (input->>'slug') and double-encoded jsonb
   // strings from pre-fix data ((input #>> '{}')::jsonb->>'slug').
   //
-  // v0.32.8: returns Array<{slug, source_id}> instead of string[]. Subagent
-  // put_page tool schema doesn't expose source_id (subagents are scoped to
-  // a single source); default to 'default' for the current dream-cycle
-  // product behavior. Threading the source_id through reverseWriteRefs
-  // guarantees getPage targets the correct (source, slug) row instead of
-  // the first DB match.
-  const rows = await engine.executeRaw<{ job_id: number; slug: string }>(
-    `SELECT job_id,
-            COALESCE(input->>'slug', (input #>> '{}')::jsonb->>'slug') AS slug
-       FROM subagent_tool_executions
-      WHERE job_id = ANY($1::int[])
-        AND tool_name = 'brain_put_page'
-        AND status = 'complete'`,
+  // v0.43: source_id comes from the child job data. The put_page tool schema
+  // still doesn't expose source_id to the model; the parent cycle pins it
+  // server-side so Dream writes don't collapse into the legacy default source.
+  const rows = await engine.executeRaw<{ job_id: number; slug: string; source_id: string | null }>(
+    `SELECT e.job_id,
+            COALESCE(e.input->>'slug', (e.input #>> '{}')::jsonb->>'slug') AS slug,
+            COALESCE(j.data->>'source_id', 'default') AS source_id
+       FROM subagent_tool_executions e
+       JOIN minion_jobs j ON j.id = e.job_id
+      WHERE e.job_id = ANY($1::int[])
+        AND e.tool_name = 'brain_put_page'
+        AND e.status = 'complete'`,
     [childIds],
   );
-  const rewritten = new Set<string>();
+  const rewritten = new Map<string, { slug: string; source_id: string }>();
   for (const r of rows) {
     if (typeof r.slug !== 'string' || r.slug.length === 0) continue;
+    const sourceId = typeof r.source_id === 'string' && r.source_id.length > 0 ? r.source_id : 'default';
     const ci = chunkInfo.get(r.job_id);
-    rewritten.add(ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug);
+    const slug = ci ? rewriteChunkedSlug(r.slug, ci.hash6, ci.idx) : r.slug;
+    rewritten.set(`${sourceId}\0${slug}`, { slug, source_id: sourceId });
   }
-  return Array.from(rewritten).sort().map(slug => ({ slug, source_id: 'default' }));
+  return Array.from(rewritten.values()).sort((a, b) =>
+    a.source_id.localeCompare(b.source_id) || a.slug.localeCompare(b.slug));
 }
 
 /**
@@ -1408,6 +1413,7 @@ async function reverseWriteRefs(
   engine: BrainEngine,
   brainDir: string,
   refs: Array<{ slug: string; source_id: string }>,
+  rootSourceId: string = 'default',
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
@@ -1421,7 +1427,7 @@ async function reverseWriteRefs(
       // v0.32.8 F6: non-default sources land at brainDir/.sources/<id>/<slug>.md
       // so same-slug-different-source pages don't collide. Default-source
       // pages stay at brainDir/<slug>.md so single-source brains see no change.
-      const filePath = source_id === 'default'
+      const filePath = source_id === rootSourceId
         ? join(brainDir, `${slug}.md`)
         : join(brainDir, '.sources', source_id, `${slug}.md`);
       mkdirSync(dirname(filePath), { recursive: true });
@@ -1468,6 +1474,7 @@ async function writeSummaryPage(
   summaryDate: string,
   writtenSlugs: string[],
   childOutcomes: Array<{ jobId: number; status: string }>,
+  sourceId: string = 'default',
 ): Promise<void> {
   const completed = childOutcomes.filter(c => c.status === 'completed').length;
   const failed = childOutcomes.length - completed;
@@ -1511,7 +1518,7 @@ async function writeSummaryPage(
     compiled_truth: parsed.compiled_truth,
     timeline: parsed.timeline,
     frontmatter: parsed.frontmatter,
-  });
+  }, { sourceId });
 
   // Also write to disk (orchestrator dual-write).
   try {

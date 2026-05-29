@@ -450,6 +450,12 @@ export interface SubagentHandlerData {
    */
   allowed_slug_prefixes?: string[];
   /**
+   * Source that brain-tool writes should target. Dream/pattern subagents set
+   * this from the parent cycle's --source so trusted-workspace put_page calls
+   * land in the active source instead of the legacy default source.
+   */
+  source_id?: string;
+  /**
    * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
    * that `buildSystemPrompt()` splices into `system`. Default behavior
    * (omitted or false) prepends a deterministic preamble listing each
