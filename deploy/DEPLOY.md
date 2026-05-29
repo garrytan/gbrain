@@ -70,11 +70,24 @@ Deploy this on the NEW image (sp1a-v11) first — it's the canary (step B). It m
 have the lock-renewal fix (#1572, in upstream master) or it crashes ~39×/day on
 DB blips; the pinned UPSTREAM_REF includes it.
 
-## Coolify hardening to apply on app 108 (GB-PROD findings)
-- **Healthcheck:** `GET /health` → restart on fail (currently none; a hung-but-alive
-  process is invisible).
-- **Memory limit:** ~1–2 GB (currently unbounded on a shared host).
-- These + the `&&`/`exec` CMD (already in deploy/Dockerfile) close GB-PROD-5/6/7/8.
+## Coolify hardening on app 108 (GB-PROD findings)
+- **Memory limit (DONE 2026-05-29):** applied as `custom_docker_run_options=--memory=2g --memory-swap=2g`
+  on app 108 (the dedicated `limits_memory=2g` field is also set as belt-and-suspenders).
+  Verified live: `HostConfig.Memory=2147483648`. The dedicated field alone proved
+  unreliable on this `dockerimage` build pack — a container can get recreated without
+  it — so the explicit run-option is the source of truth.
+- **Healthcheck (`health_check_enabled=true`, `GET /health`):** Coolify auto-generates a
+  `curl … || wget … || exit 1` probe. ⚠️ **The image MUST contain `curl`** — the base
+  `oven/bun` image does not, so on an image without it the probe fails every tick and the
+  container is flagged `unhealthy` (no crash-loop: Docker doesn't restart on unhealthy and
+  Coolify has no restart-unhealthy scheduler, but it's a landmine). `deploy/Dockerfile` now
+  `apt-get install`s curl — build + ship sp1a-v12 (or later) for the healthcheck to pass.
+  Until then, keep `health_check_enabled=false` to avoid a false `unhealthy`, OR accept the
+  cosmetic unhealthy on the curl-less image.
+- A complex `--health-cmd` via `custom_docker_run_options` is **rejected** by Coolify's
+  validator (422 "format is invalid"), so a bun-based probe can't be injected that way —
+  curl-in-image is the supported path.
+- The `&&`/`exec` CMD (already in deploy/Dockerfile) closes GB-PROD-5/8.
 
 ## Data durability (DONE 2026-05-29)
 `/root/confer-brain-backup.sh` + daily 03:00 UTC cron on S1 dumps `confer_brain`

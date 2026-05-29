@@ -28,6 +28,20 @@ FROM oven/bun:${BUN_VERSION}
 ENV BUN_INSTALL_BIN=/usr/local/bin
 ENV GBRAIN_HOME=/data/.gbrain
 
+# ─── curl: required by the Coolify-generated healthcheck ────────────────────
+# Coolify's app-level health check (health_check_enabled) auto-generates a
+# `curl -f <path> || wget -O- <path> || exit 1` probe. The base oven/bun image
+# (debian-slim) ships NEITHER curl nor wget, so the generated probe fails every
+# tick and the container is marked `unhealthy`. It does NOT crash-loop today
+# (Docker never restarts on unhealthy, and Coolify has no restart-unhealthy
+# scheduler), but a false `unhealthy` is a landmine for deploy health-gates and
+# any future auto-restart policy. Installing curl makes the generated probe work.
+# Discovered 2026-05-29 when a clean force-redeploy first materialized Coolify's
+# healthcheck against an image lacking curl. (Was previously NONE on the running
+# container, so the gap was invisible.)
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Pin upstream for reproducible builds. Override with --build-arg UPSTREAM_REF=<sha>.
 ARG UPSTREAM_REF=master
 RUN bun install -g "github:garrytan/gbrain#${UPSTREAM_REF}"
