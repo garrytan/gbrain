@@ -1180,6 +1180,28 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
     const exhausted = result.events.filter((e) => e.outcome === 'exhausted');
     const successful = result.events.filter((e) => e.outcome === 'success');
 
+    // v0.41.25.0 (#1570) — read the db-disconnect audit so the existing
+    // batch_retry_health check surfaces ALL connection-incident signal in
+    // one place (per codex finding 11: extend, don't add a new check).
+    // Disconnect events are informational — every CLI command legitimately
+    // disconnects at end-of-life. The value is the most_recent_caller
+    // frame: when the v0.41.25 retry reconnect callback fires, the
+    // operator runs `gbrain doctor` and the stack trace tells them which
+    // code path triggered the mid-process disconnect. v0.41.26 fixes
+    // that specific ownership boundary.
+    let disconnectNote = '';
+    try {
+      const { readRecentDbDisconnects } = await import('../core/audit/db-disconnect-audit.ts');
+      const dc = readRecentDbDisconnects(24);
+      if (dc.count > 0) {
+        // First-line of stack trace is the caller of logDbDisconnect; show
+        // it so the operator sees something compact in human output.
+        const firstFrame = (dc.most_recent_caller ?? '').split('\n')[0]?.trim() ?? '';
+        const frameSlug = firstFrame.length > 0 ? ` (most recent caller: ${firstFrame.slice(0, 200)})` : '';
+        disconnectNote = ` Disconnect-call audit: ${dc.count} call(s) in 24h${frameSlug}.`;
+      }
+    } catch { /* audit module unavailable; older brain, fine */ }
+
     if (exhausted.length === 0) {
       const note = result.corrupted_lines > 0
         ? ` (note: ${result.corrupted_lines} corrupt JSONL line(s) skipped)`
@@ -1190,7 +1212,7 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
       return {
         name: 'batch_retry_health',
         status: 'ok',
-        message: `No exhausted batch retries in last 24h.${recoveredNote}${note}`,
+        message: `No exhausted batch retries in last 24h.${recoveredNote}${note}${disconnectNote}`,
       };
     }
 
@@ -1204,7 +1226,7 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
       return {
         name: 'batch_retry_health',
         status: 'fail',
-        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Sustained circuit-breaker incident. Fix: check pooler status; consider raising GBRAIN_BULK_MAX_RETRIES or moving to direct-connection.`,
+        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Sustained circuit-breaker incident. Fix: check pooler status; consider raising GBRAIN_BULK_MAX_RETRIES or moving to direct-connection.${disconnectNote}`,
       };
     }
 
@@ -1213,7 +1235,7 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
       return {
         name: 'batch_retry_health',
         status: 'warn',
-        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Tune via GBRAIN_BULK_MAX_RETRIES / GBRAIN_BULK_RETRY_MAX_MS.`,
+        message: `${exhausted.length} exhausted batch retries in last 24h (worst: ${worstSite[0]} = ${worstSite[1]}). Tune via GBRAIN_BULK_MAX_RETRIES / GBRAIN_BULK_RETRY_MAX_MS.${disconnectNote}`,
       };
     }
 
@@ -1221,7 +1243,7 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
     return {
       name: 'batch_retry_health',
       status: 'ok',
-      message: `${exhausted.length} exhausted batch retry(s) in last 24h (below per-site threshold of 3)`,
+      message: `${exhausted.length} exhausted batch retry(s) in last 24h (below per-site threshold of 3)${disconnectNote}`,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

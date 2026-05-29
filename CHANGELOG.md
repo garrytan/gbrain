@@ -2,6 +2,154 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.41.28.0] - 2026-05-27
+
+**Your `gbrain dream` cycle stops losing rows when the database connection
+blips, and the silent `'No database connection'` errors after `gbrain
+capture` go away.**
+
+If you run `gbrain dream` against a Supabase brain on the Supavisor pooler,
+you might have seen ~150 link rows quietly disappear every cycle, with
+log lines like:
+
+```
+[extract.links_fs] connection blip, retrying (attempt 1/3): No database connection: connect() has not been called
+[extract.links_fs] connection blip, retrying (attempt 2/3): No database connection: connect() has not been called
+[extract.links_fs] connection blip, retrying (attempt 3/3): No database connection: connect() has not been called
+  batch error (100 link rows lost): No database connection: connect() has not been called
+```
+
+The retry layer was correctly noticing the problem and waiting. But the
+underlying database connection wrapper had been nulled out by some other
+code path in the same process, and the retry was hammering against a dead
+reference. v0.41.28.0 makes the retry layer rebuild the connection between
+attempts via a new opt-in `reconnect` callback on `withRetry`. The engine
+self-heals; rows land. (Closes #1570.)
+
+The other symptom was that `gbrain capture` would print a trailing
+`'No database connection'` line on stderr from a background facts:absorb
+worker firing AFTER the CLI's `engine.disconnect()` finally block ran.
+The fact subsystem queues post-page-write work fire-and-forget; that work
+sometimes outlived the CLI process's connection lifetime. v0.41.28.0 adds
+a new `FactsQueue.drainPending({timeout: 1000})` method, semantically
+distinct from `shutdown()` (which would abort in-flight) — drain lets
+in-flight finish. The CLI op-dispatch now awaits the drain before
+`engine.disconnect()`, capped at 1s so commands that don't enqueue facts
+pay only a fast no-op check.
+
+**Honest scope.** This is the tactical symptom fix. The deeper question
+— which specific code path nulls the database singleton mid-cycle — is
+still open. v0.41.28.0 also ships diagnostic instrumentation:
+every call to `db.disconnect()` and `PostgresEngine.disconnect()` writes
+a JSONL audit row to `~/.gbrain/audit/db-disconnect-YYYY-Www.jsonl`
+recording the engine kind, connection style, caller stack trace, and
+command. The doctor's existing `batch_retry_health` check surfaces the
+24-hour count plus the most-recent caller frame, so after your next
+dream cycle you can run `gbrain doctor --json` and see exactly which
+code path is calling disconnect mid-process. v0.41.28+ will fix that
+specific ownership boundary based on the production data.
+
+**What to do after upgrading:**
+
+```bash
+gbrain --version   # 0.41.25.0
+gbrain upgrade
+gbrain dream --workers 4 2>&1 | tee /tmp/dream.log
+grep -c "batch error" /tmp/dream.log     # expect 0
+grep -c "No database connection" /tmp/dream.log   # expect 0
+gbrain doctor --json | jq '.checks[] | select(.id=="batch_retry_health")'
+```
+
+The `batch_retry_health` output will include a `Disconnect-call audit`
+sentence naming the most-recent mid-process disconnect caller. If the
+field shows zero calls, the symptom fix alone solved your problem. If it
+shows calls, please file an issue with that data so v0.41.28+ can target
+the right ownership boundary.
+
+### Itemized changes
+
+**Core fix — retry self-heals on null singleton:**
+
+- `src/core/retry.ts` — `WithRetryOpts` gains `reconnect?: () => Promise<void>`.
+  Awaited in the catch branch AFTER `isRetryableConnError` classification but
+  BEFORE the inter-attempt sleep. `onRetry` callbacks are now awaited too
+  (back-compat-safe: existing sync arrows work identically; async callbacks
+  now correctly delay the sleep). Fail-loud posture (per codex outside-voice
+  finding 3): a reconnect throw propagates AS the new error, replacing the
+  symptomatic "No database connection" so operators see the real cause.
+- `src/core/postgres-engine.ts:batchRetry` — Injects `reconnect: () => this.reconnect()`
+  into its `withRetry` call. `PostgresEngine.reconnect()` was already
+  race-safe via `_reconnecting` guard and handles both module and instance
+  pools.
+
+**Facts queue post-CLI drain:**
+
+- `src/core/facts/queue.ts` — New `FactsQueue.drainPending({timeout?: number})`
+  method, returns `{drained, unfinished}`. Distinct from `shutdown()`: drain
+  does NOT abort in-flight (per codex finding 9: shutdown's
+  `internalAbort.abort()` would abort the very facts:absorb worker that's
+  trying to log its post-completion event, preserving the bug class we're
+  fixing). Default timeout 1000ms; bounded so commands that don't enqueue
+  facts pay no observable cost.
+- `src/cli.ts` op-dispatch finally — Awaits
+  `getFactsQueue().drainPending({timeout: 1000})` BEFORE
+  `engine.disconnect()`. Lazy-import keeps the facts-queue module off the
+  hot path for ops that never touch it.
+
+**Diagnostic instrumentation (find the offender for v0.41.28+):**
+
+- `src/core/audit/db-disconnect-audit.ts` (NEW, ~150 LOC) — Built on the
+  existing `audit-writer.ts` cathedral, mirrors `batch-retry-audit.ts`
+  shape. Schema: `{ts, engine_kind, connection_style, caller_stack,
+  command, pid}`. Stack trace captured via `new Error().stack`, truncated
+  to ~20 frames. ISO-week file rotation. Best-effort writes (stderr-warn
+  on failure, never throws).
+- `src/core/db.ts:disconnect` — Logs an audit row before `sql.end()`. Lazy
+  import so cold paths don't pay the cost.
+- `src/core/postgres-engine.ts:disconnect` — Logs an audit row BEFORE the
+  early-return branches so even no-op disconnects (engine that was never
+  connected) are recorded — that case may itself be a caller-side bug.
+- `src/commands/doctor.ts:checkBatchRetryHealth` — Extended (per codex
+  finding 11: extend the existing check, don't add a new one) to surface
+  24h disconnect-call count and most-recent caller frame in the existing
+  message. Operators reading doctor output see all connection-incident
+  signal in one place.
+
+**Tests (focused, per codex finding 12):**
+
+- `test/core/retry-reconnect.test.ts` (NEW, 5 cases) — reconnect-callback
+  contract: ordering (classification → onRetry → reconnect → sleep),
+  back-compat (no reconnect opt = v0.41.18.0 behavior), fail-loud
+  propagation, signal-abort short-circuit, awaited onRetry timing.
+- `test/facts-queue-drain-pending.test.ts` (NEW, 4 cases) — drainPending
+  semantic distinct from shutdown: empty fast-path, in-flight settled
+  without abort, unfinished count on timeout, default timeout = 1000ms.
+- `test/db-disconnect-audit.test.ts` (NEW, 6 cases) — round-trip, stack
+  truncation, sort order, empty-dir nulls, stable feature name, EROFS
+  best-effort.
+- `test/e2e/db-singleton-shared-recovery.test.ts` (NEW, 3 DB-gated cases) —
+  pins the production failure modes: shared-singleton survival via retry
+  reconnect, diagnostic audit fires on disconnect, instance-pool disconnect
+  doesn't touch module singleton.
+
+### Honest claims (per codex outside-voice review)
+
+- The "postgres.js auto-reconnects" claim from earlier plan iterations is
+  acknowledged as overbroad: postgres.js's internal auto-reconnect handles
+  network drops on a still-live pool object. It does NOT help when our
+  module-singleton reference has been explicitly nulled — that's the bug
+  class this release patches at the retry layer + investigates with the
+  audit instrumentation.
+- The architectural refactor (remove module-singleton nullability, rename
+  `disconnect → shutdown`) considered in earlier plan iterations is
+  deferred to v0.42+ pending the diagnostic data this release ships.
+  Codex's outside-voice review of the architectural plan found 15
+  substantive problems — most importantly that the refactor was designed
+  for a root cause we hadn't actually identified.
+
+**Plan + 12 decisions + 15 codex findings absorbed at
+`~/.claude/plans/system-instruction-you-are-working-cuddly-panda.md`.
+Closes #1570.**
 ## [0.41.27.0] - 2026-05-27
 
 **`gbrain doctor` stops crying wolf about sources that have no new commits.**
