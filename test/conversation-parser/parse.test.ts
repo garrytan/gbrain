@@ -235,8 +235,20 @@ describe('parseConversation — disabledBuiltinIds', () => {
       fallbackDate: '2024-03-15',
       disabledBuiltinIds: ['telegram-bracket'],
     });
-    // No other built-in matches this exact shape → no_match.
-    expect(rDisabled.phase).toBe('no_match');
+    // With telegram-bracket disabled, the `**[18:37] 👤 Alice:** hello`
+    // line still has its colon INSIDE the bold markers, so it falls
+    // through to the lower-priority bold-name-no-time pattern (speaker
+    // becomes the whole `[18:37] 👤 Alice` bracket prefix, anchored at
+    // 00:00:00). This proves disable causes fall-through to the next
+    // matching builtin.
+    expect(rDisabled.phase).toBe('regex_match');
+    expect(rDisabled.matched_pattern_id).toBe('bold-name-no-time');
+    // Disabling BOTH bold patterns → genuine no_match.
+    const rBothDisabled = parseConversation(body, {
+      fallbackDate: '2024-03-15',
+      disabledBuiltinIds: ['telegram-bracket', 'bold-name-no-time'],
+    });
+    expect(rBothDisabled.phase).toBe('no_match');
   });
 });
 
@@ -475,6 +487,86 @@ describe('bold-paren-time pattern (Circleback meeting transcripts)', () => {
     expect(r.phase).toBe('regex_match');
     expect(r.matched_pattern_id).toBe('bold-paren-time');
     expect(r.messages).toHaveLength(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bold-name-no-time pattern (Circleback / Granola / Zoom transcripts with NO
+// per-line timestamp — `**Speaker:** text`). Additive pattern; ordered AFTER
+// the timestamped bold patterns so it can never shadow bold-paren-time.
+// ---------------------------------------------------------------------------
+
+describe('bold-name-no-time pattern (Circleback/Granola/Zoom, no timestamp)', () => {
+  test('parses **Speaker:** text transcript with frontmatter date anchor', () => {
+    const body = [
+      '**Garry Tan:** Okay, start on. And then weirdly like zoom doesn\u2019t...',
+      '**Participant 2:** he tried to reset it remotely the other night. Let me ask him.',
+      '**Garry Tan:** I mean it\u2019s really just like we need to get zoom to fix this.',
+      '**Participant 2:** Okay, let me.',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-05-28' });
+    expect(r.phase).toBe('regex_match');
+    expect(r.matched_pattern_id).toBe('bold-name-no-time');
+    expect(r.messages).toHaveLength(4);
+    expect(r.messages[0]).toEqual({
+      speaker: 'Garry Tan',
+      timestamp: '2026-05-28T00:00:00Z',
+      text: 'Okay, start on. And then weirdly like zoom doesn\u2019t...',
+    });
+    expect(r.messages[1].speaker).toBe('Participant 2');
+    expect(r.messages[1].text).toBe(
+      'he tried to reset it remotely the other night. Let me ask him.',
+    );
+    expect(r.messages[3]).toEqual({
+      speaker: 'Participant 2',
+      timestamp: '2026-05-28T00:00:00Z',
+      text: 'Okay, let me.',
+    });
+    // No-time pattern anchors at 00:00:00 of the frontmatter date
+    // (same convention as irc-classic). No wall-clock time fabricated.
+  });
+
+  test('scores above the 0.05 acceptance floor on a pure bold-name transcript', () => {
+    const body = [
+      '**Garry Tan:** line one',
+      '**Participant 2:** line two',
+      '**Garry Tan:** line three',
+    ].join('\n');
+    const r = parseConversation(body);
+    expect(r.phase).toBe('regex_match');
+    expect(r.matched_pattern_id).toBe('bold-name-no-time');
+    expect(r.messages).toHaveLength(3);
+    // No fallbackDate → epoch default, still anchors at 00:00:00.
+    expect(r.messages[0].timestamp).toBe('1970-01-01T00:00:00Z');
+  });
+
+  // REGRESSION: the new pattern must NOT shadow bold-paren-time. A
+  // `**Garry** (00:00): text` line has its colon OUTSIDE the bold
+  // markers, so it must still parse via bold-paren-time, not the new
+  // bold-name-no-time pattern.
+  test('REGRESSION: **Speaker** (HH:MM): text still matches bold-paren-time', () => {
+    const body = [
+      '**Garry Tan** (00:00): Hey, can you hear me?',
+      '**Participant 2** (02:22): Yeah, just joined.',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-03-19' });
+    expect(r.phase).toBe('regex_match');
+    expect(r.matched_pattern_id).toBe('bold-paren-time');
+    expect(r.matched_pattern_id).not.toBe('bold-name-no-time');
+    expect(r.messages).toHaveLength(2);
+    expect(r.messages[0].timestamp).toBe('2026-03-19T00:00:00Z');
+  });
+
+  // REGRESSION: a pure telegram-bracket transcript also has the colon
+  // inside the bold markers, but telegram-bracket is declared earlier
+  // and wins the score tie — bold-name-no-time must not steal it.
+  test('REGRESSION: telegram-bracket transcript still matches telegram-bracket', () => {
+    const body = [
+      '**[18:37] \u{1f464} Alice:** one',
+      '**[18:38] \u{1f464} Bob:** two',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2024-03-15' });
+    expect(r.matched_pattern_id).toBe('telegram-bracket');
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * v0.41.16.0 — Built-in conversation parser pattern registry.
  *
- * Twelve hand-vetted patterns covering the chat-export formats this
+ * Fourteen hand-vetted patterns covering the chat-export formats this
  * codebase is most likely to encounter. Each pattern's regex was
  * derived from a public format reference (source_doc field) so future
  * maintainers can verify against the wild shape.
@@ -50,7 +50,7 @@ export function cleanSpeaker(raw: string, override?: RegExp): string {
   return stripped || raw.trim();
 }
 
-/** The 12 hand-vetted built-in patterns. */
+/** The 14 hand-vetted built-in patterns. */
 export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   // -------------------------------------------------------------------
   // INLINE-DATE patterns (date in every line; less ambiguous; tried first).
@@ -176,6 +176,61 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     ],
     source_doc:
       'OpenClaw meeting-ingestion pipeline reformat of Circleback transcripts (see your OpenClaw skills/meeting-ingestion/SKILL.md)',
+  },
+
+  {
+    // Modern meeting-transcription tools (Circleback, Granola, Zoom)
+    // emit `**Speaker Name:** message text` with NO per-line
+    // timestamp. Every other built-in requires a time anchor, so this
+    // shape scored ~0.002 (one stray line in a long page) and fell
+    // below SCORING_MIN_ACCEPTANCE — parsing to zero messages and
+    // extracting zero conversation-facts. This additive pattern fixes
+    // that: speaker is captured inside the bold markers (`**Name:**`),
+    // there is no time capture, and date_source='frontmatter' with
+    // hour_group undefined routes through parse.ts's no-time branch
+    // (same convention as irc-classic) — every message anchors at
+    // 00:00:00 of the page's frontmatter date. No wall-clock time is
+    // fabricated; intra-day ordering is preserved by line order.
+    //
+    // ORDERING (critical): declared AFTER the timestamped bold
+    // patterns (imessage-slack, telegram-bracket, bold-paren-time) so
+    // it can never shadow them. The scorer tie-breaks on declaration
+    // index, so on a `**Name** (00:00): text` transcript bold-paren-
+    // time scores 1.0 and this pattern scores 0.0 (its regex requires
+    // the colon INSIDE the bold markers — `**Name:**` — which the
+    // paren-time shape `**Name** (time):` never has). On a telegram-
+    // bracket transcript both score 1.0 but telegram-bracket has the
+    // lower index and wins the tie.
+    id: 'bold-name-no-time',
+    origin: 'builtin',
+    // Matches: **Speaker Name:** message text  (colon INSIDE bold).
+    regex: /^\*\*(.+?):\*\*\s*(.*)$/,
+    captures: {
+      speaker_group: 1,
+      text_group: 2,
+    },
+    date_source: 'frontmatter',
+    time_format: '24h',
+    timezone_policy: 'utc_assumed_with_warn',
+    multi_line: false,
+    quick_reject: /^\*\*/,
+    test_positive: [
+      '**Garry Tan:** Okay, start on.',
+      '**Participant 2:** he tried to reset it remotely the other night.',
+      '**Alex Graveley:** That is exactly right.',
+    ],
+    test_negative: [
+      // bold-paren-time shape (colon OUTSIDE bold) MUST fall through:
+      '**Garry** (00:00): text',
+      // imessage-slack shape MUST fall through:
+      '**Alice Example** (2024-03-15 9:00 AM): iMessage shape',
+      // Bold but no colon at all:
+      '**Alice** hello world',
+      // No bold markers:
+      'Garry Tan: plain no bold',
+    ],
+    source_doc:
+      'Circleback / Granola / Zoom meeting-transcript export shape: `**Speaker:** text` with no per-line timestamp',
   },
 
   {
