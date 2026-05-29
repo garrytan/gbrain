@@ -83,6 +83,8 @@ const HEADROOM_RATIO = 0.9;
 const MIN_PROMPT_TOKENS = 100_000;
 /** Default chunk-count cap; operator-configurable via dream.synthesize.max_chunks_per_transcript. */
 const DEFAULT_MAX_CHUNKS = 24;
+/** Default per-run transcript cap. 0 means unlimited. */
+const DEFAULT_MAX_TRANSCRIPTS_PER_RUN = 0;
 /** Conservative default budget when model is unknown (200K × HEADROOM_RATIO). */
 const UNKNOWN_MODEL_BUDGET_TOKENS = 180_000;
 
@@ -380,12 +382,23 @@ export async function runPhaseSynthesize(
       }
     }
 
+    const capActive = config.maxTranscriptsPerRun > 0 && worthProcessing.length > config.maxTranscriptsPerRun;
+    const cappedWorthProcessing = capActive
+      ? worthProcessing.slice(0, config.maxTranscriptsPerRun)
+      : worthProcessing;
+
     // Dry-run stops here: significance filter ran (Haiku verdicts cached),
     // but no Sonnet synthesis. Codex finding #8: --dry-run does NOT mean
     // "zero LLM calls"; it means "skip Sonnet."
     if (opts.dryRun) {
-      return ok(`dry-run: ${worthProcessing.length} of ${transcripts.length} transcripts would synthesize`, {
+      const summary = capActive
+        ? `dry-run: ${cappedWorthProcessing.length} of ${worthProcessing.length} worth-processing transcripts would synthesize (cap=${config.maxTranscriptsPerRun}; ${transcripts.length} discovered)`
+        : `dry-run: ${worthProcessing.length} of ${transcripts.length} transcripts would synthesize`;
+      return ok(summary, {
         transcripts_discovered: transcripts.length,
+        transcripts_worth_processing: worthProcessing.length,
+        transcripts_cap: config.maxTranscriptsPerRun,
+        transcripts_capped: capActive,
         transcripts_processed: 0,
         pages_written: 0,
         verdicts,
@@ -422,7 +435,7 @@ export async function runPhaseSynthesize(
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
 
-    for (const t of worthProcessing) {
+    for (const t of cappedWorthProcessing) {
       const hash16 = t.contentHash.slice(0, 16);
       const hash6 = t.contentHash.slice(0, 6);
 
@@ -552,9 +565,12 @@ export async function runPhaseSynthesize(
     await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
 
     const ms = Date.now() - start;
-    const submittedTranscripts = worthProcessing.length - skipReports.length;
+    const submittedTranscripts = cappedWorthProcessing.length - skipReports.length;
     return ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s`, {
       transcripts_discovered: transcripts.length,
+      transcripts_worth_processing: worthProcessing.length,
+      transcripts_cap: config.maxTranscriptsPerRun,
+      transcripts_capped: capActive,
       transcripts_processed: submittedTranscripts,
       pages_written: writtenSlugs.length,
       // v0.29: emit the slug list so the recompute_emotional_weight phase can
@@ -743,6 +759,12 @@ interface SynthConfig {
    * `dream.synthesize.max_chunks_per_transcript`.
    */
   maxChunksPerTranscript: number;
+  /**
+   * Cap on worth-processing transcripts submitted in one real synthesize run.
+   * 0 means unlimited. Operator override:
+   * `dream.synthesize.max_transcripts_per_run`.
+   */
+  maxTranscriptsPerRun: number;
 }
 
 async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -771,6 +793,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const cooldownHoursStr = await engine.getConfig('dream.synthesize.cooldown_hours');
   const maxPromptTokensStr = await engine.getConfig('dream.synthesize.max_prompt_tokens');
   const maxChunksStr = await engine.getConfig('dream.synthesize.max_chunks_per_transcript');
+  const maxTranscriptsStr = await engine.getConfig('dream.synthesize.max_transcripts_per_run');
 
   let excludePatterns: string[] = ['medical', 'therapy'];
   if (excludeStr) {
@@ -796,6 +819,13 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
       maxChunksPerTranscript = parsed;
     }
   }
+  let maxTranscriptsPerRun = DEFAULT_MAX_TRANSCRIPTS_PER_RUN;
+  if (maxTranscriptsStr) {
+    const parsed = parseInt(maxTranscriptsStr, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      maxTranscriptsPerRun = parsed;
+    }
+  }
 
   return {
     enabled,
@@ -808,6 +838,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     cooldownHours: cooldownHoursStr ? Math.max(0, parseInt(cooldownHoursStr, 10) || 12) : 12,
     maxPromptTokens,
     maxChunksPerTranscript,
+    maxTranscriptsPerRun,
   };
 }
 

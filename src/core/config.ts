@@ -190,6 +190,7 @@ export interface GBrainConfig {
       verdict_model?: string;
       max_prompt_tokens?: number;
       max_chunks_per_transcript?: number;
+      max_transcripts_per_run?: number;
     };
     patterns?: {
       lookback_days?: number;
@@ -542,6 +543,7 @@ export async function loadConfigWithEngine(
   const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
   const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
   const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbMaxTranscriptsPerRun = await dbInt('dream.synthesize.max_transcripts_per_run');
   const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
   const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
 
@@ -565,6 +567,9 @@ export async function loadConfigWithEngine(
   }
   if (mergedSynth.max_chunks_per_transcript === undefined && dbMaxChunksPerTranscript !== undefined) {
     mergedSynth.max_chunks_per_transcript = dbMaxChunksPerTranscript;
+  }
+  if (mergedSynth.max_transcripts_per_run === undefined && dbMaxTranscriptsPerRun !== undefined) {
+    mergedSynth.max_transcripts_per_run = dbMaxTranscriptsPerRun;
   }
   if (mergedPatterns.lookback_days === undefined && dbLookbackDays !== undefined) {
     mergedPatterns.lookback_days = dbLookbackDays;
@@ -670,6 +675,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.verdict_model',
   'dream.synthesize.max_prompt_tokens',
   'dream.synthesize.max_chunks_per_transcript',
+  'dream.synthesize.max_transcripts_per_run',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // Emotional weight (v0.29)

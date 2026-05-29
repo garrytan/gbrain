@@ -215,6 +215,51 @@ describe('E2E synthesize chunking — D8 legacy single-chunk migration', () => {
 });
 
 describe('E2E synthesize chunking — fan-out shape', () => {
+  test('max_transcripts_per_run caps real fan-out to a small batch', async () => {
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.enabled', 'true');
+      await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      await rig.engine.setConfig('dream.synthesize.max_transcripts_per_run', '2');
+
+      for (let i = 0; i < 3; i++) {
+        const basename = `2026-04-25-small-${i}.txt`;
+        const filePath = corpusPath(rig.corpusDir, basename);
+        const content = `small transcript ${i}\n`.repeat(200);
+        writeFileSync(filePath, content);
+        await seedVerdict(rig.engine, filePath, content);
+      }
+
+      await withoutAnthropicKey(async () => {
+        await withSubagentAutoCancel(rig.engine, async () => {
+          const result = await runPhaseSynthesize(rig.engine, {
+            brainDir: rig.brainDir,
+            dryRun: false,
+          });
+          const details = result.details as {
+            transcripts_worth_processing: number;
+            transcripts_cap: number;
+            transcripts_capped: boolean;
+            transcripts_processed: number;
+            children_submitted: number;
+          };
+          expect(details.transcripts_worth_processing).toBe(3);
+          expect(details.transcripts_cap).toBe(2);
+          expect(details.transcripts_capped).toBe(true);
+          expect(details.transcripts_processed).toBe(2);
+          expect(details.children_submitted).toBe(2);
+        });
+      });
+
+      const jobs = await rig.engine.executeRaw<{ cnt: string | number }>(
+        `SELECT count(*) AS cnt FROM minion_jobs WHERE name = 'subagent'`,
+      );
+      expect(Number(jobs[0].cnt)).toBe(2);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
   test('single-chunk transcript uses legacy idempotency key (parity on upgrade)', async () => {
     const rig = await setupRig();
     try {
