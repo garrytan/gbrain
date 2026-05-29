@@ -194,6 +194,18 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async disconnect(): Promise<void> {
+    // v0.41.25.0 (#1570) — instrument disconnect calls to identify the
+    // mid-process caller behind the singleton-null bug. The audit log
+    // captures connection_style so we can tell instance-pool teardowns
+    // (correct, end-of-worker-life) apart from module-singleton teardowns
+    // (the load-bearing class). Best-effort: audit failure never blocks
+    // the actual disconnect. Logged BEFORE the early-return branches so
+    // even a no-op disconnect (engine that was never connected) is
+    // recorded — that case may itself be a caller-side bug worth seeing.
+    try {
+      const { logDbDisconnect } = await import('./audit/db-disconnect-audit.ts');
+      logDbDisconnect('postgres', this._connectionStyle ?? 'unknown');
+    } catch { /* best-effort; never block disconnect on audit failure */ }
     // v0.30.1: tear down the direct pool first if the manager owns one.
     if (this.connectionManager) {
       await this.connectionManager.disconnect();
@@ -1907,6 +1919,16 @@ export class PostgresEngine implements BrainEngine {
           const msg = err instanceof Error ? err.message : String(err);
           process.stderr.write(`[${auditSite}] connection blip, retrying (attempt ${attempt}/${opts.maxRetries}): ${msg}\n`);
         },
+        // v0.41.25.0 (#1570): on null-singleton retryable errors, rebuild
+        // the connection BEFORE the inter-attempt sleep so the next attempt
+        // sees a live pool. `this.reconnect()` is race-safe via
+        // `_reconnecting` guard, handles both module and instance pools,
+        // and is a fast no-op when the underlying client is still healthy
+        // (postgres.js's own connection-replacement covers that case).
+        // Fail-loud per retry.ts contract: a reconnect throw propagates
+        // as the real cause, replacing the symptomatic
+        // "No database connection" error.
+        reconnect: () => this.reconnect(),
       });
     } catch (err) {
       // Distinguish "retries exhausted" (a retryable error that ran out of
