@@ -2934,7 +2934,11 @@ export class PostgresEngine implements BrainEngine {
   private async _addTimelineEntriesBatchOnce(entries: TimelineBatchInput[]): Promise<number> {
     const sql = this.sql;
     const slugs = entries.map(e => e.slug);
-    const dates = entries.map(e => e.date);
+    // Coerce Date/timestamptz values to 'YYYY-MM-DD' strings so postgres.js binds
+    // the array as text[] (not timestamptz[]); otherwise unnest(...::text[]) throws
+    // 42846 "cannot cast type timestamp with time zone to text[]" and the whole
+    // batch fails silently. effective_date arrives as a JS Date on the PG engine.
+    const dates = entries.map(e => typeof e.date === 'string' ? e.date : new Date(e.date as unknown as string).toISOString().slice(0, 10));
     const sources = entries.map(e => e.source || '');
     const summaries = entries.map(e => e.summary);
     const details = entries.map(e => e.detail || '');
