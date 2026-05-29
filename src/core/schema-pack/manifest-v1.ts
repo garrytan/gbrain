@@ -338,6 +338,13 @@ export const SchemaPackManifestSchema = z.object({
   page_types: z.array(PageTypeSchema).default([]),
   link_types: z.array(LinkTypeSchema).default([]),
   frontmatter_links: z.array(FrontmatterLinkSchema).default([]),
+  // Upstream baseline seed. The Confer fork's `world_knowledge` kind is NOT
+  // added to this default — it is declared by the confer-everything-v1 pack's
+  // own `takes_kinds:` (it depends on the escalated_from link_type +
+  // world_consensus infra that only Confer brains have). Code recognizes
+  // world_knowledge as first-class (takes-fence KIND_VALUES, CLI, the
+  // promotion rule in src/core/facts/world-knowledge.ts) regardless of this
+  // baseline; packs opt in via their manifest.
   takes_kinds: z.array(z.string()).default(['fact', 'take', 'bet', 'hunch']),
   enrichable_types: z.array(EnrichableSchema).default([]),
   filing_rules: z.array(FilingRuleSchema).default([]),

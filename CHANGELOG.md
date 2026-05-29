@@ -16,6 +16,36 @@ on top of upstream — the numeric `VERSION` still tracks upstream semver.
   self-registered client could request `admin` / `write` / `sources_admin`.
 - **resolve_slugs tenant isolation** — `resolve_slugs` is scoped by source,
   sealing a cross-tenant slug-name leak.
+## [0.42.0.0] - 2026-05-29 (Confer fork)
+
+**`world_knowledge` is now a first-class take kind.** A `take` that has been
+escalated (via the pack's `escalated_from` link) and whose computed
+`world_consensus` reaches 0.8 graduates from a personal opinion to shared world
+knowledge — and the brain now models that promotion explicitly instead of
+leaving it implicit on a `take` row.
+
+This is the gbrain-fork feature the `confer-everything-v1` pack's
+`gbrain_min_version: 0.42.0` targets.
+
+- **New kind `world_knowledge`** — accepted as first-class everywhere a take is
+  persisted or read: the takes fence parser (`KIND_VALUES`), the `gbrain takes`
+  CLI (`--kind world_knowledge`), and the `ProposedTake` kind union. Because
+  `takes.kind` / `take_proposals.kind` have been runtime-pack-validated since
+  v0.38 (no DB CHECK), no schema migration is needed.
+- **Promotion rule** (`src/core/facts/world-knowledge.ts`) — `classifyWorldKnowledge`
+  promotes a take to `world_knowledge` iff it is currently a `take`, carries an
+  `escalated_from` lineage link, and its `world_consensus` ≥
+  `WORLD_KNOWLEDGE_CONSENSUS_THRESHOLD` (0.8, the pack's stated bar, as a named
+  constant). Reuses the existing `confer_world_consensus` view + the
+  `escalated_from` link primitive — no parallel table.
+- **Derived, not extracted** — the LLM extraction path (`propose_takes`,
+  `extract-takes-from-pages`) deliberately never PROPOSES `world_knowledge`;
+  a model cannot fabricate consensus. `promoteProposal()` is the seam the
+  (forthcoming, separately-shipped) nightly consensus-refresh job uses to
+  graduate a row once its lineage + consensus are known.
+- **Upstream untouched** — the gbrain-base `takes_kinds` default stays
+  `[fact, take, bet, hunch]`; `world_knowledge` is opted into by the Confer
+  pack's own `takes_kinds:`, since it depends on Confer-only consensus infra.
 ## [0.41.29.0] - 2026-05-29
 
 **Your meeting transcripts that look like `**Garry Tan:** ...` now actually

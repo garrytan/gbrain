@@ -63,11 +63,14 @@ function pageFilePath(brainDir: string, slug: string): string {
 
 function ensureKind(raw: string | undefined): TakeKind {
   if (!raw) {
-    console.error('Missing --kind. Expected one of: fact, take, bet, hunch.');
+    console.error('Missing --kind. Expected one of: fact, take, bet, hunch, world_knowledge.');
     process.exit(1);
   }
-  if (raw !== 'fact' && raw !== 'take' && raw !== 'bet' && raw !== 'hunch') {
-    console.error(`Invalid --kind "${raw}". Expected: fact, take, bet, hunch.`);
+  // v0.42.0.0: world_knowledge (Confer fork) is a first-class kind. Normally
+  // produced by promotion (escalated_from + world_consensus ≥ 0.8) rather than
+  // typed by hand, but the CLI accepts it so an operator can write a graduated row.
+  if (raw !== 'fact' && raw !== 'take' && raw !== 'bet' && raw !== 'hunch' && raw !== 'world_knowledge') {
+    console.error(`Invalid --kind "${raw}". Expected: fact, take, bet, hunch, world_knowledge.`);
     process.exit(1);
   }
   return raw;

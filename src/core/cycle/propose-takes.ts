@@ -47,6 +47,11 @@ import type { Page, PageFilters } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
+import {
+  classifyWorldKnowledge,
+  WORLD_KNOWLEDGE_KIND,
+  type WorldKnowledgeInput,
+} from '../facts/world-knowledge.ts';
 
 /**
  * Bump when the extractor prompt or the JSON output shape changes. Old
@@ -115,10 +120,17 @@ PAGE PROSE:
 {PAGE_BODY}
 `;
 
-/** One proposed take, as the extractor produces it. */
+/**
+ * One proposed take, as the extractor produces it.
+ *
+ * v0.42.0.0: `world_knowledge` (Confer fork) is part of the kind union so a
+ * promoted proposal type-checks, but the LLM extractor never EMITS it — see
+ * parseExtractorOutput. It is reached only via classifyWorldKnowledge once a
+ * take has an escalated_from lineage + world_consensus ≥ 0.8.
+ */
 export interface ProposedTake {
   claim_text: string;
-  kind: 'fact' | 'take' | 'bet' | 'hunch';
+  kind: 'fact' | 'take' | 'bet' | 'hunch' | 'world_knowledge';
   holder: string;
   weight: number;
   domain?: string;
@@ -267,6 +279,10 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
     const r = raw as Record<string, unknown>;
     const claim_text = typeof r.claim_text === 'string' ? r.claim_text.trim() : '';
     if (!claim_text || claim_text.length > 500) continue;
+    // The extractor proposes only the four base kinds. `world_knowledge` is a
+    // DERIVED kind (escalated_from + world_consensus ≥ 0.8) and is intentionally
+    // NOT in this allow-list — a model emitting it (or any unknown) coerces to
+    // 'take'. Graduation happens later via promoteProposal()/classifyWorldKnowledge.
     const kind = ['fact', 'take', 'bet', 'hunch'].includes(r.kind as string)
       ? (r.kind as ProposedTake['kind'])
       : 'take';
@@ -277,6 +293,31 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
     out.push({ claim_text, kind, holder, weight, domain });
   }
   return out;
+}
+
+/**
+ * v0.42.0.0 — graduate a proposed/stored take to `world_knowledge` when it has
+ * earned it. Pure function: returns a COPY with the promoted kind, or the input
+ * unchanged when promotion does not apply (see classifyWorldKnowledge).
+ *
+ * This is the seam the consensus-refresh path uses: after the nightly job
+ * recomputes `take_proposals.world_consensus` from the confer_world_consensus
+ * VIEW and resolves the take's escalated_from lineage, it calls this to decide
+ * the row's effective kind. Keeping it here (next to the extractor parse) keeps
+ * the propose → graduate flow in one module and unit-testable without the
+ * gateway or a live brain. The orchestrator that persists the re-kinded row is
+ * a separate supervised change (the minion job does not exist yet).
+ */
+export function promoteProposal(
+  proposal: ProposedTake,
+  lineage: Pick<WorldKnowledgeInput, 'hasEscalatedFromLineage' | 'worldConsensus'>,
+): ProposedTake {
+  const kind = classifyWorldKnowledge({
+    kind: proposal.kind,
+    hasEscalatedFromLineage: lineage.hasEscalatedFromLineage,
+    worldConsensus: lineage.worldConsensus,
+  });
+  return kind === proposal.kind ? proposal : { ...proposal, kind: WORLD_KNOWLEDGE_KIND };
 }
 
 /**
