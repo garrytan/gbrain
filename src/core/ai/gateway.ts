@@ -815,7 +815,7 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
   if (!ct.toLowerCase().includes('application/json')) return resp;
 
   // v0.31.8 (D2 + D10): Layer 1 — Content-Length pre-check BEFORE the
-  // body is parsed. The pre-fix code did `await resp.clone().json()`
+  // body is parsed. The pre-fix code did `await resp.json()`
   // first, which fully parses arbitrary-size JSON into JS heap before
   // any size check could fire. A compromised/malicious Voyage endpoint
   // could OOM the worker on a single response. The 256 MB cap is sized
@@ -843,7 +843,7 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
   //   - `embedding` is a base64 string (SDK schema expects `number[]`)
   //   - `usage` lacks `prompt_tokens` (SDK schema requires it when usage present)
   try {
-    const json: any = await resp.clone().json();
+    const json: any = await resp.json();
     if (!json || typeof json !== 'object') return resp;
     let modified = false;
     if (Array.isArray(json.data)) {
@@ -883,7 +883,7 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
     return new Response(JSON.stringify(json), {
       status: resp.status,
       statusText: resp.statusText,
-      headers: resp.headers,
+      headers: (() => { const _h = new Headers(resp.headers); _h.delete("content-length"); _h.delete("content-encoding"); _h.delete("transfer-encoding"); return _h; })(),
     });
   } catch (err) {
     // OOM-cap throws MUST propagate. The catch is here for "Voyage returned
@@ -1008,7 +1008,7 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
   // prompt_tokens when `usage` is present — same divergence Voyage hit at
   // gateway.ts:655).
   try {
-    const json: any = await resp.clone().json();
+    const json: any = await resp.json();
     if (!json || typeof json !== 'object') return resp;
     let modified = false;
     if (Array.isArray(json.results) && !Array.isArray(json.data)) {
@@ -1047,7 +1047,7 @@ const zeroEntropyCompatFetch = (async (input: RequestInfo | URL, init?: RequestI
     return new Response(JSON.stringify(json), {
       status: resp.status,
       statusText: resp.statusText,
-      headers: resp.headers,
+      headers: (() => { const _h = new Headers(resp.headers); _h.delete("content-length"); _h.delete("content-encoding"); _h.delete("transfer-encoding"); return _h; })(),
     });
   } catch (err) {
     // OOM-cap throws MUST propagate. Voyage's pattern: instanceof check on
