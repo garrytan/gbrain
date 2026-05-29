@@ -104,6 +104,16 @@ export class PostgresEngine implements BrainEngine {
    * db.disconnect() and clobber the unrelated module-level connection.
    */
   private _connectionStyle: 'instance' | 'module' | null = null;
+  /**
+   * For module-style engines: whether THIS engine opened the shared db.ts
+   * singleton (true) or merely joined an already-open one (false). Only the
+   * opener may end it on disconnect(). Without this, a transient module-style
+   * engine (e.g. lint's content-sanity config probe at lint.ts:319) created
+   * inside the dream cycle calls db.disconnect() and kills the shared
+   * connection the rest of the cycle depends on — surfacing as
+   * "connect() has not been called" in every later DB phase (extract, etc.).
+   */
+  private _ownsModuleSingleton = false;
 
   /**
    * v0.30.1 (Fix 1 + X1 + T5): instance-owned ConnectionManager.
@@ -177,7 +187,10 @@ export class PostgresEngine implements BrainEngine {
       });
       this.connectionManager.setReadPool(this._sql);
     } else {
-      // Module-level singleton (backward compat for CLI main engine)
+      // Module-level singleton (backward compat for CLI main engine).
+      // Capture ownership BEFORE connect: if the singleton is already open we
+      // are merely joining it and must NOT end it on disconnect().
+      this._ownsModuleSingleton = !db.isConnected();
       await db.connect(config);
       this._connectionStyle = 'module';
 
@@ -220,8 +233,16 @@ export class PostgresEngine implements BrainEngine {
       return;
     }
     if (this._connectionStyle === 'module') {
-      await db.disconnect();
+      // Only the engine that OPENED the shared singleton may end it. A module
+      // engine that joined an already-open singleton (e.g. a config probe
+      // inside the dream cycle) leaves it for its owner to close — this
+      // prevents the cycle-wide connection clobber where lint's content-sanity
+      // probe killed the singleton and every later DB phase failed.
+      if (this._ownsModuleSingleton) {
+        await db.disconnect();
+      }
       this._connectionStyle = null;
+      this._ownsModuleSingleton = false;
     }
     // else: nothing to disconnect (already done or never connected)
   }

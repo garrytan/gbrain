@@ -159,6 +159,16 @@ export function getConnection(): ReturnType<typeof postgres> {
   return sql;
 }
 
+/**
+ * True when the module-level singleton connection is currently open.
+ * Lets a PostgresEngine that joins an already-open singleton (e.g. a config
+ * probe created inside the dream cycle) know it does NOT own the connection,
+ * so its disconnect() won't end the shared pool out from under the owner.
+ */
+export function isConnected(): boolean {
+  return sql !== null;
+}
+
 export async function connect(config: EngineConfig): Promise<void> {
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use

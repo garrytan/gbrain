@@ -84,4 +84,27 @@ describe.skipIf(skip)('PostgresEngine.disconnect idempotency', () => {
     // _connectionStyle was reset to null.
     await expect(engine.disconnect()).resolves.toBeUndefined();
   });
+
+  test('module engine that JOINED an open singleton does NOT clobber it (dream cycle regression)', async () => {
+    // Regression for the gbrain dream Postgres clobber (2026-05-29): lint's
+    // content-sanity config probe (resolveLintContentSanity, lint.ts:319) opened
+    // a module-style engine that JOINED the cycle's already-open singleton, then
+    // disconnect()ed it — ending the SHARED connection so every later DB phase
+    // (extract write, embed, conversation_facts_backfill) threw "connect() has
+    // not been called", the cycle exited 1, and writes were lost.
+    //
+    // The fix: a module engine that joined an already-open singleton does NOT
+    // own it (_ownsModuleSingleton=false via db.isConnected()), so its
+    // disconnect() leaves the connection alive for its opener to close.
+    await db.connect({ database_url: DATABASE_URL! }); // shared singleton (the cycle's main engine)
+    expect(db.isConnected()).toBe(true);
+
+    const joiner = new PostgresEngine();
+    await joiner.connect({ database_url: DATABASE_URL! }); // module-style: joins existing singleton
+    await joiner.disconnect();                            // must NOT end the shared singleton
+
+    expect(db.isConnected()).toBe(true);
+    const rows = await db.getConnection().unsafe('SELECT 1 as ok');
+    expect((rows[0] as unknown as { ok: number }).ok).toBe(1);
+  });
 });
