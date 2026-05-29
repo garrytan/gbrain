@@ -27,6 +27,7 @@ import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
+import { runInlinePgliteSubagents } from './synthesize.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
@@ -88,6 +89,10 @@ export async function runPhasePatterns(
     const job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
       allowProtectedSubmit: true,
     });
+
+    if (engine.kind === 'pglite') {
+      await runInlinePgliteSubagents(engine, queue, [job.id]);
+    }
 
     let outcome: string;
     try {

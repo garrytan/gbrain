@@ -516,6 +516,10 @@ export async function runPhaseSynthesize(
       }
     }
 
+    if (config.inlinePgliteSubagents && engine.kind === 'pglite') {
+      await runInlinePgliteSubagents(engine, queue, childIds);
+    }
+
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
     const childOutcomes: Array<{ jobId: number; status: string }> = [];
@@ -765,6 +769,8 @@ interface SynthConfig {
    * `dream.synthesize.max_transcripts_per_run`.
    */
   maxTranscriptsPerRun: number;
+  /** Execute synthesize subagent children inline on PGLite instead of waiting for a Postgres worker. */
+  inlinePgliteSubagents: boolean;
 }
 
 async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -794,6 +800,7 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
   const maxPromptTokensStr = await engine.getConfig('dream.synthesize.max_prompt_tokens');
   const maxChunksStr = await engine.getConfig('dream.synthesize.max_chunks_per_transcript');
   const maxTranscriptsStr = await engine.getConfig('dream.synthesize.max_transcripts_per_run');
+  const inlinePgliteSubagentsRaw = await engine.getConfig('dream.synthesize.inline_pglite_subagents');
 
   let excludePatterns: string[] = ['medical', 'therapy'];
   if (excludeStr) {
@@ -839,7 +846,50 @@ async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
     maxPromptTokens,
     maxChunksPerTranscript,
     maxTranscriptsPerRun,
+    inlinePgliteSubagents: inlinePgliteSubagentsRaw === 'true' || inlinePgliteSubagentsRaw === '1',
   };
+}
+
+export async function runInlinePgliteSubagents(
+  engine: BrainEngine,
+  queue: MinionQueue,
+  childIds: number[],
+): Promise<void> {
+  if (childIds.length === 0) return;
+  const { MinionWorker } = await import('../minions/worker.ts');
+  const { makeSubagentHandler } = await import('../minions/handlers/subagent.ts');
+  const worker = new MinionWorker(engine, {
+    queue: 'default',
+    concurrency: 1,
+    pollInterval: 100,
+    healthCheckInterval: 0,
+  });
+  worker.register('subagent', makeSubagentHandler({ engine }));
+
+  const terminal = new Set(['completed', 'failed', 'dead', 'cancelled']);
+  const childSet = new Set(childIds);
+  const allChildrenTerminal = async () => {
+    for (const id of childSet) {
+      const job = await queue.getJob(id);
+      if (!job || !terminal.has(job.status)) return false;
+    }
+    return true;
+  };
+
+  const workerPromise = worker.start();
+  const poll = setInterval(async () => {
+    try {
+      if (await allChildrenTerminal()) worker.stop();
+    } catch {
+      // The worker owns job failure reporting; polling failures should not
+      // mask its result.
+    }
+  }, 200);
+  try {
+    await workerPromise;
+  } finally {
+    clearInterval(poll);
+  }
 }
 
 async function checkCooldown(

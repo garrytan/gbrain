@@ -92,6 +92,7 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.finalText).toBe('final answer');
     expect(result.totalUsage.input_tokens).toBe(25); // 10 + 15
     expect(result.totalUsage.output_tokens).toBe(9); // 4 + 5
+    expect(result.messages[2]?.role).toBe('tool');
   });
 
   it('captures persistence callbacks in order: assistant → tool start → tool complete', async () => {

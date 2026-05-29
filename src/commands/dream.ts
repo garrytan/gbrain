@@ -42,6 +42,7 @@ interface DreamArgs {
   pull: boolean;
   phase: CyclePhase | null;
   dir: string | null;
+  sourceId: string | null;
   model: string | null;
   help: boolean;
   /** v0.21: ad-hoc transcript file path; implies --phase synthesize. */
@@ -76,6 +77,9 @@ function parseArgs(args: string[]): DreamArgs {
 
   const dirIdx = args.indexOf('--dir');
   const dir = dirIdx !== -1 ? args[dirIdx + 1] : null;
+
+  const sourceIdx = args.indexOf('--source');
+  const sourceId = sourceIdx !== -1 ? args[sourceIdx + 1] ?? null : null;
 
   const modelIdx = args.indexOf('--model');
   const model = modelIdx !== -1 ? args[modelIdx + 1] ?? null : null;
@@ -148,6 +152,7 @@ function parseArgs(args: string[]): DreamArgs {
     pull: args.includes('--pull'),
     phase,
     dir,
+    sourceId,
     model,
     help: args.includes('--help') || args.includes('-h'),
     inputFile,
@@ -216,6 +221,7 @@ Options:
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain)
+  --source <id>       Mark a successful cycle against a registered source
 
   --input <file>      Synthesize a specific transcript file (implies
                       --phase synthesize). Bypasses corpus-dir scan.
@@ -358,6 +364,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
+    sourceId: opts.sourceId ?? undefined,
   });
 
   if (opts.json) {

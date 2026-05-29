@@ -21,7 +21,7 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
+import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -2205,6 +2205,38 @@ export interface ChatOpts {
   cacheSystem?: boolean;
 }
 
+function toSdkToolOutput(block: Extract<ChatBlock, { type: 'tool-result' }>): Record<string, unknown> {
+  if (typeof block.output === 'string') {
+    return {
+      type: block.isError ? 'error-text' : 'text',
+      value: block.output,
+    };
+  }
+  return {
+    type: block.isError ? 'error-json' : 'json',
+    value: block.output,
+  };
+}
+
+function toSdkMessage(message: ChatMessage): Record<string, unknown> {
+  if (!Array.isArray(message.content)) return message as unknown as Record<string, unknown>;
+  const hasToolResults = message.content.some(part => part.type === 'tool-result');
+  const role = hasToolResults ? 'tool' : message.role;
+  return {
+    ...message,
+    role,
+    content: message.content.map(part => {
+      if (part.type !== 'tool-result') return part;
+      return {
+        type: 'tool-result',
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        output: toSdkToolOutput(part),
+      };
+    }),
+  };
+}
+
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
@@ -2357,7 +2389,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tools = (opts.tools ?? []).reduce((acc, t) => {
     acc[t.name] = {
       description: t.description,
-      inputSchema: { jsonSchema: t.inputSchema } as any,
+      inputSchema: jsonSchema(t.inputSchema as any),
     };
     return acc;
   }, {} as Record<string, any>);
@@ -2387,7 +2419,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const result = await generateText({
       model,
       system: opts.system,
-      messages: opts.messages as any,
+      messages: opts.messages.map(toSdkMessage) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? 4096,
       abortSignal: opts.abortSignal,
@@ -2748,10 +2780,10 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
+    // Feed all tool results back as a single tool message.
     const userMessageIdx = messageIdx++;
     void userMessageIdx;
-    messages.push({ role: 'user', content: toolResultBlocks });
+    messages.push({ role: 'tool', content: toolResultBlocks });
 
     turnIdx++;
   }

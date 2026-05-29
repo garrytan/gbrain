@@ -448,6 +448,9 @@ function isCustomDimValidForProvider(
         `OpenAI ${modelId} accepts dimensions 1..${maxDim}, got ${requestedDims}.`,
     };
   }
+  if (recipe.id === 'ollama') {
+    return { valid: true, error: '' };
+  }
 
   // Tier 3: provider not known to support custom dims at all.
   return {

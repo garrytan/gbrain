@@ -191,6 +191,7 @@ export interface GBrainConfig {
       max_prompt_tokens?: number;
       max_chunks_per_transcript?: number;
       max_transcripts_per_run?: number;
+      inline_pglite_subagents?: boolean;
     };
     patterns?: {
       lookback_days?: number;
@@ -544,6 +545,7 @@ export async function loadConfigWithEngine(
   const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
   const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
   const dbMaxTranscriptsPerRun = await dbInt('dream.synthesize.max_transcripts_per_run');
+  const dbInlinePgliteSubagents = await dbBool('dream.synthesize.inline_pglite_subagents');
   const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
   const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
 
@@ -570,6 +572,9 @@ export async function loadConfigWithEngine(
   }
   if (mergedSynth.max_transcripts_per_run === undefined && dbMaxTranscriptsPerRun !== undefined) {
     mergedSynth.max_transcripts_per_run = dbMaxTranscriptsPerRun;
+  }
+  if (mergedSynth.inline_pglite_subagents === undefined && dbInlinePgliteSubagents !== undefined) {
+    mergedSynth.inline_pglite_subagents = dbInlinePgliteSubagents;
   }
   if (mergedPatterns.lookback_days === undefined && dbLookbackDays !== undefined) {
     mergedPatterns.lookback_days = dbLookbackDays;
@@ -667,6 +672,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.expansion',
   'models.chat',
   'models.eval.longmemeval',
+  'agent.use_gateway_loop',
   'facts.extraction_model',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir',
@@ -676,6 +682,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.max_prompt_tokens',
   'dream.synthesize.max_chunks_per_transcript',
   'dream.synthesize.max_transcripts_per_run',
+  'dream.synthesize.inline_pglite_subagents',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // Emotional weight (v0.29)
