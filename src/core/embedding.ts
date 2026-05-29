@@ -12,6 +12,7 @@ import {
   getEmbeddingModel as gatewayGetModel,
   getEmbeddingDimensions as gatewayGetDims,
 } from './ai/gateway.ts';
+import { lookupEmbeddingPrice } from './embedding-pricing.ts';
 
 // v0.27.1: re-export multimodal embedding so callers can pull both text and
 // image embedding APIs from `src/core/embedding`. import-image-file consumes
@@ -127,13 +128,36 @@ export const EMBEDDING_MODEL = 'text-embedding-3-large';
 export const EMBEDDING_DIMENSIONS = 1536;
 
 /**
- * USD cost per 1k tokens for text-embedding-3-large. Used by
- * `gbrain sync --all` cost preview and `reindex-code` to surface
- * expected spend before accepting expensive operations.
+ * USD cost per 1k tokens for text-embedding-3-large. Retained for back-compat
+ * with callers/tests that import it directly; new cost math resolves the
+ * ACTUAL configured model's rate via embedding-pricing.ts instead of assuming
+ * OpenAI. (Hardcoding this rate produced cost previews that named the wrong
+ * provider and over-stated spend ~2.6x when the brain ran on a cheaper model.)
  */
 export const EMBEDDING_COST_PER_1K_TOKENS = 0.00013;
 
-/** Compute USD cost estimate for embedding `tokens` at current model rate. */
+/**
+ * Resolve the price-per-1M-tokens for the currently-configured embedding
+ * model. Falls back to the OpenAI text-embedding-3-large rate only when the
+ * model is unknown to the pricing table.
+ */
+export function currentEmbeddingPricePerMTok(): number {
+  let modelString: string;
+  try {
+    modelString = gatewayGetModel(); // e.g. 'zeroentropyai:zembed-1'
+  } catch {
+    // Gateway not configured (e.g. unit tests, cost preview before connect).
+    // Fall back to the OpenAI text-embedding-3-large default rate.
+    return 0.13;
+  }
+  const hit = lookupEmbeddingPrice(modelString);
+  return hit.kind === 'known' ? hit.pricePerMTok : 0.13;
+}
+
+/**
+ * Compute USD cost estimate for embedding `tokens` at the CURRENT configured
+ * model's rate (not a hardcoded OpenAI rate).
+ */
 export function estimateEmbeddingCostUsd(tokens: number): number {
-  return (tokens / 1000) * EMBEDDING_COST_PER_1K_TOKENS;
+  return (tokens / 1_000_000) * currentEmbeddingPricePerMTok();
 }
