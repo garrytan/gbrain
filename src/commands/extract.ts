@@ -786,7 +786,10 @@ async function extractForSlugs(
     const snapshot = timelineBatch.slice();
     timelineBatch.length = 0;
     try {
-      timelineCreated += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_inc' });
+      timelineCreated += await engine.addTimelineEntriesBatch(snapshot, {
+        auditSite: 'extract.timeline_inc',
+        createdAtFromPageUpdatedAt: true,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!jsonMode) console.error(`  timeline batch error (${snapshot.length} rows lost): ${msg}`);
@@ -945,7 +948,10 @@ async function extractTimelineFromDir(
     const snapshot = batch.slice();
     batch.length = 0;
     try {
-      created += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_fs' });
+      created += await engine.addTimelineEntriesBatch(snapshot, {
+        auditSite: 'extract.timeline_fs',
+        createdAtFromPageUpdatedAt: true,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
@@ -1030,7 +1036,10 @@ export async function extractTimelineForSlugs(
   // v0.18.0+ multi-source: source-qualify so timeline rows don't fan out
   // across every source containing the slug (the addTimelineEntry's
   // INSERT...SELECT-from-pages fan-out was Data R1's HIGH 2).
-  const entryOpts = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
+  const entryOpts = {
+    ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+    createdAtFromPageUpdatedAt: true,
+  };
   let created = 0;
   for (const slug of slugs) {
     const filePath = join(repoPath, slug + '.md');
@@ -1272,7 +1281,10 @@ async function extractTimelineFromDB(
     const snapshot = batch.slice();
     batch.length = 0;
     try {
-      created += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_db' });
+      created += await engine.addTimelineEntriesBatch(snapshot, {
+        auditSite: 'extract.timeline_db',
+        createdAtFromPageUpdatedAt: true,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {

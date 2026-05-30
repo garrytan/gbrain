@@ -112,11 +112,26 @@ export interface FileSpec {
  *   site.sh` validates every string-literal value at build time.
  * - `signal`: AbortSignal that aborts mid-retry-sleep on SIGTERM/SIGINT.
  *   `MinionWorker.shutdownAbort.signal` is the canonical source.
+ * - `createdAtFromPageUpdatedAt`: timeline batches only. Use when entries are
+ *   deterministic materializations of the owning page content, so health does
+ *   not treat extraction time as newer evidence than the page itself.
  */
 import type { BatchAuditSite } from './retry.ts';
 export interface BatchOpts {
   auditSite?: BatchAuditSite;
   signal?: AbortSignal;
+  createdAtFromPageUpdatedAt?: boolean;
+}
+
+export interface TimelineWriteOpts {
+  skipExistenceCheck?: boolean;
+  sourceId?: string;
+  /**
+   * Use the owning page updated_at as timeline_entries.created_at. Intended
+   * for extraction/autotimeline materialization from the page body itself.
+   * Manual timeline writes should omit this so they remain fresh evidence.
+   */
+  createdAtFromPageUpdatedAt?: boolean;
 }
 
 /** Input row for addLinksBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -1214,7 +1229,7 @@ export interface BrainEngine {
   addTimelineEntry(
     slug: string,
     entry: TimelineInput,
-    opts?: { skipExistenceCheck?: boolean; sourceId?: string },
+    opts?: TimelineWriteOpts,
   ): Promise<void>;
   /**
    * Bulk insert timeline entries via a single multi-row INSERT...SELECT FROM (VALUES)
