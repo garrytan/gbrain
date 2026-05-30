@@ -12,7 +12,10 @@
 # This pack extends gbrain-base (which reproduces pre-v0.38 hardcoded
 # behavior) and adds the additional types the recommended-schema doc
 # describes: deals, meetings, concepts, projects, sources, daily,
-# personal, civic, originals, places, trips, conversations.
+# personal, civic, originals, places, trips.
+#
+# Note: `conversation` was promoted into gbrain-base in v0.41.11 and is
+# no longer duplicated here — it now arrives via `extends: gbrain-base`.
 #
 # Inherits everything else from gbrain-base via `extends:`. Pin the
 # base version so a future gbrain-base change doesn't silently shift
@@ -120,14 +123,6 @@ page_types:
       - trips/
     aliases: []
     extractable: false
-    expert_routing: false
-
-  - name: conversation
-    primitive: temporal
-    path_prefixes:
-      - conversations/
-    aliases: []
-    extractable: true
     expert_routing: false
 
   - name: writing

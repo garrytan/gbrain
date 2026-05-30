@@ -1,0 +1,113 @@
+# gbrain-engineer — engineer / code-author lens pack
+#
+# v0.41 lens packs wave. Bridge-only pack (D8-C — locked at plan time
+# after assessing what already exists in gstack):
+#
+#   - gstack already ships review, investigate, plan-eng-review, health,
+#     qa, retro, learn, cso skills with a typed JSONL learnings system
+#     at ~/.gstack/projects/{repo}/learnings.jsonl (pattern, pitfall,
+#     preference, architecture, tool, operational, investigation).
+#   - gbrain already ships `type: code` + code-def/code-refs/code-callers.
+#   - gbrain already ships `type: project` + brain/projects/ directory.
+#
+# What's missing: the gstack learnings JSONL never reaches gbrain. T8
+# fixes that with an IngestionSource bridge that watches the JSONL files
+# and emits IngestionEvent per line typed as `learning` page.
+#
+# Scope deliberately small: declares the `learning` page type (NEW) and
+# reuses `code` from gbrain-base. Drops the speculative ADR / postmortem /
+# refactor_thesis / tech_debt types from the original plan because:
+#   (a) gstack's investigation + retro skills already capture postmortems
+#       and architecture decisions inline (no dedicated type needed)
+#   (b) shipping types nobody authors is worse than no types at all
+#   (c) v0.42+ can add them when first user authors one
+#
+# Calibration: declares 3 engineering domains (architecture_calls,
+# effort_estimates, risk_assessment). All scalar_brier except
+# effort_estimates which uses weighted_brier — small estimates that are
+# wrong cost less than big estimates that are wrong.
+#
+# Does NOT declare new cycle phases. Engineering work consumes the
+# existing extract_facts + propose_takes + grade_takes + calibration_profile
+# loop, augmented by the gstack-learnings IngestionSource (T8) running in
+# the v0.38 daemon when this pack is active.
+
+api_version: gbrain-schema-pack-v1
+name: gbrain-engineer
+version: 1.0.0
+description: "Engineer / code-author lens. Bridges gstack's typed JSONL learnings system (pattern, pitfall, architecture, tool, operational, investigation) into gbrain as first-class `learning` pages. Declares architecture_calls, effort_estimates, risk_assessment calibration domains. Reuses gbrain-base's `code` page type unchanged."
+gbrain_min_version: 0.41.0
+extends: gbrain-base
+
+# Reuse `code` + `project` from base. The gstack-learnings bridge writes
+# `learning` pages cross-referenced to code:// URIs via link_types, but
+# we don't introduce new code-related page types here.
+borrow_from:
+  - pack: gbrain-base
+    types:
+      - code
+      - project
+
+# Engineering uses the same takes_kinds as base (fact, take, bet, hunch).
+# `bet` is the load-bearing one for architecture_calls (a bet on a
+# refactor's payoff is a take).
+# takes_kinds intentionally omitted (inherits from base).
+
+# Pack-specific page types. ONLY `learning` is new (D8-C: bridge-only).
+page_types:
+  - name: learning
+    primitive: annotation
+    path_prefixes:
+      - learnings/
+      - engineering/learnings/
+    aliases: []
+    # extractable: false — learnings ARE distilled engineering insights;
+    # they're not raw source material for further fact extraction.
+    extractable: false
+    # expert_routing: false — learnings surface in code-aware queries
+    # via direct slug search, not via whoknows/find_experts (whoknows is
+    # person+company shaped, learnings are pattern shaped).
+    expert_routing: false
+
+# No new cycle phases. Engineering consumes existing pipeline.
+# gstack-learnings IngestionSource (T8) emits events when this pack is
+# active — handled by the v0.38 daemon's normal trickle-mode dispatch.
+phases: []
+
+# v0.41 T3: engineering-flavored calibration domains.
+calibration_domains:
+  - name: architecture_calls
+    # "How often I'm wrong about which architecture to pick" — scalar
+    # Brier over resolved code-attached + learning-attached binary takes
+    # (e.g. "this refactor was worth it" resolved true/false).
+    aggregator: scalar_brier
+    page_types:
+      - code
+      - learning
+
+  - name: effort_estimates
+    # Weighted Brier — a 1-day-estimate miss costs less than a 1-quarter
+    # estimate miss. Weight by take.confidence so high-conviction
+    # estimates that fail count more.
+    aggregator: weighted_brier
+    page_types:
+      - project
+
+  - name: risk_assessment
+    # "How often I correctly flag a risk" — scalar Brier over project-
+    # attached binary takes (e.g. "this rollout will OOM" resolved
+    # true/false). Distinct from architecture_calls (those are go/no-go
+    # decisions on direction; risk_assessment is about specific failure
+    # mode predictions).
+    aggregator: scalar_brier
+    page_types:
+      - project
+
+# Filing rules.
+filing_rules:
+  - kind: learning
+    directory: learnings/
+    examples:
+      - learnings/2026-05/orbstack-port-8080-conflict
+      - learnings/2026-05/django-form-cleaned-data-defaults-empty
+    description: "Engineering learnings bridged from gstack's ~/.gstack/projects/{repo}/learnings.jsonl. Per-month subdirectories. Frontmatter carries the original JSONL fields verbatim: learning_type (one of: pattern, pitfall, preference, architecture, tool, operational, investigation), confidence (1-10), source (one of: observed, user-stated, inferred, cross-model), files (paths), skill (originating gstack skill name)."

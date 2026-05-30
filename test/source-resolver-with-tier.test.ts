@@ -44,13 +44,17 @@ function makeStub(
 }
 
 describe('SOURCE_TIER_NAMES ordering matches resolveSourceId priority', () => {
-  test('canonical order is 1=flag → 6=seed_default', () => {
+  test('canonical order is 1=flag → 7=seed_default with sole_non_default at 5.5', () => {
+    // v0.41.13 (#1434): tier 5.5 `sole_non_default` slots between brain_default
+    // and seed_default. Explicit user intent (sources.default config) wins
+    // over the auto-routing; seed terminal still loses to anything.
     expect(SOURCE_TIER_NAMES).toEqual([
       'flag',
       'env',
       'dotfile',
       'local_path',
       'brain_default',
+      'sole_non_default',
       'seed_default',
     ]);
   });

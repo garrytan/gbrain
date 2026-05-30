@@ -427,7 +427,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       // poll-only deployments.
       try {
         const { MinionQueue } = await import('../core/minions/queue.ts');
-        const { computeRecommendations } = await import('../core/brain-score-recommendations.ts');
+        const { computeRecommendations, embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG } = await import('../core/brain-score-recommendations.ts');
         const queue = new MinionQueue(engine);
         const slotMs = Math.floor(Date.now() / (baseInterval * 1000)) * baseInterval * 1000;
         const slot = new Date(slotMs).toISOString();
@@ -487,12 +487,47 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         // Cheap path: engine.getHealth() is a single SQL count query.
         const health = await engine.getHealth();
         const score = health.brain_score;
+        // v0.40.x: recipe-aware embedding-provider check shared with doctor.ts.
+        // Resolve the configured model (gateway → DB fallback), then pre-await
+        // the handful of hosted-key config values so the resolveKey closure
+        // passed to embeddingProviderConfigured() can stay synchronous.
+        let embeddingModel: string | undefined;
+        try {
+          const gw = await import('../core/ai/gateway.ts');
+          embeddingModel = gw.getEmbeddingModel();
+        } catch {
+          embeddingModel = (await engine.getConfig('embedding_model')) ?? undefined;
+        }
+        const embedKeyCfg: Record<string, string | null> = {};
+        for (const field of Object.values(HOSTED_EMBED_KEY_CONFIG)) {
+          embedKeyCfg[field] = await engine.getConfig(field);
+        }
         const ctx = {
           repoPath,
-          hasEmbeddingApiKey: !!(process.env.OPENAI_API_KEY || await engine.getConfig('openai_api_key')),
+          embeddingModel,
+          embeddingProviderConfigured: embeddingProviderConfigured(embeddingModel, (envVar) => {
+            const cfgField = HOSTED_EMBED_KEY_CONFIG[envVar];
+            return !!(process.env[envVar] || (cfgField ? embedKeyCfg[cfgField] : undefined));
+          }),
           hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
         };
-        const plan = computeRecommendations(health, ctx).filter((r) => r.status === 'remediable');
+        // v0.41.18.0 (A5 + A19 + A22, T15): consult onboard recommendations
+        // ALONGSIDE doctor's brain-score recommendations. Onboard's 4 new
+        // checks (embed_staleness, link_coverage, timeline_coverage,
+        // takes_count) supply extraRemediations into computeRecommendations.
+        // Per A19 fail-open: any throw in the onboard path falls through
+        // to legacy doctor-only plan (no crash).
+        let extraRemediations: ReturnType<typeof computeRecommendations> = [];
+        try {
+          const { runAllOnboardChecks } = await import('../core/onboard/checks.ts');
+          const onboardResults = await runAllOnboardChecks(engine);
+          extraRemediations = onboardResults.flatMap((r) => r.remediations);
+        } catch (err) {
+          process.stderr.write(
+            `[autopilot] onboard checks failed (fail-open per A19): ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+        const plan = computeRecommendations(health, ctx, extraRemediations).filter((r) => r.status === 'remediable');
         const estTotal = plan.reduce((s, r) => s + r.est_seconds, 0);
 
         // Track time since last full cycle for the 60-min floor.
@@ -643,6 +678,36 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         void shutdown('cycle-failure-cap');
         break;
       }
+    }
+
+    // 4.5 — Nightly quality probe (v0.41).
+    // Per D10: trust the phase's internal 24h rate-limit (via shouldRunNightly
+    // reading the audit JSONL). No scheduler-side precheck — one source of
+    // truth for the rate-limit. Feature flag gates the probe entirely.
+    // Wrapped in try/catch — a probe failure NEVER crashes the autopilot
+    // loop. Probe runs even when cycleOk=false (probe may surface signal
+    // explaining why the cycle is failing).
+    try {
+      const probeEnabled = cfg?.autopilot?.nightly_quality_probe?.enabled === true;
+      if (probeEnabled) {
+        const { runNightlyQualityProbe } = await import('../core/cycle/nightly-quality-probe.ts');
+        const { runLongMemEvalForProbe, runCrossModalBatchForProbe } = await import('../core/cycle/nightly-probe-adapters.ts');
+        const { isAvailable } = await import('../core/ai/gateway.ts');
+        const maxUsd = Number(cfg?.autopilot?.nightly_quality_probe?.max_usd ?? 5);
+        await runNightlyQualityProbe({
+          isEnabled: () => true, // already gated above; phase re-checks for defense-in-depth
+          hasEmbeddingProvider: () => isAvailable('embedding'),
+          resolveMaxUsd: () => maxUsd,
+          resolveRepoRoot: () => repoPath ?? gbrainHomePath('.'),
+          runLongMemEval: runLongMemEvalForProbe,
+          runCrossModalBatch: runCrossModalBatchForProbe,
+          now: () => new Date(),
+        });
+      }
+    } catch (e) {
+      logError('autopilot.nightly_probe', e);
+      // Intentional: do NOT bump consecutiveErrors. Probe failure is
+      // informational; autopilot loop continues.
     }
 
     // Wait for next cycle

@@ -49,6 +49,7 @@ import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 
 const MAX_CHARS = 8000;
 // v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
@@ -128,6 +129,11 @@ function getExtendedModelsForProvider(providerId: string): ReadonlySet<string> |
  */
 type EmbedManyFn = typeof embedMany;
 let _embedTransport: EmbedManyFn = embedMany;
+// v0.41.6.0 D1: tests that install a transport stub also pass the
+// embedding-creds preflight, matching the chat-transport fast-path
+// pattern. Set when __setEmbedTransportForTests is called with a
+// non-null fn; cleared when called with null or on resetGateway().
+let _embedTransportInstalled = false;
 // Test-only seam for chat(). When set, chat() skips provider resolution and
 // returns this function's result directly. See __setChatTransportForTests.
 let _chatTransport: ((opts: ChatOpts) => Promise<ChatResult>) | null = null;
@@ -501,6 +507,7 @@ export function resetGateway(): void {
   _modelCache.clear();
   _shrinkState.clear();
   _embedTransport = embedMany;
+  _embedTransportInstalled = false;
   _chatTransport = null;
   _warnedRecipes.clear();
   _extendedModels.clear();
@@ -517,6 +524,7 @@ export function resetGateway(): void {
  */
 export function __setEmbedTransportForTests(fn: EmbedManyFn | null): void {
   _embedTransport = fn ?? embedMany;
+  _embedTransportInstalled = fn !== null;
 }
 
 /**
@@ -589,6 +597,113 @@ export function getRerankerModel(): string | undefined {
 }
 
 /**
+ * v0.41.6.0 — structured diagnosis for the embedding touchpoint. Returns
+ * a tagged union naming exactly why the gateway can't serve embeddings.
+ * The old `isAvailable('embedding')` collapsed 5 distinct conditions
+ * (no gateway config, no model configured, unknown provider, no
+ * embedding touchpoint on the recipe, missing env vars) into one
+ * boolean — useful for hot-path branching but useless for surfacing a
+ * paste-ready error message to the user.
+ *
+ * D1 preflight in `src/core/embed-preflight.ts` consumes this to produce
+ * `EmbeddingCredentialError` with the exact env var name + recipe id +
+ * model. CLI catch sites format the error with a `--no-embed` hint.
+ *
+ * `isAvailable('embedding', ...)` delegates here so existing callers
+ * (search hybrid path, etc.) keep their boolean contract.
+ */
+export type EmbeddingDiagnosis =
+  | { ok: true; model: string; provider: string; recipeId: string }
+  | { ok: false; reason: 'no_gateway_config' }
+  | { ok: false; reason: 'no_model_configured' }
+  | { ok: false; reason: 'unknown_provider'; model: string; provider: string; message: string }
+  | { ok: false; reason: 'no_touchpoint'; model: string; provider: string; recipeId: string }
+  | { ok: false; reason: 'user_provided_model_unset'; model: string; provider: string; recipeId: string }
+  | { ok: false; reason: 'missing_env'; model: string; provider: string; recipeId: string; missingEnvVars: string[] };
+
+export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
+  // Test-transport fast path: matches the `if (touchpoint === 'chat' &&
+  // _chatTransport) return true` shortcut in isAvailable() so tests that
+  // install an embed transport stub also pass the preflight without
+  // having to configure real provider env vars.
+  if (_embedTransportInstalled) {
+    const modelStr = modelOverride ?? _config?.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+    return { ok: true, model: modelStr, provider: '<test-transport>', recipeId: '<test-transport>' };
+  }
+
+  if (!_config) return { ok: false, reason: 'no_gateway_config' };
+
+  const modelStr = modelOverride ?? _config.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+  if (!modelStr) return { ok: false, reason: 'no_model_configured' };
+
+  let parsed;
+  let recipe;
+  try {
+    const resolved = resolveRecipe(modelStr);
+    parsed = resolved.parsed;
+    recipe = resolved.recipe;
+  } catch (err) {
+    const { providerId = 'unknown' } = (() => {
+      try { return parseModelId(modelStr); } catch { return { providerId: 'unknown' }; }
+    })();
+    return {
+      ok: false,
+      reason: 'unknown_provider',
+      model: modelStr,
+      provider: providerId,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const tp = recipe.touchpoints.embedding;
+  if (!tp) {
+    return {
+      ok: false,
+      reason: 'no_touchpoint',
+      model: modelStr,
+      provider: parsed.providerId,
+      recipeId: recipe.id,
+    };
+  }
+
+  // Openai-compat recipes with empty models list require a user-provided model.
+  const isUserProvided = (tp as any).user_provided_models === true;
+  if (
+    Array.isArray(tp.models) &&
+    tp.models.length === 0 &&
+    (recipe.id === 'litellm' || isUserProvided)
+  ) {
+    return {
+      ok: false,
+      reason: 'user_provided_model_unset',
+      model: modelStr,
+      provider: parsed.providerId,
+      recipeId: recipe.id,
+    };
+  }
+
+  const required = recipe.auth_env?.required ?? [];
+  const missing = required.filter(k => !_config!.env[k]);
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      reason: 'missing_env',
+      model: modelStr,
+      provider: parsed.providerId,
+      recipeId: recipe.id,
+      missingEnvVars: missing,
+    };
+  }
+
+  return {
+    ok: true,
+    model: modelStr,
+    provider: parsed.providerId,
+    recipeId: recipe.id,
+  };
+}
+
+/**
  * Check whether a touchpoint can be served given the current config.
  * Replaces scattered `!process.env.OPENAI_API_KEY` checks (Codex C3).
  *
@@ -598,6 +713,10 @@ export function getRerankerModel(): string | undefined {
  * provider reachable?" rather than "is the global default reachable?" —
  * otherwise an unreachable global default disables vector search even
  * when the active column's provider works fine.
+ *
+ * v0.41.6.0: the 'embedding' branch delegates to diagnoseEmbedding() so
+ * the predicate and the diagnostic stay in sync. Other touchpoints keep
+ * their inline logic for now.
  */
 export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string): boolean {
   // Test seam: when a transport stub is installed for this touchpoint, the
@@ -606,13 +725,13 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
   // __setEmbedTransportForTests.
   if (touchpoint === 'chat' && _chatTransport) return true;
 
+  if (touchpoint === 'embedding') return diagnoseEmbedding(modelOverride).ok;
+
   if (!_config) return false;
   try {
     const modelStr =
       modelOverride
         ? modelOverride
-        : touchpoint === 'embedding'
-        ? getEmbeddingModel()
         : touchpoint === 'expansion'
         ? getExpansionModel()
         : touchpoint === 'chat'
@@ -626,21 +745,8 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
     // Recipe must actually support the requested touchpoint.
     // Anthropic declares only expansion + chat (no embedding model); requesting
     // embedding from an anthropic-configured brain is unavailable regardless of auth.
-    const touchpointConfig = recipe.touchpoints[touchpoint as 'embedding' | 'expansion' | 'chat' | 'reranker'];
+    const touchpointConfig = recipe.touchpoints[touchpoint as 'expansion' | 'chat' | 'reranker'];
     if (!touchpointConfig) return false;
-    // Openai-compat recipes with empty models list require a user-provided
-    // model. Either the recipe explicitly opts in via
-    // EmbeddingTouchpoint.user_provided_models (D8=A), or the legacy
-    // `recipe.id === 'litellm'` heuristic (back-compat for pre-v0.32 builds
-    // where the field hadn't been declared yet).
-    const isUserProvided =
-      touchpoint === 'embedding' &&
-      (touchpointConfig as any).user_provided_models === true;
-    if (
-      Array.isArray(touchpointConfig.models) &&
-      touchpointConfig.models.length === 0 &&
-      (recipe.id === 'litellm' || isUserProvided)
-    ) return false;
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
     const required = recipe.auth_env?.required ?? [];
@@ -1259,7 +1365,10 @@ export function isTokenLimitError(err: unknown): boolean {
   return (
     /max.*allowed.*tokens.*batch/i.test(msg) ||
     /batch.*too.*many.*tokens/i.test(msg) ||
-    /token.*limit.*exceeded/i.test(msg)
+    /token.*limit.*exceeded/i.test(msg) ||
+    // OpenAI embeddings: "Invalid 'input': maximum request size is 300000 tokens per request."
+    /maximum request size.*tokens/i.test(msg) ||
+    /max.*tokens.*per.*request/i.test(msg)
   );
 }
 
@@ -1911,6 +2020,13 @@ export async function expand(query: string): Promise<string[]> {
   if (!query || !query.trim()) return [query];
   if (!isAvailable('expansion')) return [query];
 
+  // Guardrail seam: classify the query before the expansion model call.
+  await classifyGatewayGuardrail({
+    hook: 'ai_gateway.expand',
+    content: query,
+    metadata: { query_chars: query.length },
+  });
+
   try {
     const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
     const result = await generateObject({
@@ -2173,9 +2289,101 @@ function mapStopReason(
  * Crash-resumable replay is the caller's responsibility (subagent.ts persists
  * blocks via the provider-neutral schema landing in commit 2a).
  */
+/**
+ * Safely stringify an arbitrary tool-input value for guardrail classification.
+ * Cycle-safe; serializes functions/symbols/bigints to stable placeholders so a
+ * weird tool payload never throws inside the guardrail seam.
+ */
+function stringifyGuardrailValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  const seen = new WeakSet<object>();
+  try {
+    return JSON.stringify(value, (_key, nested) => {
+      if (typeof nested === 'bigint') return nested.toString();
+      if (typeof nested === 'function') return `[Function${nested.name ? `:${nested.name}` : ''}]`;
+      if (typeof nested === 'symbol') return nested.toString();
+      if (typeof nested === 'object' && nested !== null) {
+        if (seen.has(nested)) return '[Circular]';
+        seen.add(nested);
+      }
+      return nested;
+    });
+  } catch {
+    return String(value);
+  }
+}
+
+/** Flatten a chat message's content blocks into a single guardrail text. */
+function chatContentToGuardrailText(content: ChatMessage['content']): string {
+  if (typeof content === 'string') return content;
+  return content
+    .map((block) => (block.type === 'text' ? block.text : stringifyGuardrailValue(block)))
+    .filter((part) => part.trim().length > 0)
+    .join('\n');
+}
+
+/**
+ * Find the latest user message for guardrail classification. Returns null when
+ * there's no non-empty trailing user message (nothing to classify).
+ */
+function lastUserMessageForGuardrail(
+  messages: ChatMessage[],
+): { text: string; index: number } | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (!message || message.role !== 'user') continue;
+    const text = chatContentToGuardrailText(message.content);
+    if (text.trim().length === 0) return null;
+    return { text, index: i };
+  }
+  return null;
+}
+
+/**
+ * Gateway-side guardrail wrapper. Observe-only, fail-open, never throws into
+ * the gateway. No-op when no guardrail is registered. The guardrail boundary
+ * intentionally sees ONLY the user/query/tool-input text — never system
+ * prompts, assistant/tool messages, full history, tool output, or LLM output.
+ */
+async function classifyGatewayGuardrail(input: {
+  hook: GuardrailHook;
+  content: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  if (!hasGuardrails()) return;
+  const content = input.content.trim();
+  if (!content) return;
+  try {
+    await runGuardrails({ hook: input.hook, content, metadata: input.metadata });
+  } catch {
+    // Fail open. A guardrail must never break inference or tool execution.
+  }
+}
+
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
+
+  // Guardrail seam: classify ONLY the latest user message before provider
+  // inference. Observe-only / fail-open; no-op without a registered guardrail.
+  if (hasGuardrails()) {
+    const lastUser = lastUserMessageForGuardrail(opts.messages);
+    if (lastUser) {
+      await classifyGatewayGuardrail({
+        hook: 'ai_gateway.chat',
+        content: lastUser.text,
+        metadata: {
+          model: modelStrEarly,
+          message_index: lastUser.index,
+          message_count: opts.messages.length,
+        },
+      });
+    }
+  }
   const estimatedInputTokens = estimateChatInputTokens(opts);
   const maxOutputTokens = opts.maxTokens ?? 4096;
 
@@ -2568,6 +2776,19 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         continue;
       }
 
+      // Guardrail seam: classify tool input BEFORE pending-persist and BEFORE
+      // tool execution. Observe-only / fail-open. Sends only the tool name +
+      // input — never tool output, LLM output, or full conversation state.
+      await classifyGatewayGuardrail({
+        hook: 'ai_gateway.tool_input',
+        content: stringifyGuardrailValue({ toolName: call.toolName, input: call.input }),
+        metadata: {
+          turn_idx: turnIdx,
+          call_idx: callIdx,
+          tool_name: call.toolName,
+        },
+      });
+
       // Step 2: persist pending row + claim gbrainToolUseId. The caller's
       // callback handles uniqueness contention via ON CONFLICT DO NOTHING +
       // re-read pattern (see persistToolExecPending in subagent.ts).
@@ -2767,7 +2988,12 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
   const compat = applyOpenAICompatConfig(recipe, cfg);
-  const url = `${compat.baseURL.replace(/\/$/, '')}/models/rerank`;
+  // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
+  // legacy `/models/rerank`; openai-style providers like llama.cpp's
+  // llama-server set `/v1/rerank`. Wire shape is unchanged — any provider
+  // whose request/response shape differs from ZE/llama.cpp (e.g. Voyage with
+  // `top_k` / `data[]`) needs separate adapter hooks in a follow-up plan.
+  const url = `${compat.baseURL.replace(/\/$/, '')}${tp.path ?? '/models/rerank'}`;
   const auth = applyResolveAuth(recipe, cfg, 'reranker');
   // applyResolveAuth returns { apiKey } for Bearer-style auth (SDK's native
   // path) or { headers } for custom-header providers (Azure). v0.37.6.0:

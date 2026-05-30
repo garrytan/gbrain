@@ -44,7 +44,8 @@ TARGET_DIR="${1:-test}"
 ALLOWLIST_FILE="$ROOT/scripts/check-test-isolation.allowlist"
 
 # Read allowlist (one filename per line, # comments allowed). Empty file
-# is fine — every violation will fail.
+# is fine — every violation will fail. Cached into ALLOWLIST so the
+# per-file check (~700 lookups per run) is one pure-bash `case` match.
 ALLOWLIST=""
 if [ -f "$ALLOWLIST_FILE" ]; then
   ALLOWLIST="$(grep -v '^[[:space:]]*#' "$ALLOWLIST_FILE" | grep -v '^[[:space:]]*$' || true)"
@@ -52,8 +53,21 @@ fi
 
 is_allowlisted() {
   local f="$1"
-  [ -z "$ALLOWLIST" ] && return 1
-  echo "$ALLOWLIST" | grep -qxF "$f"
+  if [ -z "$ALLOWLIST" ]; then
+    return 1
+  fi
+  # Use a pure-bash `case` whole-line match against the newline-delimited
+  # allowlist instead of `echo | grep -qxF`. v0.41.8 CI flake (verify job
+  # 77771356276): the grep pipe form occasionally failed to match the
+  # first allowlist entry on Ubuntu 24.04 + bash 5 under
+  # `bun run` + GNU `timeout` (couldn't reproduce on macOS bash 3.2 with
+  # the same allowlist file content + lint script content + checkout
+  # state). Pure-bash case is locale-free, pipe-free, subshell-free,
+  # set-e-quirk-free, and ~100x faster on every call.
+  case $'\n'"$ALLOWLIST"$'\n' in
+    *$'\n'"$f"$'\n'*) return 0 ;;
+  esac
+  return 1
 }
 
 # Find non-serial unit test files (excluding test/e2e). Portable across

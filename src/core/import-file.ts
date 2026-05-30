@@ -8,7 +8,7 @@ import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
-import { embedBatch, embedMultimodal } from './embedding.ts';
+import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
@@ -28,7 +28,10 @@ import {
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
+import { normalizeAliasList } from './search/alias-normalize.ts';
+import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
+import { runGuardrails } from './guardrails.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -273,6 +276,26 @@ export async function importFromContent(
 
   const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
 
+  // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
+  // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
+  // chunking, embedding, and DB write — so a registered guardrail sees the
+  // full markdown payload at the exact pre-persist moment. The returned
+  // verdict is intentionally ignored: this seam cannot block or mutate the
+  // ingest. No-op when zero guardrails are registered (OSS default).
+  await runGuardrails({
+    hook: 'file_storage.markdown',
+    content,
+    metadata: {
+      slug,
+      source_id: sourceId ?? 'default',
+      source_path: opts.sourcePath ?? null,
+      source_kind: opts.source_kind ?? null,
+      source_uri: opts.source_uri ?? null,
+      ingested_via: opts.ingested_via ?? null,
+      content_type: 'markdown',
+    },
+  });
+
   // v0.41 content-sanity gate. Runs AFTER parseMarkdown so the assessor
   // sees the parsed body (compiled_truth + timeline), title, and
   // frontmatter; runs BEFORE the hash compute so a soft-block that
@@ -423,6 +446,68 @@ export async function importFromContent(
   const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
   if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
+  }
+
+  // v0.41.13 (#1309) — identity-based cross-slug dedup pre-check.
+  //
+  // Catches the overlapping-ingest-roots bug class: when a user runs
+  // `gbrain import /vault/Subdir/` then later `gbrain import /vault/`,
+  // the same file is ingested under two different slugs (e.g.
+  // `vault/subdir/note` and `vault/note`). The slug-only check above
+  // misses it because the slugs differ; this check identifies the true
+  // duplicate by content_hash OR external frontmatter.id (granola UUID,
+  // ULID, etc.).
+  //
+  // Posture (codex review):
+  //   - SKIP only when frontmatter.id matches (true external duplicate).
+  //   - WARN-ALWAYS when content_hash matches but identity differs (two
+  //     intentional pages that happen to share text — templates, daily
+  //     logs). User decides whether to investigate.
+  //   - FAIL CLOSED on lookup error: a DB throw means we cannot verify
+  //     uniqueness, so throw rather than silently allow a duplicate.
+  //
+  // Soft-deleted rows are excluded at the engine layer (`deleted_at IS NULL`)
+  // so a tombstoned page doesn't block a legitimate re-import.
+  // Test doubles that don't implement `findDuplicatePage` fall through
+  // via the `?.` shape — no failure mode for fake engines.
+  const fmId = (parsed.frontmatter as Record<string, unknown> | undefined)?.id;
+  const fmIdStr = typeof fmId === 'string' && fmId.length > 0 ? fmId : null;
+  if (!opts.forceRechunk && engine.findDuplicatePage) {
+    let dup: { slug: string; id: number } | null = null;
+    try {
+      dup = await engine.findDuplicatePage(sourceId ?? 'default', {
+        hash,
+        frontmatterId: fmIdStr,
+      });
+    } catch (err) {
+      throw new Error(
+        `[import] dedup pre-check failed for ${opts.sourcePath ?? slug}: ` +
+        `${(err as Error).message}. Re-run import after DB recovery.`
+      );
+    }
+    if (dup && dup.slug !== slug) {
+      // Look up the duplicate page so we can compare frontmatter.id.
+      const dupPage = await engine.getPage(dup.slug, sourceId ? { sourceId } : undefined);
+      const dupFmId = (dupPage?.frontmatter as Record<string, unknown> | undefined)?.id;
+      const dupFmIdStr = typeof dupFmId === 'string' && dupFmId.length > 0 ? dupFmId : null;
+      const sameExternalId = fmIdStr !== null && dupFmIdStr === fmIdStr;
+      if (sameExternalId) {
+        // True duplicate (same external ID). Skip + log to stderr.
+        process.stderr.write(
+          `[import] skipping ${opts.sourcePath ?? slug}: identical to ${dup.slug} ` +
+          `(frontmatter.id=${fmIdStr}) in source ${sourceId ?? 'default'}. ` +
+          `Pass --force-rechunk to override.\n`
+        );
+        return { slug: dup.slug, status: 'skipped', chunks: 0, parsedPage };
+      }
+      // Same content_hash, different (or missing) frontmatter.id.
+      // Surface a warning but proceed with the insert — they may be
+      // legitimate independent pages that happen to share text.
+      process.stderr.write(
+        `[import] WARNING: ${opts.sourcePath ?? slug} shares content_hash with ${dup.slug} ` +
+        `(${hash.slice(0, 8)}) but has different frontmatter.id. Indexing both.\n`
+      );
+    }
   }
 
   // Chunk compiled_truth and timeline.
@@ -596,6 +681,13 @@ export async function importFromContent(
 
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
+      // v0.41.31: stamp embedding provenance when this import actually
+      // embedded (not --no-embed), so a later model/dims swap is detectable
+      // as stale via embed --stale. The deferred/backfill + per-slug embed
+      // paths stamp too; this covers the inline import/sync path.
+      if (!opts.noEmbed) {
+        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+      }
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
       await tx.deleteChunks(slug, txOpts);
@@ -638,6 +730,25 @@ export async function importFromContent(
       } catch { /* same reason — silent skip */ }
     }
   });
+
+  // T3 — project frontmatter `aliases:` into page_aliases (free-text alias
+  // resolution for search). Runs AFTER the page write commits so the slug
+  // exists. Fail-soft: a pre-v110 brain has no page_aliases table yet (the
+  // migration may not have run); an alias-write failure must NOT fail the
+  // import. Always called (even with []) so REMOVING an alias from frontmatter
+  // clears its row — the content_hash includes non-timestamp frontmatter, so
+  // an alias edit changes the hash and reaches this path (not the skip branch).
+  try {
+    const aliasNorms = normalizeAliasList((parsed.frontmatter as Record<string, unknown>).aliases);
+    await engine.setPageAliases(slug, sourceId ?? 'default', aliasNorms);
+  } catch (e) {
+    if (!isUndefinedTableError(e)) {
+      warnOncePerProcess(
+        'setPageAliases:failed',
+        `[import] page_aliases projection failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
 
   return { slug, status: 'imported', chunks: chunks.length, parsedPage };
 }
@@ -808,6 +919,22 @@ export async function importCodeFile(
     return { slug, status: 'skipped', chunks: 0, error: `Code file too large (${byteLength} bytes)` };
   }
 
+  // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER the
+  // code size guard, BEFORE hash compute, code-chunking, embedding, and DB
+  // write. Verdict ignored by design; no-op when no guardrail is registered.
+  await runGuardrails({
+    hook: 'file_storage.code',
+    content,
+    metadata: {
+      slug,
+      source_id: sourceId ?? 'default',
+      source_path: relativePath,
+      source_kind: 'code',
+      content_type: 'code',
+      language: lang,
+    },
+  });
+
   // Hash for idempotency. CHUNKER_VERSION is folded in so chunker shape
   // changes across releases force clean re-chunks without sync --force.
   const hash = createHash('sha256')
@@ -906,6 +1033,14 @@ export async function importCodeFile(
 
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
+      // v0.41.31: stamp embedding provenance ONLY when every chunk was
+      // freshly embedded with the current model this call (no reuse-by-hash
+      // carrying old-model vectors). Mixed pages stay unstamped rather than
+      // falsely marked current; `reindex --code --force` / `embed --stale`
+      // handle the swap for those.
+      if (!opts.noEmbed && needsEmbedIndexes.length === chunks.length) {
+        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+      }
     } else {
       await tx.deleteChunks(slug, txOpts);
     }

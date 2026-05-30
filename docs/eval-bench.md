@@ -8,6 +8,112 @@ For the **NDJSON wire format** consumed by gbrain-evals, see
 [`eval-capture.md`](./eval-capture.md). This doc is the human dev loop
 that lives on top of that format.
 
+## v0.41 update — the LOOP is now real
+
+Before v0.41, you could capture eval rows and replay them but nothing
+stitched them into a gate. `gbrain bench publish` + `gbrain eval gate`
+close the loop. Two gates:
+
+- **Regression gate** (`--baseline X.baseline.ndjson`): replays a baseline
+  you captured against your current brain. Catches: "did my refactor break
+  search?" Compares jaccard / top-1 stability / latency multiplier.
+- **Correctness gate** (`--qrels Y.qrels.json`): runs known-right queries
+  against your current brain via bare `hybridSearch`. Catches: "is my
+  retrieval actually any good?" Computes recall@K, first-relevant-hit-rate,
+  expected_top1-hit-rate.
+
+Both can be passed together; both must pass for verdict `pass`. At least
+one is required.
+
+### The full LOOP for your own brain
+
+```bash
+# 1. Capture (one-time; uses queries already in eval_candidates)
+gbrain eval export --limit 200 --tool query > /tmp/captured.ndjson
+
+# 2. Publish a baseline
+mkdir -p ~/.gbrain/baselines
+gbrain bench publish --from /tmp/captured.ndjson --to ~/.gbrain/baselines/personal.baseline.ndjson --label "personal-$(date +%Y%m%d)"
+
+# 3. Gate against it
+gbrain eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson
+```
+
+### Privacy posture (D9)
+
+**Public baselines in `gbrain-evals` are hermetic-synthetic ONLY.** Real
+user captures stay local in `~/.gbrain/baselines/`. The boundary is
+enforced at the file source, not by post-hoc scrubbing. If you publish a
+baseline to `gbrain-evals`, generate it from a fixture-seeded test brain
+(placeholder names like `alice-example`, `widget-co-example`) — never
+from a real user's `eval_candidates` table.
+
+### Deterministic-pipeline disclosure
+
+`gbrain eval gate --qrels` uses bare `hybridSearch` (not the production
+`query` op handler). This is deliberate: gates need to be deterministic in
+CI. Production retrieval differs via the query cache, salience freshness,
+expansion, etc. The gate measures retrieval quality with a fixed pipeline;
+your users may see different results when the cache is warm.
+
+### `.qrels.json` shape
+
+Two equivalent representations per entry:
+
+```json
+{
+  "schema_version": 1,
+  "queries": [
+    {
+      "query_id": "q1",
+      "query": "fintech founder",
+      "relevant_slugs": ["people/alice-example"],
+      "first_relevant_slug": "people/alice-example"
+    }
+  ]
+}
+```
+
+For federated / multi-source brains, use the explicit shape (no defaults
+to `source_id='default'`):
+
+```json
+{
+  "query_id": "q2",
+  "query": "anything",
+  "relevant": [
+    {"source_id": "host", "slug": "people/alice"},
+    {"source_id": "team-a", "slug": "people/alice"}
+  ],
+  "expected_top1": {"source_id": "host", "slug": "people/alice"}
+}
+```
+
+Without `source_id`, a hit from the wrong source could false-pass the
+gate. The compare everywhere is `${source_id}::${slug}` strings.
+
+### Example GitHub Actions workflow
+
+```yaml
+name: gbrain-eval-gate
+on: [pull_request]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: |
+          # Run both gates; CI fails on any breach.
+          gbrain eval gate \
+            --baseline gbrain-evals/baselines/v0.41-launch.baseline.ndjson \
+            --qrels gbrain-evals/qrels/v0.41-launch.qrels.json \
+            --json | tee /tmp/gate.json
+```
+
+---
+
 ## Prerequisite: turn on contributor mode
 
 Capture is **off by default** for production users (privacy-positive — no

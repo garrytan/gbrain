@@ -50,6 +50,43 @@ exclusively via `gbrain auth create/list/revoke`.
 4. **Log all token issuance** — alert on unexpected registrations
 5. **Rate-limit registration and token endpoints**
 
+### Pre-registering claude.ai / ChatGPT clients without DCR (v0.41.3+)
+
+The recommended hardening posture above is: ship `gbrain serve --http`
+**without** `--enable-dcr` and pre-register every client manually. As of
+v0.41.3, `gbrain auth register-client` accepts the OAuth fields
+browser-based clients need:
+
+```bash
+# Pre-register claude.ai (confidential client; two redirect URIs)
+gbrain auth register-client claude-ai \
+  --scopes "read write" \
+  --redirect-uri https://claude.ai/api/mcp/auth_callback \
+  --redirect-uri https://claude.com/api/mcp/auth_callback
+# --grant-types is auto-set to authorization_code,refresh_token when
+# --redirect-uri is passed; pass --grant-types explicitly to override.
+
+# Pre-register ChatGPT (public PKCE client; no client_secret minted)
+gbrain auth register-client chatgpt \
+  --scopes "read write" \
+  --redirect-uri https://chatgpt.com/connector/oauth/<HASH> \
+  --token-endpoint-auth-method none
+```
+
+Auth methods (`--token-endpoint-auth-method`):
+
+- `client_secret_post` (default) — confidential client, secret in body
+- `client_secret_basic` — confidential client, secret in `Authorization` header
+- `none` — public PKCE-only client (no secret minted; ChatGPT custom
+  connector, Claude Code, Cursor)
+
+The validator rejects unknown methods at the registration boundary, and
+the same gate applies to the admin endpoint `POST /admin/api/register-client`
+and the DCR `POST /register` path. Pre-v0.41.3 the CLI hard-coded
+`redirect_uris = []` and `token_endpoint_auth_method = NULL`, forcing
+operators to UPDATE `oauth_clients` rows by hand to make claude.ai work
+without `--enable-dcr`. That footgun is gone.
+
 ### Token Management
 
 ```bash
@@ -101,6 +138,19 @@ When the request `Origin` matches the allowlist, the server echoes it
 back in `Access-Control-Allow-Origin` (with `Vary: Origin`). Otherwise no
 CORS header is sent and the browser blocks the request.
 
+**v0.41.3:** the same allowlist now gates every OAuth endpoint (`/mcp`,
+`/token`, `/authorize`, `/register`, `/revoke`). Pre-v0.41.3 these used
+default-wide-open `cors()` middleware, leaking
+`Access-Control-Allow-Origin: *` on every response — any web origin could
+complete a token exchange from a logged-in operator's browser. The CORS
+preflight handler in the legacy bearer transport was also asymmetric
+(actual-request path correctly default-deny, but OPTIONS preflight leaked
+`Access-Control-Allow-Methods` + `Access-Control-Allow-Headers` to every
+Origin); both are now consolidated through a single allowlist-gated path.
+A startup stderr WARN fires when `--bind 0.0.0.0` is set without
+`GBRAIN_HTTP_CORS_ORIGIN`, surfacing the default-deny posture before the
+first request.
+
 ### Rate limiting
 
 Two buckets, both stored in a bounded LRU map (default 10K keys, evicts
@@ -124,15 +174,34 @@ deployments.
 
 ### Reverse-proxy trust
 
-Disabled by default. To honor `X-Forwarded-For` (or `X-Real-IP`) when
-gbrain runs behind a trusted reverse proxy:
+**Loopback-only by default** (v0.41.3+ Express server agrees with the
+legacy transport; pre-v0.41.3 the Express server hardcoded `'loopback'`
+while docs claimed "disabled by default" — that disagreement is gone).
+The default trusts only same-host proxies (127.0.0.1, ::1, fc00::/7);
+external forwarded-for headers are ignored regardless. To widen or
+narrow trust:
 
 ```bash
+# Trust exactly one hop — Fly.io, Render, Vercel, single-layer nginx
 GBRAIN_HTTP_TRUST_PROXY=1 gbrain serve --http --port 8787
+
+# Trust N hops — Cloudflare → nginx → gbrain
+GBRAIN_HTTP_TRUST_PROXY=2 gbrain serve --http --port 8787
+
+# Disable entirely — direct-exposure deployment with no proxy
+GBRAIN_HTTP_TRUST_PROXY=0 gbrain serve --http --port 8787
+
+# Named Express modes (uniquelocal, linklocal) or CIDR lists pass through
+GBRAIN_HTTP_TRUST_PROXY=uniquelocal gbrain serve --http --port 8787
+GBRAIN_HTTP_TRUST_PROXY="10.0.0.0/8,192.168.1.0/24" gbrain serve --http --port 8787
 ```
 
-**Critical safety contract:** only set `GBRAIN_HTTP_TRUST_PROXY=1` when
-**both** of these are true:
+Both transports (Express OAuth server in `src/commands/serve-http.ts` and
+the legacy bearer transport in `src/mcp/http-transport.ts`) read the same
+env var, so single source of truth.
+
+**Critical safety contract:** only widen past `'loopback'` when **both**
+of these are true:
 
 1. gbrain is reachable only via a trusted reverse proxy (not directly
    exposed to the internet on the configured port). As of v0.34
@@ -145,11 +214,11 @@ GBRAIN_HTTP_TRUST_PROXY=1 gbrain serve --http --port 8787
    X-Forwarded-For $remote_addr` does this; Cloudflare and most cloud
    load balancers handle it automatically.)
 
-If gbrain is reachable directly AND `GBRAIN_HTTP_TRUST_PROXY=1` is set,
-clients can spoof their IP by sending arbitrary `X-Forwarded-For`
-headers, defeating the pre-auth IP rate limit. Without the flag, gbrain
-ignores all forwarded-for headers and uses the socket peer address,
-which is the safe default for direct-exposure deployments.
+If gbrain is reachable directly AND `GBRAIN_HTTP_TRUST_PROXY=1` (or any
+non-loopback value) is set, clients can spoof their IP by sending
+arbitrary `X-Forwarded-For` headers, defeating the pre-auth IP rate
+limit. The `'loopback'` default protects against this by ignoring all
+forwarded-for headers and using the socket peer address.
 
 ### Body size cap
 

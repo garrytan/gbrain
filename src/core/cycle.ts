@@ -69,7 +69,23 @@ export type CyclePhase =
   | 'embed' | 'orphans' | 'purge'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
-  | 'schema-suggest';
+  | 'schema-suggest'
+  // v0.41 T9 lens packs:
+  //  - extract_atoms: per-source Haiku extraction of atoms from
+  //    transcripts/articles/meetings into atom-typed pages. Gated on the
+  //    active pack's `phases:` declaration (gbrain-creator or gbrain-
+  //    everything declare this); other packs are no-op.
+  //  - synthesize_concepts: global aggregation of atoms into tier-promoted
+  //    concept pages via dedup → tier → Sonnet T1/T2 voice-gated narratives.
+  //    Same pack-gate model.
+  | 'extract_atoms' | 'synthesize_concepts'
+  // v0.41.11.0 — opt-in (default OFF) bulk fact extraction for long-form
+  // conversation pages. The phase wrapper does its own multi-source
+  // iteration directly (PHASE_SCOPE='source' here is taxonomy only;
+  // see comment above PHASE_SCOPE). Wraps the per-source loop in ONE
+  // brain-wide BudgetTracker and passes it through opts.budgetTracker
+  // so the core's auto-wrap doesn't REPLACE it.
+  | 'conversation_facts_backfill';
 
 export const ALL_PHASES: CyclePhase[] = [
   'lint',
@@ -83,6 +99,12 @@ export const ALL_PHASES: CyclePhase[] = [
   // The empty-fence guard refuses to run if pre-v51 legacy facts are
   // pending the v0_32_2 backfill (Codex R2-#7).
   'extract_facts',
+  // v0.41 T9 — atom extraction (per-source, pack-gated). Runs AFTER
+  // extract_facts so the Haiku 3-check has fresh fact context, BEFORE
+  // resolve_symbol_edges so new atom pages don't interrupt the symbol
+  // resolution sweep mid-flight. Pack-gate via active pack's `phases:`
+  // declaration (gbrain-creator + gbrain-everything declare; others skip).
+  'extract_atoms',
   // v0.33.3 W0c — within-file two-pass symbol resolution. Runs AFTER
   // extract + extract_facts so any code edges sync emitted (still bare-token)
   // get resolved into {resolved_chunk_id: N} / {ambiguous: true,
@@ -91,6 +113,10 @@ export const ALL_PHASES: CyclePhase[] = [
   // BATCH_SIZE*10 chunks where edges_backfilled_at IS NULL or stale.
   'resolve_symbol_edges',
   'patterns',
+  // v0.41 T9 — concept synthesis (global, pack-gated). Runs AFTER patterns
+  // so the cluster pass sees fresh cross-session themes. Same pack-gate
+  // model as extract_atoms.
+  'synthesize_concepts',
   // v0.29 — runs AFTER extract + synthesize so it sees the union of
   // sync-touched + synthesize-written pages with fresh tag + take state.
   'recompute_emotional_weight',
@@ -114,6 +140,12 @@ export const ALL_PHASES: CyclePhase[] = [
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  // v0.41.11.0 — opt-in conversation-facts backfill. Default OFF; reads
+  // cycle.conversation_facts_backfill.enabled gate inside the wrapper.
+  // Ordered AFTER calibration_profile (matches the runCycle dispatch
+  // block placement, which runs between the calibration trio and embed),
+  // and BEFORE embed so newly-inserted facts get embedded same-cycle.
+  'conversation_facts_backfill',
   'embed',
   'orphans',
   // v0.39 T12: passive schema-suggest. Runs LATE so post-sync brain state
@@ -166,6 +198,16 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   orphans: 'global',
   purge: 'global',
   'schema-suggest': 'source',
+  // v0.41 T9 — extract_atoms is naturally per-source (each source's
+  // transcript dir gets walked independently). synthesize_concepts is
+  // global because concept clusters cross sources by nature.
+  extract_atoms: 'source',
+  synthesize_concepts: 'global',
+  // v0.41.11.0 — declared 'source' for taxonomy alignment with
+  // extract_facts (per-source semantics). PHASE_SCOPE has no runtime
+  // fanout enforcement today (per the comment above); the phase
+  // wrapper does its own multi-source loop via listSources().
+  conversation_facts_backfill: 'source',
 };
 
 /**
@@ -196,6 +238,13 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  // v0.41 T9 — extract_atoms writes atom-typed pages via put_page;
+  // synthesize_concepts writes concept-typed pages + tier updates. Both
+  // mutate DB state and need the lock.
+  'extract_atoms',
+  'synthesize_concepts',
+  // v0.41.11.0 — inserts facts + writes terminal audit rows; needs lock.
+  'conversation_facts_backfill',
   'embed',
   'purge',
 ]);
@@ -373,12 +422,19 @@ export interface CycleOpts {
  * time use this row in `gbrain_cycle_locks`.
  */
 const LEGACY_CYCLE_LOCK_ID = 'gbrain-cycle';
-const LOCK_TTL_MS = 30 * 60 * 1000;       // 30 minutes
-const LOCK_TTL_MINUTES = 30;              // db-lock.ts takes minutes
+// v0.41.19.0 (T2 of ops-fix-wave): dropped from 30 min to 5 min so a
+// crashed cycle releases the lock within 5 min instead of holding it for
+// the full 30-min TTL. Wired with active in-phase refresh via
+// `buildYieldDuringPhase` (T3) — the closure passed to long phases as
+// `yieldDuringPhase` calls `lock.refresh()` every 30s, so a healthy
+// long-running cycle keeps the TTL alive while the shorter window
+// shrinks crash recovery 6×.
+const LOCK_TTL_MS = 5 * 60 * 1000;        // 5 minutes (was 30)
+const LOCK_TTL_MINUTES = 5;               // was 30; db-lock.ts takes minutes
 // Lazy: GBRAIN_HOME may be set after module load; resolve at call time.
 const getLockFilePathDefault = () => gbrainPath('cycle.lock');
 
-interface LockHandle {
+export interface LockHandle {
   release: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -508,6 +564,53 @@ function acquireFileLock(lockPath = getLockFilePathDefault()): LockHandle | null
         /* already gone */
       }
     },
+  };
+}
+
+/**
+ * v0.41.19.0 (T3 of ops-fix-wave): build the closure that long phases
+ * call to keep the cycle DB lock alive AND fire the existing cooperative
+ * yield hook (Minion job-lock renewal in jobs.ts / autopilot.ts).
+ *
+ * Codex caught that the prior `yieldBetweenPhases` opt does NOT refresh
+ * the cycle lock — it's just a `setImmediate()` from external callers,
+ * and `lock.refresh()` was only ever called via the implicit final
+ * `release()` path. Combined with the TTL drop 30→5min (T2), a long
+ * phase like `extract_atoms` or `synthesize_concepts` would lose the
+ * lock to a competing worker mid-phase.
+ *
+ * The returned closure does TWO things on each fire:
+ *   1. `await lock.refresh()` to bump `ttl_expires_at` + `last_refreshed_at`
+ *   2. `await outer()` to renew any external job-lock the caller threaded in
+ *
+ * Both are wrapped in try/catch — a refresh failure logs to stderr but
+ * doesn't crash the phase (if the lock was truly stolen, we want this
+ * run to wind down gracefully, not throw mid-LLM-call).
+ *
+ * Returns `undefined` when there's no lock AND no outer hook so phases
+ * short-circuit via their `if (!opts.yieldDuringPhase) return;` guard.
+ */
+export function buildYieldDuringPhase(
+  lock: LockHandle | null,
+  outer?: () => Promise<void>,
+): (() => Promise<void>) | undefined {
+  if (!lock && !outer) return undefined;
+  return async () => {
+    if (lock) {
+      try {
+        await lock.refresh();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Non-fatal: a refresh error doesn't crash the phase. If the
+        // lock truly expired and was stolen, the next acquire by another
+        // worker has already happened — let this run wind down rather
+        // than throw mid-phase.
+        console.error(`[cycle] lock refresh failed (non-fatal): ${msg}`);
+      }
+    }
+    if (outer) {
+      try { await outer(); } catch { /* outer hook errors are not fatal */ }
+    }
   };
 }
 
@@ -662,6 +765,42 @@ async function resolveSourceForDir(
   } catch {
     // sources table might not exist on very old brains — fall through.
     return undefined;
+  }
+}
+
+// v0.41 T9 D4-B — orchestrator-level pack gate for lens-pack phases.
+//
+// Returns true when the ACTIVE pack's `phases:` list includes `phase`.
+// Phases are local to the manifest that declares them — extends chains
+// inherit page_types + link_types + filing_rules via the registry's
+// standard merge semantics, but NOT phases. Per D4-B, each pack declares
+// its own phase participation explicitly. The gbrain-everything meta-
+// pack therefore re-declares creator's phases verbatim in its own
+// manifest (asserted by test/lens-pack-manifests.test.ts).
+//
+// Why local-only: phases are runtime control flow, not data. A user pack
+// that extends gbrain-creator may NOT want extract_atoms to run (e.g. they
+// derive atoms differently). Inheriting phases would force them into a
+// no-op-or-fork choice; local-only declaration lets them opt in cleanly.
+//
+// Fail-open semantics: if the registry lookup throws (pack not found,
+// manifest malformed, registry not initialized), the gate returns FALSE.
+// Better to skip a pack-gated phase than to run it for a brain that
+// can't resolve its active pack. Skipped phases land in the cycle report
+// with `not_in_active_pack` so doctor can surface to the user.
+async function packDeclaresPhase(
+  engine: BrainEngine,
+  phase: CyclePhase,
+): Promise<boolean> {
+  try {
+    const { loadActivePack } = await import('./schema-pack/load-active.ts');
+    const { loadConfig } = await import('./config.ts');
+    const cfg = loadConfig();
+    const resolved = await loadActivePack({ cfg, remote: false });
+    const phases = resolved.manifest.phases ?? [];
+    return phases.includes(phase);
+  } catch {
+    return false;
   }
 }
 
@@ -1041,6 +1180,16 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     } catch {
       // Non-fatal.
     }
+    // v0.41.18.0 codex H-8 — actual 30-day pruning of batch-retry audit JSONL.
+    // The pre-v0.41.18 plan promised this "by convention"; this is the real
+    // implementation. Never throws — best-effort GC.
+    let purgedBatchRetryAuditFiles = 0;
+    try {
+      const { pruneOldBatchRetryAuditFiles } = await import('./audit/batch-retry-audit.ts');
+      purgedBatchRetryAuditFiles = pruneOldBatchRetryAuditFiles(30).removed;
+    } catch {
+      // Non-fatal.
+    }
     return {
       phase: 'purge',
       status: 'ok',
@@ -1048,7 +1197,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
       summary:
         `purged ${purgedSources.length} source(s), ${purgedPages.count} page(s), ` +
         `${purgedClones.count} orphan clone temp dir(s), ${purgedCheckpoints} stale op_checkpoint(s), ` +
-        `and ${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s)`,
+        `${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s), ` +
+        `and ${purgedBatchRetryAuditFiles} stale batch-retry audit file(s)`,
       details: {
         purged_sources_count: purgedSources.length,
         purged_pages_count: purgedPages.count,
@@ -1058,6 +1208,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_page_slugs: purgedPages.slugs,
         purged_checkpoints_count: purgedCheckpoints,
         purged_brainstorm_checkpoints_count: purgedBrainstormCheckpoints,
+        purged_batch_retry_audit_files_count: purgedBatchRetryAuditFiles,
       },
     };
   } catch (e) {
@@ -1407,6 +1558,68 @@ export async function runCycle(
       await safeYield(opts.yieldBetweenPhases);
     }
 
+    // ── v0.41 T9: extract_atoms (per-source, pack-gated) ──────────
+    // Orchestrator-level pack gate: consults the active pack's `phases:`
+    // declaration. When the active pack does NOT declare extract_atoms
+    // (e.g. user is on gbrain-base or gbrain-investor), this phase is a
+    // no-op with reason='not_in_active_pack'. When the pack does declare
+    // it (gbrain-creator, gbrain-everything), dispatches to the
+    // extract-atoms.ts module (real body in T5; stub for now).
+    //
+    // borrow_from does NOT borrow phases — each pack declares phase
+    // participation explicitly. The packDeclaresPhase helper walks the
+    // resolved active pack's `phases:` list ONLY; not the extends chain
+    // or borrow_from targets.
+    if (phases.includes('extract_atoms')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'extract_atoms',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else if (!(await packDeclaresPhase(engine, 'extract_atoms'))) {
+        phaseResults.push({
+          phase: 'extract_atoms',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'extract_atoms: active pack does not declare this phase',
+          details: { reason: 'not_in_active_pack' },
+        });
+      } else {
+        progress.start('cycle.extract_atoms');
+        const { runPhaseExtractAtoms } = await import('./cycle/extract-atoms.ts');
+        const xaSourceId = (await resolveSourceForDir(engine, opts.brainDir)) ?? 'default';
+        // v0.41.2.1 (D9 #5): union sync + synthesize affected slugs so the
+        // incremental discovery path doesn't miss pages just-written by the
+        // synthesize phase that ran earlier in the same cycle.
+        const xaAffectedSlugs =
+          syncPagesAffected || synthesizeWrittenSlugs
+            ? [
+                ...(syncPagesAffected ?? []),
+                ...(synthesizeWrittenSlugs ?? []),
+              ]
+            : undefined;
+        const { result, duration_ms } = await timePhase(() => runPhaseExtractAtoms(engine, {
+          brainDir: opts.brainDir,
+          sourceId: xaSourceId,
+          dryRun,
+          affectedSlugs: xaAffectedSlugs,
+          // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
+          yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          // v0.41.19.0 (T4): pass same reporter (not a child — cycle.ts
+          // owns start/finish; phase only ticks).
+          progress,
+        }));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
     // ── v0.33.3 W0c: resolve_symbol_edges (between extract_facts + patterns) ──
     // Walks chunks whose edges_backfilled_at is null/stale. Resumable
     // across cycles via the watermark. Quick-cycle compatible — caps at
@@ -1453,6 +1666,46 @@ export async function runCycle(
           brainDir: opts.brainDir,
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
+        }));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── v0.41 T9: synthesize_concepts (global, pack-gated) ───────
+    // Same pack-gate model as extract_atoms. Reads `phases:` from the
+    // resolved active pack manifest; no-op when this phase isn't
+    // declared. Real body in T6 — synthesize-concepts.ts is a stub today.
+    if (phases.includes('synthesize_concepts')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'synthesize_concepts',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else if (!(await packDeclaresPhase(engine, 'synthesize_concepts'))) {
+        phaseResults.push({
+          phase: 'synthesize_concepts',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'synthesize_concepts: active pack does not declare this phase',
+          details: { reason: 'not_in_active_pack' },
+        });
+      } else {
+        progress.start('cycle.synthesize_concepts');
+        const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts');
+        const { result, duration_ms } = await timePhase(() => runPhaseSynthesizeConcepts(engine, {
+          brainDir: opts.brainDir,
+          dryRun,
+          // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
+          yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          // v0.41.19.0 (T4): pass same reporter (not a child).
+          progress,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -1600,6 +1853,36 @@ export async function runCycle(
           }
         }
       }
+    }
+
+    // ── v0.41.11.0: conversation_facts_backfill ─────────────────
+    // Opt-in (default OFF). Walks long-form conversation/meeting/slack/
+    // email pages, segments by 30-min gap, runs facts extractor with a
+    // topical/temporal header, writes facts + per-page TERMINAL audit
+    // row. Per-source + brain-wide cost AND walltime caps; budget
+    // tracker passed in from the phase wrapper (NOT nested-wrapped in
+    // core — would REPLACE not stack).
+    if (phases.includes('conversation_facts_backfill')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'conversation_facts_backfill',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.conversation_facts_backfill');
+        const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseConversationFactsBackfill(engine, { dryRun, signal: opts.signal }),
+        );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── Phase 8: embed ──────────────────────────────────────────

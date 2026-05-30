@@ -134,7 +134,29 @@ for f in "${files[@]}"; do
   name=$(basename "$f")
   echo ""
   echo "=== $name ==="
-  if output=$(bun test --timeout=60000 "$f" 2>&1); then
+  # Cross-file isolation: terminate any stale connections from the prior
+  # file's pool before the next file's setupDB() runs. Without this,
+  # idle postgres connections from the previous bun process race with
+  # the next file's TRUNCATE CASCADE → cross-file fixture-state pollution
+  # (people/sarah-chen disappears mid-test, etc.). The terminate call is
+  # idempotent + fast (~50ms); on the first iteration there's nothing to
+  # terminate so it's effectively free.
+  if [ -n "${DATABASE_URL:-}" ]; then
+    psql "$DATABASE_URL" -At -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid != pg_backend_pid() AND datname = current_database()" >/dev/null 2>&1 || true
+  fi
+  # Hard outer timeout (180s per file). bun's --timeout is per-test; if a
+  # PGLite WASM call hangs in beforeAll/afterAll, --timeout never fires and
+  # the file wedges indefinitely. gtimeout/timeout SIGKILLs the file so the
+  # suite advances. gtimeout (macOS via coreutils) preferred; timeout (Linux)
+  # fallback; bare bun (no outer cap) if neither is installed.
+  if command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout 180"
+  elif command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="timeout 180"
+  else
+    TIMEOUT_CMD=""
+  fi
+  if output=$($TIMEOUT_CMD bun test --timeout=60000 "$f" 2>&1); then
     pass_files=$((pass_files + 1))
     # Extract pass/fail counts from bun's summary (e.g., "123 pass")
     p=$(echo "$output" | grep -oE '[0-9]+ pass' | tail -1 | grep -oE '[0-9]+' || echo 0)

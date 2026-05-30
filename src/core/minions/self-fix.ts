@@ -247,7 +247,7 @@ export interface SelfFixEventRecord {
   outcome: string;
 }
 
-/** Best-effort write to minion_self_fix_log (audit table from migration v93). */
+/** Best-effort write to minion_self_fix_log (audit table from migration v94). */
 export async function logSelfFixEvent(
   engine: BrainEngine,
   record: SelfFixEventRecord,

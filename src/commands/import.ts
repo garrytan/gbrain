@@ -64,6 +64,26 @@ export async function runImport(
       console.error('Tip: run `gbrain import <dir> --no-embed` to import without embedding now.');
       process.exit(1);
     }
+
+    // v0.41.6.0 D1: preflight embedding credentials. Closes the bug class
+    // where `gbrain import` per-file embed writes N identical
+    // "missing OPENAI_API_KEY" failures into sync-failures.jsonl.
+    const { validateEmbeddingCreds, EmbeddingCredentialError } = await import('../core/embed-preflight.ts');
+    try {
+      validateEmbeddingCreds();
+    } catch (e) {
+      if (e instanceof EmbeddingCredentialError) {
+        if (jsonOutput) {
+          console.log(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: e.diagnosis }));
+        } else {
+          console.error('');
+          console.error(e.userMessage);
+          console.error('');
+        }
+        process.exit(1);
+      }
+      throw e;
+    }
   }
   // v0.39 T1.5: load active pack ONCE at runImport entry; thread to every
   // per-file importFile call below. Codex perf finding #7 — never per-file.
@@ -95,7 +115,34 @@ export async function runImport(
   // CLI callers' flag wins over opts when both are set.
   const sourceIdIdx = args.indexOf('--source-id');
   const flagSourceId = sourceIdIdx !== -1 ? args[sourceIdIdx + 1] : null;
-  const sourceId = flagSourceId ?? opts.sourceId;
+  let sourceId: string | undefined = flagSourceId ?? opts.sourceId;
+
+  // v0.41.13 (#1434): when no explicit source / env / opts.sourceId is set,
+  // fall through to the resolver so the new sole_non_default tier (5.5) can
+  // auto-route to the only registered non-default source. Pre-fix, import
+  // followed the explicit-only design from PR #707 and silently routed
+  // every import to 'default', mirroring the sync bug class.
+  //
+  // Resolution chain (full 7 tiers): flag → env → dotfile → local_path →
+  // brain_default → sole_non_default → seed_default. The nudge fires only
+  // when the resolver returns tier='sole_non_default', so explicit users
+  // see no behavior change.
+  if (!sourceId && process.env.GBRAIN_SOURCE) {
+    const { resolveSourceId } = await import('../core/source-resolver.ts');
+    sourceId = await resolveSourceId(engine, null);
+  } else if (!sourceId) {
+    const { resolveSourceWithTier, formatSoleNonDefaultNudge } = await import('../core/source-resolver.ts');
+    const resolved = await resolveSourceWithTier(engine, null);
+    // Only adopt the resolution when it improves on the seed_default
+    // fallback — that preserves the v0.30.x "default-only when unset"
+    // contract for the common case AND opens the sole_non_default
+    // auto-route for the single-source-brain case.
+    if (resolved.tier === 'sole_non_default') {
+      sourceId = resolved.source_id;
+      const nudge = formatSoleNonDefaultNudge(sourceId);
+      if (nudge) process.stderr.write(nudge + '\n');
+    }
+  }
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input

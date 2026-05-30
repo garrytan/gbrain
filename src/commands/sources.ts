@@ -592,29 +592,38 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
     }
     return;
   }
-  const metrics = await computeAllSourceMetrics(engine, sources);
+  // Local CLI on the trusted host: probe the live commit hash so a quiet,
+  // caught-up source reports lag 0 instead of growing wall-clock (v0.41.32.0).
+  const metrics = await computeAllSourceMetrics(engine, sources, { probeContent: true });
 
   if (json) {
     console.log(JSON.stringify({ schema_version: 1, sources: metrics }, null, 2));
     return;
   }
 
-  // Human-readable table: SOURCE | LAG | EMBED | FAILS | QUEUE | PAGES | LAST SYNC
+  // Human-readable table: SOURCE | LAG | EMBED | BACKFILL | FAILS | QUEUE | PAGES | LAST SYNC
   console.log('SOURCES — health');
   console.log('────────────────');
   console.log(
-    `  ${'SOURCE'.padEnd(20)}  ${'LAG'.padEnd(8)}  ${'EMBED'.padEnd(7)}  ${'FAILS'.padEnd(6)}  ${'QUEUE'.padEnd(6)}  ${'PAGES'.padStart(8)}  LAST SYNC`,
+    `  ${'SOURCE'.padEnd(20)}  ${'LAG'.padEnd(8)}  ${'EMBED'.padEnd(7)}  ${'BACKFILL'.padEnd(9)}  ${'FAILS'.padEnd(6)}  ${'QUEUE'.padEnd(6)}  ${'PAGES'.padStart(8)}  LAST SYNC`,
   );
   for (const m of metrics) {
     const lag = m.lag_seconds === null
       ? 'never'
       : formatLag(m.lag_seconds);
     const embed = `${m.embed_coverage_pct.toFixed(0)}%`;
+    // v0.41.31: embed-backfill state (active beats queued beats idle) so a
+    // cron operator sees deferred embedding work after `sync --all`.
+    const backfill = m.backfill_active > 0
+      ? `active(${m.backfill_active})`
+      : m.backfill_queued > 0
+        ? `queued(${m.backfill_queued})`
+        : 'idle';
     const fails = String(m.failed_jobs_24h);
     const queue = String(m.queue_depth);
     const pages = m.total_pages.toLocaleString();
     const sync = m.last_sync_at ? new Date(m.last_sync_at).toISOString().slice(0, 19).replace('T', ' ') : 'never';
-    console.log(`  ${m.source_id.padEnd(20)}  ${lag.padEnd(8)}  ${embed.padEnd(7)}  ${fails.padEnd(6)}  ${queue.padEnd(6)}  ${pages.padStart(8)}  ${sync}`);
+    console.log(`  ${m.source_id.padEnd(20)}  ${lag.padEnd(8)}  ${embed.padEnd(7)}  ${backfill.padEnd(9)}  ${fails.padEnd(6)}  ${queue.padEnd(6)}  ${pages.padStart(8)}  ${sync}`);
   }
   console.log('');
   for (const m of metrics) {
@@ -964,6 +973,16 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
   const wouldSoftBlock: Array<{ file: string; bytes: number }> = [];
   const wouldWarn: Array<{ file: string; bytes: number }> = [];
   const patternHits: Record<string, number> = {};
+  // v0.41.11.0 — facts-backfill estimator (E4). Walks the same files
+  // already loaded for sanity scanning; counts eligible pages by
+  // frontmatter.type and estimates per-page segment count from body
+  // bytes. Estimated per-segment Sonnet cost is a rough heuristic
+  // (~2000 in + 500 out tokens at $3/MTok in + $15/MTok out ≈ $0.013).
+  const FACTS_BACKFILL_ALLOWED = ['conversation', 'meeting', 'slack', 'email'];
+  const FACTS_BACKFILL_CHARS_PER_SEGMENT = 6500; // matches SEGMENT_TEXT_CHAR_LIMIT
+  const FACTS_BACKFILL_USD_PER_SEGMENT = 0.013;
+  let factsBackfillPages = 0;
+  let factsBackfillSegments = 0;
 
   for (const file of files) {
     let content: string;
@@ -996,7 +1015,25 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
     } else if (sanity.reasons.includes('oversize_warn')) {
       wouldWarn.push({ file, bytes: sanity.bytes });
     }
+    // Facts-backfill estimator: counts pages matching allowed types.
+    const fmType = (parsed.frontmatter?.type as string | undefined) ?? null;
+    if (fmType && FACTS_BACKFILL_ALLOWED.includes(fmType)) {
+      factsBackfillPages++;
+      const totalBytes = sanity.bytes;
+      const segmentsEstimate = Math.max(
+        1,
+        Math.ceil(totalBytes / FACTS_BACKFILL_CHARS_PER_SEGMENT),
+      );
+      factsBackfillSegments += segmentsEstimate;
+    }
   }
+
+  const factsBackfillEstimate = {
+    pages: factsBackfillPages,
+    est_segments: factsBackfillSegments,
+    est_cost_usd: Number((factsBackfillSegments * FACTS_BACKFILL_USD_PER_SEGMENT).toFixed(2)),
+    types: FACTS_BACKFILL_ALLOWED,
+  };
 
   // Size distribution stats.
   sizes.sort((a, b) => a - b);
@@ -1014,6 +1051,7 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
       soft_block_count: wouldSoftBlock.length,
       warn_count: wouldWarn.length,
       pattern_hits: patternHits,
+      facts_backfill_estimate: factsBackfillEstimate,
       hard_blocks: wouldHardBlock.slice(0, 20),
       soft_blocks: wouldSoftBlock.slice(0, 20),
       ...(includeWarns ? { warns: wouldWarn.slice(0, 20) } : {}),
@@ -1034,6 +1072,13 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
   if (Object.keys(patternHits).length > 0) {
     const sorted = Object.entries(patternHits).sort((a, b) => b[1] - a[1]);
     console.log(`Junk-pattern hits: ${sorted.map(([n, c]) => `${n} ×${c}`).join(', ')}`);
+  }
+  if (factsBackfillEstimate.pages > 0) {
+    console.log(
+      `Facts backfill estimate: ${factsBackfillEstimate.pages} eligible page(s), ` +
+      `~${factsBackfillEstimate.est_segments} segments, ~$${factsBackfillEstimate.est_cost_usd}. ` +
+      `Run: gbrain extract-conversation-facts --source-id ${sourceId} --max-cost-usd ${Math.max(factsBackfillEstimate.est_cost_usd, 1)}`,
+    );
   }
   if (wouldHardBlock.length > 0) {
     console.log('\nTop hard-blocks:');

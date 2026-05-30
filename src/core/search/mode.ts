@@ -25,6 +25,32 @@
 
 import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
+import { getRecipe } from '../ai/recipes/index.ts';
+
+/**
+ * Look up the `reranker.default_timeout_ms` declared by the resolved
+ * reranker model's recipe touchpoint. Returns undefined when:
+ *   - modelStr is empty/null,
+ *   - the provider id doesn't resolve to a registered recipe,
+ *   - the recipe has no reranker touchpoint, or
+ *   - the touchpoint doesn't declare a default_timeout_ms.
+ *
+ * Used by `resolveSearchMode()` to slot the recipe default between the
+ * config-key override and the mode-bundle fallback for `reranker_timeout_ms`.
+ * Local rerankers (CPU-only llama.cpp + 4B+ cross-encoder) need >5s for
+ * first-call warmup; without this, the recipe field is dead because
+ * hybridSearch always passes the bundle's 5000ms value to gateway.rerank().
+ *
+ * Crosses a layer boundary (mode → recipes) deliberately and bounded:
+ * only the touchpoint timeout. Other touchpoint fields stay on the recipe.
+ */
+function lookupRerankerRecipeDefaultTimeout(modelStr: string | undefined): number | undefined {
+  if (!modelStr) return undefined;
+  const colon = modelStr.indexOf(':');
+  const providerId = colon === -1 ? modelStr : modelStr.slice(0, colon);
+  const recipe = getRecipe(providerId);
+  return recipe?.touchpoints?.reranker?.default_timeout_ms;
+}
 
 export type SearchMode = 'conservative' | 'balanced' | 'tokenmax';
 
@@ -113,6 +139,16 @@ export interface ModeBundle {
    * relevance signal and is NOT gated.
    */
   floor_ratio: number | undefined;
+
+  /**
+   * T2 (retrieval-maxpool incident) — title-phrase boost multiplier. When a
+   * query is a contiguous token-run inside a page's title (or an exact full-
+   * title match), multiply that result's score by this factor. <= 1.0 or
+   * undefined disables. Floor-ratio-gated so a title hit can't bury a strong
+   * semantic match. Correctness fix (cheap, in-memory) — ON in all bundles.
+   * Override: per-call SearchOpts → `search.title_boost` config → bundle.
+   */
+  title_boost: number | undefined;
 
   // v0.36 cross-modal wave knobs (D2 + D3 + D6 + D8 + D13 + LLM-intent).
   // All three mode bundles default these to the same values — cross-modal
@@ -234,6 +270,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.35.6.0 — undefined for all three bundles; the per-corpus ablation
     // (TODOS.md) gates any default flip.
     floor_ratio: undefined,
+    // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
+    title_boost: 1.25,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -274,6 +312,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.35.6.0 — undefined for all three bundles; the per-corpus ablation
     // (TODOS.md) gates any default flip.
     floor_ratio: undefined,
+    // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
+    title_boost: 1.25,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -316,6 +356,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.35.6.0 — undefined for all three bundles; the per-corpus ablation
     // (TODOS.md) gates any default flip.
     floor_ratio: undefined,
+    // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
+    title_boost: 1.25,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -366,6 +408,8 @@ export interface SearchKeyOverrides {
   reranker_timeout_ms?: number;
   // v0.35.6.0 — floor-ratio gate override.
   floor_ratio?: number;
+  // T2 — title-phrase boost override.
+  title_boost?: number;
   // v0.36 cross-modal overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -404,6 +448,8 @@ export interface SearchPerCallOpts {
   reranker_timeout_ms?: number;
   // v0.35.6.0 — floor-ratio per-call override.
   floor_ratio?: number;
+  // T2 — title-phrase boost per-call override.
+  title_boost?: number;
   // v0.36 cross-modal per-call overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -462,6 +508,21 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     return bundle[key];
   };
 
+  // v0.40.6.1: `reranker_timeout_ms` resolution slots the resolved recipe's
+  // touchpoint default between override and bundle, so local rerankers
+  // (llama.cpp serving Qwen3-Reranker / self-hosted ZE on CPU) inherit
+  // their cold-start headroom without forcing users to discover the
+  // `search.reranker.timeout_ms` config key.
+  // Precedence: per-call > config override > recipe.touchpoints.reranker.default_timeout_ms > mode bundle.
+  const resolvedRerankerModel = pick('reranker_model');
+  const pickRerankerTimeoutMs = (): number => {
+    if (pc.reranker_timeout_ms !== undefined) return pc.reranker_timeout_ms;
+    if (ov.reranker_timeout_ms !== undefined) return ov.reranker_timeout_ms;
+    const recipeDefault = lookupRerankerRecipeDefaultTimeout(resolvedRerankerModel);
+    if (recipeDefault !== undefined) return recipeDefault;
+    return bundle.reranker_timeout_ms;
+  };
+
   return {
     cache_enabled: pick('cache_enabled'),
     cache_similarity_threshold: pick('cache_similarity_threshold'),
@@ -471,12 +532,13 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     expansion: pick('expansion'),
     searchLimit: pick('searchLimit'),
     reranker_enabled: pick('reranker_enabled'),
-    reranker_model: pick('reranker_model'),
+    reranker_model: resolvedRerankerModel,
     reranker_top_n_in: pick('reranker_top_n_in'),
     reranker_top_n_out: pick('reranker_top_n_out'),
-    reranker_timeout_ms: pick('reranker_timeout_ms'),
+    reranker_timeout_ms: pickRerankerTimeoutMs(),
     // v0.35.6.0 — floor-ratio resolved via the same pick chain.
     floor_ratio: pick('floor_ratio'),
+    title_boost: pick('title_boost'),
     // v0.36 cross-modal knobs
     cross_modal_both_text_weight: pick('cross_modal_both_text_weight'),
     cross_modal_both_image_weight: pick('cross_modal_both_image_weight'),
@@ -569,7 +631,18 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // added under v=5 (per D8 sequencing — first to land claimed v=4; the
 // contextual-retrieval wave rebased to v=5). Mid-deploy hit-rate dip is
 // expected — clears within cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 5;
+//
+// v0.42 bump 5→6: alias_resolved_boost (T19, plan D6) adds a new post-fusion
+// stage. Results whose slug is a canonical_slug in slug_aliases get a
+// 1.05x multiplier. Cached pre-v0.42 entries don't reflect the boost so
+// must invalidate. Same one-time miss-spike pattern as prior bumps;
+// fills within cache.ttl_seconds (3600s default).
+//
+// T2 bump 6→7: title_boost (retrieval-maxpool incident) adds a post-fusion
+// stage that multiplies title-phrase-matching results. A title-boost-on write
+// must NOT be served to a title-boost-off lookup (ranking shifts). Same
+// one-time miss-spike pattern; fills within cache.ttl_seconds.
+export const KNOBS_HASH_VERSION = 7;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -665,6 +738,8 @@ export function knobsHash(
     // neutralizes prior cache rows.
     `cr=${knobs.contextual_retrieval}`,
     `crd=${knobs.contextual_retrieval_disabled ? 1 : 0}`,
+    // v=7 addition (append-only) — T2 title-phrase boost (retrieval-maxpool).
+    `tib=${knobs.title_boost === undefined ? 'none' : knobs.title_boost.toFixed(4)}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -762,6 +837,14 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n >= 0 && n <= 1) out.floor_ratio = n;
   }
 
+  // T2 — title-phrase boost factor. >= 1.0 (1.0 disables). Bounded sanity cap
+  // at 5.0 so a fat-fingered config can't make a title hit dominate everything.
+  const tib = get('search.title_boost');
+  if (tib !== undefined) {
+    const n = parseFloat(tib);
+    if (Number.isFinite(n) && n >= 1.0 && n <= 5.0) out.title_boost = n;
+  }
+
   // v0.36 cross-modal overrides (D3 registry)
   const cmbt = get('search.cross_modal.both_mode_text_weight');
   if (cmbt !== undefined) {
@@ -831,6 +914,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.reranker.timeout_ms',
   // v0.35.6.0 — floor-ratio gate
   'search.floor_ratio',
+  'search.title_boost',
   // v0.36 cross-modal keys (D3)
   'search.cross_modal.both_mode_text_weight',
   'search.cross_modal.both_mode_image_weight',
@@ -871,7 +955,12 @@ export async function loadSearchModeConfig(
   const safeGet = async (k: string): Promise<string | undefined> => {
     try {
       const v = await engine.getConfig(k);
-      return v == null ? undefined : v;
+      // getConfig's contract is string | null, but guard against engines that
+      // return non-string junk (e.g. arrays/booleans). A non-string value is
+      // treated as "not set" so it falls through to the mode-bundle default,
+      // matching the behavior of a missing key. Without this, downstream
+      // parsing (e.g. ce.toLowerCase()) crashes on a non-string.
+      return typeof v === 'string' ? v : undefined;
     } catch {
       return undefined;
     }

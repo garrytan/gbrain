@@ -11,11 +11,16 @@ export {
   type SchemaPackManifest,
   type PackPageType,
   type PackLinkType,
+  type ExtractableSpec,
   SchemaPackManifestSchema,
   SchemaPackManifestError,
   parseSchemaPackManifest,
   computeManifestSha8,
   packIdentity,
+  // v0.41 T3 — calibration domain registry
+  AGGREGATOR_KINDS,
+  type AggregatorKind,
+  type CalibrationDomain,
 } from './manifest-v1.ts';
 
 export {
@@ -110,7 +115,10 @@ export {
 
 export {
   extractableTypesFromPack,
+  extractableSpecsFromPack,
+  getExtractableSpec,
   isExtractableType,
+  refuseVerifierPathInV042,
 } from './extractable.ts';
 
 export {

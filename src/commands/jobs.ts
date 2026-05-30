@@ -1211,6 +1211,46 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     return result;
   });
 
+  // v0.41.11.0 — extract-conversation-facts. NOT in PROTECTED_JOB_NAMES
+  // because per-call cost is bounded by `data.max_cost_usd` (default
+  // DEFAULT_MAX_COST_USD = $5) and the handler re-creates the
+  // BudgetTracker inside its own process. BudgetExhausted is caught at
+  // the core level and returned as `result.budget_exhausted: true` (NOT
+  // a job failure) so the user can resume with a higher cap.
+  worker.register('extract-conversation-facts', async (job) => {
+    const { runExtractConversationFactsCore } = await import('./extract-conversation-facts.ts');
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+    if (!sourceId) {
+      // Multi-source iteration not supported in the Minion-handler path;
+      // the CLI wrapper does multi-source loops. A background submission
+      // SHOULD pin to one source per call (job_id is per-call).
+      throw new Error('extract-conversation-facts Minion job requires data.sourceId');
+    }
+    const types = Array.isArray(job.data.types)
+      ? (job.data.types as string[]).filter((t) =>
+          ['conversation', 'meeting', 'slack', 'email'].includes(t),
+        )
+      : undefined;
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId,
+      types: types as ('conversation' | 'meeting' | 'slack' | 'email')[] | undefined,
+      slug: typeof job.data.slug === 'string' ? job.data.slug : undefined,
+      dryRun: !!job.data.dryRun,
+      limit: typeof job.data.limit === 'number' ? job.data.limit : undefined,
+      sinceIso: typeof job.data.sinceIso === 'string' ? job.data.sinceIso : undefined,
+      force: !!job.data.force,
+      sleepMs: typeof job.data.sleepMs === 'number' ? job.data.sleepMs : undefined,
+      segmentLimit: typeof job.data.segmentLimit === 'number' ? job.data.segmentLimit : undefined,
+      maxCostUsd: typeof job.data.maxCostUsd === 'number' ? job.data.maxCostUsd : undefined,
+      overrideDisabled: !!job.data.overrideDisabled,
+      // v0.41.15.0 (D9): round-trip --workers via job.data.workers so
+      // `gbrain extract-conversation-facts --background --workers 20`
+      // works end-to-end.
+      workers: typeof job.data.workers === 'number' ? job.data.workers : undefined,
+    });
+    return result;
+  });
+
   // v0.40.3.0 T8b: RemediationStep consumer handlers. Thin wrappers
   // around already-shipping CLI commands so doctor --remediate can
   // submit them as Minion jobs. NOT in PROTECTED_JOB_NAMES (no shell
@@ -1515,7 +1555,103 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     return await makeEmbedBackfillHandler(engine)(job);
   });
 
-  process.stderr.write('[minion worker] brain-health-100 handlers registered (11 ops, 3 protected) + embed-backfill (v0.40)\n');
+  // v0.41.18.0 (A10, T7): extract-ner handler for the gbrain onboard
+  // remediation pipeline. Wraps extractNerLinks; emits typed_ner kind
+  // alongside the by-mention 'plain' kind. NOT in PROTECTED_JOB_NAMES
+  // (regex-only, no LLM spend).
+  worker.register('extract-ner', async (job) => {
+    const { extractNerLinks } = await import('../core/extract-ner.ts');
+    const data = (job.data ?? {}) as { sourceId?: string };
+    return await extractNerLinks(engine, {
+      sourceIdFilter: data.sourceId,
+    });
+  });
+
+  // v0.41.18.0 (A12, T9): extract-takes-from-pages handler. PROTECTED
+  // (LLM-bearing). Two-gate consent enforced at the handler boundary:
+  // refuses to run unless takes.bootstrap_enabled config is true, even
+  // when allowProtectedSubmit was set at queue.add time.
+  worker.register('extract-takes-from-pages', async (job) => {
+    const { extractTakesFromPages } = await import('../core/extract-takes-from-pages.ts');
+    const data = (job.data ?? {}) as { sourceId?: string; maxPages?: number };
+    const bootstrapCfg = await engine.getConfig('takes.bootstrap_enabled');
+    const bootstrapEnabled = bootstrapCfg === 'true' || bootstrapCfg === '1';
+    return await extractTakesFromPages(engine, {
+      bootstrapEnabled,
+      sourceIdFilter: data.sourceId,
+      maxPages: data.maxPages,
+    });
+  });
+
+  // v0.41.18.0 (A11, T8): extract-timeline-from-meetings handler. Wraps
+  // extractTimelineFromMeetings. NOT in PROTECTED_JOB_NAMES (pure SQL + string
+  // scan, no LLM spend).
+  worker.register('extract-timeline-from-meetings', async (job) => {
+    const { extractTimelineFromMeetings } = await import('../core/extract-timeline-from-meetings.ts');
+    const data = (job.data ?? {}) as { sourceId?: string };
+    return await extractTimelineFromMeetings(engine, {
+      sourceIdFilter: data.sourceId,
+    });
+  });
+
+  // v0.41.18.0 (A13): embed-catch-up handler for the gbrain onboard
+  // remediation pipeline. Wraps runEmbedCore with stale + catchUp + the
+  // priority/batchSize the recommendation supplies. NOT in
+  // PROTECTED_JOB_NAMES (embedding spend only).
+  worker.register('embed-catch-up', async (job) => {
+    const { runEmbedCore } = await import('./embed.ts');
+    const data = (job.data ?? {}) as {
+      sourceId?: string;
+      batchSize?: number;
+      priority?: 'recent';
+    };
+    return await runEmbedCore(engine, {
+      stale: true,
+      catchUp: true,
+      batchSize: data.batchSize,
+      priority: data.priority,
+      sourceId: data.sourceId,
+    });
+  });
+
+  // v0.42 type-unification (T10): unify-types PROTECTED handler. Pack-upgrade
+  // migration that retypes 25K+ pages, creates alias rows, converts edge-
+  // shaped pages to link rows, AND flips the active pack at end of run.
+  // manual_only via src/core/onboard/render.ts:MANUAL_ONLY_PROTECTED_JOBS.
+  // Operator path: `gbrain jobs submit unify-types --allow-protected --params
+  // '{"target_pack":"gbrain-base-v2"}'`.
+  worker.register('unify-types', async (job) => {
+    const { runUnifyTypes } = await import('../core/schema-pack/unify-types-handler.ts');
+    const data = (job.data ?? {}) as {
+      target_pack?: string;
+      apply?: boolean;
+      sourceId?: string;
+    };
+    if (!data.target_pack) {
+      throw new Error(`unify-types: missing required 'target_pack' parameter`);
+    }
+    // Build a minimal OperationContext shim. Real context is constructed
+    // by the CLI/MCP dispatch layer; handlers don't have one, so we build
+    // one with engine + null cfg + remote=false (trusted local caller —
+    // PROTECTED handler enforced at submit_job).
+    const ctx = {
+      engine,
+      cfg: null,
+      remote: false,
+    } as unknown as import('../core/operations.ts').OperationContext;
+    return await runUnifyTypes(ctx, {
+      target_pack: data.target_pack,
+      apply: data.apply ?? true,            // worker invocation defaults to apply
+      sourceId: data.sourceId,
+      onProgress: (msg: string) => {
+        // Stream to job.updateProgress (DB-backed) AND stderr (operator visibility).
+        job.updateProgress({ phase: 'unify-types', message: msg }).catch(() => {});
+        process.stderr.write(msg + '\n');
+      },
+    });
+  });
+
+  process.stderr.write('[minion worker] brain-health-100 handlers registered (12 ops, 4 protected) + embed-backfill (v0.40) + embed-catch-up (v0.42) + unify-types (v0.42)\n');
 
   // Plugin discovery — one line per discovered plugin (mirrors the
   // openclaw-seam startup line convention from v0.11+). Loaded
