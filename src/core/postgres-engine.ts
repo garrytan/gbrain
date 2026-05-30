@@ -1535,9 +1535,53 @@ export class PostgresEngine implements BrainEngine {
         ORDER BY score DESC
         LIMIT ${innerLimitParam}
       ),
+      -- PATCH (title-search-fix): page-grain keyword arm. Title tokens live in
+      -- pages.search_vector (title weight A) but were never copied into any
+      -- content_chunks.search_vector, so exact-title queries like
+      -- "agentic AI economy" matched the page vector yet returned zero chunk
+      -- rows -> "No results". This arm unions in pages whose page-level vector
+      -- matches but that have NO matching text chunk (anti-join), so pages that
+      -- already match on body chunks rank EXACTLY as before (zero regression);
+      -- we only ADD pages the chunk-only query would have missed entirely.
+      -- chunk_source is reported as 'compiled_truth' (the snippet's true origin)
+      -- to avoid introducing a new enum value downstream. Symbol/language
+      -- filters are chunk-grain and intentionally omitted here.
+      title_hits AS (
+        SELECT
+          p.slug, p.id as page_id, p.title, p.type, p.source_id,
+          p.effective_date, p.effective_date_source,
+          -1 as chunk_id, 0 as chunk_index,
+          left(coalesce(NULLIF(p.compiled_truth, ''), p.title), 400) as chunk_text,
+          'compiled_truth'::text as chunk_source,
+          ts_rank(p.search_vector, websearch_to_tsquery('english', $1)) * ${sourceFactorCase} AS score
+        FROM pages p
+        JOIN sources s ON s.id = p.source_id
+        WHERE p.search_vector @@ websearch_to_tsquery('english', $1)
+          AND NOT EXISTS (
+            SELECT 1 FROM content_chunks cc2
+            WHERE cc2.page_id = p.id
+              AND cc2.modality = 'text'
+              AND cc2.search_vector @@ websearch_to_tsquery('english', $1)
+          )
+          ${typeClause}
+          ${typesClause}
+          ${excludeSlugsClause}
+          ${afterDateClause}
+          ${beforeDateClause}
+          ${sourceClause}
+          ${hardExcludeClause}
+          ${visibilityClause}
+        ORDER BY score DESC
+        LIMIT ${innerLimitParam}
+      ),
+      combined AS (
+        SELECT * FROM ranked_chunks
+        UNION ALL
+        SELECT * FROM title_hits
+      ),
       best_per_page AS (
         SELECT DISTINCT ON (slug) *
-        FROM ranked_chunks
+        FROM combined
         ORDER BY slug, score DESC
       )
       SELECT slug, page_id, title, type, source_id,
