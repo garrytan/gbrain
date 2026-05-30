@@ -12,9 +12,10 @@ export const openaiCodex: Recipe = {
   id: 'openai-codex',
   name: 'OpenAI Codex OAuth',
   tier: 'native',
-  // Placeholder until the native per-call adapter lands. Do not route live
-  // gateway calls through this recipe before gateway.ts adds the openai-codex
-  // native adapter seam.
+  // The live gateway routes openai-codex chat/expansion through the native
+  // adapter (`openAICodexChat` in gateway.ts), NOT the static openai-compatible
+  // path. This field is retained only as the capability/classifier fallback for
+  // provider-list/explain surfaces; per-call wiring uses the native seam.
   implementation: 'openai-compatible',
   auth_env: {
     required: [],
