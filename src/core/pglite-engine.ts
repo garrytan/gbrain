@@ -890,6 +890,16 @@ export class PGLiteEngine implements BrainEngine {
        RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
       [sourceId, slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
     );
+    // PGLite can return zero rows from INSERT ... ON CONFLICT DO UPDATE ...
+    // RETURNING in no-op/trigger edge cases, which made rowToPage(undefined)
+    // throw "undefined is not an object (evaluating 'row.deleted_at')" and
+    // skip the file during sync. The row WAS written, so re-read instead of
+    // crashing.
+    if (rows.length === 0) {
+      const reread = await this.getPage(slug, { sourceId });
+      if (reread) return reread;
+      throw new Error(`putPage: RETURNING produced no row for ${sourceId}/${slug}`);
+    }
     return rowToPage(rows[0] as Record<string, unknown>);
   }
 
