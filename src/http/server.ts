@@ -565,13 +565,18 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
       // ── GET /search ───────────────────────────────────────────────────────
       // Supports two modes:
       // 1. qmd-style: ?lex=keywords&vec=semantic+question&hyde=hypothetical+doc
-      //    Runs each typed sub-query independently and RRF-merges results.
-      //    Any combination of lex/vec/hyde works; first-listed gets 2x weight via RRF.
-      // 2. Simple: ?q=query (hybridSearch with optional ?expand=1)
+      // 2. Simple: ?q=query
+      // 3. Tag-only: ?tag=signal:10  — returns all pages with that tag (no keyword needed)
       //
-      // Optional: ?ns=wiki,工作  — comma-separated slug prefixes; post-filters results
-      //           to only those namespaces. Useful for high-quality-zone-only search.
+      // Optional: ?ns=wiki,工作  — slug prefix post-filter
       if (path === '/search' && req.method === 'GET') {
+        // Tag-only shortcut: ?tag=X returns pages by tag without keyword search
+        const tagFilter = url.searchParams.get('tag');
+        if (tagFilter && !url.searchParams.get('lex') && !url.searchParams.get('vec') && !url.searchParams.get('q')) {
+          const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10), 200);
+          const tagPages = await listPagesOp.handler(ctx, { tag: tagFilter, limit }) as { slug: string; title: string; type: string; updated_at: string }[];
+          return ok({ tag: tagFilter, results: tagPages, count: tagPages.length }, Date.now() - t0);
+        }
         const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '10', 10), 50);
         const innerOpts = { limit: Math.min(limit * 3, 50) };
 
@@ -834,13 +839,27 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         return ok({ results, requested: slugs.length, found: results.filter(r => r.found).length }, Date.now() - t0);
       }
 
-      // ── GET /pages?domain=...&limit=N ────────────────────────────────────
+      // ── GET /pages?domain=...&prefix=...&tag=...&limit=N ─────────────────
+      // ?prefix=wiki/concepts  → only slugs starting with that prefix
+      // ?tag=signal:10         → only pages with that tag (exact match)
+      // ?domain=notes          → legacy filter (first path segment)
+      // These can be combined; prefix is the most precise.
       if (path === '/pages' && req.method === 'GET') {
         const domain = url.searchParams.get('domain') ?? undefined;
-        const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '20', 10), 100);
+        const prefix = url.searchParams.get('prefix') ?? undefined;
+        const tag = url.searchParams.get('tag') ?? undefined;
+        const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '20', 10), 200);
         const cursor = url.searchParams.get('cursor') ?? undefined;
-        const pages = await listPagesOp.handler(ctx, { domain, limit, cursor });
-        return ok({ pages }, Date.now() - t0);
+
+        // Fetch with generous limit so prefix/tag filters have enough to slice from
+        const fetchLimit = prefix ? 1000 : limit;
+        const pages = await listPagesOp.handler(ctx, { domain, tag, limit: fetchLimit, cursor }) as { slug: string; title: string; type: string; updated_at: string }[];
+
+        const filtered = prefix
+          ? pages.filter(p => p.slug.startsWith(prefix + '/') || p.slug === prefix)
+          : pages;
+
+        return ok({ pages: filtered.slice(0, limit), count: filtered.length }, Date.now() - t0);
       }
 
       // ── PUT /page  { content, slug?, tags?, source?, async?, idempotency_key? } ──
