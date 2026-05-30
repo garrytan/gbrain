@@ -99,3 +99,27 @@ describe('autopilot wrapper script — env source order (v0.36.1.x #966)', () =>
     expect(src).toMatch(/source\s+~\/\.zshrc/);
   });
 });
+
+// The wrapper must put the resolved gbrain CLI's OWN directory on PATH so the
+// autopilot's subprocess spawns (`gbrain <subcommand>`) resolve even under
+// launchd/systemd/cron, where interactive shell rc files don't export the CLI
+// dir (~/.bun/bin for a bun install, nvm bin, etc.) - either because they
+// early-return for non-interactive shells or guard the PATH line behind
+// interactivity. Sourcing rc above is not enough; the dir is derived from the
+// install-time resolved CLI path, so it works regardless of install location.
+describe('autopilot wrapper script — CLI dir on PATH for subprocess spawns', () => {
+  test('wrapper exports the resolved CLI dir on PATH, after rc sourcing and before exec', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/commands/autopilot.ts', 'utf8');
+    expect(/export PATH=/.test(src)).toBe(true);
+    const pathIdx = src.indexOf('export PATH=');
+    const zshrcIdx = src.indexOf('source ~/.zshrc');
+    const execIdx = src.indexOf("exec '${safeGbrainPath}'");
+    expect(zshrcIdx).toBeGreaterThan(0);
+    expect(execIdx).toBeGreaterThan(0);
+    // PATH export comes AFTER rc sourcing (so rc can't clobber it)...
+    expect(pathIdx > zshrcIdx).toBe(true);
+    // ...and BEFORE the exec line.
+    expect(pathIdx < execIdx).toBe(true);
+  });
+});
