@@ -348,8 +348,13 @@ export interface CycleOpts {
   dryRun?: boolean;
   /** Defaults to ALL_PHASES. Pass a subset for --phase lint etc. */
   phases?: CyclePhase[];
-  /** Brain directory (git repo). Required for filesystem phases. */
-  brainDir: string;
+  /**
+   * Brain directory (git repo). Required for filesystem phases (lint,
+   * backlinks, sync, synthesize, extract, patterns). `null` when the brain has
+   * no on-disk checkout (postgres/remote engine) — those phases are skipped
+   * with reason `no_brain_dir` and the DB-only phases still run.
+   */
+  brainDir: string | null;
   /** Whether sync should run `git pull`. Default false (cron-safe). */
   pull?: boolean;
   /**
@@ -754,8 +759,11 @@ interface SyncPhaseResult extends PhaseResult {
  */
 async function resolveSourceForDir(
   engine: BrainEngine,
-  brainDir: string,
+  brainDir: string | null,
 ): Promise<string | undefined> {
+  // No checkout → no path-derived source. Callers fall back to opts.sourceId
+  // (the cycleSourceId precedence) or 'default'.
+  if (brainDir === null) return undefined;
   try {
     const rows = await engine.executeRaw<{ id: string }>(
       `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`,
@@ -1288,6 +1296,33 @@ export async function runCycle(
   const timestamp = new Date().toISOString();
   const phaseResults: PhaseResult[] = [];
 
+  // Capture as a const so it narrows to `string` inside the `else` branches of
+  // the per-phase `if (brainDir === null)` guards, even within async closures
+  // (const bindings narrow across closures; property accesses don't).
+  const brainDir = opts.brainDir;
+
+  // Skip result for a filesystem phase when the brain has no on-disk checkout.
+  const skipNoBrainDir = (phase: CyclePhase): PhaseResult => ({
+    phase,
+    status: 'skipped',
+    duration_ms: 0,
+    summary: 'requires a local brain directory; this brain has no on-disk checkout '
+      + '(postgres/remote engine); pass --dir <path> to run filesystem phases',
+    details: { reason: 'no_brain_dir' },
+  });
+
+  // A1: canonical per-source scope for the DB-capable per-source phases
+  // (extract_facts, extract_atoms, the calibration trio). Explicit --source
+  // (opts.sourceId) wins; else derive from the resolved checkout dir. Without
+  // this, `gbrain dream --source repo-a` on a checkout-less brain would scope
+  // those phases to 'default' (resolveSourceForDir(null) → undefined) while the
+  // cycle still locks + stamps last_full_cycle_at for repo-a — a freshness
+  // stamp that lies. resolveSourceForDir returns undefined when brainDir is
+  // null, so opts.sourceId is the only signal in the no-checkout case.
+  const cycleSourceId: string | undefined = engine
+    ? (opts.sourceId ?? (await resolveSourceForDir(engine, brainDir)))
+    : opts.sourceId;
+
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   // Decide if we need the cycle lock: any state-mutating phase in the selection.
@@ -1417,22 +1452,30 @@ export async function runCycle(
     // ── Phase 1: lint ────────────────────────────────────────────
     if (phases.includes('lint')) {
       checkAborted(opts.signal);
-      progress.start('cycle.lint');
-      const { result, duration_ms } = await timePhase(() => runPhaseLint(opts.brainDir, dryRun));
-      result.duration_ms = duration_ms;
-      phaseResults.push(result);
-      progress.finish();
+      if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('lint'));
+      } else {
+        progress.start('cycle.lint');
+        const { result, duration_ms } = await timePhase(() => runPhaseLint(brainDir, dryRun));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
       await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── Phase 2: backlinks ──────────────────────────────────────
     if (phases.includes('backlinks')) {
       checkAborted(opts.signal);
-      progress.start('cycle.backlinks');
-      const { result, duration_ms } = await timePhase(() => runPhaseBacklinks(opts.brainDir, dryRun));
-      result.duration_ms = duration_ms;
-      phaseResults.push(result);
-      progress.finish();
+      if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('backlinks'));
+      } else {
+        progress.start('cycle.backlinks');
+        const { result, duration_ms } = await timePhase(() => runPhaseBacklinks(brainDir, dryRun));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
       await safeYield(opts.yieldBetweenPhases);
     }
 
@@ -1452,9 +1495,11 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
+      } else if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('sync'));
       } else {
         progress.start('cycle.sync');
-        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, opts.brainDir, dryRun, pull, phases.includes('extract')));
+        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, brainDir, dryRun, pull, phases.includes('extract')));
         result.duration_ms = duration_ms;
         // Capture changed slugs for incremental extract.
         syncPagesAffected = (result as SyncPhaseResult).pagesAffected;
@@ -1474,11 +1519,13 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
+      } else if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('synthesize'));
       } else {
         progress.start('cycle.synthesize');
         const { runPhaseSynthesize } = await import('./cycle/synthesize.ts');
         const { result, duration_ms } = await timePhase(() => runPhaseSynthesize(engine, {
-          brainDir: opts.brainDir,
+          brainDir,
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
           inputFile: opts.synthInputFile,
@@ -1510,12 +1557,14 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
+      } else if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('extract'));
       } else {
         // Pass changed slugs from sync for incremental extract.
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, opts.brainDir, dryRun, syncPagesAffected));
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1548,9 +1597,9 @@ export async function runCycle(
         // already-resolved cycle scope; sourceId defaults to 'default' when
         // the sources table doesn't recognize this brainDir (pre-multi-
         // source installs).
-        const xfSourceId = (await resolveSourceForDir(engine, opts.brainDir)) ?? 'default';
+        const xfSourceId = cycleSourceId ?? 'default';
         const { result, duration_ms } = await timePhase(() =>
-          runPhaseExtractFacts(engine, opts.brainDir, xfSourceId, dryRun, syncPagesAffected));
+          runPhaseExtractFacts(engine, brainDir, xfSourceId, dryRun, syncPagesAffected));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1591,7 +1640,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.extract_atoms');
         const { runPhaseExtractAtoms } = await import('./cycle/extract-atoms.ts');
-        const xaSourceId = (await resolveSourceForDir(engine, opts.brainDir)) ?? 'default';
+        const xaSourceId = cycleSourceId ?? 'default';
         // v0.41.2.1 (D9 #5): union sync + synthesize affected slugs so the
         // incremental discovery path doesn't miss pages just-written by the
         // synthesize phase that ran earlier in the same cycle.
@@ -1603,7 +1652,7 @@ export async function runCycle(
               ]
             : undefined;
         const { result, duration_ms } = await timePhase(() => runPhaseExtractAtoms(engine, {
-          brainDir: opts.brainDir,
+          brainDir: brainDir ?? undefined,
           sourceId: xaSourceId,
           dryRun,
           affectedSlugs: xaAffectedSlugs,
@@ -1659,11 +1708,13 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
+      } else if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('patterns'));
       } else {
         progress.start('cycle.patterns');
         const { runPhasePatterns } = await import('./cycle/patterns.ts');
         const { result, duration_ms } = await timePhase(() => runPhasePatterns(engine, {
-          brainDir: opts.brainDir,
+          brainDir,
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
         }));
@@ -1700,7 +1751,7 @@ export async function runCycle(
         progress.start('cycle.synthesize_concepts');
         const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts');
         const { result, duration_ms } = await timePhase(() => runPhaseSynthesizeConcepts(engine, {
-          brainDir: opts.brainDir,
+          brainDir: brainDir ?? undefined,
           dryRun,
           // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
@@ -1798,7 +1849,7 @@ export async function runCycle(
       if (engine) {
         const cfgMod = await import('./config.ts');
         const calibrationConfig = cfgMod.loadConfig() ?? ({} as ReturnType<typeof cfgMod.loadConfig> & object);
-        const calibrationSourceId = await resolveSourceForDir(engine, opts.brainDir);
+        const calibrationSourceId = cycleSourceId;
         const calibrationCtx = {
           engine,
           config: calibrationConfig,
@@ -1812,7 +1863,7 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.propose_takes');
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: opts.brainDir }) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2126,6 +2177,11 @@ function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals']): Cyc
     totals.pages_synced > 0 ||
     totals.pages_extracted > 0 ||
     totals.pages_embedded > 0 ||
-    totals.pages_emotional_weight_recomputed > 0;
+    totals.pages_emotional_weight_recomputed > 0 ||
+    // A7: a code brain runs `gbrain dream` specifically to build the call graph
+    // (resolve_symbol_edges). Without these, an edges-only cycle reports 'clean'
+    // — indistinguishable from "nothing happened" even when N edges resolved.
+    totals.edges_resolved > 0 ||
+    totals.edges_ambiguous > 0;
   return anyWork ? 'ok' : 'clean';
 }

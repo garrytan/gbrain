@@ -41,6 +41,8 @@ import {
   CODE_CALLEES_DESCRIPTION,
   CODE_DEF_DESCRIPTION,
   CODE_REFS_DESCRIPTION,
+  LIST_SKILLS_DESCRIPTION,
+  GET_SKILL_DESCRIPTION,
 } from './operations-descriptions.ts';
 
 // --- Types ---
@@ -1980,6 +1982,58 @@ const get_brain_identity: Operation = {
   },
   scope: 'read',
   // intentionally no cliHints — banner-only op
+};
+
+// --- PR1: skill catalog over MCP (host-repo skills for thin clients) ---
+// Both ops dynamically import ./skill-catalog.ts to avoid an import cycle
+// (skill-catalog statically imports the `operations` array for D7 tool honesty).
+// Read-scope, non-localOnly: a thin client (Codex/Perplexity/Cowork) reaches
+// these over HTTP. The host-filesystem read is gated by mcp.publish_skills +
+// path confinement — see the trust-boundary memo in skill-catalog.ts.
+
+const list_skills: Operation = {
+  name: 'list_skills',
+  description: LIST_SKILLS_DESCRIPTION,
+  params: {
+    section: {
+      type: 'string',
+      description: 'Optional: only skills whose routing section matches this exactly.',
+    },
+  },
+  handler: async (ctx, p) => {
+    const sc = await import('./skill-catalog.ts');
+    const publish = await sc.readMcpPublishSkills(ctx);
+    sc.assertPublishEnabled(ctx, publish);
+    const override = await sc.readMcpSkillsDir(ctx);
+    const { dir, source } = sc.resolveSkillsDir(ctx, override);
+    const section = typeof p.section === 'string' ? p.section : undefined;
+    return sc.buildSkillCatalog(ctx, dir, source, { section });
+  },
+  scope: 'read',
+  cliHints: { name: 'skills', positional: [] },
+};
+
+const get_skill: Operation = {
+  name: 'get_skill',
+  description: GET_SKILL_DESCRIPTION,
+  params: {
+    name: {
+      type: 'string',
+      required: true,
+      description: 'Skill name exactly as returned by list_skills.',
+    },
+  },
+  handler: async (ctx, p) => {
+    const sc = await import('./skill-catalog.ts');
+    const publish = await sc.readMcpPublishSkills(ctx);
+    sc.assertPublishEnabled(ctx, publish);
+    const override = await sc.readMcpSkillsDir(ctx);
+    const { dir } = sc.resolveSkillsDir(ctx, override);
+    const name = typeof p.name === 'string' ? p.name : '';
+    return sc.getSkillDetail(ctx, dir, name);
+  },
+  scope: 'read',
+  cliHints: { name: 'skill', positional: ['name'] },
 };
 
 /**
@@ -4426,6 +4480,8 @@ export const operations: Operation[] = [
   get_stats, get_health, run_doctor, get_versions, revert_version,
   // v0.31.1 (Issue #734): thin-client banner identity packet (read-scope, banner-only)
   get_brain_identity,
+  // PR1: skill catalog over MCP — discover + fetch host-repo skills (read-scope)
+  list_skills, get_skill,
   // v0.41.19.0: thin-client `gbrain status` payload (admin-scope, sync + cycle only)
   get_status_snapshot,
   // Sync

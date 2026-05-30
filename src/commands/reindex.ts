@@ -24,6 +24,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../core/chunkers/recursive.ts';
 import { importFromContent, importFromFile } from '../core/import-file.ts';
+import { serializeMarkdown } from '../core/markdown.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { existsSync } from 'fs';
@@ -220,8 +221,24 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
               return;
             }
           }
-          // Fallback path: re-chunk stored compiled_truth in place.
-          await importFromContent(engine, row.slug, row.compiled_truth, {
+          // No source file on disk (DB-only page, or repo not available) —
+          // re-chunk from the stored page. v0.41.37.0 #1621: reconstruct the
+          // FULL markdown (frontmatter + body + timeline) via serializeMarkdown
+          // and re-import THAT, instead of passing body-only `compiled_truth`
+          // to importFromContent. The body-only path re-parsed with empty
+          // frontmatter and OVERWROTE the page's real frontmatter / title /
+          // timeline (codex catch). The round-trip preserves everything while
+          // still re-chunking + bumping chunker_version.
+          const page = await engine.getPage(row.slug, { sourceId: row.source_id });
+          if (!page) { skipped++; return; }
+          const tags = await engine.getTags(row.slug, { sourceId: row.source_id });
+          const fullMarkdown = serializeMarkdown(
+            page.frontmatter ?? {},
+            page.compiled_truth ?? row.compiled_truth,
+            page.timeline ?? '',
+            { type: page.type, title: page.title, tags },
+          );
+          await importFromContent(engine, row.slug, fullMarkdown, {
             sourceId: row.source_id,
             noEmbed: !!opts.noEmbed,
             forceRechunk: true,

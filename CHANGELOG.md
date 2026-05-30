@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.41.35.0] - 2026-05-30
+## [0.41.39.0] - 2026-05-30
 
 **Wikilinks like `[[struktura]]` that point at pages in another folder finally connect.** Until now, if you wrote `[[struktura]]` in `concepts/knowledge-graph.md` and the actual page lived at `projects/struktura.md`, GBrain silently dropped the link from its graph. Obsidian users saw a dense web of connections in their vault and a thin, broken graph inside GBrain. The issue reporter had 71 wikilinks across 20 pages — GBrain captured 12.
 
@@ -67,6 +67,389 @@ Closes https://github.com/garrytan/gbrain/issues/972.
 - Tests: 38 new cases pinning the contract. `test/link-extraction.test.ts` adds 17 cases covering `WIKILINK_GENERIC_RE` shape (anchor / display / strip / escape paths), the `extractEntityRefs` pass-2c no-double-emit invariant, `resolveBasenameMatches` multi-match + index-built-once + missing-`getAllSlugs` degradation, and the `extractPageLinks` opt routing under both flag states. `test/extract-fs.test.ts` adds 11 cases for the pure-function helpers (`resolveBasenameMatchesFromSlugs`, `resolveSlugAll`) plus 3 round-trip tests of the issue's exact repro inside a PGLite brain. `test/doctor.test.ts` adds 7 cases for the new doctor check (skip / ok / warn paths + the cross-surface wiring source-grep). `test/e2e/global-basename-pglite.test.ts` adds 7 end-to-end cases against an in-memory PGLite brain covering FS-source, DB-source, and put_page auto-link paths under both flag states.
 - PR #1233 from @rayers contributed the kernel of the resolver-side approach (the generic wikilink regex + slug-tail index pattern). This PR keeps that mechanism, makes it opt-in via the new config flag, replaces the first-write-wins lookup with multi-match return, and extends the coverage to the FS-source path that the issue's repro actually hits.
 
+## [0.41.38.0] - 2026-05-30
+
+**Two fixes for Supabase brains with a code source. `gbrain code-callers` and
+`gbrain code-callees` now respect your `.gbrain-source` pin instead of demanding
+`--source` every time, and `gbrain dream` finally runs on a postgres brain that
+has no local checkout instead of dying with "No brain directory found."**
+
+If you build a code call graph with gbrain (the way gstack's `/sync-gbrain`
+does), both of these bit you. You'd run `gbrain dream` to build the graph and it
+would error out on Supabase. And every `gbrain code-callers Foo` query forced a
+`--source` flag even though you'd pinned the source with a `.gbrain-source`
+dotfile in your repo. Now "who calls this / what does this call" works out of
+the box on a Supabase brain.
+
+### What changed for you
+
+- **`code-callers` / `code-callees` honor the source pin.** When you don't pass
+  `--source` or `--all-sources`, they now resolve through the same chain as
+  `gbrain sources current`: flag, then `GBRAIN_SOURCE`, then the
+  `.gbrain-source` dotfile, then the source whose `local_path` contains your cwd,
+  then the brain default, then the single non-default source. They only fall
+  back to the old "multi-source, pick one" error when nothing in that chain
+  matches. `code-def` / `code-refs` are unchanged.
+- **`gbrain dream` runs on postgres brains with no checkout.** The maintenance
+  cycle's database-only phases (including `resolve_symbol_edges`, the call-graph
+  builder) run against the DB. The six filesystem phases (lint, backlinks, sync,
+  synthesize, extract, patterns) are skipped with a clear reason instead of a
+  blanket failure. `gbrain doctor`'s "Run `gbrain dream --source <id>`"
+  recommendation now actually works on this engine.
+
+### How to use it
+
+```bash
+# In a repo with a .gbrain-source pin, on a multi-source Supabase brain:
+gbrain code-callers myFunction        # resolves to the pinned source, no --source
+gbrain code-callees myFunction --json # JSON now includes source_id + scope
+
+# Build the call graph on a checkout-less postgres brain:
+gbrain dream --phase resolve_symbol_edges
+gbrain dream --source my-code-source  # scopes per-source phases correctly
+```
+
+### Things to know
+
+- `code-callers` / `code-callees` JSON output gains `source_id` and `scope`
+  (`"single"` or `"all"`) so a tool can confirm which source it actually queried.
+  When the pin auto-routed to the only non-default source, a one-line stderr
+  nudge names it (same as `gbrain sync`). A zero-result implicit-scope query
+  appends a "try `--all-sources`" hint.
+- `gbrain dream`'s JSON report exposes skipped filesystem phases as
+  `phases[].status: "skipped"` with `phases[].details.reason: "no_brain_dir"` —
+  a stable shape downstream tools can key off. Pass `--dir <path>` to run the
+  filesystem phases.
+- `gbrain dream --source <id>` now scopes the per-source database phases
+  (`extract_facts`, `extract_atoms`, calibration) to that source even with no
+  checkout. Previously they silently ran against the `default` source while the
+  cycle marked your source "fresh" — a freshness stamp that lied.
+- An edges-only cycle now reports `ok` (not `clean`) when it resolves call-graph
+  edges, so you can tell real work from a no-op.
+- The queued `autopilot-cycle` job (what `gbrain remote ping` triggers) follows
+  the same checkout-less behavior instead of running against the worker's
+  current directory.
+
+## To take advantage of v0.41.38.0
+
+Nothing to run. `gbrain upgrade` ships the fix. After upgrading, on a postgres
+brain with a `.gbrain-source` pin:
+
+```bash
+gbrain code-callers <symbol>   # should resolve without --source
+gbrain dream --phase resolve_symbol_edges   # should run, not error
+```
+
+If `gbrain dream` still prints "No brain directory found and no database
+connection," your `~/.gbrain/config.json` has neither a postgres `database_url`
+nor a `sync.repo_path`; run `gbrain doctor` and file an issue with its output.
+
+### Itemized changes
+
+**code-callers / code-callees source resolution**
+- New `resolveScopedSourceOrThrow(engine, cwd)` in `src/core/sources-ops.ts`:
+  runs `resolveSourceWithTier` and only applies the multi-source ambiguity guard
+  (`resolveDefaultSource`) on the `seed_default` tier. Returns `{source_id, tier}`.
+- `src/commands/code-callers.ts` + `src/commands/code-callees.ts` route through
+  it, add `source_id` + `scope` to the JSON envelope, emit the `sole_non_default`
+  stderr nudge, append the zero-result `--all-sources` hint, and surface a bad
+  `.gbrain-source` / `GBRAIN_SOURCE` value as a clean `invalid_source_pin` exit 2.
+
+**gbrain dream on postgres**
+- `src/commands/dream.ts`: `resolveBrainDir` returns `string | null` (resolution
+  order: `--dir` → resolved source's `local_path` → `sync.repo_path` → null);
+  `runDream` owns the both-null (no checkout AND no engine) exit 1.
+- `src/core/cycle.ts`: `CycleOpts.brainDir` is now `string | null`;
+  `resolveSourceForDir` is null-tolerant; the six filesystem phases skip with
+  `reason: "no_brain_dir"` when there's no checkout; `cycleSourceId =
+  opts.sourceId ?? resolveSourceForDir(...)` scopes the per-source DB phases;
+  `deriveStatus` counts resolved/ambiguous edges as work.
+- `src/commands/jobs.ts`: the `autopilot-cycle` handler passes `null` (not cwd
+  `'.'`) when no repo is configured.
+
+**Tests**
+- `test/code-scoped-source-resolve.test.ts` (8), `test/code-callers-pin.serial.test.ts`
+  (9), `test/dream-postgres.test.ts` (8), `test/jobs-autopilot-cycle-braindir.test.ts`
+  (1) — covering the pin chain, env/brain_default/sole_non_default tiers, the
+  source-scope regression, the null-brainDir path, edges→ok, and the both-null exit.
+## [0.41.37.0] - 2026-05-30
+
+**A four-bug critical fix wave: your tags stop disappearing on reindex, a
+migration that hung forever on big brains now finishes in seconds, Windows
+users stuck mid-upgrade get unstuck, and a class of sync-time regex blowups is
+capped.**
+
+If you run `gbrain reindex --markdown` (or a cron that does), it was quietly
+wiping tags. Specifically: any tag that wasn't written in the page's `.md`
+frontmatter — the ones your dream cycle, signal-detector, or auto-tagging added
+straight to the database — got deleted on every reindex. One reporter watched
+their distinct-tag count fall from ~848 to ~100. That's fixed: reindex and
+re-import are now **add-only**. They add whatever tags are in the frontmatter
+and never delete, so database-side tags survive. (The trade-off: removing a tag
+from frontmatter no longer removes it from the DB on the next sync — additive
+metadata, low harm, and a provenance-column fix is filed for later.)
+
+If you're on a large brain and `gbrain apply-migrations` ever hung, the v0.13.1
+"grandfather" step was the culprit. On an 82K-page brain it pinned a CPU core
+for over an hour after ~4,200 pages and never finished. It walked every page one
+at a time. It now does the same work as a handful of bulk SQL statements and
+finishes in a second or two. It's also now safe on multi-source brains (it keys
+on the page's unique id, not its slug) and leaves soft-deleted pages alone.
+
+If you're on Windows with a Supabase brain and got stuck at an old
+`schema_version` while the binary kept upgrading, this one's for you. The
+migration step shelled out to a child `gbrain init --migrate-only` process, and
+on Windows+bun+Supabase that child died with `getaddrinfo ENOTFOUND` before it
+could connect — even though the parent connected fine. The schema bring-up now
+runs in-process (no child process), so the upgrade actually advances. The
+remaining data-backfill steps that still shell out now surface the real error
+instead of a bare "Command failed," so the next Windows issue is diagnosable.
+
+And if `gbrain sync` ever pinned CPU on a brain with a custom schema pack, we
+capped the blast radius: a pack's link-inference regex now has a hard
+input-length limit (catastrophic backtracking needs a long input; we don't give
+it one), and `gbrain schema lint` warns when a pack regex has the classic
+exponential shape like `(a+)+`. New escape hatch: `gbrain sync --no-schema-pack`
+completes a sync without running any pack regex. New diagnostic:
+`GBRAIN_SYNC_TRACE=1 gbrain sync` prints the file being imported so a hang names
+the culprit. (Honest scope: this is hardening plus diagnostics. The specific
+deterministic wedge one reporter hit at ~3100 files on a 56K-file brain is not
+root-caused yet — their repro sample is the next step.)
+
+### What you might need to do
+
+- **Lost tags from a past reindex?** They aren't recoverable from frontmatter
+  (they were never there). Re-run whatever enrichment originally created them.
+  Going forward, reindex won't wipe them.
+- **Stuck mid-migration (Windows or a hung large-brain upgrade)?**
+  `gbrain upgrade` then `gbrain apply-migrations --yes` should now complete.
+  Verify with `gbrain doctor`.
+- **Sync wedging on a schema-pack brain?** `gbrain sync --no-schema-pack` to get
+  unblocked, then `gbrain schema lint` to find the bad regex.
+
+### Itemized changes
+
+- **#1621 — reindex/sync no longer wipe DB-side tags.** Tag reconciliation in
+  `src/core/import-file.ts` is now add-only (adds current frontmatter tags via
+  the idempotent `ON CONFLICT DO NOTHING` `addTag`, never deletes). The
+  `gbrain reindex --markdown` DB-only fallback (pages with no on-disk source)
+  reconstructs full markdown via `serializeMarkdown(page)` before re-importing,
+  so re-chunking preserves frontmatter, title, and timeline instead of
+  overwriting them from body-only content.
+- **#1581 — v0.13.1 grandfather migration no longer hangs.** `phaseCGrandfather`
+  rewritten from a per-page `getPage`+`putPage` loop to a chunked bulk SQL pass
+  keyed on `pages.id` (slug is not globally unique — a slug-keyed UPDATE would
+  cross-contaminate same-slug pages in other sources), filtering
+  `deleted_at IS NULL`, with a batched rollback log carrying `{id, slug,
+  source_id, pre_frontmatter}`.
+- **#1605 — Windows migration upgrade unblocked.** New
+  `src/commands/migrations/in-process.ts` exports `runMigrateOnlyCore` (extracted
+  from `init.ts`'s `initMigrateOnly`, single source of truth so the
+  configure-gateway-before-initSchema fix can't drift). The 9
+  `gbrain init --migrate-only` schema-phase spawns across the migration
+  orchestrators now run in-process for every engine, with a wall-clock guard.
+  Remaining `extract`/`repair` spawns route through `runGbrainSubprocess`, which
+  captures child stderr (large `maxBuffer`) and folds it into the failure detail.
+- **#1569 — schema-pack ReDoS hardening + sync diagnostics.** Input-length cap
+  (`MAX_REGEX_INPUT_CHARS`, default 64K, env-overridable) in
+  `redos-guard.ts:runRegexBounded`; the previously-unbounded
+  `link-inference.ts` path now routes through it. New `link_regex_catastrophic_backtrack`
+  lint rule (warning) flags nested-quantifier patterns. New `gbrain sync
+  --no-schema-pack` flag (threaded through the `--all` per-source path). New
+  `GBRAIN_SYNC_TRACE=1` per-file begin heartbeat. New
+  `docs/architecture/serve-sync-concurrency.md`.
+
+### For contributors
+
+- 8 new/updated test files (28 new cases): `test/reindex-preserve-tags.test.ts`,
+  `test/migrations-v0_13_1-grandfather.test.ts` (multi-source + soft-delete +
+  large-N), `test/migration-in-process.serial.test.ts`,
+  `test/redos-hardening.test.ts`, plus updates to `import-file`,
+  `migrations-v0_13_0`, `migrations-v0_16_0`, `schema-pack-lint-rules`, and
+  `fix-wave-structural` tests for the changed contracts.
+- `phaseASchema` in the 9 migration orchestrators is now `async` and awaited at
+  every call site (a structural source-grep guard in
+  `migration-in-process.serial.test.ts` bans reintroducing the
+  `execSync('gbrain init --migrate-only')` spawn).
+
+## To take advantage of v0.41.37.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain
+doctor` warns about a partial migration:
+## [0.41.36.0] - 2026-05-30
+
+**Your MCP clients can now see and use your agent's skills. Point Codex desktop,
+Claude Code, Claude Cowork, or Perplexity at your `gbrain serve` and they can
+list every skill your brain knows, read one, and follow it — using the same
+search/query/store tools the server already gives them. No copy-paste, no
+re-explaining your workflows to each new tool.**
+
+Until now, a skill (the fat-markdown files that teach an agent how to do things:
+brain ops, ingestion, enrichment, your custom workflows) only worked inside the
+one agent that had them on disk. A thin MCP client connecting to your brain saw
+the data tools but had no idea your skills existed. This release publishes them.
+
+Two new tools show up on your MCP server:
+
+- **`list_skills`** — a flat catalog of every skill: name, what it does, the
+  phrasings that should trigger it, and which tools it needs. Each entry also
+  says which of those tools *you* can actually call (given this server and your
+  access), so the catalog never points you at something that'll fail. It opens
+  with a short "here's what these are and how to use them" note, because a skill
+  is instructions to follow, not a program to run.
+- **`get_skill <name>`** — the full prose of one skill, plus a sanitized header
+  and a reminder of the tools you can call. You read it, then do what it says by
+  calling the brain tools this server exposes.
+
+### How to turn it on
+
+New installs are on by default. Existing installs stay off until you say yes —
+upgrading never silently hands your already-issued tokens a new capability. On
+`gbrain upgrade` you'll get a one-time prompt that shows the exact skills folder
+being published and states plainly that the contents of those SKILL.md files
+become readable by the remote MCP clients you've authorized. Say yes (strongly
+recommended — it makes your MCP server dramatically more useful) and it's on.
+Flip it anytime:
+
+    gbrain config set mcp.publish_skills true     # or false to stop publishing
+
+If autodetect picks the wrong folder under a daemon or container, pin it:
+
+    gbrain config set mcp.skills_dir /path/to/your/skills
+
+### What's safe to know about
+
+This reads SKILL.md files off the serving machine and returns their text over
+the network, so it's gated carefully: off-by-default for existing installs,
+explicit owner opt-in, prose only (no source code), a size cap so a stray giant
+file can't choke the server, and strict path confinement so a request can only
+ever reach a real skill inside your skills folder. Private frontmatter fields
+(your brain's filing taxonomy, any absolute paths a skill declares) are stripped
+before anything goes out. A hosted brain with no agent repo on disk returns a
+clear "no skills here" instead of accidentally serving gbrain's own bundled
+dev skills. Locally, `gbrain skills` and `gbrain skill <name>` always work
+regardless of the publish setting — the owner on the box owns the box.
+
+Downloadable, installable skillpacks (tarball any skill or the whole set and
+pull it into your own setup) are the next step and ship separately.
+
+## To take advantage of v0.41.36.0
+
+`gbrain upgrade` handles this. On upgrade you'll be asked once whether to publish
+your skills to MCP clients — say yes to let Codex/Perplexity/Cowork discover them.
+
+1. **Confirm or flip the setting:**
+   ```bash
+   gbrain config set mcp.publish_skills true
+   ```
+2. **Check what's published** (works locally regardless of the gate):
+   ```bash
+   gbrain skills            # the catalog your MCP clients will see
+   gbrain skill brain-ops   # one skill's full instructions
+   ```
+3. **If the catalog is empty or wrong under a daemon/container,** pin the folder:
+   ```bash
+   gbrain config set mcp.skills_dir /path/to/your/skills
+   ```
+4. **If anything looks off,** file an issue at
+   https://github.com/garrytan/gbrain/issues with the output of `gbrain skills`.
+## [0.41.35.0] - 2026-05-30
+
+**GBrain now has five built-in spots where an outside content checker can watch
+what flows in, and the open-source build ships with all five turned off.**
+
+If you run a brain, content arrives from places you don't fully control: a
+markdown note you imported, a code file you synced, a question typed at the LLM,
+a tool the agent decided to call. Any one of those can carry a prompt-injection
+payload or something you'd rather not store. Until now there was no clean place
+to hand that content to a checker (a content firewall, a PII scrubber, an
+injection detector) before GBrain acted on it.
+
+This release adds those clean places. Five hook points: the two file-import
+boundaries (markdown and code, right before the content gets chunked, embedded,
+and saved) and three LLM gateway boundaries (the user's chat message, the
+search-expansion query, and a tool call before it runs). A checker registered at
+any of these gets to see the content at the exact moment before GBrain commits
+to it.
+
+The whole thing is deliberately weak by design, and that's the point. The
+checker can only **watch**, never block. The interface returns nothing, so no
+GBrain code can branch on a checker's verdict. A checker that crashes, hangs, or
+times out can't break your import, your query, or your tool call — every hook
+fails open. And the open-source distribution registers zero checkers, so the
+seams are completely inert until you wire one in. No vendor code, no API URL, no
+phone-home anywhere in the public tree.
+
+This also closes a real gap. A prompt-injection payload that rides in through a
+file import used to have no checkpoint at all, because the only places anyone
+could hook were the LLM calls — and file content reaches retrieval without ever
+touching one. `file_storage.markdown` and `file_storage.code` are real hooks at
+that boundary now.
+
+How to use it (you write a provider in your own package, ~80 lines):
+
+```ts
+import { registerGuardrailProvider } from 'gbrain/core/guardrails';
+
+registerGuardrailProvider({
+  id: 'my-firewall',
+  async classify(input) {
+    // input.hook    — which boundary ('file_storage.markdown', 'ai_gateway.chat', ...)
+    // input.content — the raw text to inspect
+    // input.metadata — context (slug, source_kind, tool_name, model, ...)
+    // Return value is ignored by GBrain. Log a redacted verdict from here.
+    await fetch(MY_API, { method: 'POST', body: JSON.stringify({ text: input.content }) });
+  },
+});
+```
+
+Register it once at process init. Your provider owns its own timeout, secret
+handling, redacted logging, and (if you don't want to block on it) async
+fan-out. The full contract, the seam table, and the provider-authoring guide
+are in `docs/guardrails.md`.
+
+### Itemized changes
+
+#### Added
+
+- New module `src/core/guardrails.ts` — the vendor-neutral seam.
+  `runGuardrails({ hook, content, metadata })` returns `void` (observe-only by
+  construction). `registerGuardrailProvider` / `unregisterGuardrailProvider`
+  manage providers (idempotent by `id`). `hasGuardrails()` is a cheap hot-path
+  guard so hooks skip all work when no provider is registered. Providers are
+  snapshotted before iteration so a mid-flight register/unregister can't mutate
+  the running set, and every provider runs inside its own try/catch (one bad
+  provider can't stop a good one).
+- Two `file_storage.*` seams in `src/core/import-file.ts`:
+  `file_storage.markdown` fires in `importFromContent` after `parseMarkdown` +
+  the size guard and before content-sanity, hashing, chunking, embedding, and DB
+  write; `file_storage.code` fires in `importCodeFile` after the code size guard
+  and before hashing, code-chunking, embedding, and DB write. Both cover every
+  natural ingest caller that routes through these functions (`gbrain import`,
+  sync, capture, `put_page`, subagent `brain_put_page`, trusted-workspace
+  writes, `ingest_capture`, inbox dispatch, reindex, code reindex, the public
+  import APIs).
+- Three `ai_gateway.*` seams in `src/core/ai/gateway.ts`: `ai_gateway.chat`
+  classifies only the latest user message before provider inference;
+  `ai_gateway.expand` classifies the query before the expansion model call;
+  `ai_gateway.tool_input` classifies `{toolName, input}` before pending-persist
+  and before tool execution. Gateway hooks pass only the user/query/tool-input
+  payload — never system prompts, full chat history, tool output, LLM output,
+  embeddings, or multimodal/OCR/rerank payloads. A cycle-safe stringifier keeps
+  a weird tool payload from throwing inside the seam.
+- `docs/guardrails.md` — the contract (five hard invariants: observe-only, fail
+  open, inline await, no verdict persistence, content boundaries), the seam
+  table, the provider-authoring guide, and a shadow-mode provider sketch.
+
+### For contributors
+
+- `test/guardrails.test.ts` (14 tests) pins the contract: `runGuardrails`
+  resolves `void`, a throwing or rejecting provider is swallowed (fail-open
+  isolation), a slow async provider is awaited before resolving (inline),
+  zero providers is a no-op, empty/blank content short-circuits, registration
+  is idempotent by `id`, and content + metadata pass through unmutated. The
+  existing import-file tests still pass — the ingest hot path is undisturbed.
+
 ## [0.41.34.0] - 2026-05-30
 
 **Search now finds a page by its name, even when you only remember what you
@@ -115,6 +498,19 @@ columns) automatically. If `gbrain doctor` warns about a partial migration:
    ```bash
    gbrain apply-migrations --yes
    ```
+2. **No agent action is required** — these are bug fixes; the mechanical schema
+   side is handled by the orchestrator.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor
+   gbrain stats
+   ```
+   On a brain that previously hung on v0.13.1, the cascade should now complete in
+   seconds. On Windows + Supabase, `schema_version` should reach head.
+4. **If any step fails or numbers look wrong,** file an issue at
+   https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`
+   and the contents of `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
 2. **Backfill aliases for pages you already have** (one time):
    ```bash
    gbrain reindex --aliases

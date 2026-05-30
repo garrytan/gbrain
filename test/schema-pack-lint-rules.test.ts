@@ -332,12 +332,13 @@ describe('runAllLintRules — composition', () => {
 });
 
 describe('rule registry shape', () => {
-  it('ALL_LINT_RULES contains 11 rules', () => {
-    expect(ALL_LINT_RULES.length).toBe(11);
+  it('ALL_LINT_RULES contains 12 rules', () => {
+    // v0.41.37.0 #1569 added link_regex_catastrophic_backtrack (file-plane).
+    expect(ALL_LINT_RULES.length).toBe(12);
   });
 
   it('FILE_PLANE_LINT_RULES excludes the 2 DB-aware rules', () => {
-    expect(FILE_PLANE_LINT_RULES.length).toBe(9);
+    expect(FILE_PLANE_LINT_RULES.length).toBe(10);
     expect(FILE_PLANE_LINT_RULES.every((r) => !r.planeAware)).toBe(true);
   });
 

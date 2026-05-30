@@ -31,6 +31,7 @@ import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
 import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
+import { runGuardrails } from './guardrails.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -274,6 +275,26 @@ export async function importFromContent(
   }
 
   const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
+
+  // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
+  // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
+  // chunking, embedding, and DB write — so a registered guardrail sees the
+  // full markdown payload at the exact pre-persist moment. The returned
+  // verdict is intentionally ignored: this seam cannot block or mutate the
+  // ingest. No-op when zero guardrails are registered (OSS default).
+  await runGuardrails({
+    hook: 'file_storage.markdown',
+    content,
+    metadata: {
+      slug,
+      source_id: sourceId ?? 'default',
+      source_path: opts.sourcePath ?? null,
+      source_kind: opts.source_kind ?? null,
+      source_uri: opts.source_uri ?? null,
+      ingested_via: opts.ingested_via ?? null,
+      content_type: 'markdown',
+    },
+  });
 
   // v0.41 content-sanity gate. Runs AFTER parseMarkdown so the assessor
   // sees the parsed body (compiled_truth + timeline), title, and
@@ -648,12 +669,25 @@ export async function importFromContent(
       );
     }
 
-    // Tag reconciliation: remove stale, add current
-    const existingTags = await tx.getTags(slug, txOpts);
-    const newTags = new Set(parsed.tags);
-    for (const old of existingTags) {
-      if (!newTags.has(old)) await tx.removeTag(slug, old, txOpts);
-    }
+    // Tag reconciliation: ADD-ONLY (v0.41.37.0 #1621).
+    //
+    // We deliberately do NOT delete existing tags here. The `tags` table has
+    // no provenance column, and frontmatter tags are stripped from the stored
+    // `pages.frontmatter` (markdown.ts:118) — so at re-import time we cannot
+    // distinguish a frontmatter-origin tag from a DB-side enrichment tag
+    // (auto-tag / dream synthesize / signal-detector writes to the same
+    // table). The pre-v0.41.37.0 "delete every existing tag not in the current
+    // frontmatter" logic wiped ALL enrichment tags on every re-import — most
+    // visibly under `gbrain reindex --markdown` (#1621), which re-imports every
+    // page with forceRechunk. reindex is a re-chunk/re-embed op; it must not
+    // destroy tags.
+    //
+    // Trade-off (accepted): removing a tag from a page's frontmatter no longer
+    // removes it from the DB on the next sync. That staleness is minor (tags
+    // are additive metadata) and far preferable to silently losing enrichment
+    // tags. Frontmatter-tag REMOVAL would require a `tag_source` provenance
+    // column (deferred — see TODOS.md #1621-followup). addTag is idempotent
+    // (ON CONFLICT DO NOTHING), so re-adding existing tags is a no-op.
     for (const tag of parsed.tags) {
       await tx.addTag(slug, tag, txOpts);
     }
@@ -897,6 +931,22 @@ export async function importCodeFile(
   if (byteLength > MAX_FILE_SIZE) {
     return { slug, status: 'skipped', chunks: 0, error: `Code file too large (${byteLength} bytes)` };
   }
+
+  // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER the
+  // code size guard, BEFORE hash compute, code-chunking, embedding, and DB
+  // write. Verdict ignored by design; no-op when no guardrail is registered.
+  await runGuardrails({
+    hook: 'file_storage.code',
+    content,
+    metadata: {
+      slug,
+      source_id: sourceId ?? 'default',
+      source_path: relativePath,
+      source_kind: 'code',
+      content_type: 'code',
+      language: lang,
+    },
+  });
 
   // Hash for idempotency. CHUNKER_VERSION is folded in so chunker shape
   // changes across releases force clean re-chunks without sync --force.

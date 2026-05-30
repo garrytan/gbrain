@@ -227,6 +227,15 @@ export interface SyncOpts {
   /** Bug 9 — re-attempt unacknowledged failures explicitly (CLI --retry-failed). */
   retryFailed?: boolean;
   /**
+   * v0.41.37.0 #1569 — skip loading the active schema pack during sync. When set,
+   * `loadActivePack` is not called, so no user-supplied pack page-type regex
+   * (markdown.ts subtype path_pattern) runs during import. Pages fall back to
+   * legacy prefix typing. Escape hatch for completing a sync when a suspect
+   * pack regex is the suspected cause of a wedge; re-run extraction later.
+   * Threaded through performSync AND syncOneSource so `sync --all` honors it.
+   */
+  noSchemaPack?: boolean;
+  /**
    * v0.18.0 Step 5 — sync a specific named source. When set, sync reads
    * local_path + last_commit from the sources table (not the global
    * config.sync.* keys) and writes last_commit + last_sync_at back to
@@ -961,6 +970,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // failure falls through to legacy inferType (parity preserved).
   let syncActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
   try {
+    // v0.41.37.0 #1569: --no-schema-pack escape hatch. Skip pack load entirely so
+    // no user-supplied pack regex (markdown.ts subtype path_pattern) runs during
+    // sync; pages fall back to legacy prefix typing.
+    if (opts.noSchemaPack) {
+      serr('[sync] --no-schema-pack: skipping schema pack; pages use legacy prefix typing');
+      throw new Error('schema-pack-skipped');
+    }
     const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
     const { loadConfig } = await import('../core/config.ts');
     const resolved = await loadActivePack({
@@ -1589,6 +1605,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         progress.tick(1, `skip:${path}`);
         return;
       }
+      // v0.41.37.0 #1569: per-file BEGIN heartbeat, emitted BEFORE importFile so a
+      // hang names the stalling file (the progress.tick below only fires AFTER
+      // importFile returns — useless when one file wedges). Off by default
+      // (GBRAIN_SYNC_TRACE=1) to avoid a line per file on huge brains. serr is
+      // source-prefix-aware, so under --workers>1 / --all the stuck file is the
+      // begin-line with no matching completion in the in-flight set.
+      if (process.env.GBRAIN_SYNC_TRACE) serr(`[sync] begin import: ${path}`);
       try {
         // v0.18.0+ multi-source: thread `opts.sourceId` so per-page tx writes
         // (putPage / getTags / addTag / removeTag / deleteChunks / upsertChunks
@@ -2078,6 +2101,12 @@ Options:
   --watch              Re-sync continuously on an interval.
   --interval N         Watch-mode interval in seconds (default 60).
   --no-pull            Skip 'git pull' before the sync (useful for tests).
+  --no-schema-pack     Skip loading the active schema pack (no per-file pack
+                       regex runs; pages use legacy prefix typing). Escape
+                       hatch if a suspect pack regex is wedging sync.
+                       PGLite is single-writer: stop 'gbrain serve' before a
+                       large sync (see docs/architecture/serve-sync-concurrency.md).
+                       GBRAIN_SYNC_TRACE=1 names the file being imported (hang triage).
   --all                Sync every registered source instead of just the
                        default (multi-source brains).
   --parallel N         (with --all) Run up to N sources concurrently.
@@ -2113,6 +2142,7 @@ See also:
   const noEmbed = args.includes('--no-embed');
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
+  const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
   const syncAll = args.includes('--all');
   const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
@@ -2540,7 +2570,7 @@ See also:
         repoPath: src.local_path!,
         dryRun, full, noPull,
         noEmbed: effectiveNoEmbed,
-        skipFailed, retryFailed,
+        skipFailed, retryFailed, noSchemaPack,
         sourceId: src.id,
         strategy: cfg.strategy,
         concurrency,
@@ -2741,7 +2771,7 @@ See also:
     : undefined;
   singleSourceTimer?.unref?.();
   const opts: SyncOpts = {
-    repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, sourceId,
+    repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, noSchemaPack, sourceId,
     strategy: strategyArg, concurrency,
     signal: singleSourceController?.signal,
   };
@@ -2901,6 +2931,8 @@ export async function syncOneSource(
     skipFailed: boolean;
     retryFailed: boolean;
     concurrency: number | undefined;
+    /** v0.41.37.0 #1569: propagate --no-schema-pack into every per-source sync. */
+    noSchemaPack?: boolean;
   },
 ): Promise<{ result: SyncResult; log: string }> {
   const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
@@ -2913,6 +2945,7 @@ export async function syncOneSource(
     noEmbed: shared.noEmbed,
     skipFailed: shared.skipFailed,
     retryFailed: shared.retryFailed,
+    noSchemaPack: shared.noSchemaPack,
     sourceId: src.id,
     strategy: cfg.strategy,
     concurrency: shared.concurrency,

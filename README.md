@@ -340,6 +340,53 @@ anthropic/claude-sonnet-4-6 --max-cost 5` failed with
 matched the colon form. Both shapes work now. No config change, no
 schema migration — `gbrain upgrade` is the whole fix.
 
+**`gbrain reindex --markdown` wiped your auto/dream/signal-detector
+tags?** v0.41.37.0 makes tag reconciliation add-only. Re-import and
+`reindex --markdown` now ADD current frontmatter tags and never delete,
+so enrichment tags written to the DB (auto-tag, dream synthesize,
+signal-detector) survive a re-chunk. The reindex DB-only fallback also
+reconstructs the full markdown (frontmatter + body + timeline) before
+re-chunking, so a page with no on-disk source keeps its frontmatter,
+title, and timeline instead of getting overwritten with empty
+frontmatter. Trade-off: removing a tag from a page's frontmatter no
+longer removes it from the DB on the next sync (frontmatter-tag removal
+needs a provenance column, deferred). (Closes #1621.)
+
+**`gbrain sync` wedges on a large brain (no progress, high CPU)?**
+v0.41.37.0 ships three things. First, name the stalling file:
+
+```bash
+GBRAIN_SYNC_TRACE=1 gbrain sync --no-pull --no-embed --yes
+```
+
+The last `[sync] begin import: <path>` line with no following completion
+is the file being processed when the hang hit. Second, if you suspect a
+schema-pack `inference.regex` with catastrophic backtracking, complete
+the sync with the pack disabled and re-run extraction later:
+
+```bash
+gbrain sync --no-schema-pack --no-pull --no-embed --yes
+```
+
+`gbrain schema lint` now warns on the classic nested-quantifier ReDoS
+shapes (`(a+)+`, `(a*)*`, …) in pack regexes, and the runtime caps
+inference-regex input length (override via `GBRAIN_MAX_REGEX_INPUT_CHARS`).
+Third, on a PGLite brain, stop `gbrain serve` before a large sync —
+PGLite is single-writer and a live MCP server contends for the write
+lock. See [`docs/architecture/serve-sync-concurrency.md`](docs/architecture/serve-sync-concurrency.md)
+for the full triage. (Closes #1569.)
+
+**`gbrain init --migrate-only` / a schema migration fails on Windows
+with `getaddrinfo ENOTFOUND`?** v0.41.37.0 runs the 9 schema-bring-up
+phases in-process instead of spawning a child `gbrain init
+--migrate-only` per phase. The spawned child died on
+Windows + bun + Supabase pooler with a DNS-resolution failure even
+though the parent connected fine; running in-process removes the spawn
+entirely. The v0.13.1 grandfather migration that hung 70+ minutes on an
+82K-page PGLite brain is also fixed — it now runs as a chunked bulk SQL
+pass (keyed on the page PK, soft-delete-filtered, source-safe) that
+completes in ~1-2 seconds. (Closes #1605, #1581.)
+
 ## Docs
 
 - [`docs/INSTALL.md`](docs/INSTALL.md) — every install path, end to end

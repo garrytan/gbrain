@@ -198,18 +198,26 @@ function parseArgs(args: string[]): DreamArgs {
 /**
  * Resolve the brain directory without the `findRepoRoot` footgun.
  *
- * Prior dream.ts walked up 10 levels of cwd looking for `.git` and would
- * happily run lint + sync against an unrelated git repo the user happened
- * to be cd'd into. This resolver only trusts two sources:
- *   1. An explicit --dir argument.
- *   2. The `sync.repo_path` config key set by `gbrain init` (engine-backed).
+ * Resolution order (v0.41.30 — postgres support):
+ *   1. An explicit --dir argument (exits 1 if it doesn't exist — a real mistake).
+ *   2. T1: when --source resolved to a source that has an on-disk `local_path`,
+ *      use it (matches `gbrain sync`, lets that source's filesystem phases run).
+ *   3. The legacy `sync.repo_path` config key (pre-v0.18 default-source brains).
+ *   4. `null` — no local checkout. The cycle then SKIPS filesystem phases
+ *      (lint/backlinks/sync/synthesize/extract/patterns) with reason
+ *      `no_brain_dir` and runs the DB-only phases (resolve_symbol_edges, embed,
+ *      orphans, ...). This is what makes `gbrain dream` work on a postgres /
+ *      Supabase brain with no checkout. `runDream` owns the only hard error:
+ *      no checkout AND no engine = truly nothing to run.
  *
- * If neither is available, we error out instead of guessing.
+ * Still never walks cwd for a `.git` — only the explicit / source / config
+ * signals are trusted.
  */
 async function resolveBrainDir(
   engine: BrainEngine | null,
   explicit: string | null,
-): Promise<string> {
+  resolvedSourceId?: string,
+): Promise<string | null> {
   if (explicit) {
     if (!existsSync(explicit)) {
       console.error(`--dir path does not exist: ${explicit}`);
@@ -220,6 +228,22 @@ async function resolveBrainDir(
     return resolve(explicit);
   }
 
+  // T1: the user scoped to a specific source via --source/--source-id; if that
+  // source has a checkout on disk, use it so its filesystem phases can run.
+  if (engine && resolvedSourceId) {
+    const src = await fetchSource(engine, resolvedSourceId);
+    if (src?.local_path && existsSync(src.local_path)) {
+      return resolve(src.local_path);
+    }
+    // Explicit --source whose checkout isn't on disk → DB-only (skip FS phases).
+    // Do NOT fall through to the global sync.repo_path below: that path belongs
+    // to the default/unscoped brain, and running FS phases (sync/lint/extract)
+    // against it while the DB phases AND the last_full_cycle_at stamp target
+    // <resolvedSourceId> would mix scopes — syncing one source's checkout while
+    // marking a different source fresh. (codex P1 review finding.)
+    return null;
+  }
+
   if (engine) {
     const configured = await engine.getConfig('sync.repo_path');
     if (configured && existsSync(configured)) {
@@ -227,10 +251,9 @@ async function resolveBrainDir(
     }
   }
 
-  console.error(
-    'No brain directory found. Pass --dir <path> or configure one via `gbrain init`.',
-  );
-  process.exit(1);
+  // No checkout found. Return null (NOT exit) — DB-only phases can still run
+  // against the engine. The both-null hard error lives in runDream.
+  return null;
 }
 
 function printHelp() {
@@ -251,7 +274,11 @@ Options:
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
   --pull              git pull the brain repo before syncing (default: no pull)
-  --dir <path>        Brain directory (default: configured brain)
+  --dir <path>        Brain directory (default: configured brain). On a
+                      postgres/remote brain with no local checkout, the
+                      filesystem phases (lint, backlinks, sync, synthesize,
+                      extract, patterns) are skipped (reason: no_brain_dir)
+                      and the DB-only phases still run.
 
   --source <id>       Scope the cycle to one source so doctor's
                       cycle_freshness check sees a fresh stamp on
@@ -420,7 +447,18 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     }
   }
 
-  const brainDir = await resolveBrainDir(engine, opts.dir);
+  const brainDir = await resolveBrainDir(engine, opts.dir, resolvedSourceId);
+  // Both-null is the only hard error: no local checkout AND no DB connection
+  // means neither filesystem phases nor DB phases can run. With an engine but
+  // no checkout, the cycle skips filesystem phases and runs DB-only phases
+  // (resolve_symbol_edges, embed, orphans, ...) — the postgres support path.
+  if (brainDir === null && engine === null) {
+    console.error(
+      'No brain directory found and no database connection. ' +
+      'Pass --dir <path> or configure a brain via `gbrain init`.',
+    );
+    process.exit(1);
+  }
   const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
 
   const report = await runCycle(engine, {
