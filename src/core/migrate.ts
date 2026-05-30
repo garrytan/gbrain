@@ -4948,6 +4948,22 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 109,
+    name: 'sources_newest_content_at',
+    // v0.41.32.0 (supersedes #1623): durable newest-COMMIT timestamp per source,
+    // written at sync time (HEAD committer time). The REMOTE staleness path
+    // (federation_health, get_status_snapshot MCP op) reads this column instead
+    // of shelling out to git on a DB-supplied local_path — preserving the
+    // v0.41.27.0 trust boundary while still killing the quiet-repo false-SEVERE
+    // alarm. ADD COLUMN with a NULL default is metadata-only on both engines
+    // (instant, no table rewrite). Mirror lives in pglite-schema.ts +
+    // schema.sql (fresh-install path) and the applyForwardReferenceBootstrap
+    // probe set in both engines. Renumbered 108→109 on the master merge that
+    // landed v0.41.31's pages_embedding_signature at v108.
+    idempotent: true,
+    sql: `ALTER TABLE sources ADD COLUMN IF NOT EXISTS newest_content_at TIMESTAMPTZ`,
+  },
+  {
+    version: 110,
     name: 'links_link_source_widen_for_wikilink_basename',
     // Issue #972: opt-in global-basename wikilink resolution (bare [[name]]
     // resolved by slug tail) emits edges tagged
@@ -4960,9 +4976,9 @@ export const MIGRATIONS: Migration[] = [
     // clobber that widening. Keep both branches in sync with src/schema.sql
     // and src/core/pglite-schema.ts.
     //
-    // Renumbered from v93 → v109 during the master merge (master claimed
-    // v93-v108 in the interim). Idempotent via DROP ... IF EXISTS, so it
-    // no-ops on installs that never created the constraint.
+    // Renumbered v93 → v109 → v110 across successive master merges (upstream
+    // claimed v93-v109 in the interim). Idempotent via DROP ... IF EXISTS, so
+    // it no-ops on installs that never created the constraint.
     idempotent: true,
     sql: `
       ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;

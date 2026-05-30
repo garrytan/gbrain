@@ -723,6 +723,14 @@ export interface ResolvedColumn {
 export interface SearchOpts {
   limit?: number;
   offset?: number;
+  /**
+   * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
+   * default caps; an object overrides caps per-call; omitted/`false` = off
+   * (default, no behavior change). Trims the ranked set to an intent-driven
+   * cap (entity → tight, else → recall-preserving). Only fires when offset===0.
+   * See src/core/search/return-policy.ts.
+   */
+  adaptiveReturn?: import('./search/return-policy.ts').AdaptiveReturnInput;
   type?: PageType;
   /**
    * v0.33: multi-type filter. When set, search results are filtered to
@@ -1253,6 +1261,11 @@ export interface HybridSearchMeta {
    * weighting decision auditable.
    */
   intent?: 'entity' | 'temporal' | 'event' | 'general';
+  /**
+   * v0.42 — adaptive return-sizing decision (intent, cap, kept, total).
+   * Omitted when the gate is off. Surfaced for `gbrain search --explain`.
+   */
+  adaptive_return?: import('./search/return-policy.ts').AdaptiveReturnDecision;
   /**
    * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
    * no budget was applied (backward-compatible with pre-search-lite

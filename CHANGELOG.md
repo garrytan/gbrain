@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.41.32.0] - 2026-05-30
+## [0.41.34.0] - 2026-05-30
 
 **Wikilinks like `[[struktura]]` that point at pages in another folder finally connect.** Until now, if you wrote `[[struktura]]` in `concepts/knowledge-graph.md` and the actual page lived at `projects/struktura.md`, GBrain silently dropped the link from its graph. Obsidian users saw a dense web of connections in their vault and a thin, broken graph inside GBrain. The issue reporter had 71 wikilinks across 20 pages — GBrain captured 12.
 
@@ -66,6 +66,247 @@ Closes https://github.com/garrytan/gbrain/issues/972.
 - `KNOWN_CONFIG_KEYS` (in `src/core/config.ts`) adds `'link_resolution'` and `'link_resolution.global_basename'` so `gbrain config set ...` accepts the new key without `--force`.
 - Tests: 38 new cases pinning the contract. `test/link-extraction.test.ts` adds 17 cases covering `WIKILINK_GENERIC_RE` shape (anchor / display / strip / escape paths), the `extractEntityRefs` pass-2c no-double-emit invariant, `resolveBasenameMatches` multi-match + index-built-once + missing-`getAllSlugs` degradation, and the `extractPageLinks` opt routing under both flag states. `test/extract-fs.test.ts` adds 11 cases for the pure-function helpers (`resolveBasenameMatchesFromSlugs`, `resolveSlugAll`) plus 3 round-trip tests of the issue's exact repro inside a PGLite brain. `test/doctor.test.ts` adds 7 cases for the new doctor check (skip / ok / warn paths + the cross-surface wiring source-grep). `test/e2e/global-basename-pglite.test.ts` adds 7 end-to-end cases against an in-memory PGLite brain covering FS-source, DB-source, and put_page auto-link paths under both flag states.
 - PR #1233 from @rayers contributed the kernel of the resolver-side approach (the generic wikilink regex + slug-tail index pattern). This PR keeps that mechanism, makes it opt-in via the new config flag, replaces the first-write-wins lookup with multi-match return, and extends the coverage to the FS-source path that the issue's repro actually hits.
+
+## [0.41.33.0] - 2026-05-29
+
+**`gbrain search` and `query` can now return a tight, intent-sized set of
+results instead of always handing back the full top-K pile. Opt-in, off by
+default, so nothing changes until you turn it on — and your agent can now flip
+it per query via a new `adaptive_return` flag on the `query` tool.**
+
+Most retrieval hands back the top 10-50 hits and lets you (or a downstream
+model) sort the wheat from the chaff. That is the right default for "show me
+everything related," but it is noisy when you asked a question that has one
+answer. The new `search.adaptive_return` knob makes retrieval return roughly
+as many results as the question deserves: a single-answer lookup gets a tight
+set, an enumeration query keeps the comparable cluster. Less noise for you
+reading results, a cleaner candidate set for any agent or `think` loop that
+consumes them, and lower downstream token spend.
+
+It is **off by default** and changes nothing until enabled. Turn it on:
+
+```bash
+gbrain config set search.adaptive_return true
+gbrain config set search.adaptive_return_entity_max 2   # cap for lookup-style queries
+gbrain config set search.adaptive_return_other_max 6    # cap for enumeration queries
+```
+
+The config knob is the human, set-and-forget path. **The agent path is the
+point:** the `query` MCP tool now takes an `adaptive_return` boolean, and its
+description tells the agent exactly when to use it — set it TRUE when the user
+asked something with a small, specific answer (a lookup, a single-fact recall,
+anything routed into a precise downstream step) so the user gets the answer
+instead of a wall of pages; leave it off for breadth ("everything about X",
+"list all", exploration) where recall matters more. The end user never touches a
+config knob — their agent decides per query, the same way it already decides
+`salience` and `recency`. Pass `limit: 1` alongside it for a hard single-answer
+cap. Library callers can also pass `SearchOpts.adaptiveReturn` (`true`, or
+`{ entityMax, otherMax, minKeep }`); defaults are 2 / 6 (recall-preserving).
+
+A few things we were careful about:
+
+- **It never hands back an empty result when there are candidates.** A human
+  searching always gets at least the top hit, no matter how tight the caps.
+- **It only fires on the first page** (`offset` 0). Paginating a
+  confidence-trimmed set is incoherent, so paged calls fall back to the fixed
+  limit.
+- **Recall is the tradeoff.** Returning fewer results can drop a legitimate
+  second or third answer, which is exactly why this ships off by default and
+  why the recall-preserving caps are the default when you do turn it on.
+- **The query cache is skipped while it is on** (a trimmed result set must not
+  be served to a gate-off lookup). Folding the gate into the cache key is a
+  follow-up; until then, adaptive-on calls always retrieve fresh.
+
+This came out of running gbrain against PrecisionMemBench (a precision-only
+memory benchmark) in the gbrain-evals repo. gbrain's default top-K retrieval
+scores low on raw precision there, as any top-K system does. With this feature
+on, gbrain lands second on that benchmark behind a purpose-built belief store.
+The measurement also killed a fancier idea: a "score cliff" detector turned out
+to carry no signal (the score gap after the top hit is the same whether the top
+hit is right or wrong), so the mechanism is a simple intent-driven cap, not a
+cliff cut.
+
+### To take advantage of v0.41.33.0
+
+`gbrain upgrade` handles this. There is no schema migration and no manual step.
+The feature is dormant until used.
+
+0. **Agents:** nothing to configure — the `query` tool's `adaptive_return`
+   param is live, and its description tells you when to set it. Reach for it on
+   single-answer questions; skip it on broad / exploratory ones.
+1. **Humans (set-and-forget, per-brain):**
+   ```bash
+   gbrain config set search.adaptive_return true
+   ```
+2. **Tune the caps** to taste, tighter for precision, looser for recall:
+   ```bash
+   gbrain config set search.adaptive_return_entity_max 2
+   gbrain config set search.adaptive_return_other_max 6
+   ```
+3. **Inspect what it did** on any query with `--json`: the `adaptive_return`
+   field in the search meta shows the intent, the cap, and how many results
+   were kept versus the full candidate count.
+4. **If results feel too thin,** raise the caps or set
+   `search.adaptive_return false` to return to the previous top-K behavior. No
+   data change either way.
+
+### Itemized changes
+
+**Adaptive return-sizing (new feature, default-off)**
+- `src/core/search/return-policy.ts` (new): pure module. `resolveAdaptiveReturn`
+  (defaults then config plane then per-call precedence), `applyAdaptiveReturn`
+  (intent-driven cap with an at-least-`minKeep` failsafe so it never empties a
+  non-empty result set), `adaptiveReturnFromConfig` (reads `search.adaptive_*`),
+  `adaptiveReturnEnabled`, and `DEFAULT_ADAPTIVE_RETURN` (`enabled:false`,
+  `entityMax:2`, `otherMax:6`, `minKeep:1`). The mechanism is an intent-driven
+  cap, not a score-cliff detector (the cliff carries no signal).
+- `src/core/search/hybrid.ts`: applies the gate after the reranker and before
+  the limit slice, only when enabled and `offset===0`, reading the
+  ordering-driving score. Stamps the decision into
+  `HybridSearchMeta.adaptive_return`. `hybridSearchCached` skips the cache when
+  the gate is on so a trimmed set is never served to a gate-off lookup
+  (KNOBS_HASH fold is a documented follow-up).
+- `src/core/types.ts`: `SearchOpts.adaptiveReturn` (`boolean` or partial config)
+  and `HybridSearchMeta.adaptive_return` (intent / cap / kept / total) for
+  `--json` and `--explain` consumers.
+- `src/core/operations.ts`: the **agent-facing surface** — `query` op gains an
+  `adaptive_return` boolean param whose description instructs the agent when to
+  use it (single-answer → on; breadth → off), matching the `salience`/`recency`
+  "YOU (the agent) decide" pattern. Threaded into `hybridSearchCached`.
+
+**Tests**
+- `test/search/return-policy.test.ts` (19 cases): config-resolution precedence,
+  intent-to-cap mapping, the never-empty failsafe, `minKeep > cap` recall floor,
+  and the default-off passthrough contract.
+- `test/search/query-op-adaptive-return.test.ts` (3 cases): pins the agent
+  surface — the `query` op exposes `adaptive_return` and its description teaches
+  both directions of the decision plus the never-empty safety contract.
+
+Measured against PrecisionMemBench in the sibling gbrain-evals repo (faithful
+vendored scorer); the default-off path is byte-identical to prior behavior (the
+existing search suite passes unchanged).
+## [0.41.32.0] - 2026-05-30
+
+**A quiet repo that's fully caught up no longer screams `SEVERELY STALE` in
+`gbrain doctor`. Staleness now means "is there committed content the sync hasn't
+ingested?" — not "how long has the wall clock been ticking since the last sync
+ran."**
+
+If you keep a federated source that doesn't get a commit for days, the old check
+kept escalating — 24h "stale", 72h "severely stale" — even though the sync had
+everything the repo contained. It was pure wall-clock noise, and it trained you
+to ignore the alert. Worse, a repo with a couple of stray untracked folders
+(`companies/`, `media/`) tripped it even right after a sync, because the
+freshness gate counted untracked files as "uncommitted work."
+
+Now the gate asks the right question. A source is caught up when its current
+commit is the one the sync recorded (`HEAD == last_commit`) and there are no
+uncommitted edits to *tracked* files. Untracked folders are ignored — they're
+not part of the repo, and `gbrain sync` never imports them anyway. If that holds,
+lag is `0` and the source reports clean, no matter how long ago the sync ran.
+
+### How to use it
+
+Nothing to turn on. Run `gbrain doctor` (or `gbrain sources status`) and a quiet,
+caught-up source now shows fresh instead of stale. After `gbrain upgrade`,
+migration v109 adds one column and the next `gbrain sync` starts populating it.
+
+### What you'd see
+
+| Scenario | Old metric | New metric |
+|---|---|---|
+| Quiet repo, caught up (newest commit predates last sync) | grows forever → SEVERELY STALE | **0 → fresh** |
+| Repo with new commits the sync hasn't pulled | wall-clock | wall-clock → stale (correct) |
+| HEAD force-pushed to an older-dated commit | could read "caught up" | **stale** (compares the commit hash, not its date) |
+| Non-git path / never synced | wall-clock | wall-clock (unchanged) |
+| Future `last_sync_at` (clock skew) | warns | warns (unchanged) |
+
+### Local vs remote, and the trust boundary we kept
+
+The local `gbrain doctor` (running on the machine that has your checkouts) reads
+the live commit hash, so it always catches new commits the sync hasn't pulled —
+your authoritative signal. The remote surfaces (`gbrain remote doctor`,
+`federation_health`, and the `get_status_snapshot` MCP op) read a stored
+`sources.newest_content_at` column written at sync time instead of running `git`
+against a database-supplied path — preserving the v0.41.27.0 rule that a
+remote-callable endpoint never shells out to a path an OAuth client could
+influence. A `NULL` column falls back to wall-clock, so nothing regresses before
+your next sync.
+
+### What we caught before merging
+
+An early version compared content *timestamps* (`newest content <= last sync`).
+That's wrong when HEAD moves to a commit with an *older* author date — a rebase
+that preserves dates, a branch rewind, an imported old commit — it would call a
+genuinely-behind source "caught up." Switching to the commit *hash* fixes it and
+also drops a fragile `git status` mtime-parsing path. The remote-path git
+subprocess was gated back behind the trust boundary, and two regression tests
+pin both: the headline untracked-folders case and the "remote path never shells
+out to git" guarantee.
+
+### For contributors
+
+New `scripts/ship-remote-tests.sh` offloads the test suite to GitHub's on-demand
+runners and blocks on the result with a real exit code (`gh run watch
+--exit-status`). When your local machine is saturated (many agents running their
+own `bun test` at once), run the gate in the cloud instead of fighting for CPU.
+`test.yml` now also accepts `workflow_dispatch` so it can be triggered from any
+branch.
+
+### To take advantage of v0.41.32.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain
+doctor` warns about a partial migration:
+
+1. **Apply the migration:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+   This adds `sources.newest_content_at` (migration v109) — a metadata-only
+   column add, instant on any brain size.
+2. **Run a sync so the column populates:**
+   ```bash
+   gbrain sync           # or `gbrain sync --all` on a federated brain
+   ```
+   Until a source syncs once post-upgrade, its remote staleness falls back to
+   the old wall-clock measure (the local doctor is already accurate via live git).
+3. **Verify:**
+   ```bash
+   gbrain doctor --json | grep -A2 sync_freshness
+   gbrain sources status
+   ```
+   A quiet, caught-up source should report `ok` / lag 0.
+4. **If anything looks wrong,** file an issue with `gbrain doctor` output and the
+   contents of `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+- **`src/core/git-head.ts`** — `isSourceUnchangedSinceSync`'s `requireCleanWorkingTree`
+  now accepts `'ignore-untracked'` (alongside `true`/`false`); the clean probe runs
+  `git status --porcelain --untracked-files=no` in that mode. This is the one-line
+  headline fix: untracked folders no longer defeat the freshness short-circuit.
+- **`src/core/source-health.ts`** — new `newestCommitMs(localPath)` (HEAD committer
+  time via `git log -1 --format=%ct`, fail-open null) and pure `lagFromContentMs(contentMs,
+  lastSyncMs, nowMs)` comparator for the remote/column path; `computeAllSourceMetrics`
+  gains `{ probeContent }` (local opts into the live commit-hash probe, remote reads the
+  column). Dead `isSourceStale(src, intervalMs)` removed (only `autopilot-fanout.ts`'s
+  own variant was live).
+- **`src/core/migrate.ts` v109** + `src/schema.sql` + `src/core/pglite-schema.ts` (+
+  regenerated `schema-embedded.ts`) — `sources.newest_content_at TIMESTAMPTZ`.
+- **`src/commands/sync.ts`** — `writeSyncAnchor` stamps `newest_content_at` (HEAD committer
+  time) in the same atomic UPDATE as `last_commit`/`last_sync_at`; `buildSyncStatusReport`
+  (the remote `get_status_snapshot` op) reads the column via `lagFromContentMs` — no git
+  subprocess.
+- **`src/commands/doctor.ts`** — `checkSyncFreshness` short-circuit uses `'ignore-untracked'`;
+  the remote (non-`localOnly`) path computes lag from the stored column; the `< 0` clock-skew
+  check stays on raw wall-clock.
+- **`src/commands/sources.ts`** — `gbrain sources status` opts into the live probe
+  (`probeContent: true`).
+- **Tests** — `test/source-health.test.ts` (commit-hash caught-up incl. the old-dated-commit
+  regression, `lagFromContentMs` matrix, `newestCommitMs`, probeContent local/remote),
+  `test/doctor.test.ts` (T1 untracked-folders headline bug, T2 remote-never-shells-out trust
+  boundary), `test/sync-all-parallel.test.ts` (column-path staleness).
+- **CI tooling** — `scripts/ship-remote-tests.sh` + `workflow_dispatch` on `test.yml`.
 
 ## [0.41.31.0] - 2026-05-30
 

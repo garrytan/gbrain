@@ -842,6 +842,121 @@ describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
   });
 });
 
+// ============================================================================
+// v0.41.32.0 — commit-relative staleness (supersedes #1623)
+// ============================================================================
+// Two contracts:
+//   T1 (headline bug): a quiet repo whose only "dirt" is untracked files
+//       (`?? companies/`, `?? media/`) is now caught up on the LOCAL path —
+//       the short-circuit's clean check ignores untracked. Pre-v0.41.30 the
+//       strict clean check counted those as dirty → fell through to wall-clock
+//       → false SEVERE.
+//   T2 (trust boundary): the REMOTE path (no localOnly) computes lag from the
+//       stored newest_content_at column and NEVER shells out to git on a
+//       DB-supplied local_path (preserves the v0.41.27.0 boundary).
+// ============================================================================
+describe('v0.41.32.0 — commit-relative staleness', () => {
+  function makeStubEngine(rows: any[]): any {
+    return { executeRaw: async () => rows };
+  }
+  function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
+  let currentChunkerVersion: string;
+
+  beforeEach(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = String(CHUNKER_VERSION);
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+  afterAll(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+
+  test('T1: stale + HEAD match + DIRTY-by-untracked-only + localOnly → ok (untracked ignored)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'abc123');
+    // Clean ONLY when untracked is ignored (the bug scenario: `?? companies/`).
+    let sawIgnoreUntracked = false;
+    _setGitCleanProbeForTests((_path, ignoreUntracked) => {
+      if (ignoreUntracked) { sawIgnoreUntracked = true; return true; }
+      return false; // strict mode would call it dirty
+    });
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'media-corpus', name: '', local_path: '/tmp/media',
+        last_sync_at: agoMs(86 * 60 * 60 * 1000), // 86h — would be SEVERE on wall-clock
+        last_commit: 'abc123', chunker_version: currentChunkerVersion,
+        newest_content_at: null },
+    ]), { localOnly: true });
+
+    expect(sawIgnoreUntracked).toBe(true); // the short-circuit asked to ignore untracked
+    expect(result.status).toBe('ok');
+    expect(result.details).toEqual({ unchanged_count: 1, synced_recently_count: 0, stale_count: 0 });
+  });
+
+  test('T2: REMOTE (no localOnly) reads column, quiet repo → ok, NO git subprocess', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    let headCalls = 0, cleanCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'x'; });
+    _setGitCleanProbeForTests(() => { cleanCalls++; return true; });
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'remote', name: '', local_path: '/tmp/remote',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        // Content committed BEFORE the last sync → caught up.
+        newest_content_at: agoMs(200 * 60 * 60 * 1000) },
+    ])); // NOTE: no { localOnly: true } → remote path
+
+    expect(headCalls).toBe(0);   // trust boundary: no git probe on remote path
+    expect(cleanCalls).toBe(0);
+    expect(result.status).toBe('ok');
+    expect(result.details).toEqual({ unchanged_count: 0, synced_recently_count: 1, stale_count: 0 });
+  });
+
+  test('T2b: REMOTE + NULL column → wall-clock fallback → stale (no git subprocess)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    let headCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'x'; });
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'remote', name: '', local_path: '/tmp/remote',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        newest_content_at: null },
+    ]));
+
+    expect(headCalls).toBe(0); // still no git probe even on the fallback path
+    expect(result.status).toBe('fail'); // 100h wall-clock > 72h
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('T2c: REMOTE + content NEWER than last sync → wall-clock (genuinely behind)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'remote', name: '', local_path: '/tmp/remote',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        // committed 10h ago, synced 100h ago → behind.
+        newest_content_at: agoMs(10 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('fail');
+    expect(result.details?.stale_count).toBe(1);
+  });
+});
+
 // Supervisor crash classifier wiring. Pre-fix, doctor.ts:1013 counted every
 // `worker_exited` event as a crash regardless of `likely_cause`, inflating
 // `crashes_24h` to 120+/day from RSS-watchdog drains and SIGTERM stops.

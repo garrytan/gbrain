@@ -592,7 +592,9 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
     }
     return;
   }
-  const metrics = await computeAllSourceMetrics(engine, sources);
+  // Local CLI on the trusted host: probe the live commit hash so a quiet,
+  // caught-up source reports lag 0 instead of growing wall-clock (v0.41.32.0).
+  const metrics = await computeAllSourceMetrics(engine, sources, { probeContent: true });
 
   if (json) {
     console.log(JSON.stringify({ schema_version: 1, sources: metrics }, null, 2));

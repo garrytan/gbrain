@@ -14,6 +14,13 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
+import {
+  resolveAdaptiveReturn,
+  applyAdaptiveReturn,
+  adaptiveReturnFromConfig,
+  adaptiveReturnEnabled,
+  type AdaptiveReturnDecision,
+} from './return-policy.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { applyReranker } from './rerank.ts';
@@ -1028,7 +1035,23 @@ export async function hybridSearch(
     ? await applyReranker(query, deduped, rerankerOpts as any)
     : deduped;
 
-  const sliced = reranked.slice(offset, offset + limit);
+  // v0.42 — intent-aware adaptive return-sizing (opt-in, default off). Trim
+  // the ranked candidate set to an intent-driven cap BEFORE the limit slice,
+  // and only on the first page (offset===0) — paginating a confidence-gated
+  // set is incoherent, so paginated calls fall through to the fixed limit.
+  const adaptiveCfg = resolveAdaptiveReturn(
+    opts?.adaptiveReturn,
+    adaptiveReturnFromConfig(cfgForColumn as Record<string, unknown> | null),
+  );
+  let returnPool = reranked;
+  let adaptiveDecision: AdaptiveReturnDecision | undefined;
+  if (adaptiveCfg.enabled && offset === 0) {
+    const r = applyAdaptiveReturn(reranked, suggestions.intent, adaptiveCfg);
+    returnPool = r.kept;
+    adaptiveDecision = r.decision;
+  }
+
+  const sliced = returnPool.slice(offset, offset + limit);
   // v0.32.3 search-lite: budget enforcement at the main return path.
   // hybridSearchCached used to be the only place this fired; now bare
   // hybridSearch enforces it too so eval-replay + eval-longmemeval see
@@ -1045,6 +1068,7 @@ export async function hybridSearch(
     ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
       ? { token_budget: budgetMeta }
       : {}),
+    ...(adaptiveDecision ? { adaptive_return: adaptiveDecision } : {}),
   });
   return budgeted;
 }
@@ -1140,11 +1164,20 @@ export async function hybridSearchCached(
   // a non-default embedding column (per-call or via config default —
   // D8 closes the silent-corruption bug class), or near-symbol mode
   // (structural state that the cache can't safely express).
+  // v0.42 — when adaptive return-sizing is on, skip the cache: a gated
+  // (trimmed) result set must not be served to a gate-off lookup, and vice
+  // versa. Folding the gate params into knobsHash is the v0.42+ follow-up
+  // (TODO) that lets adaptive-on calls cache safely; until then, skip.
+  const adaptiveReturnOn = adaptiveReturnEnabled(
+    opts?.adaptiveReturn,
+    cfgCached as unknown as Record<string, unknown> | null,
+  );
   const skipCache =
     !cache.isEnabled() ||
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
-    isNonDefaultColumn;
+    isNonDefaultColumn ||
+    adaptiveReturnOn;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
   let cacheSimilarity: number | undefined;

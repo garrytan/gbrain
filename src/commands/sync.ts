@@ -54,6 +54,11 @@ import {
 } from '../core/console-prefix.ts';
 import { loadStorageConfig } from '../core/storage-config.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
+// v0.41.32.0: stamp the durable newest-COMMIT timestamp at sync time so the
+// remote staleness path reads a column instead of shelling out to git.
+// lagFromContentMs is the remote/column comparator (buildSyncStatusReport
+// backs the get_status_snapshot MCP op — must NOT shell out to git).
+import { newestCommitMs, lagFromContentMs } from '../core/source-health.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
 
 export interface SyncResult {
@@ -460,15 +465,32 @@ async function writeSyncAnchor(
   sourceId: string | undefined,
   which: 'repo_path' | 'last_commit',
   value: string,
+  // v0.41.32.0 (supersedes #1623): on `last_commit` advances, also stamp the
+  // durable newest-COMMIT timestamp (HEAD committer time, epoch ms) in the SAME
+  // atomic UPDATE as last_sync_at — no separate write to leave partial state,
+  // no clock-domain split (last_sync_at = DB now(); newest_content_at = the
+  // git-intrinsic committer time of the HEAD we just synced). `undefined` keeps
+  // the legacy 2-column write; `null` clears the column (git unavailable).
+  newestContentEpochMs?: number | null,
 ): Promise<void> {
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.
     if (which === 'last_commit') {
-      await engine.executeRaw(
-        `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
-        [value, sourceId],
-      );
+      if (newestContentEpochMs !== undefined) {
+        const iso = newestContentEpochMs === null
+          ? null
+          : new Date(newestContentEpochMs).toISOString();
+        await engine.executeRaw(
+          `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+          [value, sourceId, iso],
+        );
+      } else {
+        await engine.executeRaw(
+          `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+          [value, sourceId],
+        );
+      }
     } else {
       await engine.executeRaw(
         `UPDATE sources SET ${col} = $1 WHERE id = $2`,
@@ -477,6 +499,9 @@ async function writeSyncAnchor(
     }
     return;
   }
+  // Legacy no-sourceId path (pre-v0.18 global config). Modern sync always
+  // resolves a sourceId (incl. 'default'), so newest_content_at is written via
+  // the sourceId branch above; the default source is not stuck on NULL.
   await engine.setConfig(`sync.${which}`, value);
 }
 
@@ -1253,7 +1278,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   if (totalChanges === 0) {
     // Update sync state even with no syncable changes (git advanced)
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
     return {
@@ -1755,7 +1780,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // Update sync state AFTER all changes succeed (source-scoped when
   // opts.sourceId is set, global config otherwise).
-  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
+  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
   await engine.setConfig('sync.last_run', new Date().toISOString());
   await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
   // v0.20.0 Cathedral II Layer 12: persist the chunker version we just
@@ -1976,7 +2001,7 @@ async function performFullSync(
   // Persist sync state so next sync is incremental (C1 fix: was missing).
   // v0.18.0 Step 5: routed through writeSyncAnchor so --source pins it
   // to the right sources row rather than the global config.
-  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
+  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
   await engine.setConfig('sync.last_run', new Date().toISOString());
   await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
   // v0.20.0 Cathedral II Layer 12: persist chunker version for the gate.
@@ -2977,6 +3002,8 @@ export async function buildSyncStatusReport(
     id: string;
     last_commit: string | null;
     last_sync_at: string | Date | null;
+    // v0.41.32.0: remote staleness reads this column (no git subprocess).
+    newest_content_at: string | Date | null;
   };
   type CountRow = {
     source_id: string;
@@ -2990,7 +3017,7 @@ export async function buildSyncStatusReport(
   const sourceRows = sourceIds.length === 0
     ? []
     : await engine.executeRaw<SourceRow>(
-        `SELECT id, last_commit, last_sync_at FROM sources WHERE id = ANY($1::text[])`,
+        `SELECT id, last_commit, last_sync_at, newest_content_at FROM sources WHERE id = ANY($1::text[])`,
         [sourceIds],
       );
   const sourceMap = new Map<string, SourceRow>();
@@ -3085,14 +3112,24 @@ export async function buildSyncStatusReport(
   const now = Date.now();
   const out: SyncStatusReportSource[] = sources.map((src) => {
     const cfgEntry = (src.config || {}) as { syncEnabled?: boolean };
-    const row = sourceMap.get(src.id) || { id: src.id, last_commit: null, last_sync_at: null };
+    const row = sourceMap.get(src.id) || { id: src.id, last_commit: null, last_sync_at: null, newest_content_at: null };
     const counts = countMap.get(src.id) || { pages: 0, chunks_total: 0, chunks_unembedded: 0 };
     const lastSyncMs = row.last_sync_at
       ? (row.last_sync_at instanceof Date ? row.last_sync_at.getTime() : Date.parse(row.last_sync_at))
       : null;
-    const stalenessHours = lastSyncMs !== null && Number.isFinite(lastSyncMs)
-      ? (now - lastSyncMs) / 3_600_000
+    // v0.41.32.0: commit-relative staleness from the stored column — NO git
+    // subprocess (this function backs the remote get_status_snapshot MCP op,
+    // so it must honor the v0.41.27.0 trust boundary). A quiet repo whose
+    // newest commit predates its last sync reports 0; null column → wall-clock.
+    const contentMs = row.newest_content_at
+      ? (row.newest_content_at instanceof Date ? row.newest_content_at.getTime() : Date.parse(row.newest_content_at))
       : null;
+    const lagSeconds = lagFromContentMs(
+      Number.isFinite(contentMs as number) ? (contentMs as number) : null,
+      lastSyncMs !== null && Number.isFinite(lastSyncMs) ? lastSyncMs : null,
+      now,
+    );
+    const stalenessHours = lagSeconds === null ? null : lagSeconds / 3600;
     let stalenessClass: 'fresh' | 'stale' | 'severe' | 'unknown' = 'unknown';
     if (stalenessHours !== null) {
       if (stalenessHours < 24) stalenessClass = 'fresh';

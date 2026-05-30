@@ -918,7 +918,12 @@ export async function loadSearchModeConfig(
   const safeGet = async (k: string): Promise<string | undefined> => {
     try {
       const v = await engine.getConfig(k);
-      return v == null ? undefined : v;
+      // getConfig's contract is string | null, but guard against engines that
+      // return non-string junk (e.g. arrays/booleans). A non-string value is
+      // treated as "not set" so it falls through to the mode-bundle default,
+      // matching the behavior of a missing key. Without this, downstream
+      // parsing (e.g. ce.toLowerCase()) crashes on a non-string.
+      return typeof v === 'string' ? v : undefined;
     } catch {
       return undefined;
     }

@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS sources (
   -- FALSE for mounts by default; host is always trusted regardless.
   contextual_retrieval_mode   TEXT,
   trust_frontmatter_overrides BOOLEAN NOT NULL DEFAULT false,
+  -- v0.41.32.0 (supersedes #1623): newest COMMIT timestamp at last sync
+  -- (mirrors src/schema.sql). REMOTE staleness reads this; NULL → wall-clock.
+  newest_content_at TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
