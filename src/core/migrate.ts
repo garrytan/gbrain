@@ -4964,6 +4964,67 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 110,
+    name: 'page_aliases',
+    // T3 of the retrieval-cathedral wave (retrieval-maxpool incident).
+    //
+    // Free-text alias resolution: a query like "Hall of Light" or "明堂"
+    // should surface the page titled "Mingtang". gbrain stored that mapping
+    // in pages.frontmatter `aliases:` JSONB but it was invisible to search.
+    //
+    // DELIBERATELY SEPARATE from slug_aliases (v105). They answer different
+    // questions and overloading one for both would muddy the semantics:
+    //   - slug_aliases:  old-slug -> canonical-slug (wikilink/get_page redirect)
+    //   - page_aliases:  normalized free-text name -> canonical slug (search hop)
+    //
+    // alias_norm is the output of normalizeAlias() (NFKC + lowercase + ws
+    // collapse) so the WRITE side (ingest projection) and READ side (search)
+    // match on the same key. Btree on (source_id, alias_norm) so the hop is an
+    // indexed equality lookup, not ILIKE.
+    //
+    // NOT a UNIQUE(source_id, alias_norm) — real brains may legitimately have
+    // two pages claiming the same alias; we report the collision and resolve
+    // deterministically at query time rather than failing the ingest (Codex#8).
+    // The (source_id, alias_norm, slug) triple is unique so re-ingest is
+    // idempotent without blocking a second page's claim on the same alias.
+    //
+    // Mirror in src/core/pglite-schema.ts (fresh install); forward-reference
+    // bootstrap probe on both engines so pre-v110 brains pick it up cleanly.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS page_aliases (
+        id          BIGSERIAL PRIMARY KEY,
+        source_id   TEXT NOT NULL,
+        alias_norm  TEXT NOT NULL,
+        slug        TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT page_aliases_uniq UNIQUE (source_id, alias_norm, slug)
+      );
+      CREATE INDEX IF NOT EXISTS page_aliases_lookup_idx
+        ON page_aliases (source_id, alias_norm);
+      CREATE INDEX IF NOT EXISTS page_aliases_slug_idx
+        ON page_aliases (source_id, slug);
+    `,
+  },
+  {
+    version: 111,
+    name: 'search_telemetry_rank1_columns',
+    // T7 of the retrieval-cathedral wave — rank-1 base_score drift signal.
+    // Aggregate columns (NOT per-query rows, D10) so a downward drift in the
+    // median rank-1 match score is computable from the existing day/mode/intent
+    // rollup with bounded growth. search_telemetry lives only in migration v57
+    // (not the schema blobs), so these are ADD COLUMN IF NOT EXISTS on both
+    // engines; fresh installs pick them up right after v57 runs.
+    idempotent: true,
+    sql: `
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS sum_rank1_score DOUBLE PRECISION NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS count_rank1 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_lt_solid INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_solid INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_high INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 112,
     name: 'links_link_source_widen_for_wikilink_basename',
     // Issue #972: opt-in global-basename wikilink resolution (bare [[name]]
     // resolved by slug tail) emits edges tagged
@@ -4976,9 +5037,10 @@ export const MIGRATIONS: Migration[] = [
     // clobber that widening. Keep both branches in sync with src/schema.sql
     // and src/core/pglite-schema.ts.
     //
-    // Renumbered v93 → v109 → v110 across successive master merges (upstream
-    // claimed v93-v109 in the interim). Idempotent via DROP ... IF EXISTS, so
-    // it no-ops on installs that never created the constraint.
+    // Renumbered v93 → v109 → v110 → v112 across successive master merges
+    // (upstream claimed v93-v111 in the interim). Idempotent via
+    // DROP ... IF EXISTS, so it no-ops on installs that never created the
+    // constraint.
     idempotent: true,
     sql: `
       ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;

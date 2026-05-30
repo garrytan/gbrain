@@ -659,6 +659,15 @@ test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE 
 // ─────────────────────────────────────────────────────────────────
 
 const COLUMN_EXEMPTIONS = new Set<string>([
+  // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
+  // is created entirely by migration v57 (not in the schema blob), so the v57+v111
+  // chain handles fresh + upgrade; no CREATE INDEX references these columns, so
+  // there's no forward reference for the bootstrap to cover.
+  'search_telemetry.sum_rank1_score',
+  'search_telemetry.count_rank1',
+  'search_telemetry.rank1_lt_solid',
+  'search_telemetry.rank1_solid',
+  'search_telemetry.rank1_high',
   // Schema-blob-not-yet-refreshed: each of these columns is added by a
   // migration but NOT (yet) referenced by `PGLITE_SCHEMA_SQL` (neither in a
   // CREATE TABLE body nor in any CREATE INDEX). Bootstrap doesn't need to

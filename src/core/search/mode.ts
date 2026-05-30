@@ -140,6 +140,16 @@ export interface ModeBundle {
    */
   floor_ratio: number | undefined;
 
+  /**
+   * T2 (retrieval-maxpool incident) — title-phrase boost multiplier. When a
+   * query is a contiguous token-run inside a page's title (or an exact full-
+   * title match), multiply that result's score by this factor. <= 1.0 or
+   * undefined disables. Floor-ratio-gated so a title hit can't bury a strong
+   * semantic match. Correctness fix (cheap, in-memory) — ON in all bundles.
+   * Override: per-call SearchOpts → `search.title_boost` config → bundle.
+   */
+  title_boost: number | undefined;
+
   // v0.36 cross-modal wave knobs (D2 + D3 + D6 + D8 + D13 + LLM-intent).
   // All three mode bundles default these to the same values — cross-modal
   // is opt-in per-call (D6 weighting), opt-in per-brain (D8 unified flags),
@@ -260,6 +270,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.35.6.0 — undefined for all three bundles; the per-corpus ablation
     // (TODOS.md) gates any default flip.
     floor_ratio: undefined,
+    // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
+    title_boost: 1.25,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -300,6 +312,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.35.6.0 — undefined for all three bundles; the per-corpus ablation
     // (TODOS.md) gates any default flip.
     floor_ratio: undefined,
+    // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
+    title_boost: 1.25,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -342,6 +356,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.35.6.0 — undefined for all three bundles; the per-corpus ablation
     // (TODOS.md) gates any default flip.
     floor_ratio: undefined,
+    // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
+    title_boost: 1.25,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -392,6 +408,8 @@ export interface SearchKeyOverrides {
   reranker_timeout_ms?: number;
   // v0.35.6.0 — floor-ratio gate override.
   floor_ratio?: number;
+  // T2 — title-phrase boost override.
+  title_boost?: number;
   // v0.36 cross-modal overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -430,6 +448,8 @@ export interface SearchPerCallOpts {
   reranker_timeout_ms?: number;
   // v0.35.6.0 — floor-ratio per-call override.
   floor_ratio?: number;
+  // T2 — title-phrase boost per-call override.
+  title_boost?: number;
   // v0.36 cross-modal per-call overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -518,6 +538,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     reranker_timeout_ms: pickRerankerTimeoutMs(),
     // v0.35.6.0 — floor-ratio resolved via the same pick chain.
     floor_ratio: pick('floor_ratio'),
+    title_boost: pick('title_boost'),
     // v0.36 cross-modal knobs
     cross_modal_both_text_weight: pick('cross_modal_both_text_weight'),
     cross_modal_both_image_weight: pick('cross_modal_both_image_weight'),
@@ -616,7 +637,12 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // 1.05x multiplier. Cached pre-v0.42 entries don't reflect the boost so
 // must invalidate. Same one-time miss-spike pattern as prior bumps;
 // fills within cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 6;
+//
+// T2 bump 6→7: title_boost (retrieval-maxpool incident) adds a post-fusion
+// stage that multiplies title-phrase-matching results. A title-boost-on write
+// must NOT be served to a title-boost-off lookup (ranking shifts). Same
+// one-time miss-spike pattern; fills within cache.ttl_seconds.
+export const KNOBS_HASH_VERSION = 7;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -712,6 +738,8 @@ export function knobsHash(
     // neutralizes prior cache rows.
     `cr=${knobs.contextual_retrieval}`,
     `crd=${knobs.contextual_retrieval_disabled ? 1 : 0}`,
+    // v=7 addition (append-only) — T2 title-phrase boost (retrieval-maxpool).
+    `tib=${knobs.title_boost === undefined ? 'none' : knobs.title_boost.toFixed(4)}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -809,6 +837,14 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n >= 0 && n <= 1) out.floor_ratio = n;
   }
 
+  // T2 — title-phrase boost factor. >= 1.0 (1.0 disables). Bounded sanity cap
+  // at 5.0 so a fat-fingered config can't make a title hit dominate everything.
+  const tib = get('search.title_boost');
+  if (tib !== undefined) {
+    const n = parseFloat(tib);
+    if (Number.isFinite(n) && n >= 1.0 && n <= 5.0) out.title_boost = n;
+  }
+
   // v0.36 cross-modal overrides (D3 registry)
   const cmbt = get('search.cross_modal.both_mode_text_weight');
   if (cmbt !== undefined) {
@@ -878,6 +914,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.reranker.timeout_ms',
   // v0.35.6.0 — floor-ratio gate
   'search.floor_ratio',
+  'search.title_boost',
   // v0.36 cross-modal keys (D3)
   'search.cross_modal.both_mode_text_weight',
   'search.cross_modal.both_mode_image_weight',

@@ -69,6 +69,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,
       floor_ratio: undefined,
+      title_boost: 1.25,
       ...CROSS_MODAL_DEFAULTS,
       graph_signals: false,
       ...CR_DISABLED_DEFAULT,
@@ -93,6 +94,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,
       floor_ratio: undefined,
+      title_boost: 1.25,
       ...CROSS_MODAL_DEFAULTS,
       graph_signals: true,
       ...CR_DISABLED_DEFAULT,
@@ -115,6 +117,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,
       floor_ratio: undefined,
+      title_boost: 1.25,
       ...CROSS_MODAL_DEFAULTS,
       graph_signals: true,
       ...CR_DISABLED_DEFAULT,
@@ -376,7 +379,7 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // post-fusion boost stage. A query against a brain with slug_aliases
     // populated must not be served from a cache row written before the
     // boost stage existed.
-    expect(KNOBS_HASH_VERSION).toBe(6);
+    expect(KNOBS_HASH_VERSION).toBe(7);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {

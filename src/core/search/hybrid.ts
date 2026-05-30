@@ -25,6 +25,9 @@ import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { applyReranker } from './rerank.ts';
 import { autoDetectDetail, classifyQuery, isAmbiguousModalityQuery } from './query-intent.ts';
+import { isTitlePhraseMatch } from './title-match.ts';
+import { normalizeAlias } from './alias-normalize.ts';
+import { stampEvidence } from './evidence.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget } from './token-budget.ts';
 import { recordSearchTelemetry } from './telemetry.ts';
@@ -229,6 +232,43 @@ export function applyRecencyBoost(
 }
 
 /**
+ * T2 (retrieval-maxpool incident) — apply the title-phrase boost.
+ *
+ * Fires when the normalized query is a contiguous token-run inside a result's
+ * page title (or an exact full-title match), per `isTitlePhraseMatch`. Mutate-
+ * in-place; caller re-sorts. Mirrors applyBacklinkBoost's floor-gate + stamp.
+ *
+ * Bounded by construction: a single fixed multiplier (`factor`, default 1.25),
+ * floor-ratio-gated so a title hit on a weak-overlap page can't leapfrog a
+ * strong primary hit. `base_score` (stamped at runPostFusionStages entry) is
+ * NOT touched, so the agent's dedup gate still reads true match confidence.
+ *
+ * Why page.title and not "first compiled_truth chunk" (Codex#11): the title is
+ * a stable column; the first chunk is a chunking accident that import changes
+ * could shift. The signal is "the query is the name of this thing."
+ */
+export function applyTitleBoost(
+  results: SearchResult[],
+  query: string,
+  factor: number,
+  floorThreshold?: number,
+): void {
+  if (!query || !Number.isFinite(factor) || factor <= 1.0) return;
+  for (const r of results) {
+    if (!Number.isFinite(r.score)) continue;
+    if (floorThreshold !== undefined && r.score < floorThreshold) continue;
+    if (!r.title) continue;
+    if (isTitlePhraseMatch(query, r.title)) {
+      r.score *= factor;
+      r.title_match_boost = factor; // attribution stamp (v0.40.4 convention)
+    }
+  }
+}
+
+/** Default title-phrase boost multiplier (mode-overridable via `title_boost`). */
+export const DEFAULT_TITLE_BOOST = 1.25;
+
+/**
  * v0.29.1 — runPostFusionStages: wrap backlink + salience + recency in a
  * single stage that fires from EVERY hybridSearch return path (codex
  * pass-1 #2 + pass-2 #4: keyword-only, embed-fail-fallback, full-hybrid).
@@ -284,6 +324,17 @@ export interface PostFusionOpts {
    * wave via search-stats.
    */
   onScoreDistribution?: (dist: import('./graph-signals.ts').ScoreDistribution) => void;
+  /**
+   * T2 — the raw query string, needed by the title-phrase boost stage.
+   * Undefined disables the stage (e.g. image-only queries).
+   */
+  query?: string;
+  /**
+   * T2 — title-phrase boost multiplier (mode-resolved from `title_boost`).
+   * <= 1.0 or undefined disables the stage. Floor-ratio-gated like the
+   * metadata stages so a title hit can't bury a strong semantic match.
+   */
+  titleBoost?: number;
 }
 
 export async function runPostFusionStages(
@@ -354,6 +405,18 @@ export async function runPostFusionStages(
       );
     } catch {
       // Non-fatal.
+    }
+  }
+
+  // T2 — title-phrase boost. Runs after the metadata stages, before graph
+  // signals. Shares the single floor-threshold so a title hit on a weak page
+  // can't leapfrog a strong primary hit (Codex#10). Fail-soft: pure + in-memory,
+  // but guarded so a bad query/title can't throw the whole pipeline.
+  if (opts.query && opts.titleBoost && opts.titleBoost > 1.0) {
+    try {
+      applyTitleBoost(results, opts.query, opts.titleBoost, floorThreshold);
+    } catch {
+      // Non-fatal; preserves the per-stage contract.
     }
   }
 
@@ -447,8 +510,103 @@ async function applyAliasResolvedBoost(
   }
 }
 
+// T3 — free-text alias hop tuning.
+const ALIAS_HOP_PRESENT_BOOST = 1.10; // bounded boost when canonical already in results
+const MAX_ALIAS_QUERY_TOKENS = 6;     // skip long queries (clearly not a chosen name)
+const MAX_ALIAS_INJECT = 3;           // cap injected pages per query (collision safety)
+
+/**
+ * T3 — free-text alias hop (retrieval-maxpool incident, the named-thing fix).
+ *
+ * When the normalized query EXACTLY matches a page's declared alias
+ * ("Hall of Light" / "明堂" -> the Mingtang page), make sure that page is in
+ * the result set: boost it if already present, inject it at top-of-organic +
+ * epsilon if absent. This is the only layer that bridges true synonyms with
+ * zero surface overlap — neither max-pool nor title-boost can.
+ *
+ * Precision guards (Codex#7/#10):
+ *   - FULL normalized-query exact match only (not substring / not n-grams) —
+ *     "light" won't fire unless the whole query normalizes to a stored alias.
+ *   - skip queries longer than MAX_ALIAS_QUERY_TOKENS (clearly prose, not a name).
+ *   - bounded: present-boost is 1.10x; inject score is top-of-organic + ε,
+ *     never an absolute 1.0 (D3 — aliases are not a ranking sledgehammer).
+ *   - collisions (two pages claim one alias): deterministic alpha order, capped.
+ *
+ * Fail-open: pre-v110 brains (no page_aliases table) and any lookup error
+ * degrade to the input unchanged (D9). Returns a NEW array; caller re-slices.
+ */
+export async function applyAliasHop(
+  engine: import('../engine.ts').BrainEngine,
+  results: SearchResult[],
+  query: string,
+  opts: { sourceId?: string; sourceIds?: string[] },
+): Promise<SearchResult[]> {
+  if (!query) return results;
+  const qNorm = normalizeAlias(query);
+  if (!qNorm || qNorm.split(' ').length > MAX_ALIAS_QUERY_TOKENS) return results;
+
+  let aliasMap: Map<string, Array<{ slug: string; source_id: string }>>;
+  try {
+    aliasMap = await engine.resolveAliases([qNorm], { sourceId: opts.sourceId, sourceIds: opts.sourceIds });
+  } catch {
+    return results; // pre-v110 table-missing OR transient error -> fail-open
+  }
+  const refs = aliasMap.get(qNorm);
+  if (!refs || refs.length === 0) return results;
+
+  // Deterministic + capped. Source-scoped: each canonical is a (source_id, slug)
+  // pair so a federated caller boosts/injects the RIGHT source's page, never
+  // collapsing or cross-injecting (P0 source-isolation contract).
+  const ordered = [...refs]
+    .sort((a, b) => (a.source_id === b.source_id ? a.slug.localeCompare(b.slug) : a.source_id.localeCompare(b.source_id)))
+    .slice(0, MAX_ALIAS_INJECT);
+  const out = [...results];
+  const topScore = out.reduce((m, r) => (Number.isFinite(r.score) && r.score > m ? r.score : m), 0);
+  let injectScore = topScore > 0 ? topScore : 1.0;
+
+  for (const ref of ordered) {
+    const idx = out.findIndex(r => r.slug === ref.slug && (r.source_id ?? 'default') === ref.source_id);
+    if (idx >= 0) {
+      if (Number.isFinite(out[idx].score)) out[idx].score *= ALIAS_HOP_PRESENT_BOOST;
+      out[idx].alias_hit = true;
+      continue;
+    }
+    // Absent canonical: fetch (in its OWN source) + inject at top-of-organic + epsilon.
+    let page;
+    try {
+      page = await engine.getPage(ref.slug, { sourceId: ref.source_id });
+    } catch {
+      continue;
+    }
+    if (!page) continue;
+    injectScore += 1e-6;
+    out.push({
+      slug: page.slug,
+      title: page.title,
+      type: page.type,
+      source_id: page.source_id ?? ref.source_id,
+      chunk_text: (page.compiled_truth ?? '').slice(0, 200),
+      chunk_index: 0,
+      chunk_id: 0,
+      score: injectScore,
+      base_score: injectScore,
+      alias_hit: true,
+    } as SearchResult);
+  }
+  out.sort((a, b) => b.score - a.score);
+  return out;
+}
+
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
+  /**
+   * T4/D5 — per-call search-mode selector (one of SEARCH_MODES). Selects the
+   * whole mode bundle for this call, overriding the server-configured mode.
+   * The op layer passes this ONLY for trusted/local callers (ctx.remote ===
+   * false); remote callers leave it undefined so they can't escalate to the
+   * costly tokenmax bundle. Unknown values fall back to the default bundle.
+   */
+  mode?: string;
   expandFn?: (query: string) => Promise<string[]>;
   /** Override default RRF K constant (default: 60). Lower values boost top-ranked results more. */
   rrfK?: number;
@@ -486,7 +644,11 @@ export async function hybridSearch(
   const { loadSearchModeConfig, resolveSearchMode } = await import('./mode.ts');
   const modeInput = await loadSearchModeConfig(engine);
   const resolvedMode = resolveSearchMode({
-    mode: modeInput.mode,
+    // T4/D5 — per-call mode selector (e.g. `--mode tokenmax`). The op layer
+    // only passes this for trusted/local callers; remote callers leave it
+    // undefined and fall through to the server-configured mode (no cost
+    // escalation). Unknown values fall back to the default in resolveSearchMode.
+    mode: opts?.mode ?? modeInput.mode,
     overrides: modeInput.overrides,
     perCall: {
       intentWeighting: opts?.intentWeighting,
@@ -581,6 +743,9 @@ export async function hybridSearch(
   // flush is fire-and-forget on 60s / 100-call thresholds. The hot path
   // never waits.
   let lastResultsCount = 0;
+  // T7 — rank-1 base_score for the telemetry drift signal. Set alongside
+  // lastResultsCount at each return path; undefined when there are no results.
+  let lastRank1Score: number | undefined;
   const emitMeta = (meta: HybridSearchMeta): void => {
     try {
       opts?.onMeta?.(meta);
@@ -588,7 +753,7 @@ export async function hybridSearch(
       // swallow — capture telemetry is best-effort
     }
     try {
-      recordSearchTelemetry(engine, meta, { results_count: lastResultsCount });
+      recordSearchTelemetry(engine, meta, { results_count: lastResultsCount, rank1_score: lastRank1Score });
     } catch {
       // swallow — telemetry must never break the search hot path.
     }
@@ -658,6 +823,10 @@ export async function hybridSearch(
     // Without this thread, the entire graph-signals wave is dead code —
     // codex outside-voice caught the missing wire pre-merge.
     graphSignalsEnabled: resolvedMode.graph_signals,
+    // T2 — title-phrase boost threaded from resolved mode (`title_boost`).
+    // The raw query drives the matcher; default factor when the knob is unset.
+    query,
+    titleBoost: resolvedMode.title_boost,
   };
 
   // Skip vector search entirely if the gateway has no embedding provider configured (Codex C3).
@@ -672,10 +841,18 @@ export async function hybridSearch(
       await runPostFusionStages(engine, keywordResults, postFusionOpts);
       keywordResults.sort((a, b) => b.score - a.score);
     }
-    const noEmbedSliced = dedupResults(keywordResults).slice(offset, offset + limit);
+    // T3/T4 — alias hop + evidence stamp even without an embedding provider
+    // (the named-thing fix is most valuable exactly when vector is unavailable).
+    const noEmbedHopped = await applyAliasHop(engine, dedupResults(keywordResults), query, {
+      sourceId: opts?.sourceId,
+      sourceIds: opts?.sourceIds,
+    });
+    stampEvidence(noEmbedHopped);
+    const noEmbedSliced = noEmbedHopped.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
     const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
     lastResultsCount = noEmbedBudgeted.length;
+    lastRank1Score = noEmbedBudgeted[0] ? (noEmbedBudgeted[0].base_score ?? noEmbedBudgeted[0].score) : undefined;
     emitMeta({
       vector_enabled: false,
       detail_resolved: detailResolved,
@@ -882,10 +1059,16 @@ export async function hybridSearch(
       await runPostFusionStages(engine, keywordResults, postFusionOpts);
       keywordResults.sort((a, b) => b.score - a.score);
     }
-    const kwSliced = dedupResults(keywordResults).slice(offset, offset + limit);
+    const kwHopped = await applyAliasHop(engine, dedupResults(keywordResults), query, {
+      sourceId: opts?.sourceId,
+      sourceIds: opts?.sourceIds,
+    });
+    stampEvidence(kwHopped);
+    const kwSliced = kwHopped.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
     const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
     lastResultsCount = kwBudgeted.length;
+    lastRank1Score = kwBudgeted[0] ? (kwBudgeted[0].base_score ?? kwBudgeted[0].score) : undefined;
     emitMeta({
       vector_enabled: false,
       detail_resolved: detailResolved,
@@ -1035,18 +1218,34 @@ export async function hybridSearch(
     ? await applyReranker(query, deduped, rerankerOpts as any)
     : deduped;
 
+  // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
+  // declared chosen name reliably surfaces that page regardless of how the
+  // reranker scored body chunks. Fail-open on pre-v110 brains.
+  const aliasHopped = await applyAliasHop(engine, reranked, query, {
+    sourceId: opts?.sourceId,
+    sourceIds: opts?.sourceIds,
+  });
+
+  // T4 — stamp evidence + create_safety so the agent's don't-duplicate
+  // decision keys off WHY a page matched, not a raw blended score. Stamp on
+  // the full alias-hopped set before any adaptive trim so the kept results
+  // carry evidence regardless of where the cap lands.
+  stampEvidence(aliasHopped);
+
   // v0.42 — intent-aware adaptive return-sizing (opt-in, default off). Trim
   // the ranked candidate set to an intent-driven cap BEFORE the limit slice,
   // and only on the first page (offset===0) — paginating a confidence-gated
   // set is incoherent, so paginated calls fall through to the fixed limit.
+  // Runs on the alias-hopped set so an alias-injected page (top-of-organic)
+  // survives the trim.
   const adaptiveCfg = resolveAdaptiveReturn(
     opts?.adaptiveReturn,
     adaptiveReturnFromConfig(cfgForColumn as Record<string, unknown> | null),
   );
-  let returnPool = reranked;
+  let returnPool = aliasHopped;
   let adaptiveDecision: AdaptiveReturnDecision | undefined;
   if (adaptiveCfg.enabled && offset === 0) {
-    const r = applyAdaptiveReturn(reranked, suggestions.intent, adaptiveCfg);
+    const r = applyAdaptiveReturn(aliasHopped, suggestions.intent, adaptiveCfg);
     returnPool = r.kept;
     adaptiveDecision = r.decision;
   }
@@ -1058,6 +1257,7 @@ export async function hybridSearch(
   // the same budget behavior as the production query op.
   const { results: budgeted, meta: budgetMeta } = enforceTokenBudget(sliced, resolvedMode.tokenBudget);
   lastResultsCount = budgeted.length;
+  lastRank1Score = budgeted[0] ? (budgeted[0].base_score ?? budgeted[0].score) : undefined;
   emitMeta({
     vector_enabled: true,
     detail_resolved: detailResolved,
@@ -1106,7 +1306,10 @@ export async function hybridSearchCached(
   const { loadSearchModeConfig, resolveSearchMode, knobsHash } = await import('./mode.ts');
   const modeInputForCache = await loadSearchModeConfig(engine);
   const resolvedForCache = resolveSearchMode({
-    mode: modeInputForCache.mode,
+    // T4/D5 — per-call mode folds into the cache key (resolved_mode is part
+    // of knobsHash) so a per-call `--mode tokenmax` read can't be served a
+    // server-default-mode cache row.
+    mode: opts?.mode ?? modeInputForCache.mode,
     overrides: modeInputForCache.overrides,
     perCall: {
       cache_enabled: opts?.useCache,

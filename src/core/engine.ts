@@ -1724,6 +1724,38 @@ export interface BrainEngine {
   ): Promise<string>;
 
   /**
+   * T3 retrieval-cathedral — free-text alias resolution for SEARCH.
+   * Given a set of NORMALIZED alias strings (normalizeAlias() output),
+   * return a map alias_norm -> canonical slugs from page_aliases. An alias
+   * may resolve to MORE THAN ONE slug (two pages claimed the same name) —
+   * the caller reports the collision and resolves deterministically.
+   *
+   * Source-scoped: pass scalar `sourceId` (single-source) OR `sourceIds`
+   * (federated read) — array wins when both set, matching sourceScopeOpts.
+   * Empty input → empty map (no query). Throws "relation page_aliases does
+   * not exist" on pre-v110 brains; the alias-hop caller wraps in try/catch
+   * (isUndefinedColumnError) and degrades to no-injection (D9 fail-open).
+   */
+  resolveAliases(
+    aliasNorms: string[],
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<Map<string, Array<{ slug: string; source_id: string }>>>;
+
+  /**
+   * T3 retrieval-cathedral — WRITE side of the alias layer. Replace the full
+   * alias set for one (slug, source) with `aliasNorms` (already normalized):
+   * delete the page's existing page_aliases rows, insert the new set. Empty
+   * `aliasNorms` just clears them. Idempotent (the unique triple). Called by
+   * the ingest projection in importFromContent and the `reindex --aliases`
+   * backfill so a page's declared aliases stay in lockstep with its frontmatter.
+   */
+  setPageAliases(
+    slug: string,
+    sourceId: string,
+    aliasNorms: string[],
+  ): Promise<void>;
+
+  /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and
    * `pages.content_hash` for a single slug+source. NO chunking, NO embedding,
    * NO link reconcile, NO `updated_at` advance beyond the trivial bump.

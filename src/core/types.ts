@@ -653,6 +653,38 @@ export interface SearchResult {
    * as canonical" and lets canonicals outrank fuzzy matches.
    */
   alias_resolved_boost?: number;
+  /**
+   * T2 (retrieval-maxpool incident) — multiplier applied by applyTitleBoost
+   * (1.0 = unchanged; default ~1.25x). Fires when the normalized query is a
+   * contiguous token-run inside the page title (or an exact full-title match).
+   * Floor-ratio-gated + clamped so a title hit reorders without burying a
+   * strong semantic match or lying about base_score (the agent's dedup gate
+   * keys off base_score / evidence, not the boosted score).
+   */
+  title_match_boost?: number;
+  /**
+   * T3 (retrieval-maxpool incident) — set when this result was surfaced or
+   * boosted by the free-text alias hop (the query exactly matched a page's
+   * declared alias in page_aliases). An injected canonical that wasn't in the
+   * organic candidate set carries alias_hit=true with score = top-of-organic
+   * + epsilon. Drives the evidence=alias_hit signal the agent's don't-duplicate
+   * decision keys off (T4).
+   */
+  alias_hit?: boolean;
+  /**
+   * T4 — the strongest signal that surfaced this page (alias_hit >
+   * exact_title_match > high_vector_match > keyword_exact > weak_semantic).
+   * Computed by classifyEvidence at the end of the hybrid pipeline.
+   */
+  evidence?: import('./search/evidence.ts').Evidence;
+  /**
+   * T4 — derived "is this page already in the brain?" hint. The agent's
+   * don't-write-a-duplicate decision keys off THIS, not a raw score:
+   * 'exists' = strong (don't duplicate), 'probable' = prefer update,
+   * 'unknown' = look closer. This is the contract that prevents the
+   * incident's duplicate-stub class.
+   */
+  create_safety?: import('./search/evidence.ts').CreateSafety;
 }
 
 /**

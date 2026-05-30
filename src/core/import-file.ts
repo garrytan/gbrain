@@ -28,6 +28,8 @@ import {
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
+import { normalizeAliasList } from './search/alias-normalize.ts';
+import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
 
 /**
@@ -707,6 +709,25 @@ export async function importFromContent(
       } catch { /* same reason — silent skip */ }
     }
   });
+
+  // T3 — project frontmatter `aliases:` into page_aliases (free-text alias
+  // resolution for search). Runs AFTER the page write commits so the slug
+  // exists. Fail-soft: a pre-v110 brain has no page_aliases table yet (the
+  // migration may not have run); an alias-write failure must NOT fail the
+  // import. Always called (even with []) so REMOVING an alias from frontmatter
+  // clears its row — the content_hash includes non-timestamp frontmatter, so
+  // an alias edit changes the hash and reaches this path (not the skip branch).
+  try {
+    const aliasNorms = normalizeAliasList((parsed.frontmatter as Record<string, unknown>).aliases);
+    await engine.setPageAliases(slug, sourceId ?? 'default', aliasNorms);
+  } catch (e) {
+    if (!isUndefinedTableError(e)) {
+      warnOncePerProcess(
+        'setPageAliases:failed',
+        `[import] page_aliases projection failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
 
   return { slug, status: 'imported', chunks: chunks.length, parsedPage };
 }

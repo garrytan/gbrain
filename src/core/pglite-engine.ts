@@ -47,7 +47,7 @@ import { normalizeWeightForStorage } from './takes-fence.ts';
 import { GBrainError, PAGE_SORT_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -1497,13 +1497,9 @@ export class PGLiteEngine implements BrainEngine {
          ORDER BY score DESC
          LIMIT $2
        ),
-       best_per_page AS (
-         SELECT DISTINCT ON (slug) *
-         FROM ranked
-         ORDER BY slug, score DESC
-       )
+       ${buildBestPerPagePoolCte('ranked')}
        SELECT * FROM best_per_page
-       ORDER BY score DESC
+       ORDER BY score DESC, page_id ASC, chunk_id ASC
        LIMIT $3 OFFSET $4`,
       params
     );
@@ -1612,13 +1608,9 @@ export class PGLiteEngine implements BrainEngine {
            ORDER BY score DESC
            LIMIT $3
          ),
-         best_per_page AS (
-           SELECT DISTINCT ON (slug) *
-           FROM ranked
-           ORDER BY slug, score DESC
-         )
+         ${buildBestPerPagePoolCte('ranked')}
          SELECT * FROM best_per_page
-         ORDER BY score DESC
+         ORDER BY score DESC, page_id ASC, chunk_id ASC
          LIMIT $4 OFFSET $5`,
         params,
       );
@@ -1759,7 +1751,10 @@ export class PGLiteEngine implements BrainEngine {
     // subquery's WHERE would lexically resolve back to `te.page_id` itself
     // and degrade to `te.page_id = te.page_id` (always true), making every
     // result stale=true. Codex caught this in adversarial review.
-    const sourceFactorCaseOnSlug = buildSourceFactorCase('hc.slug', boostMap, opts?.detail);
+    // Built on the bare `slug` output column: applied inside the `scored` CTE
+    // whose FROM is the single relation `hnsw_candidates`, so unqualified
+    // `slug` resolves cleanly (T1 per-page pool restructure).
+    const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
     const innerLimit = offset + Math.max(limit * 5, 100);
@@ -1838,23 +1833,33 @@ export class PGLiteEngine implements BrainEngine {
          WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
          ORDER BY cc.${col} <=> ${castSql}
          LIMIT $2
-       )
+       ),
+       -- score as a select-list expr; inner ORDER BY stays pure-distance so
+       -- the HNSW index is usable.
+       scored AS (
+         SELECT *, raw_score * ${sourceFactorCaseOnSlug} AS score
+         FROM hnsw_candidates
+       ),
+       -- T1 (retrieval-maxpool incident): collapse to the best chunk PER PAGE
+       -- over the full candidate set before the user LIMIT. Shared builder with
+       -- postgres-engine + the keyword path so they cannot drift.
+       ${buildBestPerPagePoolCte('scored')}
        SELECT
-         hc.slug, hc.page_id, hc.title, hc.type, hc.source_id,
-         hc.effective_date, hc.effective_date_source,
-         hc.chunk_id, hc.chunk_index, hc.chunk_text, hc.chunk_source,
-         hc.raw_score * ${sourceFactorCaseOnSlug} AS score,
-         CASE WHEN hc.updated_at < (
-           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = hc.page_id
+         bpp.slug, bpp.page_id, bpp.title, bpp.type, bpp.source_id,
+         bpp.effective_date, bpp.effective_date_source,
+         bpp.chunk_id, bpp.chunk_index, bpp.chunk_text, bpp.chunk_source,
+         bpp.score,
+         CASE WHEN bpp.updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = bpp.page_id
          ) THEN true ELSE false END AS stale
-       FROM hnsw_candidates hc
+       FROM best_per_page bpp
        -- v0.41.13: stable tiebreaker. When two chunks share a score (same
        -- source-prefix boost + same cosine distance, the basis-vector + same-
        -- source-prefix case in eval fixtures), older page_id wins. Without
        -- this, planner choice + index presence can flip ordering between
        -- master and feature branches that add unrelated indexes — see the
        -- pages_dedup_idx (v95) regression that motivated this.
-       ORDER BY score DESC, hc.page_id ASC, hc.chunk_id ASC
+       ORDER BY bpp.score DESC, bpp.page_id ASC, bpp.chunk_id ASC
        LIMIT $3
        OFFSET $4`,
       params
@@ -4513,6 +4518,48 @@ export class PGLiteEngine implements BrainEngine {
       if (isUndefinedTableError(e)) return slug;
       throw e;
     }
+  }
+
+  async resolveAliases(
+    aliasNorms: string[],
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<Map<string, Array<{ slug: string; source_id: string }>>> {
+    const out = new Map<string, Array<{ slug: string; source_id: string }>>();
+    if (!aliasNorms || aliasNorms.length === 0) return out;
+    const sources =
+      opts?.sourceIds && opts.sourceIds.length > 0
+        ? opts.sourceIds
+        : opts?.sourceId
+          ? [opts.sourceId]
+          : null;
+    let q = `SELECT alias_norm, slug, source_id FROM page_aliases WHERE alias_norm = ANY($1::text[])`;
+    const params: unknown[] = [aliasNorms];
+    if (sources) {
+      params.push(sources);
+      q += ` AND source_id = ANY($2::text[])`;
+    }
+    q += ` ORDER BY alias_norm, source_id, slug`;
+    const { rows } = await this.db.query(q, params);
+    for (const r of rows as Array<{ alias_norm: string; slug: string; source_id: string }>) {
+      const list = out.get(r.alias_norm) ?? [];
+      if (!list.some(x => x.slug === r.slug && x.source_id === r.source_id)) {
+        list.push({ slug: r.slug, source_id: r.source_id });
+      }
+      out.set(r.alias_norm, list);
+    }
+    return out;
+  }
+
+  async setPageAliases(slug: string, sourceId: string, aliasNorms: string[]): Promise<void> {
+    const uniq = Array.from(new Set(aliasNorms.filter(a => a.length > 0)));
+    await this.db.query(`DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2`, [sourceId, slug]);
+    if (uniq.length === 0) return;
+    await this.db.query(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug)
+       SELECT $1, a, $2 FROM unnest($3::text[]) AS a
+       ON CONFLICT (source_id, alias_norm, slug) DO NOTHING`,
+      [sourceId, slug, uniq],
+    );
   }
 
   // Config

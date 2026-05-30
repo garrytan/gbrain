@@ -130,6 +130,57 @@ export function buildVisibilityClause(pageAlias: string, sourceAlias: string): s
 }
 
 // ============================================================
+// Per-page max-pool (T1 / D7) — single source of truth
+// ============================================================
+
+/**
+ * Build the `best_per_page` pooling CTE: collapse a chunk-grain candidate set
+ * to ONE row per page — the page's highest-scoring chunk.
+ *
+ * This is the per-page max-pool that `searchKeyword` always had and that
+ * `searchVector` was missing (the retrieval-maxpool incident: a page got
+ * represented by whichever chunk survived the candidate cut, not its best
+ * chunk). Both engines (postgres + pglite) AND both retrieval paths
+ * (keyword + vector) consume this one builder so they cannot drift — the
+ * recurring postgres/pglite parity bug class this repo guards against.
+ *
+ * Contract on the candidate CTE (`candidateCte`):
+ *   - exposes `source_id` + `slug` columns (the composite per-page collapse key)
+ *   - exposes a numeric `score` column (the value pooled on)
+ *   - exposes `page_id` and `chunk_id` columns (deterministic tiebreak)
+ *
+ * Collapse key is COMPOSITE `(source_id, slug)`, NOT slug alone — two pages
+ * with the same slug in different sources are distinct pages (the federated
+ * multi-source contract; matches dedup.ts's pageKey and the v0.34.1 source
+ * isolation seal). Pooling on bare slug would collapse them and drop the
+ * neighbor-source page before ranking. `COALESCE(source_id, 'default')` keeps
+ * pre-v0.17 single-source rows (null source_id) collapsing correctly.
+ *
+ * Determinism: `DISTINCT ON` keeps the FIRST row per key under the ORDER BY,
+ * so the tiebreak `… score DESC, page_id ASC, chunk_id ASC` makes the surviving
+ * chunk fully deterministic when two chunks of the same page tie on score
+ * (basis-vector eval fixtures, planner-independent — same rationale as the
+ * v0.41.13 searchVector stable tiebreaker).
+ *
+ * Pooling happens over the FULL candidate set (`innerLimit` rows) BEFORE the
+ * user-facing `LIMIT`, so a page's best chunk can't be truncated out by
+ * weaker chunks of OTHER pages occupying the early `LIMIT` slots — the vector
+ * path now returns N distinct pages (each by best chunk), not N chunks that
+ * collapse to fewer pages downstream.
+ *
+ * @param candidateCte — name of the upstream CTE to pool (e.g. `'hnsw_candidates'`,
+ *                        `'ranked_chunks'`). Engine-supplied identifier, never user input.
+ * @returns raw SQL fragment: `best_per_page AS ( ... )` (no trailing comma)
+ */
+export function buildBestPerPagePoolCte(candidateCte: string): string {
+  return `best_per_page AS (
+        SELECT DISTINCT ON (COALESCE(source_id, 'default'), slug) *
+        FROM ${candidateCte}
+        ORDER BY COALESCE(source_id, 'default'), slug, score DESC, page_id ASC, chunk_id ASC
+      )`;
+}
+
+// ============================================================
 // v0.29.1 — Recency component SQL builder
 // ============================================================
 
