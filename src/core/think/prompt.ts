@@ -52,19 +52,19 @@ Hard rules:
   rather than asserting it as established. Confidence is part of the data.
 - If two takes contradict (different holders, opposite claims), surface BOTH in a "Conflicts"
   section. Never silently pick one.
-- If you cannot answer because the brain doesn't contain the relevant data, say so in the
-  "Gaps" section. List the specific missing pieces. Do not make up answers.
+- If the brain doesn't contain data needed to answer, do NOT make it up. Record each
+  missing piece in the structured "gaps" array (below), not as a section in the answer prose.
 - Never instruct the user (no "you should" / "I recommend X"). The brain reports; the user decides.
 - Output MUST be valid JSON matching the schema below. No prose outside JSON.
 
 Output schema:
 {
-  "answer": "<markdown body. Inline citations like [slug#row] or [slug]. Sections: Answer, Conflicts (optional), Gaps>",
+  "answer": "<markdown body. Inline citations like [slug#row] or [slug]. Sections: Answer, Conflicts (optional). Do NOT add a Gaps section here — gaps belong in the gaps array.>",
   "citations": [
     {"page_slug": "people/alice-example", "row_num": 3, "citation_index": 1},
     {"page_slug": "companies/acme-example", "row_num": null, "citation_index": 2}
   ],
-  "gaps": ["specific missing data point 1", "specific missing data point 2"]
+  "gaps": ["a specific, self-contained missing-or-stale data point, citing the [slug] where relevant", "another specific gap"]
 }
 
 The "row_num" field is required for take citations and MUST be null for page-only citations.`;
@@ -83,7 +83,7 @@ export function buildThinkSystemPrompt(opts: ThinkSystemPromptOpts = {}): string
     lines.push(`\nThis is a temporal question. Order key claims chronologically when it helps the reader.`);
   }
   if (opts.willSave) {
-    lines.push(`\nThis synthesis will be persisted as a brain page. Aim for completeness — cover Answer, Conflicts, and Gaps thoroughly.`);
+    lines.push(`\nThis synthesis will be persisted as a brain page. Aim for completeness — cover the Answer and any Conflicts thoroughly, and list every missing piece in the structured "gaps" array.`);
   }
   if (opts.withCalibration) {
     lines.push(
@@ -92,7 +92,7 @@ export function buildThinkSystemPrompt(opts: ThinkSystemPromptOpts = {}): string
     lines.push(`- Name both the user's PRIOR (default reasoning) AND the COUNTER-PRIOR from their hedged-domain self.`);
     lines.push(`- Reference active bias tags by name when relevant ("this fits the over-confident-geography pattern").`);
     lines.push(`- Do NOT silently substitute the debiased answer. ALWAYS surface both priors transparently.`);
-    lines.push(`- Track-record sentences belong in a "Calibration" section in the answer body, between Conflicts and Gaps.`);
+    lines.push(`- Track-record sentences belong in a "Calibration" section in the answer body, after the Conflicts section (if present).`);
   }
   return lines.join('\n');
 }
