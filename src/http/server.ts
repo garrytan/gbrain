@@ -406,8 +406,8 @@ export interface HttpServeOptions {
   token?: string;
 }
 
-function ok(data: unknown, took_ms: number): Response {
-  return Response.json({ ok: true, took_ms, ...data as object });
+function ok(data: unknown, took_ms: number, headers?: Record<string, string>): Response {
+  return Response.json({ ok: true, took_ms, ...data as object }, { headers });
 }
 
 function err(code: string, message: string, status = 400, extra?: object): Response {
@@ -775,17 +775,63 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         }
         if (!page) return err('not_found', `Page not found: ${slug}`, 404);
 
-        // Prompt injection: scan compiled_truth + content for injection patterns
         const pageObj = page as Record<string, unknown>;
+
+        // ETag + Last-Modified for conditional requests (If-None-Match / If-Modified-Since)
+        const contentHash = pageObj.content_hash as string | undefined;
+        const updatedAt = pageObj.updated_at as string | Date | undefined;
+        const etag = contentHash ? `"${contentHash}"` : undefined;
+        const lastModified = updatedAt ? new Date(updatedAt).toUTCString() : undefined;
+        if (etag && req.headers.get('If-None-Match') === etag) {
+          return new Response(null, { status: 304 });
+        }
+        if (lastModified && req.headers.get('If-Modified-Since') === lastModified) {
+          return new Response(null, { status: 304 });
+        }
+        const cacheHeaders: Record<string, string> = {};
+        if (etag) cacheHeaders['ETag'] = etag;
+        if (lastModified) cacheHeaders['Last-Modified'] = lastModified;
+
+        // Prompt injection: scan compiled_truth + content for injection patterns
         const rawContent = (pageObj.compiled_truth as string | undefined) ?? (pageObj.content as string | undefined) ?? '';
         const { content: sanitized, injection_detected } = sanitizePageContent(rawContent);
         if (injection_detected) {
           const safePageObj = { ...pageObj } as Record<string, unknown>;
           if ('compiled_truth' in safePageObj) safePageObj.compiled_truth = sanitized;
           if ('content' in safePageObj) safePageObj.content = sanitized;
-          return ok({ page: safePageObj, injection_detected: true, warning: 'Prompt injection patterns were stripped from this page content.' }, Date.now() - t0);
+          return ok({ page: safePageObj, injection_detected: true, warning: 'Prompt injection patterns were stripped from this page content.' }, Date.now() - t0, cacheHeaders);
         }
-        return ok({ page }, Date.now() - t0);
+        return ok({ page }, Date.now() - t0, cacheHeaders);
+      }
+
+      // ── POST /pages/batch  { slugs: string[] } ───────────────────────────
+      // Fetch up to 20 pages in one round-trip. Each slug resolved independently;
+      // missing slugs return { slug, found: false } — never errors the whole batch.
+      if (path === '/pages/batch' && req.method === 'POST') {
+        let body: Record<string, unknown>;
+        try { body = await req.json(); } catch { return err('invalid_json', 'Body must be JSON'); }
+        const slugs = body.slugs;
+        if (!Array.isArray(slugs) || slugs.length === 0) return err('missing_param', 'slugs must be a non-empty array');
+        if (slugs.length > 20) return err('too_large', 'slugs array exceeds 20-item limit');
+
+        const results = await Promise.all(slugs.map(async (slug: string) => {
+          try {
+            const page = await getPageOp.handler(ctx, { slug });
+            if (!page) return { slug, found: false };
+            const pageObj = page as Record<string, unknown>;
+            const raw = (pageObj.compiled_truth as string | undefined) ?? (pageObj.content as string | undefined) ?? '';
+            const { content: sanitized, injection_detected } = sanitizePageContent(raw);
+            if (injection_detected) {
+              const safe = { ...pageObj } as Record<string, unknown>;
+              if ('compiled_truth' in safe) safe.compiled_truth = sanitized;
+              if ('content' in safe) safe.content = sanitized;
+              return { slug, found: true, page: safe, injection_detected: true };
+            }
+            return { slug, found: true, page };
+          } catch { return { slug, found: false }; }
+        }));
+
+        return ok({ results, requested: slugs.length, found: results.filter(r => r.found).length }, Date.now() - t0);
       }
 
       // ── GET /pages?domain=...&limit=N ────────────────────────────────────
@@ -977,6 +1023,8 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
       if (path === '/topics' && req.method === 'GET') {
         const sampleSize = Math.min(Math.max(parseInt(url.searchParams.get('samples') ?? '3', 10), 0), 10);
         const minCount = Math.max(parseInt(url.searchParams.get('min_count') ?? '1', 10), 1);
+        const pageNum = Math.max(parseInt(url.searchParams.get('page') ?? '1', 10), 1);
+        const pageSize = Math.min(parseInt(url.searchParams.get('page_size') ?? '30', 10), 100);
 
         const slugs = await engine.getAllSlugs();
         const buckets = new Map<string, string[]>();
@@ -988,7 +1036,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           bucket.push(slug);
         }
 
-        const topics = [...buckets.entries()]
+        const allTopics = [...buckets.entries()]
           .filter(([, list]) => list.length >= minCount)
           .map(([name, list]) => ({
             name,
@@ -997,7 +1045,15 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           }))
           .sort((a, b) => b.count - a.count);
 
-        return ok({ topics, total_pages: slugs.size }, Date.now() - t0);
+        const totalTopics = allTopics.length;
+        const totalPages = Math.ceil(totalTopics / pageSize);
+        const topics = allTopics.slice((pageNum - 1) * pageSize, pageNum * pageSize);
+
+        return ok({
+          topics,
+          total_pages: slugs.size,
+          pagination: { page: pageNum, page_size: pageSize, total_topics: totalTopics, total_pages_count: totalPages },
+        }, Date.now() - t0);
       }
 
       // ── GET /schema — return-shape contract for agents ────────────────────

@@ -216,19 +216,22 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql.begin(async sql => {
       await sql`SET LOCAL statement_timeout = '8s'`;
       if (hasCJK) {
-        // pg_trgm path: search title + compiled_truth + chunk_text via ILIKE
+        // pg_trgm path: search title + slug + compiled_truth + chunk_text via ILIKE.
+        // best_chunks uses LEFT JOIN so pages without chunks (pending embed) still surface.
         return await sql`
           WITH matched_pages AS (
             SELECT DISTINCT ON (p.slug)
               p.id, p.slug, p.title, p.type,
               CASE
                 WHEN p.title ILIKE ${likePattern} THEN 1.0
+                WHEN p.slug  ILIKE ${likePattern} THEN 0.9
                 WHEN p.compiled_truth ILIKE ${likePattern} THEN 0.7
                 ELSE 0.5
               END AS score
             FROM pages p
             LEFT JOIN content_chunks cc ON cc.page_id = p.id
             WHERE p.title ILIKE ${likePattern}
+               OR p.slug  ILIKE ${likePattern}
                OR p.compiled_truth ILIKE ${likePattern}
                OR cc.chunk_text ILIKE ${likePattern}
               ${type ? sql`AND p.type = ${type}` : sql``}
@@ -242,12 +245,14 @@ export class PostgresEngine implements BrainEngine {
               mp.slug, mp.id as page_id, mp.title, mp.type, mp.score,
               cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
             FROM matched_pages mp
-            JOIN content_chunks cc ON cc.page_id = mp.id
-            ${detailLow ? sql`WHERE cc.chunk_source = 'compiled_truth'` : sql``}
+            LEFT JOIN content_chunks cc ON cc.page_id = mp.id
+              ${detailLow ? sql`AND cc.chunk_source = 'compiled_truth'` : sql``}
             ORDER BY mp.slug, cc.chunk_index
           )
-          SELECT slug, page_id, title, type, chunk_id, chunk_index, chunk_text, chunk_source, score,
-            false AS stale
+          SELECT slug, page_id, title, type, chunk_id, chunk_index,
+            COALESCE(chunk_text, title) AS chunk_text,
+            COALESCE(chunk_source, 'compiled_truth') AS chunk_source,
+            score, false AS stale
           FROM best_chunks
           ORDER BY score DESC
         `;
