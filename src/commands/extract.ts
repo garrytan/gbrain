@@ -327,6 +327,15 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
     entries.push({ slug, date: match[1], source: match[2].trim(), summary: match[3].trim() });
   }
 
+  // Format 1b: Simple timeline bullet — - YYYY-MM-DD: Summary
+  // Many hand-authored brain pages use this lightweight form under
+  // "## Timeline"; treating it as timeline data fixes coverage without
+  // forcing noisy rewrites into the heavier source-delimited format.
+  const simpleBulletPattern = /^-\s+(\d{4}-\d{2}-\d{2})\s*:\s*(.+)$/gm;
+  while ((match = simpleBulletPattern.exec(content)) !== null) {
+    entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim() });
+  }
+
   // Format 2: Header — ### YYYY-MM-DD — Title
   const headerPattern = /^###\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+)$/gm;
   while ((match = headerPattern.exec(content)) !== null) {
