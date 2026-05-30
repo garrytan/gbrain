@@ -23,6 +23,8 @@ import {
 } from '../core/brainstorm/orchestrator.ts';
 import { loadConfig } from '../core/config.ts';
 import { StructuredAgentError } from '../core/errors.ts';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { dirname, join, isAbsolute } from 'node:path';
 
 export interface BrainstormCliArgs {
   question?: string;
@@ -310,6 +312,15 @@ async function runBrainstormCli(
     // (when implemented) has the full set to re-score.
     const body = formatBrainstormMarkdown(result, { onlyPassed: false, includeMeta: true });
     const content = frontmatter + body;
+    // Persist to BOTH the DB page (queryable via `gbrain get`) and, when a
+    // local brain repo is configured, the advertised `wiki/ideas/<slug>.md`
+    // file on disk. Previously this only wrote the DB page while the help
+    // text + success message promised a `.md` file that never appeared — a
+    // silent "Saved to ..." lie when the DB write failed under PgBouncer or
+    // when the caller expected a committable file. Track each sink so the
+    // message is honest about where it actually landed.
+    let dbSaved = false;
+    let fileSaved: string | null = null;
     try {
       await engine.putPage(slug, {
         title: `${profile.label === 'lsd' ? 'LSD' : 'Brainstorm'}: ${parsed.question.slice(0, 100)}`,
@@ -326,10 +337,32 @@ async function runBrainstormCli(
         },
         timeline: '',
       });
-      console.log(`\n_Saved to \`${slug}\`._`);
+      dbSaved = true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`gbrain ${profile.label}: save failed: ${msg}`);
+      console.error(`gbrain ${profile.label}: DB save failed: ${msg}`);
+    }
+    try {
+      const repoPath = await engine.getConfig('sync.repo_path');
+      if (repoPath) {
+        const abs = isAbsolute(repoPath) ? repoPath : join(process.cwd(), repoPath);
+        const filePath = join(abs, `${slug}.md`);
+        await mkdir(dirname(filePath), { recursive: true });
+        await writeFile(filePath, content, 'utf8');
+        fileSaved = filePath;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`gbrain ${profile.label}: file save failed: ${msg}`);
+    }
+    if (dbSaved && fileSaved) {
+      console.log(`\n_Saved to DB page \`${slug}\` and file \`${fileSaved}\`._`);
+    } else if (dbSaved) {
+      console.log(`\n_Saved to DB page \`${slug}\` (no \`sync.repo_path\` set — skipped file write)._`);
+    } else if (fileSaved) {
+      console.log(`\n_Saved to file \`${fileSaved}\` (DB write failed — see error above)._`);
+    } else {
+      console.error(`gbrain ${profile.label}: save FAILED — neither DB page nor file was written. The idea is NOT persisted.`);
     }
   }
 }
