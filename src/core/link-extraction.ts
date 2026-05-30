@@ -488,11 +488,15 @@ const FOUNDED_RE = /\b(?:founded|co-?founded|started the company|incorporated|fo
 const ADVISES_RE = /\b(?:advises|advised|advisor (?:to|at|for|of)|advisory (?:board|role|position|capacity|engagement|partnership|contract|relationship|work)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board|in an? advisory (?:capacity|role|position)|as an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|board advisor|senior advisor)|(?:strategic|technical|security|product|industry|senior|board) advisor (?:to|at|for|of)|consults for|consulting role (?:at|with))\b/i;
 
 // Chinese link type patterns for CJK entity mentions.
-const CN_FOUNDED_RE = /(?:创立|创办|成立|创建|建立|开创|发起)(?:了|的)/;
-const CN_INVESTED_RE = /(?:投资|入股|融资|注资|参股)(?:了|的|了?于)/;
-const CN_ADVISES_RE = /(?:顾问|咨询|指导)(?:了|的)?/;
-const CN_WORKS_AT_RE = /(?:任职|就职|担任|供职|在.{0,10}(?:工作|上班|负责))(?:于|在|的)?/;
-const CN_CITED_RE = /(?:引用|援引|提到|提及|转述|摘录)(?:了|的|自)?/;
+// NOTE: These patterns are Chinese-only (zh). Japanese and Korean link
+// type extraction is not yet implemented. Entity NAME extraction in
+// by-mention.ts covers all three scripts (CJK = Chinese/Japanese/Korean)
+// via Unicode-aware tokenization.
+const ZH_FOUNDED_RE = /(?:创立|创办|成立|创建|建立|开创|发起)(?:了|的)/;
+const ZH_INVESTED_RE = /(?:投资|入股|融资|注资|参股)(?:了|的|了?于)/;
+const ZH_ADVISES_RE = /(?:顾问|咨询|指导)(?:了|的)?/;
+const ZH_WORKS_AT_RE = /(?:任职|就职|担任|供职|在.{0,10}(?:工作|上班|负责))(?:于|在|的)?/;
+const ZH_CITED_RE = /(?:引用|援引|提到|提及|转述|摘录)(?:了|的|自)?/;
 
 // Page-role detection: if the source page describes a partner/investor at
 // page level, that's a strong prior for outbound company refs being
@@ -548,11 +552,11 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   if (ADVISES_RE.test(context)) return 'advises';
   if (WORKS_AT_RE.test(context)) return 'works_at';
   // Chinese link type patterns
-  if (CN_FOUNDED_RE.test(context)) return 'founded';
-  if (CN_INVESTED_RE.test(context)) return 'invested_in';
-  if (CN_ADVISES_RE.test(context)) return 'advises';
-  if (CN_WORKS_AT_RE.test(context)) return 'works_at';
-  if (CN_CITED_RE.test(context)) return 'cited';
+  if (ZH_FOUNDED_RE.test(context)) return 'founded';
+  if (ZH_INVESTED_RE.test(context)) return 'invested_in';
+  if (ZH_ADVISES_RE.test(context)) return 'advises';
+  if (ZH_WORKS_AT_RE.test(context)) return 'works_at';
+  if (ZH_CITED_RE.test(context)) return 'cited';
   // Page-role prior: only fires for person -> company links. Concept pages
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning
