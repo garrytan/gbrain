@@ -58,6 +58,21 @@ describe('isRetryableConnError', () => {
     expect(isRetryableConnError(new Error('ECONNRESET'))).toBe(true);
   });
 
+  test('matches postgres.js CONNECTION_ENDED code (pooler-reaped socket)', () => {
+    // postgres.js raises this when writing to a connection the
+    // transaction-mode pooler already closed between statements — the
+    // root transient drop on long-lived cycle-lock refresh heartbeats.
+    expect(
+      isRetryableConnError(pgError('CONNECTION_ENDED', 'write CONNECTION_ENDED host:6543'))
+    ).toBe(true);
+  });
+
+  test('matches CONNECTION_ENDED via message when code is absent', () => {
+    expect(
+      isRetryableConnError(new Error('write CONNECTION_ENDED aws-1-us-east-1.pooler.supabase.com:6543'))
+    ).toBe(true);
+  });
+
   test('matches database-starting-up', () => {
     expect(
       isRetryableConnError(new Error('the database system is starting up'))

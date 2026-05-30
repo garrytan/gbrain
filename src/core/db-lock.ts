@@ -23,6 +23,21 @@
  */
 import { hostname } from 'os';
 import type { BrainEngine } from './engine.ts';
+import { withRetry } from './retry.ts';
+
+/**
+ * Resolve a best-effort reconnect callback for `withRetry`. `reconnect()`
+ * is a PostgresEngine-private method (not on the BrainEngine interface), so
+ * we duck-type it. Returns undefined for engines (PGLite) that don't expose
+ * it — withRetry then simply retries against the existing pool, which is the
+ * correct behavior for an in-process engine that can't lose a socket.
+ */
+function resolveReconnect(engine: BrainEngine): (() => Promise<void>) | undefined {
+  const maybe = engine as unknown as { reconnect?: () => Promise<void> };
+  return typeof maybe.reconnect === 'function'
+    ? () => maybe.reconnect!()
+    : undefined;
+}
 
 export interface DbLockHandle {
   id: string;
@@ -105,12 +120,35 @@ export async function tryAcquireDbLock(
         // v0.41.13.0: bump BOTH ttl_expires_at AND last_refreshed_at.
         // Without last_refreshed_at, --max-age would steal healthy locks
         // whose acquired_at is old but whose holder is alive and refreshing.
-        await sql`
-          UPDATE gbrain_cycle_locks
-            SET ttl_expires_at = NOW() + ${ttl}::interval,
-                last_refreshed_at = NOW()
-          WHERE id = ${lockId} AND holder_pid = ${pid}
-        `;
+        //
+        // The refresh tick fires every (TTL/6) ms (~5 min for the default
+        // 30-min cycle lock), but the read pool's `idle_timeout` is 20s, so
+        // the connection is ALWAYS reaped between ticks. Against a
+        // transaction-mode pooler (PgBouncer/Supavisor :6543) the reconnect
+        // can lose the race and postgres.js raises `write CONNECTION_ENDED`.
+        // An unhandled throw here trips withRefreshingLock's catch, sets
+        // healthOk=false, and makes the worker voluntarily release + exit —
+        // the observed every-~5-min "crash" loop. Wrap in withRetry so a
+        // reaped socket self-heals (rebuild the pool, retry) instead of
+        // killing the holder. Matches the engine-level batchRetry idiom
+        // (#1570) and the CONNECTION_ENDED matcher addition in this change.
+        await withRetry(
+          async () => {
+            await sql`
+              UPDATE gbrain_cycle_locks
+                SET ttl_expires_at = NOW() + ${ttl}::interval,
+                    last_refreshed_at = NOW()
+              WHERE id = ${lockId} AND holder_pid = ${pid}
+            `;
+          },
+          {
+            maxRetries: 3,
+            delayMs: 500,
+            delayMaxMs: 4000,
+            jitter: 'decorrelated',
+            reconnect: resolveReconnect(engine),
+          },
+        );
       },
       release: async () => {
         deregister();
@@ -592,7 +630,16 @@ async function engineSelectOne(engine: BrainEngine): Promise<void> {
   };
   if (engine.kind === 'postgres' && maybePG.sql) {
     const sql = maybePG.sql as any;
-    await sql`SELECT 1`;
+    // The heartbeat shares the read pool with refresh(), whose connection
+    // the transaction-mode pooler reaps between the ~5-min ticks. A reaped
+    // socket surfaces as `write CONNECTION_ENDED` — a FALSE wedge signal
+    // (the backend is healthy; only the idle connection died). Retrying
+    // once self-heals it so the heartbeat only fails on a genuinely
+    // unreachable Postgres, not on routine pooler idle-reaping.
+    await withRetry(
+      async () => { await sql`SELECT 1`; },
+      { maxRetries: 2, delayMs: 300, delayMaxMs: 2000, reconnect: resolveReconnect(engine) },
+    );
     return;
   }
   if (engine.kind === 'pglite' && maybePGLite.db) {
