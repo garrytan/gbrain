@@ -514,6 +514,14 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           ? { next_rotation_at: new Date(nextOtpRotationMs()).toISOString(),
               ms_until_rotation: nextOtpRotationMs() - Date.now() }
           : null;
+
+        // Last write time: query DB for most recently updated page
+        let last_write_at: string | null = null;
+        try {
+          const recent = await engine.listPages({ limit: 1 });
+          last_write_at = recent[0]?.updated_at ? new Date(recent[0].updated_at).toISOString() : null;
+        } catch { /* non-critical, skip */ }
+
         return ok({
           status: 'ok',
           engine: engine.kind,
@@ -522,6 +530,7 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           warm: firstQueryAt !== null,
           uptime_ms: Date.now() - SERVER_STARTED_AT,
           last_query_ago_ms: lastQueryAt ? Date.now() - lastQueryAt : null,
+          last_write_at,
           requests_total: requestsTotal,
           requests_today: requestsToday,
           otp: otpInfo,
