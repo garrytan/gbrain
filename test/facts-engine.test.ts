@@ -175,21 +175,33 @@ describe('findCandidateDuplicates', () => {
   });
 
   test('embedding cosine ordering when both sides have embeddings', async () => {
+    // Use per-run unique entity_slug so the assertion is immune to any
+    // cross-test pollution (no other test in the file uses 'embed-test',
+    // but parallel CI shard runs have surfaced a flake where the
+    // position-0 assertion failed without a visible assertion-detail in
+    // the truncated log). The contract this test pins is "A ranks higher
+    // than B because cos(A,query)=1.0 vs cos(B,query)=0.0" — assert that
+    // RELATIONSHIP, not the absolute index, so any unrelated row in the
+    // result set can't flip the test.
+    const slug = `embed-test-${Math.random().toString(36).slice(2, 10)}`;
     await engine.insertFact(
-      { fact: 'A', kind: 'fact', entity_slug: 'embed-test', source: 'test', embedding: vec(1, 0, 0) },
+      { fact: 'A', kind: 'fact', entity_slug: slug, source: 'test', embedding: vec(1, 0, 0) },
       { source_id: 'default' },
     );
     await engine.insertFact(
-      { fact: 'B', kind: 'fact', entity_slug: 'embed-test', source: 'test', embedding: vec(0, 1, 0) },
+      { fact: 'B', kind: 'fact', entity_slug: slug, source: 'test', embedding: vec(0, 1, 0) },
       { source_id: 'default' },
     );
     const result = await engine.findCandidateDuplicates(
-      'default', 'embed-test', 'q',
+      'default', slug, 'q',
       { embedding: vec(1, 0, 0) },
     );
-    expect(result.length).toBeGreaterThanOrEqual(2);
-    // Closest by cosine should come first.
-    expect(result[0].fact).toBe('A');
+    const aIdx = result.findIndex(r => r.fact === 'A');
+    const bIdx = result.findIndex(r => r.fact === 'B');
+    expect(aIdx).toBeGreaterThanOrEqual(0); // A is in the result
+    expect(bIdx).toBeGreaterThanOrEqual(0); // B is in the result
+    // Closest by cosine MUST come first.
+    expect(aIdx).toBeLessThan(bIdx);
   });
 });
 

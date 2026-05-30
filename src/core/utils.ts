@@ -193,6 +193,46 @@ export function isUndefinedColumnError(error: unknown, column: string): boolean 
   return message.includes(column) && /does not exist|no such column|undefined column/i.test(message);
 }
 
+/**
+ * v0.42 (T1 sibling): undefined-table predicate for defense-in-depth on
+ * pre-migration brains. Matches SQLSTATE `42P01` (postgres) plus the common
+ * "relation ... does not exist" / "no such table" message variants (PGLite +
+ * driver-wrapped paths). Use on read paths where a missing table should
+ * degrade to "no rows" rather than crash (e.g. resolveSlugWithAlias on
+ * pre-v104 brains, dangling_aliases doctor check on pre-v104 brains).
+ *
+ * Anything else falls through and caller MUST re-throw.
+ */
+export function isUndefinedTableError(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : '';
+  if (code === '42P01') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /relation .* does not exist|no such table|undefined table/i.test(message);
+}
+
+const _warnedKeys = new Set<string>();
+
+/**
+ * v0.42 (T2): emit a stderr warning at most once per process-key. Used by
+ * `resolveSlugWithAlias` to surface multi-source alias ambiguity without
+ * spamming hot paths.
+ *
+ * Test seam: `_resetWarnOnceForTests()` clears the set so per-process
+ * warn-once contracts can be reasserted across test cases.
+ */
+export function warnOncePerProcess(key: string, message: string): void {
+  if (_warnedKeys.has(key)) return;
+  _warnedKeys.add(key);
+  console.warn(message);
+}
+
+/** @internal test seam */
+export function _resetWarnOnceForTests(): void {
+  _warnedKeys.clear();
+}
+
 let _tryParseEmbeddingWarned = false;
 
 /**

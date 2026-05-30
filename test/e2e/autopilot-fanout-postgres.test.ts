@@ -144,7 +144,13 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     await seedSource('full-round-trip');
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
 
-    const ts = '2026-05-22T15:00:00.000Z';
+    // Use a recent (within-freshness-window) timestamp so the source
+    // classifies as fresh. Hardcoded dates rot — when this test was
+    // written, '2026-05-22T15:00:00.000Z' was 30 minutes ago and within
+    // the window. Two days later it's past the window and the source
+    // dispatches instead of being skipped, breaking the assertion on
+    // line below. Relative timestamp keeps the test valid forever.
+    const ts = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const updated = await engine.updateSourceConfig('full-round-trip', {
       last_full_cycle_at: ts,
     });

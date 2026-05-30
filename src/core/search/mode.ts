@@ -25,6 +25,32 @@
 
 import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
+import { getRecipe } from '../ai/recipes/index.ts';
+
+/**
+ * Look up the `reranker.default_timeout_ms` declared by the resolved
+ * reranker model's recipe touchpoint. Returns undefined when:
+ *   - modelStr is empty/null,
+ *   - the provider id doesn't resolve to a registered recipe,
+ *   - the recipe has no reranker touchpoint, or
+ *   - the touchpoint doesn't declare a default_timeout_ms.
+ *
+ * Used by `resolveSearchMode()` to slot the recipe default between the
+ * config-key override and the mode-bundle fallback for `reranker_timeout_ms`.
+ * Local rerankers (CPU-only llama.cpp + 4B+ cross-encoder) need >5s for
+ * first-call warmup; without this, the recipe field is dead because
+ * hybridSearch always passes the bundle's 5000ms value to gateway.rerank().
+ *
+ * Crosses a layer boundary (mode → recipes) deliberately and bounded:
+ * only the touchpoint timeout. Other touchpoint fields stay on the recipe.
+ */
+function lookupRerankerRecipeDefaultTimeout(modelStr: string | undefined): number | undefined {
+  if (!modelStr) return undefined;
+  const colon = modelStr.indexOf(':');
+  const providerId = colon === -1 ? modelStr : modelStr.slice(0, colon);
+  const recipe = getRecipe(providerId);
+  return recipe?.touchpoints?.reranker?.default_timeout_ms;
+}
 
 export type SearchMode = 'conservative' | 'balanced' | 'tokenmax';
 
@@ -462,6 +488,21 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     return bundle[key];
   };
 
+  // v0.40.6.1: `reranker_timeout_ms` resolution slots the resolved recipe's
+  // touchpoint default between override and bundle, so local rerankers
+  // (llama.cpp serving Qwen3-Reranker / self-hosted ZE on CPU) inherit
+  // their cold-start headroom without forcing users to discover the
+  // `search.reranker.timeout_ms` config key.
+  // Precedence: per-call > config override > recipe.touchpoints.reranker.default_timeout_ms > mode bundle.
+  const resolvedRerankerModel = pick('reranker_model');
+  const pickRerankerTimeoutMs = (): number => {
+    if (pc.reranker_timeout_ms !== undefined) return pc.reranker_timeout_ms;
+    if (ov.reranker_timeout_ms !== undefined) return ov.reranker_timeout_ms;
+    const recipeDefault = lookupRerankerRecipeDefaultTimeout(resolvedRerankerModel);
+    if (recipeDefault !== undefined) return recipeDefault;
+    return bundle.reranker_timeout_ms;
+  };
+
   return {
     cache_enabled: pick('cache_enabled'),
     cache_similarity_threshold: pick('cache_similarity_threshold'),
@@ -471,10 +512,10 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     expansion: pick('expansion'),
     searchLimit: pick('searchLimit'),
     reranker_enabled: pick('reranker_enabled'),
-    reranker_model: pick('reranker_model'),
+    reranker_model: resolvedRerankerModel,
     reranker_top_n_in: pick('reranker_top_n_in'),
     reranker_top_n_out: pick('reranker_top_n_out'),
-    reranker_timeout_ms: pick('reranker_timeout_ms'),
+    reranker_timeout_ms: pickRerankerTimeoutMs(),
     // v0.35.6.0 — floor-ratio resolved via the same pick chain.
     floor_ratio: pick('floor_ratio'),
     // v0.36 cross-modal knobs
@@ -569,7 +610,13 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // added under v=5 (per D8 sequencing — first to land claimed v=4; the
 // contextual-retrieval wave rebased to v=5). Mid-deploy hit-rate dip is
 // expected — clears within cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 5;
+//
+// v0.42 bump 5→6: alias_resolved_boost (T19, plan D6) adds a new post-fusion
+// stage. Results whose slug is a canonical_slug in slug_aliases get a
+// 1.05x multiplier. Cached pre-v0.42 entries don't reflect the boost so
+// must invalidate. Same one-time miss-spike pattern as prior bumps;
+// fills within cache.ttl_seconds (3600s default).
+export const KNOBS_HASH_VERSION = 6;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The

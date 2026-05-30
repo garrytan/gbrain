@@ -28,6 +28,9 @@ import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
+// v0.41.15.0 (T10, D9): per-batch parallel workers.
+import { runSlidingPool } from '../core/worker-pool.ts';
+import { resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 
 interface ReindexOpts {
   /** Cap total pages reindexed. Useful for triage runs on huge brains. */
@@ -44,6 +47,13 @@ interface ReindexOpts {
    * Useful for offline / no-API-key brains and for tests.
    */
   noEmbed?: boolean;
+  /**
+   * v0.41.15.0 (T10, D9): in-process per-batch parallel workers.
+   * Default 1. PGLite clamps to 1. Recommended 4-8 for large brains.
+   * Each worker calls importFromFile / importFromContent independently;
+   * the counters (reindexed/skipped/failed) are JS-single-thread atomic.
+   */
+  workers?: number;
 }
 
 export interface ReindexResult {
@@ -68,6 +78,10 @@ function parseArgs(args: string[]): ReindexOpts {
       if (Number.isFinite(v) && v > 0) out.limit = v;
     } else if (a === '--repo') {
       out.repoPath = args[++i];
+    } else if (a === '--workers' || a === '--concurrency') {
+      // v0.41.15.0 (T10, D9): per-batch parallel workers.
+      const v = parseInt(args[++i] ?? '', 10);
+      if (Number.isFinite(v) && v >= 1) out.workers = v;
     }
   }
   return out;
@@ -177,50 +191,49 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
     const batch = await readBatch(engine, batchSize);
     if (batch.length === 0) break;
 
-    for (const row of batch) {
-      reporter.tick();
-      try {
-        // Prefer importFromFile when we have a source_path AND the file
-        // still exists on disk — re-runs both the path-authoritative slug
-        // resolution AND the parseMarkdown pipeline on the real file.
-        // When the file is gone or we never recorded source_path (legacy
-        // rows pre-migration), fall back to importFromContent which uses
-        // the stored markdown body. importFromContent doesn't re-parse a
-        // frontmatter file, so timeline + tags don't refresh — accepted
-        // tradeoff for the post-upgrade sweep.
-        if (row.source_path && repoPath) {
-          const absPath = resolve(repoPath, row.source_path);
-          if (existsSync(absPath)) {
-            // importFromFile re-parses the markdown and calls importFromContent
-            // internally; we route through it with forceRechunk so the
-            // chunker-version bump actually applies (codex post-merge F1).
-            await importFromFile(engine, absPath, row.source_path, {
-              noEmbed: !!opts.noEmbed,
-              sourceId: row.source_id,
-              inferFrontmatter: false,
-              forceRechunk: true,
-            });
-            reindexed++;
-            continue;
+    // v0.41.15.0 (T10, D9): per-batch sliding pool. Counters are JS-
+    // single-thread atomic so reindexed++ / failed++ are race-free
+    // across workers.
+    const writersResolved = resolveWorkersWithClamp(
+      engine,
+      opts.workers,
+      'reindex',
+      batch.length,
+    );
+    await runSlidingPool({
+      items: batch,
+      workers: writersResolved.workers,
+      failureLabel: (row) => row.slug,
+      onItem: async (row) => {
+        reporter.tick();
+        try {
+          if (row.source_path && repoPath) {
+            const absPath = resolve(repoPath, row.source_path);
+            if (existsSync(absPath)) {
+              await importFromFile(engine, absPath, row.source_path, {
+                noEmbed: !!opts.noEmbed,
+                sourceId: row.source_id,
+                inferFrontmatter: false,
+                forceRechunk: true,
+              });
+              reindexed++;
+              return;
+            }
           }
+          // Fallback path: re-chunk stored compiled_truth in place.
+          await importFromContent(engine, row.slug, row.compiled_truth, {
+            sourceId: row.source_id,
+            noEmbed: !!opts.noEmbed,
+            forceRechunk: true,
+          });
+          reindexed++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`[reindex] ${row.slug}: ${msg}\n`);
+          failed++;
         }
-        // Fallback path: re-chunk the stored compiled_truth in place.
-        // forceRechunk bypasses the content_hash short-circuit so the bumped
-        // chunker actually applies — without this, every unchanged-source page
-        // is silently skipped and the version bump never reaches existing
-        // chunks (codex post-merge F1).
-        await importFromContent(engine, row.slug, row.compiled_truth, {
-          sourceId: row.source_id,
-          noEmbed: !!opts.noEmbed,
-          forceRechunk: true,
-        });
-        reindexed++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[reindex] ${row.slug}: ${msg}\n`);
-        failed++;
-      }
-    }
+      },
+    });
   }
 
   reporter.finish();

@@ -8,13 +8,18 @@ import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
-import { embedBatch, embedMultimodal } from './embedding.ts';
+import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
+import { assessContentSanity, ContentSanityBlockError } from './content-sanity.ts';
+import { loadOperatorLiterals } from './content-sanity-literals.ts';
+import { logContentSanityAssessment } from './audit/content-sanity-audit.ts';
+import { isEmbedSkipped, buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
+import { loadConfig, loadConfigWithEngine } from './config.ts';
 import {
   buildContextualPrefix,
   modeRequiresHaiku,
@@ -268,6 +273,112 @@ export async function importFromContent(
 
   const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
 
+  // v0.41 content-sanity gate. Runs AFTER parseMarkdown so the assessor
+  // sees the parsed body (compiled_truth + timeline), title, and
+  // frontmatter; runs BEFORE the hash compute so a soft-block that
+  // mutates frontmatter (sets `embed_skip`) reaches the existing hash
+  // calculation and the page write doesn't short-circuit on hash equality.
+  //
+  // Three outcomes:
+  //   - kill-switch active (`content_sanity.disabled === true` /
+  //     `GBRAIN_NO_SANITY=1`) → assess + audit with bypass flag, emit
+  //     loud stderr per offending ingest, but let everything through.
+  //   - hard-block (junk pattern OR operator literal) → THROW
+  //     ContentSanityBlockError. Existing exception flow at every
+  //     wrapper site (import.ts errors counter, put_page MCP envelope,
+  //     sync.ts:929 failure record) fires correctly through this single
+  //     throw point. classifyErrorCode picks up the PAGE_JUNK_PATTERN
+  //     prefix in the error message and groups in sync-failures.jsonl.
+  //   - soft-block (oversize WITHOUT junk-pattern hit) → mutate
+  //     frontmatter to embed `embed_skip` marker. Existing chunking
+  //     block guards on `isEmbedSkipped(frontmatter)` so chunks stays
+  //     empty; the existing `tx.deleteChunks` at the empty-chunks
+  //     branch fires to purge old chunks (D9 transition invariant).
+  //
+  // Effective config: env > file > DB > defaults. The DB-plane lift
+  // adds ~4 SQL round-trips per import (one per content_sanity.* key);
+  // acceptable for the per-page cost since the gate runs at most once
+  // per ingest. Power-users with 10K-file syncs who care about this
+  // overhead can set the keys via env vars instead and skip the DB read.
+  {
+    const baseCfg = loadConfig();
+    let effectiveCfg = baseCfg;
+    try {
+      // loadConfigWithEngine merges DB-plane content_sanity.* on top
+      // of file/env. Wrapped in try/catch so a transient engine error
+      // doesn't kill the import — the gate falls back to file/env
+      // values (which include defaults via the assessor itself).
+      effectiveCfg = await loadConfigWithEngine(engine, baseCfg);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[gbrain] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
+    }
+    const cs = effectiveCfg?.content_sanity ?? {};
+    // GBRAIN_NO_SANITY=1 fast-path: loadConfig() returns null when
+    // there's no `~/.gbrain/config.json` AND no DATABASE_URL env var
+    // (e.g., fresh PGLite-only setups, hermetic tests). The merged
+    // content_sanity block never carries `disabled` in that case. Read
+    // the kill-switch env directly so it works regardless of whether
+    // any other config plumbing fired. Same direct-env-check pattern
+    // applies to the patterns_enabled flip below.
+    const sanityDisabled =
+      cs.disabled === true || process.env.GBRAIN_NO_SANITY === '1';
+    const extra_literals =
+      cs.junk_patterns_enabled !== false && !sanityDisabled ? loadOperatorLiterals() : [];
+    const sanityResult = assessContentSanity({
+      compiled_truth: parsed.compiled_truth,
+      timeline: parsed.timeline ?? '',
+      title: parsed.title,
+      bytes_warn: cs.bytes_warn,
+      bytes_block: cs.bytes_block,
+      extra_literals,
+    });
+    // Audit BEFORE branching so hard-block / soft-block / warn / bypass
+    // ALL get a row in the JSONL. The audit module's own gate
+    // suppresses no-op rows (bytes below warn, no patterns, no bypass).
+    logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+      bypass: sanityDisabled,
+    });
+
+    if (sanityDisabled) {
+      // Kill-switch active: loud stderr per offending ingest. Operator
+      // explicitly opted into the bypass and gets noisy feedback every
+      // time it fires so they remember the gate is off.
+      if (sanityResult.shouldHardBlock || sanityResult.shouldSkipEmbed) {
+        process.stderr.write(
+          `[gbrain] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
+        );
+      }
+    } else {
+      if (sanityResult.shouldHardBlock) {
+        // Single throw point. Existing exception flow at every wrapper
+        // site fires correctly. Caller-side semantics:
+        //   - import.ts → runImport's catch increments errors → non-zero exit
+        //   - put_page MCP → operations.ts try/catch → OperationError envelope
+        //   - sync.ts → existing catch at :929 → records failure with classified code
+        throw new ContentSanityBlockError(sanityResult);
+      }
+      if (sanityResult.shouldSkipEmbed) {
+        // Soft-block: mutate frontmatter so the embed_skip marker
+        // persists into the page write. The existing chunking block
+        // below guards on isEmbedSkipped → chunks stays empty →
+        // existing tx.deleteChunks fires to purge old chunks
+        // (D9 transition invariant — old chunks were searchable
+        // against stale content; deleting them maintains the
+        // invariant that embed_skip means "no live chunks").
+        parsed.frontmatter[EMBED_SKIP_KEY] = buildEmbedSkipMarker(sanityResult.bytes);
+        process.stderr.write(
+          `[gbrain] content-sanity soft-block: ${slug} (${sanityResult.bytes} bytes) — page lands, embedding skipped\n`,
+        );
+      } else if (sanityResult.reasons.includes('oversize_warn')) {
+        // Warn tier: page lands normally; lint surface picks up too.
+        process.stderr.write(
+          `[gbrain] content-sanity warn: ${slug} (${sanityResult.bytes} bytes) — exceeds warn threshold, consider splitting\n`,
+        );
+      }
+    }
+  }
+
   // v0.39.3.0 CV8 — DB content_hash excludes timestamp-bearing frontmatter
   // keys so identical body content from `gbrain capture` (which stamps
   // `captured_at` and `ingested_at` per call) produces a stable hash.
@@ -314,24 +425,94 @@ export async function importFromContent(
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
 
-  // Chunk compiled_truth and timeline
-  const chunks: ChunkInput[] = [];
-  if (parsed.compiled_truth.trim()) {
-    for (const c of chunkText(parsed.compiled_truth)) {
-      chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
+  // v0.41.13 (#1309) — identity-based cross-slug dedup pre-check.
+  //
+  // Catches the overlapping-ingest-roots bug class: when a user runs
+  // `gbrain import /vault/Subdir/` then later `gbrain import /vault/`,
+  // the same file is ingested under two different slugs (e.g.
+  // `vault/subdir/note` and `vault/note`). The slug-only check above
+  // misses it because the slugs differ; this check identifies the true
+  // duplicate by content_hash OR external frontmatter.id (granola UUID,
+  // ULID, etc.).
+  //
+  // Posture (codex review):
+  //   - SKIP only when frontmatter.id matches (true external duplicate).
+  //   - WARN-ALWAYS when content_hash matches but identity differs (two
+  //     intentional pages that happen to share text — templates, daily
+  //     logs). User decides whether to investigate.
+  //   - FAIL CLOSED on lookup error: a DB throw means we cannot verify
+  //     uniqueness, so throw rather than silently allow a duplicate.
+  //
+  // Soft-deleted rows are excluded at the engine layer (`deleted_at IS NULL`)
+  // so a tombstoned page doesn't block a legitimate re-import.
+  // Test doubles that don't implement `findDuplicatePage` fall through
+  // via the `?.` shape — no failure mode for fake engines.
+  const fmId = (parsed.frontmatter as Record<string, unknown> | undefined)?.id;
+  const fmIdStr = typeof fmId === 'string' && fmId.length > 0 ? fmId : null;
+  if (!opts.forceRechunk && engine.findDuplicatePage) {
+    let dup: { slug: string; id: number } | null = null;
+    try {
+      dup = await engine.findDuplicatePage(sourceId ?? 'default', {
+        hash,
+        frontmatterId: fmIdStr,
+      });
+    } catch (err) {
+      throw new Error(
+        `[import] dedup pre-check failed for ${opts.sourcePath ?? slug}: ` +
+        `${(err as Error).message}. Re-run import after DB recovery.`
+      );
     }
-  }
-  if (parsed.timeline?.trim()) {
-    for (const c of chunkText(parsed.timeline)) {
-      chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
+    if (dup && dup.slug !== slug) {
+      // Look up the duplicate page so we can compare frontmatter.id.
+      const dupPage = await engine.getPage(dup.slug, sourceId ? { sourceId } : undefined);
+      const dupFmId = (dupPage?.frontmatter as Record<string, unknown> | undefined)?.id;
+      const dupFmIdStr = typeof dupFmId === 'string' && dupFmId.length > 0 ? dupFmId : null;
+      const sameExternalId = fmIdStr !== null && dupFmIdStr === fmIdStr;
+      if (sameExternalId) {
+        // True duplicate (same external ID). Skip + log to stderr.
+        process.stderr.write(
+          `[import] skipping ${opts.sourcePath ?? slug}: identical to ${dup.slug} ` +
+          `(frontmatter.id=${fmIdStr}) in source ${sourceId ?? 'default'}. ` +
+          `Pass --force-rechunk to override.\n`
+        );
+        return { slug: dup.slug, status: 'skipped', chunks: 0, parsedPage };
+      }
+      // Same content_hash, different (or missing) frontmatter.id.
+      // Surface a warning but proceed with the insert — they may be
+      // legitimate independent pages that happen to share text.
+      process.stderr.write(
+        `[import] WARNING: ${opts.sourcePath ?? slug} shares content_hash with ${dup.slug} ` +
+        `(${hash.slice(0, 8)}) but has different frontmatter.id. Indexing both.\n`
+      );
     }
   }
 
-  // v0.20.0 Cathedral II Layer 8 D2 — extract fenced code blocks from
-  // compiled_truth as first-class code chunks.
-  if (parsed.compiled_truth.trim()) {
-    const fenceChunks = await extractFencedChunks(parsed.compiled_truth, chunks.length);
-    chunks.push(...fenceChunks);
+  // Chunk compiled_truth and timeline.
+  // v0.41 content-sanity soft-block: if the gate marked this page as
+  // embed-skipped (oversize without junk-pattern), skip chunking
+  // entirely. The empty-chunks branch in the transaction below
+  // triggers tx.deleteChunks(slug) which purges any pre-existing
+  // chunks (D9 transition invariant: embed_skip means no live chunks).
+  const chunks: ChunkInput[] = [];
+  const embedSkipped = isEmbedSkipped(parsed.frontmatter);
+  if (!embedSkipped) {
+    if (parsed.compiled_truth.trim()) {
+      for (const c of chunkText(parsed.compiled_truth)) {
+        chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
+      }
+    }
+    if (parsed.timeline?.trim()) {
+      for (const c of chunkText(parsed.timeline)) {
+        chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
+      }
+    }
+
+    // v0.20.0 Cathedral II Layer 8 D2 — extract fenced code blocks from
+    // compiled_truth as first-class code chunks.
+    if (parsed.compiled_truth.trim()) {
+      const fenceChunks = await extractFencedChunks(parsed.compiled_truth, chunks.length);
+      chunks.push(...fenceChunks);
+    }
   }
 
   // Embed BEFORE the transaction (external API call).
@@ -477,6 +658,13 @@ export async function importFromContent(
 
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
+      // v0.41.31: stamp embedding provenance when this import actually
+      // embedded (not --no-embed), so a later model/dims swap is detectable
+      // as stale via embed --stale. The deferred/backfill + per-slug embed
+      // paths stamp too; this covers the inline import/sync path.
+      if (!opts.noEmbed) {
+        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+      }
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
       await tx.deleteChunks(slug, txOpts);
@@ -787,6 +975,14 @@ export async function importCodeFile(
 
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
+      // v0.41.31: stamp embedding provenance ONLY when every chunk was
+      // freshly embedded with the current model this call (no reuse-by-hash
+      // carrying old-model vectors). Mixed pages stay unstamped rather than
+      // falsely marked current; `reindex --code --force` / `embed --stale`
+      // handle the swap for those.
+      if (!opts.noEmbed && needsEmbedIndexes.length === chunks.length) {
+        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+      }
     } else {
       await tx.deleteChunks(slug, txOpts);
     }

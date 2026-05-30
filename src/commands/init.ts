@@ -11,6 +11,20 @@ import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
 
 export async function runInit(args: string[]) {
+  // Help guard: cli.ts only routes --help to printOpHelp() for shared-op
+  // commands; CLI_ONLY commands (init, embed, etc.) fall through to their
+  // handler with --help in argv. Without this guard, `gbrain init --help`
+  // proceeds into the smart-detection branch below, scans cwd for .md files,
+  // and on a directory with 1000+ files (e.g. $HOME for someone whose brain
+  // and notes share a root) silently overwrites the existing Supabase config
+  // with a fresh PGLite brain at ~/.gbrain/brain.pglite. Confirmed in the
+  // wild — flipped a working `engine: postgres` config to `engine: pglite`
+  // on a brain with 10K+ pages. Help should never mutate state.
+  if (args.includes('--help') || args.includes('-h')) {
+    printInitHelp();
+    return;
+  }
+
   const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
   const isMcpOnly = args.includes('--mcp-only');
@@ -24,6 +38,15 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  // v0.42 (T17): pack selection on fresh installs. New brains default to
+  // gbrain-base-v2 (the 15-type canonical taxonomy); --schema-pack
+  // gbrain-base opts back to the legacy 24-type pack for users who don't
+  // want the new taxonomy on day one. Existing brains stay on whatever
+  // schema_pack their config.json already says.
+  const schemaPackIdx = args.indexOf('--schema-pack');
+  const schemaPack = schemaPackIdx !== -1 && args[schemaPackIdx + 1]
+    ? args[schemaPackIdx + 1]
+    : 'gbrain-base-v2';
 
   // Multi-topology v1: thin-client init. Skips local engine entirely; writes
   // remote_mcp config that the CLI dispatch guard reads to refuse DB-bound ops.
@@ -98,7 +121,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts });
+    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack });
   }
 
   // Supabase/Postgres mode
@@ -117,7 +140,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts, schemaPack });
 }
 
 interface ResolveAIOptionsArgs {
@@ -771,6 +794,9 @@ async function initPGLite(opts: {
   apiKey: string | null;
   customPath: string | null;
   aiOpts?: ResolvedAIOptions;
+  /** v0.42 (T17): schema pack to default. Stored as config.schema_pack
+   *  so loadActivePack's homeConfig tier resolves it. */
+  schemaPack?: string;
 }) {
   const dbPath = opts.customPath || gbrainPath('brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
@@ -920,8 +946,17 @@ async function initPGLite(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      // v0.42 (T17): default new brains to the schema_pack selected at init
+      // time. Existing config.schema_pack survives (...existingFile spread)
+      // unless explicitly overridden by --schema-pack on re-init.
+      ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
     saveConfig(config);
+    if (opts.schemaPack) {
+      process.stderr.write(
+        `[init] Using schema pack: ${opts.schemaPack} (override with --schema-pack <name>)\n`,
+      );
+    }
 
     // T6 (D7): post-init subagent-Anthropic caveat. Fires for both auto-pick
     // and picker paths so users see the implication of running on a chat
@@ -959,6 +994,11 @@ async function initPGLite(opts: {
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');
       printAdvisoryIfRecommended({ version: VERSION, context: 'init' });
+
+      // v0.41.18.0 (A4 + A18 + A20, T14): post-initSchema onboard nudge.
+      // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
+      const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
+      await runInitNudge(engine);
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -970,6 +1010,8 @@ async function initPostgres(opts: {
   jsonOutput: boolean;
   apiKey: string | null;
   aiOpts?: ResolvedAIOptions;
+  /** v0.42 (T17): schema pack to default. */
+  schemaPack?: string;
 }) {
   const { databaseUrl } = opts;
 
@@ -1143,9 +1185,16 @@ async function initPostgres(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      // v0.42 (T17): same schema_pack default as PGLite path.
+      ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
+    if (opts.schemaPack) {
+      process.stderr.write(
+        `[init] Using schema pack: ${opts.schemaPack} (override with --schema-pack <name>)\n`,
+      );
+    }
 
     // T6 (D7): post-init subagent-Anthropic caveat.
     if (opts.aiOpts?.chat_model && !opts.aiOpts.chat_model.startsWith('anthropic:') && !process.env.ANTHROPIC_API_KEY) {
@@ -1177,6 +1226,11 @@ async function initPostgres(opts: {
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');
       printAdvisoryIfRecommended({ version: VERSION, context: 'init' });
+
+      // v0.41.18.0 (A4 + A18 + A20, T14): post-initSchema onboard nudge.
+      // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
+      const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
+      await runInitNudge(engine);
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -1400,4 +1454,49 @@ export function reportModStatus(): void {
   console.log('Resolver: skills/RESOLVER.md');
   console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
   console.log('');
+}
+
+function printInitHelp() {
+  console.log(`
+gbrain init — initialize a brain (PGLite or Supabase Postgres)
+
+USAGE
+  gbrain init [flags]
+
+ENGINE SELECTION (mutually exclusive)
+  --pglite              Use embedded PGLite (zero-config, default for <1000 .md files)
+  --supabase            Use Supabase Postgres (recommended for 1000+ files)
+  --url <URL>           Use a manual Postgres connection string
+  --mcp-only            Thin-client mode: connect to a remote gbrain MCP, no local engine
+
+OPTIONS
+  --force               Overwrite an existing config (gated by default)
+  --non-interactive     Don't prompt; use defaults
+  --migrate-only        Apply pending schema migrations against the configured engine
+                        without re-saving config (used by post-upgrade and orchestrators)
+  --json                JSON output for status reporting
+  --path <DIR>          Override default brain path (PGLite only)
+  --key <APIKEY>        Provide an API key non-interactively (Supabase only)
+  --embedding-model <PROVIDER:MODEL>
+                        e.g. openai:text-embedding-3-large, voyage:voyage-multimodal-3
+  --model <PROVIDER>    Shorthand: pick recipe default for a provider
+  --embedding-dimensions <N>
+                        Embedding dimensions (must match the model)
+  --expansion-model <PROVIDER:MODEL>
+                        Model for query expansion (default: anthropic:claude-haiku)
+  --chat-model <PROVIDER:MODEL>
+                        Default subagent driver (v0.27+)
+
+EXAMPLES
+  gbrain init --pglite                      # Local-only, no API keys
+  gbrain init --supabase                    # Interactive Supabase setup
+  gbrain init --url postgresql://...        # Use a custom Postgres
+  gbrain init --mcp-only --url https://...  # Thin-client mode
+
+NOTES
+  - Bare \`gbrain init\` in a directory with 1000+ .md files defaults to Supabase
+    interactive setup. With <1000 files (or with --pglite explicitly), defaults
+    to PGLite at ~/.gbrain/brain.pglite.
+  - Existing config is preserved unless --force is passed.
+`.trim());
 }

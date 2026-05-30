@@ -487,9 +487,27 @@ export async function scanBrainSources(
             dbPageCount = null;
           } else {
             // Race COUNT against the deadline so a hung query can't eat the budget.
+            //
+            // Boundary overshoot (+1ms): the post-await deadline check at line
+            // ~512 uses `Date.now() >= deadline`. setTimeout fires AT OR AFTER
+            // the requested delay, so in theory the check always passes. In
+            // practice on heavily-loaded CI runners (8 parallel shards × 4
+            // concurrent test files = ~32 concurrent bun processes) we saw
+            // intermittent failures where the timer callback resolved
+            // microseconds BEFORE the wall-clock boundary, leaving Date.now()
+            // a tick below deadline and the skip-check evaluating false. The
+            // src-a scan then ran on a populated dir before src-b's
+            // between-source check caught up — causing
+            // `firstSource.status === 'skipped'` to receive 'scanned'.
+            //
+            // Adding 1ms guarantees the timer fires past the deadline by at
+            // least one millisecond regardless of runner timer drift. Cost is
+            // 1ms additional wall-clock latency on hung COUNT queries, which
+            // is operationally negligible. Flake repro:
+            // https://github.com/garrytan/gbrain/actions/runs/77611667786
             dbPageCount = await Promise.race([
               opts.dbPageCountForSource(src.id),
-              new Promise<null>(resolve => setTimeout(() => resolve(null), remainingMs)),
+              new Promise<null>(resolve => setTimeout(() => resolve(null), remainingMs + 1)),
             ]);
           }
         } else {

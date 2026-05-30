@@ -33,6 +33,10 @@ export interface SourceMetrics {
   failed_jobs_24h: number;
   /** Waiting + active + delayed jobs (sync OR embed-backfill) for this source. */
   queue_depth: number;
+  /** v0.41.31: embed-backfill jobs specifically active right now. */
+  backfill_active: number;
+  /** v0.41.31: embed-backfill jobs queued (waiting/delayed/waiting-children). */
+  backfill_queued: number;
   tracked_branch: string | null;
   priority_label: PriorityLabel;
   /** Webhook configured? (true iff config.webhook_secret is set.) */
@@ -131,7 +135,7 @@ export async function computeAllSourceMetrics(
     const cfg = parseSourceConfig(src.config);
     const pages = pageCounts.get(src.id) ?? 0;
     const chunkStats = chunkCounts.get(src.id) ?? { total: 0, embedded: 0 };
-    const jobStats = jobCounts.get(src.id) ?? { failed_24h: 0, queue_depth: 0 };
+    const jobStats = jobCounts.get(src.id) ?? { failed_24h: 0, queue_depth: 0, backfill_active: 0, backfill_queued: 0 };
 
     const embedCoverage = chunkStats.total === 0
       ? 100
@@ -155,6 +159,8 @@ export async function computeAllSourceMetrics(
       lag_seconds: lagSeconds,
       failed_jobs_24h: jobStats.failed_24h,
       queue_depth: jobStats.queue_depth,
+      backfill_active: jobStats.backfill_active,
+      backfill_queued: jobStats.backfill_queued,
       tracked_branch: typeof cfg.tracked_branch === 'string' ? cfg.tracked_branch : null,
       priority_label: resolvePriorityLabel(src.id, src.config),
       webhook_configured: typeof cfg.webhook_secret === 'string' && cfg.webhook_secret.length > 0,
@@ -189,21 +195,30 @@ async function chunkCountsBySource(engine: BrainEngine): Promise<Map<string, { t
   return m;
 }
 
-async function jobCountsBySource(engine: BrainEngine): Promise<Map<string, { failed_24h: number; queue_depth: number }>> {
+type JobStats = { failed_24h: number; queue_depth: number; backfill_active: number; backfill_queued: number };
+
+async function jobCountsBySource(engine: BrainEngine): Promise<Map<string, JobStats>> {
   // Pre-v0.11 brains don't have minion_jobs; return empty map.
   try {
-    const rows = await engine.executeRaw<{ source_id: string; failed_24h: number; queue_depth: number }>(
+    const rows = await engine.executeRaw<{ source_id: string; failed_24h: number; queue_depth: number; backfill_active: number; backfill_queued: number }>(
       `SELECT data->>'sourceId' AS source_id,
               COUNT(*) FILTER (WHERE status IN ('failed','dead') AND created_at > NOW() - INTERVAL '24 hours')::int AS failed_24h,
-              COUNT(*) FILTER (WHERE status IN ('waiting','active','delayed'))::int AS queue_depth
+              COUNT(*) FILTER (WHERE status IN ('waiting','active','delayed'))::int AS queue_depth,
+              COUNT(*) FILTER (WHERE name = 'embed-backfill' AND status = 'active')::int AS backfill_active,
+              COUNT(*) FILTER (WHERE name = 'embed-backfill' AND status IN ('waiting','delayed','waiting-children'))::int AS backfill_queued
          FROM minion_jobs
         WHERE name IN ('sync','embed-backfill')
           AND data->>'sourceId' IS NOT NULL
         GROUP BY data->>'sourceId'`,
     );
-    const m = new Map<string, { failed_24h: number; queue_depth: number }>();
+    const m = new Map<string, JobStats>();
     for (const r of rows) {
-      m.set(r.source_id, { failed_24h: Number(r.failed_24h), queue_depth: Number(r.queue_depth) });
+      m.set(r.source_id, {
+        failed_24h: Number(r.failed_24h),
+        queue_depth: Number(r.queue_depth),
+        backfill_active: Number(r.backfill_active),
+        backfill_queued: Number(r.backfill_queued),
+      });
     }
     return m;
   } catch {

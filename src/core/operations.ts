@@ -10,9 +10,7 @@ import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
-import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
-import { mkdirSync, writeFileSync, existsSync, statSync } from 'fs';
-import { dirname } from 'path';
+import { writePageThrough } from './write-through.ts';
 import { hybridSearch, hybridSearchCached } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
@@ -467,12 +465,19 @@ const get_page: Operation = {
     // the cross-source view, preserving pre-v0.31.8 behavior. MCP callers
     // (stdio + HTTP) populate ctx.sourceId via the transport layer.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // v0.41.13 #1436: fuzzy resolveSlugs ALSO needs source scope — pre-fix
+    // it was unscoped, so a remote `get_page` with `fuzzy: true` could
+    // return candidates from sources outside ctx.auth.allowedSources /
+    // ctx.sourceId. sourceScopeOpts(ctx) is the canonical precedence
+    // ladder (federated array > scalar > nothing) shared with every other
+    // read-side handler.
+    const fuzzyScope = sourceScopeOpts(ctx);
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
-      const candidates = await ctx.engine.resolveSlugs(slug);
+      const candidates = await ctx.engine.resolveSlugs(slug, fuzzyScope);
       if (candidates.length === 1) {
         page = await ctx.engine.getPage(candidates[0], { includeDeleted, ...sourceOpts });
         resolved_slug = candidates[0];
@@ -534,7 +539,7 @@ const get_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries.',
+  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
@@ -708,38 +713,20 @@ const put_page: Operation = {
     const isSandboxSubagent = ctx.viaSubagent === true
       && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
     if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent) {
-      try {
-        const repoPath = await ctx.engine.getConfig('sync.repo_path');
-        if (!repoPath) {
-          writeThrough = { written: false, skipped: 'no_repo_configured' };
-        } else if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
-          writeThrough = { written: false, skipped: 'repo_not_found' };
-        } else {
-          const sourceId = ctx.sourceId ?? 'default';
-          const writtenPage = await ctx.engine.getPage(result.slug, { sourceId });
-          if (writtenPage) {
-            const tags = await ctx.engine.getTags(result.slug, { sourceId });
-            const provenanceVia = ctx.remote === false ? 'put_page' : 'mcp:put_page';
-            const md = serializePageToMarkdown(writtenPage, tags, {
-              frontmatterOverrides: {
-                ingested_via: provenanceVia,
-                ingested_at: new Date().toISOString(),
-                source_kind: provenanceVia,
-              },
-            });
-            const filePath = resolvePageFilePath(repoPath as string, result.slug, sourceId);
-            mkdirSync(dirname(filePath), { recursive: true });
-            writeFileSync(filePath, md, 'utf8');
-            writeThrough = { written: true, path: filePath };
-          } else {
-            writeThrough = { written: false, skipped: 'page_not_found_after_write' };
-          }
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        ctx.logger.warn(`[put_page] write-through failed for ${result.slug}: ${msg}`);
-        writeThrough = { written: false, error: msg };
-      }
+      const sourceId = ctx.sourceId ?? 'default';
+      const provenanceVia = ctx.remote === false ? 'put_page' : 'mcp:put_page';
+      // Shared canonical write-through (also used by `gbrain brainstorm/lsd
+      // --save`). Renders the file from the saved DB row and writes it
+      // atomically; never throws (failures land in skipped/error).
+      writeThrough = await writePageThrough(ctx.engine, result.slug, {
+        sourceId,
+        frontmatterOverrides: {
+          ingested_via: provenanceVia,
+          ingested_at: new Date().toISOString(),
+          source_kind: provenanceVia,
+        },
+        logger: ctx.logger,
+      });
     } else if (isSandboxSubagent) {
       writeThrough = { written: false, skipped: 'subagent_sandbox' };
     } else if (ctx.dryRun) {
@@ -800,7 +787,10 @@ const put_page: Operation = {
               summary: e.summary,
               detail: e.detail || '',
             }));
-            const created = await ctx.engine.addTimelineEntriesBatch(batch);
+            // v0.41.18.0: engine self-retries on Supavisor circuit-breaker
+            // recovery. auditSite label routes the audit JSONL emission so
+            // operators can attribute losses to the agent-write path.
+            const created = await ctx.engine.addTimelineEntriesBatch(batch, { auditSite: 'mcp.put_page.autolink' });
             autoTimeline = { created };
           } else {
             autoTimeline = { created: 0 };
@@ -1923,6 +1913,74 @@ const get_brain_identity: Operation = {
 };
 
 /**
+ * v0.41.19.0 — `gbrain status` thin-client surface.
+ *
+ * Returns a snapshot of sync freshness + last cycle state for thin-client
+ * `gbrain status` callers. Per D2/D10 in the plan:
+ *
+ *   - Scope: admin (NOT localOnly). The op exposes operational state
+ *     including sync timestamps and cycle metadata. Locking it to admin
+ *     matches the `run_doctor` posture and prevents future feature creep
+ *     (adding locks/workers/queue counters) from quietly leaking ops state
+ *     to read-scoped clients.
+ *
+ *   - Payload: `{schema_version: 1, sync, cycle}` ONLY. Locks, Workers,
+ *     Queue, and Autopilot sections are deliberately omitted from the
+ *     remote payload — they are local-host concerns that thin-client
+ *     callers shouldn't see at all (and the local `gbrain status` renders
+ *     them as "N/A on remote brain" instead of pretending they exist).
+ *
+ *   - The local CLI composes the same data plus the local-only sections
+ *     directly (no MCP round-trip when running against ~/.gbrain).
+ */
+const get_status_snapshot: Operation = {
+  name: 'get_status_snapshot',
+  description: 'Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle. Admin-scope.',
+  params: {},
+  handler: async (ctx) => {
+    const { buildSyncStatusReport } = await import('../commands/sync.ts');
+    const { buildCycleSnapshot } = await import('../commands/status.ts');
+    // Pull sources first (handles brains with zero declared sources too).
+    let sources: Array<{ id: string; name: string; local_path: string | null; config: Record<string, unknown> }> = [];
+    try {
+      const rows = await ctx.engine.executeRaw<{
+        id: string;
+        name: string;
+        local_path: string | null;
+        config: Record<string, unknown> | null;
+      }>(
+        `SELECT id, name, local_path, config FROM sources WHERE COALESCE(archived, FALSE) = FALSE ORDER BY id`,
+      );
+      sources = rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        local_path: r.local_path,
+        config: r.config ?? {},
+      }));
+    } catch {
+      // Pre-v0.26.5 brains may lack the `archived` column; degrade to all rows.
+      const rows = await ctx.engine.executeRaw<{
+        id: string;
+        name: string;
+        local_path: string | null;
+        config: Record<string, unknown> | null;
+      }>(`SELECT id, name, local_path, config FROM sources ORDER BY id`);
+      sources = rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        local_path: r.local_path,
+        config: r.config ?? {},
+      }));
+    }
+    const sync = await buildSyncStatusReport(ctx.engine, sources);
+    const cycle = await buildCycleSnapshot(ctx.engine);
+    return { schema_version: 1 as const, sync, cycle };
+  },
+  scope: 'admin',
+  localOnly: false,
+};
+
+/**
  * Multi-topology v1 (Tier B): structured doctor report for remote callers.
  *
  * First read-only diagnostic op exposed over HTTP MCP. Wraps the focused
@@ -2681,7 +2739,16 @@ const find_orphans: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { findOrphans } = await import('../commands/orphans.ts');
-    return findOrphans(ctx.engine, { includePseudo: (p.include_pseudo as boolean) || false });
+    // v0.41.29.0 (Codex F8): scope by the caller's source (ctx.sourceId /
+    // ctx.auth.allowedSources) via the canonical sourceScopeOpts ladder.
+    // Pre-fix, find_orphans returned brain-wide orphans regardless of a
+    // source-bound OAuth client's scope — a read leak in the v0.34.1
+    // source-isolation class. Local CLI callers route through `gbrain
+    // orphans --source` instead (ctx.remote === false → empty scope here).
+    return findOrphans(ctx.engine, {
+      includePseudo: (p.include_pseudo as boolean) || false,
+      ...sourceScopeOpts(ctx),
+    });
   },
   cliHints: { name: 'orphans', hidden: true },
 };
@@ -4164,6 +4231,112 @@ const reload_schema_pack: Operation = {
   },
 };
 
+// v0.41.18.0 (A7 + T16, codex finding #5): MCP op for federated / thin-client
+// brain installs to drive `gbrain onboard --auto` over MCP. Admin scope
+// (NOT localOnly) so remote agents authenticated via OAuth can probe
+// brain health + submit auto-eligible remediation handlers.
+//
+// Critical security gate (codex #5): admin scope alone is NOT sufficient
+// to submit handlers in PROTECTED_JOB_NAMES (synthesize, patterns,
+// consolidate, extract-takes-from-pages, contextual_reindex_per_chunk).
+// Without this gate, an admin-scoped OAuth token would bypass the same
+// guard that `submit_job` enforces. The new NAMED scope
+// `run_protected_onboard` MUST be granted IN ADDITION TO admin for any
+// protected child handler to fire.
+//
+// Behavior:
+//   - mode='check' (default): returns the OnboardReport JSON envelope,
+//     never submits jobs. Admin scope sufficient.
+//   - mode='auto':            submits auto_apply tier. Admin + non-protected
+//                             handlers only.
+//   - mode='auto-with-prompt': submits auto_apply + prompt_required tier.
+//                             Same protection check.
+//
+// Any LLM-bearing handler the plan would have submitted gets filtered out
+// unless the caller has run_protected_onboard. Filtered items appear in
+// the response with status='skipped_missing_scope' so the caller knows
+// what they would have gotten with the right grants.
+const run_onboard: Operation = {
+  name: 'run_onboard',
+  description: 'Probe brain health + optionally submit onboard remediations. Admin scope required. Protected handlers (LLM-bearing) require run_protected_onboard scope ADDITIONALLY.',
+  params: {
+    mode: { type: 'string', description: "'check' (default), 'auto', or 'auto-with-prompt'" },
+    target_score: { type: 'number', description: 'Target brain_score (default 90)' },
+    max_usd: { type: 'number', description: 'USD cap for autopilot path (required for auto modes)' },
+  },
+  mutating: true,
+  scope: 'admin',
+  handler: async (ctx, p) => {
+    const mode = (typeof p.mode === 'string' ? p.mode : 'check') as 'check' | 'auto' | 'auto-with-prompt';
+    const targetScore = typeof p.target_score === 'number' ? p.target_score : 90;
+    const maxUsd = typeof p.max_usd === 'number' ? p.max_usd : undefined;
+
+    const { computeRemediationPlan, runRemediation } = await import('./remediation/index.ts');
+    const { runAllOnboardChecks } = await import('./onboard/checks.ts');
+    const { buildOnboardReport } = await import('./onboard/render.ts');
+
+    // Per A26: source-scope via sourceScopeOpts(ctx). The recommendation
+    // planner is brain-wide today; future extension can scope by reading
+    // ctx.sourceId / ctx.auth.allowedSources for per-source plans.
+
+    let extraRemediations: import('./remediation-step.ts').RemediationStep[] = [];
+    try {
+      const checkResults = await runAllOnboardChecks(ctx.engine);
+      extraRemediations = checkResults.flatMap((r) => r.remediations);
+    } catch {
+      // Fail-open per A19 — return plan without extras rather than error.
+    }
+
+    // 'check' mode: just return the plan + JSON envelope. No submission.
+    if (mode === 'check') {
+      const plan = await computeRemediationPlan(ctx.engine, { targetScore, extraRemediations });
+      const report = buildOnboardReport(plan);
+      return report;
+    }
+
+    // 'auto' and 'auto-with-prompt' modes: require --max-usd per A12 + A20
+    // safety posture (cron-safety; refuses surprise spend).
+    if (maxUsd === undefined) {
+      throw new OperationError('invalid_params', `mode='${mode}' requires max_usd (cron-safety cap)`);
+    }
+
+    // Critical T16 + codex #5 security gate: filter out PROTECTED_JOB_NAMES
+    // unless the caller has the run_protected_onboard scope IN ADDITION
+    // to admin. Admin alone is insufficient.
+    const grantedScopes = ctx.auth?.scopes ?? [];
+    const canRunProtected = grantedScopes.includes('run_protected_onboard');
+    const { isProtectedJobName } = await import('./minions/protected-names.ts');
+
+    const skippedMissingScope: Array<{ id: string; job: string; reason: string }> = [];
+    const allowedExtras = extraRemediations.filter((r) => {
+      if (canRunProtected) return true;
+      if (isProtectedJobName(r.job)) {
+        skippedMissingScope.push({ id: r.id, job: r.job, reason: 'requires run_protected_onboard scope' });
+        return false;
+      }
+      return true;
+    });
+
+    // Run remediation with filtered extras. Hooks emit nothing — MCP
+    // returns structured result. Per A23 client_id attribution: stamp
+    // job.data.client_id on each submission so the spend chain (T10)
+    // attributes correctly. The library doesn't do this today; the
+    // upstream submit-side gating in submit_job filters protected names
+    // for ctx.remote !== false callers, so even if MCP run_onboard had a
+    // typo, the underlying queue.add would reject. Defense-in-depth.
+    const result = await runRemediation(
+      ctx.engine,
+      { targetScore, maxUsd },
+      {},
+    );
+
+    return {
+      ...result,
+      skipped_missing_scope: skippedMissingScope,
+    };
+  },
+};
+
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
@@ -4183,6 +4356,8 @@ export const operations: Operation[] = [
   get_stats, get_health, run_doctor, get_versions, revert_version,
   // v0.31.1 (Issue #734): thin-client banner identity packet (read-scope, banner-only)
   get_brain_identity,
+  // v0.41.19.0: thin-client `gbrain status` payload (admin-scope, sync + cycle only)
+  get_status_snapshot,
   // Sync
   sync_brain,
   // Raw data
@@ -4232,6 +4407,8 @@ export const operations: Operation[] = [
   schema_stats, schema_lint, schema_graph, schema_explain_type,
   schema_review_orphans,
   schema_apply_mutations, reload_schema_pack,
+  // v0.41.18.0 (T16, A7, codex #5)
+  run_onboard,
 ];
 
 export const operationsByName = Object.fromEntries(

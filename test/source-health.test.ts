@@ -167,6 +167,24 @@ describe('computeAllSourceMetrics', () => {
     expect(result.find((m) => m.source_id === 'other')!.total_pages).toBe(1);
   });
 
+  test('v0.41.31: embed-backfill active/queued counts per source (CLI BACKFILL column)', async () => {
+    // 2 queued + 1 active embed-backfill for default; a non-backfill 'sync'
+    // job must NOT inflate the backfill counts (only the generic queue_depth).
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (name, status, data) VALUES
+         ('embed-backfill', 'waiting', '{"sourceId":"default"}'::jsonb),
+         ('embed-backfill', 'waiting', '{"sourceId":"default"}'::jsonb),
+         ('embed-backfill', 'active',  '{"sourceId":"default"}'::jsonb),
+         ('sync',           'waiting', '{"sourceId":"default"}'::jsonb)`,
+    );
+    const sources = await loadAllSources(engine);
+    const dflt = (await computeAllSourceMetrics(engine, sources)).find((m) => m.source_id === 'default')!;
+    expect(dflt.backfill_active).toBe(1);
+    expect(dflt.backfill_queued).toBe(2);
+    // generic queue_depth includes the sync job too (4 total waiting/active).
+    expect(dflt.queue_depth).toBe(4);
+  });
+
   test('webhook_configured reflects config.webhook_secret presence', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name, config) VALUES ('webhooky', 'webhooky', '{"federated":true,"webhook_secret":"x","github_repo":"a/b"}'::jsonb)`,

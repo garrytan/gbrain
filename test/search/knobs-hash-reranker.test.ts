@@ -43,7 +43,7 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 5 (1→2 reranker; 2→3 floor_ratio + cross-modal + column; 3→4 v0.40.4 graph_signals + schema_pack; 4→5 v0.40.3.0 contextual_retrieval)', () => {
+  test('version is 6 (1→2 reranker; 2→3 floor_ratio + cross-modal + column; 3→4 graph_signals + schema_pack; 4→5 contextual_retrieval; 5→6 v0.41.22 alias_resolved boost)', () => {
     // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
     // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
     // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation).
@@ -52,7 +52,10 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // graph-off; cross-pack contamination structurally impossible).
     // v0.40.3.0 (D8): 4→5 to fold contextual_retrieval + kill switch,
     // sequenced behind salem's v=4 graph-signals.
-    expect(KNOBS_HASH_VERSION).toBe(5);
+    // v0.41.22.0 (type-unification): 5→6 to fold the alias_resolved
+    // post-fusion boost. Cache rows written before the boost stage
+    // cannot leak past the new stage.
+    expect(KNOBS_HASH_VERSION).toBe(6);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

@@ -44,7 +44,20 @@ export const ALL_PAGE_TYPES: readonly string[] = [
   'person', 'company', 'deal', 'yc', 'civic', 'project', 'concept',
   'source', 'media', 'writing', 'analysis', 'guide', 'hardware',
   'architecture', 'meeting', 'note', 'email', 'slack', 'calendar-event',
+  // v0.41.11+ — `conversation` (imported chat/transcript pages, lives
+  // under conversations/) and `atom` (smallest extractable claim unit,
+  // lives under atoms/). Both promoted into the gbrain-base seed list
+  // so they share the universal validation surface with the rest of
+  // the base types; their pack entries are declared in
+  // src/core/schema-pack/base/gbrain-base.yaml.
+  'conversation', 'atom',
   'code', 'image', 'synthesis',
+  // v0.42 — `extract_receipt` pages record extraction-run outcomes as
+  // first-class brain memory. Slug-prefix `extracts/`. Demoted in search
+  // via DEFAULT_SOURCE_BOOSTS (factor 0.3) and excluded from extraction
+  // loops via the dream_generated:true + type:extract_receipt belt-and-
+  // suspenders pattern per plan D-EXTRACT-19.
+  'extract_receipt',
 ] as const;
 
 /**
@@ -632,6 +645,14 @@ export interface SearchResult {
    *  Undefined when no reranker fired. The raw reranker relevance score
    *  is separately stamped as `rerank_score` for back-compat. */
   reranker_delta?: number;
+  /**
+   * v0.42 (T19, plan D6) — multiplier applied by applyAliasResolvedBoost
+   * (1.0 = unchanged; default 1.05x). Fires when the result's slug is
+   * a canonical_slug in slug_aliases — the page is the authoritative
+   * version of 1+ aliases. Signals "user explicitly disambiguated this
+   * as canonical" and lets canonicals outrank fuzzy matches.
+   */
+  alias_resolved_boost?: number;
 }
 
 /**

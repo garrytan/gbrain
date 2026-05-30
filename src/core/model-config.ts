@@ -21,6 +21,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { splitProviderModelId } from './model-id.ts';
 
 export type ModelTier = 'utility' | 'reasoning' | 'deep' | 'subagent';
 
@@ -47,13 +48,18 @@ export interface ResolveModelOpts {
   fallback: string;
 }
 
-/** Default aliases shipped in code. Users override via `models.aliases.<name>` config. */
+/** Default aliases shipped in code. Users override via `models.aliases.<name>` config.
+ *  Values include the `provider:` prefix so resolved model strings always
+ *  carry an explicit provider — required by the v0.40.8+ subagent queue's
+ *  classifyCapabilities() validation. Bare model ids (e.g. `claude-opus-4-7`)
+ *  cause `resolveRecipe()` to throw "unknown provider" and the queue rejects
+ *  the submit. */
 export const DEFAULT_ALIASES: Record<string, string> = {
-  opus:   'claude-opus-4-7',
-  sonnet: 'claude-sonnet-4-6',
-  haiku:  'claude-haiku-4-5-20251001',
-  gemini: 'gemini-3-pro',
-  gpt:    'gpt-5',
+  opus:   'anthropic:claude-opus-4-7',
+  sonnet: 'anthropic:claude-sonnet-4-6',
+  haiku:  'anthropic:claude-haiku-4-5-20251001',
+  gemini: 'google:gemini-3-pro',
+  gpt:    'openai:gpt-5',
 };
 
 /**
@@ -66,10 +72,10 @@ export const DEFAULT_ALIASES: Record<string, string> = {
  * Users override via `gbrain config set models.tier.<tier> <model>`.
  */
 export const TIER_DEFAULTS: Record<ModelTier, string> = {
-  utility:   'claude-haiku-4-5-20251001',
-  reasoning: 'claude-sonnet-4-6',
-  deep:      'claude-opus-4-7',
-  subagent:  'claude-sonnet-4-6',
+  utility:   'anthropic:claude-haiku-4-5-20251001',
+  reasoning: 'anthropic:claude-sonnet-4-6',
+  deep:      'anthropic:claude-opus-4-7',
+  subagent:  'anthropic:claude-sonnet-4-6',
 };
 
 /**
@@ -84,16 +90,18 @@ export const TIER_DEFAULTS: Record<ModelTier, string> = {
  */
 export function isAnthropicProvider(modelString: string): boolean {
   if (!modelString) return false;
-  const trimmed = modelString.trim();
-  // `provider:model` form: check provider prefix.
-  const colon = trimmed.indexOf(':');
-  if (colon !== -1) {
-    return trimmed.slice(0, colon).trim().toLowerCase() === 'anthropic';
+  // v0.41.21.0: route through splitProviderModelId so slash form
+  // (`anthropic/claude-sonnet-4-6`) also classifies as Anthropic.
+  // Pre-fix the inline `:`-only split silently returned false for slash
+  // form → subagent guard bypass → silent fallback to TIER_DEFAULTS.
+  const { provider, model } = splitProviderModelId(modelString);
+  if (provider !== null) {
+    return provider.trim().toLowerCase() === 'anthropic';
   }
-  // Bare model id: known Anthropic models start with `claude-`. Conservative:
-  // we'd rather warn-on-Anthropic-typo than silently route gpt-5 to the
-  // subagent loop.
-  return trimmed.toLowerCase().startsWith('claude-');
+  // Bare model id (no separator): known Anthropic models start with `claude-`.
+  // Conservative: we'd rather warn-on-Anthropic-typo than silently route
+  // gpt-5 to the subagent loop.
+  return model.toLowerCase().startsWith('claude-');
 }
 
 const _subagentTierWarningsEmitted = new Set<string>();

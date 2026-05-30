@@ -158,6 +158,10 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // pages_generation_idx (CREATE INDEX ON pages (generation)) so bootstrap
   // probes guard pre-v91 brains.
   { kind: 'column', table: 'pages', column: 'generation' },
+  // v0.41.31 (v108) — pages.embedding_signature TEXT for real stale
+  // semantics. No SCHEMA_SQL index references it; bootstrap probe is
+  // defense-in-depth (and satisfies the MIGRATIONS ADD COLUMN coverage gate).
+  { kind: 'column', table: 'pages', column: 'embedding_signature' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -719,6 +723,18 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // only via the eval-replay CLI, not via SQL filters that would force a
   // bootstrap probe.
   'eval_candidates.schema_pack_per_source',
+  // v0.41 (migration v94) — minions cathedral budget columns. Same precedent
+  // as facts.claim_metric and friends: column-only additions on `minion_jobs`,
+  // no forward-reference index in PGLITE_SCHEMA_SQL (the partial indexes
+  // `minion_jobs_budget_owner_idx` + `minion_jobs_budget_root_owner_idx`
+  // live INSIDE the same v93 migration, not in the schema blob), and
+  // downstream callers explicitly handle NULL via the Eng D10 NULL-bypass
+  // branch in budget-tracker (jobs without `budget_owner_job_id` skip
+  // reservation entirely). Old brains pre-v93 silently get NULL on these
+  // columns; the budget enforcement path treats NULL as "no budget."
+  'minion_jobs.budget_remaining_cents',
+  'minion_jobs.budget_owner_job_id',
+  'minion_jobs.budget_root_owner_id',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {

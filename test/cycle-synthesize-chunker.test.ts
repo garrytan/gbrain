@@ -174,3 +174,60 @@ describe('rewriteChunkedSlug — D6 zero-Sonnet-trust slug rewrite', () => {
     expect(rewriteChunkedSlug('', 'abc123', 0)).toBe('');
   });
 });
+
+describe('splitTranscriptByBudget — UTF-16 surrogate-pair safety (v0.42.0.0)', () => {
+  // 🚀 = U+1F680 (surrogate pair: 0xD83D 0xDE80; JS string length = 2).
+  // 𠀀 = U+20000 (non-BMP CJK: 0xD840 0xDC00).
+  const ROCKET = '🚀';
+  const NBMP_HAN = '𠀀';
+
+  test('hard-split lands at emoji boundary — pair not orphaned', () => {
+    // Build a content with NO `## Topic:`, NO `---`, NO `\n` past the
+    // first half so all three boundary tiers fail and findBoundary falls
+    // through to the surrogate-safe hard-split. Emoji at maxChars=300.
+    // Budget = 300; searchStart somewhere in [150, 179]. No newlines in
+    // back-half → tier-3 hard-split fires.
+    const head = 'x'.repeat(298);          // ASCII pad to position 298
+    const tail = ROCKET + 'y'.repeat(200); // 🚀 at positions [298, 299]
+    const content = head + tail;
+    const out = splitTranscriptByBudget(content, 'cafebabedeadbeef', 300);
+    expect(out.length).toBeGreaterThanOrEqual(2);
+    // chunk 1 must not orphan a surrogate: every chunk-1 char.codeAt
+    // must be paired (or non-surrogate).
+    const c1 = out[0]!;
+    const lastCode = c1.charCodeAt(c1.length - 1);
+    expect(lastCode >= 0xd800 && lastCode <= 0xdbff).toBe(false);
+    // joined chunks reconstruct the source byte-identical
+    expect(out.join('')).toBe(content);
+  });
+
+  test('determinism preserved with non-BMP CJK at hard-split boundary', () => {
+    const head = 'a'.repeat(298);
+    const tail = NBMP_HAN + 'b'.repeat(200);
+    const content = head + tail;
+    const refs = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      refs.add(JSON.stringify(splitTranscriptByBudget(content, 'cafebabedeadbeef', 300)));
+    }
+    // same (content, hash, maxChars) → byte-identical chunks every time
+    expect(refs.size).toBe(1);
+  });
+
+  test('joined chunks always reconstruct source — fuzz across multiple hashes', () => {
+    const head = 'h'.repeat(297);
+    const tail = ROCKET + NBMP_HAN + 't'.repeat(200);
+    const content = head + tail;
+    // exercise jitter window across 5 different content hashes
+    const hashes = ['0', '1f', '7fffffff', 'cafebabe', 'deadbeef'];
+    for (const h of hashes) {
+      const out = splitTranscriptByBudget(content, h.padStart(16, '0'), 300);
+      expect(out.join('')).toBe(content);
+      // no chunk ends with an unpaired high surrogate
+      for (const c of out) {
+        if (c.length === 0) continue;
+        const last = c.charCodeAt(c.length - 1);
+        expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+      }
+    }
+  });
+});

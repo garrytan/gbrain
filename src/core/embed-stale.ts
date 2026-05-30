@@ -51,6 +51,14 @@ export interface EmbedStaleOpts {
    * the gateway. Production callers leave it unset.
    */
   embedFn?: (texts: string[], opts: { abortSignal?: AbortSignal }) => Promise<Float32Array[]>;
+  /**
+   * v0.41.31: current embedding provenance signature (`<provider:model>:<dims>`).
+   * When set, embeddings stamped under a DIFFERENT signature are invalidated
+   * (NULLed) at the start so they flow through the NULL cursor and get
+   * re-embedded; each page's signature is stamped after its chunks land.
+   * Omit to keep the legacy `embedding IS NULL`-only behavior.
+   */
+  embeddingSignature?: string;
 }
 
 export interface EmbedStaleResult {
@@ -109,6 +117,18 @@ export async function embedStaleForSource(
     done: false,
     aborted: false,
   };
+  const signature = opts.embeddingSignature;
+
+  // v0.41.31: invalidate embeddings stamped under a prior model signature so
+  // the NULL cursor below re-embeds them. GRANDFATHER: NULL signature
+  // untouched. Best-effort — a failure here must not abort the backfill.
+  if (signature) {
+    try {
+      await engine.invalidateStaleSignatureEmbeddings({ signature, sourceId });
+    } catch {
+      // Non-fatal: fall through to the NULL-only stale loop.
+    }
+  }
 
   for (;;) {
     if (signal?.aborted) {
@@ -170,6 +190,13 @@ export async function embedStaleForSource(
           token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
         }));
         await engine.upsertChunks(slug, merged, { sourceId: keySourceId });
+        // v0.41.31: stamp provenance only when EVERY chunk was stale (fully
+        // re-embedded this pass) — a partially-stale page keeps preserved
+        // chunks of unknown provenance, so don't claim current. After the
+        // invalidate pass above, signature-drifted pages ARE fully stale.
+        if (signature && stale.length === existing.length) {
+          await engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature });
+        }
         result.embedded += stale.length;
         result.pagesProcessed += 1;
       } catch (e: unknown) {
