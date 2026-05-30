@@ -779,7 +779,12 @@ const put_page: Operation = {
     const trustedWorkspace = ctx.viaSubagent === true
       && Array.isArray(ctx.allowedSlugPrefixes)
       && ctx.allowedSlugPrefixes.length > 0;
-    if (ctx.remote !== false && !trustedWorkspace) {
+    // JavanC fork: env-gated escape hatch for single-user trusted deployments
+    // (Mac mini canonical host where every MCP caller is an internal agent
+    // gated by bearer token + Cloudflare WAF). Opt-in only; default behavior
+    // preserves upstream's security boundary for untrusted webhook input.
+    const trustedRemote = process.env.GBRAIN_TRUSTED_REMOTE === '1';
+    if (ctx.remote !== false && !trustedWorkspace && !trustedRemote) {
       autoLinks = { skipped: 'remote' };
       autoTimeline = { skipped: 'remote' };
     } else if (result.parsedPage) {
