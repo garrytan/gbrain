@@ -1424,8 +1424,29 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
                 `created: ${new Date().toISOString().slice(0, 10)}`,
                 '---', '', item.content,
               ].join('\n');
-              const batchRes = await putPageOp.handler(ctx, { slug: item.slug, content: batchFullContent }) as { content_hash?: string };
-              batchResults.push({ slug: item.slug, ok: true, content_hash: batchRes.content_hash });
+              // Phase-1: write to DB immediately (noEmbed: true) so the handler
+              // returns fast without waiting for OpenAI embedding retries.
+              // Mirrors the async path used by action=put_page (line ~809).
+              const phase1 = await importFromContent(engine, item.slug, batchFullContent, { noEmbed: true });
+              const batchContentHash = phase1.content_hash ?? '';
+              pendingEmbeds.add(item.slug);
+              const canEmbedBatch = !!process.env.OPENAI_API_KEY;
+              // Phase-2: background embedding — non-blocking, does not delay response.
+              ;(async () => {
+                await acquireAsyncSlot();
+                try {
+                  await withEmbedRetry(item.slug, () => importFromContent(engine, item.slug, batchFullContent, {
+                    forceReembed: canEmbedBatch,
+                    noEmbed: !canEmbedBatch,
+                  }));
+                } catch (e) {
+                  console.warn(`[gbrain] batch embed failed for ${item.slug}: ${e instanceof Error ? e.message : String(e)}`);
+                } finally {
+                  pendingEmbeds.delete(item.slug);
+                  releaseAsyncSlot();
+                }
+              })();
+              batchResults.push({ slug: item.slug, ok: true, content_hash: batchContentHash });
             } catch (e) {
               batchResults.push({ slug: item.slug, ok: false, error: e instanceof Error ? e.message : String(e) });
             }

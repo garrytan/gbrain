@@ -80,9 +80,9 @@
       "description": "Where new brain files go. Filing rules and directory conventions."
     },
     {
-      "name": "skill-creator",
-      "path": "skill-creator/SKILL.md",
-      "description": "Create new skills following the conformance standard with MECE validation."
+      "name": "煉丹爐",
+      "path": "煉丹爐/SKILL.md",
+      "description": "元技能：把需求煉成符合 Azoth 標準的活 skill。含 scaffold 三資料夾、Nexus 四關、Azoth 三條件驗收。"
     },
     {
       "name": "daily-task-manager",

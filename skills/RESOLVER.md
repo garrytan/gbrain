@@ -59,7 +59,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | Daily briefing, "what's happening today" | `skills/briefing/SKILL.md` |
 | Cron scheduling, quiet hours, job staggering | `skills/cron-scheduler/SKILL.md` |
 | Save or load reports | `skills/reports/SKILL.md` |
-| "Create a skill", "improve this skill" | `skills/skill-creator/SKILL.md` |
+| "Create a skill", "new skill", "improve this skill", "建立 skill", "煉一個 skill", "出爐" | `skills/煉丹爐/SKILL.md` |
 | "Skillify this", "is this a skill?", "make this proper" | `skills/skillify/SKILL.md` |
 | "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
