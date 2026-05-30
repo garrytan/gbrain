@@ -191,7 +191,10 @@ export class PostgresEngine implements BrainEngine {
       // Module-level singleton (backward compat for CLI main engine).
       // #1471: sample ownership BEFORE delegating to db.connect(). If the
       // singleton already exists we are a borrower and must never disconnect
-      // it; only the engine that creates it owns its teardown.
+      // it; only the engine that creates it owns its teardown. (Concurrent
+      // module-path connects are not an expected pattern; if two raced and both
+      // sampled isConnected()===false they would both claim ownership - benign,
+      // since db.disconnect() is an idempotent no-op once sql is already null.)
       const ownsSingleton = !db.isConnected();
       await db.connect(config);
       this._connectionStyle = 'module';
@@ -4547,7 +4550,10 @@ export class PostgresEngine implements BrainEngine {
 
   /**
    * Reconnect the engine by tearing down the current pool and creating a fresh one.
-   * No-ops if no saved config (module-singleton mode) or if already reconnecting.
+   * No-ops if the engine was never connected (no saved config) or if a reconnect
+   * is already in progress. Both instance-pool AND module-singleton engines set
+   * _savedConfig on connect(), so both reconnect; #1471's ownership flag is
+   * re-sampled on the connect() leg, so an owner re-acquires and a borrower re-borrows.
    */
   async reconnect(): Promise<void> {
     if (!this._savedConfig || this._reconnecting) return;
