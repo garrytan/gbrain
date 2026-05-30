@@ -207,7 +207,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // serve-http fallback chain that was removed for OAuth clients
         // (migration v60 backfills oauth_clients.source_id). This path
         // is for the older v0.22.7 access_tokens transport.
-        sourceId: 'default',
+        sourceId: process.env.GBRAIN_SOURCE || 'default',
       };
     } catch {
       return { ok: false };
