@@ -307,6 +307,31 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ]);
 }
 
+// ── Prompt injection sanitizer ───────────────────────────────────────────────
+// Strips or flags known injection patterns from untrusted page content before
+// returning it to callers. Patterns: fake <instructions>, <system>, [INST],
+// ## SYSTEM:, <!-- instructions -->, etc.
+// Returns { content, injection_detected } so the caller can add a flag.
+const INJECTION_PATTERNS: RegExp[] = [
+  /<instructions[\s\S]*?<\/instructions>/gi,
+  /<system[\s\S]*?<\/system>/gi,
+  /\[INST\][\s\S]*?\[\/INST\]/gi,
+  /<!--\s*instructions?[\s\S]*?-->/gi,
+  /^#{1,3}\s*(SYSTEM|INSTRUCTIONS?|PROMPT)\s*:.*$/gim,
+  /^(SYSTEM|INSTRUCTIONS?)\s*:\s*.+$/gim,
+];
+
+function sanitizePageContent(raw: string): { content: string; injection_detected: boolean } {
+  let content = raw;
+  let injection_detected = false;
+  for (const pattern of INJECTION_PATTERNS) {
+    const before = content;
+    content = content.replace(pattern, '[⚠ injection-stripped]');
+    if (content !== before) injection_detected = true;
+  }
+  return { content, injection_detected };
+}
+
 // Lex-search the pending-embed set and return results not already in mainResults.
 // Each result is tagged vec_pending:true so callers know embedding is in-flight.
 async function appendPendingResults(
@@ -543,6 +568,9 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
       //    Runs each typed sub-query independently and RRF-merges results.
       //    Any combination of lex/vec/hyde works; first-listed gets 2x weight via RRF.
       // 2. Simple: ?q=query (hybridSearch with optional ?expand=1)
+      //
+      // Optional: ?ns=wiki,工作  — comma-separated slug prefixes; post-filters results
+      //           to only those namespaces. Useful for high-quality-zone-only search.
       if (path === '/search' && req.method === 'GET') {
         const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '10', 10), 50);
         const innerOpts = { limit: Math.min(limit * 3, 50) };
@@ -552,6 +580,25 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         const hyde = url.searchParams.get('hyde');
         const includePending = url.searchParams.get('include_pending') === '1'
           || url.searchParams.get('include_pending') === 'true';
+
+        // ?ns=wiki,工作  → post-filter results to these slug prefixes
+        const nsParam = url.searchParams.get('ns');
+        const nsPrefixes = nsParam ? nsParam.split(',').map(s => s.trim()).filter(Boolean) : null;
+        const filterByNs = (results: { slug: string }[]) =>
+          nsPrefixes ? results.filter(r => nsPrefixes.some(prefix => r.slug.startsWith(prefix + '/') || r.slug === prefix)) : results;
+
+        // Build empty_hint for 0-result responses
+        const buildEmptyHint = () => ({
+          message: 'No results found. This may mean: (1) content not yet indexed, (2) search index lag (~60-90s after write), or (3) content truly absent.',
+          suggestions: [
+            'Try GET /pages/recent?days=3 to see recently added pages',
+            'Try GET /page?slug=<exact-slug> for direct lookup (404 = truly absent)',
+            'Broaden search terms or try ?lex= (keyword) without ?vec= (semantic)',
+            nsPrefixes ? `Currently filtered to ns=${nsParam}; remove ?ns= to search all namespaces` : null,
+          ].filter(Boolean),
+          pending_embeds: pendingEmbeds.size,
+          hint: pendingEmbeds.size > 0 ? `${pendingEmbeds.size} page(s) still embedding — add ?include_pending=1 to surface them` : null,
+        });
 
         if (lex || vec || hyde) {
           const outcome = await runQmdSearch(engine, { lex, vec, hyde, limit });
@@ -563,22 +610,27 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
             });
           }
           const { ok: _omit, ...body } = outcome;
+          const filteredResults = filterByNs(body.results as { slug: string }[]);
 
           if (includePending && pendingEmbeds.size > 0) {
             const lexQuery = lex || vec || hyde || '';
-            const pendingResults = await appendPendingResults(engine, lexQuery, body.results as { slug: string }[], limit);
+            const pendingResults = await appendPendingResults(engine, lexQuery, filteredResults, limit);
             if (pendingResults.length > 0) {
-              return ok({ ...body, results: [...(body.results as unknown[]), ...pendingResults], pending_count: pendingResults.length }, Date.now() - t0);
+              return ok({ ...body, results: [...filteredResults, ...pendingResults], pending_count: pendingResults.length }, Date.now() - t0);
             }
           }
 
-          return ok(body, Date.now() - t0);
+          const responseBody: Record<string, unknown> = { ...body, results: filteredResults };
+          if (filteredResults.length === 0) responseBody.empty_hint = buildEmptyHint();
+          if (nsPrefixes) responseBody.ns_filter = nsPrefixes;
+          return ok(responseBody, Date.now() - t0);
         }
 
         // Simple mode: single ?q= via keyword search (fast, no embedding)
         const q = url.searchParams.get('q');
         if (!q) return err('missing_param', 'Provide ?q=... or at least one of ?lex=, ?vec=, ?hyde=');
-        const results = await searchOp.handler(ctx, { query: q, limit }) as { slug: string }[];
+        const rawResults = await searchOp.handler(ctx, { query: q, limit }) as { slug: string }[];
+        const results = filterByNs(rawResults);
         markQuerySuccess();
 
         if (includePending && pendingEmbeds.size > 0) {
@@ -588,7 +640,10 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           }
         }
 
-        return ok({ query: q, results }, Date.now() - t0);
+        const simpleBody: Record<string, unknown> = { query: q, results };
+        if (results.length === 0) simpleBody.empty_hint = buildEmptyHint();
+        if (nsPrefixes) simpleBody.ns_filter = nsPrefixes;
+        return ok(simpleBody, Date.now() - t0);
       }
 
       // ── POST /search/batch  { queries: [{lex?, vec?, hyde?, q?, limit?}, ...] } ──
@@ -719,6 +774,17 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
           throw e;
         }
         if (!page) return err('not_found', `Page not found: ${slug}`, 404);
+
+        // Prompt injection: scan compiled_truth + content for injection patterns
+        const pageObj = page as Record<string, unknown>;
+        const rawContent = (pageObj.compiled_truth as string | undefined) ?? (pageObj.content as string | undefined) ?? '';
+        const { content: sanitized, injection_detected } = sanitizePageContent(rawContent);
+        if (injection_detected) {
+          const safePageObj = { ...pageObj } as Record<string, unknown>;
+          if ('compiled_truth' in safePageObj) safePageObj.compiled_truth = sanitized;
+          if ('content' in safePageObj) safePageObj.content = sanitized;
+          return ok({ page: safePageObj, injection_detected: true, warning: 'Prompt injection patterns were stripped from this page content.' }, Date.now() - t0);
+        }
         return ok({ page }, Date.now() - t0);
       }
 
@@ -875,11 +941,33 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
         return ok({ slug, deleted: true }, Date.now() - t0);
       }
 
-      // ── GET /pages/recent?limit=N ─────────────────────────────────────────
+      // ── GET /pages/recent?days=N&limit=N&ns=wiki,工作 ─────────────────────
+      // Returns pages sorted by updated_at DESC, optionally filtered by:
+      //   ?days=N    — only pages updated in the last N days (default: 7)
+      //   ?ns=x,y    — only slugs starting with x/ or y/
+      //   ?limit=N   — max results (default 50, max 200)
+      // Use this to discover what's actually new without guessing keywords.
       if (path === '/pages/recent' && req.method === 'GET') {
         const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '50', 10), 200);
-        const pages = await listPagesOp.handler(ctx, { domain: 'mem', limit });
-        return ok({ pages }, Date.now() - t0);
+        const days = Math.min(Math.max(parseInt(url.searchParams.get('days') ?? '7', 10), 1), 90);
+        const nsParam = url.searchParams.get('ns');
+        const nsPrefixes = nsParam ? nsParam.split(',').map(s => s.trim()).filter(Boolean) : null;
+
+        const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+        const allPages = await engine.listPages({ updated_after: cutoff, limit: 500 });
+
+        const filtered = nsPrefixes
+          ? allPages.filter(p => nsPrefixes.some(prefix => p.slug.startsWith(prefix + '/') || p.slug === prefix))
+          : allPages;
+
+        const pages = filtered.slice(0, limit).map(p => ({
+          slug: p.slug,
+          title: p.title,
+          type: p.type,
+          updated_at: p.updated_at,
+        }));
+
+        return ok({ pages, days, count: pages.length, ns_filter: nsPrefixes ?? 'all' }, Date.now() - t0);
       }
 
       // ── GET /topics — knowledge map (no-OTP-needed entry point) ───────────
