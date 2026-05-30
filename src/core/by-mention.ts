@@ -40,6 +40,7 @@ export const LINKABLE_ENTITY_TYPES = ['person', 'company', 'organization', 'enti
  * types in.
  */
 const MIN_NAME_LENGTH = 4;
+const MIN_CJK_NAME_LENGTH = 2;
 
 /**
  * Built-in ignore list — common ambiguous tokens whose body-text mentions
@@ -133,8 +134,34 @@ function tokenizeForScan(text: string): ScannedToken[] {
   return out;
 }
 
+function hasCJK(s: string): boolean {
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
+        (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
+        (cp >= 0xac00 && cp <= 0xd7af)) return true;
+  }
+  return false;
+}
+
+function cjkCharCount(s: string): number {
+  let count = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if ((cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0x3400 && cp <= 0x4dbf) ||
+        (cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff) ||
+        (cp >= 0xac00 && cp <= 0xd7af)) count++;
+  }
+  return count;
+}
+
 function tokenizeTitle(title: string): string[] {
   const tokens: string[] = [];
+  TOKEN_RE.lastIndex = 0;
+  const hasAscii = TOKEN_RE.test(title);
+  if (!hasAscii && hasCJK(title)) {
+    return [title.toLowerCase()];
+  }
   TOKEN_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = TOKEN_RE.exec(title)) !== null) tokens.push(m[0].toLowerCase());
@@ -175,7 +202,9 @@ export async function buildGazetteer(
 
   const gazetteer: Gazetteer = new Map();
   for (const row of rows) {
-    if (!row.title || row.title.length < MIN_NAME_LENGTH) continue;
+    if (!row.title) continue;
+      if (!hasCJK(row.title) && row.title.length < MIN_NAME_LENGTH) continue;
+      if (hasCJK(row.title) && cjkCharCount(row.title) < MIN_CJK_NAME_LENGTH) continue;
     if (ignoreSet.has(row.title) && !existingTitles.has(row.title)) continue;
 
     const tokens = tokenizeTitle(row.title);
@@ -301,6 +330,26 @@ export function findMentionedEntities(
     });
     seenSlugs.add(matched.slug);
     i += matchedTokens;
+  }
+
+
+  // CJK pass: direct substring matching for CJK entity titles
+  const cjkEntries: GazetteerEntry[] = [];
+  for (const bucket of gazetteer.values()) {
+    for (const entry of bucket) {
+      if (entry.tokens.length === 1 && hasCJK(entry.tokens[0]!)) {
+        cjkEntries.push(entry);
+      }
+    }
+  }
+  for (const entry of cjkEntries) {
+    if (seenSlugs.has(entry.slug)) continue;
+    if (entry.slug === opts.fromSlug) continue;
+    if (entry.source_id !== opts.fromSourceId) continue;
+    const idx = stripped.indexOf(entry.title);
+    if (idx < 0) continue;
+    out.push({ slug: entry.slug, source_id: entry.source_id, name: entry.title, offset: idx });
+    seenSlugs.add(entry.slug);
   }
 
   return out;
