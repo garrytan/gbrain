@@ -8,6 +8,15 @@ let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
 
 /**
+ * Whether the process-global connection singleton is currently established.
+ * Used by PostgresEngine to decide module-singleton ownership (#1570): only
+ * the engine that established it may later tear it down.
+ */
+export function isConnected(): boolean {
+  return sql !== null;
+}
+
+/**
  * Default pool size for Postgres connections. Users on the Supabase transaction
  * pooler (port 6543) or any multi-tenant pooler can lower this to avoid
  * MaxClients errors when `gbrain upgrade` spawns subprocesses that each open

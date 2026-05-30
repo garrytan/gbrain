@@ -106,6 +106,17 @@ export class PostgresEngine implements BrainEngine {
   private _connectionStyle: 'instance' | 'module' | null = null;
 
   /**
+   * #1570 root cause: true ONLY for the engine that actually established the
+   * process-global module singleton (db.ts ). A second module-mode engine
+   * that merely shared the existing singleton (e.g. lint's content-sanity probe
+   * in resolveLintContentSanity) must NOT db.disconnect() it on cleanup —
+   * doing so nulls the global out from under the owner mid-cycle and crashes
+   * concurrent phases with "connect() has not been called". Only the owner
+   * tears it down.
+   */
+  private _ownsModuleSingleton = false;
+
+  /**
    * v0.30.1 (Fix 1 + X1 + T5): instance-owned ConnectionManager.
    * - INSTANCE-owned: each PostgresEngine constructs its own.
    * - Worker engines (cycle, sync) inherit via opts.parentConnectionManager.
@@ -177,9 +188,13 @@ export class PostgresEngine implements BrainEngine {
       });
       this.connectionManager.setReadPool(this._sql);
     } else {
-      // Module-level singleton (backward compat for CLI main engine)
+      // Module-level singleton (backward compat for CLI main engine).
+      // Capture whether WE establish it here: only the establishing engine may
+      // tear it down later (see _ownsModuleSingleton + disconnect()).
+      const establishedModuleSingleton = !db.isConnected();
       await db.connect(config);
       this._connectionStyle = 'module';
+      this._ownsModuleSingleton = establishedModuleSingleton;
 
       // v0.30.1: connection-manager wraps the module singleton.
       if (url) {
@@ -220,8 +235,16 @@ export class PostgresEngine implements BrainEngine {
       return;
     }
     if (this._connectionStyle === 'module') {
-      await db.disconnect();
+      // Only the engine that established the process-global singleton may tear
+      // it down. A second module-mode engine that merely shared it (e.g. lint's
+      // content-sanity probe) must leave it intact; otherwise it nulls the
+      // global mid-cycle and crashes concurrent phases with "connect() has not
+      // been called" (#1570 root cause).
+      if (this._ownsModuleSingleton) {
+        await db.disconnect();
+      }
       this._connectionStyle = null;
+      this._ownsModuleSingleton = false;
     }
     // else: nothing to disconnect (already done or never connected)
   }
