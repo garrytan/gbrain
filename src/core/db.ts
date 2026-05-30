@@ -148,6 +148,16 @@ export async function setSessionDefaults(_sql: ReturnType<typeof postgres>): Pro
   // No-op: timeouts are now applied as startup parameters in resolveSessionTimeouts().
 }
 
+/**
+ * Whether the module-level singleton is currently connected. Lets a
+ * PostgresEngine decide, at connect() time, whether it is creating the
+ * singleton (owner) or borrowing an existing one (borrower) - so only the
+ * owner disconnects it later. See #1471.
+ */
+export function isConnected(): boolean {
+  return sql !== null;
+}
+
 export function getConnection(): ReturnType<typeof postgres> {
   if (!sql) {
     throw new GBrainError(
