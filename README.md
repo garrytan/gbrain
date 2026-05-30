@@ -267,6 +267,8 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 
 ## Troubleshooting
 
+**`gbrain init --pglite` crashes on macOS 26.x (Tahoe)?** PGLite's embedded WASM engine is incompatible with macOS 26.x on Apple Silicon. The fix is to use native Homebrew PostgreSQL + pgvector instead. Full step-by-step setup in [`docs/INSTALL.md` — Troubleshooting: PGLite crashes on macOS 26.x](docs/INSTALL.md#pglite-crashes-on-macos-26x-tahoe).
+
 **`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain retrieval-upgrade` command to repair the mismatch. You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys in your environment: set `OPENAI_API_KEY` (or `ZEROENTROPY_API_KEY` / `VOYAGE_API_KEY`) before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker. In non-TTY contexts (CI, Docker) with no keys, init exits 1 with a paste-ready setup hint; pass `--no-embedding` to defer setup until runtime. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker/CI sequencing.
 
 **Hourly cron sync keeps timing out on a federated brain?** v0.41.13.0 ships
