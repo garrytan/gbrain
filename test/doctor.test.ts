@@ -975,14 +975,17 @@ describe('supervisor crash classifier wiring (v0.35.x)', () => {
     );
   });
 
-  test('doctor.ts warn threshold dropped from >3 to >=1', async () => {
+  test('doctor.ts warns on crashes since current supervisor start, not stale rolling crashes', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
-    // The pre-fix `crashes24h > 3` threshold made sense only because the
-    // counter was over-counting clean exits. Under accurate counts, any real
-    // crash is signal — threshold lands at `>=1`.
-    expect(source).toMatch(/crashes24h\s*>=\s*1/);
-    // The old `> 3` predicate must not survive on the supervisor check.
+    // The supervisor check should warn for an actionable crash after the
+    // current supervisor start. Historical rolling-24h crashes are context
+    // only when the current process has stayed healthy.
+    expect(source).toMatch(/postStartCrashes\s*>=\s*1/);
+    expect(source).toContain('crashes_since_start=');
+    expect(source).toContain('rolling_24h=');
+    // The old stale-noise predicates must not survive on the supervisor check.
     expect(source).not.toMatch(/crashes24h\s*>\s*3/);
+    expect(source).not.toMatch(/crashes24h\s*>=\s*1/);
   });
 
   test('doctor.ts ok + warn messages include per-cause breakdown and clean_exits_24h', async () => {

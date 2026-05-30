@@ -3376,7 +3376,13 @@ export async function buildChecks(
     // shape is the right contract.
     const summary = summarizeCrashes(events);
     const crashes24h = summary.total;
-    const causeStr = `runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy}`;
+    const lastStartMs = lastStart ? Date.parse(lastStart) : NaN;
+    const postStartEvents = Number.isFinite(lastStartMs)
+      ? events.filter(e => Date.parse(e.ts) >= lastStartMs)
+      : events;
+    const postStartSummary = summarizeCrashes(postStartEvents);
+    const postStartCrashes = postStartSummary.total;
+    const postStartCauseStr = `runtime=${postStartSummary.by_cause.runtime_error} oom=${postStartSummary.by_cause.oom_or_external_kill} unknown=${postStartSummary.by_cause.unknown} legacy=${postStartSummary.by_cause.legacy}`;
     const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
     // Only surface a Check if the supervisor was ever observed (stops the
@@ -3394,20 +3400,21 @@ export async function buildChecks(
           status: 'warn',
           message: `Supervisor not running (last_start=${lastStart ?? 'unknown'}). Restart with: gbrain jobs supervisor start --detach`,
         });
-      } else if (crashes24h >= 1) {
-        // Threshold dropped from `>3` (pre-fix, inflated by clean exits being
-        // miscounted) to `>=1` (any real crash is signal). Per-cause breakdown
-        // gives operators triage context without grep'ing the JSONL.
+      } else if (postStartCrashes >= 1) {
+        // A crash after the current supervisor start is actionable. Older
+        // crashes in the rolling 24h audit are historical signal only: if the
+        // supervisor is currently running and has not crashed since this start,
+        // report OK and let the rolling counter age out.
         checks.push({
           name: 'supervisor',
           status: 'warn',
-          message: `Worker crashed ${crashes24h}x in last 24h (${causeStr}). Check ~/.gbrain/audit/supervisor-*.jsonl for context.`,
+          message: `Worker crashed ${postStartCrashes}x since current start (${postStartCauseStr}; rolling_24h=${crashes24h}). Check ~/.gbrain/audit/supervisor-*.jsonl for context.`,
         });
       } else {
         checks.push({
           name: 'supervisor',
           status: 'ok',
-          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
+          message: `running=true pid=${supervisorPid} last_start=${lastStart ?? 'unknown'} crashes_since_start=${postStartCrashes} crashes_24h=${crashes24h} clean_exits_24h=${summary.clean_exits}`,
         });
       }
     }
