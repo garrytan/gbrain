@@ -232,8 +232,11 @@ export function assessContentSanity(opts: {
   compiled_truth: string;
   /** Post-parseMarkdown timeline section (empty string if no sentinel). */
   timeline: string;
-  /** Post-parseMarkdown title. Some patterns key on title alone. */
-  title: string;
+  /** Post-parseMarkdown title. Some patterns key on title alone.
+   *  May be undefined/null: pages without a `title:` frontmatter field
+   *  (or git-history commits replayed by `sync` that predate the field)
+   *  yield `parsed.title === undefined`. Coerced defensively below. */
+  title?: string | null;
   /** Effective warn threshold; defaults to DEFAULT_BYTES_WARN. */
   bytes_warn?: number;
   /** Effective block threshold; defaults to DEFAULT_BYTES_BLOCK. */
@@ -259,14 +262,16 @@ export function assessContentSanity(opts: {
   // doesn't repeat the lowercase per literal.
   const bodyHead = body.slice(0, SCAN_HEAD_BYTES);
   const bodyHeadLower = bodyHead.toLowerCase();
-  const titleLower = opts.title.toLowerCase();
+  // Coerce once: opts.title may be undefined/null (see param doc).
+  const title = String(opts.title ?? '');
+  const titleLower = title.toLowerCase();
 
   const junk_pattern_matches: string[] = [];
   for (const p of BUILT_IN_JUNK_PATTERNS) {
     const scope = p.applies_to ?? 'both';
     let matched = false;
     if (scope === 'title' || scope === 'both') {
-      if (p.pattern.test(opts.title)) matched = true;
+      if (p.pattern.test(title)) matched = true;
     }
     if (!matched && (scope === 'body' || scope === 'both')) {
       if (p.pattern.test(bodyHead)) matched = true;
