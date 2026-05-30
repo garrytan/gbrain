@@ -1278,6 +1278,74 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     expect(h.timeline_coverage).toBeCloseTo(1 / 3, 2);
   });
 
+  test('derived timeline batches do not mark their source page stale', async () => {
+    await engine.executeRaw(
+      `UPDATE pages SET updated_at = '2000-01-01T00:00:00Z'::timestamptz
+       WHERE slug = 'people/alice'`,
+    );
+
+    await engine.addTimelineEntriesBatch([
+      { slug: 'people/alice', date: '2026-01-15', summary: 'Joined' },
+    ], { createdAtFromPageUpdatedAt: true });
+
+    const h = await engine.getHealth();
+    expect(h.stale_pages).toBe(0);
+  });
+
+  test('derived single timeline writes do not mark their source page stale', async () => {
+    await engine.executeRaw(
+      `UPDATE pages SET updated_at = '2000-01-01T00:00:00Z'::timestamptz
+       WHERE slug = 'people/alice'`,
+    );
+
+    await engine.addTimelineEntry(
+      'people/alice',
+      { date: '2026-01-15', summary: 'Joined' },
+      { createdAtFromPageUpdatedAt: true },
+    );
+
+    const h = await engine.getHealth();
+    expect(h.stale_pages).toBe(0);
+  });
+
+  test('derived timeline batches repair older now-stamped extracted rows', async () => {
+    await engine.executeRaw(
+      `UPDATE pages SET updated_at = '2000-01-01T00:00:00Z'::timestamptz
+       WHERE slug = 'people/alice'`,
+    );
+
+    await engine.addTimelineEntriesBatch([
+      { slug: 'people/alice', date: '2026-01-15', summary: 'Joined' },
+    ]);
+    expect((await engine.getHealth()).stale_pages).toBe(1);
+
+    await engine.addTimelineEntriesBatch([
+      { slug: 'people/alice', date: '2026-01-15', summary: 'Joined' },
+    ], { createdAtFromPageUpdatedAt: true });
+
+    const rows = await engine.executeRaw<{ c: number }>(
+      `SELECT count(*)::int AS c FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id
+       WHERE p.slug = 'people/alice'`,
+    );
+    expect(Number(rows[0].c)).toBe(1);
+
+    const h = await engine.getHealth();
+    expect(h.stale_pages).toBe(0);
+  });
+
+  test('manual timeline entries still mark older pages stale', async () => {
+    await engine.executeRaw(
+      `UPDATE pages SET updated_at = '2000-01-01T00:00:00Z'::timestamptz
+       WHERE slug = 'people/alice'`,
+    );
+
+    await engine.addTimelineEntry('people/alice', { date: '2026-01-15', summary: 'Joined' });
+
+    const h = await engine.getHealth();
+    expect(h.stale_pages).toBe(1);
+  });
+
   test('most_connected lists top entities by link count', async () => {
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     await engine.addLink('people/bob', 'companies/acme', '', 'invested_in');

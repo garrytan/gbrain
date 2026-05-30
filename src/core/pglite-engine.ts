@@ -6,6 +6,7 @@ import type {
   BrainEngine,
   BatchOpts,
   LinkBatchInput, TimelineBatchInput,
+  TimelineWriteOpts,
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
@@ -2881,7 +2882,7 @@ export class PGLiteEngine implements BrainEngine {
   async addTimelineEntry(
     slug: string,
     entry: TimelineInput,
-    opts?: { skipExistenceCheck?: boolean; sourceId?: string },
+    opts?: TimelineWriteOpts,
   ): Promise<void> {
     const sourceId = opts?.sourceId ?? 'default';
     if (!opts?.skipExistenceCheck) {
@@ -2893,9 +2894,21 @@ export class PGLiteEngine implements BrainEngine {
         throw new Error(`addTimelineEntry failed: page "${slug}" (source=${sourceId}) not found`);
       }
     }
-    // ON CONFLICT DO NOTHING via the (page_id, date, summary) unique index.
+    // ON CONFLICT DO NOTHING via the (page_id, date, summary, source) unique index.
     // Source-qualify the page-id lookup so multi-source brains don't fan
     // timeline rows out across every source containing the slug.
+    if (opts?.createdAtFromPageUpdatedAt) {
+      await this.db.query(
+        `INSERT INTO timeline_entries (page_id, date, source, summary, detail, created_at)
+         SELECT id, $2::date, $3, $4, $5, updated_at
+         FROM pages WHERE slug = $1 AND source_id = $6
+         ON CONFLICT (page_id, date, summary, source)
+         DO UPDATE SET created_at = LEAST(timeline_entries.created_at, EXCLUDED.created_at)
+         WHERE timeline_entries.created_at > EXCLUDED.created_at`,
+        [slug, entry.date, entry.source || '', entry.summary, entry.detail || '', sourceId]
+      );
+      return;
+    }
     await this.db.query(
       `INSERT INTO timeline_entries (page_id, date, source, summary, detail)
        SELECT id, $2::date, $3, $4, $5
@@ -2907,10 +2920,15 @@ export class PGLiteEngine implements BrainEngine {
 
   async addTimelineEntriesBatch(entries: TimelineBatchInput[], opts?: BatchOpts): Promise<number> {
     if (entries.length === 0) return 0;
-    return this.batchRetry(opts?.auditSite ?? 'addTimelineEntriesBatch', opts?.signal, () => this._addTimelineEntriesBatchOnce(entries), entries.length);
+    return this.batchRetry(
+      opts?.auditSite ?? 'addTimelineEntriesBatch',
+      opts?.signal,
+      () => this._addTimelineEntriesBatchOnce(entries, opts?.createdAtFromPageUpdatedAt === true),
+      entries.length
+    );
   }
 
-  private async _addTimelineEntriesBatchOnce(entries: TimelineBatchInput[]): Promise<number> {
+  private async _addTimelineEntriesBatchOnce(entries: TimelineBatchInput[], createdAtFromPageUpdatedAt = false): Promise<number> {
     if (entries.length === 0) return 0;
     const slugs = entries.map(e => e.slug);
     const dates = entries.map(e => e.date);
@@ -2918,6 +2936,21 @@ export class PGLiteEngine implements BrainEngine {
     const summaries = entries.map(e => e.summary);
     const details = entries.map(e => e.detail || '');
     const sourceIds = entries.map(e => e.source_id || 'default');
+    if (createdAtFromPageUpdatedAt) {
+      const result = await this.db.query(
+        `INSERT INTO timeline_entries (page_id, date, source, summary, detail, created_at)
+         SELECT p.id, v.date::date, v.source, v.summary, v.detail, p.updated_at
+         FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+           AS v(slug, date, source, summary, detail, source_id)
+         JOIN pages p ON p.slug = v.slug AND p.source_id = v.source_id
+         ON CONFLICT (page_id, date, summary, source)
+         DO UPDATE SET created_at = LEAST(timeline_entries.created_at, EXCLUDED.created_at)
+         WHERE timeline_entries.created_at > EXCLUDED.created_at
+         RETURNING 1`,
+        [slugs, dates, sources, summaries, details, sourceIds]
+      );
+      return result.rows.length;
+    }
     const result = await this.db.query(
       `INSERT INTO timeline_entries (page_id, date, source, summary, detail)
        SELECT p.id, v.date::date, v.source, v.summary, v.detail
