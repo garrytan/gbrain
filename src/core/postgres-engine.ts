@@ -106,6 +106,17 @@ export class PostgresEngine implements BrainEngine {
   private _connectionStyle: 'instance' | 'module' | null = null;
 
   /**
+   * #1471: module-singleton OWNERSHIP. Only the engine whose connect() actually
+   * created the shared db.ts `sql` singleton may disconnect it. A borrower (a
+   * probe engine constructed while the singleton already exists - e.g.
+   * resolveLintContentSanity or doctor) must clear its own marker WITHOUT
+   * calling db.disconnect(), or it nulls the `sql` the owner cycle engine is
+   * still using and every later phase throws "connect() has not been called".
+   * `_connectionStyle` alone can't separate owner from borrower: both are 'module'.
+   */
+  private _ownsModuleSingleton = false;
+
+  /**
    * v0.30.1 (Fix 1 + X1 + T5): instance-owned ConnectionManager.
    * - INSTANCE-owned: each PostgresEngine constructs its own.
    * - Worker engines (cycle, sync) inherit via opts.parentConnectionManager.
@@ -177,9 +188,14 @@ export class PostgresEngine implements BrainEngine {
       });
       this.connectionManager.setReadPool(this._sql);
     } else {
-      // Module-level singleton (backward compat for CLI main engine)
+      // Module-level singleton (backward compat for CLI main engine).
+      // #1471: sample ownership BEFORE delegating to db.connect(). If the
+      // singleton already exists we are a borrower and must never disconnect
+      // it; only the engine that creates it owns its teardown.
+      const ownsSingleton = !db.isConnected();
       await db.connect(config);
       this._connectionStyle = 'module';
+      this._ownsModuleSingleton = ownsSingleton;
 
       // v0.30.1: connection-manager wraps the module singleton.
       if (url) {
@@ -220,7 +236,13 @@ export class PostgresEngine implements BrainEngine {
       return;
     }
     if (this._connectionStyle === 'module') {
-      await db.disconnect();
+      // #1471: only the owner disconnects the shared singleton; a borrower
+      // clears its markers so a probe engine's teardown can't clobber the
+      // owner's live connection.
+      if (this._ownsModuleSingleton) {
+        await db.disconnect();
+        this._ownsModuleSingleton = false;
+      }
       this._connectionStyle = null;
     }
     // else: nothing to disconnect (already done or never connected)
