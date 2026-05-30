@@ -1,5 +1,48 @@
 # TODOS
 
+## v0.41.38.0 dream-postgres / source-pin follow-ups (v0.42+)
+
+Deferred from the v0.41.38.0 wave (code-callers/callees pin + dream-on-postgres).
+Documented tradeoffs, not blockers — the shipped bug fixes are complete and tested.
+
+- [ ] **P1 — Per-source autopilot fan-out passes the global repoPath.**
+  `src/commands/autopilot-fanout.ts:~206` submits every per-source `autopilot-cycle`
+  job with `repoPath: opts.repoPath` (the global checkout), not `src.local_path`.
+  With v0.41.38.0's `cycleSourceId = opts.sourceId ?? resolveSourceForDir(...)`,
+  a per-source job now reconciles DB phases for `src.id` while the filesystem
+  phases (sync/lint/extract) run against the default brain's checkout, then stamps
+  `src.id` fresh — mixed scope. Pre-existing fan-out limitation (cycle.ts PHASE_SCOPE
+  comment already notes genuine per-source fan-out needs deferred work); the common
+  single-source autopilot path (legacy no-source dispatch) is unaffected. Fix:
+  resolve brainDir from the source's `local_path` inside the `autopilot-cycle`
+  handler when `source_id` is set (mirror dream.ts's T1), so FS and DB phases agree.
+  Needs its own review (touches the deferred autopilot path).
+- [ ] **P2 — `.gbrain-source` with invalid SYNTAX still falls through silently.**
+  `readDotfileWalk` (source-resolver.ts:39) intentionally skips a dotfile whose
+  content fails `isValidSourceId` (e.g. `repo_a` with an underscore) per the v0.31.8
+  P1-F silent-fallback design, so `resolveScopedSourceOrThrow` resolves it to a
+  later tier rather than surfacing `invalid_source_pin`. A valid-syntax-but-missing
+  pin DOES surface (assertSourceExists throws). Decide whether a typo'd dotfile
+  should warn loudly; changing it alters resolver semantics shared by other callers.
+- [ ] **P3 — Sibling source-scoped commands don't honor the pin.** `blast`/`flow`/
+  `clusters`/`wiki` still call `resolveDefaultSource` directly. Route them through
+  `resolveScopedSourceOrThrow` for consistency with code-callers/code-callees.
+- [ ] **P3 — `gbrain autopilot` CLI daemon pre-guard.** `autopilot.ts:~152`
+  `if (!repoPath) exit 1` still blocks the daemon on a checkout-less postgres brain.
+  Relax to the same null-brainDir contract so the daemon can run DB phases.
+
+## v0.41.37.0 critical-fix-wave follow-ups (v0.42+)
+
+Filed from the v0.41.37.0 wave (#1621 tag-wipe, #1581 grandfather hang,
+#1605 Windows migration spawn, #1569 sync ReDoS hardening). Each item was
+deliberately scoped out of the wave (see plan + GSTACK REVIEW REPORT at
+`~/.claude/plans/system-instruction-you-are-working-greedy-quiche.md`).
+
+- [ ] **#1621-followup: tag_source provenance column for frontmatter-tag REMOVAL.** The wave shipped ADD-ONLY tag reconciliation (`src/core/import-file.ts`) — re-import never deletes tags, so DB-side enrichment tags survive. Trade-off: removing a tag from a page's frontmatter no longer removes it from the DB. To restore removal-on-edit without wiping enrichment tags, add a `tags.tag_source` column (migration, both engines), stamp `'frontmatter'` on import-path tags, and reconcile by deleting only `tag_source='frontmatter'` tags absent from the new frontmatter (enrichment/backfilled tags default NULL = preserved, so no enrichment-write-site enumeration needed). Priority: P3 (additive-metadata staleness is low-harm).
+
+- [ ] **#1605-followup: convert migration backfill-phase spawns to in-process.** v0.41.37.0 made the 9 schema phases (`gbrain init --migrate-only`) run in-process via `runMigrateOnlyCore`, which unblocks `schema_version` advancement on Windows+bun+Supabase. The remaining non-schema spawns (`extract links/timeline`, `repair-jsonb`) still shell out via `runGbrainSubprocess` — they now surface child stderr (so a Windows failure is diagnosable) but still fail on Windows. Convert them to in-process calls (the extract/repair command functions are callable with an engine) so Windows brains complete data backfill, not just schema. Sites: `src/commands/migrations/v0_12_0.ts` (extract), `v0_12_2.ts` (repair), `v0_13_0.ts` (extract). Priority: P2.
+
+- [ ] **#1569-followup: root-cause the 56K-file sync wedge with the reporter's repro.** v0.41.37.0 shipped ReDoS hardening (input-length cap + star-height lint + `--no-schema-pack` escape) + diagnostics (`GBRAIN_SYNC_TRACE=1` begin-heartbeat + PGLite serve/sync concurrency doc), but did NOT root-cause the deterministic wedge at ~3100 files — the reporter's redos-guard hypothesis didn't hold (it's not on the sync path). Get the reporter's sample files (`/tmp/gbrain-hang-sample.txt`, `/tmp/gbrain-prewedge-sample.txt`), reproduce, and pin the resume-mode deep-recursion pre-import phase (prime suspect: the walk/diff/checkpoint path). Priority: P1 once a repro exists; tracked on the #1569 thread.
 ## MCP skillpack distribution — PR2 (v0.41.37+)
 
 Filed from the v0.41.36.0 skill-catalog wave (`list_skills` / `get_skill`).

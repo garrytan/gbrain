@@ -669,12 +669,25 @@ export async function importFromContent(
       );
     }
 
-    // Tag reconciliation: remove stale, add current
-    const existingTags = await tx.getTags(slug, txOpts);
-    const newTags = new Set(parsed.tags);
-    for (const old of existingTags) {
-      if (!newTags.has(old)) await tx.removeTag(slug, old, txOpts);
-    }
+    // Tag reconciliation: ADD-ONLY (v0.41.37.0 #1621).
+    //
+    // We deliberately do NOT delete existing tags here. The `tags` table has
+    // no provenance column, and frontmatter tags are stripped from the stored
+    // `pages.frontmatter` (markdown.ts:118) — so at re-import time we cannot
+    // distinguish a frontmatter-origin tag from a DB-side enrichment tag
+    // (auto-tag / dream synthesize / signal-detector writes to the same
+    // table). The pre-v0.41.37.0 "delete every existing tag not in the current
+    // frontmatter" logic wiped ALL enrichment tags on every re-import — most
+    // visibly under `gbrain reindex --markdown` (#1621), which re-imports every
+    // page with forceRechunk. reindex is a re-chunk/re-embed op; it must not
+    // destroy tags.
+    //
+    // Trade-off (accepted): removing a tag from a page's frontmatter no longer
+    // removes it from the DB on the next sync. That staleness is minor (tags
+    // are additive metadata) and far preferable to silently losing enrichment
+    // tags. Frontmatter-tag REMOVAL would require a `tag_source` provenance
+    // column (deferred — see TODOS.md #1621-followup). addTag is idempotent
+    // (ON CONFLICT DO NOTHING), so re-adding existing tags is a no-op.
     for (const tag of parsed.tags) {
       await tx.addTag(slug, tag, txOpts);
     }

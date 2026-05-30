@@ -51,6 +51,7 @@ import {
 } from './git-remote.ts';
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
+import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -444,6 +445,47 @@ export async function resolveDefaultSource(engine: BrainEngine): Promise<string>
     'multiple_sources_ambiguous',
     ids,
   );
+}
+
+/** Result of `resolveScopedSourceOrThrow`: the resolved source id plus the
+ * tier that won, so callers can nudge (sole_non_default) or surface the
+ * source in their output envelope. */
+export interface ScopedSourceResolution {
+  source_id: string;
+  tier: SourceTier;
+}
+
+/**
+ * Source scope for the structural-retrieval commands (`code-callers` /
+ * `code-callees`) when neither `--source` nor `--all-sources` is given.
+ *
+ * Runs the FULL 7-tier resolution chain via `resolveSourceWithTier`
+ * (flag → env → dotfile → local_path → brain_default → sole_non_default →
+ * seed_default), so a `.gbrain-source` pin (or any real signal) selects the
+ * source. The multi-source ambiguity guard (`resolveDefaultSource`) is
+ * applied ONLY when the chain matched nothing real (tier `seed_default`):
+ * 1 source → returns it, 0 → `no_sources` throw, 2+ → `multiple_sources_ambiguous`.
+ *
+ * Contrast with `resolveSourceId` (silently returns `'default'` and never
+ * throws on ambiguity) — this helper deliberately preserves the loud
+ * multi-source error when there's genuinely no signal.
+ *
+ * @throws SourceResolutionError  on a no-signal 0/2+-source brain (seed_default tier).
+ * @throws Error ("Source \"…\" not found." / "Invalid …")  on a bad pin / env value
+ *         via `assertSourceExists` inside `resolveSourceWithTier` — callers should
+ *         surface these as clean usage errors, not uncaught stacks.
+ */
+export async function resolveScopedSourceOrThrow(
+  engine: BrainEngine,
+  cwd: string = process.cwd(),
+): Promise<ScopedSourceResolution> {
+  const resolved = await resolveSourceWithTier(engine, null, cwd);
+  if (resolved.tier !== 'seed_default') {
+    return { source_id: resolved.source_id, tier: resolved.tier };
+  }
+  // Nothing in the chain matched → apply the ambiguity guard (may throw).
+  const id = await resolveDefaultSource(engine);
+  return { source_id: id, tier: 'seed_default' };
 }
 
 // ── listSources ─────────────────────────────────────────────────────────────

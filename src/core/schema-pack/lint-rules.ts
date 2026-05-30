@@ -320,6 +320,34 @@ export const mutationCountAnomaly: LintRule = (manifest, opts) => {
 // Aggregator
 // ────────────────────────────────────────────────────────────────────────
 
+// v0.41.37.0 #1569: advisory ReDoS pre-screen for pack inference regexes.
+// Flags the classic nested-quantifier shapes ((a+)+, (a*)*, (a+)*, (\w+)+)
+// that cause catastrophic backtracking. WARNING, not error: a hard reject
+// would disable the whole pack on upgrade (pages fall back to legacy typing).
+// The runtime input-length cap (MAX_REGEX_INPUT_CHARS in redos-guard.ts) is
+// the actual safety net; this rule tells the author to fix the pattern.
+// Heuristic: an inner group containing a +/* quantifier, wrapped by an outer
+// +/* quantifier. Catches the common ReDoS class, not every possible one.
+const NESTED_QUANTIFIER_RE = /\([^()]*[+*][^()]*\)\s*[+*]/;
+export const linkRegexCatastrophicBacktrack: LintRule = (manifest) => {
+  const issues: LintIssue[] = [];
+  for (const lt of manifest.link_types) {
+    const pattern = lt.inference?.regex;
+    if (!pattern) continue;
+    if (NESTED_QUANTIFIER_RE.test(pattern)) {
+      issues.push({
+        rule: 'link_regex_catastrophic_backtrack',
+        severity: 'warning',
+        message: `link_type '${lt.name}' inference.regex '${pattern}' has a nested quantifier (e.g. (a+)+) that can cause catastrophic backtracking (ReDoS)`,
+        pack: manifest.name,
+        link: lt.name,
+        hint: `rewrite without nested quantifiers (e.g. (a+)+ → a+). The runtime caps input length, but the pattern stays O(2^n) on adversarial input`,
+      });
+    }
+  }
+  return issues;
+};
+
 /** All rules. File-plane callers can compose a subset via FILE_PLANE_RULES. */
 export const ALL_LINT_RULES: ReadonlyArray<{ name: string; rule: LintRule; planeAware: boolean }> = [
   { name: 'alias_shadows_type', rule: aliasShadowsType, planeAware: false },
@@ -331,6 +359,7 @@ export const ALL_LINT_RULES: ReadonlyArray<{ name: string; rule: LintRule; plane
   { name: 'expert_routing_without_prefix', rule: expertRoutingWithoutPrefix, planeAware: false },
   { name: 'prefix_collision', rule: prefixCollision, planeAware: false },
   { name: 'prefix_strict_subset_overlap', rule: prefixStrictSubsetOverlap, planeAware: false },
+  { name: 'link_regex_catastrophic_backtrack', rule: linkRegexCatastrophicBacktrack, planeAware: false },
   { name: 'extractable_empty_corpus', rule: extractableEmptyCorpus, planeAware: true },
   { name: 'mutation_count_anomaly', rule: mutationCountAnomaly, planeAware: true },
 ];

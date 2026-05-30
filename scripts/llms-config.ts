@@ -255,9 +255,10 @@ export const INLINE_TIPS = [
   "`gbrain upgrade` runs post-upgrade + apply-migrations.",
 ];
 
-// Target ~700KB so llms-full.txt fits in ~175k-token contexts with room to spare.
-// Bumped from 600KB in v0.41.9.0 — CLAUDE.md grew past 600KB after the wave's
-// new-file annotations + Conductor branch-name iron-rule landed; the bundle
-// still fits comfortably in modern long-context models.
+// Target so llms-full.txt fits in ~190k-token contexts with room to spare.
+// Bumped 600KB→700KB in v0.41.9.0, then 700KB→750KB in v0.41.37.0 — CLAUDE.md
+// crossed 700KB once the critical-fix-wave key-files annotations merged on top
+// of master's v0.41.34/35/36 additions (703KB). Still fits comfortably in
+// modern long-context models.
 // Generator prints a WARN if exceeded; ship with includeInFull=false exclusions.
-export const FULL_SIZE_BUDGET = 700_000;
+export const FULL_SIZE_BUDGET = 750_000;

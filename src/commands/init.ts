@@ -515,43 +515,26 @@ async function resolveChatByEnv(out: ResolvedAIOptions): Promise<void> {
  * clobbering the user's chosen engine.
  */
 async function initMigrateOnly(opts: { jsonOutput: boolean }) {
-  const config = loadConfig();
-  if (!config) {
-    const msg = 'No brain configured. Run `gbrain init` (interactive) or `gbrain init --pglite` / `gbrain init --supabase` first.';
+  // v0.41.37.0 #1605: delegate to the shared runMigrateOnlyCore so the CLI path
+  // and the in-process migration-orchestrator path can't drift (single source
+  // of truth for configureGateway-before-initSchema + the schema bring-up).
+  const { runMigrateOnlyCore, MigrateOnlyError } = await import('./migrations/in-process.ts');
+  try {
+    const result = await runMigrateOnlyCore();
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'error', reason: 'no_config', message: msg }));
+      console.log(JSON.stringify({ status: 'success', engine: result.engine, mode: 'migrate-only' }));
+    } else {
+      console.log(`Schema up to date (engine: ${result.engine}).`);
+    }
+  } catch (e) {
+    const isNoConfig = e instanceof MigrateOnlyError && e.message.startsWith('No brain configured');
+    const msg = e instanceof Error ? e.message : String(e);
+    if (opts.jsonOutput) {
+      console.log(JSON.stringify({ status: 'error', reason: isNoConfig ? 'no_config' : 'migrate_failed', message: msg }));
     } else {
       console.error(msg);
     }
     process.exit(1);
-  }
-
-  // B.3: configureGateway BEFORE initSchema even on the migrate-only path,
-  // so a schema bump on a brain whose file config is missing the embedding
-  // fields doesn't fall through to stale hardcoded fallbacks. Reads
-  // existing config (which loadConfig already merged with env) and
-  // propagates it into the gateway.
-  const { configureGateway: configureGw } = await import('../core/ai/gateway.ts');
-  configureGw({
-    embedding_model: config.embedding_model,
-    embedding_dimensions: config.embedding_dimensions,
-    expansion_model: config.expansion_model,
-    chat_model: config.chat_model,
-    env: { ...process.env },
-  });
-
-  const engine = await createEngine(toEngineConfig(config));
-  try {
-    await engine.connect(toEngineConfig(config));
-    await engine.initSchema();
-  } finally {
-    try { await engine.disconnect(); } catch { /* best-effort */ }
-  }
-
-  if (opts.jsonOutput) {
-    console.log(JSON.stringify({ status: 'success', engine: config.engine, mode: 'migrate-only' }));
-  } else {
-    console.log(`Schema up to date (engine: ${config.engine}).`);
   }
 }
 

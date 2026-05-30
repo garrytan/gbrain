@@ -11,21 +11,37 @@
  * in repo A ≠ same string in repo B). Pass `--all-sources` to search
  * globally.
  *
- * v0.34 W0b (Codex finding #7): the pre-v0.34 implementation set
- * `allSources: allSources || !sourceId`, which INVERTED the documented
- * default to global whenever --source was omitted. Multi-source brains
- * cross-contaminated structural retrieval despite the docstring claim.
- * Fix: when --source is omitted AND --all-sources is NOT set, resolve to
- * the brain's only source (single-source brains) or fail with a clear
- * error listing valid source ids (multi-source brains).
+ * Source resolution: when --source is omitted AND --all-sources is NOT set,
+ * resolve through the full source-resolution chain via
+ * `resolveScopedSourceOrThrow` (flag → env → .gbrain-source dotfile →
+ * local_path → brain_default → sole_non_default), matching `gbrain sources
+ * current`. A `.gbrain-source` pin selects the source; only a no-signal
+ * multi-source brain still fails with `multiple_sources_ambiguous`. (Pre-
+ * v0.41.30 this called `resolveDefaultSource` directly, which ignored the pin
+ * and errored on every multi-source brain — Codex finding #7's source-scoped
+ * default is preserved; the pin is now honored on top of it.) `--all-sources`
+ * searches globally and overrides any pin.
  *
- * Output: non-TTY → JSON envelope. TTY → human table. Follows the
- * code-def / code-refs pattern.
+ * Output: non-TTY → JSON envelope (carries `source_id` + `scope`). TTY → human
+ * table. Follows the code-def / code-refs pattern.
  */
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
-import { resolveDefaultSource, SourceResolutionError } from '../core/sources-ops.ts';
+import { resolveScopedSourceOrThrow, SourceResolutionError } from '../core/sources-ops.ts';
+import { formatSoleNonDefaultNudge } from '../core/source-resolver.ts';
+
+/** A bad/invalid `.gbrain-source` pin or GBRAIN_SOURCE value surfaces from
+ * `resolveSourceWithTier`'s `assertSourceExists` as a plain Error with one of
+ * these message prefixes. Mirrors dream.ts:isResolverUserError so we surface a
+ * clean usage error instead of an uncaught stack. */
+function isResolverUserError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const m = e.message;
+  return (m.startsWith('Source "') && m.includes(' not found.'))
+    || m.startsWith('Invalid --source value')
+    || m.startsWith('Invalid GBRAIN_SOURCE value');
+}
 
 function parseFlag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -59,12 +75,20 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
   const allSources = args.includes('--all-sources');
   let sourceId = parseFlag(args, '--source');
 
-  // v0.34 W0b: when neither --source nor --all-sources is set, resolve
-  // to the brain's only source. Multi-source brains require an explicit
-  // choice — no more silent cross-source default.
+  // When neither --source nor --all-sources is set, resolve through the full
+  // source-resolution chain (honors the .gbrain-source pin, env, local_path,
+  // brain_default, sole_non_default). Only a no-signal multi-source brain
+  // still errors as multiple_sources_ambiguous.
   if (!allSources && !sourceId) {
     try {
-      sourceId = await resolveDefaultSource(engine);
+      const resolved = await resolveScopedSourceOrThrow(engine);
+      sourceId = resolved.source_id;
+      // Nudge only when we auto-routed to the sole non-default source (the one
+      // tier with no explicit user signal). Matches sync/import behavior.
+      if (resolved.tier === 'sole_non_default') {
+        const nudge = formatSoleNonDefaultNudge(resolved.source_id);
+        if (nudge) console.error(nudge);
+      }
     } catch (e: unknown) {
       if (e instanceof SourceResolutionError) {
         const env = errorFor({
@@ -80,6 +104,22 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
         }
         process.exit(2);
       }
+      // Bad/invalid pin (.gbrain-source or GBRAIN_SOURCE points at a missing
+      // source) → clean usage error, not an uncaught stack.
+      if (isResolverUserError(e)) {
+        const env = errorFor({
+          class: 'UsageError',
+          code: 'invalid_source_pin',
+          message: (e as Error).message,
+          hint: 'fix the .gbrain-source pin / GBRAIN_SOURCE value, or pass --source <id> / --all-sources',
+        }).envelope;
+        if (shouldEmitJson(args)) {
+          console.log(JSON.stringify({ error: env }));
+        } else {
+          console.error((e as Error).message);
+        }
+        process.exit(2);
+      }
       throw e;
     }
   }
@@ -91,10 +131,23 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
       sourceId: sourceId ?? undefined,
     });
 
+    const scope = allSources ? 'all' : 'single';
+    const envelopeSourceId = allSources ? null : (sourceId ?? null);
+
     if (shouldEmitJson(args)) {
-      console.log(JSON.stringify({ symbol: sym, count: edges.length, callers: edges }, null, 2));
+      const out: Record<string, unknown> = {
+        symbol: sym, source_id: envelopeSourceId, scope, count: edges.length, callers: edges,
+      };
+      if (edges.length === 0 && !allSources && sourceId) {
+        out.hint = `No callers in source '${sourceId}'. Try --all-sources to search every source.`;
+      }
+      console.log(JSON.stringify(out, null, 2));
     } else if (edges.length === 0) {
-      console.log(`No callers found for "${sym}".`);
+      if (!allSources && sourceId) {
+        console.log(`No callers found for "${sym}" in source '${sourceId}'. Try --all-sources to search every source.`);
+      } else {
+        console.log(`No callers found for "${sym}".`);
+      }
     } else {
       console.log(`${edges.length} caller(s) for "${sym}":`);
       for (const e of edges) {
