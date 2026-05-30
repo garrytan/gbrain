@@ -2,6 +2,41 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [UNRELEASED] - openai-codex OAuth provider
+
+**Your ChatGPT subscription can now drive GBrain's chat-tier model calls — no `OPENAI_API_KEY` required.**
+
+This wave adds `openai-codex`, a *native* AI provider that authenticates with the same OAuth credential the Codex CLI uses. A browser login (PKCE `S256`, loopback-only `localhost:1455` callback) writes a token to your OS keychain; a dynamic model-discovery cache populates the available chat models; and a dedicated gateway adapter routes `openai-codex:<model>` calls through OpenAI's Responses API. The chat and expansion touchpoints — including `think`, `dream`, and the durable subagent loop — can now run on a ChatGPT plan instead of per-token API billing. Embeddings are untouched: this provider is chat/expansion only, so Voyage / OpenAI / ZeroEntropy keep the embedding touchpoint.
+
+The provider is intentionally separate from the API-key `openai` recipe — different credential store, different gateway path — so the two never cross-contaminate. Credentials live in the macOS keychain (service `gbrain-openai-codex`) with a `0600`, symlink-refusing, `GBRAIN_HOME`-confined JSON fallback when no keychain is available; every keychain call uses `execFile`-style argument arrays, and all diagnostics redact token-like substrings. Provider login/refresh is a trusted local-CLI action and is not exposed on the MCP/HTTP surface.
+
+### How to take advantage
+
+```bash
+gbrain providers login openai-codex     # browser OAuth → keychain
+gbrain providers refresh openai-codex    # populate dynamic model cache
+gbrain config set chat_model openai-codex:gpt-5.5
+gbrain config set expansion_model openai-codex:gpt-5.5
+```
+
+To run subagents on Codex, also enable the gateway loop (the legacy Anthropic-direct path refuses non-Anthropic models):
+
+```bash
+gbrain config set models.subagent openai-codex:gpt-5.5
+gbrain config set agent.use_gateway_loop true
+```
+
+Codex has no prompt caching, so the subagent loop runs hot — `gbrain doctor` surfaces a `subagent_capability` advisory recommending an Anthropic model for long autonomous loops. Full setup, readiness states, and troubleshooting in [`docs/ai-providers/openai-codex.md`](docs/ai-providers/openai-codex.md).
+
+### Itemized changes
+
+- **`src/core/ai/openai-codex/` (new) — provider implementation.** `oauth.ts` (PKCE authorize-URL builder, loopback callback parse with state verification, token exchange/refresh), `browser-login.ts` (loopback listener + browser open), `token-store.ts` (keychain via `security` execFile arrays + `0600` `GBRAIN_HOME`-confined file fallback, token redaction), `model-cache.ts` (24h-TTL dynamic cache, single-flight refresh, permission/symlink hardening), `model-discovery.ts` (filters `supported_in_api`), `readiness.ts` (5-state readiness for `providers list`/doctor), `adapter.ts` (Responses-API adapter: input/output_text role mapping, tool-calling, stream dedup).
+- **`src/core/ai/recipes/openai-codex.ts` (new) + `recipes/index.ts`.** Native recipe id `openai-codex`, `tier: native`, capability flags (`supports_tools`, `supports_subagent_loop`, `supports_prompt_cache: false`, `max_context_tokens: 128000`); registered in `ALL[]`.
+- **`src/core/ai/gateway.ts`.** Chat and expansion touchpoints route `openai-codex` model ids through the native `openAICodexChat` adapter (with `tools` plumbed through), not the static openai-compatible path.
+- **`src/commands/providers.ts`.** `providers login openai-codex` and `providers refresh openai-codex` subcommands; OAuth-readiness rendering in `providers list`/`explain`.
+- **`src/core/minions/handlers/subagent.ts`.** Codex subagents run via the gateway tool loop with tool-discipline steering.
+- **Tests (new): `test/openai-codex-*.test.ts`, `test/gateway-openai-codex-adapter.test.ts`, `test/providers-login-cli.test.ts`.** Cover OAuth callback/state, token-store permission/symlink/redaction guards, model-cache TTL/single-flight/no-credential-leak, readiness states, adapter multi-turn role mapping + tool-calling + stream dedup, and gateway routing. 64 cases.
+
 ## [0.41.29.0] - 2026-05-29
 
 **Your meeting transcripts that look like `**Garry Tan:** ...` now actually

@@ -819,10 +819,22 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     } as any);
   };
 
+  // Tool-discipline steering: some models (notably gpt-5.5 via the Codex
+  // backend) reach for built-in tool names they know from other contexts
+  // (brain_query, brain_search, brain_list_pages, ...) instead of the tools actually provided here,
+  // wasting turns on registry-miss errors. Append an explicit allow-list
+  // reminder when tools are present. Provider-neutral — harmless to models
+  // that already respect the supplied tool set (e.g. Anthropic).
+  const systemWithToolDiscipline = chatTools.length > 0
+    ? `${systemPrompt}\n\nTOOL USE: You have exactly these tools available: ${chatTools.map(t => t.name).join(', ')}. ` +
+      `Use ONLY these tools. Do NOT call any tool that is not in this list (e.g. brain_query, brain_search, brain_list_pages, Bash) — ` +
+      `they are not available and will fail. When you have enough information, answer directly in plain text.`
+    : systemPrompt;
+
   // Run the loop.
   const result = await gatewayToolLoop({
     model,
-    system: systemPrompt,
+    system: systemWithToolDiscipline,
     initialMessages,
     tools: chatTools,
     toolHandlers,
