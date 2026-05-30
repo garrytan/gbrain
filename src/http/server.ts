@@ -2074,8 +2074,15 @@ export function startHttpServer(engine: BrainEngine, opts: HttpServeOptions = {}
       }
 
       return err('not_found', 'Unknown endpoint', 404, {
-        hint: 'Available: GET /health, /topics, /schema, /search, /page, /pages, /pages/recent, /write, /job | POST /query, /search/batch | PUT /page | DELETE /page',
+        hint: 'Available: GET /health, /topics, /schema, /search, /search?tag=X, /page, /pages, /pages?prefix=X, /pages/recent, /write, /job | POST /query, /search/batch, /pages/batch | PUT /page | DELETE /page',
       });
+    },
+    error(e: unknown) {
+      // Bun calls this for unhandled errors in fetch() instead of returning HTML 500.
+      // Always return JSON so callers get a consistent envelope.
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[gbrain] unhandled fetch error: ${msg}`);
+      return Response.json({ ok: false, error: 'Internal server error', code: 'internal_error', detail: msg.slice(0, 300) }, { status: 500 });
     },
   });
 
