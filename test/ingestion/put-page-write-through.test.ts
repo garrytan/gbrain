@@ -193,6 +193,25 @@ describe('put_page write-through — config edge cases', () => {
     })) as { write_through?: { skipped?: string } };
     expect(result.write_through?.skipped).toBe('repo_not_found');
   });
+
+  test('bare repo target commits markdown through a temporary worktree', async () => {
+    const bareRepo = path.join(tmpRoot, 'brain.git');
+    fs.mkdirSync(bareRepo, { recursive: true });
+    Bun.spawnSync(['git', 'init', '--bare', bareRepo]);
+    await engine.setConfig('sync.repo_path', bareRepo);
+
+    const ctx = makeCtx({ remote: true });
+    const result = (await putPage.handler(ctx, {
+      slug: 'inbox/bare-repo',
+      content: '---\ntitle: Bare\n---\n\nbare body',
+    })) as { write_through?: { written: boolean; path?: string } };
+
+    expect(result.write_through?.written).toBe(true);
+    expect(result.write_through?.path).toBe(`bare:${bareRepo}:main:inbox/bare-repo.md`);
+    const show = Bun.spawnSync(['git', '--git-dir', bareRepo, 'show', 'main:inbox/bare-repo.md']);
+    expect(show.exitCode).toBe(0);
+    expect(show.stdout.toString()).toContain('bare body');
+  });
 });
 
 describe('put_page write-through — multi-source filing', () => {

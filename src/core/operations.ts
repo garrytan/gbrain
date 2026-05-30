@@ -11,8 +11,10 @@ import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
-import { mkdirSync, writeFileSync, existsSync, statSync } from 'fs';
+import { mkdirSync, writeFileSync, existsSync, statSync, mkdtempSync, rmSync } from 'fs';
 import { dirname } from 'path';
+import { tmpdir } from 'os';
+import { execFileSync } from 'child_process';
 import { hybridSearch, hybridSearchCached } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
@@ -41,6 +43,64 @@ import {
   CODE_DEF_DESCRIPTION,
   CODE_REFS_DESCRIPTION,
 } from './operations-descriptions.ts';
+
+function isBareGitRepo(repoPath: string): boolean {
+  try {
+    const out = execFileSync('git', ['--git-dir', repoPath, 'rev-parse', '--is-bare-repository'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return out === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function writePageToBareRepo(repoPath: string, relativePath: string, markdown: string, slug: string): { path: string } {
+  const branch = (() => {
+    try {
+      return execFileSync('git', ['--git-dir', repoPath, 'symbolic-ref', '--quiet', '--short', 'HEAD'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim() || 'main';
+    } catch {
+      return 'main';
+    }
+  })();
+  const workTree = mkdtempSync(`${tmpdir()}/gbrain-bare-write-`);
+  const git = (args: string[]) => execFileSync('git', ['--git-dir', repoPath, '--work-tree', workTree, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || 'GBrain',
+      GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || 'gbrain@localhost',
+      GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || 'GBrain',
+      GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || 'gbrain@localhost',
+    },
+  });
+
+  try {
+    try {
+      git(['checkout', '-f', branch]);
+    } catch {
+      // Empty bare repo: first write will create the branch on commit.
+    }
+    const filePath = resolve(workTree, relativePath);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, markdown, 'utf8');
+    git(['add', relativePath]);
+    try {
+      git(['diff', '--cached', '--quiet']);
+      return { path: `bare:${repoPath}:${branch}:${relativePath}` };
+    } catch {
+      git(['commit', '-m', `gbrain write-through ${slug}`]);
+      return { path: `bare:${repoPath}:${branch}:${relativePath}` };
+    }
+  } finally {
+    rmSync(workTree, { recursive: true, force: true });
+  }
+}
 
 // --- Types ---
 
@@ -712,6 +772,25 @@ const put_page: Operation = {
         const repoPath = await ctx.engine.getConfig('sync.repo_path');
         if (!repoPath) {
           writeThrough = { written: false, skipped: 'no_repo_configured' };
+        } else if (isBareGitRepo(repoPath as string)) {
+          const sourceId = ctx.sourceId ?? 'default';
+          const writtenPage = await ctx.engine.getPage(result.slug, { sourceId });
+          if (writtenPage) {
+            const tags = await ctx.engine.getTags(result.slug, { sourceId });
+            const provenanceVia = ctx.remote === false ? 'put_page' : 'mcp:put_page';
+            const md = serializePageToMarkdown(writtenPage, tags, {
+              frontmatterOverrides: {
+                ingested_via: provenanceVia,
+                ingested_at: new Date().toISOString(),
+                source_kind: provenanceVia,
+              },
+            });
+            const filePath = resolvePageFilePath('/', result.slug, sourceId).slice(1);
+            const target = writePageToBareRepo(repoPath as string, filePath, md, result.slug);
+            writeThrough = { written: true, path: target.path };
+          } else {
+            writeThrough = { written: false, skipped: 'page_not_found_after_write' };
+          }
         } else if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
           writeThrough = { written: false, skipped: 'repo_not_found' };
         } else {
