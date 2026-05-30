@@ -16,6 +16,19 @@ function flagValue(args: string[], name: string): string | undefined {
   return args[i + 1];
 }
 
+/**
+ * The synthesis prompt instructs the model to include a "Gaps" section in the
+ * answer body. The CLI also has a structured `gaps[]` array it can render as a
+ * `## Gaps` block. Rendering both prints Gaps twice, so only emit the
+ * structured block when there are gaps AND the answer body does not already
+ * contain a Gaps heading. Exported for unit testing.
+ */
+export function shouldRenderGapsBlock(answer: string, gaps: string[]): boolean {
+  if (gaps.length === 0) return false;
+  const answerHasGaps = /^#{1,6}\s*Gaps\b/im.test(answer);
+  return !answerHasGaps;
+}
+
 function flagPresent(args: string[], name: string): boolean {
   return args.includes(name);
 }
@@ -133,7 +146,7 @@ the gather phase still runs and prints what would have been the input.
   console.log(`# ${question}\n`);
   console.log(result.answer);
   console.log('');
-  if (result.gaps.length > 0) {
+  if (shouldRenderGapsBlock(result.answer, result.gaps)) {
     console.log('## Gaps');
     for (const g of result.gaps) console.log(`- ${g}`);
     console.log('');

@@ -2,6 +2,10 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [UNRELEASED] - fix(think): duplicate "Gaps" section in CLI output
+
+`knowledgebase think` printed the **Gaps** section twice: once from the model's answer body (the synthesis prompt instructs the model to include an Answer/Conflicts/Gaps structure) and again from the CLI rendering the structured `gaps[]` array as a second `## Gaps` block. The renderer now suppresses the structured block when the answer body already contains a Gaps heading (`shouldRenderGapsBlock`, unit-tested). The structured block still renders when the model omits a Gaps section from the body, so no gap data is lost.
+
 ## [0.41.29.0] - 2026-05-29
 
 **Your meeting transcripts that look like `**Garry Tan:** ...` now actually
