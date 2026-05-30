@@ -54,6 +54,30 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
   }),
 
   // ────────────────────────────────────────────────────────────────────────
+  // NamedThingBench (retrieval-quality) + the agent-facing evidence contract
+  // ────────────────────────────────────────────────────────────────────────
+  'hit@1': Object.freeze({
+    industry_term: 'Hit rate at 1 (Hit@1)',
+    eli10: 'Fraction of queries where the right page is the very first result. NamedThingBench hard-gates title-substring Hit@1 >= 0.95 and alias Hit@1 >= 0.98 — a query that is a page\'s name or title phrase should land it at rank 1, not "somewhere in the top 10".',
+    range: '0..1, higher is better.',
+  }),
+  'hit@3': Object.freeze({
+    industry_term: 'Hit rate at 3 (Hit@3)',
+    eli10: 'Fraction of queries where the right page is in the top 3 results. NamedThingBench requires the multi-chunk-dilution family to hit 1.0 — a page with one strong chunk among many weak ones must never be buried.',
+    range: '0..1, higher is better.',
+  }),
+  'avg_rank1_score': Object.freeze({
+    industry_term: 'Average rank-1 match score',
+    eli10: 'The mean base (pre-boost) retrieval score of the TOP result across recent searches, from `gbrain search stats`. It is NOT a labeled accuracy number — it is a drift signal: if this trends DOWN over time, retrieval quality is regressing (the early warning that would have caught the duplicate-page incident before a human did).',
+    range: '0..1. Watch the trend, not the absolute value; pair with the <0.6 / 0.6-0.85 / >=0.85 bucket counts for shape.',
+  }),
+  'create_safety': Object.freeze({
+    industry_term: 'Create-safety hint (evidence contract)',
+    eli10: 'A result\'s answer to "is this page already in the brain — safe to NOT write a new one?" Derived from the strongest evidence, NOT a raw score: exists (alias_hit / exact_title_match / high_vector_match — do not duplicate), probable (solid keyword match — prefer updating), unknown (weak match — look closer). An agent keys its don\'t-duplicate decision off this, which is what prevents the incident\'s duplicate-stub class.',
+    range: 'enum: exists | probable | unknown',
+  }),
+
+  // ────────────────────────────────────────────────────────────────────────
   // Set-similarity / stability metrics (replay + regression checks)
   // ────────────────────────────────────────────────────────────────────────
   'jaccard@k': Object.freeze({
@@ -182,6 +206,7 @@ export function renderMetricGlossaryMarkdown(): string {
 
   const groups: Array<[string, string[]]> = [
     ['Retrieval Metrics', ['precision@k', 'recall@k', 'mrr', 'ndcg@k']],
+    ['Retrieval-Quality / Evidence Metrics (NamedThingBench)', ['hit@1', 'hit@3', 'avg_rank1_score', 'create_safety']],
     ['Set-Similarity / Stability Metrics', ['jaccard@k', 'top1_stability']],
     ['Statistical-Significance Metrics', ['p_value', 'confidence_interval']],
     ['Operational / Cost Metrics', ['cache_hit_rate', 'avg_results', 'avg_tokens', 'cost_per_query_usd', 'p99_latency_ms']],

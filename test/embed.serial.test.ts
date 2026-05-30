@@ -32,6 +32,11 @@ mock.module('../src/core/embedding.ts', () => ({
       activeEmbedCalls--;
     }
   },
+  // v0.41.31: embedAll/embedAllStale read the current embedding signature to
+  // stamp provenance. The mock returns a stable value; the mock engine's
+  // setPageEmbeddingSignature / invalidateStaleSignatureEmbeddings resolve to
+  // null via the Proxy default, so the signature value is inert here.
+  currentEmbeddingSignature: () => 'test:model:1536',
 }));
 
 // Import AFTER mocking.
@@ -103,6 +108,29 @@ describe('runEmbed --all (parallel)', () => {
     expect(maxConcurrentEmbedCalls).toBeGreaterThan(1);
     // And stayed within the configured limit.
     expect(maxConcurrentEmbedCalls).toBeLessThanOrEqual(10);
+  });
+
+  test('v0.41.31: stamps embedding_signature after embedding each page (--all)', async () => {
+    const pages = [{ slug: 'a', source_id: 'default' }, { slug: 'b', source_id: 'default' }];
+    const chunksBySlug = new Map(
+      pages.map(p => [
+        p.slug,
+        [{ chunk_index: 0, chunk_text: `text ${p.slug}`, chunk_source: 'compiled_truth', embedded_at: null, token_count: 4 }],
+      ]),
+    );
+    const engine = mockEngine({
+      listPages: async () => pages,
+      getChunks: async (slug: string) => chunksBySlug.get(slug) || [],
+      upsertChunks: async () => {},
+    });
+
+    await runEmbed(engine, ['--all']);
+
+    // The wiring gap this pins: embedAll must CALL setPageEmbeddingSignature
+    // after upsertChunks, with the current signature (mocked to test:model:1536).
+    const stampCalls = (engine as any)._calls.filter((c: any) => c.method === 'setPageEmbeddingSignature');
+    expect(stampCalls.length).toBe(2); // one per page
+    expect(stampCalls[0].args[1]).toEqual({ sourceId: 'default', signature: 'test:model:1536' });
   });
 
   test('respects GBRAIN_EMBED_CONCURRENCY=1 (serial)', async () => {

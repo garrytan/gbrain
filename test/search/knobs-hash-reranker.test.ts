@@ -55,7 +55,7 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // v0.41.22.0 (type-unification): 5→6 to fold the alias_resolved
     // post-fusion boost. Cache rows written before the boost stage
     // cannot leak past the new stage.
-    expect(KNOBS_HASH_VERSION).toBe(6);
+    expect(KNOBS_HASH_VERSION).toBe(7);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

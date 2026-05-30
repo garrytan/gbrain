@@ -38,6 +38,40 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 **Range:** 0..1, higher is better. nDCG@10 above 0.65 is the common "ship it" threshold for hybrid retrieval on technical corpora.
 
+## Retrieval-Quality / Evidence Metrics (NamedThingBench)
+
+### Hit rate at 1 (Hit@1)
+
+**Key:** `hit@1`
+
+**Plain English:** Fraction of queries where the right page is the very first result. NamedThingBench hard-gates title-substring Hit@1 >= 0.95 and alias Hit@1 >= 0.98 — a query that is a page's name or title phrase should land it at rank 1, not "somewhere in the top 10".
+
+**Range:** 0..1, higher is better.
+
+### Hit rate at 3 (Hit@3)
+
+**Key:** `hit@3`
+
+**Plain English:** Fraction of queries where the right page is in the top 3 results. NamedThingBench requires the multi-chunk-dilution family to hit 1.0 — a page with one strong chunk among many weak ones must never be buried.
+
+**Range:** 0..1, higher is better.
+
+### Average rank-1 match score
+
+**Key:** `avg_rank1_score`
+
+**Plain English:** The mean base (pre-boost) retrieval score of the TOP result across recent searches, from `gbrain search stats`. It is NOT a labeled accuracy number — it is a drift signal: if this trends DOWN over time, retrieval quality is regressing (the early warning that would have caught the duplicate-page incident before a human did).
+
+**Range:** 0..1. Watch the trend, not the absolute value; pair with the <0.6 / 0.6-0.85 / >=0.85 bucket counts for shape.
+
+### Create-safety hint (evidence contract)
+
+**Key:** `create_safety`
+
+**Plain English:** A result's answer to "is this page already in the brain — safe to NOT write a new one?" Derived from the strongest evidence, NOT a raw score: exists (alias_hit / exact_title_match / high_vector_match — do not duplicate), probable (solid keyword match — prefer updating), unknown (weak match — look closer). An agent keys its don't-duplicate decision off this, which is what prevents the incident's duplicate-stub class.
+
+**Range:** enum: exists | probable | unknown
+
 ## Set-Similarity / Stability Metrics
 
 ### Jaccard similarity at k (set Jaccard @k)

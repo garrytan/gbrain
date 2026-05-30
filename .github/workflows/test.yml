@@ -5,6 +5,11 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Manual dispatch lets a local dev/agent offload the suite to GitHub's
+  # on-demand runners from ANY branch (see scripts/ship-remote-tests.sh).
+  # Frees a load-saturated local machine (e.g. many Conductor agents running
+  # their own bun-test suites at once — load avg 120 on 16 cores).
+  workflow_dispatch:
 
 permissions:
   contents: read

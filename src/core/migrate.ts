@@ -4920,6 +4920,109 @@ export const MIGRATIONS: Migration[] = [
         EXECUTE FUNCTION bump_page_generation_clock_fn();
     `,
   },
+  {
+    version: 108,
+    name: 'pages_embedding_signature',
+    // v0.41.31 — embedding provenance for real stale semantics.
+    //
+    // Adds `pages.embedding_signature TEXT NULL` = `<provider:model>:<dims>`
+    // stamped when a page's chunks are embedded (setPageEmbeddingSignature).
+    // A later model/dimension swap makes the stored signature differ from
+    // the current one, so countStaleChunks/sumStaleChunkChars (with the
+    // `signature` opt) and invalidateStaleSignatureEmbeddings can detect and
+    // re-embed those pages.
+    //
+    // GRANDFATHER (critical): the stale predicate is
+    //   `embedding_signature IS NOT NULL AND embedding_signature <> $current`
+    // so a NULL signature is NEVER stale. After this migration every existing
+    // page has NULL — none are flagged — so the next `embed --stale` does NOT
+    // re-embed the whole corpus. Signatures only get stamped going forward.
+    //
+    // No index: the column is read only via a JOINed pages row in the
+    // chunk-grain stale queries; no standalone lookup hot path. ADD COLUMN
+    // with no DEFAULT (NULL) is metadata-only on Postgres 11+ / PGLite 17.5.
+    idempotent: true,
+    sql: `
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS embedding_signature TEXT NULL;
+    `,
+  },
+  {
+    version: 109,
+    name: 'sources_newest_content_at',
+    // v0.41.32.0 (supersedes #1623): durable newest-COMMIT timestamp per source,
+    // written at sync time (HEAD committer time). The REMOTE staleness path
+    // (federation_health, get_status_snapshot MCP op) reads this column instead
+    // of shelling out to git on a DB-supplied local_path — preserving the
+    // v0.41.27.0 trust boundary while still killing the quiet-repo false-SEVERE
+    // alarm. ADD COLUMN with a NULL default is metadata-only on both engines
+    // (instant, no table rewrite). Mirror lives in pglite-schema.ts +
+    // schema.sql (fresh-install path) and the applyForwardReferenceBootstrap
+    // probe set in both engines. Renumbered 108→109 on the master merge that
+    // landed v0.41.31's pages_embedding_signature at v108.
+    idempotent: true,
+    sql: `ALTER TABLE sources ADD COLUMN IF NOT EXISTS newest_content_at TIMESTAMPTZ`,
+  },
+  {
+    version: 110,
+    name: 'page_aliases',
+    // T3 of the retrieval-cathedral wave (retrieval-maxpool incident).
+    //
+    // Free-text alias resolution: a query like "Hall of Light" or "明堂"
+    // should surface the page titled "Mingtang". gbrain stored that mapping
+    // in pages.frontmatter `aliases:` JSONB but it was invisible to search.
+    //
+    // DELIBERATELY SEPARATE from slug_aliases (v105). They answer different
+    // questions and overloading one for both would muddy the semantics:
+    //   - slug_aliases:  old-slug -> canonical-slug (wikilink/get_page redirect)
+    //   - page_aliases:  normalized free-text name -> canonical slug (search hop)
+    //
+    // alias_norm is the output of normalizeAlias() (NFKC + lowercase + ws
+    // collapse) so the WRITE side (ingest projection) and READ side (search)
+    // match on the same key. Btree on (source_id, alias_norm) so the hop is an
+    // indexed equality lookup, not ILIKE.
+    //
+    // NOT a UNIQUE(source_id, alias_norm) — real brains may legitimately have
+    // two pages claiming the same alias; we report the collision and resolve
+    // deterministically at query time rather than failing the ingest (Codex#8).
+    // The (source_id, alias_norm, slug) triple is unique so re-ingest is
+    // idempotent without blocking a second page's claim on the same alias.
+    //
+    // Mirror in src/core/pglite-schema.ts (fresh install); forward-reference
+    // bootstrap probe on both engines so pre-v110 brains pick it up cleanly.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS page_aliases (
+        id          BIGSERIAL PRIMARY KEY,
+        source_id   TEXT NOT NULL,
+        alias_norm  TEXT NOT NULL,
+        slug        TEXT NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT page_aliases_uniq UNIQUE (source_id, alias_norm, slug)
+      );
+      CREATE INDEX IF NOT EXISTS page_aliases_lookup_idx
+        ON page_aliases (source_id, alias_norm);
+      CREATE INDEX IF NOT EXISTS page_aliases_slug_idx
+        ON page_aliases (source_id, slug);
+    `,
+  },
+  {
+    version: 111,
+    name: 'search_telemetry_rank1_columns',
+    // T7 of the retrieval-cathedral wave — rank-1 base_score drift signal.
+    // Aggregate columns (NOT per-query rows, D10) so a downward drift in the
+    // median rank-1 match score is computable from the existing day/mode/intent
+    // rollup with bounded growth. search_telemetry lives only in migration v57
+    // (not the schema blobs), so these are ADD COLUMN IF NOT EXISTS on both
+    // engines; fresh installs pick them up right after v57 runs.
+    idempotent: true,
+    sql: `
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS sum_rank1_score DOUBLE PRECISION NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS count_rank1 INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_lt_solid INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_solid INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE search_telemetry ADD COLUMN IF NOT EXISTS rank1_high INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

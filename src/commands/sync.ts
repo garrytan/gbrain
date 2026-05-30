@@ -17,7 +17,17 @@ import {
   formatCodeBreakdown,
 } from '../core/sync.ts';
 import { estimateTokens, CHUNKER_VERSION } from '../core/chunkers/code.ts';
-import { EMBEDDING_MODEL, estimateEmbeddingCostUsd } from '../core/embedding.ts';
+import {
+  estimateEmbeddingCostUsd,
+  getEmbeddingModelName,
+  currentEmbeddingPricePerMTok,
+  currentEmbeddingSignature,
+  willEmbedSynchronously,
+  shouldBlockSync,
+} from '../core/embedding.ts';
+import { estimateCostFromChars } from '../core/embedding-pricing.ts';
+import { isSourceUnchangedSinceSync } from '../core/git-head.ts';
+import { SPEND_CAP_CONFIG_KEY } from '../core/embed-backfill-submit.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import type { SyncManifest } from '../core/sync.ts';
 import { createProgress } from '../core/progress.ts';
@@ -44,6 +54,11 @@ import {
 } from '../core/console-prefix.ts';
 import { loadStorageConfig } from '../core/storage-config.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
+// v0.41.32.0: stamp the durable newest-COMMIT timestamp at sync time so the
+// remote staleness path reads a column instead of shelling out to git.
+// lagFromContentMs is the remote/column comparator (buildSyncStatusReport
+// backs the get_status_snapshot MCP op — must NOT shell out to git).
+import { newestCommitMs, lagFromContentMs } from '../core/source-health.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
 
 export interface SyncResult {
@@ -78,64 +93,114 @@ export interface SyncResult {
 }
 
 /**
- * v0.20.0 Cathedral II Layer 8 (D1) — walk each source's working tree and
- * sum tokens for every syncable file. This is a conservative overestimate
- * (full file content, not just the incremental diff) because `sync --all`
- * on a source that hasn't been synced yet WILL embed every file in the
- * working tree. For already-synced sources with only incremental changes,
- * the overestimate is the ceiling, not the floor — users never get
- * surprised by MORE cost than the preview claims. The false-high bias is
- * intentional: a lower estimate that undersells the real bill would be
- * worse than one that oversells.
+ * Walk ONE source's working tree and sum tokens for every syncable file.
+ * Conservative full-tree ceiling (full file content, not the incremental
+ * diff) — over-counts, never under-counts, and matches the filesystem set
+ * `sync` actually imports (collectSyncableFiles + content_hash, NOT a git
+ * commit diff). Best-effort per file and per source: anything unreadable
+ * contributes 0 rather than blocking the preview.
+ *
+ * v0.31.2: routed through collectSyncableFiles (lstat + inode-cycle +
+ * max-depth) so the preview walks exactly what the real sync walks.
  */
-function estimateSyncAllCost(sources: Array<{ local_path: string | null; config: Record<string, unknown> }>): {
-  totalTokens: number;
-  totalFiles: number;
-  activeSources: number;
-  perSource: Array<{ path: string; tokens: number; files: number }>;
-} {
-  let totalTokens = 0;
-  let totalFiles = 0;
-  let activeSources = 0;
-  const perSource: Array<{ path: string; tokens: number; files: number }> = [];
+function estimateSourceTreeTokens(
+  localPath: string,
+  strategy: 'markdown' | 'code' | 'auto',
+): { tokens: number; files: number } {
+  let tokens = 0;
+  let files = 0;
+  try {
+    const fileList = collectSyncableFiles(localPath, { strategy });
+    for (const fullPath of fileList) {
+      try {
+        const stat = statSync(fullPath);
+        if (stat.size > 5_000_000) continue; // skip large binaries
+        const content = readFileSync(fullPath, 'utf-8');
+        tokens += estimateTokens(content);
+        files++;
+      } catch {
+        // Best-effort per file; sync itself tolerates the same.
+      }
+    }
+  } catch {
+    // Best-effort: a source whose local_path is gone/unreadable contributes 0.
+  }
+  return { tokens, files };
+}
 
+/**
+ * v0.41.31 — INLINE-path new-content estimate. Per source, contribute ZERO
+ * when the source is provably unchanged since its last sync (HEAD ==
+ * last_commit AND clean working tree AND chunker_version matches CURRENT) —
+ * `content_hash` short-circuits every file so nothing re-embeds. Otherwise
+ * contribute the full-tree ceiling. The unchanged predicate mirrors
+ * doctor's `sync_freshness` and sync's own "do work?" gate (sync.ts:1057+
+ * 1075). `isSourceUnchangedSinceSync` is fail-open (probe error → false), so
+ * a source we can't prove unchanged is conservatively re-estimated rather
+ * than silently priced at $0.
+ */
+function estimateInlineNewTokens(
+  sources: Array<{
+    local_path: string | null;
+    config: Record<string, unknown>;
+    last_commit: string | null;
+    chunker_version: string | null;
+  }>,
+  currentChunkerVersion: string,
+): { tokens: number; changedSources: number; unchangedSources: number } {
+  let tokens = 0;
+  let changedSources = 0;
+  let unchangedSources = 0;
   for (const src of sources) {
     if (!src.local_path) continue;
     const cfg = (src.config || {}) as { syncEnabled?: boolean; strategy?: 'markdown' | 'code' | 'auto' };
     if (cfg.syncEnabled === false) continue;
-    activeSources++;
-    let sourceTokens = 0;
-    let sourceFiles = 0;
-    try {
-      // v0.31.2: cost preview routed through collectSyncableFiles
-      // (single hardened walker; see import.ts). Previously
-      // walkSyncableFiles used statSync (followed symlinks). New walker
-      // uses lstat + inode-cycle + max-depth so the preview matches
-      // what the real sync will actually walk.
-      const files = collectSyncableFiles(src.local_path, { strategy: cfg.strategy ?? 'markdown' });
-      for (const fullPath of files) {
-        try {
-          const stat = statSync(fullPath);
-          if (stat.size > 5_000_000) continue; // skip large binaries
-          const content = readFileSync(fullPath, 'utf-8');
-          sourceTokens += estimateTokens(content);
-          sourceFiles++;
-        } catch {
-          // Best-effort per file. Skip unreadable files silently;
-          // sync itself tolerates the same.
-        }
-      }
-    } catch {
-      // Best-effort: a source whose local_path is gone or unreadable just
-      // contributes 0. The sync itself would have failed anyway; no point
-      // blocking the preview on a pre-existing fault.
+    const unchanged =
+      isSourceUnchangedSinceSync(src.local_path, src.last_commit, { requireCleanWorkingTree: true }) &&
+      src.chunker_version === currentChunkerVersion;
+    if (unchanged) {
+      unchangedSources++;
+      continue;
     }
-    totalTokens += sourceTokens;
-    totalFiles += sourceFiles;
-    perSource.push({ path: src.local_path, tokens: sourceTokens, files: sourceFiles });
+    changedSources++;
+    tokens += estimateSourceTreeTokens(src.local_path, cfg.strategy ?? 'markdown').tokens;
   }
+  return { tokens, changedSources, unchangedSources };
+}
 
-  return { totalTokens, totalFiles, activeSources, perSource };
+/**
+ * Resolve the inline-path cost-gate floor in USD. Config key
+ * `sync.cost_gate_min_usd` (DB plane), default $0.50. Below this estimate
+ * the inline gate proceeds without blocking. Fail-open to the default on a
+ * missing/invalid value or a config-read error (the gate must never crash
+ * the sync). Accepts 0 (an operator can set the floor to $0 to make the
+ * gate block on any nonzero inline cost).
+ */
+async function resolveCostGateFloorUsd(engine: BrainEngine): Promise<number> {
+  try {
+    const raw = await engine.getConfig('sync.cost_gate_min_usd');
+    if (raw === null || raw === undefined) return 0.5;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 0.5;
+  } catch {
+    return 0.5;
+  }
+}
+
+/**
+ * Resolve the per-source embed-backfill 24h spend cap (USD) for the deferred
+ * notice. Mirrors embed-backfill-submit.ts's own resolution of
+ * SPEND_CAP_CONFIG_KEY (default 25). Fail-open to the default.
+ */
+async function resolveBackfillCapUsd(engine: BrainEngine): Promise<number> {
+  try {
+    const raw = await engine.getConfig(SPEND_CAP_CONFIG_KEY);
+    if (raw === null || raw === undefined) return 25;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 25;
+  } catch {
+    return 25;
+  }
 }
 
 /** Interactive [y/N] prompt. Resolves false on non-y answers or EOF. */
@@ -400,15 +465,32 @@ async function writeSyncAnchor(
   sourceId: string | undefined,
   which: 'repo_path' | 'last_commit',
   value: string,
+  // v0.41.32.0 (supersedes #1623): on `last_commit` advances, also stamp the
+  // durable newest-COMMIT timestamp (HEAD committer time, epoch ms) in the SAME
+  // atomic UPDATE as last_sync_at — no separate write to leave partial state,
+  // no clock-domain split (last_sync_at = DB now(); newest_content_at = the
+  // git-intrinsic committer time of the HEAD we just synced). `undefined` keeps
+  // the legacy 2-column write; `null` clears the column (git unavailable).
+  newestContentEpochMs?: number | null,
 ): Promise<void> {
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.
     if (which === 'last_commit') {
-      await engine.executeRaw(
-        `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
-        [value, sourceId],
-      );
+      if (newestContentEpochMs !== undefined) {
+        const iso = newestContentEpochMs === null
+          ? null
+          : new Date(newestContentEpochMs).toISOString();
+        await engine.executeRaw(
+          `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+          [value, sourceId, iso],
+        );
+      } else {
+        await engine.executeRaw(
+          `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+          [value, sourceId],
+        );
+      }
     } else {
       await engine.executeRaw(
         `UPDATE sources SET ${col} = $1 WHERE id = $2`,
@@ -417,6 +499,9 @@ async function writeSyncAnchor(
     }
     return;
   }
+  // Legacy no-sourceId path (pre-v0.18 global config). Modern sync always
+  // resolves a sourceId (incl. 'default'), so newest_content_at is written via
+  // the sourceId branch above; the default source is not stuck on NULL.
   await engine.setConfig(`sync.${which}`, value);
 }
 
@@ -1193,7 +1278,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   if (totalChanges === 0) {
     // Update sync state even with no syncable changes (git advanced)
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
     return {
@@ -1695,7 +1780,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
 
   // Update sync state AFTER all changes succeed (source-scoped when
   // opts.sourceId is set, global config otherwise).
-  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
+  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
   await engine.setConfig('sync.last_run', new Date().toISOString());
   await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
   // v0.20.0 Cathedral II Layer 12: persist the chunker version we just
@@ -1916,7 +2001,7 @@ async function performFullSync(
   // Persist sync state so next sync is incremental (C1 fix: was missing).
   // v0.18.0 Step 5: routed through writeSyncAnchor so --source pins it
   // to the right sources row rather than the global config.
-  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit);
+  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
   await engine.setConfig('sync.last_run', new Date().toISOString());
   await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
   // v0.20.0 Cathedral II Layer 12: persist chunker version for the gate.
@@ -2231,61 +2316,148 @@ See also:
   // source (no checkout) has nothing for `sync` to pull. Sources with
   // syncEnabled=false in config.jsonb are skipped too.
   if (syncAll) {
-    const sources = await engine.executeRaw<{ id: string; name: string; local_path: string | null; config: Record<string, unknown> }>(
-      `SELECT id, name, local_path, config FROM sources WHERE local_path IS NOT NULL`,
+    // v0.41.31: SELECT carries last_commit + chunker_version so the inline
+    // cost preview's "unchanged source → 0" short-circuit can mirror sync's
+    // own "do work?" gate (sync.ts:1057+1075) + doctor's sync_freshness.
+    // Both columns predate v0.41 (writeSyncAnchor / writeChunkerVersion); no
+    // schema migration needed.
+    const sources = await engine.executeRaw<{ id: string; name: string; local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null }>(
+      `SELECT id, name, local_path, config, last_commit, chunker_version FROM sources WHERE local_path IS NOT NULL`,
     );
     if (!sources || sources.length === 0) {
       console.log('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
       return;
     }
 
-    // v0.20.0 Cathedral II Layer 8 D1 — cost preview + ConfirmationRequired
-    // gate. Before kicking off a multi-source sync that may embed tens of
-    // thousands of chunks (real money), walk the sync-diff set(s), sum
-    // tokens, compute USD estimate, and gate:
-    //   - TTY + !json + !yes → interactive [y/N] prompt
-    //   - non-TTY OR --json OR piped → emit ConfirmationRequired envelope,
-    //     exit 2 (reserve 1 for runtime errors)
-    //   - --yes → skip prompt entirely
-    //   - --dry-run → preview + exit 0
-    // Skipped entirely when --no-embed is set (user already opted out of
-    // the cost and will run `embed --stale` later).
+    // v0.41.31 — mode-aware cost gate. Resolve federated_v2 ONCE here so both
+    // the gate (below) and the fan-out (further down) share it.
+    const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
+    const v2Enabled = await isFederatedV2Enabled(engine);
+
+    // v0.41.31 cost gate (supersedes the v0.20.0 unconditional gate). Under
+    // federated_v2 sync DEFERS embedding to per-source embed-backfill jobs
+    // that carry their own $X/source/24h spend cap, so sync itself spends
+    // nothing synchronously — the gate is INFORMATIONAL (never exit 2) on
+    // that path. The blocking ConfirmationRequired gate fires ONLY when embed
+    // runs INLINE (v2 off, or --serial without --no-embed) AND the estimated
+    // spend exceeds `sync.cost_gate_min_usd` (default $0.50). Skipped entirely
+    // when --no-embed is set (user opted out; will run `embed --stale` later).
     if (!noEmbed) {
-      const preview = estimateSyncAllCost(sources);
-      const costUsd = estimateEmbeddingCostUsd(preview.totalTokens);
-      const previewMsg =
-        `sync --all preview: ${preview.totalFiles} files across ${preview.activeSources} source(s), ` +
-        `~${preview.totalTokens.toLocaleString()} tokens, est. $${costUsd.toFixed(2)} on ${EMBEDDING_MODEL}.`;
-
-      if (dryRun) {
-        if (jsonOut) {
-          console.log(JSON.stringify({ status: 'dry_run', preview, costUsd, model: EMBEDDING_MODEL }));
-        } else {
-          console.log(previewMsg);
-          console.log('--dry-run: exit without syncing.');
-        }
-        return;
+      const mode = willEmbedSynchronously({ v2Enabled, serialFlag, noEmbed });
+      // Stale backlog: cheap single SQL; fail-open to 0 so a transient DB
+      // hiccup never blocks the sync.
+      let staleChars = 0;
+      try {
+        // v0.41.31: signature-aware so a model/dims swap surfaces in the
+        // backlog estimate (NULL signature grandfathered → not counted).
+        staleChars = await engine.sumStaleChunkChars({ signature: currentEmbeddingSignature() });
+      } catch {
+        staleChars = 0;
       }
+      const rate = currentEmbeddingPricePerMTok();
+      const staleCostUsd = estimateCostFromChars(staleChars, rate);
+      const embeddingModelName = getEmbeddingModelName();
+      const floorUsd = await resolveCostGateFloorUsd(engine);
 
-      if (!yesFlag) {
-        const isTTY = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
-        if (!isTTY || jsonOut) {
-          // Agent-facing path: emit structured envelope, exit 2.
-          const envelope = serializeError(errorFor({
-            class: 'ConfirmationRequired',
-            code: 'cost_preview_requires_yes',
-            message: previewMsg,
-            hint: 'Pass --yes to proceed, or --dry-run to see the preview and exit 0.',
-          }));
-          console.log(JSON.stringify({ error: envelope, preview, costUsd, model: EMBEDDING_MODEL }));
-          process.exit(2);
+      if (mode === 'deferred') {
+        // Deferred path: print an FYI, NEVER exit 2. The backfill cap is the
+        // real money gate (D1/D4).
+        const capUsd = await resolveBackfillCapUsd(engine);
+        // v0.41.31 (TODO-2): surface already-queued backfill jobs so a cron
+        // operator sees work is enqueued, not lost. Best-effort — minion_jobs
+        // may not exist on a brain that never ran a worker.
+        let queuedBackfills = 0;
+        try {
+          const r = await engine.executeRaw<{ n: number }>(
+            `SELECT COUNT(*)::int AS n FROM minion_jobs
+              WHERE name = 'embed-backfill'
+                AND status IN ('waiting','active','delayed','waiting-children')`,
+          );
+          queuedBackfills = Number(r[0]?.n) || 0;
+        } catch {
+          queuedBackfills = 0;
         }
-        // Interactive TTY path: prompt [y/N].
-        console.log(previewMsg);
-        const answer = await promptYesNo('Proceed? [y/N] ');
-        if (!answer) {
-          console.log('Cancelled.');
+        const deferredMsg =
+          `sync --all: embedding deferred to backfill jobs ` +
+          `(capped $${capUsd}/source/24h, not charged by this sync). ` +
+          `Current backlog ~${staleChars.toLocaleString()} chars (~$${staleCostUsd.toFixed(2)} on ` +
+          `${embeddingModelName}) across ${sources.length} source(s); ` +
+          `${queuedBackfills} backfill job(s) queued.`;
+        if (dryRun) {
+          if (jsonOut) {
+            console.log(JSON.stringify({ status: 'dry_run', mode, gate: 'dry_run', staleChars, staleCostUsd, capUsd, floorUsd, queuedBackfills, model: embeddingModelName }));
+          } else {
+            console.log(deferredMsg);
+            console.log('--dry-run: exit without syncing.');
+          }
           return;
+        }
+        if (jsonOut) {
+          console.log(JSON.stringify({ status: 'deferred', mode, gate: 'deferred_notice', staleChars, staleCostUsd, capUsd, floorUsd, queuedBackfills, model: embeddingModelName }));
+        } else {
+          console.log(deferredMsg);
+        }
+        // fall through to sync — no exit 2.
+      } else {
+        // Inline path: sync embeds synchronously with no backfill cap to
+        // protect it, so the blocking gate applies. The BLOCKING cost is the
+        // new-content estimate ONLY (full-tree ceiling for changed sources;
+        // unchanged contribute 0) — that's what this sync actually embeds.
+        // The pre-existing stale backlog (NULL embeddings + signature drift)
+        // is NOT swept by sync; `gbrain embed --stale` clears it. So we show
+        // it informationally but never gate on cost this sync won't incur
+        // (else a model swap would block the next inline cron — F2).
+        const currentChunkerVersion = String(CHUNKER_VERSION);
+        const inline = estimateInlineNewTokens(sources, currentChunkerVersion);
+        const newCostUsd = estimateEmbeddingCostUsd(inline.tokens);
+        const costUsd = newCostUsd;
+        const staleNote = staleChars > 0
+          ? ` (plus ~${staleChars.toLocaleString()} stale-backlog chars pending \`gbrain embed --stale\`)`
+          : '';
+        const previewMsg =
+          `sync --all preview (inline embed): ${inline.changedSources} changed source(s), ` +
+          `${inline.unchangedSources} unchanged; ~${inline.tokens.toLocaleString()} new tokens, ` +
+          `est. $${costUsd.toFixed(2)} on ${embeddingModelName}${staleNote}.`;
+
+        if (dryRun) {
+          if (jsonOut) {
+            console.log(JSON.stringify({ status: 'dry_run', mode, gate: 'dry_run', newTokens: inline.tokens, staleChars, costUsd, floorUsd, model: embeddingModelName }));
+          } else {
+            console.log(previewMsg);
+            console.log('--dry-run: exit without syncing.');
+          }
+          return;
+        }
+
+        if (!yesFlag) {
+          if (shouldBlockSync(costUsd, floorUsd, mode)) {
+            const isTTY = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
+            if (!isTTY || jsonOut) {
+              // Agent-facing path: emit structured envelope, exit 2.
+              const envelope = serializeError(errorFor({
+                class: 'ConfirmationRequired',
+                code: 'cost_preview_requires_yes',
+                message: previewMsg,
+                hint: 'Pass --yes to proceed, or --dry-run to see the preview and exit 0.',
+              }));
+              console.log(JSON.stringify({ error: envelope, mode, gate: 'confirmation_required', newTokens: inline.tokens, staleChars, costUsd, floorUsd, model: embeddingModelName }));
+              process.exit(2);
+            }
+            // Interactive TTY path: prompt [y/N].
+            console.log(previewMsg);
+            const answer = await promptYesNo('Proceed? [y/N] ');
+            if (!answer) {
+              console.log('Cancelled.');
+              return;
+            }
+          } else {
+            // Below floor → proceed without blocking (kills inline-cron noise).
+            if (jsonOut) {
+              console.log(JSON.stringify({ status: 'below_floor', mode, gate: 'below_floor', newTokens: inline.tokens, staleChars, costUsd, floorUsd, model: embeddingModelName }));
+            } else {
+              console.log(`${previewMsg} Below cost gate floor ($${floorUsd.toFixed(2)}), proceeding.`);
+            }
+          }
         }
       }
     }
@@ -2302,8 +2474,7 @@ See also:
     //   - withSourcePrefix wrap inside runOne so slog/serr lines from
     //     performSync get the [<source-id>] prefix under parallel mode (D6)
     //   - stable JSON envelope {schema_version:1, sources, ...} when --json
-    const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
-    const v2Enabled = await isFederatedV2Enabled(engine);
+    // v0.41.31: v2Enabled resolved once above (cost gate). Reused here.
     const activeSources = sources.filter((s) => {
       const cfg = (s.config || {}) as { syncEnabled?: boolean };
       return cfg.syncEnabled !== false;
@@ -2791,6 +2962,13 @@ export interface SyncStatusReportSource {
   chunks_total: number;
   chunks_unembedded: number;
   embedding_coverage_pct: number;
+  // v0.41.31: embed-backfill job visibility (federated_v2 defers embedding
+  // to these jobs; without this an operator can't see queued/lagging work
+  // after `sync --all` exits 0). Best-effort — all 0 / null on brains
+  // without the minion_jobs table.
+  backfill_queued: number;
+  backfill_active: number;
+  backfill_last_completed_at: string | null;
 }
 
 export interface SyncStatusReport {
@@ -2824,6 +3002,8 @@ export async function buildSyncStatusReport(
     id: string;
     last_commit: string | null;
     last_sync_at: string | Date | null;
+    // v0.41.32.0: remote staleness reads this column (no git subprocess).
+    newest_content_at: string | Date | null;
   };
   type CountRow = {
     source_id: string;
@@ -2837,7 +3017,7 @@ export async function buildSyncStatusReport(
   const sourceRows = sourceIds.length === 0
     ? []
     : await engine.executeRaw<SourceRow>(
-        `SELECT id, last_commit, last_sync_at FROM sources WHERE id = ANY($1::text[])`,
+        `SELECT id, last_commit, last_sync_at, newest_content_at FROM sources WHERE id = ANY($1::text[])`,
         [sourceIds],
       );
   const sourceMap = new Map<string, SourceRow>();
@@ -2892,17 +3072,64 @@ export async function buildSyncStatusReport(
     });
   }
 
+  // v0.41.31: per-source embed-backfill job state. Best-effort — the
+  // minion_jobs table doesn't exist on every brain (a brain that never ran
+  // a worker has the pre-minions schema), and the dashboard must not crash
+  // for that. A failure → empty map → all sources report 0/null.
+  type BackfillRow = {
+    source_id: string | null;
+    queued: string | number;
+    active: string | number;
+    last_completed_at: string | Date | null;
+  };
+  const backfillMap = new Map<string, { queued: number; active: number; last_completed_at: string | null }>();
+  if (sourceIds.length > 0) {
+    try {
+      const backfillRows = await engine.executeRaw<BackfillRow>(
+        `SELECT data->>'sourceId' AS source_id,
+                COUNT(*) FILTER (WHERE status IN ('waiting','delayed','waiting-children'))::int AS queued,
+                COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+                MAX(finished_at) FILTER (WHERE status = 'completed') AS last_completed_at
+           FROM minion_jobs
+          WHERE name = 'embed-backfill' AND data->>'sourceId' = ANY($1::text[])
+          GROUP BY data->>'sourceId'`,
+        [sourceIds],
+      );
+      for (const r of backfillRows) {
+        if (!r.source_id) continue;
+        const last = r.last_completed_at;
+        backfillMap.set(r.source_id, {
+          queued: Number(r.queued) || 0,
+          active: Number(r.active) || 0,
+          last_completed_at: last == null ? null : (last instanceof Date ? last.toISOString() : last),
+        });
+      }
+    } catch {
+      // minion_jobs absent / unreadable → leave backfillMap empty.
+    }
+  }
+
   const now = Date.now();
   const out: SyncStatusReportSource[] = sources.map((src) => {
     const cfgEntry = (src.config || {}) as { syncEnabled?: boolean };
-    const row = sourceMap.get(src.id) || { id: src.id, last_commit: null, last_sync_at: null };
+    const row = sourceMap.get(src.id) || { id: src.id, last_commit: null, last_sync_at: null, newest_content_at: null };
     const counts = countMap.get(src.id) || { pages: 0, chunks_total: 0, chunks_unembedded: 0 };
     const lastSyncMs = row.last_sync_at
       ? (row.last_sync_at instanceof Date ? row.last_sync_at.getTime() : Date.parse(row.last_sync_at))
       : null;
-    const stalenessHours = lastSyncMs !== null && Number.isFinite(lastSyncMs)
-      ? (now - lastSyncMs) / 3_600_000
+    // v0.41.32.0: commit-relative staleness from the stored column — NO git
+    // subprocess (this function backs the remote get_status_snapshot MCP op,
+    // so it must honor the v0.41.27.0 trust boundary). A quiet repo whose
+    // newest commit predates its last sync reports 0; null column → wall-clock.
+    const contentMs = row.newest_content_at
+      ? (row.newest_content_at instanceof Date ? row.newest_content_at.getTime() : Date.parse(row.newest_content_at))
       : null;
+    const lagSeconds = lagFromContentMs(
+      Number.isFinite(contentMs as number) ? (contentMs as number) : null,
+      lastSyncMs !== null && Number.isFinite(lastSyncMs) ? lastSyncMs : null,
+      now,
+    );
+    const stalenessHours = lagSeconds === null ? null : lagSeconds / 3600;
     let stalenessClass: 'fresh' | 'stale' | 'severe' | 'unknown' = 'unknown';
     if (stalenessHours !== null) {
       if (stalenessHours < 24) stalenessClass = 'fresh';
@@ -2928,6 +3155,9 @@ export async function buildSyncStatusReport(
       chunks_total: counts.chunks_total,
       chunks_unembedded: counts.chunks_unembedded,
       embedding_coverage_pct: embeddingCoveragePct,
+      backfill_queued: backfillMap.get(src.id)?.queued ?? 0,
+      backfill_active: backfillMap.get(src.id)?.active ?? 0,
+      backfill_last_completed_at: backfillMap.get(src.id)?.last_completed_at ?? null,
     };
   });
 
@@ -2968,7 +3198,7 @@ export function printSyncStatusReport(
     write('  (no sources registered)');
     return;
   }
-  const headers = ['SOURCE', 'STATE', 'STALENESS', 'PAGES', 'EMBEDDED', 'LAST SYNC'];
+  const headers = ['SOURCE', 'STATE', 'STALENESS', 'PAGES', 'EMBEDDED', 'BACKFILL', 'LAST SYNC'];
   const rows = report.sources.map((s) => {
     const stale = s.staleness_hours === null
       ? 'never'
@@ -2976,21 +3206,28 @@ export function printSyncStatusReport(
     const stateBits: string[] = [];
     if (!s.sync_enabled) stateBits.push('disabled');
     stateBits.push(s.staleness_class);
+    // BACKFILL: active beats queued beats idle for the at-a-glance cell.
+    const backfill = s.backfill_active > 0
+      ? `active(${s.backfill_active})`
+      : s.backfill_queued > 0
+        ? `queued(${s.backfill_queued})`
+        : 'idle';
     return [
       s.name,
       stateBits.join(','),
       stale,
       String(s.pages),
       `${s.embedding_coverage_pct}%`,
+      backfill,
       s.last_sync_at ?? '(never)',
     ];
   });
   const widths = headers.map((h, i) =>
     Math.max(h.length, ...rows.map((r) => r[i].length)),
   );
-  // Numeric columns (PAGES at index 3, EMBEDDED at index 4, STALENESS
-  // at index 2) right-pad-left so digits align cleanly. Text columns
-  // left-pad-right per the existing `sources list` convention.
+  // Numeric columns (STALENESS=2, PAGES=3, EMBEDDED=4) right-pad-left so
+  // digits align cleanly. Text columns (incl. BACKFILL=5) left-pad-right
+  // per the existing `sources list` convention.
   const NUMERIC_COLS = new Set([2, 3, 4]);
   const fmt = (cells: string[]) =>
     cells.map((c, i) => (NUMERIC_COLS.has(i) ? c.padStart(widths[i]) : c.padEnd(widths[i]))).join('  ');

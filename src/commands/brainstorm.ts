@@ -16,13 +16,17 @@ import type { BrainEngine } from '../core/engine.ts';
 import {
   runBrainstorm,
   formatBrainstormMarkdown,
-  buildBrainstormFrontmatter,
+  buildBrainstormFrontmatterObject,
   BRAINSTORM_PROFILE,
   LSD_PROFILE,
   type BrainstormProfile,
 } from '../core/brainstorm/orchestrator.ts';
 import { loadConfig } from '../core/config.ts';
 import { StructuredAgentError } from '../core/errors.ts';
+import { serializeMarkdown } from '../core/markdown.ts';
+import { importFromContent } from '../core/import-file.ts';
+import { writePageThrough, type WriteThroughResult } from '../core/write-through.ts';
+import { randomBytes } from 'crypto';
 
 export interface BrainstormCliArgs {
   question?: string;
@@ -305,37 +309,144 @@ async function runBrainstormCli(
   const shouldSave = parsed.save ?? profile.default_save;
   if (shouldSave) {
     const slug = buildIdeaSlug(parsed.question, profile.label);
-    const frontmatter = buildBrainstormFrontmatter(result, { slug });
-    // Re-render content for save: include filtered ideas too so --retry-judge
-    // (when implemented) has the full set to re-score.
+    const title = `${profile.label === 'lsd' ? 'LSD' : 'Brainstorm'}: ${parsed.question.slice(0, 100)}`;
+    // Build ONE frontmatter object and render via the canonical serializer so
+    // the saved file round-trips through `gbrain sync` byte-for-byte. Include
+    // filtered ideas (onlyPassed:false) so a future --retry-judge has the full
+    // set to re-score.
+    const fmObj = buildBrainstormFrontmatterObject(result);
     const body = formatBrainstormMarkdown(result, { onlyPassed: false, includeMeta: true });
-    const content = frontmatter + body;
-    try {
-      await engine.putPage(slug, {
-        title: `${profile.label === 'lsd' ? 'LSD' : 'Brainstorm'}: ${parsed.question.slice(0, 100)}`,
-        type: 'note',
-        compiled_truth: content,
-        frontmatter: {
-          mode: profile.frontmatter_mode,
-          generated_at: new Date().toISOString(),
-          question: parsed.question,
-          judge_failed: result.judge_failed,
-          unscored: result.judge_failed,
-          close_slugs: result.close_set.map((c) => c.slug),
-          far_slugs: result.far_set.map((f) => f.slug),
-        },
-        timeline: '',
-      });
-      console.log(`\n_Saved to \`${slug}\`._`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`gbrain ${profile.label}: save failed: ${msg}`);
-    }
+    const content = serializeMarkdown(fmObj, body, '', { type: 'note', title, tags: [] });
+
+    const outcome = await persistSavedIdea(engine, { slug, content, provenanceVia: profile.label });
+    const msg = formatSaveOutcome(outcome, { profileLabel: profile.label, slug });
+    if (msg.stdout) console.log(msg.stdout);
+    for (const line of msg.stderr) console.error(line);
+    if (msg.exitCode) process.exitCode = msg.exitCode;
   }
 }
 
-/** Slugify the question for the saved page path. Capped + collision-resistant via date prefix. */
-function buildIdeaSlug(question: string, label: 'brainstorm' | 'lsd'): string {
+/** Outcome of persisting a saved idea to both sinks. */
+export interface SaveOutcome {
+  /** True when the canonical DB import (importFromContent) succeeded. */
+  dbSaved: boolean;
+  /** Set when the DB import threw. */
+  dbError?: string;
+  /** Disk write-through result (rendered from the saved row). */
+  writeThrough: WriteThroughResult;
+}
+
+export interface SaveMessage {
+  /** Human-readable success line for stdout (omitted when nothing persisted). */
+  stdout?: string;
+  /** Error / warning lines for stderr. */
+  stderr: string[];
+  /** Nonzero ONLY when nothing was persisted (no DB row AND no file). */
+  exitCode: number;
+}
+
+/**
+ * Persist a saved idea through the CANONICAL ingestion path: importFromContent
+ * (chunks + tags + content_hash + source_path, but `noEmbed` so we don't pay
+ * embedding cost at save time) writes the DB row, then the shared
+ * `writePageThrough` helper renders that row to disk. Rendering from the row
+ * means the two sinks cannot diverge, and the row matches what `gbrain sync`
+ * would produce — so a later sync doesn't churn it. The file is only attempted
+ * when the DB write landed (it's rendered from the row).
+ */
+export async function persistSavedIdea(
+  engine: BrainEngine,
+  args: { slug: string; content: string; sourceId?: string; provenanceVia: string },
+): Promise<SaveOutcome> {
+  const sourceId = args.sourceId ?? 'default';
+  let dbSaved = false;
+  let dbError: string | undefined;
+  try {
+    await importFromContent(engine, args.slug, args.content, {
+      noEmbed: true,
+      sourceId,
+      sourcePath: `${args.slug}.md`,
+    });
+    dbSaved = true;
+  } catch (err) {
+    dbError = err instanceof Error ? err.message : String(err);
+  }
+  const writeThrough: WriteThroughResult = dbSaved
+    ? await writePageThrough(engine, args.slug, {
+        sourceId,
+        frontmatterOverrides: { source_kind: args.provenanceVia },
+      })
+    : { written: false, skipped: 'page_not_found_after_write' };
+  return { dbSaved, dbError, writeThrough };
+}
+
+/**
+ * Render an honest save message from the outcome. Every branch names the real
+ * state; the only nonzero exit is the total-failure case (nothing persisted),
+ * so scripts can't read a failed `--save` as success. A file-write failure when
+ * the DB row landed stays exit 0 — the row is durable and `gbrain sync`
+ * reconciles the disk file on the next run.
+ */
+export function formatSaveOutcome(
+  outcome: SaveOutcome,
+  ctx: { profileLabel: string; slug: string },
+): SaveMessage {
+  const { dbSaved, dbError, writeThrough } = outcome;
+  const stderr: string[] = [];
+  if (dbError) stderr.push(`gbrain ${ctx.profileLabel}: DB save failed: ${dbError}`);
+  if (writeThrough.error) {
+    stderr.push(`gbrain ${ctx.profileLabel}: file write failed: ${writeThrough.error}`);
+  }
+
+  if (dbSaved && writeThrough.written) {
+    return {
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` and file \`${writeThrough.path}\`._`,
+      stderr,
+      exitCode: 0,
+    };
+  }
+  if (dbSaved && writeThrough.skipped === 'no_repo_configured') {
+    return {
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (no \`sync.repo_path\` set — skipped file write)._`,
+      stderr,
+      exitCode: 0,
+    };
+  }
+  if (dbSaved && writeThrough.skipped === 'repo_not_found') {
+    return {
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (\`sync.repo_path\` is not a directory — skipped file write)._`,
+      stderr,
+      exitCode: 0,
+    };
+  }
+  if (dbSaved) {
+    // File write attempted but errored (already on stderr). Row is durable.
+    return {
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (file NOT written — see error above; \`gbrain sync\` will reconcile)._`,
+      stderr,
+      exitCode: 0,
+    };
+  }
+  // Nothing persisted — the silent-false-success bug class. Exit nonzero.
+  stderr.push(
+    `gbrain ${ctx.profileLabel}: save FAILED — neither DB page nor file was written. The idea is NOT persisted.`,
+  );
+  return { stderr, exitCode: 1 };
+}
+
+/**
+ * Slugify the question for the saved page path. Collision-resistant via a date
+ * prefix AND a random nonce suffix — two same-day runs whose questions share
+ * the first 60 slug chars (or both slugify to empty → `untitled`) would
+ * otherwise produce the same slug, and both the DB upsert and the file write
+ * would silently clobber the earlier idea. The nonce is injectable so tests are
+ * deterministic; production uses crypto random.
+ */
+export function buildIdeaSlug(
+  question: string,
+  label: 'brainstorm' | 'lsd',
+  nonce?: string,
+): string {
   const date = new Date().toISOString().slice(0, 10);
   const stem = question
     .toLowerCase()
@@ -343,7 +454,8 @@ function buildIdeaSlug(question: string, label: 'brainstorm' | 'lsd'): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 60)
     .replace(/^-+|-+$/g, '');
-  return `wiki/ideas/${date}-${label}-${stem || 'untitled'}`;
+  const suffix = nonce ?? randomBytes(3).toString('hex');
+  return `wiki/ideas/${date}-${label}-${stem || 'untitled'}-${suffix}`;
 }
 
 /** CLI entry: `gbrain brainstorm`. */

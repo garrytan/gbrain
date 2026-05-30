@@ -951,6 +951,9 @@ async function initPGLite(opts: {
       // unless explicitly overridden by --schema-pack on re-init.
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    // PR1: new installs publish their skill catalog over MCP by default
+    // (existing config wins on re-init, so a prior opt-out is preserved).
+    config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
     saveConfig(config);
     if (opts.schemaPack) {
       process.stderr.write(
@@ -1188,6 +1191,9 @@ async function initPostgres(opts: {
       // v0.42 (T17): same schema_pack default as PGLite path.
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    // PR1: new installs publish their skill catalog over MCP by default
+    // (existing config wins on re-init, so a prior opt-out is preserved).
+    config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
     if (opts.schemaPack) {

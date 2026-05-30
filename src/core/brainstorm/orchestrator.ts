@@ -1045,3 +1045,32 @@ cost_usd: ${result.cost.actual_usd.toFixed(4)}
 
 `;
 }
+
+/**
+ * Object form of {@link buildBrainstormFrontmatter} for callers that feed the
+ * canonical `serializeMarkdown` serializer (which owns YAML escaping). The
+ * string builder above is left untouched for back-compat — its output shape is
+ * relied on by existing callers, so this is a SEPARATE helper, not a wrapper.
+ * `title` is intentionally omitted: serializeMarkdown takes it via its `meta`
+ * argument so it isn't duplicated in the frontmatter map.
+ */
+export function buildBrainstormFrontmatterObject(
+  result: BrainstormResult,
+): Record<string, unknown> {
+  const obj: Record<string, unknown> = {
+    mode: result.profile_label,
+    generated_at: new Date().toISOString(),
+    date: new Date().toISOString().slice(0, 10),
+    question: result.question.slice(0, 200),
+    close_slugs: result.close_set.map((c) => c.slug),
+    far_slugs: result.far_set.map((f) => f.slug),
+    short_of_target: result.short_of_target,
+    calibration_cold_start: result.active_bias_tags === null,
+    cost_usd: Number(result.cost.actual_usd.toFixed(4)),
+  };
+  if (result.judge_failed) {
+    obj.judge_failed = true;
+    obj.unscored = true;
+  }
+  return obj;
+}

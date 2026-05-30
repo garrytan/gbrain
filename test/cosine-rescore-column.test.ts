@@ -19,6 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   EmbeddingColumnNotRegisteredError,
 } from '../src/core/search/embedding-column.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -26,6 +27,17 @@ let chunkId: number;
 let chunkId2: number;
 
 beforeAll(async () => {
+  // Pin the embedding dim to 1536 BEFORE initSchema. initSchema sizes the
+  // `embedding` column from getEmbeddingDimensions() (default 1280 =
+  // zeroentropyai). This test hardcodes 1536-dim vectors + asserts 1536, so
+  // it must NOT inherit ambient/leaked gateway state (which is 1536 from a
+  // local ~/.gbrain config but 1280 in CI → vector(1280) → insert fails).
+  // Pinning here makes the column deterministically 1536 regardless of order.
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-test-cosine-rescore' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -87,6 +99,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 describe('getEmbeddingsByChunkIds — column parameter (D9)', () => {

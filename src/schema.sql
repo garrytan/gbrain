@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS sources (
   -- (id='default') is always trusted regardless of this column.
   contextual_retrieval_mode   TEXT,
   trust_frontmatter_overrides BOOLEAN NOT NULL DEFAULT false,
+  -- v0.41.32.0 (supersedes #1623): newest COMMIT timestamp (HEAD committer
+  -- time) recorded at last sync. The REMOTE staleness path reads this instead
+  -- of shelling out to git on a DB-supplied local_path, preserving the
+  -- v0.41.27.0 trust boundary. NULL → reader falls back to wall-clock.
+  newest_content_at TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

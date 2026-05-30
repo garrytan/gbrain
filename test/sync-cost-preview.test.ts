@@ -14,21 +14,52 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { EMBEDDING_COST_PER_1K_TOKENS, estimateEmbeddingCostUsd } from '../src/core/embedding.ts';
+import {
+  EMBEDDING_COST_PER_1K_TOKENS,
+  estimateEmbeddingCostUsd,
+  willEmbedSynchronously,
+  shouldBlockSync,
+} from '../src/core/embedding.ts';
+import { lookupEmbeddingPrice } from '../src/core/embedding-pricing.ts';
 import { estimateTokens } from '../src/core/chunkers/code.ts';
 
 describe('Layer 8 D1 — embedding cost model', () => {
-  test('EMBEDDING_COST_PER_1K_TOKENS is text-embedding-3-large pricing', () => {
-    // Update this when OpenAI changes text-embedding-3-large pricing.
-    // As of 2026-04-24: $0.00013 / 1k tokens.
+  test('EMBEDDING_COST_PER_1K_TOKENS back-compat constant is the OpenAI 3-large rate', () => {
+    // Retained only for back-compat imports. Live cost math now resolves the
+    // CONFIGURED model's rate via embedding-pricing.ts (see model-aware test
+    // below). As of 2026-04-24: $0.00013 / 1k tokens.
     expect(EMBEDDING_COST_PER_1K_TOKENS).toBe(0.00013);
   });
 
-  test('estimateEmbeddingCostUsd scales linearly with tokens', () => {
+  test('estimateEmbeddingCostUsd scales linearly (gateway-unconfigured fallback = OpenAI rate)', () => {
+    // With no gateway configured (unit-test context) the estimator falls back
+    // to the OpenAI text-embedding-3-large rate ($0.13/Mtok = $0.00013/1k).
     expect(estimateEmbeddingCostUsd(0)).toBe(0);
     expect(estimateEmbeddingCostUsd(1000)).toBeCloseTo(0.00013, 5);
     expect(estimateEmbeddingCostUsd(10_000)).toBeCloseTo(0.0013, 4);
     expect(estimateEmbeddingCostUsd(1_000_000)).toBeCloseTo(0.13, 4);
+  });
+
+  test('cost preview uses the CONFIGURED model rate, not a hardcoded OpenAI rate', () => {
+    // Regression: the cost gate previously hardcoded $0.00013/1k (OpenAI
+    // text-embedding-3-large) regardless of the configured embedding model,
+    // so a brain on a cheaper model (e.g. zeroentropyai:zembed-1 @ $0.05/Mtok)
+    // saw a preview that named the wrong provider and over-stated spend ~2.6x.
+    // The pricing table is the single source of truth per provider:model.
+    const TOKENS = 2_590_710_262; // a real large-brain sync preview
+    const openai = lookupEmbeddingPrice('openai:text-embedding-3-large');
+    const zeroentropy = lookupEmbeddingPrice('zeroentropyai:zembed-1');
+    expect(openai.kind).toBe('known');
+    expect(zeroentropy.kind).toBe('known');
+    if (openai.kind === 'known' && zeroentropy.kind === 'known') {
+      const openaiCost = (TOKENS / 1_000_000) * openai.pricePerMTok;
+      const zeCost = (TOKENS / 1_000_000) * zeroentropy.pricePerMTok;
+      // The two models must produce materially different previews; a fix that
+      // collapses both to the OpenAI number would regress this assertion.
+      expect(openaiCost).toBeCloseTo(336.79, 1);
+      expect(zeCost).toBeCloseTo(129.54, 1);
+      expect(zeCost).toBeLessThan(openaiCost);
+    }
   });
 
   test('5K-file TS repo sanity check: ~$5 at ~400k tokens', () => {
@@ -40,6 +71,50 @@ describe('Layer 8 D1 — embedding cost model', () => {
     const cost = estimateEmbeddingCostUsd(400_000);
     expect(cost).toBeGreaterThan(0.04);
     expect(cost).toBeLessThan(0.07);
+  });
+});
+
+describe('v0.41.31 — willEmbedSynchronously (embed-mode resolver)', () => {
+  // Mirrors sync.ts:2346 effectiveNoEmbed = v2 && !serial && !noEmbed ? true : noEmbed.
+  // Embed runs INLINE iff that resolves to false.
+  test('v2 off → inline (legacy synchronous embed)', () => {
+    expect(willEmbedSynchronously({ v2Enabled: false, serialFlag: false, noEmbed: false })).toBe('inline');
+  });
+  test('v2 on + parallel → deferred (backfill jobs)', () => {
+    expect(willEmbedSynchronously({ v2Enabled: true, serialFlag: false, noEmbed: false })).toBe('deferred');
+  });
+  test('v2 on + --serial → inline', () => {
+    expect(willEmbedSynchronously({ v2Enabled: true, serialFlag: true, noEmbed: false })).toBe('inline');
+  });
+  test('--no-embed forces deferred regardless of v2/serial', () => {
+    expect(willEmbedSynchronously({ v2Enabled: false, serialFlag: false, noEmbed: true })).toBe('deferred');
+    expect(willEmbedSynchronously({ v2Enabled: true, serialFlag: true, noEmbed: true })).toBe('deferred');
+  });
+});
+
+describe('v0.41.31 — shouldBlockSync (cost-gate decision)', () => {
+  // R-1: deferred NEVER blocks, even at absurd cost (the headline fix — a
+  // nightly cron over a synced corpus must not exit 2).
+  test('R-1: deferred never blocks, even at $999', () => {
+    expect(shouldBlockSync(999, 0.5, 'deferred')).toBe(false);
+    expect(shouldBlockSync(0, 0.5, 'deferred')).toBe(false);
+  });
+  // R-2: inline still blocks above the floor (protection preserved where
+  // sync actually spends synchronously).
+  test('R-2: inline blocks above floor', () => {
+    expect(shouldBlockSync(0.51, 0.5, 'inline')).toBe(true);
+    expect(shouldBlockSync(130, 0.5, 'inline')).toBe(true);
+  });
+  test('inline at exactly the floor does NOT block (boundary)', () => {
+    expect(shouldBlockSync(0.5, 0.5, 'inline')).toBe(false);
+  });
+  test('inline below floor does not block (kills cents-level cron noise)', () => {
+    expect(shouldBlockSync(0.03, 0.5, 'inline')).toBe(false);
+    expect(shouldBlockSync(0, 0.5, 'inline')).toBe(false);
+  });
+  test('floor of 0 makes inline block on any nonzero cost', () => {
+    expect(shouldBlockSync(0.0001, 0, 'inline')).toBe(true);
+    expect(shouldBlockSync(0, 0, 'inline')).toBe(false);
   });
 });
 

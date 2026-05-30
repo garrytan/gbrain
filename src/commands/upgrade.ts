@@ -357,6 +357,59 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           // Banner is cosmetic; never block the upgrade.
         }
 
+        // PR1: skill-catalog publish consent. New installs default ON at
+        // `gbrain init`; EXISTING installs stay OFF (default-OFF runtime = no
+        // silent capability grant on upgrade) until the owner opts in HERE.
+        // One-time, gated by `mcp.publish_skills_prompted`. Strongly recommended.
+        try {
+          const prompted = await engine.getConfig('mcp.publish_skills_prompted');
+          const current = await engine.getConfig('mcp.publish_skills');
+          if (prompted !== 'true' && current == null) {
+            const { autoDetectSkillsDir } = await import('../core/repo-root.ts');
+            const det = autoDetectSkillsDir();
+            const dirLine = det.dir
+              ? `Skills dir: ${det.dir} (source: ${det.source})`
+              : 'Skills dir: not auto-detected — set $GBRAIN_SKILLS_DIR or mcp.skills_dir before enabling.';
+            console.log('');
+            console.log('═══════════════════════════════════════════════════════════════');
+            console.log('[gbrain] Publish your skills to MCP clients?');
+            console.log('[gbrain] Codex desktop, Claude Code/Cowork, and Perplexity can then');
+            console.log("[gbrain] DISCOVER and FOLLOW your agent's skills over `gbrain serve`.");
+            console.log('[gbrain] This makes your MCP server dramatically more useful.');
+            console.log('[gbrain]');
+            console.log(`[gbrain] ${dirLine}`);
+            console.log('[gbrain] Effect: the CONTENTS of your SKILL.md files become readable by');
+            console.log('[gbrain] remote MCP callers you have authorized. Source code is NOT exposed.');
+            console.log('═══════════════════════════════════════════════════════════════');
+            const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+            let enabled = false;
+            if (isTty) {
+              const { createInterface } = await import('readline');
+              enabled = await new Promise<boolean>((resolveAns) => {
+                const rl = createInterface({ input: process.stdin, output: process.stdout });
+                rl.question('[gbrain] Enable skill publishing now? (recommended) [Y/n] ', (answer) => {
+                  rl.close();
+                  const a = answer.trim().toLowerCase();
+                  resolveAns(a === '' || a === 'y' || a === 'yes');
+                });
+                rl.on('close', () => resolveAns(false));
+              });
+            } else {
+              console.log('[AGENT] Relay this to your operator. Recommended: enable it.');
+              console.log('[AGENT] Enable with: gbrain config set mcp.publish_skills true');
+            }
+            if (enabled) {
+              await engine.setConfig('mcp.publish_skills', 'true');
+              console.log('[gbrain] Skill publishing ENABLED. Disable anytime: gbrain config set mcp.publish_skills false');
+            } else if (isTty) {
+              console.log('[gbrain] Left disabled. Enable later: gbrain config set mcp.publish_skills true');
+            }
+            await engine.setConfig('mcp.publish_skills_prompted', 'true');
+          }
+        } catch {
+          // Consent prompt is best-effort; never block the upgrade.
+        }
+
         // v0.32.7 CJK wave: chunker-version bump → re-embed sweep.
         // Idempotent — `runReindex` short-circuits when no pages are pending.
         try {

@@ -47,7 +47,7 @@ import { normalizeWeightForStorage } from './takes-fence.ts';
 import { GBrainError, PAGE_SORT_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -422,7 +422,9 @@ export class PGLiteEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='sources' AND column_name='trust_frontmatter_overrides') AS sources_trust_fm_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='pages' AND column_name='generation') AS pages_generation_exists
+                WHERE table_schema='public' AND table_name='pages' AND column_name='generation') AS pages_generation_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='pages' AND column_name='embedding_signature') AS pages_embedding_signature_exists
     `);
     const probe = rows[0] as {
       pages_exists: boolean;
@@ -463,6 +465,7 @@ export class PGLiteEngine implements BrainEngine {
       sources_cr_mode_exists: boolean;
       sources_trust_fm_exists: boolean;
       pages_generation_exists: boolean;
+      pages_embedding_signature_exists: boolean;
     };
 
     const needsPagesBootstrap = probe.pages_exists && !probe.source_id_exists;
@@ -530,6 +533,10 @@ export class PGLiteEngine implements BrainEngine {
     // body; bootstrap only needs to add the column on pre-v91 brains so
     // the CREATE INDEX doesn't crash.
     const needsPagesGeneration = probe.pages_exists && !probe.pages_generation_exists;
+    // v0.41.31 (v108): pages.embedding_signature for real stale semantics.
+    // No SCHEMA_SQL index references it today; bootstrap is defense-in-depth
+    // so future schema work doesn't wedge pre-v108 brains.
+    const needsPagesEmbeddingSignature = probe.pages_exists && !probe.pages_embedding_signature_exists;
 
     // Fresh installs (no tables yet) and modern brains both no-op.
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
@@ -539,7 +546,8 @@ export class PGLiteEngine implements BrainEngine {
         && !needsFilesBootstrap && !needsOauthClientsBootstrap
         && !needsSourcesArchive && !needsPagesLastRetrievedAt
         && !needsPagesProvenance
-        && !needsContextualRetrievalColumns && !needsPagesGeneration) return;
+        && !needsContextualRetrievalColumns && !needsPagesGeneration
+        && !needsPagesEmbeddingSignature) return;
 
     process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
 
@@ -765,6 +773,15 @@ export class PGLiteEngine implements BrainEngine {
       // the column. v91 is idempotent.
       await this.db.exec(`
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS generation BIGINT NOT NULL DEFAULT 1;
+      `);
+    }
+
+    if (needsPagesEmbeddingSignature) {
+      // v108 (pages_embedding_signature): embedding provenance for real
+      // stale semantics. NULL grandfathered (never stale). v108 runs later
+      // via runMigrations and is idempotent.
+      await this.db.exec(`
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS embedding_signature TEXT;
       `);
     }
   }
@@ -1480,13 +1497,9 @@ export class PGLiteEngine implements BrainEngine {
          ORDER BY score DESC
          LIMIT $2
        ),
-       best_per_page AS (
-         SELECT DISTINCT ON (slug) *
-         FROM ranked
-         ORDER BY slug, score DESC
-       )
+       ${buildBestPerPagePoolCte('ranked')}
        SELECT * FROM best_per_page
-       ORDER BY score DESC
+       ORDER BY score DESC, page_id ASC, chunk_id ASC
        LIMIT $3 OFFSET $4`,
       params
     );
@@ -1595,13 +1608,9 @@ export class PGLiteEngine implements BrainEngine {
            ORDER BY score DESC
            LIMIT $3
          ),
-         best_per_page AS (
-           SELECT DISTINCT ON (slug) *
-           FROM ranked
-           ORDER BY slug, score DESC
-         )
+         ${buildBestPerPagePoolCte('ranked')}
          SELECT * FROM best_per_page
-         ORDER BY score DESC
+         ORDER BY score DESC, page_id ASC, chunk_id ASC
          LIMIT $4 OFFSET $5`,
         params,
       );
@@ -1742,7 +1751,10 @@ export class PGLiteEngine implements BrainEngine {
     // subquery's WHERE would lexically resolve back to `te.page_id` itself
     // and degrade to `te.page_id = te.page_id` (always true), making every
     // result stale=true. Codex caught this in adversarial review.
-    const sourceFactorCaseOnSlug = buildSourceFactorCase('hc.slug', boostMap, opts?.detail);
+    // Built on the bare `slug` output column: applied inside the `scored` CTE
+    // whose FROM is the single relation `hnsw_candidates`, so unqualified
+    // `slug` resolves cleanly (T1 per-page pool restructure).
+    const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
     const innerLimit = offset + Math.max(limit * 5, 100);
@@ -1821,23 +1833,33 @@ export class PGLiteEngine implements BrainEngine {
          WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
          ORDER BY cc.${col} <=> ${castSql}
          LIMIT $2
-       )
+       ),
+       -- score as a select-list expr; inner ORDER BY stays pure-distance so
+       -- the HNSW index is usable.
+       scored AS (
+         SELECT *, raw_score * ${sourceFactorCaseOnSlug} AS score
+         FROM hnsw_candidates
+       ),
+       -- T1 (retrieval-maxpool incident): collapse to the best chunk PER PAGE
+       -- over the full candidate set before the user LIMIT. Shared builder with
+       -- postgres-engine + the keyword path so they cannot drift.
+       ${buildBestPerPagePoolCte('scored')}
        SELECT
-         hc.slug, hc.page_id, hc.title, hc.type, hc.source_id,
-         hc.effective_date, hc.effective_date_source,
-         hc.chunk_id, hc.chunk_index, hc.chunk_text, hc.chunk_source,
-         hc.raw_score * ${sourceFactorCaseOnSlug} AS score,
-         CASE WHEN hc.updated_at < (
-           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = hc.page_id
+         bpp.slug, bpp.page_id, bpp.title, bpp.type, bpp.source_id,
+         bpp.effective_date, bpp.effective_date_source,
+         bpp.chunk_id, bpp.chunk_index, bpp.chunk_text, bpp.chunk_source,
+         bpp.score,
+         CASE WHEN bpp.updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = bpp.page_id
          ) THEN true ELSE false END AS stale
-       FROM hnsw_candidates hc
+       FROM best_per_page bpp
        -- v0.41.13: stable tiebreaker. When two chunks share a score (same
        -- source-prefix boost + same cosine distance, the basis-vector + same-
        -- source-prefix case in eval fixtures), older page_id wins. Without
        -- this, planner choice + index presence can flip ordering between
        -- master and feature branches that add unrelated indexes — see the
        -- pages_dedup_idx (v95) regression that motivated this.
-       ORDER BY score DESC, hc.page_id ASC, hc.chunk_id ASC
+       ORDER BY bpp.score DESC, bpp.page_id ASC, bpp.chunk_id ASC
        LIMIT $3
        OFFSET $4`,
       params
@@ -2061,33 +2083,89 @@ export class PGLiteEngine implements BrainEngine {
     return (rows as Record<string, unknown>[]).map(r => rowToChunk(r));
   }
 
-  async countStaleChunks(opts?: { sourceId?: string }): Promise<number> {
-    // D7: source-scoped count for `gbrain embed --stale --source X`.
-    // v0.41 (D4+D8+Codex r2 #11): always JOIN pages so embed-skip filter
-    // applies via `NOT (frontmatter ? 'embed_skip')`. PGLite is
-    // PostgreSQL 17.5 in WASM and supports the full JSONB operator set.
-    if (opts?.sourceId === undefined) {
-      const { rows } = await this.db.query(
-        `SELECT count(*)::int AS count
-           FROM content_chunks cc
-           JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
-            AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`,
-      );
-      const count = (rows[0] as { count: number } | undefined)?.count ?? 0;
-      return Number(count);
+  /**
+   * Build the stale-chunk WHERE clause + positional params. embed_skip is
+   * always excluded. `signature` widens "stale" to include embedding_signature
+   * drift (NULL grandfathered → never stale). Shared by countStaleChunks +
+   * sumStaleChunkChars so they can't drift.
+   */
+  private buildStaleChunkWhere(opts?: { sourceId?: string; signature?: string }): { where: string; params: unknown[] } {
+    const params: unknown[] = [];
+    const conds: string[] = [];
+    if (opts?.signature !== undefined) {
+      params.push(opts.signature);
+      conds.push(`(cc.embedding IS NULL OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $${params.length}))`);
+    } else {
+      conds.push(`cc.embedding IS NULL`);
     }
+    conds.push(`NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`);
+    if (opts?.sourceId !== undefined) {
+      params.push(opts.sourceId);
+      conds.push(`p.source_id = $${params.length}`);
+    }
+    return { where: conds.join(' AND '), params };
+  }
+
+  async countStaleChunks(opts?: { sourceId?: string; signature?: string }): Promise<number> {
+    // D7: source-scoped count for `gbrain embed --stale --source X`. Always
+    // JOIN pages so embed-skip + signature predicates apply. PGLite is
+    // PostgreSQL 17.5 in WASM and supports the full JSONB operator set.
+    const { where, params } = this.buildStaleChunkWhere(opts);
     const { rows } = await this.db.query(
       `SELECT count(*)::int AS count
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NULL
-          AND p.source_id = $1
-          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`,
-      [opts.sourceId],
+        WHERE ${where}`,
+      params,
     );
     const count = (rows[0] as { count: number } | undefined)?.count ?? 0;
     return Number(count);
+  }
+
+  async sumStaleChunkChars(opts?: { sourceId?: string; signature?: string }): Promise<number> {
+    // Sibling of countStaleChunks: same stale predicate, summing chunk_text
+    // length for the sync cost preview. ::bigint guards int4 overflow.
+    const { where, params } = this.buildStaleChunkWhere(opts);
+    const { rows } = await this.db.query(
+      `SELECT COALESCE(SUM(LENGTH(cc.chunk_text)), 0)::bigint AS chars
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE ${where}`,
+      params,
+    );
+    const chars = (rows[0] as { chars: number | string } | undefined)?.chars ?? 0;
+    return Number(chars);
+  }
+
+  async setPageEmbeddingSignature(slug: string, opts: { sourceId?: string; signature: string }): Promise<void> {
+    await this.db.query(
+      `UPDATE pages SET embedding_signature = $1 WHERE slug = $2 AND source_id = $3`,
+      [opts.signature, slug, opts.sourceId ?? 'default'],
+    );
+  }
+
+  async invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string }): Promise<number> {
+    // NULL out embeddings whose page signature is set AND differs from the
+    // current model signature. GRANDFATHER: NULL signature untouched. Feeds
+    // the existing NULL-embedding cursor so listStaleChunks stays unchanged.
+    const params: unknown[] = [opts.signature];
+    let srcClause = '';
+    if (opts.sourceId !== undefined) {
+      params.push(opts.sourceId);
+      srcClause = ` AND p.source_id = $${params.length}`;
+    }
+    const { rows } = await this.db.query(
+      `UPDATE content_chunks cc
+          SET embedding = NULL, embedded_at = NULL
+         FROM pages p
+        WHERE cc.page_id = p.id
+          AND cc.embedding IS NOT NULL
+          AND p.embedding_signature IS NOT NULL
+          AND p.embedding_signature <> $1${srcClause}
+        RETURNING cc.page_id`,
+      params,
+    );
+    return (rows as unknown[]).length;
   }
 
   async listStaleChunks(opts?: {
@@ -4440,6 +4518,48 @@ export class PGLiteEngine implements BrainEngine {
       if (isUndefinedTableError(e)) return slug;
       throw e;
     }
+  }
+
+  async resolveAliases(
+    aliasNorms: string[],
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<Map<string, Array<{ slug: string; source_id: string }>>> {
+    const out = new Map<string, Array<{ slug: string; source_id: string }>>();
+    if (!aliasNorms || aliasNorms.length === 0) return out;
+    const sources =
+      opts?.sourceIds && opts.sourceIds.length > 0
+        ? opts.sourceIds
+        : opts?.sourceId
+          ? [opts.sourceId]
+          : null;
+    let q = `SELECT alias_norm, slug, source_id FROM page_aliases WHERE alias_norm = ANY($1::text[])`;
+    const params: unknown[] = [aliasNorms];
+    if (sources) {
+      params.push(sources);
+      q += ` AND source_id = ANY($2::text[])`;
+    }
+    q += ` ORDER BY alias_norm, source_id, slug`;
+    const { rows } = await this.db.query(q, params);
+    for (const r of rows as Array<{ alias_norm: string; slug: string; source_id: string }>) {
+      const list = out.get(r.alias_norm) ?? [];
+      if (!list.some(x => x.slug === r.slug && x.source_id === r.source_id)) {
+        list.push({ slug: r.slug, source_id: r.source_id });
+      }
+      out.set(r.alias_norm, list);
+    }
+    return out;
+  }
+
+  async setPageAliases(slug: string, sourceId: string, aliasNorms: string[]): Promise<void> {
+    const uniq = Array.from(new Set(aliasNorms.filter(a => a.length > 0)));
+    await this.db.query(`DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2`, [sourceId, slug]);
+    if (uniq.length === 0) return;
+    await this.db.query(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug)
+       SELECT $1, a, $2 FROM unnest($3::text[]) AS a
+       ON CONFLICT (source_id, alias_norm, slug) DO NOTHING`,
+      [sourceId, slug, uniq],
+    );
   }
 
   // Config

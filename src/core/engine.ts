@@ -956,7 +956,38 @@ export interface BrainEngine {
    * `gbrain embed --stale --source media-corpus` expect only that
    * source's NULLs touched; the caller threads `sourceId` here.
    */
-  countStaleChunks(opts?: { sourceId?: string }): Promise<number>;
+  countStaleChunks(opts?: { sourceId?: string; signature?: string }): Promise<number>;
+  /**
+   * Sum of LENGTH(chunk_text) over stale chunks — the character-count
+   * backlog the embed phase / embed-backfill will process. Sibling of
+   * countStaleChunks (same stale predicate + embed_skip filter + optional
+   * sourceId scope); used by the `gbrain sync --all` cost preview to price
+   * the embedding backlog via estimateCostFromChars. Returns 0 on an
+   * empty/fully-embedded brain.
+   *
+   * v0.41.31: `signature` (optional) widens "stale" to ALSO include chunks
+   * whose page `embedding_signature` is set AND differs from the current
+   * model signature (a model/dims swap). NULL signature is GRANDFATHERED
+   * (never counted) so the post-migration corpus isn't flagged en masse.
+   * Omit `signature` for the legacy `embedding IS NULL`-only count.
+   */
+  sumStaleChunkChars(opts?: { sourceId?: string; signature?: string }): Promise<number>;
+  /**
+   * Stamp `pages.embedding_signature = signature` for one page. Called after
+   * a page's chunks are (re)embedded so a later model swap can detect it as
+   * stale. Idempotent. No-op if the page doesn't exist.
+   */
+  setPageEmbeddingSignature(slug: string, opts: { sourceId?: string; signature: string }): Promise<void>;
+  /**
+   * NULL out the embeddings (and embedded_at) of every chunk whose page
+   * `embedding_signature` is set AND differs from `signature` — i.e. pages
+   * embedded under a now-stale model. Returns the chunk count invalidated.
+   * The embed-stale loop calls this BEFORE listStaleChunks so signature-
+   * drift pages flow through the existing NULL-embedding cursor (keeps
+   * listStaleChunks's keyset pagination untouched). GRANDFATHER: NULL
+   * signature is never invalidated. `sourceId` scopes the sweep.
+   */
+  invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string }): Promise<number>;
   /**
    * Return every chunk where embedding IS NULL, with the metadata needed
    * to call embedBatch + upsertChunks. The `embedding` column is omitted
@@ -1691,6 +1722,38 @@ export interface BrainEngine {
     slug: string,
     sourceOrSources: string | readonly string[],
   ): Promise<string>;
+
+  /**
+   * T3 retrieval-cathedral — free-text alias resolution for SEARCH.
+   * Given a set of NORMALIZED alias strings (normalizeAlias() output),
+   * return a map alias_norm -> canonical slugs from page_aliases. An alias
+   * may resolve to MORE THAN ONE slug (two pages claimed the same name) —
+   * the caller reports the collision and resolves deterministically.
+   *
+   * Source-scoped: pass scalar `sourceId` (single-source) OR `sourceIds`
+   * (federated read) — array wins when both set, matching sourceScopeOpts.
+   * Empty input → empty map (no query). Throws "relation page_aliases does
+   * not exist" on pre-v110 brains; the alias-hop caller wraps in try/catch
+   * (isUndefinedColumnError) and degrades to no-injection (D9 fail-open).
+   */
+  resolveAliases(
+    aliasNorms: string[],
+    opts?: { sourceId?: string; sourceIds?: string[] },
+  ): Promise<Map<string, Array<{ slug: string; source_id: string }>>>;
+
+  /**
+   * T3 retrieval-cathedral — WRITE side of the alias layer. Replace the full
+   * alias set for one (slug, source) with `aliasNorms` (already normalized):
+   * delete the page's existing page_aliases rows, insert the new set. Empty
+   * `aliasNorms` just clears them. Idempotent (the unique triple). Called by
+   * the ingest projection in importFromContent and the `reindex --aliases`
+   * backfill so a page's declared aliases stay in lockstep with its frontmatter.
+   */
+  setPageAliases(
+    slug: string,
+    sourceId: string,
+    aliasNorms: string[],
+  ): Promise<void>;
 
   /**
    * v0.35.5 — narrow UPDATE of `pages.compiled_truth`, `pages.timeline`, and

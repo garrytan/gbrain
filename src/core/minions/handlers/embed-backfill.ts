@@ -35,6 +35,7 @@ import { tryAcquireDbLock } from '../../db-lock.ts';
 import { BudgetTracker, BudgetExhausted } from '../../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../../ai/gateway.ts';
 import { embedStaleForSource } from '../../embed-stale.ts';
+import { currentEmbeddingSignature } from '../../embedding.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionJobContext } from '../types.ts';
 
@@ -123,6 +124,9 @@ export function makeEmbedBackfillHandler(engine: BrainEngine) {
         embedStaleForSource(engine, sourceId, {
           batchSize,
           signal: job.signal,
+          // v0.41.31: re-embed pages whose model signature drifted + stamp
+          // provenance as chunks land.
+          embeddingSignature: currentEmbeddingSignature(),
           onProgress: ({ embedded, chunksProcessed, cursor }) => {
             // Fire-and-forget; updateProgress returns a Promise but the
             // handler is sync inside the loop.
