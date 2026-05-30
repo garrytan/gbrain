@@ -33,7 +33,7 @@ const OPENAI_CODEX_AUTH_EXTRA_PARAMS = {
   originator: OPENAI_CODEX_DEFAULT_ORIGINATOR,
 };
 const OPENAI_CODEX_MODELS_ENDPOINT = 'https://chatgpt.com/backend-api/codex/models';
-const OPENAI_CODEX_CLIENT_VERSION = '0.133.0';
+const OPENAI_CODEX_CLIENT_VERSION = '0.135.0';
 
 type TouchpointFilter = 'embedding' | 'expansion' | 'chat';
 

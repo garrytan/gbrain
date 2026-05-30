@@ -2388,6 +2388,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
         model: parsedChat.modelId,
         system: opts.system,
         messages: opts.messages,
+        tools: opts.tools,
         maxTokens: opts.maxTokens ?? 4096,
         abortSignal: opts.abortSignal,
       });

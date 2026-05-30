@@ -1,5 +1,5 @@
 import { AIConfigError, AITransientError } from '../errors.ts';
-import type { ChatBlock, ChatMessage, ChatResult } from '../gateway.ts';
+import type { ChatBlock, ChatMessage, ChatResult, ChatToolDef } from '../gateway.ts';
 import { defaultTokenStore, redactTokenLike, type TokenStore } from './token-store.ts';
 
 const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -29,6 +29,8 @@ export interface OpenAICodexChatOpts extends OpenAICodexAdapterOpts {
   system?: string;
   messages: ChatMessage[];
   maxTokens?: number;
+  /** Tool definitions for function calling (subagent tool loop). */
+  tools?: ChatToolDef[];
 }
 
 export interface OpenAICodexJsonOpts<T> extends OpenAICodexAdapterOpts {
@@ -76,14 +78,95 @@ function buildInput(system: string | undefined, messages: ChatMessage[]): Array<
   }
   for (const message of messages) {
     if (message.role === 'tool') continue;
+    const isAssistant = message.role === 'assistant';
+
+    // Structured blocks (assistant tool-calls, tool-results) must map to the
+    // Responses API's top-level item shapes, NOT nested message content. The
+    // subagent tool loop replays history as blocks: assistant turns carry
+    // `tool-call` blocks, and tool outputs come back as `tool-result` blocks.
+    if (Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (block.type === 'text') {
+          if (!block.text) continue;
+          input.push({
+            role: isAssistant ? 'assistant' : 'user',
+            content: [{ type: isAssistant ? 'output_text' : 'input_text', text: block.text }],
+          });
+        } else if (block.type === 'tool-call') {
+          // Assistant function call — replayed so the model sees its own prior
+          // tool invocation. `arguments` MUST be a JSON string per the API.
+          input.push({
+            type: 'function_call',
+            call_id: block.toolCallId,
+            name: block.toolName,
+            arguments: typeof block.input === 'string' ? block.input : JSON.stringify(block.input ?? {}),
+          });
+        } else if (block.type === 'tool-result') {
+          // Tool execution result fed back into the next turn.
+          const out = typeof block.output === 'string' ? block.output : JSON.stringify(block.output ?? '');
+          input.push({
+            type: 'function_call_output',
+            call_id: block.toolCallId,
+            output: out,
+          });
+        }
+      }
+      continue;
+    }
+
+    // Plain string content.
     const text = contentToInputText(message.content);
     if (!text) continue;
+    // The Codex Responses API validates content-part types by role: assistant
+    // turns must use `output_text` (they represent prior model output), while
+    // user/system turns use `input_text`. Sending `input_text` for an assistant
+    // turn returns HTTP 400, which breaks every multi-turn path (think, dream,
+    // subagent history replay).
     input.push({
-      role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: [{ type: 'input_text', text }],
+      role: isAssistant ? 'assistant' : 'user',
+      content: [{ type: isAssistant ? 'output_text' : 'input_text', text }],
     });
   }
   return input;
+}
+
+/** Map GBrain tool defs to the Responses API `tools` shape. */
+function buildTools(tools: ChatToolDef[] | undefined): Array<Record<string, unknown>> | undefined {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.map(t => ({
+    type: 'function',
+    name: t.name,
+    description: t.description,
+    parameters: t.inputSchema,
+    strict: false,
+  }));
+}
+
+/**
+ * Extract assistant tool-call blocks from a Responses API body. Function calls
+ * surface as top-level `output` items with `type: 'function_call'`, carrying
+ * `call_id`, `name`, and a JSON-string `arguments` field.
+ */
+function extractToolCalls(body: any): Array<{ type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }> {
+  const calls: Array<{ type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }> = [];
+  for (const item of Array.isArray(body?.output) ? body.output : []) {
+    if (item?.type === 'function_call' || (typeof item?.name === 'string' && item?.call_id)) {
+      const rawArgs = item.arguments ?? item.input ?? '{}';
+      let parsed: unknown;
+      try {
+        parsed = typeof rawArgs === 'string' ? JSON.parse(rawArgs || '{}') : rawArgs;
+      } catch {
+        parsed = rawArgs; // keep raw string if not valid JSON — handler can decide
+      }
+      calls.push({
+        type: 'tool-call',
+        toolCallId: String(item.call_id ?? item.id ?? `call_${calls.length}`),
+        toolName: String(item.name),
+        input: parsed,
+      });
+    }
+  }
+  return calls;
 }
 
 function extractOutputText(body: any): string {
@@ -146,7 +229,22 @@ function parseResponsesEventStream(streamText: string): any {
       if (text) aggregate.output_text = text;
     }
     if (event.item && typeof event.item === 'object') {
-      aggregate.output.push(event.item);
+      // Function-call items stream as a pair: `output_item.added` (empty args)
+      // then `output_item.done` (complete args), both carrying the same
+      // `call_id`. Dedupe by call_id so we keep only the final, fully-formed
+      // call — otherwise the tool loop sees a phantom duplicate invocation.
+      const item = event.item as any;
+      const callId = item?.call_id;
+      if (callId) {
+        const existingIdx = aggregate.output.findIndex((o: any) => o?.call_id === callId);
+        if (existingIdx >= 0) {
+          aggregate.output[existingIdx] = item; // latest (done) wins
+        } else {
+          aggregate.output.push(item);
+        }
+      } else {
+        aggregate.output.push(item);
+      }
     }
     if (event.usage) aggregate.usage = event.usage;
   }
@@ -210,6 +308,7 @@ async function postResponses(params: {
 }
 
 export async function openAICodexChat(opts: OpenAICodexChatOpts): Promise<ChatResult> {
+  const tools = buildTools(opts.tools);
   const body = await postResponses({
     model: opts.model,
     tokenStore: opts.tokenStore,
@@ -219,15 +318,25 @@ export async function openAICodexChat(opts: OpenAICodexChatOpts): Promise<ChatRe
     body: {
       instructions: opts.system ?? 'You are a concise assistant.',
       input: buildInput(undefined, opts.messages),
+      ...(tools ? { tools, tool_choice: 'auto' } : {}),
     },
   });
 
   const text = extractOutputText(body);
-  const blocks: ChatBlock[] = text ? [{ type: 'text', text }] : [];
+  const toolCalls = extractToolCalls(body);
+  const blocks: ChatBlock[] = [];
+  if (text) blocks.push({ type: 'text', text });
+  for (const call of toolCalls) blocks.push(call);
+
+  // When the model emits tool calls, the stop reason MUST be 'tool_calls' so
+  // the gateway tool loop continues. Codex's stream status is 'completed' even
+  // on a function-call turn, so infer from the presence of tool-call blocks.
+  const stopReason: ChatResult['stopReason'] = toolCalls.length > 0 ? 'tool_calls' : mapStopReason(body);
+
   return {
     text,
     blocks,
-    stopReason: mapStopReason(body),
+    stopReason,
     usage: normalizeUsage(body?.usage),
     model: `openai-codex:${opts.model}`,
     providerId: 'openai-codex',

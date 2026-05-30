@@ -29,8 +29,8 @@ export const openaiCodex: Recipe = {
     },
     chat: {
       models: ['dynamic'],
-      supports_tools: false,
-      supports_subagent_loop: false,
+      supports_tools: true,
+      supports_subagent_loop: true,
       supports_prompt_cache: false,
       max_context_tokens: 128000,
     },
