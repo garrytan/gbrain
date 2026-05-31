@@ -142,6 +142,67 @@ export function stripCodeBlocks(content: string): string {
 }
 
 /**
+ * Mask already-linked spans from markdown, replacing them with whitespace of
+ * equivalent length (offset-preserving, same contract as stripCodeBlocks).
+ *
+ * Masks two forms so a downstream tokenizer never sees text that is ALREADY a
+ * link target:
+ *  - Wikilinks `[[...]]` (any inner content, including `|display` and bare
+ *    `[[term]]`). Nesting-safe: consumes up to the first `]]` it finds, so a
+ *    correctly-formed link is fully masked; this is deliberately broad (no
+ *    DIR_PATTERN whitelist) because the goal is "don't re-scan linked text",
+ *    not "parse a valid link".
+ *  - Markdown inline links `[text](target)` — the whole span is masked so the
+ *    visible `text` isn't tokenized into a spurious mention.
+ *
+ * Why this exists (v0.42.0.x): findMentionedEntities tokenizes body text to
+ * mint typed NER edges. Without masking, a word sitting INSIDE an existing
+ * link (e.g. the "Session" in `[[fleet/x|Session Recap]]`, or `principles`
+ * in `[[first-principles-thinking]]`) matches the gazetteer and creates a
+ * second, spurious edge from already-linked text. Masking existing links
+ * before the scan removes that false-positive class entirely.
+ */
+export function stripWikilinks(content: string): string {
+  let out = '';
+  let i = 0;
+  while (i < content.length) {
+    // Wikilink: [[ ... ]] — mask through the first closing ]].
+    if (content.startsWith('[[', i)) {
+      const end = content.indexOf(']]', i + 2);
+      if (end === -1) { out += ' '.repeat(content.length - i); break; }
+      out += ' '.repeat(end + 2 - i);
+      i = end + 2;
+      continue;
+    }
+    // Markdown inline link: [text](target) — mask the whole span. Only treat
+    // it as a link when a `](` follows the opening `[` before the matching
+    // `]`, and the `(...)` closes on the same line. Otherwise emit the `[`
+    // verbatim (it's prose, not a link).
+    if (content[i] === '[') {
+      const closeBracket = content.indexOf(']', i + 1);
+      if (
+        closeBracket !== -1 &&
+        content[closeBracket + 1] === '(' &&
+        !content.slice(i + 1, closeBracket).includes('\n')
+      ) {
+        const closeParen = content.indexOf(')', closeBracket + 2);
+        if (closeParen !== -1 && !content.slice(closeBracket + 2, closeParen).includes('\n')) {
+          out += ' '.repeat(closeParen + 1 - i);
+          i = closeParen + 1;
+          continue;
+        }
+      }
+      out += content[i];
+      i++;
+      continue;
+    }
+    out += content[i];
+    i++;
+  }
+  return out;
+}
+
+/**
  * A code-reference found in markdown prose. Created by extractCodeRefs and
  * consumed by importFromFile's tail to build doc↔impl edges (v0.19.0 E1).
  */

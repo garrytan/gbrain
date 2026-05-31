@@ -159,6 +159,53 @@ describe('findMentionedEntities — pure cases', () => {
     expect(mentions).toHaveLength(0);
   });
 
+  test('6b. wikilink masking — bare [[Acme]] does NOT mint a mention', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'default', title: 'Acme' },
+    ]);
+    const mentions = findMentionedEntities('We invested in [[Acme]] last year.', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(0);
+  });
+
+  test('6c. wikilink masking — word inside [[slug|Display]] display text is not re-scanned', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'default', title: 'Acme' },
+    ]);
+    // "Acme" lives only inside the display text of an existing link.
+    const mentions = findMentionedEntities('See [[companies/acme|Acme Corp update]].', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(0);
+  });
+
+  test('6d. markdown-link masking — word inside [text](slug) is not re-scanned', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'default', title: 'Acme' },
+    ]);
+    const mentions = findMentionedEntities('Read the [Acme report](companies/acme).', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(0);
+  });
+
+  test('6e. masking is span-local — an UNLINKED mention on the same line still matches', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'default', title: 'Acme' },
+    ]);
+    // First "Acme" is inside a link (masked); the second, bare "Acme" must match.
+    const body = 'Both [[companies/acme|Acme]] and Acme grew.';
+    const mentions = findMentionedEntities(body, g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'default',
+    });
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.slug).toBe('companies/acme');
+    // Offset must point at the BARE occurrence (un-stripped original text).
+    expect(body.slice(mentions[0]!.offset, mentions[0]!.offset + 4)).toBe('Acme');
+    expect(mentions[0]!.offset).toBe(body.lastIndexOf('Acme'));
+  });
+
   test('10. first-mention-only cap — 5 body mentions of same entity → 1 link', () => {
     const g = gazetteerFromEntries([
       { slug: 'companies/acme', source_id: 'default', title: 'Acme' },
