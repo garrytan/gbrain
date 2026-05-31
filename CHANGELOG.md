@@ -4,6 +4,14 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Webhook and collector services now have always-on cloud hosting recipes.**
+  Agents can set up Fly.io or Railway hosting for HTTP webhook services when a
+  stable public URL is better than a local ngrok tunnel. The recipes keep the
+  boundary honest: they host services that already expose HTTP, and do not
+  pretend stdio MCP becomes remote MCP without a separate HTTP wrapper.
+
 ### Changed
 
 - **Community recipe authors can now preflight and package contributions before opening a PR.**

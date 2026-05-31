@@ -1059,6 +1059,51 @@ describe('twilio-voice-brain recipe', () => {
 // --- All recipes parse without error ---
 
 describe('all recipes', () => {
+  test('bundles always-on infra recipes for Fly.io and Railway webhook hosting', () => {
+    const { readFileSync } = require('fs');
+    const hostingRecipes = [
+      { file: 'fly-app-hosting.md', id: 'fly-app-hosting' },
+      { file: 'railway-app-hosting.md', id: 'railway-app-hosting' },
+    ];
+
+    for (const { file, id } of hostingRecipes) {
+      const content = readFileSync(new URL(`../recipes/${file}`, import.meta.url), 'utf-8');
+      const recipe = parseRecipe(content, file);
+      expect(recipe).not.toBeNull();
+      expect(recipe!.validation_errors).toEqual([]);
+      expect(recipe!.frontmatter.id).toBe(id);
+      expect(recipe!.frontmatter.category).toBe('infra');
+      expect(recipe!.frontmatter.requires).toEqual([]);
+      expect(recipe!.frontmatter.version).toMatch(/^\d+\.\d+\.\d+$/);
+      expect(recipe!.frontmatter.health_checks.map((check) => check.type)).not.toContain('url_responds');
+      expect(recipe!.body).toContain('Bring your own HTTP service');
+      expect(recipe!.body).toContain('does not turn stdio MCP into HTTP');
+      expect(recipe!.body).toContain('Do not paste raw logs');
+      expect(recipe!.body).toContain('redact tokens');
+      expect(recipe!.body).toContain('local paths');
+      expect(recipe!.body).toContain('single-quote literal secret values that contain spaces or shell metacharacters');
+    }
+  });
+
+  test('Railway hosting recipe avoids stale Nixpacks-only builder guidance', () => {
+    const { readFileSync } = require('fs');
+    const content = readFileSync(new URL('../recipes/railway-app-hosting.md', import.meta.url), 'utf-8');
+    const recipe = parseRecipe(content, 'railway-app-hosting.md');
+
+    expect(recipe).not.toBeNull();
+    expect(recipe!.body).toContain('Railpack-compatible project');
+    expect(recipe!.body).not.toContain('Nixpacks-compatible');
+  });
+
+  test('integration docs list the always-on hosting recipes', () => {
+    const { readFileSync } = require('fs');
+    const docs = readFileSync(new URL('../docs/integrations/README.md', import.meta.url), 'utf-8');
+
+    expect(docs).toContain('[fly-app-hosting](../../recipes/fly-app-hosting.md)');
+    expect(docs).toContain('[railway-app-hosting](../../recipes/railway-app-hosting.md)');
+    expect(docs).toContain('Always-on public hosting for webhook and collector services');
+  });
+
   test('every recipe file in recipes/ parses correctly', () => {
     const { readFileSync, readdirSync } = require('fs');
     const { resolve } = require('path');

@@ -67,19 +67,6 @@ compiled-binary support after the Postgres target runtime migration.
 
 **Depends on:** Constrained health_check DSL (P1, shipped). Phase 1 preflight and Phase 2 contribution-package output are implemented; optional git/GitHub PR creation automation remains open.
 
-### Always-on deployment recipes (Fly.io, Railway)
-**What:** Alternative deployment recipes for voice-to-brain and future integrations that run on cloud servers instead of local + ngrok.
-
-**Why:** ngrok free URLs are ephemeral (change on restart). Always-on deployment eliminates the watchdog complexity and gives a stable webhook URL.
-
-**Pros:** Stable URLs, no ngrok dependency, production-grade uptime.
-
-**Cons:** Costs $5-10/mo per integration. Requires cloud account.
-
-**Context:** From DX review (2026-04-11). v0.7.0 ships local+ngrok as v1 deployment path.
-
-**Depends on:** v0.7.0 recipe format (shipped).
-
 ### `mbrain serve --http` + Fly.io/Railway deployment
 **What:** Add `mbrain serve --http` as a thin HTTP wrapper around the stdio MCP server. Include a Dockerfile/fly.toml for cloud deployment.
 
@@ -94,6 +81,13 @@ compiled-binary support after the Postgres target runtime migration.
 **Depends on:** v0.8.0 (Edge Function removal shipped).
 
 ## Completed
+
+### Always-on deployment recipes (Fly.io, Railway)
+**Completed:** Unreleased — added `fly-app-hosting` and
+`railway-app-hosting` infra recipes for HTTP webhook and collector services that
+need stable public URLs without local ngrok. These recipes intentionally stop at
+hosting a user-provided HTTP service; the separate `mbrain serve --http` runtime
+TODO remains open.
 
 ### Constrained health_check DSL for third-party recipes
 **Completed:** Unreleased — replaced shell command health checks with typed
