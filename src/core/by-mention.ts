@@ -27,7 +27,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import { stripCodeBlocks } from './link-extraction.ts';
+import { stripCodeBlocks, stripWikilinks } from './link-extraction.ts';
 
 /** D2: hardcoded entity types for v1. Pack-aware extension is TODO-1. */
 export const LINKABLE_ENTITY_TYPES = ['person', 'company', 'organization', 'entity'] as const;
@@ -222,9 +222,11 @@ export async function buildGazetteer(
  *  - First-mention-only cap: dedup by `entry.slug` (one link per
  *    target page regardless of how many body mentions there are).
  *
- * Code-block stripping via `stripCodeBlocks` (preserves offsets, so the
- * returned mention offsets index into the ORIGINAL text not the stripped
- * text — useful for downstream debugging tools).
+ * Code-block stripping via `stripCodeBlocks` and existing-link masking via
+ * `stripWikilinks` (both preserve offsets, so the returned mention offsets
+ * index into the ORIGINAL text not the stripped text — useful for downstream
+ * debugging tools). Masking existing `[[...]]` / `[text](slug)` links is what
+ * prevents already-linked words from minting a second spurious NER edge.
  */
 export function findMentionedEntities(
   text: string,
@@ -232,7 +234,13 @@ export function findMentionedEntities(
   opts: FindMentionsOpts,
 ): Mention[] {
   if (!text || gazetteer.size === 0) return [];
-  const stripped = stripCodeBlocks(text);
+  // Mask code blocks AND existing links before tokenizing: a word that is
+  // already inside a `[[...]]` wikilink or a `[text](slug)` markdown link is
+  // already a link target and must NOT mint a second, spurious NER edge.
+  // Both strippers are offset-preserving (equal-length whitespace), so mention
+  // offsets still index into the ORIGINAL text. Order is irrelevant since each
+  // only blanks spans the other would already pass through.
+  const stripped = stripWikilinks(stripCodeBlocks(text));
   const tokens = tokenizeForScan(stripped);
   if (tokens.length === 0) return [];
 
