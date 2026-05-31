@@ -21,7 +21,7 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
+import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -2457,7 +2457,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tools = (opts.tools ?? []).reduce((acc, t) => {
     acc[t.name] = {
       description: t.description,
-      inputSchema: { jsonSchema: t.inputSchema } as any,
+      inputSchema: jsonSchema(t.inputSchema as any) as any,
     };
     return acc;
   }, {} as Record<string, any>);
@@ -2654,6 +2654,14 @@ export interface ToolLoopResult {
   messages: ChatMessage[];
 }
 
+function toolResultJson(output: unknown): { type: 'json'; value: unknown } {
+  return { type: 'json', value: output };
+}
+
+function toolResultError(message: string): { type: 'error-text'; value: string } {
+  return { type: 'error-text', value: message };
+}
+
 /**
  * Provider-agnostic tool-calling loop. Wraps `gateway.chat()` with:
  *   - assistant→tool-dispatch→tool-result cycle
@@ -2769,7 +2777,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           type: 'tool-result',
           toolCallId: call.toolCallId,
           toolName: call.toolName,
-          output: `tool "${call.toolName}" is not in the registry for this subagent`,
+          output: toolResultError(`tool "${call.toolName}" is not in the registry for this subagent`),
           isError: true,
         });
         opts.onHeartbeat?.('tool_failed', { turn_idx: turnIdx, tool_name: call.toolName, error: 'not_registered' });
@@ -2808,7 +2816,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           type: 'tool-result',
           toolCallId: call.toolCallId,
           toolName: call.toolName,
-          output: prior.output,
+          output: toolResultJson(prior.output),
         });
         opts.onHeartbeat?.('tool_replay_complete', { turn_idx: turnIdx, tool_name: call.toolName });
         continue;
@@ -2818,7 +2826,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           type: 'tool-result',
           toolCallId: call.toolCallId,
           toolName: call.toolName,
-          output: prior.error ?? 'tool failed',
+          output: toolResultError(prior.error ?? 'tool failed'),
           isError: true,
         });
         opts.onHeartbeat?.('tool_replay_failed', { turn_idx: turnIdx, tool_name: call.toolName });
@@ -2842,7 +2850,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           type: 'tool-result',
           toolCallId: call.toolCallId,
           toolName: call.toolName,
-          output,
+          output: toolResultJson(output),
         });
         opts.onHeartbeat?.('tool_result', { turn_idx: turnIdx, tool_name: call.toolName });
       } catch (err) {
@@ -2852,7 +2860,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           type: 'tool-result',
           toolCallId: call.toolCallId,
           toolName: call.toolName,
-          output: errMsg,
+          output: toolResultError(errMsg),
           isError: true,
         });
         opts.onHeartbeat?.('tool_failed', { turn_idx: turnIdx, tool_name: call.toolName, error: errMsg });
@@ -2861,10 +2869,10 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
 
     if (stopReason === 'aborted') break;
 
-    // Feed all tool results back as a single user message.
-    const userMessageIdx = messageIdx++;
-    void userMessageIdx;
-    messages.push({ role: 'user', content: toolResultBlocks });
+    // Feed all tool results back as a single tool message.
+    const toolMessageIdx = messageIdx++;
+    void toolMessageIdx;
+    messages.push({ role: 'tool', content: toolResultBlocks });
 
     turnIdx++;
   }

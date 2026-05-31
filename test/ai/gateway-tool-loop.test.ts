@@ -5,6 +5,7 @@ import {
   configureGateway,
   resetGateway,
   type ChatBlock,
+  type ChatMessage,
   type ToolHandler,
 } from '../../src/core/ai/gateway.ts';
 
@@ -92,6 +93,53 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.finalText).toBe('final answer');
     expect(result.totalUsage.input_tokens).toBe(25); // 10 + 15
     expect(result.totalUsage.output_tokens).toBe(9); // 4 + 5
+  });
+
+  it('feeds tool results back as AI SDK v6 tool-role output blocks', async () => {
+    const observedMessages: ChatMessage[][] = [];
+    let turn = 0;
+    __setChatTransportForTests(async (opts) => {
+      observedMessages.push(opts.messages.map((m) => ({ ...m })));
+      turn++;
+      if (turn === 1) {
+        return {
+          text: '',
+          blocks: [
+            { type: 'tool-call', toolCallId: 'tc-json', toolName: 'search', input: { q: 'foo' } },
+          ] as ChatBlock[],
+          stopReason: 'tool_calls',
+          usage: { input_tokens: 10, output_tokens: 4, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6',
+          providerId: 'anthropic',
+        };
+      }
+      return {
+        text: 'done',
+        blocks: [{ type: 'text', text: 'done' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 5, output_tokens: 2, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      };
+    });
+
+    await toolLoop({
+      initialMessages: [{ role: 'user', content: 'find foo' }],
+      tools: [{ name: 'search', description: 'search the brain', inputSchema: { type: 'object' } }],
+      toolHandlers: new Map([['search', { idempotent: true, async execute() { return { ok: true }; } }]]),
+    });
+
+    const secondTurnMessages = observedMessages[1]!;
+    const toolMessage = secondTurnMessages.at(-1)!;
+    expect(toolMessage.role).toBe('tool');
+    expect(Array.isArray(toolMessage.content)).toBe(true);
+    const [toolResult] = toolMessage.content as ChatBlock[];
+    expect(toolResult).toMatchObject({
+      type: 'tool-result',
+      toolCallId: 'tc-json',
+      toolName: 'search',
+      output: { type: 'json', value: { ok: true } },
+    });
   });
 
   it('captures persistence callbacks in order: assistant → tool start → tool complete', async () => {

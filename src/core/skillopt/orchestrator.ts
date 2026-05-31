@@ -79,10 +79,11 @@
 
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { BudgetTracker } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
 import { errorFor } from '../errors.ts';
-import { applyEditBatch, getWorkingTreeStatusForFile } from './apply-edits.ts';
+import { applyEditBatch, getWorkingTreeStatusForFile, atomicWrite } from './apply-edits.ts';
 import { logEvent, sha8 } from './audit.ts';
 import { loadBenchmark, splitBench, parseSplit } from './benchmark.ts';
 import { getBundledSkillContext, shouldMutateSkillFile } from './bundled-skill-gate.ts';
@@ -504,6 +505,8 @@ async function runOptimizationLoop(
     // Note: acceptCandidate is gated by mutateDecision.mutate above, so best.md
     // isn't written in --no-mutate mode. Write it explicitly here.
     // (Simplified for v1 — a follow-up routes the proposed-only path cleanly.)
+    fs.mkdirSync(path.dirname(proposedPath), { recursive: true });
+    atomicWrite(proposedPath, finalText);
   } else if (mutateDecision.mutate) {
     mutatedSkillFile = finalOutcome === 'accepted';
   }
