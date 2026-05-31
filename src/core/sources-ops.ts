@@ -38,7 +38,7 @@
 
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync } from 'fs';
 import { realpathSync } from 'fs';
-import { join, dirname, resolve as resolvePath } from 'path';
+import { join, dirname, relative, sep, isAbsolute, resolve as resolvePath } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import {
@@ -66,6 +66,7 @@ export type SourceOpErrorCode =
   | 'not_found'
   | 'protected_id'
   | 'clone_dir_outside_gbrain'
+  | 'unsafe_reclone_path'
   | 'symlink_escape';
 
 export class SourceOpError extends Error {
@@ -251,6 +252,64 @@ export function isPathContained(child: string, parent: string): boolean {
   // Append a separator to parent so /foo doesn't match /foobar.
   const parentWithSep = resolvedParent.endsWith('/') ? resolvedParent : resolvedParent + '/';
   return resolvedChild === resolvedParent || resolvedChild.startsWith(parentWithSep);
+}
+
+function isResolvedPathWithin(
+  childAbs: string,
+  parentAbs: string,
+  allowEqual = true,
+): boolean {
+  const rel = relative(parentAbs, childAbs);
+  if (rel === '') return allowEqual;
+  return (
+    rel !== '..' &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel) &&
+    resolvePath(parentAbs, rel) === childAbs
+  );
+}
+
+function pathExistsByLstat(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasRawParentSegment(path: string): boolean {
+  return path.split(sep).some((segment) => segment === '..');
+}
+
+function isManagedRecloneTarget(localPath: string, cloneRoot: string): boolean {
+  if (hasRawParentSegment(localPath)) return false;
+
+  const rootAbs = resolvePath(cloneRoot);
+  const targetAbs = resolvePath(localPath);
+  if (!isResolvedPathWithin(targetAbs, rootAbs, false)) return false;
+
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(rootAbs);
+  } catch {
+    return false;
+  }
+
+  let ancestor = targetAbs;
+  while (!pathExistsByLstat(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) return false;
+    ancestor = parent;
+  }
+
+  let ancestorReal: string;
+  try {
+    ancestorReal = realpathSync(ancestor);
+  } catch {
+    return false;
+  }
+  return isResolvedPathWithin(ancestorReal, rootReal);
 }
 
 // ── addSource ───────────────────────────────────────────────────────────────
@@ -697,6 +756,17 @@ export async function recloneIfMissing(
 
   const state = validateRepoState(src.local_path, remoteUrl);
   if (state === 'healthy') return false;
+
+  const cloneRoot = gbrainPath('clones');
+  mkdirSync(cloneRoot, { recursive: true });
+  if (!isManagedRecloneTarget(src.local_path, cloneRoot)) {
+    throw new SourceOpError(
+      'unsafe_reclone_path',
+      `Refusing to re-clone source "${id}" into ${resolvePath(src.local_path)}: ` +
+        `path is outside the gbrain-managed clone root ${resolvePath(cloneRoot)}. ` +
+        `Repoint or re-add the source instead.`,
+    );
+  }
 
   // Re-clone via temp + rename, mirroring addSource's atomicity contract.
   const tempDir = makeTempCloneDir(id);

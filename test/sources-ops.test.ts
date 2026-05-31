@@ -13,7 +13,7 @@ import {
   chmodSync,
   existsSync,
 } from 'fs';
-import { join } from 'path';
+import { join, relative, sep } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
@@ -504,6 +504,104 @@ describe('recloneIfMissing — T4 restore + autopurge recovery', () => {
       await addSource(engine, { id: 't4-no-url', localPath: '/tmp/anywhere' });
       const recloned = await recloneIfMissing(engine, 't4-no-url');
       expect(recloned).toBe(false);
+    });
+  });
+
+  test('refuses to re-clone into non-managed local_path and preserves contents', async () => {
+    await withEnv2(async () => {
+      const userPath = join(GBRAIN_HOME, 'user-working-tree');
+      mkdirSync(userPath, { recursive: true });
+      writeFileSync(join(userPath, 'sentinel'), 'do-not-touch');
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config) VALUES ('t4-unsafe-path', 'x', $1, $2::jsonb)`,
+        [userPath, JSON.stringify({ remote_url: 'https://github.com/example/repo' })],
+      );
+
+      try {
+        await recloneIfMissing(engine, 't4-unsafe-path');
+        throw new Error('expected throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(SourceOpError);
+        expect((e as SourceOpError).code).toBe('unsafe_reclone_path');
+      }
+      expect(existsSync(join(userPath, 'sentinel'))).toBe(true);
+    });
+  });
+
+  test('normalizes relative and trailing-slash unsafe paths before rejecting', async () => {
+    await withEnv2(async () => {
+      const userPath = join(GBRAIN_HOME, 'relative-working-tree');
+      mkdirSync(userPath, { recursive: true });
+      writeFileSync(join(userPath, 'sentinel'), 'do-not-touch');
+      const relativePath = `${relative(process.cwd(), userPath)}/`;
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config) VALUES ('t4-relative-unsafe', 'x', $1, $2::jsonb)`,
+        [relativePath, JSON.stringify({ remote_url: 'https://github.com/example/repo' })],
+      );
+
+      try {
+        await recloneIfMissing(engine, 't4-relative-unsafe');
+        throw new Error('expected throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(SourceOpError);
+        expect((e as SourceOpError).code).toBe('unsafe_reclone_path');
+      }
+      expect(existsSync(join(userPath, 'sentinel'))).toBe(true);
+    });
+  });
+
+  test('refuses clone-root symlink parents that resolve outside managed storage', async () => {
+    await withEnv2(async () => {
+      const target = join(GBRAIN_HOME, 'symlink-target');
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, 'sentinel'), 'do-not-touch');
+      mkdirSync(CLONE_ROOT, { recursive: true });
+      const linkParent = join(CLONE_ROOT, 'linked-parent');
+      symlinkSync(target, linkParent);
+      const masqueradingPath = join(linkParent, 'child-clone');
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config) VALUES ('t4-symlink-unsafe', 'x', $1, $2::jsonb)`,
+        [masqueradingPath, JSON.stringify({ remote_url: 'https://github.com/example/repo' })],
+      );
+
+      try {
+        await recloneIfMissing(engine, 't4-symlink-unsafe');
+        throw new Error('expected throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(SourceOpError);
+        expect((e as SourceOpError).code).toBe('unsafe_reclone_path');
+      }
+      expect(existsSync(join(target, 'sentinel'))).toBe(true);
+      expect(existsSync(masqueradingPath)).toBe(false);
+      rmSync(linkParent, { force: true });
+    });
+  });
+
+  test("refuses raw '..' through clone-root symlink parents and preserves outside victim", async () => {
+    await withEnv2(async () => {
+      const target = join(GBRAIN_HOME, 'dotdot-target');
+      const victim = join(GBRAIN_HOME, 'dotdot-victim');
+      mkdirSync(target, { recursive: true });
+      mkdirSync(victim, { recursive: true });
+      writeFileSync(join(victim, 'sentinel'), 'do-not-touch');
+      mkdirSync(CLONE_ROOT, { recursive: true });
+      const linkParent = join(CLONE_ROOT, 'dotdot-link');
+      symlinkSync(target, linkParent);
+      const masqueradingPath = `${linkParent}${sep}..${sep}dotdot-victim`;
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config) VALUES ('t4-symlink-dotdot', 'x', $1, $2::jsonb)`,
+        [masqueradingPath, JSON.stringify({ remote_url: 'https://github.com/example/repo' })],
+      );
+
+      try {
+        await recloneIfMissing(engine, 't4-symlink-dotdot');
+        throw new Error('expected throw');
+      } catch (e) {
+        expect(e).toBeInstanceOf(SourceOpError);
+        expect((e as SourceOpError).code).toBe('unsafe_reclone_path');
+      }
+      expect(existsSync(join(victim, 'sentinel'))).toBe(true);
+      rmSync(linkParent, { force: true });
     });
   });
 });
