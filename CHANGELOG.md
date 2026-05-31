@@ -4,6 +4,13 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Integration recipes can no longer execute arbitrary shell health checks.**
+  `mbrain integrations doctor` now evaluates a constrained health-check DSL
+  for environment variables, alternative credentials, local URLs, and heartbeat
+  freshness, making community recipes safer to inspect and run.
+
 ## [0.11.0] - 2026-05-26
 
 ### Added

@@ -23,7 +23,6 @@ import matter from 'gray-matter';
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
-import { execSync } from 'child_process';
 
 // --- Types ---
 
@@ -41,7 +40,7 @@ interface RecipeFrontmatter {
   category: 'infra' | 'sense' | 'reflex';
   requires: string[];
   secrets: RecipeSecret[];
-  health_checks: string[];
+  health_checks: RecipeHealthCheck[];
   setup_time: string;
   cost_estimate?: string;
 }
@@ -50,6 +49,7 @@ interface ParsedRecipe {
   frontmatter: RecipeFrontmatter;
   body: string;
   filename: string;
+  validation_errors: string[];
 }
 
 interface HeartbeatEntry {
@@ -59,6 +59,117 @@ interface HeartbeatEntry {
   status: string;
   details?: Record<string, unknown>;
   error?: string;
+}
+
+export type RecipeHealthCheck =
+  | { type: 'env_exists'; name: string; label?: string }
+  | { type: 'env_any_exists'; names: string[]; label?: string }
+  | { type: 'url_responds'; url: string; label?: string; timeout_ms?: number }
+  | { type: 'heartbeat_fresh'; max_age: string; label?: string };
+
+interface CheckResult {
+  integration: string;
+  check: string;
+  status: 'ok' | 'fail' | 'timeout';
+  output: string;
+}
+
+function normalizeLoopbackHttpUrl(value: string): { url: string | null; error: string | null } {
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { url: null, error: 'must use http or https' };
+    }
+    if (parsed.hostname === 'localhost') {
+      parsed.hostname = '127.0.0.1';
+    } else if (parsed.hostname !== '127.0.0.1') {
+      return { url: null, error: 'must target localhost or 127.0.0.1' };
+    }
+    return { url: parsed.toString(), error: null };
+  } catch {
+    return { url: null, error: 'must be a valid URL' };
+  }
+}
+
+function normalizeHealthChecks(raw: unknown): { checks: RecipeHealthCheck[]; errors: string[] } {
+  if (raw === undefined || raw === null) return { checks: [], errors: [] };
+  if (!Array.isArray(raw)) {
+    return { checks: [], errors: ['health_checks must be an array of typed objects'] };
+  }
+
+  const checks: RecipeHealthCheck[] = [];
+  const errors: string[] = [];
+
+  raw.forEach((entry, index) => {
+    if (typeof entry === 'string') {
+      errors.push(`health_checks[${index}] must be a typed object, not a shell command string`);
+      return;
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      errors.push(`health_checks[${index}] must be a typed object`);
+      return;
+    }
+
+    const value = entry as Record<string, unknown>;
+    const label = typeof value.label === 'string' && value.label.trim() ? value.label.trim() : undefined;
+    switch (value.type) {
+      case 'env_exists': {
+        if (typeof value.name !== 'string' || !value.name.trim()) {
+          errors.push(`health_checks[${index}].name is required for env_exists`);
+          return;
+        }
+        checks.push({ type: 'env_exists', name: value.name.trim(), ...(label ? { label } : {}) });
+        return;
+      }
+      case 'env_any_exists': {
+        if (!Array.isArray(value.names) || value.names.length === 0 || value.names.some((name) => typeof name !== 'string' || !name.trim())) {
+          errors.push(`health_checks[${index}].names must be a non-empty string array for env_any_exists`);
+          return;
+        }
+        checks.push({ type: 'env_any_exists', names: value.names.map((name) => String(name).trim()), ...(label ? { label } : {}) });
+        return;
+      }
+      case 'url_responds': {
+        if (typeof value.url !== 'string' || !value.url.trim()) {
+          errors.push(`health_checks[${index}].url is required for url_responds`);
+          return;
+        }
+        const normalizedUrl = normalizeLoopbackHttpUrl(value.url);
+        if (normalizedUrl.error) {
+          errors.push(`health_checks[${index}].url ${normalizedUrl.error}`);
+          return;
+        }
+        const timeoutMs = value.timeout_ms;
+        if (timeoutMs !== undefined && (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 10_000)) {
+          errors.push(`health_checks[${index}].timeout_ms must be an integer between 1 and 10000`);
+          return;
+        }
+        checks.push({
+          type: 'url_responds',
+          url: normalizedUrl.url!,
+          ...(label ? { label } : {}),
+          ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
+        });
+        return;
+      }
+      case 'heartbeat_fresh': {
+        if (typeof value.max_age !== 'string' || !value.max_age.trim()) {
+          errors.push(`health_checks[${index}].max_age is required for heartbeat_fresh`);
+          return;
+        }
+        if (parseDurationMs(value.max_age.trim()) === null) {
+          errors.push(`health_checks[${index}].max_age must use a duration like 30s, 5m, 24h, or 7d`);
+          return;
+        }
+        checks.push({ type: 'heartbeat_fresh', max_age: value.max_age.trim(), ...(label ? { label } : {}) });
+        return;
+      }
+      default:
+        errors.push(`health_checks[${index}].type must be env_exists, env_any_exists, url_responds, or heartbeat_fresh`);
+    }
+  });
+
+  return { checks, errors };
 }
 
 // --- Recipe Parsing ---
@@ -72,6 +183,7 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
   try {
     const { data, content: body } = matter(content);
     if (!data.id) return null;
+    const healthChecks = normalizeHealthChecks(data.health_checks);
     return {
       frontmatter: {
         id: data.id,
@@ -81,12 +193,13 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
         category: data.category || 'sense',
         requires: data.requires || [],
         secrets: data.secrets || [],
-        health_checks: data.health_checks || [],
+        health_checks: healthChecks.checks,
         setup_time: data.setup_time || 'unknown',
         cost_estimate: data.cost_estimate,
       },
       body: body.trim(),
       filename,
+      validation_errors: healthChecks.errors,
     };
   } catch {
     return null;
@@ -275,6 +388,106 @@ function checkDependencies(recipe: ParsedRecipe, allRecipes: ParsedRecipe[]): st
   return warnings;
 }
 
+function parseDurationMs(value: string): number | null {
+  const match = value.trim().match(/^(\d+)(s|m|h|d)$/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2];
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  switch (unit) {
+    case 's': return amount * 1000;
+    case 'm': return amount * 60 * 1000;
+    case 'h': return amount * 60 * 60 * 1000;
+    case 'd': return amount * 24 * 60 * 60 * 1000;
+    default: return null;
+  }
+}
+
+function healthCheckLabel(check: RecipeHealthCheck): string {
+  if (check.label) return check.label;
+  switch (check.type) {
+    case 'env_exists': return check.name;
+    case 'env_any_exists': return check.names.join(' or ');
+    case 'url_responds': return check.url;
+    case 'heartbeat_fresh': return 'Heartbeat';
+  }
+}
+
+export async function runRecipeHealthCheck(integration: string, check: RecipeHealthCheck): Promise<CheckResult> {
+  const label = healthCheckLabel(check);
+
+  switch (check.type) {
+    case 'env_exists':
+      if (process.env[check.name]) {
+        return { integration, check: label, status: 'ok', output: `${label}: OK` };
+      }
+      return { integration, check: label, status: 'fail', output: `${label}: missing ${check.name}` };
+
+    case 'env_any_exists': {
+      const present = check.names.find((name) => process.env[name]);
+      if (present) {
+        return { integration, check: label, status: 'ok', output: `${label}: OK` };
+      }
+      return {
+        integration,
+        check: label,
+        status: 'fail',
+        output: `${label}: missing one of ${check.names.join(', ')}`,
+      };
+    }
+
+    case 'url_responds': {
+      const normalizedUrl = normalizeLoopbackHttpUrl(check.url);
+      if (normalizedUrl.error) {
+        return { integration, check: label, status: 'fail', output: `${label}: URL ${normalizedUrl.error}` };
+      }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), check.timeout_ms ?? 10_000);
+      try {
+        const response = await fetch(normalizedUrl.url!, { signal: controller.signal, redirect: 'manual' });
+        if (response.status >= 300 && response.status < 400) {
+          return { integration, check: label, status: 'fail', output: `${label}: redirects are not followed` };
+        }
+        if (response.ok) {
+          return { integration, check: label, status: 'ok', output: `${label}: OK` };
+        }
+        return { integration, check: label, status: 'fail', output: `${label}: HTTP ${response.status}` };
+      } catch (error) {
+        const timedOut = error instanceof Error && error.name === 'AbortError';
+        return {
+          integration,
+          check: label,
+          status: timedOut ? 'timeout' : 'fail',
+          output: `${label}: ${timedOut ? 'timeout' : error instanceof Error ? error.message : String(error)}`,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    case 'heartbeat_fresh': {
+      const maxAgeMs = parseDurationMs(check.max_age);
+      if (maxAgeMs === null) {
+        return { integration, check: label, status: 'fail', output: `${label}: invalid max_age ${check.max_age}` };
+      }
+
+      const entries = readHeartbeat(integration);
+      const latest = entries
+        .map((entry) => new Date(entry.ts).getTime())
+        .filter((ts) => Number.isFinite(ts))
+        .sort((a, b) => b - a)[0];
+      if (!latest) {
+        return { integration, check: label, status: 'fail', output: `${label}: no heartbeat data` };
+      }
+      const ageMs = Date.now() - latest;
+      if (ageMs <= maxAgeMs) {
+        return { integration, check: label, status: 'ok', output: `${label}: OK` };
+      }
+      return { integration, check: label, status: 'fail', output: `${label}: stale` };
+    }
+  }
+}
+
 // --- Subcommands ---
 
 function cmdList(args: string[]): void {
@@ -440,7 +653,7 @@ function cmdStatus(args: string[]): void {
   console.log('');
 }
 
-function cmdDoctor(args: string[]): void {
+async function cmdDoctor(args: string[]): Promise<void> {
   const jsonMode = args.includes('--json');
   const recipes = loadAllRecipes();
   const configured = recipes.filter(r => getStatus(r) !== 'available');
@@ -454,37 +667,19 @@ function cmdDoctor(args: string[]): void {
     return;
   }
 
-  interface CheckResult {
-    integration: string;
-    check: string;
-    status: 'ok' | 'fail' | 'timeout';
-    output: string;
-  }
   const results: CheckResult[] = [];
 
   for (const recipe of configured) {
+    for (const error of recipe.validation_errors) {
+      results.push({
+        integration: recipe.frontmatter.id,
+        check: 'recipe validation',
+        status: 'fail',
+        output: error,
+      });
+    }
     for (const check of recipe.frontmatter.health_checks) {
-      try {
-        const output = execSync(check, {
-          timeout: 10000,
-          encoding: 'utf-8',
-          env: process.env,
-        }).trim();
-        results.push({
-          integration: recipe.frontmatter.id,
-          check,
-          status: output.includes('FAIL') ? 'fail' : 'ok',
-          output,
-        });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        results.push({
-          integration: recipe.frontmatter.id,
-          check,
-          status: msg.includes('TIMEDOUT') ? 'timeout' : 'fail',
-          output: msg,
-        });
-      }
+      results.push(await runRecipeHealthCheck(recipe.frontmatter.id, check));
     }
   }
 
@@ -586,12 +781,13 @@ function cmdTest(args: string[]): void {
 
   // Validate required fields
   const f = recipe.frontmatter;
+  errors.push(...recipe.validation_errors);
   if (!f.id) errors.push('Missing: id');
   if (!f.name) warnings.push('Missing: name (will default to id)');
   if (!f.description) warnings.push('Missing: description');
   if (!f.version) warnings.push('Missing: version');
-  if (!['sense', 'reflex'].includes(f.category)) {
-    errors.push(`Invalid category: '${f.category}' (must be 'sense' or 'reflex')`);
+  if (!['infra', 'sense', 'reflex'].includes(f.category)) {
+    errors.push(`Invalid category: '${f.category}' (must be 'infra', 'sense', or 'reflex')`);
   }
 
   // Check secrets format
@@ -670,7 +866,7 @@ export async function runIntegrations(args: string[]): Promise<void> {
       cmdStatus(subArgs);
       break;
     case 'doctor':
-      cmdDoctor(subArgs);
+      await cmdDoctor(subArgs);
       break;
     case 'stats':
       cmdStats(subArgs);

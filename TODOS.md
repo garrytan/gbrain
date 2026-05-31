@@ -52,21 +52,6 @@ compiled-binary support after the Postgres target runtime migration.
 
 **Depends on:** `mbrain serve --http` (not yet implemented).
 
-## P1 (new from v0.7.0)
-
-### Constrained health_check DSL for third-party recipes
-**What:** Replace shell command health_checks with a typed DSL: `{type: "env_exists", name: "KEY"}`, `{type: "url_responds", url: "..."}`, `{type: "heartbeat_fresh", max_age: "24h"}`.
-
-**Why:** Shell commands in recipe frontmatter = arbitrary code execution from markdown. Currently trusted because recipes are first-party only. This DSL is the mandatory gate before opening community recipe submissions.
-
-**Pros:** Eliminates RCE risk from third-party recipes. Health checks become machine-parseable.
-
-**Cons:** Less flexible than shell commands for novel checks. Need to define enough check types to cover common cases.
-
-**Context:** From CEO review + Codex outside voice (2026-04-11). User approved shell commands for first-party but explicitly requested constrained DSL before third-party recipes.
-
-**Depends on:** v0.7.0 recipe format (shipped).
-
 ## P2
 
 ### Community recipe submission (`mbrain integrations submit`)
@@ -109,6 +94,12 @@ compiled-binary support after the Postgres target runtime migration.
 **Depends on:** v0.8.0 (Edge Function removal shipped).
 
 ## Completed
+
+### Constrained health_check DSL for third-party recipes
+**Completed:** Unreleased — replaced shell command health checks with typed
+`env_exists`, `env_any_exists`, `url_responds`, and `heartbeat_fresh` checks.
+`mbrain integrations doctor` now evaluates the bounded DSL instead of executing
+recipe-provided shell commands.
 
 ### Implement AWS Signature V4 for S3 storage backend
 **Completed:** v0.6.0 (2026-04-10) — replaced with @aws-sdk/client-s3 for proper SigV4 signing.

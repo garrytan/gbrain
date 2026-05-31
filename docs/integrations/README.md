@@ -62,8 +62,17 @@ secrets:                        # API keys and credentials needed
   - name: TWILIO_ACCOUNT_SID
     description: Twilio account SID
     where: https://console.twilio.com    # exact URL to get this key
-health_checks:                  # commands to verify the integration is working
-  - "curl -sf https://api.twilio.com/..."
+health_checks:                  # typed checks, never shell commands
+  - type: env_exists
+    name: TWILIO_ACCOUNT_SID
+    label: Twilio account SID
+  - type: url_responds
+    url: http://localhost:4040/api/tunnels
+    label: Local tunnel API
+    timeout_ms: 2000
+  - type: heartbeat_fresh
+    max_age: 24h
+    label: Collector heartbeat
 setup_time: 30 min              # estimated time to complete setup
 ---
 
@@ -73,6 +82,11 @@ setup_time: 30 min              # estimated time to complete setup
 **The recipe IS the installer.** Your agent (OpenClaw, Hermes, Claude Code) reads
 the markdown body and executes the setup steps. It asks you for API keys, validates
 each one, configures the integration, and runs a smoke test.
+
+Health checks are a constrained DSL so community recipes cannot smuggle shell
+commands into `mbrain integrations doctor`. Supported checks are `env_exists`,
+`env_any_exists`, `url_responds`, and `heartbeat_fresh`. `url_responds` is
+limited to localhost loopback targets for local service smoke checks.
 
 ## The Deterministic Collector Pattern
 

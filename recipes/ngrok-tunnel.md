@@ -10,8 +10,13 @@ secrets:
     description: ngrok auth token (Hobby tier recommended for fixed domain)
     where: https://dashboard.ngrok.com/get-started/your-authtoken — sign up, then copy your authtoken
 health_checks:
-  - "pgrep -f 'ngrok.*http' > /dev/null && echo 'ngrok: running' || echo 'ngrok: NOT running'"
-  - "curl -sf http://localhost:4040/api/tunnels > /dev/null && echo 'ngrok API: OK' || echo 'ngrok API: FAIL'"
+  - type: env_exists
+    name: NGROK_AUTHTOKEN
+    label: ngrok auth token
+  - type: url_responds
+    url: http://localhost:4040/api/tunnels
+    label: ngrok local API
+    timeout_ms: 2000
 setup_time: 10 min
 cost_estimate: "$8/mo for Hobby tier (fixed domain). Free tier works but URLs change on restart."
 ---

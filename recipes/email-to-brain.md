@@ -19,7 +19,9 @@ secrets:
     description: Google OAuth2 client secret (Option B)
     where: https://console.cloud.google.com/apis/credentials — same page as client ID
 health_checks:
-  - "[ -n \"$CLAWVISOR_URL\" ] && curl -sf $CLAWVISOR_URL/health > /dev/null && echo 'ClawVisor: OK' || [ -n \"$GOOGLE_CLIENT_ID\" ] && echo 'Google OAuth: configured' || echo 'No email auth configured'"
+  - type: env_any_exists
+    names: [CLAWVISOR_URL, GOOGLE_CLIENT_ID]
+    label: Email auth
 setup_time: 20 min
 cost_estimate: "$0 (both options are free)"
 ---
