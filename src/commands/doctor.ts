@@ -24,6 +24,7 @@ import { categorizeCheck, type CheckCategory } from '../core/doctor-categories.t
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
 import { gbrainPath } from '../core/config.ts';
+import { DEFAULT_BYTES_BLOCK } from '../core/content-sanity.ts';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
@@ -4963,7 +4964,7 @@ export async function buildChecks(
     // loadConfig which caches in module-level config layer.)
     const { loadConfig: _loadCfg } = await import('../core/config.ts');
     const _cfg = _loadCfg();
-    const bytesBlock = _cfg?.content_sanity?.bytes_block ?? 500_000;
+    const bytesBlock = _cfg?.content_sanity?.bytes_block ?? DEFAULT_BYTES_BLOCK;
     const rows = await sql`
       SELECT p.slug, p.source_id,
              octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) AS bytes

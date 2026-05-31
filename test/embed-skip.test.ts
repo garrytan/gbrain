@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   isEmbedSkipped,
   filterOutEmbedSkipped,
+  clearStaleEmbedSkipMarker,
   buildEmbedSkipMarker,
   EMBED_SKIP_KEY,
   EMBED_SKIP_FILTER_FRAGMENT,
@@ -83,6 +84,27 @@ describe('buildEmbedSkipMarker', () => {
     const d = new Date('2026-05-24T07:00:00Z');
     const m = buildEmbedSkipMarker(100, d);
     expect(m.assessed_at).toBe('2026-05-24T07:00:00.000Z');
+  });
+});
+
+describe('clearStaleEmbedSkipMarker', () => {
+  test('removes marker when current content no longer needs embed skip', () => {
+    const frontmatter: Record<string, unknown> = { embed_skip: buildEmbedSkipMarker(123), title: 'A' };
+    clearStaleEmbedSkipMarker(frontmatter, { sanityDisabled: false, shouldSkipEmbed: false });
+    expect(frontmatter).toEqual({ title: 'A' });
+  });
+
+  test('keeps marker while current content still needs embed skip', () => {
+    const marker = buildEmbedSkipMarker(123);
+    const frontmatter = { embed_skip: marker };
+    clearStaleEmbedSkipMarker(frontmatter, { sanityDisabled: false, shouldSkipEmbed: true });
+    expect(frontmatter.embed_skip).toBe(marker);
+  });
+
+  test('removes marker when sanity is explicitly bypassed', () => {
+    const frontmatter: Record<string, unknown> = { embed_skip: buildEmbedSkipMarker(123) };
+    clearStaleEmbedSkipMarker(frontmatter, { sanityDisabled: true, shouldSkipEmbed: true });
+    expect(frontmatter).toEqual({});
   });
 });
 

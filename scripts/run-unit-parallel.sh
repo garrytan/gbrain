@@ -104,8 +104,10 @@ rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged 2
 # to bg-pid + sleep cap. For now, prefer gtimeout (brew coreutils) → timeout.
 # ──────────────────────────────────────────────────────────────────────────
 TIMEOUT_BIN=""
-if command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
-elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
+if [ "${GBRAIN_FORCE_SHELL_TIMEOUT_FALLBACK:-}" != "1" ]; then
+  if command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
+  elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
+  fi
 fi
 
 START_TS=$(date +%s)
@@ -126,29 +128,37 @@ fi
 # ──────────────────────────────────────────────────────────────────────────
 SHARD_PIDS=()
 for i in $(seq 1 "$N"); do
-  (
-    SHARD_LOG="$LOG_DIR/shard-$i.log"
-    if [ -n "$TIMEOUT_BIN" ]; then
-      "$TIMEOUT_BIN" "${SHARD_TIMEOUT}s" \
-        env SHARD="$i/$N" \
-        bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
-        > "$SHARD_LOG" 2>&1
-    else
-      env SHARD="$i/$N" \
-        bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
-        > "$SHARD_LOG" 2>&1 &
-      pid=$!
-      ( sleep "$SHARD_TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
-        sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
-      cap_pid=$!
-      wait "$pid" 2>/dev/null
-      kill "$cap_pid" 2>/dev/null
-      wait "$cap_pid" 2>/dev/null
-    fi
-    rc=$?
-    echo "$rc" > "$LOG_DIR/shard-$i.exit"
-    [ "$rc" = "124" ] && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
-  ) &
+	  (
+	    SHARD_LOG="$LOG_DIR/shard-$i.log"
+	    TIMEOUT_FILE="$LOG_DIR/shard-$i.timeout"
+	    if [ -n "$TIMEOUT_BIN" ]; then
+	      "$TIMEOUT_BIN" "${SHARD_TIMEOUT}s" \
+	        env SHARD="$i/$N" \
+	        bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
+	        > "$SHARD_LOG" 2>&1
+	      rc=$?
+	    else
+	      env SHARD="$i/$N" \
+	        bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
+	        > "$SHARD_LOG" 2>&1 &
+	      pid=$!
+	      ( sleep "$SHARD_TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
+	        echo "TIMEOUT" > "$TIMEOUT_FILE" && \
+	        sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
+	      cap_pid=$!
+	      wait "$pid" 2>/dev/null
+	      child_rc=$?
+	      if [ -f "$TIMEOUT_FILE" ]; then
+	        rc=124
+	      else
+	        rc=$child_rc
+	      fi
+	      kill "$cap_pid" 2>/dev/null || true
+	      wait "$cap_pid" 2>/dev/null || true
+	    fi
+	    echo "$rc" > "$LOG_DIR/shard-$i.exit"
+	    [ "$rc" = "124" ] && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
+	  ) &
   SHARD_PIDS+=($!)
 done
 

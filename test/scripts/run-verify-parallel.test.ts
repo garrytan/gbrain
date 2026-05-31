@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -42,6 +42,7 @@ describe("run-verify-parallel.sh — CLI contract", () => {
     expect(set.has("check:jsonb")).toBe(true);
     expect(set.has("typecheck")).toBe(true);
     expect(set.has("check:operations-filter-bypass")).toBe(true);
+    expect(set.has("check:coverage-ratchet")).toBe(true);
   });
 
   it("unknown arg exits 2 with usage error", () => {
@@ -49,6 +50,34 @@ describe("run-verify-parallel.sh — CLI contract", () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown arg");
     expect(r.stderr).toContain("usage:");
+  });
+
+  it("shell-timeout fallback preserves child success exit codes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "verify-fallback-"));
+    try {
+      const fakeBun = join(dir, "bun");
+      writeFileSync(
+        fakeBun,
+        "#!/usr/bin/env bash\nprintf 'fake bun %s\\n' \"$*\"\nexit 0\n",
+      );
+      chmodSync(fakeBun, 0o755);
+
+      const r = spawnSync("bash", [SCRIPT], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${dir}:${process.env.PATH ?? ""}`,
+          GBRAIN_FORCE_SHELL_TIMEOUT_FALLBACK: "1",
+          GBRAIN_VERIFY_LOG_DIR: join(dir, "logs"),
+          GBRAIN_VERIFY_TIMEOUT: "30",
+        },
+      });
+      expect(r.status).toBe(0);
+      expect(r.stderr).toContain("all checks green");
+      expect(r.stderr).not.toContain("rc=143");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

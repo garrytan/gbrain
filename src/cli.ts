@@ -234,23 +234,11 @@ async function main() {
   //
   // Defense-in-depth (adversarial-review C13): `engine.disconnect()` itself
   // can hang on PGLite (db.close() or releaseLock racing OS-level FS state).
-  // Install an unref'd setTimeout hard-exit fallback BEFORE entering the
-  // try/catch/finally so a hung disconnect cannot defeat the force-exit
-  // contract. Daemons (`serve`) are excluded so they stay alive.
+  // The hard-exit fallback is armed only around engine.disconnect() below.
+  // Long-running operations such as large-page embedding must not be killed
+  // by a timer that is meant to protect cleanup.
   const DISCONNECT_HARD_DEADLINE_MS = 10_000;
   let forceExitTimer: ReturnType<typeof setTimeout> | undefined;
-  if (shouldForceExitAfterMain()) {
-    forceExitTimer = setTimeout(() => {
-      console.warn(
-        `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
-      );
-      process.exit(0);
-    }, DISCONNECT_HARD_DEADLINE_MS);
-    // unref so the timer itself doesn't keep the event loop alive — only
-    // the actual pending work (PGLite WASM handle) does. Without unref,
-    // we'd block a clean exit by 10s on every successful CLI run.
-    forceExitTimer.unref?.();
-  }
 
   let drainResult: DrainOutcome = { outcome: 'drained', pending: 0 };
   try {
@@ -302,8 +290,24 @@ async function main() {
       const { getFactsQueue } = await import('./core/facts/queue.ts');
       await getFactsQueue().drainPending({ timeout: 1000 });
     } catch { /* best-effort; never block disconnect on drain failure */ }
-    await engine.disconnect();
-    if (forceExitTimer) clearTimeout(forceExitTimer);
+
+    if (shouldForceExitAfterMain()) {
+      forceExitTimer = setTimeout(() => {
+        console.warn(
+          `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
+        );
+        process.exit(0);
+      }, DISCONNECT_HARD_DEADLINE_MS);
+      // unref so the timer itself doesn't keep the event loop alive — only
+      // the actual pending work (PGLite WASM handle) does. Without unref,
+      // we'd block a clean exit by 10s on every successful CLI run.
+      forceExitTimer.unref?.();
+    }
+    try {
+      await engine.disconnect();
+    } finally {
+      if (forceExitTimer) clearTimeout(forceExitTimer);
+    }
     // Narrow force-exit: only when the drain timed out AND we are NOT
     // running a daemon. The drain helper already stderr-warned with the
     // pending count, so the diagnostic signal is preserved. Without

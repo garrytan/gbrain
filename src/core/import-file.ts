@@ -18,7 +18,7 @@ import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.
 import { assessContentSanity, ContentSanityBlockError } from './content-sanity.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { logContentSanityAssessment } from './audit/content-sanity-audit.ts';
-import { isEmbedSkipped, buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
+import { isEmbedSkipped, buildEmbedSkipMarker, EMBED_SKIP_KEY, clearStaleEmbedSkipMarker } from './embed-skip.ts';
 import { loadConfig, loadConfigWithEngine } from './config.ts';
 import {
   buildContextualPrefix,
@@ -400,6 +400,13 @@ export async function importFromContent(
         );
       }
     }
+    // If the page used to be soft-blocked but is now below the block
+    // threshold (or sanity is explicitly bypassed), remove the stale marker
+    // so the normal chunk/embed path can recover it.
+    clearStaleEmbedSkipMarker(parsed.frontmatter, {
+      sanityDisabled,
+      shouldSkipEmbed: sanityResult.shouldSkipEmbed,
+    });
   }
 
   // v0.39.3.0 CV8 — DB content_hash excludes timestamp-bearing frontmatter

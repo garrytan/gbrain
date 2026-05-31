@@ -27,7 +27,7 @@ describe('lint — huge-page rule', () => {
   });
 
   test('fires with block-threshold language when body exceeds block', () => {
-    const content = MINIMAL_FRONTMATTER + 'a'.repeat(600_000);
+    const content = MINIMAL_FRONTMATTER + 'a'.repeat(2_100_000);
     const issues = lintContent(content, 'test.md');
     const huge = issues.find((i) => i.rule === 'huge-page');
     expect(huge).toBeDefined();

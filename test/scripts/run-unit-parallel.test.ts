@@ -69,11 +69,14 @@ afterAll(() => {
   if (TMPROOT) rmSync(TMPROOT, { recursive: true, force: true });
 });
 
-function runWrapper(extraArgs: string[] = []): { code: number; stdout: string; stderr: string } {
+function runWrapper(
+  extraArgs: string[] = [],
+  envOverrides: Record<string, string> = {},
+): { code: number; stdout: string; stderr: string } {
   const result = spawnSync(
     'bash',
     [join(TMPROOT, 'scripts', 'run-unit-parallel.sh'), '--shards', '2', ...extraArgs],
-    { cwd: TMPROOT, encoding: 'utf-8', env: { ...process.env } },
+    { cwd: TMPROOT, encoding: 'utf-8', env: { ...process.env, ...envOverrides } },
   );
   return {
     code: result.status ?? -1,
@@ -97,6 +100,24 @@ describe('run-unit-parallel.sh exit-code propagation (a)', () => {
       // Restore the failing fixture for any downstream tests in the same
       // describe block (afterAll cleans the whole tempdir; this is belt-
       // and-suspenders).
+      const failing = `import { describe, it, expect } from 'bun:test';
+describe('failing-on-purpose', () => {
+  it('expects 1 to equal 2', () => { expect(1).toBe(2); });
+});`;
+      writeFileSync(join(TMPROOT, 'test', 'd-fail.test.ts'), failing);
+    }
+  });
+
+  it('shell-timeout fallback preserves passing shard exit codes', () => {
+    rmSync(join(TMPROOT, 'test', 'd-fail.test.ts'));
+    try {
+      const r = runWrapper([], {
+        GBRAIN_FORCE_SHELL_TIMEOUT_FALLBACK: '1',
+        GBRAIN_TEST_SHARD_TIMEOUT: '30',
+      });
+      expect(r.code).toBe(0);
+      expect(r.stderr).not.toContain('rc=143');
+    } finally {
       const failing = `import { describe, it, expect } from 'bun:test';
 describe('failing-on-purpose', () => {
   it('expects 1 to equal 2', () => { expect(1).toBe(2); });

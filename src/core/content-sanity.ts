@@ -63,7 +63,7 @@ export const DEFAULT_BYTES_WARN = 50_000;
  *  env var. Above this, page writes but `frontmatter.embed_skip` is set
  *  and the embedder skips on next sweep. Page is still queryable; just
  *  not searchable until manually re-embedded or split. */
-export const DEFAULT_BYTES_BLOCK = 500_000;
+export const DEFAULT_BYTES_BLOCK = 2_000_000;
 
 /** Tag added to the start of `reasons` and to error messages so
  *  `src/core/sync.ts:classifyErrorCode` can group hard-blocks under one

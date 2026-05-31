@@ -1,0 +1,26 @@
+{
+  "schema": "gbrain.coverage-ratchet.config.v1",
+  "minCoverage": 90,
+  "baselineFile": "coverage-ratchet.baselines.json",
+  "coverageDir": ".tmp/coverage-ratchet",
+  "suites": [
+    {
+      "name": "coverage-ratchet-tool",
+      "sources": ["src/core/coverage-ratchet.ts"],
+      "tests": ["test/core/coverage-ratchet.test.ts"]
+    },
+    {
+      "name": "large-page-embed-recovery",
+      "sources": [
+        "src/core/embed-skip.ts",
+        "src/core/content-sanity.ts",
+        "src/core/cli-force-exit.ts"
+      ],
+      "tests": [
+        "test/embed-skip.test.ts",
+        "test/content-sanity.test.ts",
+        "test/cli-should-force-exit.test.ts"
+      ]
+    }
+  ]
+}

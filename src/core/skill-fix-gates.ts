@@ -74,11 +74,24 @@ export type WorkingTreeStatus = 'clean' | 'dirty' | 'not_a_repo';
  * resolves correctly even when the calling process's cwd is elsewhere.
  */
 export function getWorkingTreeStatus(skillPath: string): WorkingTreeStatus {
+  const cwd = dirname(skillPath);
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', skillPath], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      cwd,
+    });
+  } catch {
+    // Untracked files have no rollback path even when an ancestor happens
+    // to be a git worktree. Treat them like non-repo files for auto-fix.
+    return 'not_a_repo';
+  }
+
   try {
     const out = execFileSync('git', ['status', '--porcelain', '--', skillPath], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      cwd: dirname(skillPath),
+      cwd,
     });
     return out.trim().length > 0 ? 'dirty' : 'clean';
   } catch {

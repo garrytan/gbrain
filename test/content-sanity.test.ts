@@ -64,7 +64,7 @@ describe('assessContentSanity — size boundaries', () => {
 
   test('above block threshold → oversize_block + shouldSkipEmbed', () => {
     const r = assessContentSanity({
-      compiled_truth: 'a'.repeat(600_000),
+      compiled_truth: 'a'.repeat(2_100_000),
       timeline: '',
       title: '',
     });
@@ -75,14 +75,16 @@ describe('assessContentSanity — size boundaries', () => {
     expect(r.shouldHardBlock).toBe(false);
   });
 
-  test('the original 890K reproduction trips block alone (no junk)', () => {
-    // 890K of clean text (no Cloudflare phrases) → soft-block only.
+  test('the original 890K reproduction now warns without skipping embed', () => {
+    // 890K of clean text (no Cloudflare phrases) is large but legitimate.
     const r = assessContentSanity({
       compiled_truth: 'normal prose. '.repeat(70_000), // ~890K bytes
       timeline: '',
       title: 'A Long Article',
     });
-    expect(r.shouldSkipEmbed).toBe(true);
+    expect(r.reasons).toContain('oversize_warn');
+    expect(r.reasons).not.toContain('oversize_block');
+    expect(r.shouldSkipEmbed).toBe(false);
     expect(r.shouldHardBlock).toBe(false);
   });
 
@@ -99,7 +101,7 @@ describe('assessContentSanity — size boundaries', () => {
 
   test('defaults are exported and reasonable', () => {
     expect(DEFAULT_BYTES_WARN).toBe(50_000);
-    expect(DEFAULT_BYTES_BLOCK).toBe(500_000);
+    expect(DEFAULT_BYTES_BLOCK).toBe(2_000_000);
   });
 });
 
@@ -353,7 +355,7 @@ describe('assessContentSanity — reason ordering', () => {
 
   test('block-level oversize message includes PAGE_OVERSIZED prefix', () => {
     const r = assessContentSanity({
-      compiled_truth: 'a'.repeat(600_000),
+      compiled_truth: 'a'.repeat(2_100_000),
       timeline: '',
       title: '',
     });
@@ -367,7 +369,7 @@ describe('assessContentSanity — reason ordering', () => {
     // the "Attention Required" banner is at the top, then the rest of
     // the page is HTML/styles/etc making it huge.
     const r = assessContentSanity({
-      compiled_truth: 'Cloudflare Ray ID: abc\n' + 'a'.repeat(600_000),
+      compiled_truth: 'Cloudflare Ray ID: abc\n' + 'a'.repeat(2_100_000),
       timeline: '',
       title: '',
     });
