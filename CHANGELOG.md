@@ -18,8 +18,11 @@ All notable changes to MBrain will be documented in this file.
   letting unauthenticated DCR requests grow durable state forever. Starting
   `mbrain serve --http --oauth` also prepares the schema before exposing OAuth
   routes, so existing Postgres installs get the required runtime tables before a
-  remote client begins setup. The live ChatGPT Developer Mode path has also
-  been validated end-to-end against a public HTTPS tunnel and real Postgres.
+  remote client begins setup. The live ChatGPT Developer Mode path was also
+  confirmed manually once against a public HTTPS tunnel and real Postgres on
+  2026-05-31 — a one-time author check, not a reproducible CI gate; the
+  reproducible evidence is the descriptor tests plus the simulated
+  `bun run smoke:http-oauth` flow.
 - **ChatGPT can now see MBrain app actions after OAuth connects.**
   HTTP MCP clients now receive full tool descriptors with titles, descriptions,
   and read/write/destructive annotations, while stdio stays compact enough for
