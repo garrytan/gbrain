@@ -175,6 +175,11 @@
       "description": "Take any book (EPUB/PDF), produce a personalized chapter-by-chapter analysis with two-column tables: left = chapter summary, right = how it applies to you based on brain context. Output: brain page + PDF."
     },
     {
+      "name": "article-mirror",
+      "path": "article-mirror/SKILL.md",
+      "description": "Take one pre-extracted article text file, personalize it against reader context, and write a two-column mirror page under media/articles/<slug>-personalized.md."
+    },
+    {
       "name": "article-enrichment",
       "path": "article-enrichment/SKILL.md",
       "description": "Transform raw article text dumps in the brain into structured pages with executive summaries, verbatim quotes, key insights, why-it-matters, and cross-references."

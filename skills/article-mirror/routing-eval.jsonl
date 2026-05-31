@@ -1,0 +1,12 @@
+// Routing eval fixtures for skills/article-mirror. Positive cases should
+// beat article-enrichment when the user wants a personalized mirror rather
+// than a generic cleanup or summary pass.
+{"intent":"Please mirror this article using my brain context","expected_skill":"article-mirror"}
+{"intent":"Make a personalized version of this article for me","expected_skill":"article-mirror"}
+{"intent":"Run a two-column article mirror with my actual life on the right","expected_skill":"article-mirror"}
+{"intent":"Apply this article to my life and write the mirror page","expected_skill":"article-mirror"}
+{"intent":"How does this article apply to me based on the brain","expected_skill":"article-mirror"}
+// Negative / adversarial cases.
+{"intent":"Enrich this article page with quotes and insights","expected_skill":"article-enrichment","ambiguous_with":["enrich","article-mirror"]}
+{"intent":"Just summarize this article for me, no personalization","expected_skill":null}
+{"intent":"Read this through the lens of the board meeting next week and give me tactics","expected_skill":"strategic-reading","ambiguous_with":["article-mirror","idea-ingest"]}
