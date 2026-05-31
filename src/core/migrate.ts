@@ -4426,16 +4426,19 @@ export const MIGRATIONS: Migration[] = [
     //
     // Postgres auto-names the inline CHECK as `links_link_source_check`.
     // PGLite mirrors that naming. Both branches DROP-IF-EXISTS for
-    // re-runnability. No data backfill needed (existing rows have
-    // link_source IN current allow-list ∪ NULL).
+    // re-runnability. Legacy similarity-link rows used link_source='embedding';
+    // relabel them before recreating the tighter CHECK so older brains can
+    // advance through v95 instead of failing constraint validation.
     sql: `
       ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+      UPDATE links SET link_source = 'manual' WHERE link_source = 'embedding';
       ALTER TABLE links ADD CONSTRAINT links_link_source_check
         CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions'));
     `,
     sqlFor: {
       pglite: `
         ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+        UPDATE links SET link_source = 'manual' WHERE link_source = 'embedding';
         ALTER TABLE links ADD CONSTRAINT links_link_source_check
           CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions'));
       `,

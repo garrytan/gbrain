@@ -49,6 +49,7 @@ describe('migration v95 — links_link_source_check_includes_mentions', () => {
     expect(sql).toContain("'markdown'");
     expect(sql).toContain("'frontmatter'");
     expect(sql).toContain("'manual'");
+    expect(sql).toMatch(/UPDATE links SET link_source = 'manual' WHERE link_source = 'embedding'/);
     // DROP IF EXISTS pattern for re-runnability
     expect(sql).toMatch(/DROP CONSTRAINT IF EXISTS links_link_source_check/i);
   });
@@ -114,6 +115,36 @@ describe('fresh-init brain (post-migration v95) accepts link_source=mentions', (
         },
       ]),
     ).rejects.toThrow();
+  });
+
+  test('migration relabels legacy embedding source rows before recreating CHECK', async () => {
+    const m = MIGRATIONS.find(m => m.version === MIGRATION_VERSION)!;
+    const pgliteSql = m.sqlFor!.pglite!;
+    const slugA = `legacy-embedding-a-${Math.random().toString(36).slice(2, 8)}`;
+    const slugB = `legacy-embedding-b-${Math.random().toString(36).slice(2, 8)}`;
+    await engine.putPage(slugA, { type: 'note', title: 'A', compiled_truth: 'a', timeline: '', frontmatter: {} });
+    await engine.putPage(slugB, { type: 'person', title: 'B', compiled_truth: 'b', timeline: '', frontmatter: {} });
+    await engine.runMigration(MIGRATION_VERSION, `
+      ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
+    `);
+    await engine.executeRaw(
+      `INSERT INTO links (from_page_id, to_page_id, link_type, link_source, context)
+       SELECT fp.id, tp.id, 'semantic_similar', 'embedding', 'legacy similarity edge'
+       FROM pages fp, pages tp
+       WHERE fp.slug = $1 AND tp.slug = $2`,
+      [slugA, slugB],
+    );
+
+    await expect(engine.runMigration(MIGRATION_VERSION, pgliteSql)).resolves.toBeUndefined();
+
+    const rows = await engine.executeRaw<{ link_source: string }>(
+      `SELECT l.link_source
+       FROM links l
+       JOIN pages p ON p.id = l.from_page_id
+       WHERE p.slug = $1 AND l.link_type = 'semantic_similar'`,
+      [slugA],
+    );
+    expect(rows).toEqual([{ link_source: 'manual' }]);
   });
 
   test('idempotent re-application via runMigration — DROP IF EXISTS + ADD pattern survives second run', async () => {
