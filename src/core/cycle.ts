@@ -85,7 +85,13 @@ export type CyclePhase =
   // see comment above PHASE_SCOPE). Wraps the per-source loop in ONE
   // brain-wide BudgetTracker and passes it through opts.budgetTracker
   // so the core's auto-wrap doesn't REPLACE it.
-  | 'conversation_facts_backfill';
+  | 'conversation_facts_backfill'
+  // v0.41.20.0 — SkillOpt-paper-grounded self-evolving skills. Default OFF;
+  // walks skills with stale skillopt-benchmark.jsonl AND last_run_at >7d.
+  // Per-skill cost cap $0.50; brain-wide cap $2.00. Bundled-skill safety
+  // (D16): never auto-mutates bundled skills — emits proposed.md instead
+  // for user review.
+  | 'skillopt';
 
 export const ALL_PHASES: CyclePhase[] = [
   'lint',
@@ -146,6 +152,18 @@ export const ALL_PHASES: CyclePhase[] = [
   // block placement, which runs between the calibration trio and embed),
   // and BEFORE embed so newly-inserted facts get embedded same-cycle.
   'conversation_facts_backfill',
+  // v0.41.20.0 SkillOpt — self-evolving skills phase. Dispatch order
+  // places it AFTER the main graph-mutating cluster (extract, patterns,
+  // consolidate, calibration, conversation-facts) so any skill that
+  // depends on cross-session themes gets optimized against the freshest
+  // state — strictly fresher than "right after patterns" since downstream
+  // phases also mutate state the optimizer reads. Default OFF; opt-in via
+  // `gbrain config set cycle.skillopt.enabled true`. Bundled-skill safety
+  // (D16): never auto-mutates bundled skills. Position MUST match the
+  // dispatch block in runCycle (see line ~1912) — pinned by the
+  // `report.phases.map(p => p.phase)).toEqual(ALL_PHASES)` assertion in
+  // test/core/cycle.serial.test.ts.
+  'skillopt',
   'embed',
   'orphans',
   // v0.39 T12: passive schema-suggest. Runs LATE so post-sync brain state
@@ -208,6 +226,9 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   // fanout enforcement today (per the comment above); the phase
   // wrapper does its own multi-source loop via listSources().
   conversation_facts_backfill: 'source',
+  // v0.41.20.0 SkillOpt — global (walks the skills/ directory; per-skill
+  // DB lock inside D14 handles cross-source coordination).
+  skillopt: 'global',
 };
 
 /**
@@ -245,6 +266,10 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'synthesize_concepts',
   // v0.41.11.0 — inserts facts + writes terminal audit rows; needs lock.
   'conversation_facts_backfill',
+  // v0.41.20.0 SkillOpt — writes SKILL.md + skillopt/ artifacts; needs lock.
+  // Per-skill lock (D14) is acquired inside runSkillOpt; this NEEDS_LOCK
+  // entry covers the cycle-level coordination.
+  'skillopt',
   'embed',
   'purge',
 ]);
@@ -1931,6 +1956,38 @@ export async function runCycle(
         );
         result.duration_ms = duration_ms;
         phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── v0.41.20.0: SkillOpt phase (default OFF, opt-in). ──────────
+    // Walks skills with skillopt-benchmark.jsonl AND stale last_run_at
+    // (>7d). Per-skill cap $0.50; brain-wide cap $2.00. Bundled-skill
+    // safety (D16): the phase ALWAYS runs in --no-mutate mode — proposed
+    // bests land at skills/<name>/skillopt/best.md for review.
+    if (phases.includes('skillopt')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'skillopt' as never,
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.skillopt');
+        const { runPhaseSkillopt } = await import('./skillopt/cycle-phase.ts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseSkillopt({
+            engine,
+            dryRun,
+            ...(opts.signal ? { signal: opts.signal } : {}),
+          }),
+        );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result as never);
         progress.finish();
       }
       await safeYield(opts.yieldBetweenPhases);

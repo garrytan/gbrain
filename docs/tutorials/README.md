@@ -6,6 +6,7 @@ Step-by-step walkthroughs that take you from zero to a working outcome. Concrete
 
 - [**Set up your personal AI agent + brain from zero**](personal-brain.md) — the canonical solo install. Two GitHub repos, a Telegram bot, AlphaClaw on Render, OpenClaw + GBrain + Supabase. End-to-end in about 2 hours; about $100 to $150 a month sustained. The full-stack install I'd run today.
 - [**Set up GBrain as your company brain**](company-brain.md) — federated, multi-user, OAuth-scoped institutional memory for a 10-50 person team. Three sources (shared / customers / internal-only), per-user scope, first synthesized query as a teammate. About 90 minutes end-to-end, about $5 in API calls for the demo, under $100 a month sustained for a 25-person company.
+- [**Auto-improve a skill with `gbrain skillopt`**](improving-skills-with-skillopt.md) — treat a `SKILL.md` as the trainable parameter of a frozen agent. Write your first benchmark from scratch (the part everyone gets stuck on), preview the cost, run the optimizer, read accepted vs no_improvement vs aborted, and accept a measurably better skill. About 20 minutes, about $1 in API calls. Reference: [`../guides/skillopt.md`](../guides/skillopt.md).
 
 ## In progress
 

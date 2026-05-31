@@ -118,16 +118,17 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'synthesize',
   'extract',
   'extract_facts',               // v0.32.2 — reconcile fence → DB facts index
-  'extract_atoms',               // v0.41 T9 — pack-gated atom extraction
+  'extract_atoms',               // v0.41 T9 — atom extraction (pack-gated)
   'resolve_symbol_edges',       // v0.33.3 — within-file symbol resolution
   'patterns',
-  'synthesize_concepts',         // v0.41 — concept synthesis after patterns
+  'synthesize_concepts',         // v0.41 T9 — concept synthesis (pack-gated)
   'recompute_emotional_weight', // v0.29
   'consolidate',                // v0.31
   'propose_takes',              // v0.36.1.0 — hindsight calibration wave
   'grade_takes',                // v0.36.1.0
   'calibration_profile',        // v0.36.1.0
-  'conversation_facts_backfill', // v0.41.11.0 — config-gated (default off)
+  'conversation_facts_backfill', // v0.41.11.0 — opt-in conversation backfill
+  'skillopt',                    // v0.42.0.0 — self-evolving skills (default OFF)
   'embed',
   'orphans',
   'schema-suggest',              // v0.39.0.0 — passive schema-suggest after orphans

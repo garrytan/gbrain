@@ -4483,6 +4483,90 @@ const run_onboard: Operation = {
   },
 };
 
+// v0.41.20.0 SkillOpt — MCP exposure (admin scope + per-skill allowlist
+// via the resolver inside the handler). Designed for trusted admin tokens
+// that want to drive optimization remotely; the same trust gates as the
+// CLI fire (working tree, install path, lock acquisition, bundled-skill
+// guard). NOT localOnly so admin HTTP MCP clients can invoke.
+const run_skillopt: Operation = {
+  name: 'run_skillopt',
+  description: 'Run SkillOpt against a single skill. Admin scope; mutating; rate-limited per-skill via DB lock. See gbrain skillopt CLI for the full flag surface.',
+  params: {
+    skill_name: { type: 'string', required: true, description: 'Kebab-case skill name (resolves to skills/<name>/SKILL.md)' },
+    benchmark_path: { type: 'string', description: 'Absolute path to benchmark JSONL; defaults to skills/<name>/skillopt-benchmark.jsonl' },
+    epochs: { type: 'number', description: 'Default 4' },
+    batch_size: { type: 'number', description: 'Default 8' },
+    lr: { type: 'number', description: 'Default 4' },
+    max_cost_usd: { type: 'number', description: 'Default 5.00' },
+    no_mutate: { type: 'boolean', description: 'Write proposed.md without replacing SKILL.md' },
+    allow_mutate_bundled: { type: 'boolean', description: 'Required to mutate bundled skills' },
+    dry_run: { type: 'boolean', description: 'Cost preview, no LLM calls' },
+  },
+  mutating: true,
+  scope: 'admin',
+  localOnly: false,
+  handler: async (ctx, p) => {
+    if (ctx.remote !== false) {
+      // Remote: enforce per-skill allowlist read from config.
+      // `skillopt.allowed_skills` is a JSON-array config of skill names
+      // an admin-scoped OAuth client may target. Default DENY-ALL: when
+      // unset, MCP cannot drive skillopt on any skill.
+      const allowedRaw = await ctx.engine.getConfig('skillopt.allowed_skills');
+      let allowed: string[] = [];
+      try {
+        if (allowedRaw) allowed = JSON.parse(allowedRaw) as string[];
+      } catch { /* fall through to deny */ }
+      const skillName = (p.skill_name as string) ?? '';
+      if (!allowed.includes(skillName)) {
+        throw new OperationError(`run_skillopt: skill '${skillName}' is not in skillopt.allowed_skills allowlist (default deny-all for remote callers)`, 'permission_denied');
+      }
+    }
+    const { runSkillOpt } = await import('./skillopt/orchestrator.ts');
+    const { autoDetectSkillsDirReadOnly } = await import('./repo-root.ts');
+    const { resolveModel } = await import('./model-config.ts');
+    const detected = autoDetectSkillsDirReadOnly(process.cwd());
+    const skillsDir = detected.dir;
+    if (!skillsDir) {
+      throw new OperationError('run_skillopt: skills directory not found', 'config_error');
+    }
+    const optimizerModel = await resolveModel(ctx.engine, { tier: 'deep', fallback: 'anthropic:claude-opus-4-7' });
+    const targetModel = await resolveModel(ctx.engine, { tier: 'subagent', fallback: 'anthropic:claude-sonnet-4-6' });
+    const judgeModel = await resolveModel(ctx.engine, { tier: 'reasoning', fallback: 'anthropic:claude-sonnet-4-6' });
+    const skillName = p.skill_name as string;
+    const benchmarkPath = (p.benchmark_path as string) ??
+      `${skillsDir}/${skillName}/skillopt-benchmark.jsonl`;
+    const result = await runSkillOpt({
+      engine: ctx.engine,
+      skillName,
+      skillsDir,
+      benchmarkPath,
+      epochs: (p.epochs as number) ?? 4,
+      batchSize: (p.batch_size as number) ?? 8,
+      lr: (p.lr as number) ?? 4,
+      lrSchedule: 'cosine',
+      split: [4, 1, 5],
+      optimizerModel,
+      targetModel,
+      judgeModel,
+      mode: 'patch',
+      dryRun: (p.dry_run as boolean) === true,
+      noMutate: (p.no_mutate as boolean) === true,
+      allowMutateBundled: (p.allow_mutate_bundled as boolean) === true,
+      bootstrapReviewed: false,
+      json: true,
+      maxCostUsd: (p.max_cost_usd as number) ?? 5.0,
+      maxRuntimeMin: 30,
+      force: false,
+    });
+    return {
+      outcome: result.outcome,
+      receipt: result.receipt,
+      mutated_skill_file: result.mutatedSkillFile,
+      proposed_path: result.proposedPath,
+    };
+  },
+};
+
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
@@ -4557,6 +4641,11 @@ export const operations: Operation[] = [
   schema_apply_mutations, reload_schema_pack,
   // v0.41.18.0 (T16, A7, codex #5)
   run_onboard,
+  // v0.41.20.0 SkillOpt — admin-scoped MCP op for remote optimization.
+  // Per-skill allowlist via `skillopt.allowed_skills` config (default
+  // deny-all for remote callers). NOT localOnly so admin OAuth clients
+  // can submit; CLI bypass via ctx.remote === false.
+  run_skillopt,
 ];
 
 export const operationsByName = Object.fromEntries(

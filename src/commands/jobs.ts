@@ -1640,10 +1640,6 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     if (!data.target_pack) {
       throw new Error(`unify-types: missing required 'target_pack' parameter`);
     }
-    // Build a minimal OperationContext shim. Real context is constructed
-    // by the CLI/MCP dispatch layer; handlers don't have one, so we build
-    // one with engine + null cfg + remote=false (trusted local caller —
-    // PROTECTED handler enforced at submit_job).
     const ctx = {
       engine,
       cfg: null,
@@ -1651,17 +1647,59 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     } as unknown as import('../core/operations.ts').OperationContext;
     return await runUnifyTypes(ctx, {
       target_pack: data.target_pack,
-      apply: data.apply ?? true,            // worker invocation defaults to apply
+      apply: data.apply ?? true,
       sourceId: data.sourceId,
       onProgress: (msg: string) => {
-        // Stream to job.updateProgress (DB-backed) AND stderr (operator visibility).
         job.updateProgress({ phase: 'unify-types', message: msg }).catch(() => {});
         process.stderr.write(msg + '\n');
       },
     });
   });
 
-  process.stderr.write('[minion worker] brain-health-100 handlers registered (12 ops, 4 protected) + embed-backfill (v0.40) + embed-catch-up (v0.42) + unify-types (v0.42)\n');
+  // v0.42.0.0 SkillOpt Minion handler — for --background CLI invocations.
+  // PROTECTED by name so MCP submission rejects (only trusted CLI can
+  // submit). Threaded SkillOptOpts JSON in job.data.
+  worker.register('skillopt', async (job) => {
+    const { runSkillOpt } = await import('../core/skillopt/orchestrator.ts');
+    const data = (job.data ?? {}) as Record<string, unknown>;
+    const skillsDir = String(data.skills_dir ?? '');
+    const skillName = String(data.skill_name ?? '');
+    const benchmarkPath = String(data.benchmark_path ?? '');
+    if (!skillsDir || !skillName || !benchmarkPath) {
+      throw new Error(`skillopt handler: missing required job.data fields (skills_dir, skill_name, benchmark_path)`);
+    }
+    const result = await runSkillOpt({
+      engine,
+      skillName,
+      skillsDir,
+      benchmarkPath,
+      epochs: Number(data.epochs ?? 4),
+      batchSize: Number(data.batch_size ?? 8),
+      lr: Number(data.lr ?? 4),
+      lrSchedule: (data.lr_schedule as 'cosine' | 'linear' | 'constant') ?? 'cosine',
+      split: (data.split as [number, number, number]) ?? [4, 1, 5],
+      optimizerModel: String(data.optimizer_model ?? 'anthropic:claude-opus-4-7'),
+      targetModel: String(data.target_model ?? 'anthropic:claude-sonnet-4-6'),
+      judgeModel: String(data.judge_model ?? 'anthropic:claude-sonnet-4-6'),
+      mode: (data.mode as 'patch' | 'rewrite') ?? 'patch',
+      dryRun: Boolean(data.dry_run),
+      noMutate: Boolean(data.no_mutate),
+      allowMutateBundled: Boolean(data.allow_mutate_bundled),
+      bootstrapReviewed: Boolean(data.bootstrap_reviewed),
+      json: true,
+      maxCostUsd: Number(data.max_cost_usd ?? 5.0),
+      maxRuntimeMin: Number(data.max_runtime_min ?? 30),
+      force: Boolean(data.force),
+    });
+    return {
+      outcome: result.outcome,
+      receipt: result.receipt,
+      mutated_skill_file: result.mutatedSkillFile,
+      proposed_path: result.proposedPath,
+    };
+  });
+
+  process.stderr.write('[minion worker] brain-health-100 handlers registered (12 ops, 4 protected) + embed-backfill (v0.40) + embed-catch-up (v0.42) + unify-types (v0.42) + skillopt (v0.42.0.0, protected)\n');
 
   // Plugin discovery — one line per discovered plugin (mirrors the
   // openclaw-seam startup line convention from v0.11+). Loaded

@@ -8,10 +8,10 @@
  * responses.
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, beforeEach, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 
 let engine: PGLiteEngine;
 
@@ -21,17 +21,15 @@ beforeAll(async () => {
   await engine.initSchema();
 });
 
-// These tests drive put_page, whose importFromContent embeds by design
-// (embed failure PROPAGATES — a deliberate Codex C2 choice). A sibling
-// shard file that left the gateway configured with a fake/non-legacy key
-// would make put_page's embed step 401 and throw (isError). We don't want
-// embedding here at all — the assertions are about the facts backstop, not
-// vectors — so reset the gateway before each test. An empty gateway makes
-// embedBatch a graceful no-op, so put_page succeeds regardless of what a
-// prior file in the shard process leaked.
-beforeEach(() => {
-  resetGateway();
-});
+// Defense-in-depth: this suite tests the FACTS BACKSTOP gating, not embedding.
+// put_page imports + embeds the page body before the backstop runs, and
+// embedding only happens when isAvailable('embedding') is true. If a prior
+// test file in this shard's process left the gateway configured with a key
+// (e.g. embed-preflight's 'sk-test'), put_page would attempt a real embed and
+// 401. Reset the gateway before each test so isAvailable('embedding') is
+// deterministically false → put_page uses noEmbed → the import never embeds →
+// we exercise only the backstop gating the suite is about.
+beforeEach(() => { resetGateway(); });
 
 afterAll(async () => {
   await engine.disconnect();
@@ -42,6 +40,14 @@ async function putAndReadBackstop(slug: string, content: string): Promise<{ queu
     remote: false,
     sourceId: 'default',
   });
+  // Diagnostic: print the actual error content when the call fails, so CI
+  // failures (which reproduce only on Linux CI, not local Mac) surface the
+  // real cause instead of opaque `Received: true`. Cheap when isError is
+  // false (the common case); pays its way the moment something throws.
+  if (r.isError) {
+    // eslint-disable-next-line no-console
+    console.error(`[facts-backstop-gating diag] put_page returned isError=true for slug=${slug}, content[0].text=${r.content[0]?.text ?? '<missing>'}`);
+  }
   expect(r.isError).toBeFalsy();
   const payload = JSON.parse(r.content[0].text);
   return payload.facts_backstop as { queued: boolean } | { skipped: string } | undefined;
