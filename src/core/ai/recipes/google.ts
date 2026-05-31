@@ -11,7 +11,7 @@ export const google: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['gemini-embedding-001'],
+      models: ['gemini-embedding-001', 'gemini-embedding-2', 'gemini-embedding-2-preview'],
       default_dims: 768,
       dims_options: [768, 1536, 3072],
       cost_per_1m_tokens_usd: 0.15,
@@ -23,7 +23,14 @@ export const google: Recipe = {
       price_last_verified: '2026-04-20',
     },
     chat: {
-      models: ['gemini-2.0-flash-exp', 'gemini-2.0-flash', 'gemini-1.5-pro'],
+      models: [
+        'gemini-2.5-flash',
+        'gemini-2.5-pro',
+        'gemini-2.0-flash-001',
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-pro',
+      ],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,
