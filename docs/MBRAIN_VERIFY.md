@@ -106,6 +106,35 @@ Expected:
   search, and `route_memory_writeback` dry-run checks in its temporary local
   profile.
 
+## HTTP OAuth runtime confidence smoke
+
+Use this gate before claiming the ChatGPT-style OAuth foundation works at the
+runtime boundary. It starts the real Bun HTTP MCP server against Postgres,
+simulates Dynamic Client Registration plus PKCE, calls MCP tools with the issued
+access token, exercises the refresh-token grant, and checks Postgres
+`access_tokens` plus `mcp_request_log` evidence. It does not require ChatGPT,
+OpenAI, or Anthropic credentials.
+
+```bash
+DATABASE_URL='postgresql://...' bun run smoke:http-oauth
+```
+
+Expected:
+
+- output ends with `"ok": true`
+- `accessTokenRows` is at least `2` because the initial and refreshed access
+  tokens were both issued
+- `requestLogRows` is at least `4` and includes `initialize`, `tools/list`, and
+  `get_stats`
+- `refreshedTokenWorked` is `true`
+- `initialTokenRejectedAfterRefresh` is `true`; refresh grants rotate the
+  client session so the pre-refresh access token is rejected with OAuth
+  re-auth/refresh guidance
+
+This smoke proves local runtime confidence for OAuth/DCR/PKCE over the real
+HTTP server. It still does not prove live ChatGPT Developer Mode behavior, public
+HTTPS tunnel behavior, or any provider-key-dependent Tier 2 skill flow.
+
 Phase 13 evidence is deterministic replay plus live-eval budget gating by
 default. `bun run test:phase13` proves the deterministic fixture, policy,
 projection, source-safety, and budget guardrails. Do not report live LLM eval evidence unless the budgeted live eval was actually run in an environment with the required provider credentials.

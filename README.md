@@ -532,7 +532,15 @@ mbrain serve --http --oauth --public-url https://YOUR-DOMAIN.ngrok.app
 ```
 
 OAuth clients discover metadata, register a public client, complete PKCE, and
-receive a normal MBrain bearer token stored in `access_tokens`.
+receive a normal MBrain bearer token stored in `access_tokens`. Refresh grants
+rotate the client session so the refreshed access token works and the
+pre-refresh access token is rejected.
+
+To verify the OAuth runtime locally before a live ChatGPT pass:
+
+```bash
+DATABASE_URL='postgresql://...' bun run smoke:http-oauth
+```
 
 ### Agent Readiness Verification
 

@@ -43,8 +43,10 @@ const ALL_TABLES = [
   'page_versions',
   'ingest_log',
   'files',
-  'pages',       // last because of foreign keys
   'config',
+  'access_tokens',
+  'mcp_request_log',
+  'pages',       // last because of foreign keys
 ];
 
 /**
@@ -62,6 +64,7 @@ export async function setupDB(): Promise<PostgresEngine> {
   if (!DATABASE_URL) {
     throw new Error('DATABASE_URL not set. Copy .env.testing.example to .env.testing and configure it.');
   }
+  assertSafeTestDatabaseUrl(DATABASE_URL);
 
   // Disconnect any prior connection (clean slate)
   await db.disconnect();
@@ -85,6 +88,18 @@ export async function setupDB(): Promise<PostgresEngine> {
   engine = new PostgresEngine();
   await engine.connect({ database_url: DATABASE_URL });
   return engine;
+}
+
+function assertSafeTestDatabaseUrl(databaseUrl: string): void {
+  const parsed = new URL(databaseUrl);
+  const hostname = parsed.hostname;
+  const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  const databaseName = parsed.pathname.replace(/^\/+/, '');
+  if (!isLoopback || !/test/i.test(databaseName)) {
+    throw new Error(
+      `Refusing to run destructive E2E setupDB() against non-test database URL: host=${hostname} database=${databaseName || '(empty)'}`,
+    );
+  }
 }
 
 /**

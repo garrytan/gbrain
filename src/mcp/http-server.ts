@@ -203,6 +203,17 @@ async function authenticateMcpHttpRequest(
     }
 
     if (row.revoked_at) {
+      if (row.name.startsWith('oauth:')) {
+        return {
+          ok: false,
+          status: 401,
+          body: {
+            error: 'invalid_token',
+            message: 'This OAuth access token was rotated. Use the OAuth refresh token or reconnect.',
+            docs: 'docs/mcp/CHATGPT.md',
+          },
+        };
+      }
       return {
         ok: false,
         status: 403,
@@ -294,7 +305,9 @@ async function issueMcpHttpAccessToken(
 ): Promise<string> {
   const token = `mbrain_${randomBytes(32).toString('hex')}`;
   const tokenHash = createHash('sha256').update(token).digest('hex');
-  const scopes = [...new Set([...input.scope, `oauth_exp:${Math.floor(input.expiresAt.getTime() / 1000)}`])];
+  const bindingScope = oauthBindingScope(input.tokenBinding);
+  const revokeScope = input.revokeTokenBinding ? oauthBindingScope(input.revokeTokenBinding) : null;
+  const scopes = [...new Set([...input.scope, `oauth_exp:${Math.floor(input.expiresAt.getTime() / 1000)}`, bindingScope])];
   const name = `oauth:${input.clientName}`;
 
   switch (config.engine) {
@@ -302,10 +315,21 @@ async function issueMcpHttpAccessToken(
       if (!config.database_url) throw new Error('Missing database_url');
       const sql = postgres(config.database_url, { max: 1 });
       try {
-        await sql`
-          INSERT INTO access_tokens (name, token_hash, scopes)
-          VALUES (${name}, ${tokenHash}, ${scopes})
-        `;
+        await sql.begin(async tx => {
+          if (revokeScope) {
+            await tx`
+              UPDATE access_tokens
+              SET revoked_at = now()
+              WHERE name = ${name}
+                AND revoked_at IS NULL
+                AND ${revokeScope} = ANY(scopes)
+            `;
+          }
+          await tx`
+            INSERT INTO access_tokens (name, token_hash, scopes)
+            VALUES (${name}, ${tokenHash}, ${scopes})
+          `;
+        });
       } finally {
         await sql.end();
       }
@@ -315,10 +339,22 @@ async function issueMcpHttpAccessToken(
       if (!config.database_path) throw new Error('Missing database_path');
       const db = new Database(config.database_path);
       try {
-        db.query(`
-          INSERT INTO access_tokens (id, name, token_hash, scopes)
-          VALUES (?, ?, ?, ?)
-        `).run(randomUUID(), name, tokenHash, JSON.stringify(scopes));
+        const issueToken = db.transaction(() => {
+          if (revokeScope) {
+            db.query(`
+              UPDATE access_tokens
+              SET revoked_at = ?
+              WHERE name = ?
+                AND revoked_at IS NULL
+                AND scopes LIKE ?
+            `).run(new Date().toISOString(), name, `%"${revokeScope}"%`);
+          }
+          db.query(`
+            INSERT INTO access_tokens (id, name, token_hash, scopes)
+            VALUES (?, ?, ?, ?)
+          `).run(randomUUID(), name, tokenHash, JSON.stringify(scopes));
+        });
+        issueToken();
       } finally {
         db.close();
       }
@@ -327,6 +363,10 @@ async function issueMcpHttpAccessToken(
     case 'pglite':
       throw new Error('HTTP OAuth token issuance is not supported for pglite');
   }
+}
+
+function oauthBindingScope(binding: string): string {
+  return `oauth_binding:${binding}`;
 }
 
 async function markAccessTokenUsed(config: MBrainConfig, tokenHash: string): Promise<void> {

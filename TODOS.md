@@ -25,7 +25,7 @@ compiled-binary support after the Postgres target runtime migration.
 ### ChatGPT MCP live validation and OAuth hardening
 **What:** Validate the opt-in OAuth MCP flow against ChatGPT Developer Mode and harden any client-specific edge cases.
 
-**Why:** MBrain now has a self-hosted OAuth 2.1/DCR foundation on `mbrain serve --http --oauth`, but live ChatGPT validation is still needed before claiming the guide is fully verified.
+**Why:** MBrain now has a self-hosted OAuth 2.1/DCR foundation on `mbrain serve --http --oauth` plus a local runtime smoke that proves DCR, PKCE, token issuance, refresh, and MCP tool calls against real Postgres. Live ChatGPT validation is still needed before claiming the guide is fully verified.
 
 **Pros:** Completes the "every AI client" promise with real client evidence, not just protocol coverage.
 
@@ -36,11 +36,21 @@ compiled-binary support after the Postgres target runtime migration.
 Function deployment was removed in v0.8.0. The built-in `mbrain serve --http`
 runtime now provides the HTTP MCP foundation, and `--oauth` adds discovery,
 DCR, PKCE authorization code exchange, refresh grants, and access-token issuance
-through the existing `access_tokens` table.
+through the existing `access_tokens` table. `bun run smoke:http-oauth` now gives
+agents a no-API-key runtime confidence gate before the live ChatGPT pass.
 
 **Depends on:** Live ChatGPT Developer Mode validation.
 
 ## Completed
+
+### HTTP OAuth runtime confidence smoke
+**Completed:** Unreleased — `bun run smoke:http-oauth` starts the real Bun HTTP
+MCP server against Postgres, simulates a ChatGPT-style Dynamic Client
+Registration and PKCE authorization-code flow, calls MCP tools with the issued
+access token, exercises the refresh-token grant, verifies the refreshed access
+token, confirms the initial access token is rejected after refresh, and verifies Postgres
+`access_tokens` plus `mcp_request_log` evidence. This narrows the remaining P0
+gap to live ChatGPT Developer Mode validation.
 
 ### ChatGPT OAuth/DCR foundation (`mbrain serve --http --oauth`)
 **Completed:** Unreleased — `mbrain serve --http --oauth` now exposes OAuth

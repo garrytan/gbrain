@@ -107,6 +107,17 @@ bun run src/commands/auth.ts test \
   --token YOUR_TOKEN
 ```
 
+For OAuth runtime confidence without ChatGPT credentials:
+
+```bash
+DATABASE_URL='postgresql://...' bun run smoke:http-oauth
+```
+
+That smoke starts the real HTTP MCP server locally, completes DCR + PKCE,
+uses the issued token against `/mcp`, refreshes it, confirms the refreshed token
+works while the pre-refresh token is rejected, and checks Postgres token plus
+request-log evidence.
+
 ## Operations
 
 All 30 MBrain operations are available remotely, including `sync_brain` and

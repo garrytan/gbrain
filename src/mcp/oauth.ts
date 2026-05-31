@@ -13,6 +13,8 @@ export interface McpOAuthAccessTokenInput {
   clientName: string;
   scope: string[];
   expiresAt: Date;
+  tokenBinding: string;
+  revokeTokenBinding?: string;
 }
 
 export interface McpOAuthState {
@@ -278,7 +280,7 @@ async function handleRefreshToken(
     redirect_uris: [],
     issued_at: now,
   };
-  return issueOAuthAccessToken(state, client, payload.scope, issueAccessToken);
+  return issueOAuthAccessToken(state, client, payload.scope, issueAccessToken, payload.token_binding);
 }
 
 async function issueOAuthAccessToken(
@@ -286,16 +288,20 @@ async function issueOAuthAccessToken(
   client: OAuthClientRecord,
   scope: string[],
   issueAccessToken: (input: McpOAuthAccessTokenInput) => Promise<string>,
+  revokeTokenBinding?: string,
 ): Promise<Response> {
   const ttl = state.options.accessTokenTtlSeconds ?? DEFAULT_ACCESS_TOKEN_TTL_SECONDS;
   const refreshTtl = state.options.refreshTokenTtlSeconds ?? DEFAULT_REFRESH_TOKEN_TTL_SECONDS;
   const nowMs = Date.now();
+  const tokenBinding = randomBytes(16).toString('hex');
   let accessToken: string;
   try {
     accessToken = await issueAccessToken({
       clientName: client.client_name,
       scope,
       expiresAt: new Date(nowMs + ttl * 1000),
+      tokenBinding,
+      revokeTokenBinding,
     });
   } catch {
     return oauthJson({
@@ -308,6 +314,7 @@ async function issueOAuthAccessToken(
     client_name: client.client_name,
     scope,
     expires_at: Math.floor(nowMs / 1000) + refreshTtl,
+    token_binding: tokenBinding,
   }, state.options);
 
   return oauthJson({
@@ -428,7 +435,7 @@ function parseScope(raw: string | undefined): string[] {
 }
 
 function encodeRefreshToken(
-  payload: { client_id: string; client_name: string; scope: string[]; expires_at: number },
+  payload: { client_id: string; client_name: string; scope: string[]; expires_at: number; token_binding: string },
   options: McpOAuthOptions,
 ): string {
   const secret = signingSecret(options);
@@ -442,7 +449,7 @@ function encodeRefreshToken(
 function decodeRefreshToken(
   token: string,
   options: McpOAuthOptions,
-): { client_id: string; client_name: string; scope: string[]; expires_at: number } | null {
+): { client_id: string; client_name: string; scope: string[]; expires_at: number; token_binding?: string } | null {
   if (!token.startsWith('mbrain_refresh_')) return null;
   const rest = token.slice('mbrain_refresh_'.length);
   const [encodedPayload, signature] = rest.split('.');
@@ -456,12 +463,19 @@ function decodeRefreshToken(
     if (!isRecord(payload)) return null;
     const clientId = stringValue(payload.client_id);
     const clientName = stringValue(payload.client_name);
+    const tokenBinding = stringValue(payload.token_binding);
     const expiresAt = typeof payload.expires_at === 'number' ? payload.expires_at : null;
     const scope = Array.isArray(payload.scope)
       ? payload.scope.filter((value): value is string => typeof value === 'string')
       : [];
     if (!clientId || !clientName || !expiresAt) return null;
-    return { client_id: clientId, client_name: clientName, scope, expires_at: expiresAt };
+    return {
+      client_id: clientId,
+      client_name: clientName,
+      scope,
+      expires_at: expiresAt,
+      token_binding: tokenBinding || undefined,
+    };
   } catch {
     return null;
   }

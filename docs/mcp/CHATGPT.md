@@ -11,6 +11,16 @@ single-user and opt-in: the owner approves the browser authorization request wit
 an approval token, and the token endpoint stores the issued MCP bearer token in
 the existing `access_tokens` table.
 
+Before a live ChatGPT pass, agents can run the local runtime confidence smoke:
+
+```bash
+DATABASE_URL='postgresql://...' bun run smoke:http-oauth
+```
+
+That smoke starts the real HTTP MCP server, simulates DCR + PKCE, calls MCP
+tools with the issued token, refreshes it, and verifies Postgres evidence. It
+does not replace live ChatGPT Developer Mode validation.
+
 ## Start the server
 
 ```bash
@@ -42,6 +52,8 @@ another HTTPS host.
 
 OAuth uses public clients, PKCE `S256`, authorization code grants, refresh token
 grants, and the existing MBrain bearer-token table for issued access tokens.
+Refresh grants rotate the client session's access token binding, so older
+access tokens from the same refresh chain are rejected.
 
 ## Current limits
 
@@ -50,6 +62,8 @@ grants, and the existing MBrain bearer-token table for issued access tokens.
 - No admin UI is included. The approval token is the owner confirmation step.
 - OAuth is not enabled unless `--oauth` or `MBRAIN_HTTP_OAUTH=1` is set.
 - PGLite remains a local/offline runtime and does not issue remote OAuth tokens.
+- `bun run smoke:http-oauth` proves the local protocol/runtime path, not
+  ChatGPT's production connector UI or a public HTTPS tunnel.
 - Live ChatGPT Developer Mode validation is still required before marking this
   guide as fully verified.
 

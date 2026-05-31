@@ -13,6 +13,13 @@ All notable changes to MBrain will be documented in this file.
   stores issued MCP access tokens in the existing hashed `access_tokens` table
   so remote OAuth clients use the same guarded `/mcp` path as bearer-token
   clients.
+- **Agents can now verify the OAuth MCP path before involving ChatGPT.**
+  `bun run smoke:http-oauth` starts the real HTTP MCP server against Postgres,
+  walks a ChatGPT-style DCR + PKCE flow, calls MCP tools with the issued token,
+  refreshes it, confirms the refreshed access token works while the pre-refresh
+  token is rejected, and checks the token plus request-log evidence. That gives
+  release agents a deterministic no-API-key confidence gate before the final
+  live ChatGPT Developer Mode pass.
 - **Remote MCP no longer needs a custom wrapper.** `mbrain serve --http` starts
   a built-in Streamable HTTP MCP server with `/mcp`, `/health`, Bearer token
   authentication, request logging, and the same tool catalog, response guards,
