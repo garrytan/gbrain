@@ -2479,14 +2479,21 @@ export class PostgresEngine implements BrainEngine {
     // v0.31.8 (D16): two-branch query. Without opts.sourceId, no source filter
     // (preserves pre-v0.31.8 cross-source semantics). With opts.sourceId,
     // scope the from-page lookup. See pglite-engine.ts:getLinks for context.
+    //
+    // Soft-delete filter (siblings of #1021/PR #1033): hide rows where either
+    // endpoint page is soft-deleted. Without this, links survive the 72h
+    // recovery window in read-side results even though the endpoint pages are
+    // hidden from get_page / list_pages / search. Hard purge
+    // (purgeDeletedPages) still cascades via FK; this filter only governs the
+    // soft-delete window.
     if (opts?.sourceId) {
       const rows = await sql`
         SELECT f.slug as from_slug, t.slug as to_slug,
                l.link_type, l.context, l.link_source,
                o.slug as origin_slug, l.origin_field
         FROM links l
-        JOIN pages f ON f.id = l.from_page_id
-        JOIN pages t ON t.id = l.to_page_id
+        JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
+        JOIN pages t ON t.id = l.to_page_id   AND t.deleted_at IS NULL
         LEFT JOIN pages o ON o.id = l.origin_page_id
         WHERE f.slug = ${slug} AND f.source_id = ${opts.sourceId}
       `;
@@ -2497,8 +2504,8 @@ export class PostgresEngine implements BrainEngine {
              l.link_type, l.context, l.link_source,
              o.slug as origin_slug, l.origin_field
       FROM links l
-      JOIN pages f ON f.id = l.from_page_id
-      JOIN pages t ON t.id = l.to_page_id
+      JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
+      JOIN pages t ON t.id = l.to_page_id   AND t.deleted_at IS NULL
       LEFT JOIN pages o ON o.id = l.origin_page_id
       WHERE f.slug = ${slug}
     `;
@@ -2508,14 +2515,15 @@ export class PostgresEngine implements BrainEngine {
   async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
     const sql = this.sql;
     // v0.31.8 (D16): two-branch query, mirrors getLinks above.
+    // Soft-delete filter: see getLinks() above.
     if (opts?.sourceId) {
       const rows = await sql`
         SELECT f.slug as from_slug, t.slug as to_slug,
                l.link_type, l.context, l.link_source,
                o.slug as origin_slug, l.origin_field
         FROM links l
-        JOIN pages f ON f.id = l.from_page_id
-        JOIN pages t ON t.id = l.to_page_id
+        JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
+        JOIN pages t ON t.id = l.to_page_id   AND t.deleted_at IS NULL
         LEFT JOIN pages o ON o.id = l.origin_page_id
         WHERE t.slug = ${slug} AND t.source_id = ${opts.sourceId}
       `;
@@ -2526,8 +2534,8 @@ export class PostgresEngine implements BrainEngine {
              l.link_type, l.context, l.link_source,
              o.slug as origin_slug, l.origin_field
       FROM links l
-      JOIN pages f ON f.id = l.from_page_id
-      JOIN pages t ON t.id = l.to_page_id
+      JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
+      JOIN pages t ON t.id = l.to_page_id   AND t.deleted_at IS NULL
       LEFT JOIN pages o ON o.id = l.origin_page_id
       WHERE t.slug = ${slug}
     `;
