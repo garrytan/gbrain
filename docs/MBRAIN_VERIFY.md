@@ -119,6 +119,15 @@ OpenAI, or Anthropic credentials.
 DATABASE_URL='postgresql://...' bun run smoke:http-oauth
 ```
 
+To prove OAuth setup state survives HTTP server restarts, ask the smoke to
+restart after DCR registration and again after authorization-code creation:
+
+```bash
+DATABASE_URL='postgresql://...' \
+MBRAIN_SMOKE_RESTART_OAUTH_STATE=1 \
+bun run smoke:http-oauth
+```
+
 To verify the OAuth metadata and unauthenticated `/mcp` challenge that a public
 HTTPS tunnel or host should advertise, set the public issuer before running the
 same smoke:
@@ -137,6 +146,7 @@ Expected:
 - output is a compact JSON result with `"ok": true`
 - `oauthIssuer` is the local server URL by default, or the normalized
   `MBRAIN_HTTP_PUBLIC_URL` value when supplied
+- `restartResilient` is `true` when `MBRAIN_SMOKE_RESTART_OAUTH_STATE=1`
 - `accessTokenRows` is at least `2` because the initial and refreshed access
   tokens were both issued
 - `requestLogRows` is at least `4` and includes `initialize`, `tools/list`, and
@@ -147,10 +157,11 @@ Expected:
   re-auth/refresh guidance
 
 This smoke proves local runtime confidence for OAuth/DCR/PKCE over the real
-HTTP server and can prove the configured public OAuth issuer metadata. It still
-does not prove live ChatGPT Developer Mode behavior, that the public HTTPS
-tunnel is reachable from the internet, or any provider-key-dependent Tier 2
-skill flow.
+HTTP server, can prove Postgres-backed OAuth setup state survives server
+restart, can prove the configured public OAuth issuer metadata, and is backed
+by E2E coverage for bounded pending DCR registration state. It still does not
+prove live ChatGPT Developer Mode behavior, that the public HTTPS tunnel is
+reachable from the internet, or any provider-key-dependent Tier 2 skill flow.
 
 Phase 13 evidence is deterministic replay plus live-eval budget gating by
 default. `bun run test:phase13` proves the deterministic fixture, policy,

@@ -179,6 +179,36 @@ describe('CLI version', () => {
 });
 
 describe('CLI dispatch integration', () => {
+  test('HTTP OAuth serve prepares schema before exposing OAuth-backed routes', async () => {
+    const { prepareHttpServeEngine } = await import('../src/commands/serve.ts');
+    const calls: string[] = [];
+    const engine = {
+      initSchema: async () => {
+        calls.push('initSchema');
+      },
+    };
+
+    const prepared = await prepareHttpServeEngine(Promise.resolve(engine as any), true);
+
+    expect(prepared).toBe(engine as any);
+    expect(calls).toEqual(['initSchema']);
+  });
+
+  test('HTTP serve without OAuth does not mutate schema on startup', async () => {
+    const { prepareHttpServeEngine } = await import('../src/commands/serve.ts');
+    const calls: string[] = [];
+    const engine = {
+      initSchema: async () => {
+        calls.push('initSchema');
+      },
+    };
+
+    const prepared = await prepareHttpServeEngine(engine as any, false);
+
+    expect(prepared).toBe(engine as any);
+    expect(calls).toEqual([]);
+  });
+
   test('runInit postgres bootstrap uses createConnectedEngine so db.getConnection remains available', async () => {
     const scriptPath = join(tempHome, 'postgres-init-child.ts');
     writeFileSync(scriptPath, `

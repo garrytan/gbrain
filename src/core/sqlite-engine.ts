@@ -4985,6 +4985,13 @@ export class SQLiteEngine implements BrainEngine {
           this.ensureSourceStatusEventAppendOnlyTriggers();
           this.repairMemoryMutationEventSessionAttachmentContract();
           break;
+        case 46:
+          // Postgres/PGLite-only OAuth DCR client and authorization-code durability.
+          // SQLite keeps the local/offline HTTP OAuth fallback in process memory.
+          break;
+        case 47:
+          // Postgres/PGLite-only cleanup of dormant OAuth DCR revocation state.
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }

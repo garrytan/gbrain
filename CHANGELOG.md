@@ -10,9 +10,15 @@ All notable changes to MBrain will be documented in this file.
   `mbrain serve --http --oauth` adds OAuth discovery, protected-resource
   metadata, Dynamic Client Registration, PKCE authorization code exchange, and
   refresh-token grants. The flow stays single-user and owner-approved, then
-  stores issued MCP access tokens in the existing hashed `access_tokens` table
-  so remote OAuth clients use the same guarded `/mcp` path as bearer-token
-  clients.
+  stores DCR clients, atomically consumed one-use authorization codes, and
+  issued MCP access tokens in Postgres so setup can survive server restarts and
+  remote OAuth clients use the same guarded `/mcp` path as bearer-token clients.
+  Unapproved public registrations are pruned after one hour and pending
+  registrations are capped, so the setup flow is restart-resilient without
+  letting unauthenticated DCR requests grow durable state forever. Starting
+  `mbrain serve --http --oauth` also prepares the schema before exposing OAuth
+  routes, so existing Postgres installs get the required runtime tables before a
+  remote client begins setup.
 - **Agents can now verify the OAuth MCP path before involving ChatGPT.**
   `bun run smoke:http-oauth` starts the real HTTP MCP server against Postgres,
   walks a ChatGPT-style DCR + PKCE flow, calls MCP tools with the issued token,
@@ -20,8 +26,10 @@ All notable changes to MBrain will be documented in this file.
   token is rejected, and checks the token plus request-log evidence. Agents can
   also set `MBRAIN_HTTP_PUBLIC_URL` to verify
   that OAuth metadata and `WWW-Authenticate` advertise the public HTTPS issuer
-  expected by remote clients. That gives release agents a deterministic
-  no-API-key confidence gate before the final live ChatGPT Developer Mode pass.
+  expected by remote clients, or `MBRAIN_SMOKE_RESTART_OAUTH_STATE=1` to
+  restart the HTTP server between registration, authorization, and token
+  exchange. That gives release agents a deterministic no-API-key confidence
+  gate before the final live ChatGPT Developer Mode pass.
 - **Remote MCP no longer needs a custom wrapper.** `mbrain serve --http` starts
   a built-in Streamable HTTP MCP server with `/mcp`, `/health`, Bearer token
   authentication, request logging, and the same tool catalog, response guards,

@@ -15,8 +15,9 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
 
   if (http) {
     const config = loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
+    const httpEngine = await prepareHttpServeEngine(engine, oauth);
     const server = startMcpHttpServer({
-      engine,
+      engine: httpEngine,
       config,
       host,
       port,
@@ -40,6 +41,17 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
 
   console.error('Starting MBrain MCP server (stdio)...');
   await startMcpServer(engine);
+}
+
+export async function prepareHttpServeEngine(
+  engine: BrainEngine | Promise<BrainEngine>,
+  oauthEnabled: boolean,
+): Promise<BrainEngine> {
+  const resolved = await engine;
+  if (oauthEnabled) {
+    await resolved.initSchema();
+  }
+  return resolved;
 }
 
 function parseStringFlag(args: string[], flag: string): string | undefined {

@@ -44,6 +44,8 @@ const ALL_TABLES = [
   'ingest_log',
   'files',
   'config',
+  'oauth_authorization_codes',
+  'oauth_dcr_clients',
   'access_tokens',
   'mcp_request_log',
   'pages',       // last because of foreign keys

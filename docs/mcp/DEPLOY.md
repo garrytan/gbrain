@@ -58,6 +58,10 @@ mbrain serve --http \
 
 OAuth adds discovery, Dynamic Client Registration, authorization, and token
 endpoints while still issuing ordinary MBrain bearer tokens under the hood.
+OAuth setup state requires the Postgres engine; use bearer-token HTTP MCP for
+SQLite/PGLite local profiles. Postgres-backed setup state survives server
+restarts, prunes unapproved DCR registrations after one hour, and caps pending
+registrations at 128.
 Use a separate `MBRAIN_OAUTH_SIGNING_SECRET` for refresh-token signing; if it is
 unset, MBrain warns and falls back to the approval token for local testing only.
 
@@ -117,6 +121,14 @@ That smoke starts the real HTTP MCP server locally, completes DCR + PKCE,
 uses the issued token against `/mcp`, refreshes it, confirms the refreshed token
 works while the pre-refresh token is rejected, and checks Postgres token plus
 request-log evidence.
+
+To prove the OAuth setup state is Postgres-backed and survives server restarts:
+
+```bash
+DATABASE_URL='postgresql://...' \
+MBRAIN_SMOKE_RESTART_OAUTH_STATE=1 \
+bun run smoke:http-oauth
+```
 
 When validating a public tunnel or hosted URL, also verify that OAuth metadata
 advertises that public HTTPS issuer:

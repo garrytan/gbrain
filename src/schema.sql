@@ -1640,6 +1640,41 @@ CREATE TABLE IF NOT EXISTS access_tokens (
 CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) WHERE revoked_at IS NULL;
 
 -- ============================================================
+-- oauth_dcr_clients: dynamic OAuth client registrations
+-- ============================================================
+CREATE TABLE IF NOT EXISTS oauth_dcr_clients (
+  client_id                  TEXT PRIMARY KEY,
+  client_name                TEXT NOT NULL,
+  redirect_uris              TEXT[] NOT NULL,
+  token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none',
+  issued_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_authorized_at         TIMESTAMPTZ
+);
+
+ALTER TABLE oauth_dcr_clients
+  ADD COLUMN IF NOT EXISTS last_authorized_at TIMESTAMPTZ;
+
+-- ============================================================
+-- oauth_authorization_codes: one-use OAuth authorization grants
+-- ============================================================
+CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+  code_hash      TEXT PRIMARY KEY,
+  client_id      TEXT NOT NULL REFERENCES oauth_dcr_clients(client_id) ON DELETE CASCADE,
+  redirect_uri   TEXT NOT NULL,
+  code_challenge TEXT NOT NULL,
+  scope          TEXT[] NOT NULL DEFAULT ARRAY['mcp'],
+  expires_at     TIMESTAMPTZ NOT NULL,
+  used_at        TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_client
+  ON oauth_authorization_codes(client_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_unexpired
+  ON oauth_authorization_codes(expires_at)
+  WHERE used_at IS NULL;
+
+-- ============================================================
 -- mcp_request_log: usage logging for remote MCP requests
 -- ============================================================
 CREATE TABLE IF NOT EXISTS mcp_request_log (

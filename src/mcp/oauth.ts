@@ -19,8 +19,7 @@ export interface McpOAuthAccessTokenInput {
 
 export interface McpOAuthState {
   options: McpOAuthOptions;
-  clients: Map<string, OAuthClientRecord>;
-  authorizationCodes: Map<string, OAuthAuthorizationCodeRecord>;
+  store: McpOAuthStore;
 }
 
 export interface McpOAuthRequestOptions {
@@ -29,14 +28,14 @@ export interface McpOAuthRequestOptions {
   issueAccessToken: (input: McpOAuthAccessTokenInput) => Promise<string>;
 }
 
-interface OAuthClientRecord {
+export interface OAuthClientRecord {
   client_id: string;
   client_name: string;
   redirect_uris: string[];
   issued_at: number;
 }
 
-interface OAuthAuthorizationCodeRecord {
+export interface OAuthAuthorizationCodeRecord {
   client_id: string;
   redirect_uri: string;
   code_challenge: string;
@@ -45,16 +44,38 @@ interface OAuthAuthorizationCodeRecord {
   used: boolean;
 }
 
+export interface OAuthAuthorizationCodeConsumption {
+  client_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+}
+
+export interface McpOAuthStore {
+  saveClient(record: OAuthClientRecord): Promise<void>;
+  getClient(clientId: string): Promise<OAuthClientRecord | null>;
+  saveAuthorizationCode(code: string, record: OAuthAuthorizationCodeRecord): Promise<void>;
+  consumeAuthorizationCode(
+    code: string,
+    expected: OAuthAuthorizationCodeConsumption,
+  ): Promise<OAuthAuthorizationCodeRecord | null>;
+}
+
+export class OAuthStoreCapacityError extends Error {
+  constructor(message = 'Too many pending OAuth client registrations') {
+    super(message);
+    this.name = 'OAuthStoreCapacityError';
+  }
+}
+
 const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 90;
 const AUTHORIZATION_CODE_TTL_SECONDS = 5 * 60;
 const SAFE_EQUAL_KEY = 'mbrain-oauth-safe-equal-v1';
 
-export function createMcpOAuthState(options: McpOAuthOptions): McpOAuthState {
+export function createMcpOAuthState(options: McpOAuthOptions, store: McpOAuthStore = createInMemoryMcpOAuthStore()): McpOAuthState {
   return {
     options,
-    clients: new Map(),
-    authorizationCodes: new Map(),
+    store,
   };
 }
 
@@ -152,7 +173,17 @@ async function handleClientRegistration(request: Request, state: McpOAuthState):
     redirect_uris: redirectUris,
     issued_at: Math.floor(Date.now() / 1000),
   };
-  state.clients.set(clientId, record);
+  try {
+    await state.store.saveClient(record);
+  } catch (error) {
+    if (error instanceof OAuthStoreCapacityError) {
+      return oauthJson({
+        error: 'temporarily_unavailable',
+        error_description: 'Too many pending OAuth client registrations. Complete authorization or try again later.',
+      }, 429);
+    }
+    throw error;
+  }
 
   return oauthJson({
     client_id: clientId,
@@ -166,11 +197,10 @@ async function handleClientRegistration(request: Request, state: McpOAuthState):
 }
 
 async function handleAuthorize(request: Request, state: McpOAuthState): Promise<Response> {
-  pruneAuthorizationCodes(state);
   const params = request.method === 'GET'
     ? paramsFromSearch(new URL(request.url).searchParams)
     : await readOAuthBody(request);
-  const validation = validateAuthorizationRequest(params, state);
+  const validation = await validateAuthorizationRequest(params, state);
   if (!validation.ok) return validation.response;
 
   if (request.method === 'GET') {
@@ -186,7 +216,7 @@ async function handleAuthorize(request: Request, state: McpOAuthState): Promise<
   }
 
   const code = `mbrain_code_${randomBytes(32).toString('base64url')}`;
-  state.authorizationCodes.set(code, {
+  await state.store.saveAuthorizationCode(code, {
     client_id: validation.client.client_id,
     redirect_uri: validation.redirectUri,
     code_challenge: validation.codeChallenge,
@@ -243,22 +273,19 @@ async function handleAuthorizationCodeToken(
     return oauthJson({ error: 'invalid_request' }, 400);
   }
 
-  pruneAuthorizationCodes(state);
-  const client = state.clients.get(clientId);
-  const record = state.authorizationCodes.get(code);
-  const now = Math.floor(Date.now() / 1000);
-  if (!client || !record || record.used || record.expires_at <= now) {
+  const client = await state.store.getClient(clientId);
+  if (!client) {
     return oauthJson({ error: 'invalid_grant' }, 400);
   }
-  if (record.client_id !== clientId || record.redirect_uri !== redirectUri) {
-    return oauthJson({ error: 'invalid_grant' }, 400);
-  }
-  if (!pkceVerifierMatches(verifier, record.code_challenge)) {
+  const record = await state.store.consumeAuthorizationCode(code, {
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_challenge: pkceChallenge(verifier),
+  });
+  if (!record) {
     return oauthJson({ error: 'invalid_grant' }, 400);
   }
 
-  record.used = true;
-  state.authorizationCodes.delete(code);
   return issueOAuthAccessToken(state, client, record.scope, issueAccessToken);
 }
 
@@ -274,7 +301,7 @@ async function handleRefreshToken(
   if (!payload || payload.expires_at <= now || (clientId && payload.client_id !== clientId)) {
     return oauthJson({ error: 'invalid_grant' }, 400);
   }
-  const client = state.clients.get(payload.client_id) ?? {
+  const client = await state.store.getClient(payload.client_id) ?? {
     client_id: payload.client_id,
     client_name: payload.client_name,
     redirect_uris: [],
@@ -326,15 +353,15 @@ async function issueOAuthAccessToken(
   }, 200);
 }
 
-function validateAuthorizationRequest(
+async function validateAuthorizationRequest(
   params: Record<string, unknown>,
   state: McpOAuthState,
-): { ok: true; client: OAuthClientRecord; redirectUri: string; codeChallenge: string; scope: string[] } | { ok: false; response: Response } {
+): Promise<{ ok: true; client: OAuthClientRecord; redirectUri: string; codeChallenge: string; scope: string[] } | { ok: false; response: Response }> {
   if (stringValue(params.response_type) !== 'code') {
     return { ok: false, response: oauthJson({ error: 'unsupported_response_type' }, 400) };
   }
   const clientId = stringValue(params.client_id);
-  const client = clientId ? state.clients.get(clientId) : undefined;
+  const client = clientId ? await state.store.getClient(clientId) : undefined;
   if (!client) {
     return { ok: false, response: oauthJson({ error: 'invalid_client' }, 400) };
   }
@@ -401,9 +428,8 @@ function paramsFromSearch(searchParams: URLSearchParams): Record<string, string>
   return params;
 }
 
-function pkceVerifierMatches(verifier: string, expectedChallenge: string): boolean {
-  const actual = createHash('sha256').update(verifier).digest('base64url');
-  return safeEqual(actual, expectedChallenge);
+function pkceChallenge(verifier: string): string {
+  return createHash('sha256').update(verifier).digest('base64url');
 }
 
 function approvalTokenMatches(input: string | undefined, configured: string | undefined): boolean {
@@ -415,15 +441,6 @@ function safeEqual(left: string, right: string): boolean {
   const leftDigest = createHmac('sha256', SAFE_EQUAL_KEY).update(left).digest();
   const rightDigest = createHmac('sha256', SAFE_EQUAL_KEY).update(right).digest();
   return timingSafeEqual(leftDigest, rightDigest);
-}
-
-function pruneAuthorizationCodes(state: McpOAuthState): void {
-  const now = Math.floor(Date.now() / 1000);
-  for (const [code, record] of state.authorizationCodes) {
-    if (record.used || record.expires_at <= now) {
-      state.authorizationCodes.delete(code);
-    }
-  }
 }
 
 function parseScope(raw: string | undefined): string[] {
@@ -526,6 +543,51 @@ function oauthCorsHeaders(): Record<string, string> {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+}
+
+export function createInMemoryMcpOAuthStore(): McpOAuthStore {
+  const clients = new Map<string, OAuthClientRecord>();
+  const authorizationCodes = new Map<string, OAuthAuthorizationCodeRecord>();
+  const pruneExpiredAuthorizationCodes = () => {
+    const now = Math.floor(Date.now() / 1000);
+    for (const [code, record] of authorizationCodes) {
+      if (record.expires_at <= now || record.used) {
+        authorizationCodes.delete(code);
+      }
+    }
+  };
+  return {
+    async saveClient(record) {
+      clients.set(record.client_id, { ...record, redirect_uris: [...record.redirect_uris] });
+    },
+    async getClient(clientId) {
+      const record = clients.get(clientId);
+      return record ? { ...record, redirect_uris: [...record.redirect_uris] } : null;
+    },
+    async saveAuthorizationCode(code, record) {
+      pruneExpiredAuthorizationCodes();
+      authorizationCodes.set(code, { ...record, scope: [...record.scope] });
+    },
+    async consumeAuthorizationCode(code, expected) {
+      pruneExpiredAuthorizationCodes();
+      const record = authorizationCodes.get(code);
+      const now = Math.floor(Date.now() / 1000);
+      if (!record || record.used || record.expires_at <= now) {
+        authorizationCodes.delete(code);
+        return null;
+      }
+      if (
+        record.client_id !== expected.client_id
+        || record.redirect_uri !== expected.redirect_uri
+        || !safeEqual(record.code_challenge, expected.code_challenge)
+      ) {
+        return null;
+      }
+      record.used = true;
+      authorizationCodes.delete(code);
+      return { ...record, scope: [...record.scope] };
+    },
   };
 }
 

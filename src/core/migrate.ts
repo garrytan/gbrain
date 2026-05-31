@@ -2860,6 +2860,50 @@ const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 46,
+    name: 'oauth_dcr_clients_and_authorization_codes',
+    sql: `
+      CREATE TABLE IF NOT EXISTS oauth_dcr_clients (
+        client_id                  TEXT PRIMARY KEY,
+        client_name                TEXT NOT NULL,
+        redirect_uris              TEXT[] NOT NULL,
+        token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none',
+        issued_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_authorized_at         TIMESTAMPTZ
+      );
+
+      ALTER TABLE oauth_dcr_clients
+        ADD COLUMN IF NOT EXISTS last_authorized_at TIMESTAMPTZ;
+      DROP INDEX IF EXISTS idx_oauth_dcr_clients_active;
+
+      CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+        code_hash      TEXT PRIMARY KEY,
+        client_id      TEXT NOT NULL REFERENCES oauth_dcr_clients(client_id) ON DELETE CASCADE,
+        redirect_uri   TEXT NOT NULL,
+        code_challenge TEXT NOT NULL,
+        scope          TEXT[] NOT NULL DEFAULT ARRAY['mcp'],
+        expires_at     TIMESTAMPTZ NOT NULL,
+        used_at        TIMESTAMPTZ,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_client
+        ON oauth_authorization_codes(client_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_unexpired
+        ON oauth_authorization_codes(expires_at)
+        WHERE used_at IS NULL;
+    `,
+  },
+  {
+    version: 47,
+    name: 'remove_oauth_dcr_client_revocation_state',
+    sql: `
+      DROP INDEX IF EXISTS idx_oauth_dcr_clients_active;
+      ALTER TABLE oauth_dcr_clients
+        DROP COLUMN IF EXISTS revoked_at;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

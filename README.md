@@ -534,12 +534,29 @@ mbrain serve --http --oauth --public-url https://YOUR-DOMAIN.ngrok.app
 OAuth clients discover metadata, register a public client, complete PKCE, and
 receive a normal MBrain bearer token stored in `access_tokens`. Refresh grants
 rotate the client session so the refreshed access token works and the
-pre-refresh access token is rejected.
+pre-refresh access token is rejected. DCR client registrations and
+authorization codes are persisted in Postgres so setup can survive HTTP server
+restarts; SQLite/PGLite local profiles should use bearer-token HTTP MCP instead
+of OAuth setup. Authorization codes are consumed with one conditional Postgres
+update so concurrent exchanges cannot mint multiple bearer tokens from the same
+code. Unapproved DCR registrations are pruned after one hour, and pending
+registrations are capped at 128 so public registration cannot grow the setup
+tables without bound. When OAuth is enabled, `serve` prepares the database
+schema before exposing the HTTP routes so upgraded Postgres installs have the
+OAuth runtime tables in place.
 
 To verify the OAuth runtime locally before a live ChatGPT pass:
 
 ```bash
 DATABASE_URL='postgresql://...' bun run smoke:http-oauth
+```
+
+To verify restart-resilient OAuth setup state:
+
+```bash
+DATABASE_URL='postgresql://...' \
+MBRAIN_SMOKE_RESTART_OAUTH_STATE=1 \
+bun run smoke:http-oauth
 ```
 
 To verify that OAuth discovery advertises the public HTTPS issuer your tunnel

@@ -25,7 +25,7 @@ compiled-binary support after the Postgres target runtime migration.
 ### ChatGPT MCP live validation and OAuth hardening
 **What:** Validate the opt-in OAuth MCP flow against ChatGPT Developer Mode and harden any client-specific edge cases.
 
-**Why:** MBrain now has a self-hosted OAuth 2.1/DCR foundation on `mbrain serve --http --oauth` plus a local runtime smoke that proves DCR, PKCE, token issuance, refresh, and MCP tool calls against real Postgres. Live ChatGPT validation is still needed before claiming the guide is fully verified.
+**Why:** MBrain now has a self-hosted OAuth 2.1/DCR foundation on `mbrain serve --http --oauth` plus a local runtime smoke that proves DCR, PKCE, token issuance, refresh, public issuer metadata, restart-resilient setup state, and MCP tool calls against real Postgres. Live ChatGPT validation is still needed before claiming the guide is fully verified.
 
 **Pros:** Completes the "every AI client" promise with real client evidence, not just protocol coverage.
 
@@ -36,8 +36,10 @@ compiled-binary support after the Postgres target runtime migration.
 Function deployment was removed in v0.8.0. The built-in `mbrain serve --http`
 runtime now provides the HTTP MCP foundation, and `--oauth` adds discovery,
 DCR, PKCE authorization code exchange, refresh grants, and access-token issuance
-through the existing `access_tokens` table. `bun run smoke:http-oauth` now gives
-agents a no-API-key runtime confidence gate before the live ChatGPT pass.
+through Postgres-backed OAuth client, authorization-code, and `access_tokens`
+state. `bun run smoke:http-oauth` now gives agents a no-API-key runtime
+confidence gate before the live ChatGPT pass, including public issuer, server
+restart, and bounded pending DCR state checks.
 
 **Depends on:** Live ChatGPT Developer Mode validation.
 
@@ -48,17 +50,32 @@ agents a no-API-key runtime confidence gate before the live ChatGPT pass.
 MCP server against Postgres, simulates a ChatGPT-style Dynamic Client
 Registration and PKCE authorization-code flow, calls MCP tools with the issued
 access token, exercises the refresh-token grant, verifies the refreshed access
-token, confirms the initial access token is rejected after refresh, and verifies Postgres
-`access_tokens` plus `mcp_request_log` evidence. This narrows the remaining P0
-gap to live ChatGPT Developer Mode validation.
+token, confirms the initial access token is rejected after refresh, and verifies
+Postgres `access_tokens` plus `mcp_request_log` evidence. It can also verify a
+configured public HTTPS issuer and restart the HTTP server between OAuth setup
+steps to prove persisted DCR/client-code state.
+This narrows the remaining P0 gap to live ChatGPT Developer Mode validation.
+
+### Postgres-backed OAuth setup state
+**Completed:** Unreleased — ChatGPT-style OAuth Dynamic Client Registration
+clients and one-use authorization codes now persist in Postgres instead of
+process-local memory. Authorization-code exchange now consumes a code with one
+conditional Postgres update so concurrent attempts cannot mint multiple bearer
+tokens. Server restarts during setup no longer force clients to register again,
+and the restart-resilient smoke mode proves registration, authorization, token
+exchange, and MCP tool calls across fresh HTTP server instances. Unapproved
+DCR registrations are pruned after one hour, and pending registrations are
+capped so unauthenticated setup requests cannot grow durable state without
+bound.
 
 ### ChatGPT OAuth/DCR foundation (`mbrain serve --http --oauth`)
 **Completed:** Unreleased — `mbrain serve --http --oauth` now exposes OAuth
 metadata, protected-resource metadata, Dynamic Client Registration,
 authorization, and token endpoints for ChatGPT-style remote MCP clients. It is
 single-user and opt-in: the owner approves with `MBRAIN_OAUTH_APPROVAL_TOKEN`,
-PKCE is required, issued MCP access tokens are hashed into the existing
-`access_tokens` table, and refresh grants can mint replacement access tokens.
+PKCE is required, DCR clients and authorization codes persist in Postgres,
+issued MCP access tokens are hashed into the existing `access_tokens` table,
+and refresh grants can mint replacement access tokens.
 
 ### Built-in HTTP MCP transport (`mbrain serve --http`)
 **Completed:** Unreleased — `mbrain serve --http` now starts a self-hosted

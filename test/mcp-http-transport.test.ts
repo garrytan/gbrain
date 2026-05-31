@@ -6,6 +6,7 @@ import { join } from 'path';
 import { Database } from 'bun:sqlite';
 import { resolveConfig } from '../src/core/config.ts';
 import { createMcpHttpHandler } from '../src/mcp/http-server.ts';
+import { createInMemoryMcpOAuthStore } from '../src/mcp/oauth.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { DEFAULT_RUNTIME_CONFIG } from '../src/core/engine-factory.ts';
 import { OperationError, type Operation } from '../src/core/operations.ts';
@@ -327,6 +328,7 @@ describe('MCP HTTP transport', () => {
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),
       config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
       oauth: {
         enabled: true,
         publicBaseUrl: 'https://brain.example.com',
@@ -372,6 +374,7 @@ describe('MCP HTTP transport', () => {
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),
       config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
       oauth: {
         enabled: true,
         publicBaseUrl: 'https://brain.example.com',
@@ -452,6 +455,7 @@ describe('MCP HTTP transport', () => {
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),
       config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
       oauth: {
         enabled: true,
         publicBaseUrl: 'https://brain.example.com',
@@ -545,6 +549,7 @@ describe('MCP HTTP transport', () => {
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),
       config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
       oauth: {
         enabled: true,
         publicBaseUrl: 'https://brain.example.com',
@@ -573,6 +578,7 @@ describe('MCP HTTP transport', () => {
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),
       config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
       oauth: {
         enabled: true,
         publicBaseUrl: 'https://brain.example.com',
@@ -596,6 +602,7 @@ describe('MCP HTTP transport', () => {
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),
       config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
       oauth: {
         enabled: true,
         publicBaseUrl: 'https://brain.example.com',
@@ -668,6 +675,7 @@ describe('MCP HTTP transport', () => {
     const handler = createMcpHttpHandler({
       engine: createStatsEngine(),
       config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauthStore: createInMemoryMcpOAuthStore(),
       oauth: {
         enabled: true,
         publicBaseUrl: 'https://brain.example.com',
@@ -716,6 +724,21 @@ describe('MCP HTTP transport', () => {
     expect(exchanges.map(response => response.status).sort()).toEqual([200, 400]);
     const failed = exchanges.find(response => response.status === 400)!;
     expect(await failed.json()).toMatchObject({ error: 'invalid_grant' });
+  });
+
+  test('HTTP OAuth requires Postgres setup state unless an explicit test store is injected', () => {
+    const { dbPath } = createSqliteTokenDb();
+
+    expect(() => createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    })).toThrow('HTTP OAuth setup state requires the Postgres engine');
   });
 });
 

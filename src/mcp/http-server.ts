@@ -10,12 +10,19 @@ import {
   createMcpOAuthState,
   handleMcpOAuthRequest,
   isMcpOAuthPath,
+  OAuthStoreCapacityError,
   oauthResourceMetadataHeader,
+  type McpOAuthStore,
   type McpOAuthAccessTokenInput,
   type McpOAuthOptions,
+  type OAuthAuthorizationCodeRecord,
+  type OAuthClientRecord,
 } from './oauth.ts';
 
 const MAX_MCP_HTTP_BODY_BYTES = 1_048_576;
+const MAX_PENDING_OAUTH_DCR_CLIENTS = 128;
+const PENDING_OAUTH_DCR_CLIENT_TTL_SECONDS = 60 * 60;
+const OAUTH_AUTHORIZATION_CODE_RETENTION_SECONDS = 60 * 60;
 
 export interface McpHttpAuthSuccess {
   ok: true;
@@ -35,6 +42,7 @@ export interface McpHttpHandlerOptions {
   config: MBrainConfig;
   operations?: Operation[];
   oauth?: McpOAuthOptions;
+  oauthStore?: McpOAuthStore;
   authenticate?: (request: Request) => Promise<McpHttpAuthResult>;
   logRequest?: (entry: McpHttpRequestLogEntry) => Promise<void>;
 }
@@ -55,7 +63,9 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): (request: 
   const enginePromise = Promise.resolve(options.engine);
   const authenticate = options.authenticate ?? ((request: Request) => authenticateMcpHttpRequest(options.config, request));
   const toolExecutionLimiter = createMcpToolExecutionLimiter();
-  const oauthState = options.oauth?.enabled ? createMcpOAuthState(options.oauth) : null;
+  const oauthState = options.oauth?.enabled
+    ? createMcpOAuthState(options.oauth, options.oauthStore ?? createMcpOAuthStore(options.config))
+    : null;
 
   return async function handleMcpHttpRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -575,6 +585,184 @@ function parseAccessTokenScopes(value: unknown): string[] {
   } catch {
     return value.split(',').map(entry => entry.trim()).filter(Boolean);
   }
+}
+
+function createMcpOAuthStore(config: MBrainConfig): McpOAuthStore {
+  if (config.engine !== 'postgres' || !config.database_url) {
+    throw new Error(
+      'HTTP OAuth setup state requires the Postgres engine. Use bearer-token HTTP MCP for SQLite/PGLite or run with Postgres.',
+    );
+  }
+  const databaseUrl = config.database_url;
+  return {
+    async saveClient(record) {
+      const sql = postgres(databaseUrl, { max: 1 });
+      try {
+        let pendingCapacityReached = false;
+        await sql.begin(async tx => {
+          await tx`SELECT pg_advisory_xact_lock(hashtext('mbrain.oauth.dcr'))`;
+          await pruneMcpOAuthSetupState(tx as unknown as ReturnType<typeof postgres>);
+          const pending = await tx`
+            SELECT count(*)::int AS count
+            FROM oauth_dcr_clients
+            WHERE last_authorized_at IS NULL
+          `;
+          if (Number(pending[0]?.count ?? 0) >= MAX_PENDING_OAUTH_DCR_CLIENTS) {
+            pendingCapacityReached = true;
+            return;
+          }
+          await tx`
+            INSERT INTO oauth_dcr_clients (
+              client_id, client_name, redirect_uris, token_endpoint_auth_method, issued_at
+            )
+            VALUES (
+              ${record.client_id},
+              ${record.client_name},
+              ${record.redirect_uris},
+              'none',
+              to_timestamp(${record.issued_at})
+            )
+            ON CONFLICT (client_id) DO UPDATE SET
+              client_name = EXCLUDED.client_name,
+              redirect_uris = EXCLUDED.redirect_uris,
+              token_endpoint_auth_method = EXCLUDED.token_endpoint_auth_method
+          `;
+        });
+        if (pendingCapacityReached) {
+          throw new OAuthStoreCapacityError();
+        }
+      } finally {
+        await sql.end();
+      }
+    },
+    async getClient(clientId) {
+      const sql = postgres(databaseUrl, { max: 1 });
+      try {
+        const rows = await sql`
+          SELECT client_id, client_name, redirect_uris, issued_at
+          FROM oauth_dcr_clients
+          WHERE client_id = ${clientId}
+        `;
+        return rowToOAuthClient(rows[0]);
+      } finally {
+        await sql.end();
+      }
+    },
+    async saveAuthorizationCode(code, record) {
+      const sql = postgres(databaseUrl, { max: 1 });
+      try {
+        await sql`
+          INSERT INTO oauth_authorization_codes (
+            code_hash, client_id, redirect_uri, code_challenge, scope, expires_at
+          )
+          VALUES (
+            ${oauthCodeHash(code)},
+            ${record.client_id},
+            ${record.redirect_uri},
+            ${record.code_challenge},
+            ${record.scope},
+            to_timestamp(${record.expires_at})
+          )
+        `;
+      } finally {
+        await sql.end();
+      }
+    },
+    async consumeAuthorizationCode(code, expected) {
+      const sql = postgres(databaseUrl, { max: 1 });
+      try {
+        const rows = await sql`
+          WITH consumed AS (
+            UPDATE oauth_authorization_codes
+            SET used_at = now()
+            WHERE code_hash = ${oauthCodeHash(code)}
+              AND client_id = ${expected.client_id}
+              AND redirect_uri = ${expected.redirect_uri}
+              AND code_challenge = ${expected.code_challenge}
+              AND used_at IS NULL
+              AND expires_at > now()
+            RETURNING client_id, redirect_uri, code_challenge, scope, expires_at, used_at
+          ), authorized AS (
+            UPDATE oauth_dcr_clients client
+            SET last_authorized_at = now()
+            FROM consumed
+            WHERE client.client_id = consumed.client_id
+            RETURNING client.client_id
+          )
+          SELECT consumed.client_id, consumed.redirect_uri, consumed.code_challenge,
+                 consumed.scope, consumed.expires_at, consumed.used_at
+          FROM consumed
+          LEFT JOIN authorized ON authorized.client_id = consumed.client_id
+        `;
+        return rowToOAuthAuthorizationCode(rows[0]);
+      } finally {
+        await sql.end();
+      }
+    },
+  };
+}
+
+async function pruneMcpOAuthSetupState(sql: ReturnType<typeof postgres>): Promise<void> {
+  await sql`
+    DELETE FROM oauth_authorization_codes
+    WHERE expires_at < now() - (${OAUTH_AUTHORIZATION_CODE_RETENTION_SECONDS} * interval '1 second')
+       OR (used_at IS NOT NULL AND used_at < now() - (${OAUTH_AUTHORIZATION_CODE_RETENTION_SECONDS} * interval '1 second'))
+  `;
+  await sql`
+    DELETE FROM oauth_dcr_clients
+    WHERE last_authorized_at IS NULL
+      AND issued_at < now() - (${PENDING_OAUTH_DCR_CLIENT_TTL_SECONDS} * interval '1 second')
+  `;
+}
+
+function oauthCodeHash(code: string): string {
+  return createHash('sha256').update(code).digest('hex');
+}
+
+function rowToOAuthClient(row: unknown): OAuthClientRecord | null {
+  if (!isRecord(row)) return null;
+  const clientId = typeof row.client_id === 'string' ? row.client_id : '';
+  const clientName = typeof row.client_name === 'string' ? row.client_name : '';
+  const redirectUris = Array.isArray(row.redirect_uris)
+    ? row.redirect_uris.filter((value): value is string => typeof value === 'string')
+    : [];
+  const issuedAt = timestampSeconds(row.issued_at);
+  if (!clientId || !clientName || issuedAt === null) return null;
+  return {
+    client_id: clientId,
+    client_name: clientName,
+    redirect_uris: redirectUris,
+    issued_at: issuedAt,
+  };
+}
+
+function rowToOAuthAuthorizationCode(row: unknown): OAuthAuthorizationCodeRecord | null {
+  if (!isRecord(row)) return null;
+  const clientId = typeof row.client_id === 'string' ? row.client_id : '';
+  const redirectUri = typeof row.redirect_uri === 'string' ? row.redirect_uri : '';
+  const codeChallenge = typeof row.code_challenge === 'string' ? row.code_challenge : '';
+  const scope = Array.isArray(row.scope)
+    ? row.scope.filter((value): value is string => typeof value === 'string')
+    : [];
+  const expiresAt = timestampSeconds(row.expires_at);
+  if (!clientId || !redirectUri || !codeChallenge || expiresAt === null) return null;
+  return {
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_challenge: codeChallenge,
+    scope,
+    expires_at: expiresAt,
+    used: row.used_at !== null && row.used_at !== undefined,
+  };
+}
+
+function timestampSeconds(value: unknown): number | null {
+  if (value instanceof Date) return Math.floor(value.getTime() / 1000);
+  if (typeof value === 'string') {
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? Math.floor(time / 1000) : null;
+  }
+  return null;
 }
 
 function accessTokenExpired(scopes: string[]): boolean {

@@ -14,6 +14,7 @@ export interface HttpOAuthSmokeOptions {
   signingSecret?: string;
   cleanup?: boolean;
   verbose?: boolean;
+  restart?: boolean;
 }
 
 export interface HttpOAuthSmokeResult {
@@ -24,6 +25,7 @@ export interface HttpOAuthSmokeResult {
   logOperations: string[];
   refreshedTokenWorked: boolean;
   initialTokenRejectedAfterRefresh: boolean;
+  restartResilient: boolean;
 }
 
 const CLIENT_NAME = 'MBrain OAuth Smoke';
@@ -48,6 +50,7 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
   const publicBaseUrl = normalizePublicBaseUrl(options.publicBaseUrl ?? process.env.MBRAIN_HTTP_PUBLIC_URL);
   const cleanup = options.cleanup ?? true;
   const verbose = options.verbose ?? process.env.MBRAIN_SMOKE_VERBOSE === '1';
+  const restart = options.restart ?? process.env.MBRAIN_SMOKE_RESTART_OAUTH_STATE === '1';
   const config = resolveConfig({
     engine: 'postgres',
     database_url: databaseUrl,
@@ -60,35 +63,59 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
   const onnotice = createSmokeNoticeHandler(verbose);
   const schemaLogger = createSmokeSchemaLogger(verbose);
   const sql = postgres(databaseUrl, { max: 1, onnotice });
-  let server: ReturnType<typeof startMcpHttpServer> | null = null;
+  const serverState: { current: ReturnType<typeof startMcpHttpServer> | null } = { current: null };
 
   try {
     await engine.connect({ database_url: databaseUrl, onnotice, schemaLogger });
     await engine.initSchema();
     await deleteSmokeEvidence(sql);
 
-    server = startMcpHttpServer({
-      engine,
-      config,
-      host,
-      port,
-      oauth: {
-        enabled: true,
-        publicBaseUrl,
-        approvalToken,
-        signingSecret,
-      },
-    });
-    const baseUrl = `http://${server.hostname}:${server.port}`;
+    const startServer = (listenPort: number): string => {
+      serverState.current = startMcpHttpServer({
+        engine,
+        config,
+        host,
+        port: listenPort,
+        oauth: {
+          enabled: true,
+          publicBaseUrl,
+          approvalToken,
+          signingSecret,
+        },
+      });
+      return `http://${serverState.current.hostname}:${serverState.current.port}`;
+    };
+    const restartServer = (): string => {
+      const listenPort = serverState.current?.port ?? port;
+      serverState.current?.stop(true);
+      serverState.current = null;
+      return startServer(listenPort);
+    };
+    let baseUrl = startServer(port);
     const oauthIssuer = publicBaseUrl ?? baseUrl;
 
     await assertProtectedResourceChallenge(baseUrl, oauthIssuer);
     await assertMetadata(baseUrl, oauthIssuer);
     const clientId = await registerClient(baseUrl);
-    const { accessToken, refreshToken } = await authorizeAndExchange(baseUrl, {
-      clientId,
-      approvalToken,
-    });
+    let accessToken: string;
+    let refreshToken: string;
+    if (restart) {
+      baseUrl = restartServer();
+      const code = await authorize(baseUrl, {
+        clientId,
+        approvalToken,
+      });
+      baseUrl = restartServer();
+      ({ accessToken, refreshToken } = await exchangeAuthorizationCode(baseUrl, {
+        clientId,
+        code,
+      }));
+    } else {
+      ({ accessToken, refreshToken } = await authorizeAndExchange(baseUrl, {
+        clientId,
+        approvalToken,
+      }));
+    }
 
     await callMcp(baseUrl, accessToken, {
       jsonrpc: '2.0',
@@ -168,10 +195,11 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
       logOperations: logs.map(row => String(row.operation)),
       refreshedTokenWorked,
       initialTokenRejectedAfterRefresh,
+      restartResilient: restart,
     };
   } finally {
-    if (server) {
-      server.stop(true);
+    if (serverState.current) {
+      serverState.current.stop(true);
     }
     if (cleanup) {
       await deleteSmokeEvidence(sql).catch(() => undefined);
@@ -232,6 +260,14 @@ async function authorizeAndExchange(
   baseUrl: string,
   input: { clientId: string; approvalToken: string },
 ): Promise<{ accessToken: string; refreshToken: string }> {
+  const code = await authorize(baseUrl, input);
+  return exchangeAuthorizationCode(baseUrl, { clientId: input.clientId, code });
+}
+
+async function authorize(
+  baseUrl: string,
+  input: { clientId: string; approvalToken: string },
+): Promise<string> {
   const challenge = createHash('sha256').update(CODE_VERIFIER).digest('base64url');
   const authorize = await fetch(`${baseUrl}/oauth/authorize`, {
     method: 'POST',
@@ -257,12 +293,18 @@ async function authorizeAndExchange(
   }
   const code = redirect.searchParams.get('code');
   if (!code) throw new Error(`Authorization redirect did not include code: ${redirect.toString()}`);
+  return code;
+}
 
+async function exchangeAuthorizationCode(
+  baseUrl: string,
+  input: { clientId: string; code: string },
+): Promise<{ accessToken: string; refreshToken: string }> {
   const token = await postForm(`${baseUrl}/oauth/token`, {
     grant_type: 'authorization_code',
     client_id: input.clientId,
     redirect_uri: REDIRECT_URI,
-    code,
+    code: input.code,
     code_verifier: CODE_VERIFIER,
   });
   if (typeof token.access_token !== 'string' || typeof token.refresh_token !== 'string') {
@@ -393,6 +435,10 @@ async function deleteSmokeEvidence(sql: ReturnType<typeof postgres>): Promise<vo
   await sql`
     DELETE FROM access_tokens
     WHERE name = ${TOKEN_NAME}
+  `;
+  await sql`
+    DELETE FROM oauth_dcr_clients
+    WHERE client_name = ${CLIENT_NAME}
   `;
 }
 
