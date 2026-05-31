@@ -267,6 +267,11 @@ mbrain embed --all
 mbrain embed notes/offline-demo
 ```
 
+`--stale`와 `--all`은 페이지 전체에서 하나의 큐를 공유하고, 청크를
+100개 단위로 flush하며, embedding runtime 동시 호출 수를 제한합니다. 페이지
+단위 에러는 해당 페이지에만 격리되어 다른 페이지를 불필요하게 다시 쓰지
+않습니다.
+
 동작 의미:
 
 - `--stale` : 아직 임베딩되지 않은 청크만 backfill

@@ -14,6 +14,11 @@ All notable changes to MBrain will be documented in this file.
 
 ### Changed
 
+- **Embedding backfills now batch work across pages.** `mbrain embed --all` and
+  `mbrain embed --stale` share one embedding queue across page submissions,
+  flush chunks in batches of 100, and cap provider concurrency, so local
+  semantic backfills make fewer small runtime calls while keeping page-level
+  write errors isolated.
 - **Community recipe authors can now preflight and package contributions before opening a PR.**
   `mbrain integrations submit <recipe.md>` validates a custom recipe locally,
   catches unsafe IDs, duplicate targets, malformed frontmatter, and rejected

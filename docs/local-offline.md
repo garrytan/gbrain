@@ -270,6 +270,10 @@ mbrain embed --all           # rebuild every chunk
 mbrain embed notes/offline-demo
 ```
 
+`--stale` and `--all` share one queue across pages, flush chunks in batches of
+100, and cap concurrent embedding runtime calls. Page-level errors stay isolated
+so a failed batch does not rewrite unrelated pages.
+
 What to expect:
 
 - `--stale` only embeds missing chunks

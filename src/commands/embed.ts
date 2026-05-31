@@ -1,9 +1,13 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedChunks, getEmbeddingProvider } from '../core/embedding.ts';
+import type { EmbeddedChunkBatch } from '../core/embedding.ts';
+import { createEmbeddingQueue } from '../core/embedding-queue.ts';
 import { formatOpHelp, parseOpArgs } from '../core/operations.ts';
 import type { Operation } from '../core/operations.ts';
 import { ensurePageChunks } from '../core/page-chunks.ts';
 import type { Chunk, ChunkInput } from '../core/types.ts';
+
+const EMBED_ALL_QUEUE_WARNING_CHUNKS = 10_000;
 
 const EMBED_COMMAND: Operation = {
   name: 'embed',
@@ -82,6 +86,30 @@ async function embedAll(
   const pages = await engine.listPages({ limit: 100000 });
   let embedded = 0;
   let touchedPages = 0;
+  let wroteBatchProgress = false;
+  let queuedChunks = 0;
+  let warnedLargeQueue = false;
+  const queue = createEmbeddingQueue({
+    provider,
+    onBatchStart: (progress) => {
+      wroteBatchProgress = true;
+      process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
+    },
+    onBatchComplete: (progress) => {
+      wroteBatchProgress = true;
+      process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
+    },
+    autoFlush: false,
+  });
+  const plans: Array<{
+    pageIndex: number;
+    slug: string;
+    chunks: Chunk[];
+    result: Promise<
+      | { ok: true; updates: EmbeddedChunkBatch }
+      | { ok: false; error: unknown }
+    >;
+  }> = [];
 
   for (let index = 0; index < pages.length; index++) {
     const page = pages[index];
@@ -92,30 +120,43 @@ async function embedAll(
     }
 
     console.log(`Embedding ${index + 1}/${pages.length} ${page.slug}: ${targetChunks.length} chunks`);
-    let wroteBatchProgress = false;
+    queuedChunks += targetChunks.length;
+    if (!warnedLargeQueue && queuedChunks > EMBED_ALL_QUEUE_WARNING_CHUNKS) {
+      warnedLargeQueue = true;
+      console.error(
+        `Warning: queued ${queuedChunks} chunks before flushing; split large backfills by slug if memory pressure is high.`,
+      );
+    }
+    const result = queue.submit(toChunkInputs(targetChunks))
+      .then(updates => ({ ok: true as const, updates }))
+      .catch(error => ({ ok: false as const, error }));
+    plans.push({
+      pageIndex: index,
+      slug: page.slug,
+      chunks,
+      result,
+    });
+  }
 
-    try {
-      const updates = await embedChunks(toChunkInputs(targetChunks), {
-        provider,
-        onBatchStart: (progress) => {
-          wroteBatchProgress = true;
-          process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
-        },
-        onBatchComplete: (progress) => {
-          wroteBatchProgress = true;
-          process.stdout.write(`\r  batch ${progress.batchIndex}/${progress.batchCount}, ${progress.completed}/${progress.total} chunks`);
-        },
-      });
-      if (wroteBatchProgress) process.stdout.write('\n');
-      const merged = mergeChunkUpdates(chunks, updates.chunks);
-      await engine.upsertChunks(page.slug, merged);
-      embedded += updates.chunks.length;
-      touchedPages += 1;
-    } catch (error: unknown) {
-      console.error(`\n  Error embedding ${page.slug}: ${error instanceof Error ? error.message : error}`);
+  await queue.flush();
+  if (wroteBatchProgress) process.stdout.write('\n');
+
+  for (const plan of plans) {
+    const result = await plan.result;
+    if (result.ok) {
+      const merged = mergeChunkUpdates(plan.chunks, result.updates.chunks);
+      try {
+        await engine.upsertChunks(plan.slug, merged);
+        embedded += result.updates.chunks.length;
+        touchedPages += 1;
+      } catch (error: unknown) {
+        console.error(`\n  Error writing embeddings for ${plan.slug}: ${error instanceof Error ? error.message : error}`);
+      }
+    } else {
+      console.error(`\n  Error embedding ${plan.slug}: ${result.error instanceof Error ? result.error.message : result.error}`);
     }
 
-    console.log(`  ${index + 1}/${pages.length} pages, ${embedded} chunks embedded`);
+    console.log(`  ${plan.pageIndex + 1}/${pages.length} pages, ${embedded} chunks embedded`);
   }
 
   console.log(`\nEmbedded ${embedded} chunks across ${touchedPages} pages`);

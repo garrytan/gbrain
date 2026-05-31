@@ -162,6 +162,10 @@ after a supported embedding provider is configured and chunks are backfilled.
 Do not run `mbrain embed --stale` on the default Postgres profile until the
 provider is configured.
 
+When you do backfill, `mbrain embed --all` and `mbrain embed --stale` share one
+queue across pages, flush chunks in batches of 100, and cap concurrent provider
+calls so semantic backfills avoid many tiny runtime requests.
+
 Legacy local SQLite mode defaults to the local Ollama-compatible
 `nomic-embed-text` path documented in `docs/local-offline.md`:
 
