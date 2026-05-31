@@ -16,7 +16,8 @@ import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
-import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isPlainTextEntityExtractionEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractEntities, slugifyEntity } from './enrichment-service.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
@@ -980,6 +981,28 @@ async function runAutoLink(
     slug, fullContent, parsed.frontmatter, parsed.type, resolver,
   );
 
+  // v0.XX.X: Plain-text entity extraction (opt-in via config).
+  // When enabled, scans body text for capitalized names (regex NER) and
+  // resolves them to existing people/company pages. Creates 'mentions' edges.
+  const plainTextEnabled = await isPlainTextEntityExtractionEnabled(engine);
+  if (plainTextEnabled) {
+    const plainTextEntities = extractEntities(fullContent);
+    for (const entity of plainTextEntities) {
+      // Generate the expected slug for this entity
+      const expectedSlug = slugifyEntity(entity.name, entity.type);
+      // Only add if we haven't already linked to this target via explicit wikilink
+      const alreadyLinked = candidates.some(c => c.targetSlug === expectedSlug);
+      if (!alreadyLinked) {
+        candidates.push({
+          targetSlug: expectedSlug,
+          linkType: 'mentions',
+          context: entity.context,
+          linkSource: 'plain_text',
+        });
+      }
+    }
+  }
+
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
   // violation churn in addLink). One getAllSlugs call upfront, O(1) lookup.
   // v0.31.8 (D12): scoped to the source when opts.sourceId is set so wikilink
@@ -1024,10 +1047,10 @@ async function runAutoLink(
       l => l.link_source === 'frontmatter' && l.origin_slug === slug,
     );
 
-    // Reconcilable outgoing edges: markdown + our own frontmatter edges.
+    // Reconcilable outgoing edges: markdown + plain_text + our own frontmatter edges.
     // Manual edges (link_source='manual') are NEVER touched by reconciliation.
     const reconcilableOut = existingOut.filter(
-      l => l.link_source === 'markdown' || l.link_source == null ||
+      l => l.link_source === 'markdown' || l.link_source === 'plain_text' || l.link_source == null ||
            (l.link_source === 'frontmatter' && l.origin_slug === slug),
     );
 

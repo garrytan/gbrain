@@ -829,3 +829,39 @@ describe("v0.18.0 migration v22 — links_resolution_type", () => {
   });
 });
 
+describe("isPlainTextEntityExtractionEnabled", () => {
+  const { isPlainTextEntityExtractionEnabled } = require("../src/core/link-extraction.ts");
+
+  const fakeEngine = (val: string | null) => ({
+    getConfig: async (k: string) => (k === "auto_link_plain_text" ? val : null),
+  }) as any;
+
+  test("default (null) -> false (opt-in)", async () => {
+    expect(await isPlainTextEntityExtractionEnabled(fakeEngine(null))).toBe(false);
+  });
+
+  test("'true' -> true", async () => {
+    expect(await isPlainTextEntityExtractionEnabled(fakeEngine("true"))).toBe(true);
+  });
+
+  test("'1' -> true", async () => {
+    expect(await isPlainTextEntityExtractionEnabled(fakeEngine("1"))).toBe(true);
+  });
+
+  test("'yes' -> true", async () => {
+    expect(await isPlainTextEntityExtractionEnabled(fakeEngine("yes"))).toBe(true);
+  });
+
+  test("'on' -> true", async () => {
+    expect(await isPlainTextEntityExtractionEnabled(fakeEngine("on"))).toBe(true);
+  });
+
+  test("'false' -> false", async () => {
+    expect(await isPlainTextEntityExtractionEnabled(fakeEngine("false"))).toBe(false);
+  });
+
+  test("garbage value -> false (opt-in default)", async () => {
+    expect(await isPlainTextEntityExtractionEnabled(fakeEngine("garbage"))).toBe(false);
+  });
+});
+
