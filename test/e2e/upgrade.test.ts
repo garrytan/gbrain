@@ -73,7 +73,7 @@ describeE2E('E2E: Check-Update', () => {
     expect(stdout).toContain('--json');
   });
 
-  test('handles no-releases gracefully (current repo state)', async () => {
+  test('check-update --json contract holds regardless of real release state', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'check-update', '--json'], {
       cwd: new URL('../..', import.meta.url).pathname,
       stdout: 'pipe',
@@ -84,8 +84,16 @@ describeE2E('E2E: Check-Update', () => {
 
     expect(exitCode).toBe(0);
     const output = JSON.parse(stdout);
-    // With no releases, should return false and an error
-    expect(output.update_available).toBe(false);
+    // Don't pin update_available to a literal value — the repo may or may not
+    // have a published release. Assert the JSON shape instead.
+    expect(typeof output.update_available).toBe('boolean');
+    expect(output.current_version).toBe(VERSION);
+    if (output.latest_version != null) {
+      expect(typeof output.latest_version).toBe('string');
+    }
+    if (output.release_url != null) {
+      expect(typeof output.release_url).toBe('string');
+    }
   });
 
   test('version comparison wiring works end-to-end', () => {
