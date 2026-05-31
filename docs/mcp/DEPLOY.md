@@ -118,6 +118,20 @@ uses the issued token against `/mcp`, refreshes it, confirms the refreshed token
 works while the pre-refresh token is rejected, and checks Postgres token plus
 request-log evidence.
 
+When validating a public tunnel or hosted URL, also verify that OAuth metadata
+advertises that public HTTPS issuer:
+
+```bash
+DATABASE_URL='postgresql://...' \
+MBRAIN_HTTP_PUBLIC_URL='https://YOUR-DOMAIN.ngrok.app' \
+bun run smoke:http-oauth
+```
+
+This confirms the OAuth discovery documents and unauthenticated `/mcp`
+challenge use the same public issuer remote clients will see. It does not prove
+the public URL is reachable from outside your network; keep the tunnel health
+check and client-side live validation as separate gates.
+
 ## Operations
 
 All 30 MBrain operations are available remotely, including `sync_brain` and

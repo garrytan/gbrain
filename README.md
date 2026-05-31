@@ -542,6 +542,15 @@ To verify the OAuth runtime locally before a live ChatGPT pass:
 DATABASE_URL='postgresql://...' bun run smoke:http-oauth
 ```
 
+To verify that OAuth discovery advertises the public HTTPS issuer your tunnel
+or host will expose:
+
+```bash
+DATABASE_URL='postgresql://...' \
+MBRAIN_HTTP_PUBLIC_URL='https://YOUR-DOMAIN.ngrok.app' \
+bun run smoke:http-oauth
+```
+
 ### Agent Readiness Verification
 
 For an installed `mbrain` command, verify the command your agents are expected

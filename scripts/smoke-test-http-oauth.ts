@@ -18,6 +18,7 @@ export interface HttpOAuthSmokeOptions {
 
 export interface HttpOAuthSmokeResult {
   baseUrl: string;
+  oauthIssuer: string;
   accessTokenRows: number;
   requestLogRows: number;
   logOperations: string[];
@@ -44,6 +45,7 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
     ?? 'mbrain-oauth-smoke-signing-secret';
   const host = options.host ?? process.env.MBRAIN_HTTP_HOST ?? '127.0.0.1';
   const port = options.port ?? Number(process.env.MBRAIN_HTTP_PORT ?? 0);
+  const publicBaseUrl = normalizePublicBaseUrl(options.publicBaseUrl ?? process.env.MBRAIN_HTTP_PUBLIC_URL);
   const cleanup = options.cleanup ?? true;
   const verbose = options.verbose ?? process.env.MBRAIN_SMOKE_VERBOSE === '1';
   const config = resolveConfig({
@@ -72,15 +74,16 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
       port,
       oauth: {
         enabled: true,
-        publicBaseUrl: options.publicBaseUrl,
+        publicBaseUrl,
         approvalToken,
         signingSecret,
       },
     });
     const baseUrl = `http://${server.hostname}:${server.port}`;
+    const oauthIssuer = publicBaseUrl ?? baseUrl;
 
-    await assertProtectedResourceChallenge(baseUrl);
-    await assertMetadata(baseUrl);
+    await assertProtectedResourceChallenge(baseUrl, oauthIssuer);
+    await assertMetadata(baseUrl, oauthIssuer);
     const clientId = await registerClient(baseUrl);
     const { accessToken, refreshToken } = await authorizeAndExchange(baseUrl, {
       clientId,
@@ -159,6 +162,7 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
 
     return {
       baseUrl,
+      oauthIssuer,
       accessTokenRows: accessTokens.length,
       requestLogRows: logs.length,
       logOperations: logs.map(row => String(row.operation)),
@@ -177,7 +181,7 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
   }
 }
 
-async function assertProtectedResourceChallenge(baseUrl: string): Promise<void> {
+async function assertProtectedResourceChallenge(baseUrl: string, oauthIssuer: string): Promise<void> {
   const response = await fetch(`${baseUrl}/mcp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -187,21 +191,22 @@ async function assertProtectedResourceChallenge(baseUrl: string): Promise<void> 
     throw new Error(`Expected unauthenticated /mcp to return 401, got ${response.status}`);
   }
   const challenge = response.headers.get('WWW-Authenticate') ?? '';
-  if (!challenge.includes('/.well-known/oauth-protected-resource')) {
+  const resourceMetadata = parseWwwAuthenticateParam(challenge, 'resource_metadata');
+  if (resourceMetadata !== `${oauthIssuer}/.well-known/oauth-protected-resource`) {
     throw new Error(`WWW-Authenticate did not advertise protected-resource metadata: ${challenge}`);
   }
 }
 
-async function assertMetadata(baseUrl: string): Promise<void> {
+async function assertMetadata(baseUrl: string, oauthIssuer: string): Promise<void> {
   const authServer = await getJson(`${baseUrl}/.well-known/oauth-authorization-server`);
-  assertEqual(authServer.issuer, baseUrl, 'issuer');
-  assertEqual(authServer.authorization_endpoint, `${baseUrl}/oauth/authorize`, 'authorization_endpoint');
-  assertEqual(authServer.token_endpoint, `${baseUrl}/oauth/token`, 'token_endpoint');
-  assertEqual(authServer.registration_endpoint, `${baseUrl}/oauth/register`, 'registration_endpoint');
+  assertEqual(authServer.issuer, oauthIssuer, 'issuer');
+  assertEqual(authServer.authorization_endpoint, `${oauthIssuer}/oauth/authorize`, 'authorization_endpoint');
+  assertEqual(authServer.token_endpoint, `${oauthIssuer}/oauth/token`, 'token_endpoint');
+  assertEqual(authServer.registration_endpoint, `${oauthIssuer}/oauth/register`, 'registration_endpoint');
 
   const protectedResource = await getJson(`${baseUrl}/.well-known/oauth-protected-resource`);
-  assertEqual(protectedResource.resource, `${baseUrl}/mcp`, 'resource');
-  if (!Array.isArray(protectedResource.authorization_servers) || protectedResource.authorization_servers[0] !== baseUrl) {
+  assertEqual(protectedResource.resource, `${oauthIssuer}/mcp`, 'resource');
+  if (!Array.isArray(protectedResource.authorization_servers) || protectedResource.authorization_servers[0] !== oauthIssuer) {
     throw new Error(`Unexpected authorization_servers: ${JSON.stringify(protectedResource.authorization_servers)}`);
   }
 }
@@ -355,6 +360,29 @@ function assertEqual(actual: unknown, expected: string, label: string): void {
   if (actual !== expected) {
     throw new Error(`Unexpected ${label}: expected=${expected} actual=${String(actual)}`);
   }
+}
+
+function normalizePublicBaseUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error('Explicit public OAuth issuer must be an HTTPS URL.');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Explicit public OAuth issuer must be an HTTPS URL.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Explicit public OAuth issuer must not include username or password.');
+  }
+  return parsed.toString().replace(/\/+$/, '');
+}
+
+function parseWwwAuthenticateParam(header: string, paramName: string): string | null {
+  const pattern = new RegExp(`(?:^|[\\s,])${paramName}="([^"]*)"`);
+  return header.match(pattern)?.[1] ?? null;
 }
 
 async function deleteSmokeEvidence(sql: ReturnType<typeof postgres>): Promise<void> {

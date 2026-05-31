@@ -17,9 +17,11 @@ All notable changes to MBrain will be documented in this file.
   `bun run smoke:http-oauth` starts the real HTTP MCP server against Postgres,
   walks a ChatGPT-style DCR + PKCE flow, calls MCP tools with the issued token,
   refreshes it, confirms the refreshed access token works while the pre-refresh
-  token is rejected, and checks the token plus request-log evidence. That gives
-  release agents a deterministic no-API-key confidence gate before the final
-  live ChatGPT Developer Mode pass.
+  token is rejected, and checks the token plus request-log evidence. Agents can
+  also set `MBRAIN_HTTP_PUBLIC_URL` to verify
+  that OAuth metadata and `WWW-Authenticate` advertise the public HTTPS issuer
+  expected by remote clients. That gives release agents a deterministic
+  no-API-key confidence gate before the final live ChatGPT Developer Mode pass.
 - **Remote MCP no longer needs a custom wrapper.** `mbrain serve --http` starts
   a built-in Streamable HTTP MCP server with `/mcp`, `/health`, Bearer token
   authentication, request logging, and the same tool catalog, response guards,

@@ -21,6 +21,18 @@ That smoke starts the real HTTP MCP server, simulates DCR + PKCE, calls MCP
 tools with the issued token, refreshes it, and verifies Postgres evidence. It
 does not replace live ChatGPT Developer Mode validation.
 
+To check that OAuth discovery will advertise your public HTTPS issuer instead
+of `localhost`, run the same smoke with the public URL:
+
+```bash
+DATABASE_URL='postgresql://...' \
+MBRAIN_HTTP_PUBLIC_URL='https://YOUR-DOMAIN.ngrok.app' \
+bun run smoke:http-oauth
+```
+
+The resulting JSON should include `"oauthIssuer":
+"https://YOUR-DOMAIN.ngrok.app"`.
+
 ## Start the server
 
 ```bash
@@ -62,8 +74,10 @@ access tokens from the same refresh chain are rejected.
 - No admin UI is included. The approval token is the owner confirmation step.
 - OAuth is not enabled unless `--oauth` or `MBRAIN_HTTP_OAUTH=1` is set.
 - PGLite remains a local/offline runtime and does not issue remote OAuth tokens.
-- `bun run smoke:http-oauth` proves the local protocol/runtime path, not
-  ChatGPT's production connector UI or a public HTTPS tunnel.
+- `bun run smoke:http-oauth` proves the local protocol/runtime path. With
+  `MBRAIN_HTTP_PUBLIC_URL`, it also proves the configured public issuer in
+  OAuth metadata and challenges. It still does not prove ChatGPT's production
+  connector UI or public internet reachability.
 - Live ChatGPT Developer Mode validation is still required before marking this
   guide as fully verified.
 

@@ -24,6 +24,34 @@ test('package exposes the HTTP OAuth smoke command', () => {
   expect(existsSync(smokeScriptPath)).toBe(true);
 });
 
+test('HTTP OAuth smoke rejects public issuer URLs with embedded credentials', async () => {
+  const smoke = await import('../../scripts/smoke-test-http-oauth.ts') as {
+    runHttpOAuthSmoke: (options: {
+      databaseUrl: string;
+      publicBaseUrl: string;
+    }) => Promise<unknown>;
+  };
+
+  await expect(smoke.runHttpOAuthSmoke({
+    databaseUrl: 'postgresql://postgres:postgres@localhost:5432/mbrain_test',
+    publicBaseUrl: 'https://user:pass@brain.example.com/',
+  })).rejects.toThrow('must not include username or password');
+});
+
+test('HTTP OAuth smoke rejects non-HTTPS public issuers before touching the runtime', async () => {
+  const smoke = await import('../../scripts/smoke-test-http-oauth.ts') as {
+    runHttpOAuthSmoke: (options: {
+      databaseUrl: string;
+      publicBaseUrl: string;
+    }) => Promise<unknown>;
+  };
+
+  expect(smoke.runHttpOAuthSmoke({
+    databaseUrl: 'postgresql://postgres:postgres@localhost:1/mbrain_test',
+    publicBaseUrl: 'http://localhost:8787',
+  })).rejects.toThrow('public OAuth issuer must be an HTTPS URL');
+});
+
 const describeE2E = hasDatabase() ? describe : describe.skip;
 
 describeE2E('E2E: HTTP OAuth runtime smoke', () => {
@@ -39,8 +67,10 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
         approvalToken: string;
         signingSecret: string;
         cleanup: boolean;
+        publicBaseUrl?: string;
       }) => Promise<{
         baseUrl: string;
+        oauthIssuer: string;
         accessTokenRows: number;
         requestLogRows: number;
         logOperations: string[];
@@ -51,10 +81,12 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
 
     const consoleLogs: unknown[][] = [];
     const originalLog = console.log;
+    const originalPublicUrl = process.env.MBRAIN_HTTP_PUBLIC_URL;
     let result: Awaited<ReturnType<typeof smoke.runHttpOAuthSmoke>>;
     console.log = (...args: unknown[]) => {
       consoleLogs.push(args);
     };
+    delete process.env.MBRAIN_HTTP_PUBLIC_URL;
     try {
       result = await smoke.runHttpOAuthSmoke({
         databaseUrl: process.env.DATABASE_URL!,
@@ -66,9 +98,15 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
       });
     } finally {
       console.log = originalLog;
+      if (originalPublicUrl === undefined) {
+        delete process.env.MBRAIN_HTTP_PUBLIC_URL;
+      } else {
+        process.env.MBRAIN_HTTP_PUBLIC_URL = originalPublicUrl;
+      }
     }
 
     expect(result.baseUrl).toStartWith('http://127.0.0.1:');
+    expect(result.oauthIssuer).toBe(result.baseUrl);
     expect(result.accessTokenRows).toBeGreaterThanOrEqual(2);
     expect(result.requestLogRows).toBeGreaterThanOrEqual(4);
     expect(result.logOperations).toEqual(expect.arrayContaining([
@@ -113,6 +151,64 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
         DELETE FROM access_tokens
         WHERE name = 'oauth:MBrain OAuth Smoke'
       `;
+      await sql.end();
+    }
+  });
+
+  test('validates configured public OAuth issuer while exercising the local server', async () => {
+    const smoke = await import('../../scripts/smoke-test-http-oauth.ts') as {
+      runHttpOAuthSmoke: (options: {
+        databaseUrl: string;
+        host: string;
+        port: number;
+        publicBaseUrl: string;
+        approvalToken: string;
+        signingSecret: string;
+        cleanup: boolean;
+      }) => Promise<{
+        baseUrl: string;
+        oauthIssuer: string;
+        accessTokenRows: number;
+        requestLogRows: number;
+        logOperations: string[];
+        refreshedTokenWorked: boolean;
+        initialTokenRejectedAfterRefresh: boolean;
+      }>;
+    };
+
+    const result = await smoke.runHttpOAuthSmoke({
+      databaseUrl: process.env.DATABASE_URL!,
+      host: '127.0.0.1',
+      port: 0,
+      publicBaseUrl: 'https://brain.example.com/',
+      approvalToken: 'owner-secret',
+      signingSecret: 'test-signing-secret',
+      cleanup: false,
+    });
+
+    expect(result.baseUrl).toStartWith('http://127.0.0.1:');
+    expect(result.oauthIssuer).toBe('https://brain.example.com');
+    expect(result.accessTokenRows).toBeGreaterThanOrEqual(2);
+    expect(result.requestLogRows).toBeGreaterThanOrEqual(4);
+    expect(result.logOperations).toEqual(expect.arrayContaining([
+      'initialize',
+      'tools/list',
+      'get_stats',
+    ]));
+    expect(result.refreshedTokenWorked).toBe(true);
+    expect(result.initialTokenRejectedAfterRefresh).toBe(true);
+
+    const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
+    try {
+      await sql`
+        DELETE FROM mcp_request_log
+        WHERE token_name = 'oauth:MBrain OAuth Smoke'
+      `;
+      await sql`
+        DELETE FROM access_tokens
+        WHERE name = 'oauth:MBrain OAuth Smoke'
+      `;
+    } finally {
       await sql.end();
     }
   });
