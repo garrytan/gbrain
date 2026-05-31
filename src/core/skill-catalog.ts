@@ -326,11 +326,36 @@ function availableBrainTools(ctx: OperationContext): string[] {
 // Frontmatter projection + description
 // ---------------------------------------------------------------------------
 
-/** Parse a single-line `description:` from raw frontmatter (best-effort). */
+/**
+ * Parse the `description:` field from raw frontmatter (best-effort). Handles
+ * both inline (`description: text`) and YAML block scalars (`description: |`
+ * or `description: >`, including chomping/indent indicators like `|-`, `>2`),
+ * folding block content into a single line. Returns undefined when there's no
+ * usable value so the caller falls back to the body's first prose line — a bare
+ * block indicator must NOT leak through as the literal `|`/`>`.
+ */
 function parseDescriptionField(raw: string): string | undefined {
-  const m = raw.match(/^description:\s*["']?(.+?)["']?\s*$/m);
-  if (!m) return undefined;
-  const v = m[1].trim();
+  const lines = raw.split('\n');
+  const idx = lines.findIndex(l => /^description:/.test(l));
+  if (idx === -1) return undefined;
+
+  const after = lines[idx].replace(/^description:[ \t]*/, '');
+  // Block scalar: `|` or `>`, optional chomping (+/-) and/or indent digit,
+  // optional trailing comment. Fold the following indented lines into one line.
+  if (/^[|>][+-]?\d*[ \t]*(#.*)?$/.test(after.trim())) {
+    const folded: string[] = [];
+    for (let i = idx + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.trim() === '') { folded.push(''); continue; }
+      if (/^[ \t]/.test(line)) { folded.push(line.trim()); continue; }
+      break; // dedent to column 0 → next top-level key ends the block
+    }
+    const v = folded.join(' ').replace(/\s+/g, ' ').trim();
+    return v.length > 0 ? v : undefined;
+  }
+
+  // Inline value (strip a matching pair / stray surrounding quote).
+  const v = after.trim().replace(/^["']|["']$/g, '').trim();
   return v.length > 0 ? v : undefined;
 }
 

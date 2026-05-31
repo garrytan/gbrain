@@ -142,6 +142,26 @@ describe('oneLineDescription', () => {
   test('empty when nothing usable', () => {
     expect(oneLineDescription('', '# only a heading')).toBe('');
   });
+  test('folds a literal block-scalar (|) description into one line', () => {
+    const raw = 'name: browse\ndescription: |\n  Fast headless browser for QA.\n  Navigate any URL.\nallowed-tools:\n  - Bash';
+    expect(oneLineDescription(raw, '# h\nbody')).toBe(
+      'Fast headless browser for QA. Navigate any URL.',
+    );
+  });
+  test('folds a folded block-scalar (>) description', () => {
+    expect(oneLineDescription('description: >\n  one two\n  three', 'body')).toBe(
+      'one two three',
+    );
+  });
+  test('handles block-scalar chomping indicators (|-)', () => {
+    expect(oneLineDescription('description: |-\n  trimmed text', 'body')).toBe('trimmed text');
+  });
+  test('never leaks a bare block indicator; empty block falls back to body', () => {
+    // regression: `description: |` with no content used to surface as "|"
+    expect(oneLineDescription('description: |\nname: x', '# H\nReal body line.')).toBe(
+      'Real body line.',
+    );
+  });
 });
 
 describe('crossReferenceTools', () => {
