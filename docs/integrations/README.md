@@ -88,6 +88,21 @@ commands into `mbrain integrations doctor`. Supported checks are `env_exists`,
 `env_any_exists`, `url_responds`, and `heartbeat_fresh`. `url_responds` is
 limited to localhost loopback targets for local service smoke checks.
 
+## Community Recipe Preflight
+
+Before opening a PR for a custom recipe, run:
+
+```bash
+mbrain integrations submit path/to/your-recipe.md
+```
+
+This is a local preflight only. It does not run health checks, call `git` or
+`gh`, open network connections, write files, or create a pull request. It checks
+frontmatter shape, semver, safe recipe IDs, existing recipe collisions,
+dependencies, recipe body length, and the constrained `health_checks` DSL. On
+success it prints the intended `recipes/<id>.md` target path and a PR checklist.
+Use `--json` for machine-readable output.
+
 ## The Deterministic Collector Pattern
 
 When an LLM keeps failing at a mechanical task despite repeated prompt fixes,

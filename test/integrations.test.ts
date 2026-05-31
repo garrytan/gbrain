@@ -418,6 +418,284 @@ describe('CLI integration', () => {
     expect(cliSource).toContain('integrations');
   });
 
+  test('integrations submit preflights a new recipe as JSON', async () => {
+    const recipesDir = mkdtempSync(join(tmpdir(), 'mbrain-recipes-empty-'));
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'slack-to-brain.md');
+    writeFileSync(recipePath, `---
+id: slack-to-brain
+name: Slack to Brain
+version: 1.0.0
+description: Slack messages become searchable brain entries
+category: sense
+requires: []
+secrets:
+  - name: SLACK_BOT_TOKEN
+    description: Slack bot token
+    where: https://api.slack.com/apps
+health_checks:
+  - type: env_exists
+    name: SLACK_BOT_TOKEN
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic Slack collector, configure
+the bot token, and import selected channel messages into MBrain.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await runIntegrations(['submit', recipePath, '--json']);
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload).toMatchObject({
+        ok: true,
+        id: 'slack-to-brain',
+        target_path: 'recipes/slack-to-brain.md',
+        pr_title: 'Add Slack to Brain integration recipe',
+        warnings: [],
+        errors: [],
+      });
+      expect(payload.next_steps).toContain('Copy the recipe to recipes/slack-to-brain.md');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit rejects recipe ids that already exist', async () => {
+    const recipesDir = mkdtempSync(join(tmpdir(), 'mbrain-recipes-existing-'));
+    writeFileSync(join(recipesDir, 'duplicate-recipe.md'), `---
+id: duplicate-recipe
+name: Existing Duplicate
+version: 1.0.0
+description: Already bundled recipe
+category: sense
+requires: []
+secrets: []
+setup_time: 5 min
+---
+Existing bundled recipe body with enough text to satisfy validation.
+`);
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'duplicate-recipe.md');
+    writeFileSync(recipePath, `---
+id: duplicate-recipe
+name: Duplicate Recipe
+version: 1.0.0
+description: New duplicate recipe
+category: sense
+requires: []
+secrets: []
+setup_time: 5 min
+---
+Submitted recipe body with enough text to satisfy validation.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const originalLog = console.log;
+    const originalError = console.error;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath])).rejects.toThrow('EXIT:1');
+      expect(logs.join('\n')).toContain('Recipe id already exists: duplicate-recipe');
+      expect(errors.join('\n')).toBe('');
+    } finally {
+      console.log = originalLog;
+      console.error = originalError;
+      process.exit = originalExit;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit rejects unsafe recipe ids', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(dir, 'unsafe.md');
+    writeFileSync(recipePath, `---
+id: ../unsafe
+name: Unsafe Recipe
+version: 1.0.0
+description: Should not produce an unsafe target path
+category: sense
+requires: []
+secrets: []
+setup_time: 5 min
+---
+Submitted recipe body with enough text to satisfy validation.
+`);
+
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const originalLog = console.log;
+    const originalError = console.error;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath])).rejects.toThrow('EXIT:1');
+      expect(logs.join('\n')).toContain("Invalid id: '../unsafe' (use lowercase letters, numbers, hyphens, and at most 64 characters)");
+      expect(errors.join('\n')).toBe('');
+    } finally {
+      console.log = originalLog;
+      console.error = originalError;
+      process.exit = originalExit;
+    }
+  });
+
+  test('integrations submit rejects legacy shell health checks', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(dir, 'legacy-health.md');
+    writeFileSync(recipePath, `---
+id: legacy-health
+name: Legacy Health
+version: 1.0.0
+description: Should reject shell health checks
+category: sense
+requires: []
+secrets: []
+health_checks:
+  - "echo unsafe"
+setup_time: 5 min
+---
+Submitted recipe body with enough text to satisfy validation.
+`);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors).toContain('health_checks[0] must be a typed object, not a shell command string');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+    }
+  });
+
+  test('integrations submit rejects non-PR-ready metadata', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(dir, 'bad-metadata.md');
+    writeFileSync(recipePath, `---
+id: bad-metadata
+name: Bad Metadata
+version: 1
+description: Should reject invalid version and unknown dependencies
+category: sense
+requires: [missing-dependency]
+secrets: []
+setup_time: 5 min
+---
+Submitted recipe body with enough text to satisfy validation.
+`);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors).toContain("Invalid version: '1' (must be semver like 1.0.0)");
+      expect(payload.errors).toContain('Requires unknown recipe: missing-dependency');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+    }
+  });
+
+  test('integrations submit caps recipe id length', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const longId = 'a'.repeat(65);
+    const recipePath = join(dir, 'long-id.md');
+    writeFileSync(recipePath, `---
+id: ${longId}
+name: Long ID
+version: 1.0.0
+description: Should reject oversized ids before they reach filenames or branch names
+category: sense
+requires: []
+secrets: []
+setup_time: 5 min
+---
+Submitted recipe body with enough text to satisfy validation.
+`);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors).toContain(
+        `Invalid id: '${longId}' (use lowercase letters, numbers, hyphens, and at most 64 characters)`,
+      );
+      expect(payload.target_path).toBeNull();
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+    }
+  });
+
+  test('integrations submit makes omitted requires guidance actionable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(dir, 'missing-requires.md');
+    writeFileSync(recipePath, `---
+id: missing-requires
+name: Missing Requires
+version: 1.0.0
+description: Should explain how dependency-free recipes declare requires
+category: sense
+secrets: []
+setup_time: 5 min
+---
+Submitted recipe body with enough text to satisfy validation.
+`);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors).toContain('Missing: requires (add requires: [] when the recipe has no dependencies)');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+    }
+  });
+
   test('integrations test rejects legacy shell health checks', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-test-'));
     const recipePath = join(dir, 'legacy.md');
@@ -472,6 +750,93 @@ This recipe has enough body text to satisfy the validator without warnings.
       expect(logs.join('\n')).toContain('PASS: infra-recipe v1.0.0');
     } finally {
       console.log = originalLog;
+    }
+  });
+
+  test('integrations test remains lenient about recipe version formatting', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-test-'));
+    const recipePath = join(dir, 'numeric-version.md');
+    writeFileSync(recipePath, `---
+id: numeric-version
+name: Numeric Version
+version: 1
+description: Existing test command remains a lightweight validator
+category: sense
+requires: []
+secrets: []
+---
+This recipe body is long enough for the lightweight test command to accept it.
+`);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await runIntegrations(['test', recipePath]);
+      expect(logs.join('\n')).toContain('PASS: numeric-version v1');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+    }
+  });
+
+  test('integrations test rejects malformed secrets shape', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-test-'));
+    const recipePath = join(dir, 'bad-secrets.md');
+    writeFileSync(recipePath, `---
+id: bad-secrets
+name: Bad Secrets
+version: 1.0.0
+description: Malformed secrets should not be accepted silently
+category: sense
+requires: []
+secrets: NOT_AN_ARRAY
+---
+This recipe body is long enough for the lightweight test command to inspect it.
+`);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['test', recipePath])).rejects.toThrow('EXIT:1');
+      expect(logs.join('\n')).toContain('secrets must be an array');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+    }
+  });
+
+  test('integrations test rejects malformed requires shape', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-test-'));
+    const recipePath = join(dir, 'bad-requires.md');
+    writeFileSync(recipePath, `---
+id: bad-requires
+name: Bad Requires
+version: 1.0.0
+description: Malformed requires should not be accepted silently
+category: sense
+requires: credential-gateway
+secrets: []
+---
+This recipe body is long enough for the lightweight test command to inspect it.
+`);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['test', recipePath])).rejects.toThrow('EXIT:1');
+      expect(logs.join('\n')).toContain('requires must be an array of recipe ids');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
     }
   });
 

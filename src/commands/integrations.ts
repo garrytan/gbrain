@@ -13,6 +13,7 @@
  *     ├── doctor  → run health_checks
  *     ├── stats   → aggregate heartbeat JSONL
  *     ├── test    → validate recipe file
+ *     ├── submit  → preflight a community recipe contribution
  *     └── (bare)  → dashboard view
  *
  *   ~/.mbrain/integrations/<id>/heartbeat.jsonl
@@ -47,6 +48,7 @@ interface RecipeFrontmatter {
 
 interface ParsedRecipe {
   frontmatter: RecipeFrontmatter;
+  raw_frontmatter: Record<string, unknown>;
   body: string;
   filename: string;
   validation_errors: string[];
@@ -72,6 +74,36 @@ interface CheckResult {
   check: string;
   status: 'ok' | 'fail' | 'timeout';
   output: string;
+}
+
+interface RecipeValidationResult {
+  errors: string[];
+  warnings: string[];
+}
+
+interface RecipeSubmissionResult extends RecipeValidationResult {
+  ok: boolean;
+  id: string | null;
+  target_path: string | null;
+  pr_title: string | null;
+  checklist: string[];
+  next_steps: string[];
+}
+
+const RECIPE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const MAX_RECIPE_ID_LENGTH = 64;
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasFrontmatterValue(raw: Record<string, unknown>, field: string): boolean {
+  return raw[field] !== undefined && raw[field] !== null && raw[field] !== '';
+}
+
+function isRecipeId(value: string): boolean {
+  return value.length <= MAX_RECIPE_ID_LENGTH && RECIPE_ID_PATTERN.test(value);
 }
 
 function normalizeLoopbackHttpUrl(value: string): { url: string | null; error: string | null } {
@@ -191,12 +223,13 @@ export function parseRecipe(content: string, filename: string): ParsedRecipe | n
         version: data.version || '0.0.0',
         description: data.description || '',
         category: data.category || 'sense',
-        requires: data.requires || [],
-        secrets: data.secrets || [],
+        requires: Array.isArray(data.requires) ? data.requires : [],
+        secrets: Array.isArray(data.secrets) ? data.secrets : [],
         health_checks: healthChecks.checks,
         setup_time: data.setup_time || 'unknown',
         cost_estimate: data.cost_estimate,
       },
+      raw_frontmatter: data as Record<string, unknown>,
       body: body.trim(),
       filename,
       validation_errors: healthChecks.errors,
@@ -386,6 +419,196 @@ function checkDependencies(recipe: ParsedRecipe, allRecipes: ParsedRecipe[]): st
   }
 
   return warnings;
+}
+
+function recipeTargetPath(id: string): string {
+  return `recipes/${id}.md`;
+}
+
+function validateRecipe(recipe: ParsedRecipe, allRecipes: ParsedRecipe[], strictSubmission = false): RecipeValidationResult {
+  const errors: string[] = [...recipe.validation_errors];
+  const warnings: string[] = [];
+  const f = recipe.frontmatter;
+  const raw = recipe.raw_frontmatter;
+
+  if (!strictSubmission) {
+    if (!f.id) errors.push('Missing: id');
+    if (!f.name) warnings.push('Missing: name (will default to id)');
+    if (!f.description) warnings.push('Missing: description');
+    if (!f.version) warnings.push('Missing: version');
+    if (!['infra', 'sense', 'reflex'].includes(f.category)) {
+      errors.push(`Invalid category: '${f.category}' (must be 'infra', 'sense', or 'reflex')`);
+    }
+
+    if (raw.requires !== undefined && !Array.isArray(raw.requires)) {
+      errors.push('requires must be an array of recipe ids');
+    }
+
+    if (raw.secrets !== undefined && !Array.isArray(raw.secrets)) {
+      errors.push('secrets must be an array');
+    } else if (Array.isArray(raw.secrets)) {
+      for (const secret of raw.secrets) {
+        if (!secret || typeof secret !== 'object' || Array.isArray(secret)) {
+          errors.push('Secret missing name');
+          continue;
+        }
+        const value = secret as Record<string, unknown>;
+        const name = isNonEmptyString(value.name) ? value.name : undefined;
+        if (!name) errors.push('Secret missing name');
+        if (!isNonEmptyString(value.where)) warnings.push(`Secret '${name}' missing 'where' URL`);
+      }
+    }
+
+    if (f.requires.length > 0) {
+      warnings.push(...checkDependencies(recipe, allRecipes));
+    }
+
+    if (!recipe.body || recipe.body.length < 50) {
+      warnings.push('Recipe body is very short (< 50 chars). Is the setup guide complete?');
+    }
+
+    return { errors, warnings };
+  }
+
+  const addMissing = (field: string) => {
+    errors.push(`Missing: ${field}`);
+  };
+
+  if (!hasFrontmatterValue(raw, 'id')) {
+    errors.push('Missing: id');
+  } else if (!isNonEmptyString(raw.id) || (strictSubmission && !isRecipeId(raw.id.trim()))) {
+    errors.push(`Invalid id: '${raw.id}' (use lowercase letters, numbers, hyphens, and at most ${MAX_RECIPE_ID_LENGTH} characters)`);
+  }
+
+  if (!isNonEmptyString(raw.name)) addMissing('name');
+  if (!isNonEmptyString(raw.description)) addMissing('description');
+
+  if (!hasFrontmatterValue(raw, 'version')) {
+    addMissing('version');
+  } else if (!isNonEmptyString(raw.version) || !SEMVER_PATTERN.test(raw.version.trim())) {
+    errors.push(`Invalid version: '${raw.version}' (must be semver like 1.0.0)`);
+  }
+
+  if (!hasFrontmatterValue(raw, 'category')) {
+    addMissing('category');
+  } else if (!isNonEmptyString(raw.category) || !['infra', 'sense', 'reflex'].includes(raw.category.trim())) {
+    errors.push(`Invalid category: '${raw.category}' (must be 'infra', 'sense', or 'reflex')`);
+  }
+
+  if (!isNonEmptyString(raw.setup_time)) {
+    errors.push('Missing: setup_time');
+  }
+
+  if (raw.requires !== undefined && !Array.isArray(raw.requires)) {
+    errors.push('requires must be an array of recipe ids');
+  } else if (Array.isArray(raw.requires)) {
+    raw.requires.forEach((dep, index) => {
+      if (!isNonEmptyString(dep)) {
+        errors.push(`requires[${index}] must be a recipe id string`);
+      } else if (!isRecipeId(dep.trim())) {
+        errors.push(`requires[${index}] has invalid recipe id '${dep}'`);
+      }
+    });
+  } else {
+    errors.push('Missing: requires (add requires: [] when the recipe has no dependencies)');
+  }
+
+  if (raw.secrets !== undefined && !Array.isArray(raw.secrets)) {
+    errors.push('secrets must be an array');
+  } else if (Array.isArray(raw.secrets)) {
+    raw.secrets.forEach((secret, index) => {
+      if (!secret || typeof secret !== 'object' || Array.isArray(secret)) {
+        errors.push(`secrets[${index}] must be an object`);
+        return;
+      }
+      const value = secret as Record<string, unknown>;
+      if (!isNonEmptyString(value.name)) errors.push(`secrets[${index}].name is required`);
+      if (!isNonEmptyString(value.description)) errors.push(`secrets[${index}].description is required`);
+      if (!isNonEmptyString(value.where)) {
+        errors.push(`secrets[${index}].where is required`);
+      }
+    });
+  } else {
+    errors.push('Missing: secrets');
+  }
+
+  if (f.requires.length > 0) {
+    for (const dep of f.requires) {
+      if (dep === f.id) {
+        errors.push(`requires cannot include the recipe itself: ${dep}`);
+      } else if (!allRecipes.some(r => r.frontmatter.id === dep)) {
+        errors.push(`Requires unknown recipe: ${dep}`);
+      }
+    }
+  }
+
+  if (!recipe.body || recipe.body.length < 50) {
+    const message = 'Recipe body is very short (< 50 chars). Is the setup guide complete?';
+    errors.push(message);
+  }
+
+  return { errors, warnings };
+}
+
+function buildRecipeSubmission(recipe: ParsedRecipe): RecipeSubmissionResult {
+  const allRecipes = loadAllRecipes();
+  const validation = validateRecipe(recipe, allRecipes, true);
+  const id = isNonEmptyString(recipe.raw_frontmatter.id) ? recipe.raw_frontmatter.id.trim() : null;
+  const safeId = id && isRecipeId(id);
+  const targetPath = safeId ? recipeTargetPath(id) : null;
+  const errors = [...validation.errors];
+
+  if (safeId) {
+    if (allRecipes.some(r => r.frontmatter.id === id)) {
+      errors.push(`Recipe id already exists: ${id}`);
+    }
+
+    const recipesDir = getRecipesDir();
+    if (recipesDir && existsSync(join(recipesDir, `${id}.md`))) {
+      errors.push(`Target path already exists: ${recipeTargetPath(id)}`);
+    }
+  }
+
+  const prTitle = safeId ? `Add ${recipe.frontmatter.name} integration recipe` : null;
+  const checklist = targetPath ? [
+    `Copy the recipe to ${targetPath}`,
+    'Update docs/integrations/README.md if this should appear in the public recipe table',
+    'Run bun test test/integrations.test.ts',
+    'Open a PR with the generated title and include setup logs if relevant',
+  ] : [];
+
+  return {
+    ok: errors.length === 0,
+    id,
+    target_path: targetPath,
+    pr_title: prTitle,
+    errors,
+    warnings: validation.warnings,
+    checklist,
+    next_steps: checklist,
+  };
+}
+
+function printSubmissionResult(result: RecipeSubmissionResult, jsonMode: boolean): void {
+  if (jsonMode) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (result.errors.length > 0) {
+    console.log('FAIL:');
+    for (const error of result.errors) console.log(`  ✗ ${error}`);
+  }
+  if (result.warnings.length > 0) {
+    console.log('WARNINGS:');
+    for (const warning of result.warnings) console.log(`  ⚠ ${warning}`);
+  }
+  if (result.ok) {
+    console.log(`READY: ${result.id} can be submitted as ${result.target_path}`);
+    if (result.pr_title) console.log(`PR title: ${result.pr_title}`);
+    console.log('\nChecklist:');
+    for (const step of result.checklist) console.log(`  - ${step}`);
+  }
 }
 
 function parseDurationMs(value: string): number | null {
@@ -776,37 +999,8 @@ function cmdTest(args: string[]): void {
     process.exit(1);
   }
 
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  // Validate required fields
+  const { errors, warnings } = validateRecipe(recipe, loadAllRecipes(), false);
   const f = recipe.frontmatter;
-  errors.push(...recipe.validation_errors);
-  if (!f.id) errors.push('Missing: id');
-  if (!f.name) warnings.push('Missing: name (will default to id)');
-  if (!f.description) warnings.push('Missing: description');
-  if (!f.version) warnings.push('Missing: version');
-  if (!['infra', 'sense', 'reflex'].includes(f.category)) {
-    errors.push(`Invalid category: '${f.category}' (must be 'infra', 'sense', or 'reflex')`);
-  }
-
-  // Check secrets format
-  for (const s of f.secrets) {
-    if (!s.name) errors.push('Secret missing name');
-    if (!s.where) warnings.push(`Secret '${s.name}' missing 'where' URL`);
-  }
-
-  // Check dependencies
-  if (f.requires.length > 0) {
-    const allRecipes = loadAllRecipes();
-    const depWarnings = checkDependencies(recipe, allRecipes);
-    warnings.push(...depWarnings);
-  }
-
-  // Check body isn't empty
-  if (!recipe.body || recipe.body.length < 50) {
-    warnings.push('Recipe body is very short (< 50 chars). Is the setup guide complete?');
-  }
 
   // Report
   if (errors.length > 0) {
@@ -824,6 +1018,61 @@ function cmdTest(args: string[]): void {
   if (errors.length > 0) process.exit(1);
 }
 
+function cmdSubmit(args: string[]): void {
+  const jsonMode = args.includes('--json');
+  const filePath = args.find(a => !a.startsWith('-'));
+  if (!filePath) {
+    const result: RecipeSubmissionResult = {
+      ok: false,
+      id: null,
+      target_path: null,
+      pr_title: null,
+      errors: ['Usage: mbrain integrations submit <recipe-file.md> [--json]'],
+      warnings: [],
+      checklist: [],
+      next_steps: [],
+    };
+    printSubmissionResult(result, jsonMode);
+    process.exit(1);
+  }
+
+  if (!existsSync(filePath)) {
+    const result: RecipeSubmissionResult = {
+      ok: false,
+      id: null,
+      target_path: null,
+      pr_title: null,
+      errors: [`File not found: ${filePath}`],
+      warnings: [],
+      checklist: [],
+      next_steps: [],
+    };
+    printSubmissionResult(result, jsonMode);
+    process.exit(1);
+  }
+
+  const content = readFileSync(filePath, 'utf-8');
+  const recipe = parseRecipe(content, basename(filePath));
+  if (!recipe) {
+    const result: RecipeSubmissionResult = {
+      ok: false,
+      id: null,
+      target_path: null,
+      pr_title: null,
+      errors: ['Could not parse recipe. Missing or invalid YAML frontmatter.', 'Required field: id'],
+      warnings: [],
+      checklist: [],
+      next_steps: [],
+    };
+    printSubmissionResult(result, jsonMode);
+    process.exit(1);
+  }
+
+  const result = buildRecipeSubmission(recipe);
+  printSubmissionResult(result, jsonMode);
+  if (!result.ok) process.exit(1);
+}
+
 function printHelp(): void {
   console.log(`mbrain integrations — manage integration recipes
 
@@ -835,6 +1084,7 @@ USAGE
   mbrain integrations doctor [--json]  Run health checks
   mbrain integrations stats [--json]   Show signal statistics
   mbrain integrations test <file>      Validate a recipe file
+  mbrain integrations submit <file>    Preflight a community recipe PR
 `);
 }
 
@@ -873,6 +1123,9 @@ export async function runIntegrations(args: string[]): Promise<void> {
       break;
     case 'test':
       cmdTest(subArgs);
+      break;
+    case 'submit':
+      cmdSubmit(subArgs);
       break;
     default:
       console.error(`Unknown subcommand: ${sub}`);
