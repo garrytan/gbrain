@@ -46,6 +46,7 @@ beforeEach(async () => {
     `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
     [brainDir],
   );
+  await engine.unsetConfig('facts.entity_namespaces');
 });
 
 const baseInput = (overrides: Partial<FenceInputFact> = {}): FenceInputFact => ({
@@ -179,6 +180,60 @@ describe('writeFactsToFence — happy path', () => {
     expect(existsSync(join(brainDir, 'companies/acme.md'))).toBe(true);
     const companyBody = readFileSync(join(brainDir, 'companies/acme.md'), 'utf-8');
     expect(companyBody).toContain('type: company');
+
+    const restaurantResult = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'restaurants/comal-next-door' },
+      [baseInput({ fact: 'Comal Next Door is a restaurant Shan mentions in Oakland.' })],
+    );
+    expect(restaurantResult.inserted).toBe(1);
+    const restaurantBody = readFileSync(join(brainDir, 'restaurants/comal-next-door.md'), 'utf-8');
+    expect(restaurantBody).toContain('type: concept');
+    expect(restaurantBody).toContain('slug: restaurants/comal-next-door');
+    expect(restaurantBody).toContain('Comal Next Door is a restaurant Shan mentions in Oakland.');
+
+    const organicPrefixResult = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'appliances/cuisinart-air-fryer' },
+      [baseInput({ fact: 'Shan has a Cuisinart air fryer with no preheat option.' })],
+    );
+    expect(organicPrefixResult.inserted).toBe(1);
+    const applianceBody = readFileSync(join(brainDir, 'appliances/cuisinart-air-fryer.md'), 'utf-8');
+    expect(applianceBody).toContain('type: concept');
+    expect(applianceBody).toContain('slug: appliances/cuisinart-air-fryer');
+    expect(applianceBody).toContain('Shan has a Cuisinart air fryer with no preheat option.');
+
+    const unknownPrefixResult = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'widgets/ambiguous-thing' },
+      [baseInput({ fact: 'Ambiguous thing should not silently create a new namespace.' })],
+    );
+    expect(unknownPrefixResult.inserted).toBe(0);
+    expect(unknownPrefixResult.stubGuardBlocked).toBe(true);
+    expect(existsSync(join(brainDir, 'widgets/ambiguous-thing.md'))).toBe(false);
+
+    await engine.setConfig('facts.entity_namespaces', JSON.stringify({
+      'social-contexts': 'concept',
+      gatherings: { type: 'event' },
+    }));
+    const configuredNamespaceResult = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'social-contexts/yc-dinner' },
+      [baseInput({ fact: 'YC dinner context is a social memory namespace.' })],
+    );
+    expect(configuredNamespaceResult.inserted).toBe(1);
+    const configuredBody = readFileSync(join(brainDir, 'social-contexts/yc-dinner.md'), 'utf-8');
+    expect(configuredBody).toContain('type: concept');
+    expect(configuredBody).toContain('slug: social-contexts/yc-dinner');
+
+    const configuredEventResult = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'gatherings/parul-birthday-dinner' },
+      [baseInput({ fact: 'Parul birthday dinner is an event memory namespace.' })],
+    );
+    expect(configuredEventResult.inserted).toBe(1);
+    const configuredEventBody = readFileSync(join(brainDir, 'gatherings/parul-birthday-dinner.md'), 'utf-8');
+    expect(configuredEventBody).toContain('type: event');
 
     const projectResult = await writeFactsToFence(
       engine,

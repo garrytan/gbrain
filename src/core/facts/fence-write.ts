@@ -116,12 +116,18 @@ function recordWriteFailure(slug: string, sourceId: string, warnings: string[], 
 /**
  * Stub-create body for a new entity page. Minimum frontmatter so the
  * page validates as gbrain-canonical markdown and survives an
- * `importFromFile` round-trip. Type inferred from an explicit slug-prefix
- * map. Unsupported prefixes are rejected instead of silently becoming
- * generic concepts; that keeps extract_facts from creating durable-looking
- * slop pages under arbitrary directories.
+ * `importFromFile` round-trip. Core entity prefixes get specific page
+ * types, and common organic-knowledge namespaces are enabled by default.
+ * Operators can extend the namespace taxonomy without code changes via
+ * config key `facts.entity_namespaces`, e.g.
+ * `{ "restaurants": "concept", "events": { "type": "event" } }`.
+ *
+ * The separate unprefixed/unknown-prefix guard below is the anti-slop
+ * boundary: configured `restaurants/comal-next-door` is intentional,
+ * while bare `jared` or unknown `widgets/foo` still cannot spawn a
+ * phantom page.
  */
-const STUB_PAGE_TYPES: Record<string, PageType> = {
+const CORE_STUB_PAGE_TYPES: Record<string, PageType> = {
   people: 'person',
   companies: 'company',
   deals: 'deal',
@@ -130,12 +136,47 @@ const STUB_PAGE_TYPES: Record<string, PageType> = {
   services: 'project',
 };
 
-function stubEntityPage(slug: string): string {
-  const prefix = slug.split('/')[0];
-  const type = STUB_PAGE_TYPES[prefix];
-  if (!type) {
-    throw new Error(`Refusing to stub-create unsupported fact target prefix: ${prefix}`);
+const DEFAULT_ENTITY_NAMESPACE_TYPES: Record<string, PageType> = {
+  restaurants: 'concept',
+  appliances: 'concept',
+  venues: 'concept',
+  products: 'concept',
+  events: 'event',
+  ideas: 'concept',
+  neighborhoods: 'concept',
+  trips: 'concept',
+};
+
+function parseEntityNamespaceConfig(raw: string | null): Record<string, PageType> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, PageType> = {};
+    for (const [prefix, value] of Object.entries(parsed)) {
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(prefix)) continue;
+      const type = typeof value === 'string'
+        ? value
+        : value && typeof value === 'object' && !Array.isArray(value) && typeof (value as { type?: unknown }).type === 'string'
+          ? (value as { type: string }).type
+          : null;
+      if (!type || !/^[a-z][a-z0-9_-]*$/.test(type)) continue;
+      out[prefix] = type;
+    }
+    return out;
+  } catch {
+    return {};
   }
+}
+
+async function loadStubPageTypes(engine: BrainEngine): Promise<Record<string, PageType>> {
+  const configured = parseEntityNamespaceConfig(await engine.getConfig('facts.entity_namespaces'));
+  return { ...CORE_STUB_PAGE_TYPES, ...DEFAULT_ENTITY_NAMESPACE_TYPES, ...configured };
+}
+
+function stubEntityPage(slug: string, stubPageTypes: Record<string, PageType>): string {
+  const prefix = slug.split('/')[0];
+  const type = stubPageTypes[prefix] ?? 'concept';
   const tail = slug.split('/').slice(1).join('/');
   const title = tail
     .replace(/[-_/]+/g, ' ')
@@ -177,6 +218,7 @@ export async function writeFactsToFence(
 
   const filePath = join(target.localPath, `${target.slug}.md`);
   const tmpPath = `${filePath}.tmp`;
+  const stubPageTypes = await loadStubPageTypes(engine);
 
   return withPageLock(
     target.slug,
@@ -203,7 +245,7 @@ export async function writeFactsToFence(
         // in resolveEntitySlug is sufficient and this guard can be removed.
         // The audit log under `~/.gbrain/audit/stub-guard-YYYY-Www.jsonl`
         // is the operator visibility surface for that retirement decision.
-        if (!target.slug.includes('/')) {
+        if (!target.slug.includes('/') || !(target.slug.split('/')[0] in stubPageTypes)) {
           logStubGuardEvent({
             slug: target.slug,
             source_id: target.sourceId,
@@ -211,13 +253,13 @@ export async function writeFactsToFence(
           });
           // eslint-disable-next-line no-console
           console.warn(
-            `[facts] refusing to stub-create unprefixed entity page slug=${target.slug} — routing to legacy DB-only path. Provide a directory prefix (people/, companies/, etc.) to opt into fence writes.`,
+            `[facts] refusing to stub-create unconfigured entity page slug=${target.slug} — routing to legacy DB-only path. Provide a configured namespace prefix (facts.entity_namespaces) to opt into fence writes.`,
           );
           return { inserted: 0, ids: [], stubGuardBlocked: true };
         }
         // Stub-create the parent directory if it doesn't exist.
         mkdirSync(dirname(filePath), { recursive: true });
-        body = stubEntityPage(target.slug);
+        body = stubEntityPage(target.slug, stubPageTypes);
       }
 
       // 2. Upsert each fact onto the fence in input order. row_num
