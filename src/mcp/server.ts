@@ -1,5 +1,5 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { ListResourcesRequestSchema, ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { startDerivedWorker, type DerivedWorkerController } from '../core/derived-worker.ts';
 import { operations as defaultOperations, OperationError, MCP_INSTRUCTIONS } from '../core/operations.ts';
@@ -659,7 +659,7 @@ export function createMcpServer(
   const server = new Server(
     { name: 'mbrain', version: VERSION },
     {
-      capabilities: { tools: {} },
+      capabilities: { resources: {}, tools: {} },
       instructions: MCP_INSTRUCTIONS,
     },
   );
@@ -672,6 +672,10 @@ export function createMcpServer(
     tools: toolCatalog.getTools({
       compact: options.compactToolSchemas ?? shouldCompactMcpToolSchemas(),
     }),
+  }));
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [],
   }));
 
   // Dispatch tool calls to operation handlers

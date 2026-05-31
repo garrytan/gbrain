@@ -27,8 +27,9 @@ The two systems have diverged into different products.
 
 `gbrain` has grown into a broad operational knowledge graph and company-capable
 runtime. Its reference implementation includes a large dream cycle, multi-source
-brains, HTTP MCP with OAuth, source-scoped clients, facts/takes storage, eval
-capture/replay, background job runtime, and tree-sitter code intelligence.
+brains, hosted/team HTTP MCP with OAuth, source-scoped clients, facts/takes
+storage, eval capture/replay, background job runtime, and tree-sitter code
+intelligence.
 
 `mbrain` has moved toward governed personal memory: canonical Markdown,
 operational task memory, scoped personal memory, Memory Inbox promotion, source
@@ -104,8 +105,10 @@ owns the boundary.
 ## Non-Goals
 
 - Do not make `mbrain` a company/team product in this roadmap.
-- Do not import HTTP OAuth, admin dashboards, teammate-scoped writes, or hosted
-  multi-user access.
+- Do not import upstream hosted/team HTTP MCP/OAuth, admin dashboards,
+  teammate-scoped writes, or hosted multi-user access.
+- Do not treat that hosted/team rejection as a ban on later first-party
+  self-hosted HTTP MCP/OAuth runtime work owned by MBrain's remote runtime docs.
 - Do not copy `gbrain`'s Minions/job runtime as a prerequisite for maintenance.
 - Do not reproduce `facts` and `takes` as direct table clones.
 - Do not introduce a second scope system under the name `corpus lane`.
@@ -385,7 +388,7 @@ Priority is based on debt risk, not feature appeal.
 | Code graph is treated as current code fact | Code graph stays derived; current claims require live verification, graph walking stays default-off until evaluated, and stale indexes fail safe. |
 | Maintenance hardens wrong memory | Default maintenance output is reviewable report or suggestion; apply paths must pass realm/session, ledger, snapshot, and redaction controls. |
 | Postgres assumptions break local-first use | Engine-neutral contracts and backend parity tests come before engine-specific code. |
-| Company features bloat personal mbrain | HTTP OAuth, admin UI, teammate writes, and Minions remain out of scope. |
+| Company features bloat personal mbrain | Upstream hosted/team HTTP MCP/OAuth, admin UI, teammate writes, and Minions remain out of scope; later first-party self-hosted HTTP MCP/OAuth remains a separate runtime track. |
 
 ## Reference Surfaces
 

@@ -140,7 +140,12 @@ describe('S32 - gbrain upstream discipline', () => {
     expect(upstream).toContain('| System-of-record discipline | adopted |');
     expect(upstream).toContain('| Eval capture and replay | reinterpreted |');
     expect(upstream).toContain('| Facts/takes hot-cold memory | reinterpreted |');
-    expect(upstream).toContain('| HTTP MCP, OAuth, admin UI, teammate-scoped writes | rejected |');
+    expect(upstream).toContain(
+      '| Hosted/team HTTP MCP, hosted/team OAuth, admin UI, teammate-scoped writes | rejected |',
+    );
+    expect(upstream).toContain(
+      'first-party self-hosted HTTP MCP/OAuth is a separate MBrain runtime path',
+    );
     expect(upstream).toContain('| Minions and hosted agent runtime | rejected |');
     expect(upstream).toContain('| Supabase/TUS hosted storage | rejected |');
     expect(upstream).toContain('| Frontmatter guards and resolver warnings | deferred |');

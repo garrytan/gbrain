@@ -91,7 +91,7 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(doc).toContain('03947665e4dbfeaf8a5542d160a0f4b89e4ae747');
     expect(doc).toContain('| Reference area | Decision | MBrain-shaped action | Boundary rationale |');
     expect(doc).toContain('| System-of-record and reconciler discipline | adapt |');
-    expect(doc).toContain('| HTTP MCP, OAuth, admin UI, teammate-scoped writes | reject |');
+    expect(doc).toContain('| Hosted/team HTTP MCP, hosted/team OAuth, admin UI, teammate-scoped writes | reject |');
     expect(doc).toContain('| Minions, durable job runtime, hosted agent runtime | reject |');
     expect(doc).toContain('| Eval capture and replay | adapt |');
     expect(doc).toContain('| Code intelligence and tree-sitter symbol graph | later |');
@@ -317,7 +317,7 @@ principles below through the owning `mbrain` redesign workstreams and tests.
 | Code intelligence and tree-sitter symbol graph | later | Treat symbol metadata and graph walking as a future Context Map code lane with backfill, invalidation, fanout caps, and default-off expansion. | Valuable but high-risk; it must not become current code truth without live verification. |
 | Source-aware ranking | adopt | Keep the existing `mbrain` reimplementation and evaluate future tuning against local fixtures. | Already adopted in `mbrain` as engine-neutral ranking. |
 | Frontmatter guards and resolver warnings | later | Fold useful checks into existing lint/import validation only after a focused design. | Useful quality guard, but not part of the `GA-P0` / `GA-P1` foundation. |
-| HTTP MCP, OAuth, admin UI, teammate-scoped writes | reject | Keep out of the personal roadmap. | Company/team runtime scope conflicts with the personal `mbrain` target. |
+| Hosted/team HTTP MCP, hosted/team OAuth, admin UI, teammate-scoped writes | reject | Keep upstream company/team runtime surfaces out of the personal roadmap. | Company/team runtime scope conflicts with the personal `mbrain` target; later first-party, self-hosted HTTP MCP/OAuth work is tracked separately in the remote MCP runtime docs. |
 | Minions, durable job runtime, hosted agent runtime | reject | Do not port as a prerequisite for personal maintenance. | `mbrain` should remain the durable memory layer under agents, not a competing job runtime. |
 | Supabase/TUS hosted storage flows | reject | Revisit only if local-first large-file semantics are designed first. | Hosted storage assumptions conflict with local/offline default behavior. |
 
@@ -325,7 +325,7 @@ principles below through the owning `mbrain` redesign workstreams and tests.
 
 Do not port these surfaces directly:
 
-- `reference/gbrain/src/server/**` HTTP MCP, OAuth, admin, and thin-client surfaces.
+- `reference/gbrain/src/server/**` hosted/team HTTP MCP, OAuth, admin, and thin-client surfaces.
 - `reference/gbrain/src/minions/**`, Minions handlers, durable job queue, and hosted agent runtime.
 - Supabase/TUS storage flows and remote artifact assumptions.
 - Postgres-only migrations or SQL that would change the SQLite/local-first core contract.

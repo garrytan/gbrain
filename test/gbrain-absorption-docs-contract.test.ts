@@ -8,17 +8,23 @@ function readRepoFile(path: string): string {
 describe('personal gbrain absorption docs contracts', () => {
   test('records a GA-P0 upstream classification checkpoint', () => {
     const doc = readRepoFile('docs/UPSTREAM_SYNC.md');
+    const roadmap = readRepoFile('docs/superpowers/specs/2026-05-19-personal-gbrain-absorption-roadmap-design.md');
+    const plan = readRepoFile('docs/superpowers/plans/2026-05-19-gbrain-absorption-ga-p0-p1.md');
 
     expect(doc).toContain('## Roadmap 2026-05-19 - GA-P0 personal gbrain absorption classification checkpoint');
     expect(doc).toContain('03947665e4dbfeaf8a5542d160a0f4b89e4ae747');
     expect(doc).toContain('| Reference area | Decision | MBrain-shaped action | Boundary rationale |');
     expect(doc).toContain('| System-of-record and reconciler discipline | adapt |');
-    expect(doc).toContain('| HTTP MCP, OAuth, admin UI, teammate-scoped writes | reject |');
+    expect(doc).toContain('| Hosted/team HTTP MCP, hosted/team OAuth, admin UI, teammate-scoped writes | reject |');
     expect(doc).toContain('| Minions, durable job runtime, hosted agent runtime | reject |');
     expect(doc).toContain('| Eval capture and replay | adapt |');
     expect(doc).toContain('| Code intelligence and tree-sitter symbol graph | later |');
     expect(doc).toContain('### Direct-port denylist');
     expect(doc).toContain('### Useful upstream evidence ledger');
+    expect(roadmap).toContain('upstream hosted/team HTTP MCP/OAuth');
+    expect(roadmap).toContain('self-hosted HTTP MCP/OAuth runtime work');
+    expect(plan).toContain('| Hosted/team HTTP MCP, hosted/team OAuth, admin UI, teammate-scoped writes | reject |');
+    expect(plan).toContain('later first-party, self-hosted HTTP MCP/OAuth work is tracked separately');
   });
 
   test('anchors authority routing in the memory-loop protocol owner', () => {
@@ -229,6 +235,7 @@ describe('personal gbrain absorption docs contracts', () => {
   test('anchors GA-P7 consolidation and upstream discipline in upstream and evaluation docs', () => {
     const upstream = readRepoFile('docs/UPSTREAM_SYNC.md');
     const evaluation = readRepoFile('docs/architecture/redesign/08-evaluation-and-acceptance.md');
+    const plan = readRepoFile('docs/superpowers/plans/2026-05-19-gbrain-absorption-ga-p7-consolidation-upstream-discipline.md');
 
     expect(upstream).toContain('## Roadmap 2026-05-19 - GA-P7 consolidation and upstream discipline checkpoint');
     expect(upstream).toContain('| Upstream area | GA-P7 classification | MBrain implementation state | Discipline rule |');
@@ -237,7 +244,12 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(upstream).toContain('| System-of-record discipline | adopted |');
     expect(upstream).toContain('| Eval capture and replay | reinterpreted |');
     expect(upstream).toContain('| Facts/takes hot-cold memory | reinterpreted |');
-    expect(upstream).toContain('| HTTP MCP, OAuth, admin UI, teammate-scoped writes | rejected |');
+    expect(upstream).toContain(
+      '| Hosted/team HTTP MCP, hosted/team OAuth, admin UI, teammate-scoped writes | rejected |',
+    );
+    expect(upstream).toContain(
+      'first-party self-hosted HTTP MCP/OAuth is a separate MBrain runtime path',
+    );
     expect(upstream).toContain('| Minions and hosted agent runtime | rejected |');
     expect(upstream).toContain('| Supabase/TUS hosted storage | rejected |');
     expect(upstream).toContain('| Frontmatter guards and resolver warnings | deferred |');
@@ -248,6 +260,10 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(evaluation).toContain('consolidation_cases');
     expect(evaluation).toContain('adopted, reinterpreted, rejected, and deferred upstream areas remain explicit');
     expect(evaluation).toContain('no production runtime change');
+    expect(evaluation).toContain('not a permanent product ban on later first-party');
+    expect(evaluation).toContain('mbrain serve --http --oauth');
+    expect(plan).toContain('upstream hosted/team HTTP MCP/OAuth');
+    expect(plan).toContain('self-hosted HTTP MCP/OAuth runtime work');
   });
 
   test('updates the install verification runbook and scenario registry for GA-P7', () => {

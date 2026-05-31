@@ -22,8 +22,10 @@ reference gbrain work.
 
 - No new runtime services.
 - No database, network, or hosted upstream dependency.
-- No direct port of upstream HTTP MCP, OAuth, Minions, hosted jobs, or storage
-  flows.
+- No direct port of upstream hosted/team HTTP MCP/OAuth, Minions, hosted jobs,
+  or storage flows.
+- No confusion between that hosted/team rejection and later first-party
+  self-hosted HTTP MCP/OAuth runtime work.
 - No reclassification of GA-P2 through GA-P6 acceptance beyond documenting the
   current implementation state.
 

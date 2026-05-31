@@ -256,7 +256,14 @@ GA-P6 fixture rules:
 
 GA-P7 is docs, fixture, and scenario consolidation only. It records the
 implemented GA-P2 through GA-P6 absorption state and ensures future upstream
-imports remain classified before they become implementation work. GA-P7 has no production runtime change.
+imports remain classified before they become implementation work. GA-P7 has no
+production runtime change.
+
+The rejected HTTP MCP and OAuth references in this GA-P7 checkpoint describe
+upstream-hosted or team-oriented surfaces that were not imported as part of the
+absorption work. They are not a permanent product ban on later first-party,
+self-hosted MBrain runtime features; the opt-in `mbrain serve --http --oauth`
+path is tracked separately in the remote MCP runtime documentation.
 
 The executable fixture is
 `test/fixtures/gbrain-absorption/ga-p7-upstream-discipline.fixture.json`, and
@@ -277,7 +284,8 @@ GA-P7 fixture rules:
    system-of-record discipline.
 2. `reinterpreted_vs_rejected_rationale_present` must distinguish
    reinterpreted upstream ideas like facts/takes, corpus lanes, and maintenance
-   cycle work from rejected HTTP MCP, OAuth, and Minions surfaces.
+   cycle work from upstream surfaces that GA-P7 rejected for absorption, such as
+   hosted/team HTTP MCP, hosted/team OAuth, and Minions surfaces.
 3. `verification_checklist_covers_ga_p2_through_ga_p6` must call out GA-P2,
    GA-P3, GA-P4, GA-P5, and GA-P6 fixtures plus S27, S28, S29, S30, and S31.
 4. `deferred_surfaces_remain_explicit` must keep frontmatter guards, parallel

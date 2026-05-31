@@ -68,7 +68,7 @@
     {
       "case_id": "reinterpreted_vs_rejected_rationale_present",
       "classification": "reinterpretation_boundary",
-      "required_terms": ["facts/takes", "corpus lanes", "maintenance cycle", "HTTP MCP", "OAuth", "Minions"],
+      "required_terms": ["facts/takes", "corpus lanes", "maintenance cycle", "Hosted/team HTTP MCP", "hosted/team OAuth", "first-party self-hosted HTTP MCP/OAuth", "Minions"],
       "expected_doc": "docs/UPSTREAM_SYNC.md",
       "expected_runtime_change": false
     },

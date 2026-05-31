@@ -109,6 +109,7 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): (request: 
     const { server } = createMcpServer(enginePromise, {
       operations: options.operations,
       config: options.config,
+      compactToolSchemas: false,
       toolExecutionLimiter,
       logger: {
         info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),

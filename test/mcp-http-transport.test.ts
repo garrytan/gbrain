@@ -94,12 +94,28 @@ describe('MCP HTTP transport', () => {
       id: 2,
     }));
     expect(toolsList.result.tools.some((tool: { name: string }) => tool.name === 'get_stats')).toBe(true);
+    const getStatsTool = toolsList.result.tools.find((tool: { name: string }) => tool.name === 'get_stats');
+    expect(getStatsTool.title).toBe('Get Stats');
+    expect(getStatsTool.description).toContain('Brain statistics');
+    expect(getStatsTool.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    });
+
+    const resourcesList = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'resources/list',
+      params: {},
+      id: 4,
+    }));
+    expect(resourcesList.result.resources).toEqual([]);
 
     const stats = await readJsonRpcResponse(await postMcp(handler, {
       jsonrpc: '2.0',
       method: 'tools/call',
       params: { name: 'get_stats', arguments: {} },
-      id: 3,
+      id: 5,
     }));
     expect(stats.result.content[0].text).toContain('"pages":3');
   });

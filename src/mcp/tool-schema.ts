@@ -20,7 +20,13 @@ export function paramToMcpSchema(
 
 export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions = {}): {
   name: string;
+  title?: string;
   description?: string;
+  annotations?: {
+    readOnlyHint: boolean;
+    destructiveHint: boolean;
+    openWorldHint: boolean;
+  };
   inputSchema: {
     type: 'object';
     properties: Record<string, Record<string, unknown>>;
@@ -30,9 +36,21 @@ export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions 
   const required = Object.entries(op.params)
     .filter(([, value]) => value.required)
     .map(([key]) => key);
+  const title = operationTitle(op.name);
+  const isMutating = op.mutating === true;
+  const isDestructive = isMutating && isDestructiveOperation(op.name);
+  const metadata = options.compact ? {} : {
+    title,
+    description: op.description,
+    annotations: {
+      readOnlyHint: !isMutating,
+      destructiveHint: isDestructive,
+      openWorldHint: false,
+    },
+  };
   return {
     name: op.name,
-    ...(!options.compact ? { description: op.description } : {}),
+    ...metadata,
     inputSchema: {
       type: 'object',
       properties: Object.fromEntries(
@@ -41,4 +59,19 @@ export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions 
       ...(!options.compact || required.length > 0 ? { required } : {}),
     },
   };
+}
+
+function operationTitle(name: string): string {
+  return name
+    .split('_')
+    .filter(part => part.length > 0)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function isDestructiveOperation(name: string): boolean {
+  if (name === 'put_page' || name === 'apply_memory_patch_candidate' || name === 'apply_memory_redaction_plan') {
+    return true;
+  }
+  return /^(delete|remove|revert|revoke|purge|supersede)_/.test(name);
 }
