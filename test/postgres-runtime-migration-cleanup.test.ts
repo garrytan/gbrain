@@ -102,6 +102,7 @@ describe('postgres runtime migration cleanup', () => {
     expect(verifiedGuide).toContain('Manually review legacy DB-only candidates, profile memory, tasks, sessions, and mutation records');
     expect(verifiedGuide).toContain('No one-shot assertion rebuild command exists yet');
     expect(verifiedGuide).toContain('mbrain projection-explain --target-type page --target-id <slug>');
+    expect(verifiedGuide).toContain('DATABASE_URL=<connection_string> bun run smoke:postgres-runtime');
     expect(verifiedGuide).toContain('bun run test:phase13');
     expect(verifiedGuide).toContain('mbrain doctor --json');
     expect(verifiedGuide).toContain('legacy DB-only records require manual review: 3');
@@ -115,6 +116,28 @@ describe('postgres runtime migration cleanup', () => {
     const migrateSource = readRepoFile('src/commands/migrate-engine.ts');
     expect(migrateSource).not.toContain('Target is Supabase but no connection string provided');
     expect(migrateSource).toContain('Postgres target migration is Markdown-first and reconciler-gated');
+  });
+
+  test('Phase 14 exposes a no-provider-key real Postgres confidence smoke', () => {
+    const pkg = JSON.parse(readRepoFile('package.json')) as { scripts: Record<string, string> };
+    const smoke = readRepoFile('scripts/smoke-test-postgres-runtime.ts');
+
+    expect(pkg.scripts['smoke:postgres-runtime']).toBe('bun run scripts/smoke-test-postgres-runtime.ts');
+    expect(smoke).toContain('mbrain init');
+    expect(smoke).toContain("runMbrain(['init', '--url', databaseUrl, '--non-interactive', '--json'])");
+    expect(smoke).toContain("runMbrain(['import', markdownDir, '--no-embed', '--workers', '1', '--fresh', '--json'])");
+    expect(smoke).toContain("runMbrain(['projection-explain', '--target-type', 'page', '--target-id', slug, '--limit', '1'])");
+    expect(smoke).toContain('function runDeterministicPhase13()');
+    expect(smoke).toContain("runCommand(['bun', 'run', 'test:phase13'], 'bun run test:phase13', {");
+    expect(smoke).toContain("MBRAIN_CONFIG_DIR: ''");
+    expect(smoke).toContain("MBRAIN_CONFIG_PATH: ''");
+    expect(smoke).toContain("MBRAIN_DATABASE_URL: ''");
+    expect(smoke).toContain("DATABASE_URL: ''");
+    expect(smoke).toContain("runMbrain(['doctor', '--json'])");
+    expect(smoke).toContain("OPENAI_API_KEY: ''");
+    expect(smoke).toContain("ANTHROPIC_API_KEY: ''");
+    expect(smoke).toContain('MBRAIN_POSTGRES_RUNTIME_SMOKE_ALLOW_NONEMPTY');
+    expect(smoke).toContain('MBRAIN_CONFIG_PATH: \'\',');
   });
 
   test('migrate setup-agent and doctor help are side-effect-free target-runtime help surfaces', async () => {
@@ -957,13 +980,18 @@ describe('postgres runtime migration cleanup', () => {
     expect(verify).toContain('guide-only output marks counts and content hashes pending until Markdown');
     expect(verify).toContain('import and projection reconciliation run');
     expect(verify).toContain('completed legacy compatibility copies still verify counts and content hashes');
-    expect(verify).toContain('eval/replay smoke passes after migration');
+    expect(verify).toContain('DATABASE_URL=\'postgresql://...\' bun run smoke:postgres-runtime');
+    expect(verify).toContain('real Postgres confidence smoke initializes a disposable target');
+    expect(verify).toContain('checks projection lineage');
+    expect(verify).toContain('runs `bun run test:phase13`');
     expect(verify).toContain('## Postgres runtime confidence smoke');
-    expect(verify).toContain('real Postgres init, import, doctor, and search');
+    expect(verify).toContain('real Postgres init, Markdown');
+    expect(verify).toContain('import, projection lineage, deterministic Phase 13 replay, and doctor');
     expect(verify).toContain('does not prove the configured agent MCP shares the');
     expect(verify).toContain('`runtime_db_identity` is evidence from the active process');
     expect(verify).toContain('not from the isolated installed');
     expect(verify).toContain('MCP smoke alone');
+    expect(verify).toContain('without OpenAI or Anthropic API keys');
     expect(verify).toContain('Phase 13 evidence is deterministic replay plus live-eval budget gating');
     expect(verify).toContain('Do not report live LLM eval evidence unless the budgeted live eval was actually run');
     expect(verify).not.toContain('migration output verifies counts and content hashes');
@@ -981,6 +1009,9 @@ describe('postgres runtime migration cleanup', () => {
     expect(todos).not.toContain('## P0\n\n### Fix `bun build --compile` WASM embedding for PGLite');
     expect(readme).toContain('For target Postgres runtime verification, run:');
     expect(readme).toContain('bun test test/postgres-runtime-migration-cleanup.test.ts');
+    expect(readme).toContain('DATABASE_URL=\'postgresql://...\' bun run smoke:postgres-runtime');
+    expect(readme).toContain('`smoke:postgres-runtime` is the Phase 14 confidence gate');
+    expect(readme).toContain('without requiring OpenAI or Anthropic API keys');
     expect(readme).toContain('Legacy local SQLite verification is isolated compatibility coverage');
     expect(readme).toContain('For release or installed-command confidence, also run the installed-command');
     expect(readme).toContain('MCP smoke starts the command in an isolated temporary local profile');

@@ -18,8 +18,15 @@ All notable changes to MBrain will be documented in this file.
   letting unauthenticated DCR requests grow durable state forever. Starting
   `mbrain serve --http --oauth` also prepares the schema before exposing OAuth
   routes, so existing Postgres installs get the required runtime tables before a
-  remote client begins setup.
-- **Agents can now verify the OAuth MCP path before involving ChatGPT.**
+  remote client begins setup. The live ChatGPT Developer Mode path has also
+  been validated end-to-end against a public HTTPS tunnel and real Postgres.
+- **ChatGPT can now see MBrain app actions after OAuth connects.**
+  HTTP MCP clients now receive full tool descriptors with titles, descriptions,
+  and read/write/destructive annotations, while stdio stays compact enough for
+  the existing frame-budget guard. MBrain also answers `resources/list` with an
+  explicit empty list so newer MCP clients do not treat resource probing as a
+  transport error.
+- **Agents can now verify the OAuth MCP path without involving ChatGPT.**
   `bun run smoke:http-oauth` starts the real HTTP MCP server against Postgres,
   walks a ChatGPT-style DCR + PKCE flow, calls MCP tools with the issued token,
   refreshes it, confirms the refreshed access token works while the pre-refresh
@@ -29,7 +36,7 @@ All notable changes to MBrain will be documented in this file.
   expected by remote clients, or `MBRAIN_SMOKE_RESTART_OAUTH_STATE=1` to
   restart the HTTP server between registration, authorization, and token
   exchange. That gives release agents a deterministic no-API-key confidence
-  gate before the final live ChatGPT Developer Mode pass.
+  gate for OAuth regressions even when ChatGPT is not available.
 - **Remote MCP no longer needs a custom wrapper.** `mbrain serve --http` starts
   a built-in Streamable HTTP MCP server with `/mcp`, `/health`, Bearer token
   authentication, request logging, and the same tool catalog, response guards,
@@ -87,7 +94,10 @@ All notable changes to MBrain will be documented in this file.
   pgvector as the target path while keeping SQLite/PGLite as explicit legacy
   compatibility and migration surfaces. Agents get clearer guidance for the
   assertion pipeline, governed canonical writes, candidate fallback, daily
-  reports, and migration verification before switching configs.
+  reports, and migration verification before switching configs. The new
+  `smoke:postgres-runtime` gate lets release agents prove the real Postgres
+  init/import/projection/Phase 13/doctor path on a disposable target without
+  OpenAI or Anthropic API keys.
 - **MCP stdio backpressure work now has an explicit validation boundary.**
   The current PR evidence covers MBrain's own stdio frame budgeting,
   bounded reads, canonical writes, and durable derived-worker behavior. The

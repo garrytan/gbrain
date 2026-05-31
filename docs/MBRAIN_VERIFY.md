@@ -62,6 +62,7 @@ Run:
 
 ```bash
 bun test test/postgres-runtime-migration-cleanup.test.ts
+DATABASE_URL='postgresql://...' bun run smoke:postgres-runtime
 ```
 
 Expected:
@@ -73,17 +74,25 @@ Expected:
 - completed legacy compatibility copies still verify counts and content hashes.
 - DB-only legacy state is called out for manual review instead of silently
   claiming full migration.
-- deterministic eval/replay smoke passes after migration:
-  `bun run test:phase13`.
+- the real Postgres confidence smoke initializes a disposable target, imports a
+  Markdown fixture, checks projection lineage, runs `bun run test:phase13`, and
+  finishes with `mbrain doctor --json` without OpenAI or Anthropic API keys.
 
 ## Postgres runtime confidence smoke
 
 Use this gate when validating a release binary or an installed command, not just
-the source tree. It exercises real Postgres init, import, doctor, and search
-against the command being validated. The installed MCP smoke is a separate
-binary-compatibility check: it starts that command's MCP server in an isolated
-temporary local profile, so it does not prove the configured agent MCP shares the
-validated Postgres profile.
+the source tree. The source-tree gate exercises real Postgres init, Markdown
+import, projection lineage, deterministic Phase 13 replay, and doctor against a
+disposable target:
+
+```bash
+DATABASE_URL='postgresql://...' bun run smoke:postgres-runtime
+```
+
+For an installed command, also verify the exact installed binary and configured
+profile. The installed MCP smoke is a separate binary-compatibility check: it
+starts that command's MCP server in an isolated temporary local profile, so it
+does not prove the configured agent MCP shares the validated Postgres profile.
 
 ```bash
 mbrain --version
@@ -96,6 +105,9 @@ MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 
 Expected:
 
+- `bun run smoke:postgres-runtime` returns `{"ok":true,...}` after `init`,
+  Markdown import, `projection-explain`, `bun run test:phase13`, and
+  `doctor --json`.
 - `mbrain --version` reports the release being validated.
 - Postgres doctor checks are healthy for the active profile.
 - `runtime_db_identity` is evidence from the active process. Treat same-DB
@@ -159,9 +171,21 @@ Expected:
 This smoke proves local runtime confidence for OAuth/DCR/PKCE over the real
 HTTP server, can prove Postgres-backed OAuth setup state survives server
 restart, can prove the configured public OAuth issuer metadata, and is backed
-by E2E coverage for bounded pending DCR registration state. It still does not
-prove live ChatGPT Developer Mode behavior, that the public HTTPS tunnel is
-reachable from the internet, or any provider-key-dependent Tier 2 skill flow.
+by E2E coverage for bounded pending DCR registration state. It does not require
+OpenAI or Anthropic API keys, and it does not by itself prove that a future
+public HTTPS tunnel is reachable from ChatGPT or that provider-key-dependent
+Tier 2 skill flows ran.
+
+The ChatGPT Developer Mode guide was live-validated on 2026-05-31 with a
+temporary public HTTPS tunnel, Dynamic Client Registration, owner-approved OAuth,
+full HTTP `tools/list` descriptors/action discovery, and a `get_stats` tool call
+against real Postgres. Descriptor hardening is covered by
+`bun test test/mcp-tool-schema.test.ts test/mcp-http-transport.test.ts
+test/mcp-stdio-frame-budget.test.ts`: HTTP descriptors include titles,
+descriptions, and read/write/destructive annotations, while compact stdio
+schemas omit that metadata for frame-budget safety. For a new deployment, keep
+the local smoke, public tunnel health check, and client-side ChatGPT connection
+check as separate gates.
 
 Phase 13 evidence is deterministic replay plus live-eval budget gating by
 default. `bun run test:phase13` proves the deterministic fixture, policy,

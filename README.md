@@ -545,7 +545,14 @@ tables without bound. When OAuth is enabled, `serve` prepares the database
 schema before exposing the HTTP routes so upgraded Postgres installs have the
 OAuth runtime tables in place.
 
-To verify the OAuth runtime locally before a live ChatGPT pass:
+HTTP MCP clients receive full tool descriptors with titles, descriptions, and
+MCP read/write/destructive annotations so ChatGPT can discover MBrain app
+actions after OAuth connects. Stdio clients keep compact descriptors to preserve
+frame budget headroom, and `resources/list` returns an explicit empty list for
+clients that probe MCP resources.
+
+To verify the OAuth runtime locally, or to reproduce a ChatGPT-style setup
+without using ChatGPT:
 
 ```bash
 DATABASE_URL='postgresql://...' bun run smoke:http-oauth
@@ -649,10 +656,16 @@ For target Postgres runtime verification, run:
 
 ```bash
 bun test test/postgres-runtime-migration-cleanup.test.ts test/postgres-runtime-foundation.test.ts
+DATABASE_URL='postgresql://...' bun run smoke:postgres-runtime
 bun run test:phase13
 bun test
 bunx tsc --noEmit --pretty false
 ```
+
+`smoke:postgres-runtime` is the Phase 14 confidence gate for a disposable
+Postgres target: it runs `mbrain init`, imports a Markdown fixture,
+checks projection lineage, runs deterministic Phase 13 replay, and finishes with
+`mbrain doctor --json` without requiring OpenAI or Anthropic API keys.
 
 For release or installed-command confidence, also run the installed-command
 doctor checks plus the MCP binary-compatibility smoke:

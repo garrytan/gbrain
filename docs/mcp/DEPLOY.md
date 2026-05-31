@@ -65,6 +65,11 @@ registrations at 128.
 Use a separate `MBRAIN_OAUTH_SIGNING_SECRET` for refresh-token signing; if it is
 unset, MBrain warns and falls back to the approval token for local testing only.
 
+For HTTP MCP clients such as ChatGPT Developer Mode, `tools/list` returns full
+tool descriptors with titles, descriptions, and MCP read/write/destructive
+annotations. Stdio keeps compact descriptors for frame-budget safety, and
+`resources/list` returns an explicit empty list for clients that probe resources.
+
 ### 2. Set up the tunnel
 
 See the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for full setup.
