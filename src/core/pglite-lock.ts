@@ -22,6 +22,10 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+function remainingTimeoutMs(timeoutMs: number, startTime: number): number {
+  return Math.max(0, timeoutMs - (Date.now() - startTime));
+}
+
 export async function acquireLock(dataDir: string | undefined, opts?: { timeoutMs?: number }): Promise<LockHandle> {
   if (!dataDir) {
     return { lockDir: '', acquired: true };
@@ -52,7 +56,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
             // Another process may have removed it first.
           }
         } else {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, Math.min(1000, remainingTimeoutMs(timeoutMs, startTime))));
           continue;
         }
       } catch {
@@ -86,7 +90,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
         }
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, Math.min(500, remainingTimeoutMs(timeoutMs, startTime))));
     }
   }
 

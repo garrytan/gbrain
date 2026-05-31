@@ -958,6 +958,14 @@ describe('postgres runtime migration cleanup', () => {
     expect(verify).toContain('import and projection reconciliation run');
     expect(verify).toContain('completed legacy compatibility copies still verify counts and content hashes');
     expect(verify).toContain('eval/replay smoke passes after migration');
+    expect(verify).toContain('## Postgres runtime confidence smoke');
+    expect(verify).toContain('real Postgres init, import, doctor, and search');
+    expect(verify).toContain('does not prove the configured agent MCP shares the');
+    expect(verify).toContain('`runtime_db_identity` is evidence from the active process');
+    expect(verify).toContain('not from the isolated installed');
+    expect(verify).toContain('MCP smoke alone');
+    expect(verify).toContain('Phase 13 evidence is deterministic replay plus live-eval budget gating');
+    expect(verify).toContain('Do not report live LLM eval evidence unless the budgeted live eval was actually run');
     expect(verify).not.toContain('migration output verifies counts and content hashes');
   });
 
@@ -974,6 +982,10 @@ describe('postgres runtime migration cleanup', () => {
     expect(readme).toContain('For target Postgres runtime verification, run:');
     expect(readme).toContain('bun test test/postgres-runtime-migration-cleanup.test.ts');
     expect(readme).toContain('Legacy local SQLite verification is isolated compatibility coverage');
+    expect(readme).toContain('For release or installed-command confidence, also run the installed-command');
+    expect(readme).toContain('MCP smoke starts the command in an isolated temporary local profile');
+    expect(readme).toContain('Phase 13 is deterministic replay plus live-eval budget gating');
+    expect(readme).toContain('by default, not evidence that paid live LLM evals ran');
     expect(readme).not.toContain('For source-tree unit and legacy local SQLite verification, run:');
     expect(readme).toContain('legacy SQLite compatibility guide');
   });

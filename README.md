@@ -591,6 +591,23 @@ bun test
 bunx tsc --noEmit --pretty false
 ```
 
+For release or installed-command confidence, also run the installed-command
+doctor checks plus the MCP binary-compatibility smoke:
+
+```bash
+mbrain --version
+mbrain doctor --agent --json
+MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
+```
+
+`runtime_db_identity` is process evidence from the command being checked; use
+the installed-command doctor and actual configured agent profile before claiming
+CLI/MCP/autopilot are all pointed at the same runtime database. The installed
+MCP smoke starts the command in an isolated temporary local profile; it proves
+the binary can serve MCP, not that the configured agent MCP shares the validated
+Postgres profile. Phase 13 is deterministic replay plus live-eval budget gating
+by default, not evidence that paid live LLM evals ran.
+
 Legacy local SQLite verification is isolated compatibility coverage. Run it
 when changing the explicit legacy profile, not as proof that new Postgres target
 runtime behavior is complete:

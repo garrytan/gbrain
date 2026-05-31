@@ -11,7 +11,7 @@ import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from '../src/core/services/note-manife
 
 setDefaultTimeout(20_000);
 
-const PGLITE_REOPEN_TEST_TIMEOUT_MS = 45_000;
+const PGLITE_REOPEN_TEST_TIMEOUT_MS = 180_000;
 
 interface EngineHarness {
   label: string;

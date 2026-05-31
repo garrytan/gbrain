@@ -76,6 +76,40 @@ Expected:
 - deterministic eval/replay smoke passes after migration:
   `bun run test:phase13`.
 
+## Postgres runtime confidence smoke
+
+Use this gate when validating a release binary or an installed command, not just
+the source tree. It exercises real Postgres init, import, doctor, and search
+against the command being validated. The installed MCP smoke is a separate
+binary-compatibility check: it starts that command's MCP server in an isolated
+temporary local profile, so it does not prove the configured agent MCP shares the
+validated Postgres profile.
+
+```bash
+mbrain --version
+mbrain init --profile homebrew-postgres --non-interactive
+mbrain import <brain-markdown-export> --no-embed
+mbrain search "<known imported term>" --json
+mbrain doctor --agent --json
+MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
+```
+
+Expected:
+
+- `mbrain --version` reports the release being validated.
+- Postgres doctor checks are healthy for the active profile.
+- `runtime_db_identity` is evidence from the active process. Treat same-DB
+  claims across CLI, MCP, and autopilot as proven only after checking the actual
+  configured agent command and Postgres profile, not from the isolated installed
+  MCP smoke alone.
+- The smoke command discovers MCP tools and completes the page lifecycle,
+  search, and `route_memory_writeback` dry-run checks in its temporary local
+  profile.
+
+Phase 13 evidence is deterministic replay plus live-eval budget gating by
+default. `bun run test:phase13` proves the deterministic fixture, policy,
+projection, source-safety, and budget guardrails. Do not report live LLM eval evidence unless the budgeted live eval was actually run in an environment with the required provider credentials.
+
 ## Phase 0 parity verification
 
 Run:

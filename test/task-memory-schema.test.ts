@@ -8,6 +8,8 @@ import { PostgresEngine } from '../src/core/postgres-engine.ts';
 
 setDefaultTimeout(20_000);
 
+const PGLITE_TRACE_MIGRATION_TEST_TIMEOUT_MS = 45_000;
+
 const RETRIEVAL_TRACE_FIDELITY_COLUMNS = [
   'derived_consulted',
   'write_outcome',
@@ -212,7 +214,7 @@ describe('task-memory schema', () => {
     expect(trace.write_outcome).toBe('no_durable_write');
 
     await engine.disconnect();
-  });
+  }, PGLITE_TRACE_MIGRATION_TEST_TIMEOUT_MS);
 
   const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl) {

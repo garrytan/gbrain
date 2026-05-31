@@ -41,9 +41,24 @@ describe('pglite-lock', () => {
     const lock1 = await acquireLock(TEST_DIR, { timeoutMs: 2000 });
     expect(lock1.acquired).toBe(true);
 
-    await expect(acquireLock(TEST_DIR, { timeoutMs: 1000 })).rejects.toThrow(/Timed out/);
+    const originalSetTimeout = globalThis.setTimeout;
+    const requestedDelays: number[] = [];
+    try {
+      globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        requestedDelays.push(Number(timeout ?? 0));
+        return originalSetTimeout(() => {
+          if (typeof handler === 'function') handler(...args);
+        }, 0);
+      }) as unknown as typeof globalThis.setTimeout;
 
-    await releaseLock(lock1);
+      await expect(acquireLock(TEST_DIR, { timeoutMs: 50 })).rejects.toThrow(/Timed out/);
+
+      expect(requestedDelays.length).toBeGreaterThan(0);
+      expect(Math.max(...requestedDelays)).toBeLessThanOrEqual(50);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      await releaseLock(lock1);
+    }
   });
 
   test('detects and cleans stale lock from dead process', async () => {

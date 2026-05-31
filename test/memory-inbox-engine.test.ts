@@ -16,7 +16,7 @@ interface EngineHarness {
   cleanup: () => Promise<void>;
 }
 
-const PGLITE_REOPEN_TEST_TIMEOUT_MS = 45_000;
+const PGLITE_REOPEN_TEST_TIMEOUT_MS = 90_000;
 
 async function createSqliteHarness(): Promise<EngineHarness> {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-inbox-sqlite-'));

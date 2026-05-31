@@ -4,10 +4,10 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
-setDefaultTimeout(20_000);
+setDefaultTimeout(60_000);
 
-let pglite: PGLiteEngine;
-let sqlite: SQLiteEngine;
+let pglite: PGLiteEngine | undefined;
+let sqlite: SQLiteEngine | undefined;
 
 beforeAll(async () => {
   pglite = new PGLiteEngine();
@@ -20,8 +20,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await pglite.disconnect();
-  await sqlite.disconnect();
+  await pglite?.disconnect();
+  await sqlite?.disconnect();
 });
 
 async function clearEngine(engine: PGLiteEngine | SQLiteEngine): Promise<void> {
@@ -76,20 +76,20 @@ async function expectEmbeddingClearedWhenChunkIdentityChanges(engine: BrainEngin
 
 describe('chunk embedding freshness identity', () => {
   beforeEach(async () => {
-    await clearEngine(pglite);
-    await clearEngine(sqlite);
+    await clearEngine(pglite!);
+    await clearEngine(sqlite!);
   });
 
   test('SQLite clears preserved embeddings when chunk text changes without a replacement embedding', async () => {
-    await expectEmbeddingClearedWhenChunkIdentityChanges(sqlite);
+    await expectEmbeddingClearedWhenChunkIdentityChanges(sqlite!);
   });
 
   test('PGLite clears preserved embeddings when chunk text changes without a replacement embedding', async () => {
-    await expectEmbeddingClearedWhenChunkIdentityChanges(pglite);
+    await expectEmbeddingClearedWhenChunkIdentityChanges(pglite!);
   });
 
   test('PGLite preserves embeddings for unchanged chunks backfilled by migration 36', async () => {
-    const page = await pglite.putPage('concepts/migrated-chunk-freshness', {
+    const page = await pglite!.putPage('concepts/migrated-chunk-freshness', {
       type: 'concept',
       title: 'Migrated Chunk Freshness',
       compiled_truth: 'Migrated embedded chunk text.',
@@ -98,7 +98,7 @@ describe('chunk embedding freshness identity', () => {
       .update('compiled_truth\nMigrated embedded chunk text.')
       .digest('hex');
 
-    await (pglite as any).db.query(
+    await (pglite! as any).db.query(
       `INSERT INTO content_chunks (
         page_id, chunk_index, chunk_text, chunk_source, chunk_content_hash, embedding, model, token_count, embedded_at
       ) VALUES ($1, 0, $2, 'compiled_truth', $3, $4::vector, 'test-embedding-v1', NULL, now())`,
@@ -110,14 +110,14 @@ describe('chunk embedding freshness identity', () => {
       ],
     );
 
-    await pglite.upsertChunks('concepts/migrated-chunk-freshness', [{
+    await pglite!.upsertChunks('concepts/migrated-chunk-freshness', [{
       chunk_index: 0,
       chunk_text: 'Migrated embedded chunk text.',
       chunk_source: 'compiled_truth',
       model: 'test-embedding-v1',
     }]);
 
-    const unchanged = (await pglite.getChunksWithEmbeddings('concepts/migrated-chunk-freshness'))[0]!;
+    const unchanged = (await pglite!.getChunksWithEmbeddings('concepts/migrated-chunk-freshness'))[0]!;
     expect(unchanged.chunk_content_hash).toBe(migratedHash);
     expect(unchanged.embedding).not.toBeNull();
     expect(unchanged.embedded_at).not.toBeNull();

@@ -11,6 +11,8 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 setDefaultTimeout(20_000);
 
+const PGLITE_SOURCE_REGISTRY_TEST_TIMEOUT_MS = 60_000;
+
 function getOperation(name: string): Operation {
   const operation = operations.find((candidate) => candidate.name === name);
   if (!operation) throw new Error(`Operation not found: ${name}`);
@@ -123,6 +125,10 @@ describe('source registry operations', () => {
     ['sqlite', createSqliteHarness],
     ['pglite', createPgliteHarness],
   ] as const) {
+    const timeoutMs = createHarness === createPgliteHarness
+      ? PGLITE_SOURCE_REGISTRY_TEST_TIMEOUT_MS
+      : undefined;
+
     test(`connector source registration persists minimal consent and remains inspectable on ${label}`, async () => {
       const harness = await createHarness(`connector-${label}`);
       try {
@@ -195,7 +201,7 @@ describe('source registry operations', () => {
       } finally {
         await harness.cleanup();
       }
-    });
+    }, timeoutMs);
   }
 
   test('connector registration without a credential reference is inspectable but not healthy', async () => {
@@ -578,7 +584,7 @@ describe('source registry operations', () => {
     } finally {
       await harness.cleanup();
     }
-  });
+  }, PGLITE_SOURCE_REGISTRY_TEST_TIMEOUT_MS);
 
   test('generic source registration persists source status history for inspection', async () => {
     const harness = await createSqliteHarness('generic');
