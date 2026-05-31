@@ -407,6 +407,28 @@ describe('PGLiteEngine: Chunks', () => {
     expect(chunks.length).toBe(1);
     expect(chunks[0].embedding).not.toBeNull();
   });
+
+  test('upsertChunks stores every row past the int16 Bind param ceiling', async () => {
+    // Regression: PGLite binds a statement's params through a SIGNED int16,
+    // so a single multi-row INSERT silently inserts 0 rows (NO error thrown)
+    // once it exceeds 32767 bound params. At ~15 params/row that ceiling is
+    // ~2184 text chunks, so upsertChunks must split the INSERT into batches.
+    // 2500 chunks => ~37500 params, which forces more than one batch.
+    await engine.putPage('test/many-chunks', testPage);
+    const COUNT = 2500;
+    const many: ChunkInput[] = Array.from({ length: COUNT }, (_, i) => ({
+      chunk_index: i,
+      chunk_text: `Chunk number ${i}`,
+      chunk_source: 'compiled_truth',
+    }));
+    await engine.upsertChunks('test/many-chunks', many);
+    const chunks = await engine.getChunks('test/many-chunks');
+    expect(chunks.length).toBe(COUNT);
+    // Content stays intact and contiguous across the batch boundary.
+    expect(chunks[0].chunk_text).toBe('Chunk number 0');
+    expect(chunks[2000].chunk_text).toBe('Chunk number 2000');
+    expect(chunks[COUNT - 1].chunk_text).toBe(`Chunk number ${COUNT - 1}`);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────

@@ -2008,6 +2008,37 @@ export class PostgresEngine implements BrainEngine {
     // v0.27.1 (Phase 8): added `modality` + `embedding_image` to the column
     // list. Image chunks pass embedding=null + embedding_image=Float32Array.
     const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)';
+
+    // Batch the multi-row INSERT to stay under the Bind parameter ceiling. The
+    // PGLite engine binds params through a SIGNED int16, so a single INSERT
+    // silently no-ops (0 rows, NO error thrown) above 32767 params; the
+    // generated __generated__/graphql.ts chunked past that and pinned
+    // sync.last_commit. Both engines share this conservative budget. (Fix 6)
+    const MAX_BIND_PARAMS = 30000;
+    let batch: ChunkInput[] = [];
+    let batchParams = 0;
+    for (const chunk of chunks) {
+      // Base row = 15 params + 1 per present embedding (text / image vector).
+      const rowParamCount =
+        15 + (chunk.embedding ? 1 : 0) + (chunk.embedding_image ? 1 : 0);
+      if (batch.length > 0 && batchParams + rowParamCount > MAX_BIND_PARAMS) {
+        await this._insertChunkBatch(cols, pageId, batch);
+        batch = [];
+        batchParams = 0;
+      }
+      batch.push(chunk);
+      batchParams += rowParamCount;
+    }
+    if (batch.length > 0) await this._insertChunkBatch(cols, pageId, batch);
+  }
+
+  /**
+   * Build and run one multi-row INSERT ... ON CONFLICT for a param-budgeted
+   * slice of chunks (Fix 6). Keeps each statement under the signed-int16 Bind
+   * parameter ceiling.
+   */
+  private async _insertChunkBatch(cols: string, pageId: number, chunks: ChunkInput[]): Promise<void> {
+    const sql = this.sql;
     const rows: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
