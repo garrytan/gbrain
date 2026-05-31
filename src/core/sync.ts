@@ -241,6 +241,11 @@ function matchesAnyGlob(path: string, patterns?: string[]): boolean {
  */
 const PRUNE_DIR_NAMES = new Set<string>([
   'node_modules',
+  'venv',
+  '.venv',
+  '__pycache__',
+  'dist',
+  'build',
   '.raw',
   'ops',
 ]);

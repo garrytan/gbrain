@@ -425,6 +425,26 @@ export async function runImport(
     summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
   });
 
+  // Local-folder source freshness: a successful source-routed import is a
+  // real source sync even when the directory is not a git repo. Previously
+  // only git-backed imports/syncs advanced sources.last_sync_at, so valid
+  // local project sources stayed stuck at "never synced" forever despite
+  // their pages being current. Advance the source freshness bookmark only on
+  // a clean run; per-file failures should remain visible in doctor/status.
+  if (sourceId) {
+    if (failures.length === 0) {
+      await engine.executeRaw(
+        `UPDATE sources SET local_path = COALESCE(local_path, $1), last_sync_at = now() WHERE id = $2`,
+        [dir, sourceId],
+      );
+    } else {
+      console.error(
+        `\nImport completed with ${failures.length} failure(s). ` +
+        `sources.last_sync_at for \`${sourceId}\` NOT advanced.`,
+      );
+    }
+  }
+
   // Import → sync continuity: write sync checkpoint if this is a git repo.
   // Bug 9 — gate last_commit on "no failures" so import doesn't silently
   // stomp on the sync bookmark when parsing broke. We still write
@@ -544,11 +564,11 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       return;
     }
     for (const entry of entries) {
-      // Skip hidden dirs (.git, .claude, .raw, etc.) and `node_modules`/`ops`.
+      // Skip hidden dirs (.git, .claude, .raw, etc.) and common generated/dependency dirs.
       // Same set the legacy walkers honored, surfaced once at the top of
       // every iteration.
       if (entry.startsWith('.')) continue;
-      if (entry === 'node_modules' || entry === 'ops') continue;
+      if (entry === 'node_modules' || entry === 'venv' || entry === '.venv' || entry === '__pycache__' || entry === 'dist' || entry === 'build' || entry === 'ops') continue;
 
       const full = join(d, entry);
       let stat;
