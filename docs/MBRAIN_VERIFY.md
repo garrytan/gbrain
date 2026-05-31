@@ -75,7 +75,7 @@ Expected:
 - DB-only legacy state is called out for manual review instead of silently
   claiming full migration.
 - the real Postgres confidence smoke initializes a disposable target, imports a
-  Markdown fixture, checks projection lineage, runs `bun run test:phase13`, and
+  Markdown fixture, runs `projection-explain` (empty lineage for a fresh `--no-embed` import), runs `bun run test:phase13`, and
   finishes with `mbrain doctor --json` without OpenAI or Anthropic API keys.
 
 ## Postgres runtime confidence smoke

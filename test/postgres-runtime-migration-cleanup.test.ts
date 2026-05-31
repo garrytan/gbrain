@@ -982,7 +982,7 @@ describe('postgres runtime migration cleanup', () => {
     expect(verify).toContain('completed legacy compatibility copies still verify counts and content hashes');
     expect(verify).toContain('DATABASE_URL=\'postgresql://...\' bun run smoke:postgres-runtime');
     expect(verify).toContain('real Postgres confidence smoke initializes a disposable target');
-    expect(verify).toContain('checks projection lineage');
+    expect(verify).toContain('runs `projection-explain` (empty lineage for a fresh `--no-embed` import)');
     expect(verify).toContain('runs `bun run test:phase13`');
     expect(verify).toContain('## Postgres runtime confidence smoke');
     expect(verify).toContain('real Postgres init, Markdown');

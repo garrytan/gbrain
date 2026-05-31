@@ -14,9 +14,12 @@ landed slices and to choose the next phase from current evidence.
 
 ## Overall Result
 
-- The original P0 gap for live ChatGPT Developer Mode validation is closed.
-- `mbrain serve --http --oauth` has live OAuth/DCR/PKCE evidence against
-  ChatGPT and real Postgres.
+- The ChatGPT Developer Mode descriptor + OAuth/DCR/PKCE path is implemented
+  and unit-tested. A live ChatGPT session was confirmed manually once on
+  2026-05-31 (author attestation); this is not a reproducible in-repo gate.
+- `mbrain serve --http --oauth` has reproducible OAuth/DCR/PKCE evidence via the
+  simulated `smoke:http-oauth` flow against real Postgres; the live ChatGPT leg
+  is the manual 2026-05-31 check above, not an automated artifact.
 - HTTP MCP now serves full tool descriptors for ChatGPT action discovery while
   stdio remains compact.
 - Phase 14 now has a real Postgres runtime confidence smoke for the final
@@ -27,13 +30,13 @@ landed slices and to choose the next phase from current evidence.
 
 | Phase | Status | Current evidence | Remaining work |
 |---|---|---|---|
-| 00 Postgres Foundation | Implemented | `src/core/postgres-runtime/connection-profile.ts`, `test/postgres-runtime-foundation.test.ts`, `docs/MBRAIN_VERIFY.md` | Keep release docs synced when target-runtime defaults change. |
+| 00 Postgres Foundation | Partial | `src/core/postgres-runtime/connection-profile.ts`, `test/postgres-runtime-foundation.test.ts`, `test/e2e/mechanical.test.ts`, `docs/MBRAIN_VERIFY.md` | Engine gating, profile resolution, DSN redaction, fresh Postgres double-init, and schema idempotency coverage are implemented, but the spec `db status/migrate/backup/restore` CLI, the tsvector/migration-lock/backup-path doctor checks, and backup-artifact/restorable-backup coverage are not yet present. |
 | 01 Source Registry And Policy | Implemented | `src/core/source-registry/source-policy.ts`, `src/core/services/source-registry-service.ts`, `src/core/operations-source-registry.ts`, `test/source-registry-policy-service.test.ts`, `test/source-registry-operations.test.ts` | Add new source kinds only through policy tests. |
 | 02 Raw Ingest And Provenance | Implemented | `src/core/source-registry/raw-ingest.ts`, `src/core/source-registry/raw-access-ledger.ts`, `test/raw-ingest-provenance-service.test.ts`, `test/raw-access-ledger-service.test.ts` | Keep raw text untrusted and scoped for future connectors. |
 | 03 Assertion Pipeline | Implemented | `src/core/assertions/`, `src/core/services/assertion-pipeline-service.ts`, `test/assertion-pipeline-service.test.ts`, `test/assertion-resolution.test.ts`, `test/assertion-evidence-service.test.ts`, `test/assertion-operations*.test.ts` | Broaden real-source extraction fixtures as connectors land. |
-| 04 Governed Canonical Write | Implemented | `src/core/canonical-write/`, `src/core/services/governed-canonical-write-service.ts`, `test/governed-canonical-write-service.test.ts` | Keep every new canonical mutation routed through policy. |
+| 04 Governed Canonical Write | Partial | `src/core/canonical-write/`, `src/core/services/governed-canonical-write-service.ts`, `test/governed-canonical-write-service.test.ts` | Dual-write, mutation ledger, and projection write are complete, but the source x claim authority matrix is not wired into `write-policy.ts` — `auto_canonical` is explicitly gated to high-confidence exact `user_direct` canonical claims, code claims still route to `verify_first`, safety/conflict/grant guards can return `quarantine`/`conflict`/`no_write`, and otherwise eligible non-`user_direct` claims fall back conservatively to `candidate`. Wire `lookupSourceAuthority`, or document the conservative scope as the intended policy. |
 | 05 Maintenance Runtime | Implemented | `src/core/maintenance/job-runtime.ts`, `src/core/services/maintenance-runtime-service.ts`, `test/maintenance-runtime-service.test.ts`, `test/maintenance-runtime-db-adapter.test.ts`, `test/maintenance-runtime-schema.test.ts` | Watch queue/backpressure behavior under longer real workloads. |
-| 06 Autopilot Daemon | Implemented | `src/core/maintenance/autopilot.ts`, `src/commands/autopilot.ts`, `test/autopilot-service.test.ts`, `test/dream-cli-autopilot.test.ts`, CLI surface in `src/cli.ts` | Keep platform-specific scheduling behavior covered when launch profiles change. |
+| 06 Autopilot Daemon | Partial | `src/core/maintenance/autopilot.ts`, `src/commands/autopilot.ts`, `test/autopilot-service.test.ts`, `test/dream-cli-autopilot.test.ts`, CLI surface in `src/cli.ts` | Cycle submission, idempotency/coalesce, and status are implemented and tested, but no real OS scheduler (launchd/systemd/cron) or daemon lifecycle is wired — `install`/`start`/`stop` return `scheduler_not_configured` and only service-profile text is rendered. |
 | 07 Dream Cycle | Implemented | `src/core/maintenance/dream-cycle.ts`, `src/core/services/dream-cycle-runner-service.ts`, `src/core/services/dream-cycle-maintenance-service.ts`, `test/dream-cycle-runner-service.test.ts`, `test/dream-cycle-maintenance-service.test.ts`, `test/dream-cli-autopilot.test.ts`, `test/phase8-dream-cycle.test.ts` | Expand phase families only with report and unavailable-family coverage. |
 | 08 Lifecycle Forgetting | Implemented | `src/core/maintenance/lifecycle-forgetting.ts`, `src/core/services/lifecycle-forgetting-service.ts`, `src/core/operations-lifecycle-forgetting.ts`, `test/lifecycle-forgetting-*.test.ts`, `test/phase8-longitudinal-evaluation.test.ts` | Continue adding policy cases as new source kinds and connectors appear. |
 | 09 Restricted Runner | Implemented | `src/core/runners/`, `src/core/services/restricted-runner-service.ts`, `test/restricted-runner-service.test.ts`, `test/restricted-runner-policy.test.ts`, `test/restricted-runner-postgres.test.ts` | Provider-backed/live runner execution remains environment-gated; keep deterministic fallback coverage green without API keys. |
@@ -45,7 +48,8 @@ landed slices and to choose the next phase from current evidence.
 
 ## Current Next Phase
 
-The original 00-14 Postgres runtime plan is implemented at the repository level.
+The original 00-14 Postgres runtime plan is substantially implemented at the
+repository level; Phases 00, 04, and 06 are partial (see the notes above).
 The next safest work is release integration and operating discipline:
 
 1. Run `bun run smoke:postgres-runtime` against a disposable real Postgres
