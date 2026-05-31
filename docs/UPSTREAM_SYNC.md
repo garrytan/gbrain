@@ -44,6 +44,33 @@ in this file may mention earlier alignment decisions, but those are
 archival context only. `CHANGELOG.md` explains the user-visible release; this
 file explains upstream provenance when upstream code was considered.
 
+## Reference baseline drift guard
+
+When a local `reference/gbrain` checkout exists, check it against the classified
+GA-P0/GA-P1 absorption baseline before claiming current `gbrain` parity:
+
+```bash
+GBRAIN_REFERENCE_PATH=reference/gbrain bun run scripts/check-gbrain-reference-baseline.ts
+```
+
+The script reads `test/fixtures/gbrain-absorption/ga-p0-p1.fixture.json` and
+compares the local checkout's `HEAD` and tag to the recorded upstream baseline.
+If it reports `drifted`, do not claim that the existing absorption matrix covers
+that checkout. Add a new dated classification checkpoint in this file first,
+then update the owning fixture, scenario, and verification docs.
+
+## Runtime direction supersession note
+
+The May 19 GA-P0/GA-P1 local-first guard applies to the `gbrain` absorption
+checkpoint. It prevents direct imports of upstream Postgres-only migrations or
+hosted assumptions that would silently change the then-current SQLite/local
+contract. It is not a veto on the later May 20 Postgres target-runtime plan.
+
+For new Postgres runtime features, the May 20 Postgres runtime specs and status
+snapshot own the target direction. SQLite/PGLite compatibility remains an
+honest local/offline profile boundary: unsupported target-runtime features must
+report clear limits instead of pretending to provide Postgres semantics.
+
 ---
 
 ## Roadmap 2026-05-19 - GA-P0 personal gbrain absorption classification checkpoint

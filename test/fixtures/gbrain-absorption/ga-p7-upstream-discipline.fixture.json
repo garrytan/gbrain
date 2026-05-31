@@ -4,11 +4,16 @@
   "description": "GA-P7 consolidates GA-P2 through GA-P6 into an upstream-discipline checkpoint that records adopted, reinterpreted, rejected, and deferred reference areas without production runtime changes.",
   "verification_commands": [
     "bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-upstream-discipline.test.ts",
+    "bun test test/gbrain-reference-baseline-script.test.ts",
     "bun run test:scenarios",
     "bunx tsc --noEmit --pretty false",
     "git diff --check",
+    "MBRAIN_CHANGED_PATH_BASE=\"${MBRAIN_CHANGED_PATH_BASE:-origin/master}\" MBRAIN_DISALLOWED_PATH_PREFIXES='src/,supabase/,.github/workflows/' bun run scripts/check-diff-path-boundary.ts",
     "GA_P7_COMMIT=\"$(git log --format=%H --fixed-strings --grep='Add GA-P7 upstream discipline checkpoint' -n 1)\"",
     "git diff --name-only \"${GA_P7_COMMIT}^..${GA_P7_COMMIT}\""
+  ],
+  "optional_verification_commands": [
+    "GBRAIN_REFERENCE_PATH=reference/gbrain bun run scripts/check-gbrain-reference-baseline.ts"
   ],
   "runtime_change_guard": {
     "commit_subject": "Add GA-P7 upstream discipline checkpoint",
@@ -83,6 +88,27 @@
       "case_id": "deferred_surfaces_remain_explicit",
       "classification": "deferred",
       "required_terms": ["frontmatter guards", "parallel incremental sync", "tree-sitter"],
+      "expected_doc": "docs/UPSTREAM_SYNC.md",
+      "expected_runtime_change": false
+    },
+    {
+      "case_id": "reference_baseline_drift_guard",
+      "classification": "verification_coverage",
+      "required_terms": ["Reference baseline drift guard", "check-gbrain-reference-baseline", "drifted"],
+      "expected_doc": "docs/UPSTREAM_SYNC.md",
+      "expected_runtime_change": false
+    },
+    {
+      "case_id": "current_branch_path_guard",
+      "classification": "verification_coverage",
+      "required_terms": ["check-diff-path-boundary", "current branch diff", "historical GA-P7 commit-only"],
+      "expected_doc": "docs/MBRAIN_VERIFY.md",
+      "expected_runtime_change": false
+    },
+    {
+      "case_id": "runtime_direction_supersession",
+      "classification": "supersession_note",
+      "required_terms": ["Runtime direction supersession", "May 20 Postgres runtime", "SQLite/PGLite"],
       "expected_doc": "docs/UPSTREAM_SYNC.md",
       "expected_runtime_change": false
     },

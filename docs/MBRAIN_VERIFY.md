@@ -349,12 +349,22 @@ Run:
 
 ```bash
 bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-upstream-discipline.test.ts
+bun test test/gbrain-reference-baseline-script.test.ts
 bun run test:scenarios
 bunx tsc --noEmit --pretty false
 git diff --check
+MBRAIN_CHANGED_PATH_BASE="${MBRAIN_CHANGED_PATH_BASE:-origin/master}" \
+MBRAIN_DISALLOWED_PATH_PREFIXES='src/,supabase/,.github/workflows/' \
+bun run scripts/check-diff-path-boundary.ts
 GA_P7_COMMIT="$(git log --format=%H --fixed-strings --grep='Add GA-P7 upstream discipline checkpoint' -n 1)"
 test -n "$GA_P7_COMMIT"
 git diff --name-only "${GA_P7_COMMIT}^..${GA_P7_COMMIT}"
+```
+
+When a local `reference/gbrain` checkout exists, also run:
+
+```bash
+GBRAIN_REFERENCE_PATH=reference/gbrain bun run scripts/check-gbrain-reference-baseline.ts
 ```
 
 Expected:
@@ -387,6 +397,16 @@ Expected:
   registry, and docs-contract test files; it contains no `src/`, `supabase/`,
   `scripts/`, or workflow runtime changes
 - No network, database, or production runtime service is required for S32.
+- `test/gbrain-reference-baseline-script.test.ts` proves the baseline drift
+  guard exits successfully for a matching checkout and fails when the local
+  checkout has moved past the classified baseline or has local modifications
+- the optional `GBRAIN_REFERENCE_PATH=reference/gbrain` check reports `matching`
+  only when the local checkout still points at the classified GA-P0/GA-P1
+  baseline; a `drifted` result means the absorption matrix must be refreshed
+  before claiming parity with that checkout
+- `scripts/check-diff-path-boundary.ts` can check the current branch diff
+  against disallowed runtime path prefixes, closing the gap left by the
+  historical GA-P7 commit-only changed-path check
 
 ## Phase 1 operational-memory verification
 
