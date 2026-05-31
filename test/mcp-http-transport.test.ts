@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createHash } from 'crypto';
+import { createHash, createHash as sha256 } from 'crypto';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -321,6 +321,258 @@ describe('MCP HTTP transport', () => {
     expect(response.result.isError).toBe(true);
     expect(logs).toEqual([{ operation: 'failing_tool', status: 'error' }]);
   });
+
+  test('serves OAuth metadata and dynamic client registration when enabled', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+
+    const metadata = await handler(new Request('http://localhost/.well-known/oauth-authorization-server'));
+    expect(metadata.status).toBe(200);
+    expect(await metadata.json()).toMatchObject({
+      issuer: 'https://brain.example.com',
+      authorization_endpoint: 'https://brain.example.com/oauth/authorize',
+      token_endpoint: 'https://brain.example.com/oauth/token',
+      registration_endpoint: 'https://brain.example.com/oauth/register',
+      code_challenge_methods_supported: ['S256'],
+    });
+
+    const protectedResource = await handler(new Request('http://localhost/.well-known/oauth-protected-resource'));
+    expect(protectedResource.status).toBe(200);
+    expect(await protectedResource.json()).toMatchObject({
+      resource: 'https://brain.example.com/mcp',
+      authorization_servers: ['https://brain.example.com'],
+    });
+
+    const register = await handler(new Request('http://localhost/oauth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'ChatGPT',
+        redirect_uris: ['https://chat.openai.com/aip/callback'],
+        token_endpoint_auth_method: 'none',
+      }),
+    }));
+    expect(register.status).toBe(201);
+    const registration = await register.json() as { client_id: string; redirect_uris: string[] };
+    expect(registration.client_id).toStartWith('mbrain_dcr_');
+    expect(registration.redirect_uris).toEqual(['https://chat.openai.com/aip/callback']);
+  });
+
+  test('OAuth authorization code exchange mints an MCP bearer token with PKCE', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const verifier = 'test-verifier-abcdefghijklmnopqrstuvwxyz0123456789';
+    const challenge = sha256('sha256').update(verifier).digest('base64url');
+
+    const authorize = await handler(new Request('http://localhost/oauth/authorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        approval_token: 'owner-secret',
+        response_type: 'code',
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        state: 'opaque-state',
+        scope: 'mcp',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }),
+    }));
+
+    expect(authorize.status).toBe(302);
+    const redirect = new URL(authorize.headers.get('Location')!);
+    expect(redirect.origin + redirect.pathname).toBe(redirectUri);
+    expect(redirect.searchParams.get('state')).toBe('opaque-state');
+    const code = redirect.searchParams.get('code');
+    expect(code).toEqual(expect.any(String));
+
+    const token = await handler(new Request('http://localhost/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        code: code!,
+        code_verifier: verifier,
+      }),
+    }));
+
+    expect(token.status).toBe(200);
+    const payload = await token.json() as { access_token: string; token_type: string; expires_in: number; refresh_token: string };
+    expect(payload.access_token).toStartWith('mbrain_');
+    expect(payload.token_type).toBe('Bearer');
+    expect(payload.expires_in).toBeGreaterThan(0);
+    expect(payload.refresh_token).toStartWith('mbrain_refresh_');
+
+    const tools = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${payload.access_token}`,
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 }),
+    }));
+    expect(tools.status).toBe(200);
+
+    const inspectDb = new Database(dbPath);
+    const tokenHash = createHash('sha256').update(payload.access_token).digest('hex');
+    const row = inspectDb
+      .query('SELECT name, scopes, last_used_at FROM access_tokens WHERE token_hash = ?')
+      .get(tokenHash) as { name: string; scopes: string; last_used_at: string | null };
+    inspectDb.close();
+    expect(row.name).toBe('oauth:ChatGPT');
+    expect(JSON.parse(row.scopes)).toContain('mcp');
+    expect(row.last_used_at).toEqual(expect.any(String));
+  });
+
+  test('OAuth token endpoint rejects reused codes and bad PKCE verifiers', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const verifier = 'test-verifier-abcdefghijklmnopqrstuvwxyz0123456789';
+    const challenge = sha256('sha256').update(verifier).digest('base64url');
+    const authorize = await handler(new Request('http://localhost/oauth/authorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        approval_token: 'owner-secret',
+        response_type: 'code',
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }),
+    }));
+    const code = new URL(authorize.headers.get('Location')!).searchParams.get('code')!;
+
+    const badVerifier = await handler(new Request('http://localhost/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        code,
+        code_verifier: 'wrong-verifier',
+      }),
+    }));
+    expect(badVerifier.status).toBe(400);
+    expect(await badVerifier.json()).toMatchObject({ error: 'invalid_grant' });
+
+    const firstExchange = await handler(new Request('http://localhost/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        code,
+        code_verifier: verifier,
+      }),
+    }));
+    expect(firstExchange.status).toBe(200);
+
+    const secondExchange = await handler(new Request('http://localhost/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        code,
+        code_verifier: verifier,
+      }),
+    }));
+    expect(secondExchange.status).toBe(400);
+    expect(await secondExchange.json()).toMatchObject({ error: 'invalid_grant' });
+  });
+
+  test('OAuth authorization codes are single-use under concurrent exchange attempts', async () => {
+    const { dbPath } = createSqliteTokenDb();
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+      oauth: {
+        enabled: true,
+        publicBaseUrl: 'https://brain.example.com',
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+      },
+    });
+    const redirectUri = 'https://chat.openai.com/aip/callback';
+    const client = await registerOAuthClient(handler, redirectUri);
+    const verifier = 'test-verifier-abcdefghijklmnopqrstuvwxyz0123456789';
+    const challenge = sha256('sha256').update(verifier).digest('base64url');
+    const authorize = await handler(new Request('http://localhost/oauth/authorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        approval_token: 'owner-secret',
+        response_type: 'code',
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }),
+    }));
+    const code = new URL(authorize.headers.get('Location')!).searchParams.get('code')!;
+
+    const tokenBody = () => new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: client.client_id,
+      redirect_uri: redirectUri,
+      code,
+      code_verifier: verifier,
+    });
+    const exchanges = await Promise.all([
+      handler(new Request('http://localhost/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody(),
+      })),
+      handler(new Request('http://localhost/oauth/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody(),
+      })),
+    ]);
+
+    expect(exchanges.map(response => response.status).sort()).toEqual([200, 400]);
+    const failed = exchanges.find(response => response.status === 400)!;
+    expect(await failed.json()).toMatchObject({ error: 'invalid_grant' });
+  });
 });
 
 async function postMcp(
@@ -347,6 +599,23 @@ async function readJsonRpcResponse(response: Response): Promise<any> {
     return JSON.parse(dataLine.slice('data:'.length).trim());
   }
   return JSON.parse(text);
+}
+
+async function registerOAuthClient(
+  handler: (request: Request) => Promise<Response>,
+  redirectUri: string,
+): Promise<{ client_id: string }> {
+  const response = await handler(new Request('http://localhost/oauth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_name: 'ChatGPT',
+      redirect_uris: [redirectUri],
+      token_endpoint_auth_method: 'none',
+    }),
+  }));
+  expect(response.status).toBe(201);
+  return response.json() as Promise<{ client_id: string }>;
 }
 
 function createStatsEngine(): BrainEngine {

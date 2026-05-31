@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import { Database } from 'bun:sqlite';
 import postgres from 'postgres';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
@@ -6,6 +6,14 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { MBrainConfig } from '../core/config.ts';
 import type { Operation } from '../core/operations.ts';
 import { createMcpServer, createMcpToolExecutionLimiter } from './server.ts';
+import {
+  createMcpOAuthState,
+  handleMcpOAuthRequest,
+  isMcpOAuthPath,
+  oauthResourceMetadataHeader,
+  type McpOAuthAccessTokenInput,
+  type McpOAuthOptions,
+} from './oauth.ts';
 
 const MAX_MCP_HTTP_BODY_BYTES = 1_048_576;
 
@@ -26,6 +34,7 @@ export interface McpHttpHandlerOptions {
   engine: BrainEngine | Promise<BrainEngine>;
   config: MBrainConfig;
   operations?: Operation[];
+  oauth?: McpOAuthOptions;
   authenticate?: (request: Request) => Promise<McpHttpAuthResult>;
   logRequest?: (entry: McpHttpRequestLogEntry) => Promise<void>;
 }
@@ -46,11 +55,20 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): (request: 
   const enginePromise = Promise.resolve(options.engine);
   const authenticate = options.authenticate ?? ((request: Request) => authenticateMcpHttpRequest(options.config, request));
   const toolExecutionLimiter = createMcpToolExecutionLimiter();
+  const oauthState = options.oauth?.enabled ? createMcpOAuthState(options.oauth) : null;
 
   return async function handleMcpHttpRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders() });
+    }
+
+    if (oauthState && isMcpOAuthPath(url.pathname)) {
+      return handleMcpOAuthRequest({
+        request,
+        state: oauthState,
+        issueAccessToken: (input) => issueMcpHttpAccessToken(options.config, input),
+      });
     }
 
     if (url.pathname === '/health') {
@@ -69,7 +87,10 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions): (request: 
 
     const auth = await authenticate(request);
     if (!auth.ok) {
-      return jsonResponse(auth.body, auth.status);
+      const headers = auth.status === 401 && options.oauth?.enabled
+        ? { 'WWW-Authenticate': oauthResourceMetadataHeader(request, options.oauth) ?? '' }
+        : undefined;
+      return jsonResponse(auth.body, auth.status, headers);
     }
 
     const operation = await inferMcpHttpOperation(request);
@@ -193,6 +214,18 @@ async function authenticateMcpHttpRequest(
       };
     }
 
+    if (accessTokenExpired(row.scopes)) {
+      return {
+        ok: false,
+        status: 401,
+        body: {
+          error: 'token_expired',
+          message: 'This OAuth access token expired. Use the OAuth refresh token or reconnect.',
+          docs: 'docs/mcp/CHATGPT.md',
+        },
+      };
+    }
+
     const tokenName = row.name.length > 0
       ? row.name
       : 'unknown';
@@ -214,18 +247,22 @@ async function authenticateMcpHttpRequest(
 async function findAccessToken(
   config: MBrainConfig,
   tokenHash: string,
-): Promise<{ name: string; revoked_at: unknown } | null> {
+): Promise<{ name: string; revoked_at: unknown; scopes: string[] } | null> {
   switch (config.engine) {
     case 'postgres': {
       if (!config.database_url) throw new Error('Missing database_url');
       const sql = postgres(config.database_url, { max: 1 });
       try {
         const rows = await sql`
-          SELECT name, revoked_at FROM access_tokens
+          SELECT name, revoked_at, scopes FROM access_tokens
           WHERE token_hash = ${tokenHash}
         `;
         const row = rows[0];
-        return row ? { name: String(row.name ?? ''), revoked_at: row.revoked_at } : null;
+        return row ? {
+          name: String(row.name ?? ''),
+          revoked_at: row.revoked_at,
+          scopes: parseAccessTokenScopes(row.scopes),
+        } : null;
       } finally {
         await sql.end();
       }
@@ -235,15 +272,60 @@ async function findAccessToken(
       const db = new Database(config.database_path);
       try {
         const row = db
-          .query('SELECT name, revoked_at FROM access_tokens WHERE token_hash = ?')
-          .get(tokenHash) as { name?: unknown; revoked_at?: unknown } | null;
-        return row ? { name: String(row.name ?? ''), revoked_at: row.revoked_at } : null;
+          .query('SELECT name, revoked_at, scopes FROM access_tokens WHERE token_hash = ?')
+          .get(tokenHash) as { name?: unknown; revoked_at?: unknown; scopes?: unknown } | null;
+        return row ? {
+          name: String(row.name ?? ''),
+          revoked_at: row.revoked_at,
+          scopes: parseAccessTokenScopes(row.scopes),
+        } : null;
       } finally {
         db.close();
       }
     }
     case 'pglite':
       throw new Error('HTTP bearer auth is not supported for pglite');
+  }
+}
+
+async function issueMcpHttpAccessToken(
+  config: MBrainConfig,
+  input: McpOAuthAccessTokenInput,
+): Promise<string> {
+  const token = `mbrain_${randomBytes(32).toString('hex')}`;
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+  const scopes = [...new Set([...input.scope, `oauth_exp:${Math.floor(input.expiresAt.getTime() / 1000)}`])];
+  const name = `oauth:${input.clientName}`;
+
+  switch (config.engine) {
+    case 'postgres': {
+      if (!config.database_url) throw new Error('Missing database_url');
+      const sql = postgres(config.database_url, { max: 1 });
+      try {
+        await sql`
+          INSERT INTO access_tokens (name, token_hash, scopes)
+          VALUES (${name}, ${tokenHash}, ${scopes})
+        `;
+      } finally {
+        await sql.end();
+      }
+      return token;
+    }
+    case 'sqlite': {
+      if (!config.database_path) throw new Error('Missing database_path');
+      const db = new Database(config.database_path);
+      try {
+        db.query(`
+          INSERT INTO access_tokens (id, name, token_hash, scopes)
+          VALUES (?, ?, ?, ?)
+        `).run(randomUUID(), name, tokenHash, JSON.stringify(scopes));
+      } finally {
+        db.close();
+      }
+      return token;
+    }
+    case 'pglite':
+      throw new Error('HTTP OAuth token issuance is not supported for pglite');
   }
 }
 
@@ -401,13 +483,17 @@ async function logMcpHttpRequest(config: MBrainConfig, entry: McpHttpRequestLogE
   }
 }
 
-function jsonResponse(body: Record<string, unknown>, status: number): Response {
+function jsonResponse(body: Record<string, unknown>, status: number, extraHeaders: Record<string, string | undefined> = {}): Response {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...corsHeaders(),
+  };
+  for (const [key, value] of Object.entries(extraHeaders)) {
+    if (value) headers[key] = value;
+  }
   return new Response(JSON.stringify(body), {
     status,
-    headers: {
-      'Content-Type': 'application/json',
-      ...corsHeaders(),
-    },
+    headers,
   });
 }
 
@@ -434,4 +520,26 @@ function corsHeaders(): Record<string, string> {
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID',
     'Access-Control-Expose-Headers': 'Mcp-Session-Id',
   };
+}
+
+function parseAccessTokenScopes(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((entry): entry is string => typeof entry === 'string');
+  }
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+  } catch {
+    return value.split(',').map(entry => entry.trim()).filter(Boolean);
+  }
+}
+
+function accessTokenExpired(scopes: string[]): boolean {
+  const expiresAt = scopes
+    .map(scope => scope.startsWith('oauth_exp:') ? Number(scope.slice('oauth_exp:'.length)) : null)
+    .find((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return expiresAt !== undefined && expiresAt <= Math.floor(Date.now() / 1000);
 }

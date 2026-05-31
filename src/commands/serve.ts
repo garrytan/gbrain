@@ -8,6 +8,10 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
   const http = args.includes('--http');
   const host = parseStringFlag(args, '--host') ?? process.env.MBRAIN_HTTP_HOST ?? '127.0.0.1';
   const port = parseNumberFlag(args, '--port') ?? parseEnvPort() ?? 8787;
+  const oauth = args.includes('--oauth') || process.env.MBRAIN_HTTP_OAUTH === '1';
+  const publicBaseUrl = parseStringFlag(args, '--public-url') ?? process.env.MBRAIN_HTTP_PUBLIC_URL;
+  const oauthApprovalToken = process.env.MBRAIN_OAUTH_APPROVAL_TOKEN ?? process.env.MBRAIN_HTTP_OAUTH_PIN;
+  const oauthSigningSecret = process.env.MBRAIN_OAUTH_SIGNING_SECRET;
 
   if (http) {
     const config = loadConfig() ?? DEFAULT_RUNTIME_CONFIG;
@@ -16,8 +20,20 @@ export async function runServe(engine: BrainEngine | Promise<BrainEngine>, args:
       config,
       host,
       port,
+      oauth: oauth ? {
+        enabled: true,
+        publicBaseUrl,
+        approvalToken: oauthApprovalToken,
+        signingSecret: oauthSigningSecret,
+      } : undefined,
     });
     console.error(`Starting MBrain MCP server (HTTP) on http://${server.hostname}:${server.port}`);
+    if (oauth) {
+      console.error('OAuth routes enabled. Set MBRAIN_OAUTH_APPROVAL_TOKEN before connecting a ChatGPT-style client.');
+      if (oauthApprovalToken && !oauthSigningSecret) {
+        console.error('Warning: MBRAIN_OAUTH_SIGNING_SECRET is not set; refresh-token signing will fall back to the approval token. Set a separate 32+ byte random secret for production.');
+      }
+    }
     await new Promise(() => undefined);
     return;
   }

@@ -8,6 +8,7 @@ const repoRoot = new URL('..', import.meta.url).pathname;
 const repoRootUrl = new URL('..', import.meta.url).href;
 const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
 const initSource = readFileSync(new URL('../src/commands/init.ts', import.meta.url), 'utf-8');
+const serveSource = readFileSync(new URL('../src/commands/serve.ts', import.meta.url), 'utf-8');
 const originalEnv = { ...process.env };
 let tempHome: string;
 
@@ -136,6 +137,12 @@ describe('CLI source shape', () => {
 
   test('serve CLI-only dispatch normalizes HTTP flags before starting the server', () => {
     expect(cliSource).toContain('await runServe(enginePromise, normalizeCliOnlyArgs(command, args));');
+  });
+
+  test('serve warns when OAuth refresh signing falls back to the approval token', () => {
+    expect(serveSource).toContain('MBRAIN_OAUTH_SIGNING_SECRET is not set');
+    expect(serveSource).toContain('refresh-token signing will fall back to the approval token');
+    expect(serveSource).toContain('Set a separate 32+ byte random secret for production');
   });
 
   test('init guidance keeps pgvector troubleshooting backend-neutral', () => {
@@ -339,6 +346,8 @@ describe('CLI dispatch integration', () => {
     expect(stdout).toContain('--http');
     expect(stdout).toContain('--host');
     expect(stdout).toContain('--port');
+    expect(stdout).toContain('--oauth');
+    expect(stdout).toContain('--public-url');
     expect(stderr).toBe('');
     expect(exitCode).toBe(0);
   });
@@ -995,7 +1004,7 @@ describe('CLI dispatch integration', () => {
     expect(stdout).toContain('mbrain <command>');
     expect(stdout).toContain('doctor [--json]');
     expect(stdout).toContain('embed [<slug>|--all|--stale]');
-    expect(stdout).toContain('serve [--http] [--host H] [--port P]');
+    expect(stdout).toContain('serve [--http] [--host H] [--port P] [--oauth]');
     expect(stdout).toContain('import <dir> [--no-embed]');
     expect(stdout).toContain('Health check (engine, schema, embeddings, local/managed capabilities)');
     expect(stdout).toContain('Keyword search (engine-native)');

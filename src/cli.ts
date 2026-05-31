@@ -104,6 +104,8 @@ const SERVE_CLI_SPEC: Operation = {
     http: { type: 'boolean', description: 'Serve MCP over HTTP instead of stdio' },
     host: { type: 'string', description: 'HTTP host to bind (default: 127.0.0.1)' },
     port: { type: 'number', description: 'HTTP port to bind (default: 8787)' },
+    oauth: { type: 'boolean', description: 'Enable OAuth 2.1/DCR routes for ChatGPT-style MCP clients' },
+    public_url: { type: 'string', description: 'Public base URL for OAuth metadata when serving behind a tunnel' },
   },
   handler: noopHandler,
   cliHints: { name: 'serve' },
@@ -561,7 +563,7 @@ ADMIN
   autopilot <enable|disable|start|stop|status|install|uninstall|logs|config|run-once|dream>
                                     Manage scheduled maintenance autopilot
   subbrain <add|list|remove>          Manage registered git-backed sub-brains
-  serve [--http] [--host H] [--port P]
+  serve [--http] [--host H] [--port P] [--oauth]
                                     MCP server (stdio or Streamable HTTP)
   call <tool> '<json>'               Raw tool invocation
   version                            Version info

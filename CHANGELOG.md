@@ -6,6 +6,13 @@ All notable changes to MBrain will be documented in this file.
 
 ### Added
 
+- **ChatGPT-style OAuth clients can now connect to the self-hosted MCP server.**
+  `mbrain serve --http --oauth` adds OAuth discovery, protected-resource
+  metadata, Dynamic Client Registration, PKCE authorization code exchange, and
+  refresh-token grants. The flow stays single-user and owner-approved, then
+  stores issued MCP access tokens in the existing hashed `access_tokens` table
+  so remote OAuth clients use the same guarded `/mcp` path as bearer-token
+  clients.
 - **Remote MCP no longer needs a custom wrapper.** `mbrain serve --http` starts
   a built-in Streamable HTTP MCP server with `/mcp`, `/health`, Bearer token
   authentication, request logging, and the same tool catalog, response guards,

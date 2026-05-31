@@ -523,6 +523,17 @@ catalog, response guards, and concurrency limits as stdio. Create tokens with
 `DATABASE_URL=... bun run src/commands/auth.ts create "<client-name>"` against
 the same Postgres brain.
 
+For ChatGPT-style OAuth clients, enable the opt-in OAuth 2.1/DCR routes and set
+a one-time owner approval token:
+
+```bash
+export MBRAIN_OAUTH_APPROVAL_TOKEN='choose-a-long-random-token'
+mbrain serve --http --oauth --public-url https://YOUR-DOMAIN.ngrok.app
+```
+
+OAuth clients discover metadata, register a public client, complete PKCE, and
+receive a normal MBrain bearer token stored in `access_tokens`.
+
 ### Agent Readiness Verification
 
 For an installed `mbrain` command, verify the command your agents are expected
