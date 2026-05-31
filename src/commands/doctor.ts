@@ -300,6 +300,84 @@ export async function whoknowsHealthCheck(_engine: BrainEngine): Promise<Check> 
   }
 }
 
+/**
+ * Verify that indexed code pages can round-trip through `code-def`.
+ *
+ * This catches the concrete failure class where `code-refs <symbol>` can find
+ * a real definition by text, but `code-def <symbol>` returns zero because
+ * older/federated code chunks are missing `symbol_name` metadata.
+ */
+export async function codeSymbolLookupCheck(engine: BrainEngine): Promise<Check> {
+  try {
+    const codeRows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*)::text AS count
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+       WHERE p.page_kind = 'code'`,
+    );
+    const codeChunks = Number(codeRows[0]?.count ?? 0);
+    if (codeChunks === 0) {
+      return {
+        name: 'code_symbol_lookup',
+        status: 'ok',
+        message: 'No code chunks indexed; code-def lookup not applicable.',
+      };
+    }
+
+    const candidates = await engine.executeRaw<{
+      slug: string;
+      language: string | null;
+      symbol_name: string | null;
+      symbol_type: string | null;
+      chunk_text: string;
+    }>(
+      `SELECT p.slug, cc.language, cc.symbol_name, cc.symbol_type, cc.chunk_text
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+       WHERE p.page_kind = 'code'
+       ORDER BY p.slug, cc.start_line NULLS LAST, cc.chunk_index
+       LIMIT 40`,
+    );
+    const { extractDefinitionLikeSymbol, findCodeDef } = await import('./code-def.ts');
+    for (const row of candidates) {
+      const parsed = row.symbol_name
+        ? { symbol: row.symbol_name, symbol_type: row.symbol_type }
+        : extractDefinitionLikeSymbol(row.chunk_text);
+      if (!parsed?.symbol) continue;
+
+      const defs = await findCodeDef(engine, parsed.symbol, {
+        language: row.language ?? undefined,
+        limit: 5,
+      });
+      if (defs.length === 0) {
+        return {
+          name: 'code_symbol_lookup',
+          status: 'fail',
+          message: `code-def failed for indexed symbol ${parsed.symbol} (${row.slug}). Reindex code or repair definition fallback.`,
+        };
+      }
+      return {
+        name: 'code_symbol_lookup',
+        status: 'ok',
+        message: `code-def resolved ${parsed.symbol} (${defs.length} definition site(s)).`,
+      };
+    }
+
+    return {
+      name: 'code_symbol_lookup',
+      status: 'warn',
+      message: `${codeChunks} code chunk(s) indexed, but no definition-like symbol was found to probe. Reindex code if code-def returns empty results.`,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'code_symbol_lookup',
+      status: 'warn',
+      message: `Could not check code symbol lookup: ${msg}`,
+    };
+  }
+}
+
 export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> {
   try {
     const rows = await engine.executeRaw<{ off_grid: string | number; total: string | number }>(
@@ -4774,6 +4852,9 @@ export async function buildChecks(
     progress.heartbeat('whoknows_health');
     checks.push(await whoknowsHealthCheck(engine));
   }
+
+  progress.heartbeat('code_symbol_lookup');
+  checks.push(await codeSymbolLookupCheck(engine));
 
   // v0.36 cross-modal wave: modality column cleanup.
   //

@@ -167,6 +167,49 @@ describe('findCodeDef', () => {
     expect(match!.symbol_type).toMatch(/function|export/);
   });
 
+  test('falls back to definition-like chunk text when symbol metadata is missing', async () => {
+    const pageRows = await engine.executeRaw<{ id: number }>(
+      `INSERT INTO pages (slug, title, type, page_kind, compiled_truth, frontmatter, updated_at, created_at)
+       VALUES (
+         'scripts-dx-agent-common-py-fallback',
+         'scripts/dx/agent_common.py',
+         'code',
+         'code',
+         '',
+         '{"file":"scripts/dx/agent_common.py"}'::jsonb,
+         NOW(),
+         NOW()
+       )
+       RETURNING id`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO content_chunks (
+         page_id, chunk_index, chunk_text, chunk_source, language,
+         symbol_name, symbol_type, start_line, end_line
+       )
+       VALUES (
+         $1,
+         0,
+         '[Python] scripts/dx/agent_common.py:40-45 function load_router\n\n' ||
+         'def load_router(root: Path) -> dict[str, Any]:\n' ||
+         '    return tomllib.loads((root / "agents" / "router.toml").read_text())',
+         'compiled_truth',
+         'python',
+         NULL,
+         NULL,
+         40,
+         45
+       )`,
+      [pageRows[0]!.id],
+    );
+
+    const results = await findCodeDef(engine, 'load_router', { language: 'python' });
+    const match = results.find((r) => r.slug === 'scripts-dx-agent-common-py-fallback');
+    expect(match).toBeDefined();
+    expect(match!.symbol_type).toBe('function');
+    expect(match!.start_line).toBe(40);
+  });
+
   test('returns empty for unknown symbol', async () => {
     const results = await findCodeDef(engine, 'ThisSymbolDoesNotExist');
     expect(results).toEqual([]);

@@ -2,6 +2,56 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.2.0] - 2026-05-31
+
+**`gbrain code-def` now finds real definitions in older or federated code
+indexes even when symbol metadata is incomplete, and `gbrain doctor` now checks
+that symbol lookup actually works.**
+
+This closes the failure mode where `gbrain code-refs load_router` could find a
+definition by text, but `gbrain code-def load_router` returned zero results
+because the indexed chunk had no complete `symbol_name` / `symbol_type`
+metadata. A healthy brain now has to prove that at least one indexed code symbol
+round-trips through `code-def`.
+
+### What changed for you
+
+- **`code-def` has a definition-text fallback.** It still prefers exact
+  `content_chunks.symbol_name` matches, but if those are absent it scans code
+  chunks for definition-shaped text such as Python `def`, TypeScript
+  `function` / `class` / `interface`, and SQL `create table` / `create view`
+  declarations.
+- **Doctor now includes `code_symbol_lookup`.** The check samples indexed code
+  chunks, picks a concrete definition-like symbol, and fails if `code-def`
+  cannot resolve it. "Doctor is healthy" now covers the symbol navigation path
+  agents actually use.
+- **Doctor categorization covers onboard checks.** Checks emitted through the
+  onboard path are now categorized instead of falling through with runtime
+  warnings.
+
+### How to use it
+
+```bash
+gbrain code-def load_router --json
+gbrain code-def RouteRateLimiter --json
+gbrain doctor --json --scope brain
+```
+
+The doctor output should include `code_symbol_lookup` with status `ok` when
+the brain has indexed code definitions that can be resolved.
+
+### Itemized changes
+
+- `src/commands/code-def.ts`: added fallback matching for definition-like code
+  chunks and inferred symbol types when metadata is missing.
+- `src/commands/doctor.ts`: added the `code_symbol_lookup` behavioral check and
+  wired it into the main doctor run.
+- `src/core/doctor-categories.ts`: registered the new check and onboard-check
+  names so doctor output stays quiet and categorized.
+- `test/code-def-refs.test.ts`, `test/doctor-behavioral.test.ts`, and
+  `test/doctor-categories.test.ts`: added regression coverage for metadata-less
+  definitions, the doctor probe, and check-name drift.
+
 ## [0.42.1.0] - 2026-05-29
 
 **Skill self-improvement no longer starts from a blank file.**

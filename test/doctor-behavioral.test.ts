@@ -25,6 +25,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import {
   buildChecks,
+  codeSymbolLookupCheck,
   computeDoctorReport,
   type Check,
 } from '../src/commands/doctor.ts';
@@ -116,6 +117,46 @@ describe('computeDoctorReport — pure score aggregation', () => {
 });
 
 describe('buildChecks — orchestrator against PGLite', () => {
+  test('code_symbol_lookup check proves code-def works without symbol metadata', async () => {
+    const pageRows = await engine.executeRaw<{ id: number }>(
+      `INSERT INTO pages (slug, title, type, page_kind, compiled_truth, frontmatter, updated_at, created_at)
+       VALUES (
+         'scripts-dx-agent-common-py-doctor',
+         'scripts/dx/agent_common.py',
+         'code',
+         'code',
+         '',
+         '{}'::jsonb,
+         NOW(),
+         NOW()
+       )
+       RETURNING id`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO content_chunks (
+         page_id, chunk_index, chunk_text, chunk_source, language,
+         symbol_name, symbol_type, start_line, end_line
+       )
+       VALUES (
+         $1,
+         0,
+         'def load_router(root: Path) -> dict[str, Any]:\n    return {}',
+         'compiled_truth',
+         'python',
+         NULL,
+         NULL,
+         40,
+         45
+       )`,
+      [pageRows[0]!.id],
+    );
+
+    const check = await codeSymbolLookupCheck(engine);
+    expect(check.name).toBe('code_symbol_lookup');
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('load_router');
+  });
+
   test('returns a non-empty Check[] against a fresh brain', async () => {
     const checks = await buildChecks(engine, []);
     expect(Array.isArray(checks)).toBe(true);
@@ -150,6 +191,7 @@ describe('buildChecks — orchestrator against PGLite', () => {
       'eval_drift',
       'reranker_health',
       'embedding_width_consistency',
+      'code_symbol_lookup',
       'autopilot_lock_scope',
     ];
     // NOTE: sync_failures and slug_fallback_audit are deliberately NOT in
