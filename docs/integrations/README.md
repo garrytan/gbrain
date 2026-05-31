@@ -99,9 +99,11 @@ mbrain integrations submit path/to/your-recipe.md
 This is a local preflight only. It does not run health checks, call `git` or
 `gh`, open network connections, write files, or create a pull request. It checks
 frontmatter shape, semver, safe recipe IDs, existing recipe collisions,
-dependencies, recipe body length, and the constrained `health_checks` DSL. On
-success it prints the intended `recipes/<id>.md` target path and a PR checklist.
-Use `--json` for machine-readable output.
+dependencies, recipe body length, and the constrained `health_checks` DSL.
+On success it prints the intended `recipes/<id>.md` target path, PR title/body
+template, included files, and review checklist. The generated package is
+deterministic and does not include secret values, setup logs, or local machine
+paths. Use `--json` for machine-readable output.
 
 ## The Deterministic Collector Pattern
 

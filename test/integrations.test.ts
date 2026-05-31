@@ -447,6 +447,8 @@ the bot token, and import selected channel messages into MBrain.
     const logs: string[] = [];
     const originalLog = console.log;
     const originalExit = process.exit;
+    const previousSlackToken = process.env.SLACK_BOT_TOKEN;
+    process.env.SLACK_BOT_TOKEN = 'do-not-leak-this-token';
     console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
     process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
     try {
@@ -461,9 +463,76 @@ the bot token, and import selected channel messages into MBrain.
         errors: [],
       });
       expect(payload.next_steps).toContain('Copy the recipe to recipes/slack-to-brain.md');
+      expect(payload.next_steps.join('\n')).not.toContain('setup logs');
+      expect(payload.contribution_package).toMatchObject({
+        target_path: 'recipes/slack-to-brain.md',
+        pr_title: 'Add Slack to Brain integration recipe',
+        files_to_include: ['recipes/slack-to-brain.md'],
+      });
+      expect(payload.contribution_package.review_checklist).toContain('Recipe uses the constrained health_checks DSL; submit validates the DSL but does not execute checks');
+      expect(payload.contribution_package.pr_body).toContain('Adds the `Slack to Brain` integration recipe.');
+      expect(payload.contribution_package.pr_body).toContain('- ID: `slack-to-brain`');
+      expect(payload.contribution_package.pr_body).toContain('- Health check types: `env_exists`');
+      expect(payload.contribution_package.pr_body).not.toContain(recipePath);
+      expect(payload.contribution_package.pr_body).not.toContain('do-not-leak-this-token');
     } finally {
       console.log = originalLog;
       process.exit = originalExit;
+      if (previousSlackToken === undefined) {
+        delete process.env.SLACK_BOT_TOKEN;
+      } else {
+        process.env.SLACK_BOT_TOKEN = previousSlackToken;
+      }
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit normalizes user metadata in the generated PR package', async () => {
+    const recipesDir = mkdtempSync(join(tmpdir(), 'mbrain-recipes-empty-'));
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'metadata-safety.md');
+    writeFileSync(recipePath, `---
+id: metadata-safety
+name: |
+  Markdown \`Name\`
+  ## Injected
+version: 1.0.0
+description: |
+  Slack messages become searchable brain entries.
+  ## Injected Section
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: |
+  20 min
+  - [ ] Injected checklist
+---
+This recipe explains how to install a deterministic collector and import
+selected messages into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    try {
+      await runIntegrations(['submit', recipePath, '--json']);
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.contribution_package.pr_title).toBe("Add Markdown 'Name' ## Injected integration recipe");
+      expect(payload.contribution_package.pr_body).toContain("Adds the `Markdown 'Name' ## Injected` integration recipe.");
+      expect(payload.contribution_package.pr_body).toContain('- Setup time: 20 min - [ ] Injected checklist');
+      expect(payload.contribution_package.pr_body).toContain('- Description: Slack messages become searchable brain entries. ## Injected Section');
+      expect(payload.contribution_package.pr_title).not.toContain('\n');
+      expect(payload.contribution_package.pr_body).not.toContain('\n## Injected');
+      expect(payload.contribution_package.pr_body).not.toContain('\n- [ ] Injected checklist');
+    } finally {
+      console.log = originalLog;
       if (previousRecipesDir === undefined) {
         delete process.env.MBRAIN_RECIPES_DIR;
       } else {
@@ -590,6 +659,7 @@ Submitted recipe body with enough text to satisfy validation.
       const payload = JSON.parse(logs.join('\n'));
       expect(payload.ok).toBe(false);
       expect(payload.errors).toContain('health_checks[0] must be a typed object, not a shell command string');
+      expect(payload.contribution_package).toBeUndefined();
     } finally {
       console.log = originalLog;
       process.exit = originalExit;
@@ -690,6 +760,40 @@ Submitted recipe body with enough text to satisfy validation.
       const payload = JSON.parse(logs.join('\n'));
       expect(payload.ok).toBe(false);
       expect(payload.errors).toContain('Missing: requires (add requires: [] when the recipe has no dependencies)');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+    }
+  });
+
+  test('integrations submit reports non-string metadata without crashing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(dir, 'bad-name.md');
+    writeFileSync(recipePath, `---
+id: bad-name
+name: 123
+version: 1.0.0
+description: Should reject invalid metadata without crashing
+category: sense
+requires: []
+secrets: []
+setup_time: 5 min
+---
+Submitted recipe body with enough text to satisfy validation.
+`);
+
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.pr_title).toBeNull();
+      expect(payload.contribution_package).toBeUndefined();
+      expect(payload.errors).toContain("Invalid name: '123'");
     } finally {
       console.log = originalLog;
       process.exit = originalExit;

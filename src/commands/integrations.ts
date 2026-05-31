@@ -88,6 +88,15 @@ interface RecipeSubmissionResult extends RecipeValidationResult {
   pr_title: string | null;
   checklist: string[];
   next_steps: string[];
+  contribution_package?: RecipeContributionPackage;
+}
+
+interface RecipeContributionPackage {
+  target_path: string;
+  pr_title: string;
+  pr_body: string;
+  files_to_include: string[];
+  review_checklist: string[];
 }
 
 const RECIPE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -425,6 +434,67 @@ function recipeTargetPath(id: string): string {
   return `recipes/${id}.md`;
 }
 
+function uniqueHealthCheckTypes(checks: RecipeHealthCheck[]): string[] {
+  return Array.from(new Set(checks.map(check => check.type))).sort();
+}
+
+function normalizeSubmissionText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().replace(/`/g, "'");
+}
+
+function formatInlineCodeValue(value: string): string {
+  return `\`${normalizeSubmissionText(value)}\``;
+}
+
+function formatInlineCodeList(values: string[]): string {
+  return values.length > 0 ? values.map(formatInlineCodeValue).join(', ') : 'None';
+}
+
+function buildContributionPackage(recipe: ParsedRecipe, targetPath: string, prTitle: string): RecipeContributionPackage {
+  const f = recipe.frontmatter;
+  const name = normalizeSubmissionText(f.name);
+  const description = normalizeSubmissionText(f.description);
+  const setupTime = normalizeSubmissionText(f.setup_time);
+  const secretNames = f.secrets.map(secret => normalizeSubmissionText(secret.name));
+  const healthCheckTypes = uniqueHealthCheckTypes(f.health_checks);
+  const reviewChecklist = [
+    'Recipe frontmatter passes mbrain integrations submit',
+    'Recipe uses the constrained health_checks DSL; submit validates the DSL but does not execute checks',
+    'No secret values, setup logs, or local machine paths are included',
+    'docs/integrations/README.md is updated if this should appear in the public recipe table',
+  ];
+
+  const prBody = [
+    '## Summary',
+    '',
+    `Adds the \`${name}\` integration recipe.`,
+    '',
+    '## Recipe',
+    '',
+    `- ID: ${formatInlineCodeValue(f.id)}`,
+    `- Target path: ${formatInlineCodeValue(targetPath)}`,
+    `- Category: ${formatInlineCodeValue(f.category)}`,
+    `- Version: ${formatInlineCodeValue(f.version)}`,
+    `- Setup time: ${setupTime}`,
+    `- Description: ${description}`,
+    `- Requires: ${formatInlineCodeList(f.requires)}`,
+    `- Secret names: ${formatInlineCodeList(secretNames)}`,
+    `- Health check types: ${formatInlineCodeList(healthCheckTypes)}`,
+    '',
+    '## Preflight',
+    '',
+    reviewChecklist.map(item => `- [ ] ${item}`).join('\n'),
+  ].join('\n');
+
+  return {
+    target_path: targetPath,
+    pr_title: prTitle,
+    pr_body: prBody,
+    files_to_include: [targetPath],
+    review_checklist: reviewChecklist,
+  };
+}
+
 function validateRecipe(recipe: ParsedRecipe, allRecipes: ParsedRecipe[], strictSubmission = false): RecipeValidationResult {
   const errors: string[] = [...recipe.validation_errors];
   const warnings: string[] = [];
@@ -480,8 +550,17 @@ function validateRecipe(recipe: ParsedRecipe, allRecipes: ParsedRecipe[], strict
     errors.push(`Invalid id: '${raw.id}' (use lowercase letters, numbers, hyphens, and at most ${MAX_RECIPE_ID_LENGTH} characters)`);
   }
 
-  if (!isNonEmptyString(raw.name)) addMissing('name');
-  if (!isNonEmptyString(raw.description)) addMissing('description');
+  if (!hasFrontmatterValue(raw, 'name')) {
+    addMissing('name');
+  } else if (!isNonEmptyString(raw.name)) {
+    errors.push(`Invalid name: '${raw.name}'`);
+  }
+
+  if (!hasFrontmatterValue(raw, 'description')) {
+    addMissing('description');
+  } else if (!isNonEmptyString(raw.description)) {
+    errors.push(`Invalid description: '${raw.description}'`);
+  }
 
   if (!hasFrontmatterValue(raw, 'version')) {
     addMissing('version');
@@ -495,8 +574,10 @@ function validateRecipe(recipe: ParsedRecipe, allRecipes: ParsedRecipe[], strict
     errors.push(`Invalid category: '${raw.category}' (must be 'infra', 'sense', or 'reflex')`);
   }
 
-  if (!isNonEmptyString(raw.setup_time)) {
-    errors.push('Missing: setup_time');
+  if (!hasFrontmatterValue(raw, 'setup_time')) {
+    addMissing('setup_time');
+  } else if (!isNonEmptyString(raw.setup_time)) {
+    errors.push(`Invalid setup_time: '${raw.setup_time}'`);
   }
 
   if (raw.requires !== undefined && !Array.isArray(raw.requires)) {
@@ -569,13 +650,19 @@ function buildRecipeSubmission(recipe: ParsedRecipe): RecipeSubmissionResult {
     }
   }
 
-  const prTitle = safeId ? `Add ${recipe.frontmatter.name} integration recipe` : null;
+  const rawName = recipe.raw_frontmatter.name;
+  const safeName = isNonEmptyString(rawName) ? normalizeSubmissionText(rawName) : null;
+  const prTitle = safeId && safeName ? `Add ${safeName} integration recipe` : null;
   const checklist = targetPath ? [
     `Copy the recipe to ${targetPath}`,
+    'Use contribution_package.pr_body as the PR body',
     'Update docs/integrations/README.md if this should appear in the public recipe table',
     'Run bun test test/integrations.test.ts',
-    'Open a PR with the generated title and include setup logs if relevant',
+    'Open a PR with the generated title and sanitized PR body',
   ] : [];
+  const contributionPackage = errors.length === 0 && targetPath && prTitle
+    ? buildContributionPackage(recipe, targetPath, prTitle)
+    : undefined;
 
   return {
     ok: errors.length === 0,
@@ -586,6 +673,7 @@ function buildRecipeSubmission(recipe: ParsedRecipe): RecipeSubmissionResult {
     warnings: validation.warnings,
     checklist,
     next_steps: checklist,
+    ...(contributionPackage ? { contribution_package: contributionPackage } : {}),
   };
 }
 
@@ -606,6 +694,10 @@ function printSubmissionResult(result: RecipeSubmissionResult, jsonMode: boolean
   if (result.ok) {
     console.log(`READY: ${result.id} can be submitted as ${result.target_path}`);
     if (result.pr_title) console.log(`PR title: ${result.pr_title}`);
+    if (result.contribution_package) {
+      console.log('\nPR body:');
+      console.log(result.contribution_package.pr_body);
+    }
     console.log('\nChecklist:');
     for (const step of result.checklist) console.log(`  - ${step}`);
   }

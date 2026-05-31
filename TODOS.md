@@ -55,7 +55,7 @@ compiled-binary support after the Postgres target runtime migration.
 ## P2
 
 ### Community recipe submission (`mbrain integrations submit`)
-**What:** Package a user's custom integration recipe for contribution to the MBrain repo. Phase 1 is a local preflight (`mbrain integrations submit <recipe.md>`) that validates frontmatter, checks constrained DSL health_checks, rejects unsafe/colliding IDs, and prints a PR-ready target path/checklist without network, git, or file-write side effects. A later phase can automate PR creation with a template.
+**What:** Package a user's custom integration recipe for contribution to the MBrain repo. Phase 1 is a local preflight (`mbrain integrations submit <recipe.md>`) that validates frontmatter, checks constrained DSL health_checks, rejects unsafe/colliding IDs, and prints a PR-ready target path/checklist without network, git, or file-write side effects. Phase 2 adds a side-effect-free contribution package with deterministic PR title/body/files/checklist. A later optional phase can automate branch and PR creation behind an explicit side-effecting flag.
 
 **Why:** Turns MBrain from "Garry's integrations" into a community ecosystem. The recipe format IS the contribution format.
 
@@ -65,7 +65,7 @@ compiled-binary support after the Postgres target runtime migration.
 
 **Context:** From CEO review (2026-04-11). User explicitly deferred due to bandwidth constraints. Target v0.9.0.
 
-**Depends on:** Constrained health_check DSL (P1, shipped). Phase 1 preflight is implemented; PR creation/template automation remains open.
+**Depends on:** Constrained health_check DSL (P1, shipped). Phase 1 preflight and Phase 2 contribution-package output are implemented; optional git/GitHub PR creation automation remains open.
 
 ### Always-on deployment recipes (Fly.io, Railway)
 **What:** Alternative deployment recipes for voice-to-brain and future integrations that run on cloud servers instead of local + ngrok.

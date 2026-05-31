@@ -6,11 +6,14 @@ All notable changes to MBrain will be documented in this file.
 
 ### Changed
 
-- **Community recipe authors can now preflight contributions before opening a PR.**
+- **Community recipe authors can now preflight and package contributions before opening a PR.**
   `mbrain integrations submit <recipe.md>` validates a custom recipe locally,
   catches unsafe IDs, duplicate targets, malformed frontmatter, and rejected
   health checks, then prints the intended `recipes/<id>.md` target and PR
-  checklist without running network, git, or file-write side effects.
+  checklist without running network, git, or file-write side effects. The
+  machine-readable output now includes a deterministic PR title/body template
+  and file list, so agents can prepare reviewable recipe submissions without
+  leaking secret values or local machine paths.
 - **Integration recipes can no longer execute arbitrary shell health checks.**
   `mbrain integrations doctor` now evaluates a constrained health-check DSL
   for environment variables, alternative credentials, local URLs, and heartbeat
