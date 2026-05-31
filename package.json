@@ -26,6 +26,7 @@
   "build:edge": "bun run build:schema && bun build src/edge-entry.ts --format=esm --outfile=supabase/functions/mbrain-mcp/mbrain-core.js --external=postgres --external=openai --external=fs --external=os --external=path --external=crypto --external=child_process --external=@aws-sdk/client-s3 --external=@anthropic-ai/sdk --external=gray-matter --minify",
   "smoke:installed-mcp": "bun run scripts/smoke-test-installed-mcp.ts",
   "smoke:http-oauth": "bun run scripts/smoke-test-http-oauth.ts",
+  "smoke:postgres-runtime": "bun run scripts/smoke-test-postgres-runtime.ts",
   "bench:phase0": "bun run ./scripts/bench/phase0-baseline.ts",
   "bench:phase1": "bun run ./scripts/bench/phase1-operational-memory.ts",
   "bench:phase2": "bun run ./scripts/bench/phase2-note-manifest.ts",

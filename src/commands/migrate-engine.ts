@@ -378,9 +378,10 @@ export function formatPostgresRuntimeMigrationGuide(input: PostgresRuntimeMigrat
     '5. Manually review legacy DB-only candidates, profile memory, tasks, sessions, and mutation records before deciding what to import.',
     '6. No one-shot assertion rebuild command exists yet; keep DB-only claims manual until a governed rebuild command lands.',
     '7. Inspect projection lineage before accepting drift repair: mbrain projection-explain --target-type page --target-id <slug>.',
-    '8. Run deterministic eval/replay smoke: bun run test:phase13.',
-    '9. Run doctor after migration checks: mbrain doctor --json.',
-    '10. Enable autopilot through onboarding when the doctor report is clean.',
+    '8. Run the real Postgres confidence smoke against a disposable target: DATABASE_URL=<connection_string> bun run smoke:postgres-runtime.',
+    '9. Run deterministic eval/replay smoke when debugging the smoke gate directly: bun run test:phase13.',
+    '10. Run doctor after migration checks when debugging the smoke gate directly: mbrain doctor --json.',
+    '11. Enable autopilot through onboarding when the doctor report is clean.',
   ].join('\n');
 }
 

@@ -1,6 +1,6 @@
 # Connect MBrain to ChatGPT
 
-**Status: OAuth foundation available; live ChatGPT validation still pending**
+**Status: OAuth foundation available; live ChatGPT Developer Mode validation completed**
 
 ChatGPT requires OAuth for remote MCP. Bearer token authentication alone is not
 accepted by ChatGPT's MCP integration.
@@ -12,7 +12,8 @@ an approval token, and the token endpoint stores the issued MCP bearer token in
 the existing `access_tokens` table. OAuth setup state requires the Postgres
 engine; SQLite/PGLite local profiles should use bearer-token HTTP MCP instead.
 
-Before a live ChatGPT pass, agents can run the local runtime confidence smoke:
+Before opening ChatGPT, or when debugging a regression without ChatGPT, agents
+can run the local runtime confidence smoke:
 
 ```bash
 DATABASE_URL='postgresql://...' bun run smoke:http-oauth
@@ -21,8 +22,7 @@ DATABASE_URL='postgresql://...' bun run smoke:http-oauth
 That smoke starts the real HTTP MCP server, simulates DCR + PKCE, calls MCP
 tools with the issued token, refreshes it, and verifies Postgres evidence. Set
 `MBRAIN_SMOKE_RESTART_OAUTH_STATE=1` to prove DCR/client-code state survives
-server restarts during setup. It does not replace live ChatGPT Developer Mode
-validation.
+server restarts during setup. It does not require OpenAI or Anthropic API keys.
 
 To check that OAuth discovery will advertise your public HTTPS issuer instead
 of `localhost`, run the same smoke with the public URL:
@@ -76,6 +76,11 @@ ChatGPT begins setup.
 Refresh grants rotate the client session's access token binding, so older
 access tokens from the same refresh chain are rejected.
 
+HTTP MCP clients receive full tool descriptors with titles, descriptions, and
+MCP read/write/destructive annotations so ChatGPT can list MBrain app actions
+after OAuth connects. Stdio clients keep compact descriptors to preserve frame
+budget headroom.
+
 ## Current limits
 
 - Authorization codes are short-lived and one-use, including concurrent exchange
@@ -90,10 +95,13 @@ access tokens from the same refresh chain are rejected.
 - `bun run smoke:http-oauth` proves the local protocol/runtime path. With
   `MBRAIN_HTTP_PUBLIC_URL`, it also proves the configured public issuer in
   OAuth metadata and challenges. With `MBRAIN_SMOKE_RESTART_OAUTH_STATE=1`, it
-  proves setup state survives HTTP server restarts. It still does not prove
-  ChatGPT's production connector UI or public internet reachability.
-- Live ChatGPT Developer Mode validation is still required before marking this
-  guide as fully verified.
+  proves setup state survives HTTP server restarts. It still does not prove that
+  a specific future public tunnel is reachable from ChatGPT; keep tunnel health
+  and client-side checks as deployment-specific gates.
+- The guide was validated with ChatGPT Developer Mode on 2026-05-31 using a
+  temporary public HTTPS tunnel, Dynamic Client Registration, owner approval,
+  OAuth token exchange, action discovery, and a `get_stats` MCP tool call
+  against real Postgres.
 
 ## Troubleshooting
 

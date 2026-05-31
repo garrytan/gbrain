@@ -10,6 +10,9 @@ runtime redesign. It is not a loose roadmap. Later implementation sessions shoul
 use this document to preserve the architecture decisions made in the design
 session.
 
+For the current post-merge implementation snapshot, see
+`docs/superpowers/specs/2026-05-31-mbrain-postgres-runtime-status.md`.
+
 ## Ordering Rule
 
 Use foundation-first linear phases. Do not jump directly to dream, runners, or

@@ -20,30 +20,26 @@ PGLite escape hatch.
 **Depends on:** A decision that the legacy PGLite escape hatch still needs
 compiled-binary support after the Postgres target runtime migration.
 
-## P0
+## Completed
+
+### Phase 14 Postgres runtime confidence smoke
+**Completed:** Unreleased — `bun run smoke:postgres-runtime` now validates the
+final Postgres runtime cleanup gate against a disposable Postgres target:
+`mbrain init`, Markdown import, projection lineage, deterministic Phase 13
+replay, and `mbrain doctor --json`. It intentionally clears OpenAI and
+Anthropic provider keys for child commands, so it is a no-provider-key release
+confidence gate for the runtime migration path.
 
 ### ChatGPT MCP live validation and OAuth hardening
-**What:** Validate the opt-in OAuth MCP flow against ChatGPT Developer Mode and harden any client-specific edge cases.
-
-**Why:** MBrain now has a self-hosted OAuth 2.1/DCR foundation on `mbrain serve --http --oauth` plus a local runtime smoke that proves DCR, PKCE, token issuance, refresh, public issuer metadata, restart-resilient setup state, and MCP tool calls against real Postgres. Live ChatGPT validation is still needed before claiming the guide is fully verified.
-
-**Pros:** Completes the "every AI client" promise with real client evidence, not just protocol coverage.
-
-**Cons:** Requires a ChatGPT plan/environment with connector setup access and a public HTTPS endpoint.
-
-**Context:** Discovered during DX review (2026-04-10). All other clients
-(Claude Desktop/Code/Cowork, Perplexity) work with bearer tokens. The Edge
-Function deployment was removed in v0.8.0. The built-in `mbrain serve --http`
-runtime now provides the HTTP MCP foundation, and `--oauth` adds discovery,
-DCR, PKCE authorization code exchange, refresh grants, and access-token issuance
-through Postgres-backed OAuth client, authorization-code, and `access_tokens`
-state. `bun run smoke:http-oauth` now gives agents a no-API-key runtime
-confidence gate before the live ChatGPT pass, including public issuer, server
-restart, and bounded pending DCR state checks.
-
-**Depends on:** Live ChatGPT Developer Mode validation.
-
-## Completed
+**Completed:** Unreleased — live ChatGPT Developer Mode validation connected a
+temporary self-hosted `mbrain serve --http --oauth` server through a public HTTPS
+tunnel, completed Dynamic Client Registration and PKCE authorization, approved
+the owner-gated OAuth request, and called `get_stats` through ChatGPT against
+real Postgres. The follow-up hardening exposes full MCP tool descriptors over
+HTTP so ChatGPT can discover app actions, keeps stdio tool schemas compact, and
+returns an explicit empty `resources/list` result for clients that probe MCP
+resources. No OpenAI or Anthropic API keys are required for the MBrain server
+runtime path.
 
 ### HTTP OAuth runtime confidence smoke
 **Completed:** Unreleased — `bun run smoke:http-oauth` starts the real Bun HTTP
@@ -54,7 +50,6 @@ token, confirms the initial access token is rejected after refresh, and verifies
 Postgres `access_tokens` plus `mcp_request_log` evidence. It can also verify a
 configured public HTTPS issuer and restart the HTTP server between OAuth setup
 steps to prove persisted DCR/client-code state.
-This narrows the remaining P0 gap to live ChatGPT Developer Mode validation.
 
 ### Postgres-backed OAuth setup state
 **Completed:** Unreleased — ChatGPT-style OAuth Dynamic Client Registration
