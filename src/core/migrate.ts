@@ -22,12 +22,20 @@ interface Migration {
   version: number;
   name: string;
   sql: string;
-  handler?: (engine: BrainEngine) => Promise<void>;
+  handler?: (engine: BrainEngine, context: MigrationContext) => Promise<void>;
 }
 
 type SqlMigrationEngine = BrainEngine & {
   runMigration(version: number, sql: string): Promise<void>;
 };
+
+type MigrationLog = (message: string) => void;
+
+interface MigrationContext {
+  log: MigrationLog;
+}
+
+const defaultMigrationLog: MigrationLog = (message) => console.log(message);
 
 // Migrations are embedded here, not loaded from files.
 // Add new migrations at the end. Never modify existing ones.
@@ -37,7 +45,7 @@ const MIGRATIONS: Migration[] = [
     version: 2,
     name: 'slugify_existing_pages',
     sql: '',
-    handler: async (engine) => {
+    handler: async (engine, { log }) => {
       const pages = await listAllPages(engine);
       let renamed = 0;
       for (const page of pages) {
@@ -49,11 +57,11 @@ const MIGRATIONS: Migration[] = [
             renamed++;
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
-            console.error(`  Warning: could not rename "${page.slug}" → "${newSlug}": ${msg}`);
+            log(`  Warning: could not rename "${page.slug}" → "${newSlug}": ${msg}`);
           }
         }
       }
-      if (renamed > 0) console.log(`  Renamed ${renamed} slugs`);
+      if (renamed > 0) log(`  Renamed ${renamed} slugs`);
     },
   },
   {
@@ -130,9 +138,9 @@ const MIGRATIONS: Migration[] = [
     version: 7,
     name: 'page_embedding_upgrade',
     sql: '',
-    handler: async (engine) => {
+    handler: async (engine, { log }) => {
       await ensurePageEmbeddingColumn(engine);
-      await backfillMissingPageEmbeddings(engine);
+      await backfillMissingPageEmbeddings(engine, log);
     },
   },
   {
@@ -2858,7 +2866,11 @@ export const LATEST_VERSION = MIGRATIONS.length > 0
   ? MIGRATIONS[MIGRATIONS.length - 1].version
   : 1;
 
-export async function runMigrations(engine: SqlMigrationEngine): Promise<{ applied: number; current: number }> {
+export async function runMigrations(
+  engine: SqlMigrationEngine,
+  options: { log?: MigrationLog } = {},
+): Promise<{ applied: number; current: number }> {
+  const log = options.log ?? defaultMigrationLog;
   const currentStr = await engine.getConfig('version');
   const current = parseInt(currentStr || '1', 10);
 
@@ -2874,12 +2886,12 @@ export async function runMigrations(engine: SqlMigrationEngine): Promise<{ appli
 
       // Application-level handler (runs outside transaction for flexibility)
       if (m.handler) {
-        await m.handler(engine);
+        await m.handler(engine, { log });
       }
 
       // Update version after both SQL and handler succeed
       await engine.setConfig('version', String(m.version));
-      console.log(`  Migration ${m.version} applied: ${m.name}`);
+      log(`  Migration ${m.version} applied: ${m.name}`);
       applied++;
     }
   }
@@ -2924,7 +2936,7 @@ async function ensurePageEmbeddingColumn(engine: BrainEngine): Promise<void> {
   }
 }
 
-async function backfillMissingPageEmbeddings(engine: BrainEngine): Promise<void> {
+async function backfillMissingPageEmbeddings(engine: BrainEngine, log: MigrationLog): Promise<void> {
   const pageEmbeddings = await engine.getPageEmbeddings();
   let backfilled = 0;
 
@@ -2944,7 +2956,7 @@ async function backfillMissingPageEmbeddings(engine: BrainEngine): Promise<void>
   }
 
   if (backfilled > 0) {
-    console.log(`  Backfilled ${backfilled} page embedding centroid(s)`);
+    log(`  Backfilled ${backfilled} page embedding centroid(s)`);
   }
 }
 

@@ -13,6 +13,7 @@ export interface HttpOAuthSmokeOptions {
   approvalToken?: string;
   signingSecret?: string;
   cleanup?: boolean;
+  verbose?: boolean;
 }
 
 export interface HttpOAuthSmokeResult {
@@ -44,6 +45,7 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
   const host = options.host ?? process.env.MBRAIN_HTTP_HOST ?? '127.0.0.1';
   const port = options.port ?? Number(process.env.MBRAIN_HTTP_PORT ?? 0);
   const cleanup = options.cleanup ?? true;
+  const verbose = options.verbose ?? process.env.MBRAIN_SMOKE_VERBOSE === '1';
   const config = resolveConfig({
     engine: 'postgres',
     database_url: databaseUrl,
@@ -53,11 +55,13 @@ export async function runHttpOAuthSmoke(options: HttpOAuthSmokeOptions = {}): Pr
   });
 
   const engine = new PostgresEngine();
-  const sql = postgres(databaseUrl, { max: 1 });
+  const onnotice = createSmokeNoticeHandler(verbose);
+  const schemaLogger = createSmokeSchemaLogger(verbose);
+  const sql = postgres(databaseUrl, { max: 1, onnotice });
   let server: ReturnType<typeof startMcpHttpServer> | null = null;
 
   try {
-    await engine.connect({ database_url: databaseUrl });
+    await engine.connect({ database_url: databaseUrl, onnotice, schemaLogger });
     await engine.initSchema();
     await deleteSmokeEvidence(sql);
 
@@ -362,6 +366,23 @@ async function deleteSmokeEvidence(sql: ReturnType<typeof postgres>): Promise<vo
     DELETE FROM access_tokens
     WHERE name = ${TOKEN_NAME}
   `;
+}
+
+function createSmokeNoticeHandler(verbose: boolean): (notice: postgres.Notice) => void {
+  return (notice) => {
+    if (notice.severity === 'NOTICE') {
+      if (verbose) console.log(notice);
+      return;
+    }
+
+    console.warn(notice);
+  };
+}
+
+function createSmokeSchemaLogger(verbose: boolean): (message: string) => void {
+  return (message) => {
+    if (verbose) console.log(message);
+  };
 }
 
 async function main(): Promise<void> {

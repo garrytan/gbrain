@@ -49,14 +49,24 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
       }>;
     };
 
-    const result = await smoke.runHttpOAuthSmoke({
-      databaseUrl: process.env.DATABASE_URL!,
-      host: '127.0.0.1',
-      port: 0,
-      approvalToken: 'owner-secret',
-      signingSecret: 'test-signing-secret',
-      cleanup: false,
-    });
+    const consoleLogs: unknown[][] = [];
+    const originalLog = console.log;
+    let result: Awaited<ReturnType<typeof smoke.runHttpOAuthSmoke>>;
+    console.log = (...args: unknown[]) => {
+      consoleLogs.push(args);
+    };
+    try {
+      result = await smoke.runHttpOAuthSmoke({
+        databaseUrl: process.env.DATABASE_URL!,
+        host: '127.0.0.1',
+        port: 0,
+        approvalToken: 'owner-secret',
+        signingSecret: 'test-signing-secret',
+        cleanup: false,
+      });
+    } finally {
+      console.log = originalLog;
+    }
 
     expect(result.baseUrl).toStartWith('http://127.0.0.1:');
     expect(result.accessTokenRows).toBeGreaterThanOrEqual(2);
@@ -68,6 +78,7 @@ describeE2E('E2E: HTTP OAuth runtime smoke', () => {
     ]));
     expect(result.refreshedTokenWorked).toBe(true);
     expect(result.initialTokenRejectedAfterRefresh).toBe(true);
+    expect(consoleLogs).toEqual([]);
 
     const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
     try {

@@ -163,6 +163,14 @@ import {
   rowToTaskWorkingSet,
 } from './utils.ts';
 
+type PostgresConnectConfig = EngineConfig & {
+  poolSize?: number;
+  onnotice?: (notice: postgres.Notice) => void;
+  schemaLogger?: (message: string) => void;
+};
+
+const defaultSchemaLogger = (message: string) => console.log(message);
+
 type PostgresConnection = ReturnType<typeof postgres>;
 type PostgresNestedConnection = PostgresConnection & {
   begin?: unknown;
@@ -229,6 +237,7 @@ function normalizePatchLedgerIdArray(ids: readonly string[]): string[] {
 
 export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
+  private schemaLogger = defaultSchemaLogger;
 
   get sql(): ReturnType<typeof postgres> {
     if (!this._sql) {
@@ -242,9 +251,10 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Lifecycle
-  async connect(config: EngineConfig & { poolSize?: number }): Promise<void> {
+  async connect(config: PostgresConnectConfig): Promise<void> {
     if (this._sql) return;
 
+    this.schemaLogger = config.schemaLogger ?? defaultSchemaLogger;
     const url = config.database_url;
     if (!url) {
       throw new MBrainError(
@@ -260,6 +270,7 @@ export class PostgresEngine implements BrainEngine {
         max: config.poolSize ?? 10,
         idle_timeout: 20,
         connect_timeout: 10,
+        onnotice: config.onnotice,
         types: { bigint: postgres.BigInt },
       });
       await sql`SELECT 1`;
@@ -295,9 +306,9 @@ export class PostgresEngine implements BrainEngine {
       await conn.unsafe(SCHEMA_SQL);
 
       // Run any pending migrations automatically
-      const { applied } = await runMigrations(this);
+      const { applied } = await runMigrations(this, { log: this.schemaLogger });
       if (applied > 0) {
-        console.log(`  ${applied} migration(s) applied`);
+        this.schemaLogger(`  ${applied} migration(s) applied`);
       }
     } finally {
       await conn`SELECT pg_advisory_unlock(42)`;

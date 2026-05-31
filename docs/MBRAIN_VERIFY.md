@@ -119,9 +119,12 @@ OpenAI, or Anthropic credentials.
 DATABASE_URL='postgresql://...' bun run smoke:http-oauth
 ```
 
+The smoke suppresses schema NOTICE chatter by default and prints the final JSON
+result. Set `MBRAIN_SMOKE_VERBOSE=1` only when debugging schema initialization.
+
 Expected:
 
-- output ends with `"ok": true`
+- output is a compact JSON result with `"ok": true`
 - `accessTokenRows` is at least `2` because the initial and refreshed access
   tokens were both issued
 - `requestLogRows` is at least `4` and includes `initialize`, `tools/list`, and
