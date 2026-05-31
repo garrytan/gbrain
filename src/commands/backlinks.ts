@@ -10,7 +10,7 @@
  *   mbrain check-backlinks fix --dry-run                  # preview fixes
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, lstatSync, existsSync } from 'fs';
 import { join, relative, posix } from 'path';
 
 interface BacklinkGap {
@@ -261,7 +261,6 @@ export function fixBacklinkGaps(brainDir: string, gaps: BacklinkGap[], dryRun: b
     for (const gap of targetGaps) {
       // Compute relative path from target to source
       const targetDir = targetPage.split('/').slice(0, -1);
-      const sourceDir = gap.sourcePage.split('/');
       const depth = targetDir.length;
       const relPrefix = '../'.repeat(depth);
       const relPath = relPrefix + gap.sourcePage;

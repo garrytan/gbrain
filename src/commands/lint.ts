@@ -256,7 +256,6 @@ export async function runLint(args: string[]) {
   if (doFix) {
     console.log(`${dryRun ? '(dry run) ' : ''}${totalFixed} auto-fixed.`);
   } else if (totalIssues > 0) {
-    const fixable = totalIssues; // rough estimate
     console.log(`Run with --fix to auto-fix fixable issues.`);
   }
 }

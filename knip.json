@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/cli.ts",
+    "src/mcp/server.ts",
+    "src/mcp/http-server.ts",
+    "src/edge-entry.ts",
+    "src/core/index.ts",
+    "src/commands/**/*.ts",
+    "scripts/**/*.ts",
+    "test/**/*.test.ts"
+  ],
+  "project": ["src/**/*.ts"],
+  "ignore": ["src/core/schema-embedded.ts"],
+  "ignoreDependencies": ["openai", "@anthropic-ai/sdk", "pgvector"],
+  "ignoreUnresolved": ["bun-types"],
+  "ignoreBinaries": ["clawhub"]
+}

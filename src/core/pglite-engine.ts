@@ -1,7 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
-import type { Transaction } from '@electric-sql/pglite';
 import type { BrainEngine } from './engine.ts';
 import {
   canonicalDerivedParameters,

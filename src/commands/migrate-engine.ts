@@ -269,7 +269,6 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     }
 
     // Copy versions
-    const versions = await sourceEngine.getVersions(page.slug);
     // Versions are snapshots, we recreate them on the target
     // (createVersion takes a snapshot of current state, which we just set)
 

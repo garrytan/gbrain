@@ -398,7 +398,7 @@ function checkSecrets(secrets: RecipeSecret[]): { set: string[]; missing: Recipe
 type IntegrationStatus = 'available' | 'configured' | 'active';
 
 function getStatus(recipe: ParsedRecipe): IntegrationStatus {
-  const { set, missing } = checkSecrets(recipe.frontmatter.secrets);
+  const { missing } = checkSecrets(recipe.frontmatter.secrets);
   // All required secrets must be set to be "configured"
   if (missing.length > 0) return 'available';
 

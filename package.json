@@ -15,6 +15,11 @@
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint src",
+    "lint:fix": "biome lint --write src",
+    "format": "biome format --write --javascript-formatter-enabled=true src scripts test",
+    "deadcode": "knip --no-exit-code --no-config-hints",
     "build": "bun build --compile --outfile bin/mbrain src/cli.ts",
   "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/mbrain-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/mbrain-linux-x64 src/cli.ts",
   "build:schema": "bash scripts/build-schema.sh",
@@ -110,7 +115,9 @@
     "postgres": "^3.4.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
     "@types/bun": "latest",
+    "knip": "^6.14.2",
     "typescript": "^6.0.2"
   },
   "license": "MIT"

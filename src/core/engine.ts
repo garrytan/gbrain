@@ -1,11 +1,15 @@
-import type {
-  Page, PageInput, PageFilters, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions,
-  NoteManifestEntry,
-  NoteManifestEntryInput,
-  NoteManifestFilters,
-  NoteSectionEntry,
-  NoteSectionEntryInput,
-  NoteSectionFilters,
+import type {BrainHealth,
+  BrainStats,
+  CanonicalHandoffEntry,
+  CanonicalHandoffEntryInput,
+  CanonicalHandoffFilters,
+  Chunk, ChunkInput,
+  ContextAtlasEntry,
+  ContextAtlasEntryInput,
+  ContextAtlasFilters,
+  ContextMapEntry,
+  ContextMapEntryInput,
+  ContextMapFilters,
   DerivedArtifactKind,
   DerivedIndexState,
   DerivedIndexStateFilters,
@@ -15,29 +19,28 @@ import type {
   DerivedJobInput,
   DerivedJobLeaseInput,
   DerivedJobLeaseReleaseInput,
-  ContextMapEntry,
-  ContextMapEntryInput,
-  ContextMapFilters,
-  ContextAtlasEntry,
-  ContextAtlasEntryInput,
-  ContextAtlasFilters,
-  MemoryCandidateEntry,
+  EngineConfig,GraphNode,
+  IngestLogEntry, IngestLogInput,
+  Link,
   MemoryCandidateContradictionEntry,
   MemoryCandidateContradictionEntryInput,
+  MemoryCandidateEntry,
   MemoryCandidateEntryInput,
   MemoryCandidateFilters,
+  MemoryCandidatePatchOperationStatePatch,
+  MemoryCandidatePromotionPatch,
+  MemoryCandidateStatusEvent,
+  MemoryCandidateStatusEventFilters,
+  MemoryCandidateStatusEventInput,
+  MemoryCandidateStatusPatch,
+  MemoryCandidateSupersessionEntry,
+  MemoryCandidateSupersessionInput,
   MemoryMutationEvent,
   MemoryMutationEventFilters,
   MemoryMutationEventInput,
   MemoryRealm,
   MemoryRealmFilters,
   MemoryRealmInput,
-  MemorySession,
-  MemorySessionFilters,
-  MemorySessionAttachment,
-  MemorySessionAttachmentFilters,
-  MemorySessionAttachmentInput,
-  MemorySessionInput,
   MemoryRedactionPlan,
   MemoryRedactionPlanFilters,
   MemoryRedactionPlanInput,
@@ -46,32 +49,31 @@ import type {
   MemoryRedactionPlanItemInput,
   MemoryRedactionPlanItemStatusPatch,
   MemoryRedactionPlanStatusPatch,
-  MemoryCandidatePatchOperationStatePatch,
-  MemoryCandidatePromotionPatch,
-  MemoryCandidateStatusEvent,
-  MemoryCandidateStatusEventFilters,
-  MemoryCandidateStatusEventInput,
-  MemoryCandidateSupersessionEntry,
-  MemoryCandidateSupersessionInput,
-  MemoryCandidateStatusPatch,
-  CanonicalHandoffEntry,
-  CanonicalHandoffEntryInput,
-  CanonicalHandoffFilters,
-  ProfileMemoryEntry,
-  ProfileMemoryEntryInput,
-  ProfileMemoryFilters,
+  MemorySession,
+  MemorySessionAttachment,
+  MemorySessionAttachmentFilters,
+  MemorySessionAttachmentInput,
+  MemorySessionFilters,
+  MemorySessionInput,
+  NoteManifestEntry,
+  NoteManifestEntryInput,
+  NoteManifestFilters,
+  NoteSectionEntry,
+  NoteSectionEntryInput,
+  NoteSectionFilters,
+  Page, PageFilters, PageInput, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions,
+  PageVersion,
   PersonalEpisodeEntry,
   PersonalEpisodeEntryInput,
   PersonalEpisodeFilters,
-  Chunk, ChunkInput,
-  SearchResult, SearchOpts,
-  Link, GraphNode,
-  TimelineEntry, TimelineInput, TimelineOpts,
+  ProfileMemoryEntry,
+  ProfileMemoryEntryInput,
+  ProfileMemoryFilters,
   RawData,
-  PageVersion,
-  BrainStats, BrainHealth,
-  IngestLogEntry, IngestLogInput,
-  EngineConfig,
+  RetrievalTrace,
+  RetrievalTraceInput,
+  RetrievalTraceWindowFilters,SearchOpts,
+  SearchResult,
   TaskAttempt,
   TaskAttemptInput,
   TaskDecision,
@@ -82,18 +84,23 @@ import type {
   TaskThreadPatch,
   TaskWorkingSet,
   TaskWorkingSetInput,
-  RetrievalTrace,
-  RetrievalTraceInput,
-  RetrievalTraceWindowFilters,
+  TimelineEntry, TimelineInput, TimelineOpts,
 } from './types.ts';
 
-export interface BrainEngine {
-  // Lifecycle
+// BrainEngine is composed from focused capability interfaces below. The
+// composition keeps the single `BrainEngine` contract that all engines
+// implement while making each capability independently referenceable (e.g.
+// for offline-profile capability gating and navigability). Method signatures
+// are unchanged from the original flat interface.
+
+export interface EngineLifecycle {
   connect(config: EngineConfig): Promise<void>;
   disconnect(): Promise<void>;
   initSchema(): Promise<void>;
   transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
+}
 
+export interface PageStore {
   // Pages CRUD
   getPage(slug: string): Promise<Page | null>;
   getPageProjection(slug: string, options?: PageProjectionOptions): Promise<PageProjection | null>;
@@ -103,10 +110,6 @@ export interface BrainEngine {
   deletePage(slug: string): Promise<void>;
   listPages(filters?: PageFilters): Promise<Page[]>;
   resolveSlugs(partial: string): Promise<string[]>;
-
-  // Search
-  searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
-  searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]>;
 
   // Chunks
   upsertChunks(slug: string, chunks: ChunkInput[]): Promise<void>;
@@ -118,6 +121,7 @@ export interface BrainEngine {
     embedding: Float32Array | null;
   }>>;
   updatePageEmbedding(slug: string, embedding: Float32Array | null): Promise<void>;
+  getChunksWithEmbeddings(slug: string): Promise<Chunk[]>;
 
   // Links
   addLink(from: string, to: string, context?: string, linkType?: string): Promise<void>;
@@ -143,7 +147,14 @@ export interface BrainEngine {
   createVersion(slug: string): Promise<PageVersion>;
   getVersions(slug: string): Promise<PageVersion[]>;
   revertToVersion(slug: string, versionId: number): Promise<void>;
+}
 
+export interface SearchEngine {
+  searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
+  searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]>;
+}
+
+export interface EngineDiagnostics {
   // Stats + health
   getStats(): Promise<BrainStats>;
   getHealth(): Promise<BrainHealth>;
@@ -151,8 +162,9 @@ export interface BrainEngine {
   // Ingest log
   logIngest(entry: IngestLogInput): Promise<void>;
   getIngestLog(opts?: { limit?: number; offset?: number }): Promise<IngestLogEntry[]>;
+}
 
-  // Operational memory
+export interface OperationalMemoryStore {
   createTaskThread(input: TaskThreadInput): Promise<TaskThread>;
   updateTaskThread(id: string, patch: TaskThreadPatch): Promise<TaskThread>;
   listTaskThreads(filters?: TaskThreadFilters): Promise<TaskThread[]>;
@@ -167,7 +179,9 @@ export interface BrainEngine {
   getRetrievalTrace(id: string): Promise<RetrievalTrace | null>;
   listRetrievalTraces(taskId: string, opts?: { limit?: number }): Promise<RetrievalTrace[]>;
   listRetrievalTracesByWindow(filters: RetrievalTraceWindowFilters): Promise<RetrievalTrace[]>;
+}
 
+export interface PersonalMemoryStore {
   // Personal profile memory
   upsertProfileMemoryEntry(input: ProfileMemoryEntryInput): Promise<ProfileMemoryEntry>;
   getProfileMemoryEntry(id: string): Promise<ProfileMemoryEntry | null>;
@@ -179,7 +193,9 @@ export interface BrainEngine {
   getPersonalEpisodeEntry(id: string): Promise<PersonalEpisodeEntry | null>;
   listPersonalEpisodeEntries(filters?: PersonalEpisodeFilters): Promise<PersonalEpisodeEntry[]>;
   deletePersonalEpisodeEntry(id: string): Promise<void>;
+}
 
+export interface MemoryGovernanceStore {
   // Governance inbox foundations
   createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry>;
   getMemoryCandidateEntry(id: string): Promise<MemoryCandidateEntry | null>;
@@ -227,7 +243,9 @@ export interface BrainEngine {
   listMemoryRedactionPlanItems(filters?: MemoryRedactionPlanItemFilters): Promise<MemoryRedactionPlanItem[]>;
   updateMemoryRedactionPlanStatus(id: string, patch: MemoryRedactionPlanStatusPatch): Promise<MemoryRedactionPlan | null>;
   updateMemoryRedactionPlanItemStatus(id: string, patch: MemoryRedactionPlanItemStatusPatch): Promise<MemoryRedactionPlanItem | null>;
+}
 
+export interface NoteStructureStore {
   // Note manifest
   upsertNoteManifestEntry(input: NoteManifestEntryInput): Promise<NoteManifestEntry>;
   getNoteManifestEntry(scopeId: string, slug: string): Promise<NoteManifestEntry | null>;
@@ -243,7 +261,9 @@ export interface BrainEngine {
   getNoteSectionEntry(scopeId: string, sectionId: string): Promise<NoteSectionEntry | null>;
   listNoteSectionEntries(filters?: NoteSectionFilters): Promise<NoteSectionEntry[]>;
   deleteNoteSectionEntries(scopeId: string, pageSlug: string): Promise<void>;
+}
 
+export interface DerivedJobStore {
   // Durable derived jobs and freshness state
   enqueueDerivedJob(input: DerivedJobInput): Promise<DerivedJob>;
   claimNextDerivedJob(input: DerivedJobLeaseInput): Promise<DerivedJob | null>;
@@ -269,7 +289,9 @@ export interface BrainEngine {
     lease_owner?: string;
     require_active_job?: boolean;
   }): Promise<DerivedIndexState>;
+}
 
+export interface ContextRegistryStore {
   // Persisted context maps
   upsertContextMapEntry(input: ContextMapEntryInput): Promise<ContextMapEntry>;
   getContextMapEntry(id: string): Promise<ContextMapEntry | null>;
@@ -281,7 +303,9 @@ export interface BrainEngine {
   getContextAtlasEntry(id: string): Promise<ContextAtlasEntry | null>;
   listContextAtlasEntries(filters?: ContextAtlasFilters): Promise<ContextAtlasEntry[]>;
   deleteContextAtlasEntry(id: string): Promise<void>;
+}
 
+export interface EngineSyncConfig {
   // Sync
   updateSlug(oldSlug: string, newSlug: string): Promise<void>;
   rewriteLinks(oldSlug: string, newSlug: string): Promise<void>;
@@ -289,6 +313,17 @@ export interface BrainEngine {
   // Config
   getConfig(key: string): Promise<string | null>;
   setConfig(key: string, value: string): Promise<void>;
-
-  getChunksWithEmbeddings(slug: string): Promise<Chunk[]>;
 }
+
+export interface BrainEngine
+  extends EngineLifecycle,
+    PageStore,
+    SearchEngine,
+    EngineDiagnostics,
+    OperationalMemoryStore,
+    PersonalMemoryStore,
+    MemoryGovernanceStore,
+    NoteStructureStore,
+    DerivedJobStore,
+    ContextRegistryStore,
+    EngineSyncConfig {}

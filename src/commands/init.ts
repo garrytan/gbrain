@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { readdirSync, statSync, lstatSync } from 'fs';
+import { readdirSync, lstatSync } from 'fs';
 import { join } from 'path';
 import {
   createLocalConfigDefaults,
