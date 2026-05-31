@@ -8,6 +8,28 @@ let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
 
 /**
+ * Refcount for the module-level singleton.
+ *
+ * Multiple PostgresEngine instances can piggyback on the same module
+ * singleton (the CLI's top-level engine plus any ad-hoc engines created
+ * mid-cycle — e.g. `resolveLintContentSanity` at lint.ts:319 spins up
+ * its own engine to probe DB config). Each `connect()` call that reuses
+ * the existing pool bumps this counter; each `disconnect()` call
+ * decrements it. The pool is only closed (via `sql.end()`) when the
+ * counter reaches zero.
+ *
+ * This closes the bug class the v1 #1546 patch chose between:
+ *   - v1 patch said "instance disconnect never closes the singleton"
+ *     → fixed the lint case but orphaned the CLI top-level disconnect
+ *     path; `gbrain init` and every op-dispatch command hung past their
+ *     natural exit until the 15s test SIGTERM or 10s force-exit timer.
+ *   - Pre-v1 behavior said "every instance disconnect closes the
+ *     singleton" → broke the lint case mid-cycle.
+ * Refcount is the discriminator both sides needed.
+ */
+let refCount = 0;
+
+/**
  * Default pool size for Postgres connections. Users on the Supabase transaction
  * pooler (port 6543) or any multi-tenant pooler can lower this to avoid
  * MaxClients errors when `gbrain upgrade` spawns subprocesses that each open
@@ -165,6 +187,10 @@ export async function connect(config: EngineConfig): Promise<void> {
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
       console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
     }
+    // Piggyback: add a reference to the existing singleton. The matching
+    // disconnect() decrement keeps the singleton alive until every
+    // caller releases it.
+    refCount++;
     return;
   }
 
@@ -210,11 +236,14 @@ export async function connect(config: EngineConfig): Promise<void> {
     // Test connection
     await sql`SELECT 1`;
     connectedUrl = url;
+    // First successful connect — initial reference held by the caller.
+    refCount = 1;
 
     await setSessionDefaults(sql);
   } catch (e: unknown) {
     sql = null;
     connectedUrl = null;
+    refCount = 0;
     const msg = e instanceof Error ? e.message : String(e);
     throw new GBrainError(
       'Cannot connect to database',
@@ -236,11 +265,48 @@ export async function disconnect(): Promise<void> {
     // instance-pool callers go through here.
     logDbDisconnect('postgres', 'module');
   } catch { /* best-effort; never block disconnect on audit failure */ }
-  if (sql) {
-    await sql.end();
-    sql = null;
-    connectedUrl = null;
+  if (!sql) return;
+  // Decrement the refcount. When other callers still hold references
+  // (e.g. the CLI top-level engine while a lint-phase ad-hoc engine
+  // disconnects), the singleton stays alive. Only the LAST disconnect
+  // closes the pool — which is the path that lets `gbrain init` and
+  // every op-dispatch command exit cleanly without hanging on an open
+  // pool's keep-alive socket.
+  if (refCount > 0) {
+    refCount--;
+    if (refCount > 0) return;
   }
+  // Last reference released (or inconsistent state with sql alive but
+  // refCount already 0 — close defensively either way).
+  await sql.end();
+  sql = null;
+  connectedUrl = null;
+  refCount = 0;
+}
+
+/**
+ * Test-only inspection of the singleton refcount. Production code MUST
+ * NOT depend on this value — it exists to pin the connect/disconnect
+ * contract.
+ */
+export function _getRefCountForTest(): number {
+  return refCount;
+}
+
+/**
+ * Test-only hard reset of the singleton state. Forces `sql.end()` if
+ * the pool is alive and clears every module-scoped variable to a fresh
+ * state. Use ONLY in tests that need to simulate a clean process start.
+ * Production code MUST NOT call this — it bypasses the refcount and
+ * would close the singleton out from under live references.
+ */
+export async function _resetForTest(): Promise<void> {
+  if (sql) {
+    try { await sql.end(); } catch { /* best-effort */ }
+  }
+  sql = null;
+  connectedUrl = null;
+  refCount = 0;
 }
 
 export async function initSchema(): Promise<void> {

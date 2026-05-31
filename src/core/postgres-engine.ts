@@ -220,6 +220,31 @@ export class PostgresEngine implements BrainEngine {
       return;
     }
     if (this._connectionStyle === 'module') {
+      // v0.41+ lint-phase bug class fix — `db.disconnect()` is now
+      // refcounted (see src/core/db.ts). Each PostgresEngine that
+      // piggybacks on the module singleton bumped the refcount on
+      // connect; this call decrements it. The actual `sql.end()` only
+      // fires when the LAST live engine releases its reference.
+      //
+      // Pre-refcount: a fresh engine created mid-cycle (e.g., by
+      // resolveLintContentSanity at src/commands/lint.ts:319 inside
+      // the cycle's lint phase) would call db.disconnect() in its
+      // own finally block, tearing down the singleton the cycle was
+      // using. Every subsequent phase then ran against a dead pool —
+      // visible as `extract.links_fs` silently dropping link batches
+      // with "connection blip, retrying" messages, and
+      // `conversation_facts_backfill` aborting with
+      // "connect() has not been called".
+      //
+      // The earlier v1 patch (PR #1546 first commit) removed this
+      // db.disconnect() call entirely. That fixed the lint case but
+      // broke the CLI top-level exit path — `gbrain init` and every
+      // op-dispatch command hung past their natural exit because the
+      // postgres.js pool's keep-alive socket kept Bun's event loop
+      // alive. Refcount is the discriminator both sides needed: this
+      // disconnect is a safe no-op when other engines still hold
+      // references (lint mid-cycle), and a proper close when this is
+      // the last reference (CLI exit).
       await db.disconnect();
       this._connectionStyle = null;
     }
