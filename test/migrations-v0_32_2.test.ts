@@ -14,6 +14,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { v0_32_2, __setTestEngineOverride, __testing } from '../src/commands/migrations/v0_32_2.ts';
@@ -235,6 +236,26 @@ describe('phaseBFenceFacts — happy path backfill', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query('SELECT row_num FROM facts');
     expect(rows.rows[0].row_num).toBeNull();
+  });
+
+  test('does not dirty-check unrelated sources with no legacy facts to fence', async () => {
+    const unrelatedDir = mkdtempSync(join(tmpdir(), 'mig-v0_32_2-dirty-unrelated-'));
+    execFileSync('git', ['init'], { cwd: unrelatedDir, stdio: 'ignore' });
+    writeFileSync(join(unrelatedDir, 'dirty.md'), 'uncommitted unrelated source change\n', 'utf-8');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO sources (id, name, local_path) VALUES ('unrelated-dirty', 'unrelated-dirty', $1)`,
+      [unrelatedDir],
+    );
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Fenceable despite unrelated dirty source' });
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('fenced=1');
+    expect(r.detail).not.toContain('unrelated-dirty');
+
+    try { rmSync(unrelatedDir, { recursive: true, force: true }); } catch { /* best-effort */ }
   });
 });
 

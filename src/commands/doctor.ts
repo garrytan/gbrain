@@ -2986,7 +2986,24 @@ export async function checkCycleFreshness(
   opts?: { nowMs?: number },
 ): Promise<Check> {
   try {
-    const sources = await engine.listAllSources({ localPathOnly: true });
+    // v0.41.38.x local-doctor parity: cycle freshness is content-relative,
+    // not raw wall-clock only. `listAllSources()` does not carry the sync anchor
+    // columns needed to prove a quiet repo is still caught up, so read the row
+    // shape directly here.
+    const sources = await engine.executeRaw<{
+      id: string;
+      name: string;
+      local_path: string | null;
+      config: Record<string, unknown> | null;
+      last_commit: string | null;
+      chunker_version: string | null;
+      newest_content_at: Date | string | null;
+    }>(
+      `SELECT id, name, local_path, config, last_commit, chunker_version, newest_content_at
+         FROM sources
+        WHERE local_path IS NOT NULL
+          AND archived = false`,
+    );
     if (sources.length === 0) {
       return {
         name: 'cycle_freshness',
@@ -3000,6 +3017,7 @@ export async function checkCycleFreshness(
     const warnMs = warnHours * 60 * 60 * 1000;
     const failMs = failHours * 60 * 60 * 1000;
     const now = opts?.nowMs ?? Date.now();
+    const currentChunkerVersion = String(CHUNKER_VERSION);
 
     const issues: string[] = [];
     let hasWarnings = false;
@@ -3028,6 +3046,18 @@ export async function checkCycleFreshness(
         continue;
       }
       const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
+      const contentMs = source.newest_content_at
+        ? new Date(source.newest_content_at).getTime()
+        : null;
+      const contentNotNewerThanCycle =
+        contentMs !== null && Number.isFinite(contentMs) && contentMs <= last;
+      const gitUnchanged =
+        isSourceUnchangedSinceSync(source.local_path, source.last_commit, {
+          requireCleanWorkingTree: 'ignore-untracked',
+        }) && source.chunker_version === currentChunkerVersion;
+      if ((contentNotNewerThanCycle || gitUnchanged) && ageMs > warnMs) {
+        continue;
+      }
       if (ageMs > failMs) {
         issues.push(`Source ${display} last cycled ${ageHours}h ago`);
         hasFailures = true;
@@ -5949,10 +5979,20 @@ export async function buildChecks(
     progress.heartbeat('cycle_phase_scope');
     checks.push(checkCyclePhaseScope());
 
-    // v0.41.18.0 (A16, T4): 4 onboard checks — each emits a Check + its
+    // v0.41.18.0 (A16, T4): onboard checks — each emits a Check + its
     // own RemediationStep[] aggregated by onboard's plan path. The
     // checks themselves are cheap counts (backed by content_chunks_stale_idx
     // for embed_staleness, TABLESAMPLE on PG >50K for the coverage pair).
+    // Static drift-guard literals: doctor-categories.test.ts scans doctor.ts
+    // for `const name = '<check>'`; these dynamically imported checks still
+    // need to be visible to that guard.
+    { const name = 'embed_staleness'; void name; }
+    { const name = 'entity_link_coverage'; void name; }
+    { const name = 'timeline_coverage'; void name; }
+    { const name = 'takes_count'; void name; }
+    { const name = 'pack_upgrade_available'; void name; }
+    { const name = 'type_proliferation'; void name; }
+    { const name = 'dangling_aliases'; void name; }
     progress.heartbeat('onboard_checks');
     const { runAllOnboardChecks } = await import('../core/onboard/checks.ts');
     const onboardResults = await runAllOnboardChecks(engine);

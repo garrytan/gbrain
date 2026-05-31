@@ -6,11 +6,35 @@
  * autopilot's per-source dispatch gate writes.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { execFileSync } from 'child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { checkCycleFreshness } from '../src/commands/doctor.ts';
 
 let engine: PGLiteEngine;
+const repos: string[] = [];
+
+function makeGitRepo(): { dir: string; head: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-cyclefresh-'));
+  repos.push(dir);
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_DATE: new Date(NOW - 200 * 3600_000).toISOString(),
+    GIT_COMMITTER_DATE: new Date(NOW - 200 * 3600_000).toISOString(),
+    GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t',
+    GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
+  };
+  const run = (args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], env });
+  run(['init', '-q']);
+  writeFileSync(join(dir, 'a.md'), '# a\n');
+  run(['add', '-A']);
+  run(['commit', '-q', '-m', 'seed']);
+  const head = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  return { dir, head };
+}
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -20,6 +44,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  for (const d of repos) {
+    try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
 });
 
 beforeEach(async () => {
@@ -68,6 +95,19 @@ describe('doctor checkCycleFreshness', () => {
     expect(result.status).toBe('warn');
     expect(result.message).toMatch(/warned/);
     expect(result.message).toMatch(/10h ago/);
+  });
+
+  test('stale last_full_cycle_at is ok when git HEAD still matches last cycle content', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    const { dir, head } = makeGitRepo();
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, last_commit, chunker_version, archived, created_at)
+       VALUES ('quiet', 'quiet', $1, $2::jsonb, $3, '4', false, NOW())`,
+      [dir, JSON.stringify({ federated: true, last_full_cycle_at: agoH(10) }), head],
+    );
+    const result = await checkCycleFreshness(engine, { nowMs: NOW });
+    expect(result.status).toBe('ok');
+    expect(result.message).toMatch(/cycled recently|unchanged/);
   });
 
   test('source with last_full_cycle_at 48h ago returns fail (>24h)', async () => {

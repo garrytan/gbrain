@@ -40,6 +40,12 @@ export async function startMcpServer(engine: BrainEngine) {
       // Operators who want a different source on stdio MCP should set
       // GBRAIN_SOURCE in the env or use --source via `gbrain call`.
       sourceId: process.env.GBRAIN_SOURCE || 'default',
+      auth: {
+        token: 'stdio',
+        clientId: 'local-stdio',
+        clientName: 'local-stdio',
+        scopes: ['read'],
+      },
       // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.
