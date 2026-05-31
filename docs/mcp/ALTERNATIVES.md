@@ -1,8 +1,9 @@
 # Remote MCP Deployment Options
 
-MBrain's MCP server runs via `mbrain serve` (stdio transport). To make it
-accessible from other devices and AI clients, you need an HTTP wrapper and
-a public tunnel. Here are your options.
+MBrain's MCP server runs via `mbrain serve` (stdio transport) for local clients
+and `mbrain serve --http` for remote Streamable HTTP MCP. To make it accessible
+from other devices and AI clients, run the HTTP transport behind a public
+tunnel. Here are your options.
 
 ## ngrok (recommended)
 
@@ -13,8 +14,8 @@ a public tunnel. Here are your options.
 # 1. Install ngrok
 brew install ngrok
 
-# 2. Start your MCP server (behind an HTTP wrapper)
-# See docs/mcp/DEPLOY.md for the server setup
+# 2. Start your MCP server
+mbrain serve --http --host 127.0.0.1 --port 8787
 
 # 3. Expose via ngrok
 ngrok http 8787 --url your-brain.ngrok.app
@@ -59,6 +60,5 @@ Both run Bun natively. No bundling, no Deno, no cold start, no timeout limits.
 | All 30 operations | Yes | Yes | Yes |
 | Setup time | 5 min | 10 min | 15 min |
 
-**Note:** `mbrain serve --http` (built-in HTTP transport) is planned but not yet
-implemented. Currently, remote MCP requires a custom HTTP wrapper around `mbrain serve`.
-See [DEPLOY.md](DEPLOY.md) for details.
+See [DEPLOY.md](DEPLOY.md) for token setup and client-specific connection
+details.

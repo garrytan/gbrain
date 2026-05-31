@@ -1,0 +1,406 @@
+import { describe, expect, test } from 'bun:test';
+import { createHash } from 'crypto';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { Database } from 'bun:sqlite';
+import { resolveConfig } from '../src/core/config.ts';
+import { createMcpHttpHandler } from '../src/mcp/http-server.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { DEFAULT_RUNTIME_CONFIG } from '../src/core/engine-factory.ts';
+import { OperationError, type Operation } from '../src/core/operations.ts';
+
+describe('MCP HTTP transport', () => {
+  test('rejects /mcp requests without bearer auth', async () => {
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => ({ ok: false, status: 401, body: { error: 'missing_auth' } }),
+      logRequest: async () => {},
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+    }));
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'missing_auth' });
+  });
+
+  test('serves health without requiring auth', async () => {
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => ({ ok: false, status: 401, body: { error: 'missing_auth' } }),
+      logRequest: async () => {},
+    });
+
+    const response = await handler(new Request('http://localhost/health'));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      status: 'ok',
+      transport: 'http',
+    });
+  });
+
+  test('health response does not expose internal brain metrics unauthenticated', async () => {
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => ({ ok: false, status: 401, body: { error: 'missing_auth' } }),
+      logRequest: async () => {},
+    });
+
+    const response = await handler(new Request('http://localhost/health'));
+    const payload = await response.json();
+
+    expect(payload).toEqual({ status: 'ok', transport: 'http' });
+    expect(payload).not.toHaveProperty('version');
+    expect(payload).not.toHaveProperty('checks');
+  });
+
+  test('handles initialize, tools/list, and tools/call over authenticated HTTP', async () => {
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async (request) => {
+        return request.headers.get('Authorization') === 'Bearer test-token'
+          ? { ok: true, tokenName: 'test-client' }
+          : { ok: false, status: 401, body: { error: 'invalid_token' } };
+      },
+      logRequest: async () => {},
+    });
+
+    const initialize = await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'mbrain-http-test', version: '1.0.0' },
+      },
+      id: 1,
+    });
+    expect(initialize.status).toBe(200);
+
+    const toolsList = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'tools/list',
+      params: {},
+      id: 2,
+    }));
+    expect(toolsList.result.tools.some((tool: { name: string }) => tool.name === 'get_stats')).toBe(true);
+
+    const stats = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: 'get_stats', arguments: {} },
+      id: 3,
+    }));
+    expect(stats.result.content[0].text).toContain('"pages":3');
+  });
+
+  test('default bearer auth validates SQLite access_tokens and records last use', async () => {
+    const { db, dbPath } = createSqliteTokenDb();
+    const token = 'mbrain_test_token';
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    db.query('INSERT INTO access_tokens (id, name, token_hash) VALUES (?, ?, ?)').run('token-1', 'sqlite-client', tokenHash);
+    db.close();
+
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 }),
+    }));
+
+    expect(response.status).toBe(200);
+    const inspectDb = new Database(dbPath);
+    const row = inspectDb.query('SELECT last_used_at FROM access_tokens WHERE token_hash = ?').get(tokenHash) as { last_used_at: string | null };
+    const log = inspectDb.query('SELECT token_name, operation, status FROM mcp_request_log').get() as {
+      token_name: string;
+      operation: string;
+      status: string;
+    };
+    inspectDb.close();
+    expect(row.last_used_at).toEqual(expect.any(String));
+    expect(log).toEqual({
+      token_name: 'sqlite-client',
+      operation: 'tools/list',
+      status: 'success',
+    });
+  });
+
+  test('default bearer auth accepts case-insensitive bearer scheme', async () => {
+    const { db, dbPath } = createSqliteTokenDb();
+    const token = 'mbrain_lowercase_bearer_token';
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    db.query('INSERT INTO access_tokens (id, name, token_hash) VALUES (?, ?, ?)').run('token-1', 'sqlite-client', tokenHash);
+    db.close();
+
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `bearer ${token}`,
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 }),
+    }));
+
+    expect(response.status).toBe(200);
+  });
+
+  test('rejects oversized MCP request bodies before authentication', async () => {
+    let authCalls = 0;
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => {
+        authCalls++;
+        return { ok: true, tokenName: 'test-client' };
+      },
+      logRequest: async () => {},
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-token',
+        'Content-Length': String(1_048_577),
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 }),
+    }));
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: 'request_too_large' });
+    expect(authCalls).toBe(0);
+  });
+
+  test('rejects oversized streamed MCP request bodies before authentication', async () => {
+    let authCalls = 0;
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      authenticate: async () => {
+        authCalls++;
+        return { ok: true, tokenName: 'test-client' };
+      },
+      logRequest: async () => {},
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1_048_577));
+        controller.close();
+      },
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-token',
+      },
+      body,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' }));
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: 'request_too_large' });
+    expect(authCalls).toBe(0);
+  });
+
+  test('default bearer auth rejects revoked SQLite access tokens', async () => {
+    const { db, dbPath } = createSqliteTokenDb();
+    const tokenHash = createHash('sha256').update('revoked-token').digest('hex');
+    db.query('INSERT INTO access_tokens (id, name, token_hash, revoked_at) VALUES (?, ?, ?, ?)').run(
+      'token-1',
+      'sqlite-client',
+      tokenHash,
+      '2026-01-01T00:00:00.000Z',
+    );
+    db.close();
+
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: resolveConfig({ engine: 'sqlite', database_path: dbPath }),
+    });
+
+    const response = await handler(new Request('http://localhost/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer revoked-token',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', params: {}, id: 1 }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: 'token_revoked' });
+  });
+
+  test('shares the MCP execution limiter across concurrent HTTP requests', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const slowMutatingOp: Operation = {
+      name: 'slow_mutation',
+      description: 'Test-only slow mutating operation.',
+      params: {},
+      mutating: true,
+      handler: async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        try {
+          await sleep(20);
+          return { ok: true };
+        } finally {
+          active--;
+        }
+      },
+    };
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      operations: [slowMutatingOp],
+      authenticate: async () => ({ ok: true, tokenName: 'test-client' }),
+      logRequest: async () => {},
+    });
+
+    await Promise.all([
+      postMcp(handler, { jsonrpc: '2.0', method: 'tools/call', params: { name: 'slow_mutation', arguments: {} }, id: 1 }).then(readJsonRpcResponse),
+      postMcp(handler, { jsonrpc: '2.0', method: 'tools/call', params: { name: 'slow_mutation', arguments: {} }, id: 2 }).then(readJsonRpcResponse),
+    ]);
+
+    expect(maxActive).toBe(1);
+  });
+
+  test('logs tool errors as error status with the tool name', async () => {
+    const logs: Array<{ operation: string; status: string }> = [];
+    const failingOp: Operation = {
+      name: 'failing_tool',
+      description: 'Test-only failing operation.',
+      params: {},
+      handler: async () => {
+        throw new OperationError('invalid_params', 'nope');
+      },
+    };
+    const handler = createMcpHttpHandler({
+      engine: createStatsEngine(),
+      config: DEFAULT_RUNTIME_CONFIG,
+      operations: [failingOp],
+      authenticate: async () => ({ ok: true, tokenName: 'test-client' }),
+      logRequest: async (entry) => {
+        logs.push({ operation: entry.operation, status: entry.status });
+      },
+    });
+
+    const response = await readJsonRpcResponse(await postMcp(handler, {
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: 'failing_tool', arguments: {} },
+      id: 1,
+    }));
+
+    expect(response.result.isError).toBe(true);
+    expect(logs).toEqual([{ operation: 'failing_tool', status: 'error' }]);
+  });
+});
+
+async function postMcp(
+  handler: (request: Request) => Promise<Response>,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  return handler(new Request('http://localhost/mcp', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer test-token',
+      Accept: 'application/json, text/event-stream',
+    },
+    body: JSON.stringify(body),
+  }));
+}
+
+async function readJsonRpcResponse(response: Response): Promise<any> {
+  expect(response.status).toBe(200);
+  const text = await response.text();
+  if (text.includes('event:')) {
+    const dataLine = text.split('\n').find(line => line.startsWith('data:'));
+    if (!dataLine) throw new Error(`No SSE data line in response: ${text}`);
+    return JSON.parse(dataLine.slice('data:'.length).trim());
+  }
+  return JSON.parse(text);
+}
+
+function createStatsEngine(): BrainEngine {
+  return {
+    getStats: async () => ({
+      pages: 3,
+      links: 2,
+      tags: 1,
+      chunks: 4,
+      files: 0,
+      timeline_entries: 0,
+      raw_data_entries: 0,
+      page_embeddings: 0,
+      chunk_embeddings: 0,
+    }),
+    getHealth: async () => ({
+      page_count: 3,
+      embed_coverage: 1,
+      stale_pages: 0,
+      orphan_pages: 0,
+      dead_links: 0,
+      missing_embeddings: 0,
+    }),
+  } as unknown as BrainEngine;
+}
+
+function createSqliteTokenDb(): { db: Database; dbPath: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'mbrain-http-auth-'));
+  const dbPath = join(dir, 'brain.db');
+  const db = new Database(dbPath);
+  db.run(`
+    CREATE TABLE access_tokens (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      scopes TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      last_used_at TEXT,
+      revoked_at TEXT
+    )
+  `);
+  db.run(`
+    CREATE TABLE mcp_request_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_name TEXT,
+      operation TEXT NOT NULL,
+      latency_ms INTEGER,
+      status TEXT NOT NULL DEFAULT 'success',
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )
+  `);
+  return { db, dbPath };
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}

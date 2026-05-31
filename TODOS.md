@@ -31,26 +31,24 @@ compiled-binary support after the Postgres target runtime migration.
 
 **Cons:** OAuth 2.1 is a significant implementation: authorization endpoint, token endpoint, PKCE flow, dynamic client registration. Estimated CC: ~3-4 hours.
 
-**Context:** Discovered during DX review (2026-04-10). All other clients (Claude Desktop/Code/Cowork, Perplexity) work with bearer tokens. The Edge Function deployment was removed in v0.8.0. OAuth needs to be added to the self-hosted HTTP MCP server (or `mbrain serve --http` when implemented).
+**Context:** Discovered during DX review (2026-04-10). All other clients
+(Claude Desktop/Code/Cowork, Perplexity) work with bearer tokens. The Edge
+Function deployment was removed in v0.8.0. The built-in `mbrain serve --http`
+runtime now provides the HTTP MCP foundation; ChatGPT still needs OAuth 2.1 on
+top of that transport.
 
-**Depends on:** `mbrain serve --http` (not yet implemented).
-
-## P2
-
-### `mbrain serve --http` + Fly.io/Railway deployment
-**What:** Add `mbrain serve --http` as a thin HTTP wrapper around the stdio MCP server. Include a Dockerfile/fly.toml for cloud deployment.
-
-**Why:** The Edge Function deployment was removed in v0.8.0. Remote MCP now requires a custom HTTP wrapper around `mbrain serve`. A built-in `--http` flag would make this zero-effort. Bun runs natively, no bundling seam, no 60s timeout, no cold start.
-
-**Pros:** Simpler remote MCP setup. Users run `mbrain serve --http` behind ngrok instead of building a custom server. Supports all 30 operations remotely (including sync_brain and file_upload).
-
-**Cons:** Users need ngrok ($8/mo) or a cloud host (Fly.io $5/mo, Railway $5/mo). Not zero-infra.
-
-**Context:** The production deployment at wintermute uses a custom Hono server wrapping `mbrain serve`. This TODO would formalize that pattern into the CLI. ChatGPT OAuth 2.1 support depends on this.
-
-**Depends on:** v0.8.0 (Edge Function removal shipped).
+**Depends on:** OAuth 2.1 and Dynamic Client Registration on top of
+`mbrain serve --http`.
 
 ## Completed
+
+### Built-in HTTP MCP transport (`mbrain serve --http`)
+**Completed:** Unreleased — `mbrain serve --http` now starts a self-hosted
+Streamable HTTP MCP server with `/mcp`, `/health`, Bearer token authentication,
+request logging, and the same operation catalog, response guards, and
+foreground limiter used by stdio MCP. It is intentionally only the transport
+foundation: OAuth 2.1 for ChatGPT and first-party Docker/Fly/Railway templates
+remain separate follow-up work.
 
 ### Batch embedding queue for explicit backfills
 **Completed:** Unreleased — `mbrain embed --all` and
@@ -72,8 +70,9 @@ a sanitized draft PR through `gh`.
 **Completed:** Unreleased — added `fly-app-hosting` and
 `railway-app-hosting` infra recipes for HTTP webhook and collector services that
 need stable public URLs without local ngrok. These recipes intentionally stop at
-hosting a user-provided HTTP service; the separate `mbrain serve --http` runtime
-TODO remains open.
+hosting a user-provided HTTP service; `mbrain serve --http` now supplies the
+HTTP service when the target is MBrain's MCP server, while OAuth remains outside
+these hosting recipes.
 
 ### Constrained health_check DSL for third-party recipes
 **Completed:** Unreleased — replaced shell command health checks with typed

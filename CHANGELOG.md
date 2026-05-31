@@ -6,6 +6,12 @@ All notable changes to MBrain will be documented in this file.
 
 ### Added
 
+- **Remote MCP no longer needs a custom wrapper.** `mbrain serve --http` starts
+  a built-in Streamable HTTP MCP server with `/mcp`, `/health`, Bearer token
+  authentication, request logging, and the same tool catalog, response guards,
+  and concurrency limits as stdio MCP. Put it behind ngrok, Tailscale Funnel,
+  Fly.io, or Railway to use your brain from remote clients without maintaining a
+  separate wrapper service.
 - **Webhook and collector services now have always-on cloud hosting recipes.**
   Agents can set up Fly.io or Railway hosting for HTTP webhook services when a
   stable public URL is better than a local ngrok tunnel. The recipes keep the

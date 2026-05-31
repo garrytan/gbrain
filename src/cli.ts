@@ -97,6 +97,18 @@ const MEMORY_REPORT_CLI_SPEC: Operation = {
   cliHints: { name: 'memory-report' },
 };
 
+const SERVE_CLI_SPEC: Operation = {
+  name: 'serve',
+  description: 'Run the MCP server over stdio or Streamable HTTP.',
+  params: {
+    http: { type: 'boolean', description: 'Serve MCP over HTTP instead of stdio' },
+    host: { type: 'string', description: 'HTTP host to bind (default: 127.0.0.1)' },
+    port: { type: 'number', description: 'HTTP port to bind (default: 8787)' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'serve' },
+};
+
 const DREAM_CLI_SPEC: Operation = {
   name: 'dream',
   description: 'Run the Dream maintenance phase runner.',
@@ -133,6 +145,7 @@ const SYNC_CLI_SPEC: Operation = {
 };
 
 const CLI_ONLY_SPECS: Partial<Record<string, Operation>> = {
+  serve: SERVE_CLI_SPEC,
   embed: EMBED_CLI_SPEC,
   doctor: DOCTOR_CLI_SPEC,
   migrate: MIGRATE_CLI_SPEC,
@@ -192,7 +205,7 @@ const CLI_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
   // `serve` owns the current stdio process and cannot run through the shared request/response contract.
   serve: async () => {
     const { runServe } = await import('./commands/serve.ts');
-    return (engine) => runServe(engine);
+    return (engine, args) => runServe(engine, args);
   },
 };
 
@@ -371,7 +384,7 @@ async function handleCliOnly(command: string, args: string[]) {
   if (command === 'serve') {
     const { runServe } = await import('./commands/serve.ts');
     const enginePromise = connectEngine();
-    await runServe(enginePromise);
+    await runServe(enginePromise, normalizeCliOnlyArgs(command, args));
     return;
   }
 
@@ -548,7 +561,8 @@ ADMIN
   autopilot <enable|disable|start|stop|status|install|uninstall|logs|config|run-once|dream>
                                     Manage scheduled maintenance autopilot
   subbrain <add|list|remove>          Manage registered git-backed sub-brains
-  serve                              MCP server (stdio)
+  serve [--http] [--host H] [--port P]
+                                    MCP server (stdio or Streamable HTTP)
   call <tool> '<json>'               Raw tool invocation
   version                            Version info
   --tools-json                       Tool discovery (JSON)

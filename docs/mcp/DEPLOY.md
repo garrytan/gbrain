@@ -1,8 +1,8 @@
 # Deploy MBrain Remote MCP Server
 
-Access your brain from any device, any AI client. MBrain's MCP server runs locally
-via `mbrain serve` (stdio). For remote access, wrap it in an HTTP server behind a
-public tunnel.
+Access your brain from any device, any AI client. MBrain's MCP server runs
+locally via `mbrain serve` (stdio) or remotely via the built-in
+`mbrain serve --http` Streamable HTTP transport behind a public tunnel.
 
 ## Two Paths
 
@@ -20,18 +20,31 @@ No server, no tunnel, no token needed.
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
   → ngrok tunnel (https://YOUR-DOMAIN.ngrok.app)
-  → Your HTTP server (wraps mbrain serve)
+  → mbrain serve --http
   → Supabase Postgres (via pooler connection string)
 ```
 
 This requires:
-1. A machine running `mbrain serve` behind an HTTP wrapper
+1. A machine running `mbrain serve --http`
 2. A public tunnel (ngrok, Tailscale, or cloud host)
 3. Bearer token auth for security
 
 ## Remote Setup
 
-### 1. Set up the tunnel
+### 1. Start HTTP MCP
+
+Run the MCP server on a local interface first:
+
+```bash
+mbrain serve --http --host 127.0.0.1 --port 8787
+```
+
+The HTTP server exposes:
+
+- `/mcp` — Streamable HTTP MCP endpoint, protected by Bearer tokens
+- `/health` — unauthenticated minimal health check with transport status
+
+### 2. Set up the tunnel
 
 See the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for full setup.
 Quick version:
@@ -42,9 +55,12 @@ ngrok config add-authtoken YOUR_TOKEN
 ngrok http 8787 --url your-brain.ngrok.app  # Hobby tier for fixed domain
 ```
 
-### 2. Create access tokens
+### 3. Create access tokens
 
 ```bash
+# Use the same Postgres connection string that `mbrain serve --http` uses.
+export DATABASE_URL='postgresql://...'
+
 # Create a token for each client
 bun run src/commands/auth.ts create "claude-desktop"
 
@@ -58,14 +74,14 @@ bun run src/commands/auth.ts revoke "claude-desktop"
 Tokens are per-client. Create one for each device/app. Revoke individually
 if compromised. Tokens are stored SHA-256 hashed in your database.
 
-### 3. Connect your AI client
+### 4. Connect your AI client
 
 - **Claude Code:** [setup guide](CLAUDE_CODE.md)
 - **Claude Desktop:** [setup guide](CLAUDE_DESKTOP.md) (must use GUI, not JSON config)
 - **Claude Cowork:** [setup guide](CLAUDE_COWORK.md)
 - **Perplexity:** [setup guide](PERPLEXITY.md)
 
-### 4. Verify
+### 5. Verify
 
 ```bash
 bun run src/commands/auth.ts test \
@@ -108,8 +124,3 @@ Remote servers must be added via Settings > Integrations, NOT
 | query (hybrid) | 1-3s | Embedding + vector + keyword + RRF |
 | put_page | 100-500ms | Write + trigger search_vector update |
 | get_stats | < 100ms | Aggregate query |
-
-**Note:** `mbrain serve --http` (built-in HTTP transport) is planned but not yet
-implemented. Currently, remote MCP requires a custom HTTP wrapper. See the
-production deployment pattern in the [voice recipe](../../recipes/twilio-voice-brain.md)
-for a reference implementation.

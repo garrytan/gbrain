@@ -509,6 +509,20 @@ The MCP server includes compact instructions that tell agents when to prefer
 MBrain over web search or codebase grep. For durable behavior, also install the
 agent rules with `mbrain setup-agent`.
 
+For remote MCP clients, start the built-in Streamable HTTP transport and expose
+it through a tunnel or host:
+
+```bash
+mbrain serve --http --host 127.0.0.1 --port 8787
+ngrok http 8787
+```
+
+The HTTP server exposes `/mcp` and `/health`, requires
+`Authorization: Bearer <token>` for MCP requests, and uses the same operation
+catalog, response guards, and concurrency limits as stdio. Create tokens with
+`DATABASE_URL=... bun run src/commands/auth.ts create "<client-name>"` against
+the same Postgres brain.
+
 ### Agent Readiness Verification
 
 For an installed `mbrain` command, verify the command your agents are expected

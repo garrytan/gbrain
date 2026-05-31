@@ -47,6 +47,21 @@ export type McpToolExecutionLimiterOptions = {
   heavyReadConcurrency?: number;
 };
 
+export type CreateMcpServerOptions = {
+  operations?: Operation[];
+  compactToolSchemas?: boolean;
+  config?: OperationContext['config'];
+  logger?: OperationContext['logger'];
+  maxResultTextBytes?: number;
+  toolExecutionLimiter?: McpToolExecutionLimiter;
+};
+
+export type CreatedMcpServer = {
+  server: Server;
+  toolExecutionLimiter: McpToolExecutionLimiter;
+  enginePromise: Promise<BrainEngine>;
+};
+
 export type McpToolExecutionLimiter = {
   run<T>(operation: Operation, task: () => Promise<T>): Promise<T>;
   getForegroundPressure(): McpForegroundPressure;
@@ -605,74 +620,7 @@ function byteLength(text: string): number {
 }
 
 export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>) {
-  const enginePromise = Promise.resolve(engine);
-  enginePromise.catch(() => {
-    // Keep startup failures reportable through the MCP request path instead of
-    // surfacing as an unhandled promise before the first tool call arrives.
-  });
-  const server = new Server(
-    { name: 'mbrain', version: VERSION },
-    {
-      capabilities: { tools: {} },
-      instructions: MCP_INSTRUCTIONS,
-    },
-  );
-  const toolCatalog = createMcpToolCatalogProvider();
-  const toolExecutionLimiter = createMcpToolExecutionLimiter();
-
-  // Generate tool definitions from operations
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: toolCatalog.getTools({ compact: shouldCompactMcpToolSchemas() }),
-  }));
-
-  // Dispatch tool calls to operation handlers
-  server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
-    const { name, arguments: params } = request.params;
-    const op = defaultOperations.find(o => o.name === name);
-    if (!op) {
-      return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
-    }
-
-    try {
-      const result = await toolExecutionLimiter.run(op, async () => {
-        const resolvedEngine = await enginePromise;
-        const ctx: OperationContext = {
-          engine: resolvedEngine,
-          config: loadConfig() || DEFAULT_RUNTIME_CONFIG,
-          logger: {
-            info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
-            warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
-            error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
-          },
-          dryRun: !!(params?.dry_run),
-        };
-        return op.handler(ctx, prepareMcpToolParams(name, params));
-      });
-      return {
-        content: [{
-          type: 'text',
-          text: formatMcpToolResult(name, result, {
-            maxResultTextBytes: mcpResultTextBudgetForFinalFrame(),
-          }),
-        }],
-      };
-    } catch (e: unknown) {
-      if (e instanceof OperationError) {
-        return {
-          content: [{
-            type: 'text',
-            text: formatMcpToolResult(name, e.toJSON(), {
-              maxResultTextBytes: mcpResultTextBudgetForFinalFrame(),
-            }),
-          }],
-          isError: true,
-        };
-      }
-      const msg = e instanceof Error ? e.message : String(e);
-      return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
-    }
-  });
-
+  const { server, toolExecutionLimiter, enginePromise } = createMcpServer(engine);
   const transport = new BudgetedStdioServerTransport();
   await server.connect(transport);
   let derivedWorker: DerivedWorkerController | undefined;
@@ -697,6 +645,84 @@ export async function startMcpServer(engine: BrainEngine | Promise<BrainEngine>)
       });
     }).catch(() => undefined);
   }
+}
+
+export function createMcpServer(
+  engine: BrainEngine | Promise<BrainEngine>,
+  options: CreateMcpServerOptions = {},
+): CreatedMcpServer {
+  const enginePromise = Promise.resolve(engine);
+  enginePromise.catch(() => {
+    // Keep startup failures reportable through the MCP request path instead of
+    // surfacing as an unhandled promise before the first tool call arrives.
+  });
+  const server = new Server(
+    { name: 'mbrain', version: VERSION },
+    {
+      capabilities: { tools: {} },
+      instructions: MCP_INSTRUCTIONS,
+    },
+  );
+  const operations = options.operations ?? defaultOperations;
+  const toolCatalog = createMcpToolCatalogProvider(operations);
+  const toolExecutionLimiter = options.toolExecutionLimiter ?? createMcpToolExecutionLimiter();
+
+  // Generate tool definitions from operations
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: toolCatalog.getTools({
+      compact: options.compactToolSchemas ?? shouldCompactMcpToolSchemas(),
+    }),
+  }));
+
+  // Dispatch tool calls to operation handlers
+  server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+    const { name, arguments: params } = request.params;
+    const op = operations.find(o => o.name === name);
+    if (!op) {
+      return { content: [{ type: 'text', text: `Error: Unknown tool: ${name}` }], isError: true };
+    }
+
+    try {
+      const result = await toolExecutionLimiter.run(op, async () => {
+        const resolvedEngine = await enginePromise;
+        const ctx: OperationContext = {
+          engine: resolvedEngine,
+          config: options.config ?? loadConfig() ?? DEFAULT_RUNTIME_CONFIG,
+          logger: options.logger ?? {
+            info: (msg: string) => process.stderr.write(`[info] ${msg}\n`),
+            warn: (msg: string) => process.stderr.write(`[warn] ${msg}\n`),
+            error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
+          },
+          dryRun: !!(params?.dry_run),
+        };
+        return op.handler(ctx, prepareMcpToolParams(name, params));
+      });
+      return {
+        content: [{
+          type: 'text',
+          text: formatMcpToolResult(name, result, {
+            maxResultTextBytes: options.maxResultTextBytes ?? mcpResultTextBudgetForFinalFrame(),
+          }),
+        }],
+      };
+    } catch (e: unknown) {
+      if (e instanceof OperationError) {
+        return {
+          content: [{
+            type: 'text',
+            text: formatMcpToolResult(name, e.toJSON(), {
+              maxResultTextBytes: options.maxResultTextBytes ?? mcpResultTextBudgetForFinalFrame(),
+            }),
+          }],
+          isError: true,
+        };
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+    }
+  });
+
+  return { server, toolExecutionLimiter, enginePromise };
 }
 
 // Backward compat: used by `mbrain call` command

@@ -23,8 +23,8 @@ custom domains.
 
 Bring your own HTTP service. The service must already expose an HTTP port and a
 small health endpoint such as `/health`. This recipe does not turn stdio MCP into HTTP.
-If the target is `mbrain serve`, build or use an HTTP wrapper first; future
-`mbrain serve --http` work is a separate runtime feature.
+If the target is MBrain MCP, run `mbrain serve --http` first and host that HTTP
+service. OAuth remains separate from this hosting recipe.
 
 ## IMPORTANT: Instructions for the Agent
 

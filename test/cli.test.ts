@@ -134,6 +134,10 @@ describe('CLI source shape', () => {
     expect(cliSource).toContain('`serve` owns the current stdio process and cannot run through the shared request/response contract.');
   });
 
+  test('serve CLI-only dispatch normalizes HTTP flags before starting the server', () => {
+    expect(cliSource).toContain('await runServe(enginePromise, normalizeCliOnlyArgs(command, args));');
+  });
+
   test('init guidance keeps pgvector troubleshooting backend-neutral', () => {
     expect(initSource).toContain('Run this on your Postgres database');
     expect(initSource).not.toContain('Run in Supabase SQL Editor');
@@ -318,6 +322,24 @@ describe('CLI dispatch integration', () => {
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
     expect(stdout).toContain('Usage: mbrain get');
+    expect(exitCode).toBe(0);
+  });
+
+  test('serve --help documents stdio and HTTP modes without DB connection', async () => {
+    const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'serve', '--help'], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: tempHome },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
+    expect(stdout).toContain('Usage: mbrain serve');
+    expect(stdout).toContain('--http');
+    expect(stdout).toContain('--host');
+    expect(stdout).toContain('--port');
+    expect(stderr).toBe('');
     expect(exitCode).toBe(0);
   });
 
@@ -973,6 +995,7 @@ describe('CLI dispatch integration', () => {
     expect(stdout).toContain('mbrain <command>');
     expect(stdout).toContain('doctor [--json]');
     expect(stdout).toContain('embed [<slug>|--all|--stale]');
+    expect(stdout).toContain('serve [--http] [--host H] [--port P]');
     expect(stdout).toContain('import <dir> [--no-embed]');
     expect(stdout).toContain('Health check (engine, schema, embeddings, local/managed capabilities)');
     expect(stdout).toContain('Keyword search (engine-native)');
