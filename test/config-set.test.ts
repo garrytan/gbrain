@@ -29,6 +29,10 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('models.tier.subagent');
   });
 
+  test('contains the gateway subagent feature flag recommended by doctor', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);
@@ -113,6 +117,10 @@ describe('prefix vs known-key gate logic (mirrored from runConfig)', () => {
 
   test('models.custom.x (under prefix) → "prefix"', () => {
     expect(gate('models.custom.x')).toBe('prefix');
+  });
+
+  test('agent.use_gateway_loop → "known"', () => {
+    expect(gate('agent.use_gateway_loop')).toBe('known');
   });
 
   test('bug-reporter: embedding.provider → "unknown" (no prefix match)', () => {
