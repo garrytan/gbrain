@@ -54,19 +54,6 @@ compiled-binary support after the Postgres target runtime migration.
 
 ## P2
 
-### Community recipe submission (`mbrain integrations submit`)
-**What:** Package a user's custom integration recipe for contribution to the MBrain repo. Phase 1 is a local preflight (`mbrain integrations submit <recipe.md>`) that validates frontmatter, checks constrained DSL health_checks, rejects unsafe/colliding IDs, and prints a PR-ready target path/checklist without network, git, or file-write side effects. Phase 2 adds a side-effect-free contribution package with deterministic PR title/body/files/checklist. A later optional phase can automate branch and PR creation behind an explicit side-effecting flag.
-
-**Why:** Turns MBrain from "Garry's integrations" into a community ecosystem. The recipe format IS the contribution format.
-
-**Pros:** Community-driven integration library. Users build Slack-to-brain, RSS-to-brain, Discord-to-brain.
-
-**Cons:** Support burden. Need constrained DSL (P1) before accepting third-party recipes. Need review process for recipe quality.
-
-**Context:** From CEO review (2026-04-11). User explicitly deferred due to bandwidth constraints. Target v0.9.0.
-
-**Depends on:** Constrained health_check DSL (P1, shipped). Phase 1 preflight and Phase 2 contribution-package output are implemented; optional git/GitHub PR creation automation remains open.
-
 ### `mbrain serve --http` + Fly.io/Railway deployment
 **What:** Add `mbrain serve --http` as a thin HTTP wrapper around the stdio MCP server. Include a Dockerfile/fly.toml for cloud deployment.
 
@@ -81,6 +68,14 @@ compiled-binary support after the Postgres target runtime migration.
 **Depends on:** v0.8.0 (Edge Function removal shipped).
 
 ## Completed
+
+### Community recipe submission (`mbrain integrations submit`)
+**Completed:** Unreleased — `mbrain integrations submit <recipe.md>` now
+validates custom recipes locally, emits a deterministic contribution package,
+and keeps the default path free of git, network, file-write, and PR side
+effects. When an agent explicitly passes `--create-pr`, submit copies the recipe
+to `recipes/<id>.md`, creates a contribution branch, commits, pushes, and opens
+a sanitized draft PR through `gh`.
 
 ### Always-on deployment recipes (Fly.io, Railway)
 **Completed:** Unreleased — added `fly-app-hosting` and

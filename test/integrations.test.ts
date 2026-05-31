@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll } from 'bun:test';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { parseRecipe, runIntegrations, runRecipeHealthCheck } from '../src/commands/integrations.ts';
@@ -483,6 +483,1003 @@ the bot token, and import selected channel messages into MBrain.
       } else {
         process.env.SLACK_BOT_TOKEN = previousSlackToken;
       }
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit stays side-effect-free unless PR creation is explicit', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-no-pr-repo-'));
+    mkdirSync(join(repoDir, 'recipes'));
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'linear-to-brain.md');
+    writeFileSync(recipePath, `---
+id: linear-to-brain
+name: Linear to Brain
+version: 1.0.0
+description: Linear issues become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic Linear collector and import
+selected issue updates into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = join(repoDir, 'recipes');
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    try {
+      await runIntegrations(['submit', recipePath, '--json']);
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(true);
+      expect(payload.pull_request).toBeUndefined();
+      expect(existsSync(join(repoDir, 'recipes', 'linear-to-brain.md'))).toBe(false);
+    } finally {
+      console.log = originalLog;
+      process.chdir(previousCwd);
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr copies recipe, commits, and opens a draft PR', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-pr-repo-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    mkdirSync(join(repoDir, 'src', 'commands'), { recursive: true });
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"mbrain"}');
+    writeFileSync(join(repoDir, 'src', 'commands', 'integrations.ts'), '// marker\n');
+    const commandLog = join(repoDir, 'commands.log');
+    const prBodyLog = join(repoDir, 'pr-body.md');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+case "$1 $2" in
+  "status --porcelain") exit 0 ;;
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;
+  "rev-parse --verify") exit 1 ;;
+  "switch -c") exit 0 ;;
+  "add recipes/notion-to-brain.md") exit 0 ;;
+  "commit -m") exit 0 ;;
+  "push -u") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then
+  echo "gh version 2.0.0"
+  exit 0
+fi
+if [ "$1 $2" = "pr create" ]; then
+  cat > "${prBodyLog}"
+  echo "https://github.com/example/mbrain/pull/123"
+  exit 0
+fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'notion-to-brain.md');
+    writeFileSync(recipePath, `---
+id: notion-to-brain
+name: Notion to Brain
+version: 1.0.0
+description: Notion pages become searchable brain entries
+category: sense
+requires: []
+secrets:
+  - name: NOTION_TOKEN
+    description: Notion integration token
+    where: https://www.notion.so/my-integrations
+health_checks:
+  - type: env_exists
+    name: NOTION_TOKEN
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic Notion collector and import
+selected pages into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    mkdirSync(join(repoDir, 'docs'));
+    process.chdir(join(repoDir, 'docs'));
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      try {
+        await runIntegrations(['submit', recipePath, '--create-pr', '--json']);
+      } catch (error) {
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\n${logs.join('\n')}`);
+      }
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(true);
+      expect(payload.pull_request).toMatchObject({
+        branch: 'mbrain/recipe-notion-to-brain',
+        url: 'https://github.com/example/mbrain/pull/123',
+        target_path: 'recipes/notion-to-brain.md',
+      });
+      expect(readFileSync(join(repoDir, 'recipes', 'notion-to-brain.md'), 'utf-8')).toContain('id: notion-to-brain');
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain(`git -C ${repoDir} status --porcelain`);
+      expect(commands).toContain('git rev-parse --show-toplevel');
+      expect(commands).toContain(`git -C ${repoDir} remote get-url origin`);
+      expect(commands).toContain(`git -C ${repoDir} switch -c mbrain/recipe-notion-to-brain`);
+      expect(commands).toContain(`git -C ${repoDir} add recipes/notion-to-brain.md`);
+      expect(commands).toContain(`git -C ${repoDir} commit -m Add notion-to-brain integration recipe`);
+      expect(commands).toContain(`git -C ${repoDir} push -u origin mbrain/recipe-notion-to-brain`);
+      expect(commands).toContain('gh pr create --repo meghendra6/mbrain --base master --draft --title Add Notion to Brain integration recipe --body-file - --head mbrain/recipe-notion-to-brain');
+      const prBody = readFileSync(prBodyLog, 'utf-8');
+      expect(prBody).toContain('Adds the `Notion to Brain` integration recipe.');
+      expect(prBody).not.toContain(recipePath);
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr fails GitHub auth before branch side effects', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-auth-fail-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    mkdirSync(join(repoDir, 'src', 'commands'), { recursive: true });
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"mbrain"}');
+    writeFileSync(join(repoDir, 'src', 'commands', 'integrations.ts'), '// marker\n');
+    const commandLog = join(repoDir, 'commands.log');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+case "$1 $2" in
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse --verify") exit 1 ;;
+  "switch -c") exit 0 ;;
+  "add recipes/trello-to-brain.md") exit 0 ;;
+  "commit -m") exit 0 ;;
+  "push -u") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then
+  echo "gh version 2.0.0"
+  exit 0
+fi
+if [ "$1 $2" = "auth status" ]; then
+  echo "not logged in" >&2
+  exit 1
+fi
+if [ "$1 $2" = "pr create" ]; then echo "https://github.com/example/mbrain/pull/127"; exit 0; fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'trello-to-brain.md');
+    writeFileSync(recipePath, `---
+id: trello-to-brain
+name: Trello to Brain
+version: 1.0.0
+description: Trello cards become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic Trello collector and import
+selected card updates into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--create-pr', '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors.join('\n')).toContain('gh auth status exited with 1');
+      expect(existsSync(join(repoDir, 'recipes', 'trello-to-brain.md'))).toBe(false);
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain('gh auth status');
+      expect(commands).not.toContain(`git -C ${repoDir} status --porcelain`);
+      expect(commands).not.toContain(`git -C ${repoDir} switch -c mbrain/recipe-trello-to-brain`);
+      expect(commands).not.toContain(`git -C ${repoDir} add recipes/trello-to-brain.md`);
+      expect(commands).not.toContain(`git -C ${repoDir} commit -m Add trello-to-brain integration recipe`);
+      expect(commands).not.toContain(`git -C ${repoDir} push -u origin mbrain/recipe-trello-to-brain`);
+      expect(commands).not.toContain('gh pr create');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr can retry an existing matching recipe branch', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-retry-branch-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    mkdirSync(join(repoDir, 'src', 'commands'), { recursive: true });
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"mbrain"}');
+    writeFileSync(join(repoDir, 'src', 'commands', 'integrations.ts'), '// marker\n');
+    const recipeContent = `---
+id: retry-to-brain
+name: Retry to Brain
+version: 1.0.0
+description: Retryable cards become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to retry a previously committed recipe branch without
+duplicating commits or overwriting existing recipe content.
+`;
+    const targetPath = join(repoDir, 'recipes', 'retry-to-brain.md');
+    const commandLog = join(repoDir, 'commands.log');
+    const prBodyLog = join(repoDir, 'pr-body.md');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+if [ "$1 $2 $3 $4" = "status --porcelain -- recipes/retry-to-brain.md" ]; then exit 0; fi
+case "$1 $2" in
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;
+  "branch --show-current") echo "main"; exit 0 ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse --verify") exit 0 ;;
+  "switch mbrain/recipe-retry-to-brain") cat > "${targetPath}" <<'EOF_RECIPE'
+${recipeContent}EOF_RECIPE
+exit 0 ;;
+  "add recipes/retry-to-brain.md") exit 0 ;;
+  "commit -m") exit 0 ;;
+  "push -u") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1 $2" = "auth status" ]; then exit 0; fi
+if [ "$1 $2" = "pr create" ]; then
+  cat > "${prBodyLog}"
+  echo "https://github.com/example/mbrain/pull/128"
+  exit 0
+fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'retry-to-brain.md');
+    writeFileSync(recipePath, recipeContent);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await runIntegrations(['submit', recipePath, '--create-pr', '--json']);
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(true);
+      expect(payload.pull_request).toMatchObject({
+        branch: 'mbrain/recipe-retry-to-brain',
+        url: 'https://github.com/example/mbrain/pull/128',
+        target_path: 'recipes/retry-to-brain.md',
+      });
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain(`git -C ${repoDir} switch mbrain/recipe-retry-to-brain`);
+      expect(commands).toContain(`git -C ${repoDir} status --porcelain -- recipes/retry-to-brain.md`);
+      expect(commands).toContain(`git -C ${repoDir} remote get-url origin`);
+      expect(commands).toContain(`git -C ${repoDir} push -u origin mbrain/recipe-retry-to-brain`);
+      expect(commands).toContain('gh pr create --repo meghendra6/mbrain --base master --draft --title Add Retry to Brain integration recipe --body-file - --head mbrain/recipe-retry-to-brain');
+      expect(commands).not.toContain(`git -C ${repoDir} add recipes/retry-to-brain.md`);
+      expect(commands).not.toContain(`git -C ${repoDir} commit -m Add retry-to-brain integration recipe`);
+      expect(readFileSync(prBodyLog, 'utf-8')).toContain('Adds the `Retry to Brain` integration recipe.');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr refuses to run outside an MBrain repository', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-wrong-repo-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"not-mbrain"}');
+    const commandLog = join(repoDir, 'commands.log');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+case "$1 $2" in
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse --verify") exit 1 ;;
+  "switch -c") exit 0 ;;
+  "add recipes/discord-to-brain.md") exit 0 ;;
+  "commit -m") exit 0 ;;
+  "push -u") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1 $2" = "pr create" ]; then echo "https://github.com/example/mbrain/pull/124"; exit 0; fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'discord-to-brain.md');
+    writeFileSync(recipePath, `---
+id: discord-to-brain
+name: Discord to Brain
+version: 1.0.0
+description: Discord messages become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic Discord collector and import
+selected messages into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--create-pr', '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors.join('\n')).toContain('MBrain repository');
+      expect(existsSync(join(repoDir, 'recipes', 'discord-to-brain.md'))).toBe(false);
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain('git rev-parse --show-toplevel');
+      expect(commands).not.toContain(`git -C ${repoDir} add recipes/discord-to-brain.md`);
+      expect(commands).not.toContain(`git -C ${repoDir} commit -m Add discord-to-brain integration recipe`);
+      expect(commands).not.toContain(`git -C ${repoDir} push -u origin mbrain/recipe-discord-to-brain`);
+      expect(commands).not.toContain('gh pr create');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr refuses to overwrite target files on an existing branch', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-existing-branch-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    mkdirSync(join(repoDir, 'src', 'commands'), { recursive: true });
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"mbrain"}');
+    writeFileSync(join(repoDir, 'src', 'commands', 'integrations.ts'), '// marker\n');
+    const targetPath = join(repoDir, 'recipes', 'asana-to-brain.md');
+    const commandLog = join(repoDir, 'commands.log');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+case "$1 $2" in
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;
+  "branch --show-current") echo "main"; exit 0 ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse --verify") exit 0 ;;
+  "switch mbrain/recipe-asana-to-brain") echo "existing branch recipe" > "${targetPath}"; exit 0 ;;
+  "switch main") exit 0 ;;
+  "add recipes/asana-to-brain.md") exit 0 ;;
+  "commit -m") exit 0 ;;
+  "push -u") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1 $2" = "pr create" ]; then echo "https://github.com/example/mbrain/pull/125"; exit 0; fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'asana-to-brain.md');
+    writeFileSync(recipePath, `---
+id: asana-to-brain
+name: Asana to Brain
+version: 1.0.0
+description: Asana tasks become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic Asana collector and import
+selected task updates into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--create-pr', '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors.join('\n')).toContain('Target path already exists on branch');
+      expect(readFileSync(targetPath, 'utf-8')).toBe('existing branch recipe\n');
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain(`git -C ${repoDir} switch mbrain/recipe-asana-to-brain`);
+      expect(commands).toContain(`git -C ${repoDir} switch main`);
+      expect(commands).not.toContain(`git -C ${repoDir} add recipes/asana-to-brain.md`);
+      expect(commands).not.toContain(`git -C ${repoDir} commit -m Add asana-to-brain integration recipe`);
+      expect(commands).not.toContain(`git -C ${repoDir} push -u origin mbrain/recipe-asana-to-brain`);
+      expect(commands).not.toContain('gh pr create');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr cleans copied recipes when commit fails', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-commit-fail-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    mkdirSync(join(repoDir, 'src', 'commands'), { recursive: true });
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"mbrain"}');
+    writeFileSync(join(repoDir, 'src', 'commands', 'integrations.ts'), '// marker\n');
+    const targetPath = join(repoDir, 'recipes', 'jira-to-brain.md');
+    const commandLog = join(repoDir, 'commands.log');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+case "$1 $2" in
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;
+  "branch --show-current") echo "main"; exit 0 ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse --verify") exit 1 ;;
+  "switch -c") exit 0 ;;
+  "add recipes/jira-to-brain.md") exit 0 ;;
+  "commit -m") echo "missing git identity" >&2; exit 1 ;;
+  "rm --cached") exit 0 ;;
+  "switch main") exit 0 ;;
+  "push -u") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1 $2" = "pr create" ]; then echo "https://github.com/example/mbrain/pull/126"; exit 0; fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'jira-to-brain.md');
+    writeFileSync(recipePath, `---
+id: jira-to-brain
+name: Jira to Brain
+version: 1.0.0
+description: Jira issues become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic Jira collector and import
+selected issue updates into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--create-pr', '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors.join('\n')).toContain('missing git identity');
+      expect(existsSync(targetPath)).toBe(false);
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain(`git -C ${repoDir} rm --cached --ignore-unmatch recipes/jira-to-brain.md`);
+      expect(commands).toContain(`git -C ${repoDir} switch main`);
+      expect(commands).not.toContain(`git -C ${repoDir} push -u origin mbrain/recipe-jira-to-brain`);
+      expect(commands).not.toContain('gh pr create');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr refuses unverified origin before branch side effects', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-wrong-origin-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    mkdirSync(join(repoDir, 'src', 'commands'), { recursive: true });
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"mbrain"}');
+    writeFileSync(join(repoDir, 'src', 'commands', 'integrations.ts'), '// marker\n');
+    const commandLog = join(repoDir, 'commands.log');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+case "$1 $2" in
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:someone/fork.git"; exit 0 ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse --verify") exit 1 ;;
+  "switch -c") exit 0 ;;
+  "add recipes/github-to-brain.md") exit 0 ;;
+  "commit -m") exit 0 ;;
+  "push -u") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1 $2" = "auth status" ]; then exit 0; fi
+if [ "$1 $2" = "pr create" ]; then echo "https://github.com/example/mbrain/pull/129"; exit 0; fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'github-to-brain.md');
+    writeFileSync(recipePath, `---
+id: github-to-brain
+name: GitHub to Brain
+version: 1.0.0
+description: GitHub issues become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic GitHub collector and import
+selected issue updates into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--create-pr', '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors.join('\n')).toContain('must run with origin set to meghendra6/mbrain');
+      expect(existsSync(join(repoDir, 'recipes', 'github-to-brain.md'))).toBe(false);
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain(`git -C ${repoDir} remote get-url origin`);
+      expect(commands).not.toContain(`git -C ${repoDir} switch -c mbrain/recipe-github-to-brain`);
+      expect(commands).not.toContain(`git -C ${repoDir} push -u origin mbrain/recipe-github-to-brain`);
+      expect(commands).not.toContain('gh pr create');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr refuses unverified origin push URL before branch side effects', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-wrong-push-origin-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    mkdirSync(join(repoDir, 'src', 'commands'), { recursive: true });
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"mbrain"}');
+    writeFileSync(join(repoDir, 'src', 'commands', 'integrations.ts'), '// marker\n');
+    const commandLog = join(repoDir, 'commands.log');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+if [ "$1 $2 $3" = "remote get-url --push" ]; then echo "git@github.com:someone/fork.git"; exit 0; fi
+case "$1 $2" in
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse --verify") exit 1 ;;
+  "switch -c") exit 0 ;;
+  "add recipes/slack-to-brain.md") exit 0 ;;
+  "commit -m") exit 0 ;;
+  "push -u") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1 $2" = "auth status" ]; then exit 0; fi
+if [ "$1 $2" = "pr create" ]; then echo "https://github.com/example/mbrain/pull/130"; exit 0; fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'slack-to-brain.md');
+    writeFileSync(recipePath, `---
+id: slack-to-brain
+name: Slack to Brain
+version: 1.0.0
+description: Slack messages become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic Slack collector and import
+selected message updates into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--create-pr', '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors.join('\n')).toContain('must run with origin push URL set to meghendra6/mbrain');
+      expect(existsSync(join(repoDir, 'recipes', 'slack-to-brain.md'))).toBe(false);
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain(`git -C ${repoDir} remote get-url origin`);
+      expect(commands).toContain(`git -C ${repoDir} remote get-url --push origin`);
+      expect(commands).not.toContain(`git -C ${repoDir} switch -c mbrain/recipe-slack-to-brain`);
+      expect(commands).not.toContain(`git -C ${repoDir} push -u origin mbrain/recipe-slack-to-brain`);
+      expect(commands).not.toContain('gh pr create');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr reports branch recovery after push fails', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-push-fail-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    mkdirSync(join(repoDir, 'src', 'commands'), { recursive: true });
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"mbrain"}');
+    writeFileSync(join(repoDir, 'src', 'commands', 'integrations.ts'), '// marker\n');
+    const commandLog = join(repoDir, 'commands.log');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+if [ "$1 $2 $3" = "remote get-url --push" ]; then echo "git@github.com:meghendra6/mbrain.git"; exit 0; fi
+case "$1 $2" in
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;
+  "branch --show-current") echo "main"; exit 0 ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse --verify") exit 1 ;;
+  "switch -c") exit 0 ;;
+  "add recipes/push-fail-to-brain.md") exit 0 ;;
+  "commit -m") exit 0 ;;
+  "push -u") echo "push failed" >&2; exit 1 ;;
+  "switch main") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1 $2" = "auth status" ]; then exit 0; fi
+if [ "$1 $2" = "pr create" ]; then echo "https://github.com/example/mbrain/pull/131"; exit 0; fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'push-fail-to-brain.md');
+    writeFileSync(recipePath, `---
+id: push-fail-to-brain
+name: Push Fail to Brain
+version: 1.0.0
+description: Push failures become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic push failure collector and
+import selected updates into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--create-pr', '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors.join('\n')).toContain('push failed');
+      expect(payload.errors.join('\n')).toContain(`git -C ${repoDir} branch -D mbrain/recipe-push-fail-to-brain`);
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain(`git -C ${repoDir} switch main`);
+      expect(commands).not.toContain('gh pr create');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
+      if (previousRecipesDir === undefined) {
+        delete process.env.MBRAIN_RECIPES_DIR;
+      } else {
+        process.env.MBRAIN_RECIPES_DIR = previousRecipesDir;
+      }
+    }
+  });
+
+  test('integrations submit --create-pr reports branch recovery after PR creation fails', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'mbrain-submit-pr-fail-'));
+    const recipesDir = join(repoDir, 'recipes');
+    const binDir = join(repoDir, 'bin');
+    mkdirSync(recipesDir);
+    mkdirSync(binDir);
+    mkdirSync(join(repoDir, 'src', 'commands'), { recursive: true });
+    writeFileSync(join(repoDir, 'package.json'), '{"name":"mbrain"}');
+    writeFileSync(join(repoDir, 'src', 'commands', 'integrations.ts'), '// marker\n');
+    const commandLog = join(repoDir, 'commands.log');
+    writeFileSync(join(binDir, 'git'), `#!/bin/sh
+echo "git $*" >> "${commandLog}"
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+case "$1 $2" in
+  "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
+  "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;
+  "branch --show-current") echo "main"; exit 0 ;;
+  "status --porcelain") exit 0 ;;
+  "rev-parse --verify") exit 1 ;;
+  "switch -c") exit 0 ;;
+  "add recipes/linear-fail-to-brain.md") exit 0 ;;
+  "commit -m") exit 0 ;;
+  "push -u") exit 0 ;;
+  "switch main") exit 0 ;;
+esac
+exit 0
+`);
+    writeFileSync(join(binDir, 'gh'), `#!/bin/sh
+echo "gh $*" >> "${commandLog}"
+if [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1 $2" = "auth status" ]; then exit 0; fi
+if [ "$1 $2" = "pr create" ]; then echo "PR creation failed" >&2; exit 1; fi
+exit 0
+`);
+    chmodSync(join(binDir, 'git'), 0o755);
+    chmodSync(join(binDir, 'gh'), 0o755);
+
+    const submitDir = mkdtempSync(join(tmpdir(), 'mbrain-recipe-submit-'));
+    const recipePath = join(submitDir, 'linear-fail-to-brain.md');
+    writeFileSync(recipePath, `---
+id: linear-fail-to-brain
+name: Linear Fail to Brain
+version: 1.0.0
+description: Linear issues become searchable brain entries
+category: sense
+requires: []
+secrets: []
+health_checks: []
+setup_time: 20 min
+---
+This recipe explains how to install a deterministic Linear collector and import
+selected issue updates into MBrain without relying on unsafe shell execution.
+`);
+
+    const previousRecipesDir = process.env.MBRAIN_RECIPES_DIR;
+    const previousPath = process.env.PATH;
+    const previousCwd = process.cwd();
+    process.env.MBRAIN_RECIPES_DIR = recipesDir;
+    process.env.PATH = `${binDir}:${previousPath ?? ''}`;
+    process.chdir(repoDir);
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const originalExit = process.exit;
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`EXIT:${code}`); }) as typeof process.exit;
+    try {
+      await expect(runIntegrations(['submit', recipePath, '--create-pr', '--json'])).rejects.toThrow('EXIT:1');
+      const payload = JSON.parse(logs.join('\n'));
+      expect(payload.ok).toBe(false);
+      expect(payload.errors.join('\n')).toContain('PR creation failed');
+      expect(payload.errors.join('\n')).toContain(`git -C ${repoDir} branch -D mbrain/recipe-linear-fail-to-brain`);
+      const commands = readFileSync(commandLog, 'utf-8');
+      expect(commands).toContain(`git -C ${repoDir} switch main`);
+      expect(commands).toContain('gh pr create --repo meghendra6/mbrain --base master --draft --title Add Linear Fail to Brain integration recipe --body-file - --head mbrain/recipe-linear-fail-to-brain');
+    } finally {
+      console.log = originalLog;
+      process.exit = originalExit;
+      process.chdir(previousCwd);
+      process.env.PATH = previousPath;
       if (previousRecipesDir === undefined) {
         delete process.env.MBRAIN_RECIPES_DIR;
       } else {

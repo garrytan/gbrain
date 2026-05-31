@@ -22,6 +22,11 @@ All notable changes to MBrain will be documented in this file.
   machine-readable output now includes a deterministic PR title/body template
   and file list, so agents can prepare reviewable recipe submissions without
   leaking secret values or local machine paths.
+- **Agents can now opt into draft PR creation for community recipes.**
+  `mbrain integrations submit <recipe.md> --create-pr` keeps the default
+  preflight safe, then intentionally copies the recipe, creates a branch,
+  commits, pushes, and opens a sanitized draft PR through `gh` only after the
+  recipe passes validation.
 - **Integration recipes can no longer execute arbitrary shell health checks.**
   `mbrain integrations doctor` now evaluates a constrained health-check DSL
   for environment variables, alternative credentials, local URLs, and heartbeat

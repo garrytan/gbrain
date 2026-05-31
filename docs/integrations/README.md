@@ -107,6 +107,19 @@ template, included files, and review checklist. The generated package is
 deterministic and does not include secret values, setup logs, or local machine
 paths. Use `--json` for machine-readable output.
 
+If you explicitly want MBrain to create the contribution branch, commit, push,
+and draft PR, run:
+
+```bash
+mbrain integrations submit path/to/your-recipe.md --create-pr
+```
+
+That mode is intentionally side-effecting. It runs only after the same preflight
+passes, then copies the recipe to `recipes/<id>.md`, creates
+`mbrain/recipe-<id>`, commits the recipe, pushes the branch, and opens a draft
+PR with `gh`. Run it from a clean MBrain repository clone with GitHub CLI
+authentication already configured.
+
 ## The Deterministic Collector Pattern
 
 When an LLM keeps failing at a mechanical task despite repeated prompt fixes,

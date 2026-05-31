@@ -21,9 +21,10 @@
  */
 
 import matter from 'gray-matter';
-import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
-import { join, basename } from 'path';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
+import { join, basename, resolve } from 'path';
 import { homedir } from 'os';
+import { execFileSync } from 'child_process';
 
 // --- Types ---
 
@@ -89,6 +90,7 @@ interface RecipeSubmissionResult extends RecipeValidationResult {
   checklist: string[];
   next_steps: string[];
   contribution_package?: RecipeContributionPackage;
+  pull_request?: RecipePullRequest;
 }
 
 interface RecipeContributionPackage {
@@ -99,9 +101,21 @@ interface RecipeContributionPackage {
   review_checklist: string[];
 }
 
+interface RecipePullRequest {
+  branch: string;
+  url: string;
+  target_path: string;
+}
+
 const RECIPE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_RECIPE_ID_LENGTH = 64;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+const MBRAIN_GITHUB_REPO = 'meghendra6/mbrain';
+const MBRAIN_ORIGIN_URLS = new Set([
+  'git@github.com:meghendra6/mbrain.git',
+  'https://github.com/meghendra6/mbrain.git',
+  'https://github.com/meghendra6/mbrain',
+]);
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -677,6 +691,169 @@ function buildRecipeSubmission(recipe: ParsedRecipe): RecipeSubmissionResult {
   };
 }
 
+function runSubmitCommand(command: string, args: string[], input?: string): string {
+  try {
+    return execFileSync(command, args, {
+      encoding: 'utf-8',
+      env: process.env,
+      input,
+      stdio: input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    const failure = error as { status?: number; stderr?: Buffer | string; message?: string };
+    const stderr = failure.stderr ? String(failure.stderr).trim() : '';
+    const status = failure.status !== undefined ? ` exited with ${failure.status}` : ' failed';
+    throw new Error(`${command} ${args.join(' ')}${status}${stderr ? `: ${stderr}` : failure.message ? `: ${failure.message}` : ''}`);
+  }
+}
+
+function runSubmitGit(repoRoot: string, args: string[]): string {
+  return runSubmitCommand('git', ['-C', repoRoot, ...args]);
+}
+
+function assertCanonicalMbrainOrigin(repoRoot: string): void {
+  const originUrl = runSubmitGit(repoRoot, ['remote', 'get-url', 'origin']).trim();
+  if (!MBRAIN_ORIGIN_URLS.has(originUrl)) {
+    throw new Error(
+      `mbrain integrations submit --create-pr must run with origin set to ${MBRAIN_GITHUB_REPO}; found ${originUrl || '(empty)'}`,
+    );
+  }
+
+  const originPushUrl = runSubmitGit(repoRoot, ['remote', 'get-url', '--push', 'origin']).trim();
+  if (!MBRAIN_ORIGIN_URLS.has(originPushUrl)) {
+    throw new Error(
+      `mbrain integrations submit --create-pr must run with origin push URL set to ${MBRAIN_GITHUB_REPO}; found ${originPushUrl || '(empty)'}`,
+    );
+  }
+}
+
+function getMbrainRepoRootForRecipePr(): string {
+  const repoRoot = resolve(runSubmitCommand('git', ['rev-parse', '--show-toplevel']).trim());
+  const packagePath = join(repoRoot, 'package.json');
+  const integrationsSourcePath = join(repoRoot, 'src', 'commands', 'integrations.ts');
+  const recipesPath = join(repoRoot, 'recipes');
+
+  if (!existsSync(packagePath) || !existsSync(integrationsSourcePath) || !existsSync(recipesPath)) {
+    throw new Error('mbrain integrations submit --create-pr must run from an MBrain repository clone');
+  }
+
+  try {
+    const pkg = JSON.parse(readFileSync(packagePath, 'utf-8')) as { name?: unknown };
+    if (pkg.name !== 'mbrain') {
+      throw new Error('package name mismatch');
+    }
+  } catch {
+    throw new Error('mbrain integrations submit --create-pr must run from an MBrain repository clone');
+  }
+
+  return repoRoot;
+}
+
+function createRecipePullRequest(recipeContent: string, result: RecipeSubmissionResult): RecipePullRequest {
+  if (!result.ok || !result.id || !result.target_path || !result.pr_title || !result.contribution_package) {
+    throw new Error('Recipe submission is not PR-ready');
+  }
+
+  const repoRoot = getMbrainRepoRootForRecipePr();
+  runSubmitCommand('gh', ['--version']);
+  runSubmitCommand('gh', ['auth', 'status']);
+  assertCanonicalMbrainOrigin(repoRoot);
+
+  const cleanStatus = runSubmitGit(repoRoot, ['status', '--porcelain']).trim();
+  if (cleanStatus) {
+    throw new Error('git status --porcelain reported uncommitted changes; commit or stash them before creating a recipe PR');
+  }
+
+  const originalBranch = runSubmitGit(repoRoot, ['branch', '--show-current']).trim();
+  const branch = `mbrain/recipe-${result.id}`;
+  const targetPath = result.target_path;
+  const targetAbsPath = resolve(repoRoot, targetPath);
+  if (!targetAbsPath.startsWith(`${repoRoot}/`)) {
+    throw new Error(`Target path escapes the repository: ${targetPath}`);
+  }
+  let recipeWritten = false;
+  let commitCreated = false;
+  let branchExists = true;
+  try {
+    runSubmitGit(repoRoot, ['rev-parse', '--verify', branch]);
+  } catch {
+    branchExists = false;
+  }
+
+  try {
+    if (branchExists) {
+      runSubmitGit(repoRoot, ['switch', branch]);
+    } else {
+      runSubmitGit(repoRoot, ['switch', '-c', branch]);
+    }
+
+    if (existsSync(targetAbsPath)) {
+      const existingRecipe = readFileSync(targetAbsPath, 'utf-8');
+      if (existingRecipe !== recipeContent) {
+        throw new Error(`Target path already exists on branch: ${targetPath}`);
+      }
+      const targetStatus = runSubmitGit(repoRoot, ['status', '--porcelain', '--', targetPath]).trim();
+      if (targetStatus) {
+        runSubmitGit(repoRoot, ['add', targetPath]);
+        runSubmitGit(repoRoot, ['commit', '-m', `Add ${result.id} integration recipe`]);
+        commitCreated = true;
+      }
+    } else {
+      mkdirSync(join(repoRoot, 'recipes'), { recursive: true });
+      writeFileSync(targetAbsPath, recipeContent);
+      recipeWritten = true;
+      runSubmitGit(repoRoot, ['add', targetPath]);
+      runSubmitGit(repoRoot, ['commit', '-m', `Add ${result.id} integration recipe`]);
+      commitCreated = true;
+    }
+
+    runSubmitGit(repoRoot, ['push', '-u', 'origin', branch]);
+    const prUrl = runSubmitCommand('gh', [
+      'pr',
+      'create',
+      '--repo',
+      MBRAIN_GITHUB_REPO,
+      '--base',
+      'master',
+      '--draft',
+      '--title',
+      result.pr_title,
+      '--body-file',
+      '-',
+      '--head',
+      branch,
+    ], result.contribution_package.pr_body).trim();
+
+    return { branch, url: prUrl, target_path: targetPath };
+  } catch (error) {
+    let recoveryHint = '';
+    if (recipeWritten && !commitCreated) {
+      try {
+        runSubmitGit(repoRoot, ['rm', '--cached', '--ignore-unmatch', targetPath]);
+      } catch {
+        // Best-effort cleanup only; preserve the original failure below.
+      }
+      try {
+        if (existsSync(targetAbsPath)) unlinkSync(targetAbsPath);
+      } catch {
+        // Best-effort cleanup only; preserve the original failure below.
+      }
+    }
+    if (originalBranch && originalBranch !== branch) {
+      try {
+        runSubmitGit(repoRoot, ['switch', originalBranch]);
+      } catch {
+        // Preserve the original failure; the user can recover with git switch.
+      }
+    }
+    if (commitCreated) {
+      recoveryHint = ` Recovery: inspect the orphan branch with git -C ${repoRoot} log -1 ${branch}; delete it with git -C ${repoRoot} branch -D ${branch} if you do not need the commit.`;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message}${recoveryHint}`);
+  }
+}
+
 function printSubmissionResult(result: RecipeSubmissionResult, jsonMode: boolean): void {
   if (jsonMode) {
     console.log(JSON.stringify(result, null, 2));
@@ -697,6 +874,9 @@ function printSubmissionResult(result: RecipeSubmissionResult, jsonMode: boolean
     if (result.contribution_package) {
       console.log('\nPR body:');
       console.log(result.contribution_package.pr_body);
+    }
+    if (result.pull_request) {
+      console.log(`\nCreated draft PR: ${result.pull_request.url}`);
     }
     console.log('\nChecklist:');
     for (const step of result.checklist) console.log(`  - ${step}`);
@@ -1112,6 +1292,7 @@ function cmdTest(args: string[]): void {
 
 function cmdSubmit(args: string[]): void {
   const jsonMode = args.includes('--json');
+  const createPr = args.includes('--create-pr');
   const filePath = args.find(a => !a.startsWith('-'));
   if (!filePath) {
     const result: RecipeSubmissionResult = {
@@ -1119,7 +1300,7 @@ function cmdSubmit(args: string[]): void {
       id: null,
       target_path: null,
       pr_title: null,
-      errors: ['Usage: mbrain integrations submit <recipe-file.md> [--json]'],
+      errors: ['Usage: mbrain integrations submit <recipe-file.md> [--json] [--create-pr]'],
       warnings: [],
       checklist: [],
       next_steps: [],
@@ -1161,6 +1342,14 @@ function cmdSubmit(args: string[]): void {
   }
 
   const result = buildRecipeSubmission(recipe);
+  if (createPr && result.ok) {
+    try {
+      result.pull_request = createRecipePullRequest(content, result);
+    } catch (error) {
+      result.ok = false;
+      result.errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
   printSubmissionResult(result, jsonMode);
   if (!result.ok) process.exit(1);
 }
@@ -1177,6 +1366,8 @@ USAGE
   mbrain integrations stats [--json]   Show signal statistics
   mbrain integrations test <file>      Validate a recipe file
   mbrain integrations submit <file>    Preflight a community recipe PR
+  mbrain integrations submit <file> --create-pr
+                                      Copy the recipe and open a draft PR
 `);
 }
 
