@@ -10,7 +10,6 @@
  */
 
 import { readFileSync, existsSync, openSync, writeSync, closeSync, writeFileSync } from 'fs';
-import Anthropic from '@anthropic-ai/sdk';
 import { withBenchmarkBrain, resetTables } from '../eval/longmemeval/harness.ts';
 import { haystackToPages, type LongMemEvalQuestion } from '../eval/longmemeval/adapter.ts';
 import { renderChatBlock, type ChatSessionForPrompt } from '../eval/longmemeval/sanitize.ts';
@@ -18,7 +17,7 @@ import { importFromContent } from '../core/import-file.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { expandQuery } from '../core/search/expansion.ts';
 import { resolveModel } from '../core/model-config.ts';
-import type { ThinkLLMClient } from '../core/think/index.ts';
+import { __thinkAdapter, type ThinkLLMClient } from '../core/think/index.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { PGLiteEngine } from '../core/pglite-engine.ts';
@@ -468,17 +467,39 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     fallback: 'sonnet',
   });
 
-  // Wrap Anthropic SDK so its `.messages.create` shape matches ThinkLLMClient.
-  // Same pattern as src/core/think/index.ts:247-249.
-  const realClient = new Anthropic();
-  const client: ThinkLLMClient = runOpts.client ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
-  };
-  // v0.40.2.0 — separate extractor client (defaults to same SDK).
-  const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? {
-    create: (params, callOpts) => realClient.messages.create(params, callOpts),
-  };
-  const trajectoryEnabled = !opts.noTrajectory;
+  // Route LLM calls through the gateway (gbrain's canonical chat seam) instead
+  // of constructing `new Anthropic()` directly. The gateway normalizes the
+  // model id — a bare `claude-sonnet-4-6` AND a provider-prefixed
+  // `anthropic:claude-sonnet-4-6` both resolve — and owns auth, which fixes the
+  // 404 the raw Anthropic SDK threw when `resolveModel` returned a prefixed id.
+  // Mirrors the v0.35.5.0 `think` refactor (tryBuildGatewayClient). Tests inject
+  // via runOpts.client, short-circuiting the gateway path entirely.
+  //
+  // `--retrieval-only` never calls the answer-gen client (see the hypothesis
+  // ternary in runOneQuestion), so skip construction entirely in that mode — it
+  // must run with NO key / NO client (the keyless CI e2e relies on this, and the
+  // old `new Anthropic()` was likewise constructed-but-never-called there).
+  // Otherwise build the gateway client and fail fast if no chat model exists.
+  let client: ThinkLLMClient;
+  if (opts.retrievalOnly) {
+    client = runOpts.client ?? {
+      create: async () => {
+        throw new Error('[longmemeval] answer-gen client invoked in --retrieval-only mode (unreachable)');
+      },
+    };
+  } else {
+    const built = runOpts.client ?? (await __thinkAdapter.tryBuildGatewayClient(model));
+    if (!built) {
+      process.stderr.write(
+        `[longmemeval] no chat model available for "${model}" — configure an API key for its ` +
+        `provider (e.g. ANTHROPIC_API_KEY, or \`gbrain config set anthropic_api_key <key>\`) then retry.\n`,
+      );
+      process.exit(1);
+    }
+    client = built;
+  }
+
+  let trajectoryEnabled = !opts.noTrajectory;
   const extractorModel = trajectoryEnabled
     ? await resolveModel(null, {
         cliFlag: runOpts.extractorModel,
@@ -486,6 +507,20 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         fallback: 'haiku',
       })
     : '';
+  // Separate extractor client for trajectory routing, also gateway-routed.
+  // A null client (no key / unknown provider for the extractor model) disables
+  // trajectory for this run rather than failing the whole eval — trajectory is
+  // an optional enrichment, not core to the benchmark.
+  let extractorClient: ThinkLLMClient | null = null;
+  if (trajectoryEnabled) {
+    extractorClient = runOpts.extractorClient ?? (await __thinkAdapter.tryBuildGatewayClient(extractorModel));
+    if (!extractorClient) {
+      process.stderr.write(
+        `[longmemeval] extractor model "${extractorModel}" unavailable — disabling trajectory routing for this run.\n`,
+      );
+      trajectoryEnabled = false;
+    }
+  }
 
   process.stderr.write(`[longmemeval] estimated 20-60 minutes for ${questions.length} questions; use --limit N for shorter runs\n`);
   process.stderr.write(`[longmemeval] connecting in-memory brain...\n`);
@@ -612,7 +647,9 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
 
 interface TrajectoryRunOpts {
   trajectoryEnabled: boolean;
-  extractorClient: ThinkLLMClient;
+  // null when the extractor model's provider is unavailable; trajectoryEnabled
+  // is forced false in that case, so the extractor path below is never reached.
+  extractorClient: ThinkLLMClient | null;
   extractorModel: string;
 }
 
@@ -644,7 +681,7 @@ async function runOneQuestion(
     // preprocessing — methodology disclosed at the envelope + stderr
     // summary level. Each call is fail-open; one bad session never
     // kills the per-question loop.
-    if (traj.trajectoryEnabled) {
+    if (traj.trajectoryEnabled && traj.extractorClient) {
       await extractAndInsertClaims({
         engine,
         client: traj.extractorClient,
