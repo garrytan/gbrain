@@ -116,6 +116,16 @@ owns the boundary.
 - Do not let maintenance cycles mutate canonical truth without the existing
   promotion, handoff, provenance, and snapshot checks.
 
+### Runtime Direction Supersession
+
+The local-first non-goal above belongs to this May 19 `gbrain` absorption
+roadmap. It prevents imported upstream migrations or runtime assumptions from
+changing the existing personal/local contract as a side effect of absorption.
+It does not supersede the later May 20 Postgres runtime architecture, which owns
+new target-runtime features. When those later specs require Postgres, SQLite and
+PGLite paths must report honest unsupported-capability boundaries instead of
+claiming target-runtime parity.
+
 ## Adoption Axes
 
 | Axis | GBrain idea | MBrain absorption |

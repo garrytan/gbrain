@@ -33,6 +33,7 @@ const fixture = JSON.parse(readFileSync(
   stage_id: string;
   fixture_format: string;
   verification_commands: string[];
+  optional_verification_commands: string[];
   runtime_change_guard: RuntimeChangeGuard;
   coverage: Record<string, { fixture: string; scenario: string; verification: string }>;
   consolidation_cases: ConsolidationCase[];
@@ -104,18 +105,26 @@ describe('S32 - gbrain upstream discipline', () => {
     expect(fixture.fixture_format).toBe('gbrain_absorption_replay_v1');
     expect(fixture.verification_commands).toEqual(expect.arrayContaining([
       'bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-upstream-discipline.test.ts',
+      'bun test test/gbrain-reference-baseline-script.test.ts',
       'bun run test:scenarios',
       'bunx tsc --noEmit --pretty false',
       'git diff --check',
+      'MBRAIN_CHANGED_PATH_BASE="${MBRAIN_CHANGED_PATH_BASE:-origin/master}" MBRAIN_DISALLOWED_PATH_PREFIXES=\'src/,supabase/,.github/workflows/\' bun run scripts/check-diff-path-boundary.ts',
       'GA_P7_COMMIT="$(git log --format=%H --fixed-strings --grep=\'Add GA-P7 upstream discipline checkpoint\' -n 1)"',
       'git diff --name-only "${GA_P7_COMMIT}^..${GA_P7_COMMIT}"',
     ]));
+    expect(fixture.optional_verification_commands).toEqual([
+      'GBRAIN_REFERENCE_PATH=reference/gbrain bun run scripts/check-gbrain-reference-baseline.ts',
+    ]);
     expect(fixture.verification_commands.join('\n')).not.toMatch(/[0-9a-f]{40}\.\.[0-9a-f]{40}/);
 
     expect(fixture.consolidation_cases.map((entry) => entry.case_id).sort()).toEqual([
+      'current_branch_path_guard',
       'deferred_surfaces_remain_explicit',
       'docs_and_tests_match_implementation_state',
+      'reference_baseline_drift_guard',
       'reinterpreted_vs_rejected_rationale_present',
+      'runtime_direction_supersession',
       'upstream_checkpoint_lists_adopted_areas',
       'verification_checklist_covers_ga_p2_through_ga_p6',
     ]);
@@ -151,11 +160,18 @@ describe('S32 - gbrain upstream discipline', () => {
     expect(upstream).toContain('| Frontmatter guards and resolver warnings | deferred |');
     expect(upstream).toContain('| Parallel incremental sync | deferred |');
     expect(upstream).toContain('| Tree-sitter Code Cathedral default graph retrieval | deferred |');
+    expect(upstream).toContain('## Reference baseline drift guard');
+    expect(upstream).toContain('GBRAIN_REFERENCE_PATH=reference/gbrain bun run scripts/check-gbrain-reference-baseline.ts');
+    expect(upstream).toContain('If it reports `drifted`, do not claim that the existing absorption matrix covers');
+    expect(upstream).toContain('## Runtime direction supersession note');
+    expect(upstream).toContain('It is not a veto on the later May 20 Postgres target-runtime plan.');
 
     for (const caseId of [
       'upstream_checkpoint_lists_adopted_areas',
       'reinterpreted_vs_rejected_rationale_present',
       'deferred_surfaces_remain_explicit',
+      'reference_baseline_drift_guard',
+      'runtime_direction_supersession',
     ]) {
       const entry = consolidationCase(caseId);
       expectCaseTermsInDeclaredDoc(entry);
@@ -168,6 +184,9 @@ describe('S32 - gbrain upstream discipline', () => {
     const readme = readRepoFile('test/scenarios/README.md');
 
     expect(verify).toContain('## GBrain Absorption GA-P7 Verification');
+    expect(verify).toContain('bun test test/gbrain-reference-baseline-script.test.ts');
+    expect(verify).toContain('GBRAIN_REFERENCE_PATH=reference/gbrain bun run scripts/check-gbrain-reference-baseline.ts');
+    expect(verify).toContain('bun run scripts/check-diff-path-boundary.ts');
     expect(evaluation).toContain('## GBrain Absorption GA-P7 Consolidation And Upstream Discipline');
     expect(readme).toContain('| S32 | `s32-gbrain-upstream-discipline.test.ts` | GA-P7, E1, L4, L6, G1 | ✅ green |');
 
@@ -195,6 +214,8 @@ describe('S32 - gbrain upstream discipline', () => {
     expect(evaluation).toContain('GA-P7 is docs, fixture, and scenario consolidation only.');
     expect(evaluation).toContain('no production runtime change');
     expect(verify).toContain('No network, database, or production runtime service is required for S32.');
+    expect(verify).toContain('baseline drift');
+    expect(verify).toContain('current branch diff');
     expect(upstream).toContain('No GA-P7 row grants permission to port upstream production runtime code directly.');
 
     const alignmentCase = consolidationCase('docs_and_tests_match_implementation_state');
@@ -202,6 +223,7 @@ describe('S32 - gbrain upstream discipline', () => {
     for (const term of alignmentCase.required_terms) {
       expect(`${evaluation}\n${verify}`).toContain(term);
     }
+    expectCaseTermsInDeclaredDoc(consolidationCase('current_branch_path_guard'));
   });
 
   test('guards the GA-P7 changed path allowlist against production runtime files', () => {

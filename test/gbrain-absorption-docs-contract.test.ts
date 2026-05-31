@@ -235,6 +235,7 @@ describe('personal gbrain absorption docs contracts', () => {
   test('anchors GA-P7 consolidation and upstream discipline in upstream and evaluation docs', () => {
     const upstream = readRepoFile('docs/UPSTREAM_SYNC.md');
     const evaluation = readRepoFile('docs/architecture/redesign/08-evaluation-and-acceptance.md');
+    const roadmap = readRepoFile('docs/superpowers/specs/2026-05-19-personal-gbrain-absorption-roadmap-design.md');
     const plan = readRepoFile('docs/superpowers/plans/2026-05-19-gbrain-absorption-ga-p7-consolidation-upstream-discipline.md');
 
     expect(upstream).toContain('## Roadmap 2026-05-19 - GA-P7 consolidation and upstream discipline checkpoint');
@@ -255,6 +256,12 @@ describe('personal gbrain absorption docs contracts', () => {
     expect(upstream).toContain('| Frontmatter guards and resolver warnings | deferred |');
     expect(upstream).toContain('| Parallel incremental sync | deferred |');
     expect(upstream).toContain('No GA-P7 row grants permission to port upstream production runtime code directly.');
+    expect(upstream).toContain('## Reference baseline drift guard');
+    expect(upstream).toContain('GBRAIN_REFERENCE_PATH=reference/gbrain bun run scripts/check-gbrain-reference-baseline.ts');
+    expect(upstream).toContain('## Runtime direction supersession note');
+    expect(upstream).toContain('It is not a veto on the later May 20 Postgres target-runtime plan.');
+    expect(roadmap).toContain('### Runtime Direction Supersession');
+    expect(roadmap).toContain('It does not supersede the later May 20 Postgres runtime architecture');
     expect(evaluation).toContain('## GBrain Absorption GA-P7 Consolidation And Upstream Discipline');
     expect(evaluation).toContain('ga-p7-upstream-discipline.fixture.json');
     expect(evaluation).toContain('consolidation_cases');
@@ -272,6 +279,9 @@ describe('personal gbrain absorption docs contracts', () => {
 
     expect(verify).toContain('## GBrain Absorption GA-P7 Verification');
     expect(verify).toContain('bun test test/gbrain-absorption-docs-contract.test.ts test/scenarios/s32-gbrain-upstream-discipline.test.ts');
+    expect(verify).toContain('bun test test/gbrain-reference-baseline-script.test.ts');
+    expect(verify).toContain('GBRAIN_REFERENCE_PATH=reference/gbrain bun run scripts/check-gbrain-reference-baseline.ts');
+    expect(verify).toContain('bun run scripts/check-diff-path-boundary.ts');
     expect(verify).toContain('test/fixtures/gbrain-absorption/ga-p7-upstream-discipline.fixture.json');
     expect(verify).toContain('upstream_checkpoint_lists_adopted_areas');
     expect(verify).toContain('reinterpreted_vs_rejected_rationale_present');
