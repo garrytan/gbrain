@@ -24,6 +24,13 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.maxContext).toBe(1000000); // Gemini 1.5 Pro
   });
 
+  it('returns capabilities for LiteLLM chat aliases', () => {
+    const caps = getProviderCapabilities('litellm:fast');
+    expect(caps.supportsToolCalling).toBe(true);
+    expect(caps.supportsPromptCaching).toBe(false);
+    expect(caps.supportsParallelTools).toBe(true);
+  });
+
   it('honors Anthropic alias (undated → dated)', () => {
     const caps = getProviderCapabilities('anthropic:claude-haiku-4-5');
     expect(caps.supportsToolCalling).toBe(true);
@@ -56,6 +63,10 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
 
   it('returns degraded:no_caching for Google Gemini', () => {
     expect(classifyCapabilities('google:gemini-1.5-pro')).toBe('degraded:no_caching');
+  });
+
+  it('returns degraded:no_caching for LiteLLM chat aliases', () => {
+    expect(classifyCapabilities('litellm:fast')).toBe('degraded:no_caching');
   });
 
   it('returns unknown for unrecognized providers', () => {

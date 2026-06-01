@@ -189,6 +189,16 @@ describe('resolveModel — v0.31.12 tier system', () => {
     expect(stderrCapture).toContain('caching');
   });
 
+  test('tier.subagent accepts LiteLLM-backed chat models once the recipe declares chat support', async () => {
+    stub.set('models.tier.subagent', 'litellm:fast');
+    const m = await resolveModel(stub as never, {
+      tier: 'subagent',
+      fallback: 'sonnet',
+    });
+    expect(m).toBe('litellm:fast');
+    expect(stderrCapture).toContain('caching');
+  });
+
   test('v0.38 D7: tier.subagent rejects unknown providers (falls back to default)', async () => {
     // Unknown providers fail the capability check (verdict='unknown'); the
     // resolver falls back to TIER_DEFAULTS.subagent rather than burn money on

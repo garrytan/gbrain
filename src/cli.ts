@@ -242,11 +242,15 @@ async function main() {
   // contract. Daemons (`serve`) are excluded so they stay alive.
   const DISCONNECT_HARD_DEADLINE_MS = 10_000;
   let forceExitTimer: ReturnType<typeof setTimeout> | undefined;
+  const suppressDisconnectTimeoutWarning =
+    op.name === 'search' || op.name === 'query' || op.name === 'get_page';
   if (shouldForceExitAfterMain()) {
     forceExitTimer = setTimeout(() => {
-      console.warn(
-        `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
-      );
+      if (!suppressDisconnectTimeoutWarning) {
+        console.warn(
+          `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
+        );
+      }
       process.exit(0);
     }, DISCONNECT_HARD_DEADLINE_MS);
     // unref so the timer itself doesn't keep the event loop alive — only
