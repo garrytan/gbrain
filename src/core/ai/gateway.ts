@@ -2736,6 +2736,20 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     providerOptions.anthropic = { cacheControl: { type: 'ephemeral' } };
   }
 
+  // Disable thinking/reasoning for all openai-compatible providers.
+  // DeepSeek v4-flash defaults to thinking mode, producing ~50% unnecessary
+  // output tokens for gbrain's non-reasoning use cases. Other providers
+  // (Ollama, OpenRouter, Groq, Together, llama-server) may add thinking in
+  // the future — the parameter is silently ignored by unrecognizing providers.
+  // Does not affect native providers (OpenAI o-series, Anthropic Claude,
+  // Google Gemini) which use different parameter names for reasoning control.
+  if (recipe.implementation === 'openai-compatible') {
+    providerOptions.openaiCompatible = {
+      ...((providerOptions as any).openaiCompatible ?? {}),
+      thinking: { type: 'disabled' as const },
+    };
+  }
+
   let _budgetRecorded = false;
   const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
     if (!tracker || _budgetRecorded) return;
