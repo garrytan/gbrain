@@ -21,6 +21,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import type { AuthInfo } from '../src/core/operations.ts';
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'skill-catalog', 'skills');
+const OTHER_FIXTURE = join(import.meta.dir, 'fixtures', 'skill-catalog', 'other-skills');
 
 let engine: PGLiteEngine;
 let home: string;
@@ -106,6 +107,23 @@ describe('list_skills over dispatch', () => {
       expect(r.body.error).toBe('permission_denied');
     });
   });
+
+  test('mcp.skill_roots publishes a unified multi-root catalog', async () => {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      await engine.setConfig('mcp.publish_skills', 'true');
+      await engine.setConfig('mcp.skill_roots', JSON.stringify([
+        { name: 'host-a', dir: FIXTURE },
+        { name: 'host-b', dir: OTHER_FIXTURE },
+      ]));
+      const r = await call('list_skills', {}, { remote: true, auth: { token: 't', clientId: 'c', scopes: ['read'] } });
+      expect(r.isError).toBe(false);
+      expect(r.body.skills_dir_source).toBe('config_multi');
+      expect(r.body.skill_roots.map((s: any) => s.name)).toEqual(['host-a', 'host-b']);
+      expect(r.body.skills.map((s: any) => s.name)).toContain('host-a:brain-ops');
+      expect(r.body.skills.map((s: any) => s.name)).toContain('host-b:brain-ops');
+      expect(r.body.skills.map((s: any) => s.name)).toContain('codex-tool');
+    });
+  });
 });
 
 describe('get_skill over dispatch', () => {
@@ -136,6 +154,22 @@ describe('get_skill over dispatch', () => {
       const r = await call('get_skill', { name: 'nope' }, { remote: false });
       expect(r.isError).toBe(true);
       expect(r.body.error).toBe('page_not_found');
+    });
+  });
+
+  test('mcp.skill_roots fetches root-qualified duplicate skills', async () => {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      await engine.setConfig('mcp.publish_skills', 'true');
+      await engine.setConfig('mcp.skill_roots', JSON.stringify([
+        { name: 'host-a', dir: FIXTURE },
+        { name: 'host-b', dir: OTHER_FIXTURE },
+      ]));
+      const r = await call('get_skill', { name: 'host-b:brain-ops' }, { remote: true, auth: { token: 't', clientId: 'c', scopes: ['read'] } });
+      expect(r.isError).toBe(false);
+      expect(r.body.name).toBe('host-b:brain-ops');
+      expect(r.body.source_root).toBe('host-b');
+      expect(r.body.canonical_name).toBe('brain-ops');
+      expect(r.body.body).toContain('Alternate host body');
     });
   });
 });

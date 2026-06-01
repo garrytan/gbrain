@@ -262,6 +262,16 @@ export interface GBrainConfig {
      * tier so a hosted gbrain never serves its own bundled dev skills).
      */
     skills_dir?: string;
+    /**
+     * Multi-host skill roots for the MCP skill catalog. When present, this
+     * supersedes `skills_dir` and lets one gbrain publish a unified catalog for
+     * several execution hosts without copying their skills into one directory.
+     */
+    skill_roots?: Array<{
+      name: string;
+      dir: string;
+      priority?: number;
+    }>;
   };
 }
 
@@ -697,6 +707,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'mcp.publish_skills',
   'mcp.publish_skills_prompted',
   'mcp.skills_dir',
+  'mcp.skill_roots',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',

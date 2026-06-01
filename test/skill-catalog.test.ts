@@ -3,13 +3,16 @@ import { join } from 'path';
 import type { OperationContext } from '../src/core/operations.ts';
 import {
   buildSkillCatalog,
+  buildSkillCatalogFromRoots,
   getSkillDetail,
+  getSkillDetailFromRoots,
   crossReferenceTools,
   oneLineDescription,
   resolveSkillMdPath,
 } from '../src/core/skill-catalog.ts';
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'skill-catalog', 'skills');
+const OTHER_FIXTURE = join(import.meta.dir, 'fixtures', 'skill-catalog', 'other-skills');
 
 /** Minimal ctx stub — the pure catalog functions only read remote/auth. */
 function ctx(remote: boolean, scopes?: string[]): OperationContext {
@@ -105,6 +108,36 @@ describe('buildSkillCatalog', () => {
   });
 });
 
+describe('buildSkillCatalogFromRoots', () => {
+  const roots = [
+    { name: 'host-a', dir: FIXTURE, source: 'config_multi' as const },
+    { name: 'host-b', dir: OTHER_FIXTURE, source: 'config_multi' as const },
+  ];
+
+  test('merges roots and namespaces duplicates only', () => {
+    const res = buildSkillCatalogFromRoots(ctx(true, ['read']), roots);
+    const names = res.skills.map(s => s.name).sort();
+    expect(res.skills_dir_source).toBe('config_multi');
+    expect(res.skill_roots?.map(r => r.name)).toEqual(['host-a', 'host-b']);
+    expect(names).toContain('host-a:brain-ops');
+    expect(names).toContain('host-b:brain-ops');
+    expect(names).toContain('codex-tool');
+    expect(names).toContain('query-helper');
+
+    const codexTool = res.skills.find(s => s.name === 'codex-tool')!;
+    expect(codexTool.source_root).toBe('host-b');
+    expect(codexTool.canonical_name).toBe('codex-tool');
+  });
+
+  test('section filter applies across every root', () => {
+    const all = buildSkillCatalogFromRoots(ctx(true, ['read']), roots);
+    const section = all.skills.find(s => s.name === 'codex-tool')!.section;
+    const filtered = buildSkillCatalogFromRoots(ctx(true, ['read']), roots, { section });
+    expect(filtered.skills.length).toBeGreaterThan(0);
+    expect(filtered.skills.every(s => s.section === section)).toBe(true);
+  });
+});
+
 describe('getSkillDetail', () => {
   test('returns prose body + allowlisted frontmatter (drops writes_to/sources)', () => {
     const res = getSkillDetail(ctx(true, ['read']), FIXTURE, 'brain-ops');
@@ -129,6 +162,33 @@ describe('getSkillDetail', () => {
     expect(res.unavailable_tools.sort()).toEqual(['put_page', 'web_search']);
     expect(res.client_guidance.mutating).toBe(true);
     expect(res.client_guidance.protocol.length).toBeGreaterThan(0);
+  });
+});
+
+describe('getSkillDetailFromRoots', () => {
+  const roots = [
+    { name: 'host-a', dir: FIXTURE, source: 'config_multi' as const },
+    { name: 'host-b', dir: OTHER_FIXTURE, source: 'config_multi' as const },
+  ];
+
+  test('fetches a unique skill by short name', () => {
+    const res = getSkillDetailFromRoots(ctx(true, ['read']), roots, 'codex-tool');
+    expect(res.name).toBe('codex-tool');
+    expect(res.canonical_name).toBe('codex-tool');
+    expect(res.source_root).toBe('host-b');
+    expect(res.body).toContain('Codex-only fixture body');
+  });
+
+  test('fetches a duplicate skill by root-qualified name', () => {
+    const res = getSkillDetailFromRoots(ctx(true, ['read']), roots, 'host-b:brain-ops');
+    expect(res.name).toBe('host-b:brain-ops');
+    expect(res.canonical_name).toBe('brain-ops');
+    expect(res.source_root).toBe('host-b');
+    expect(res.body).toContain('Alternate host body');
+  });
+
+  test('rejects an ambiguous unqualified duplicate', () => {
+    expect(() => getSkillDetailFromRoots(ctx(true, ['read']), roots, 'brain-ops')).toThrow(/multiple roots/);
   });
 });
 

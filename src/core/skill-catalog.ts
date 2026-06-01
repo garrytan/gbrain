@@ -77,12 +77,28 @@ const MAX_SKILL_NAME_LEN = 128;
 /** Where auto-detect found the dir, plus the explicit-config variant. */
 export type ResolvedSkillsDirSource = SkillsDirSource | 'config';
 
+export interface SkillRootConfig {
+  name: string;
+  dir: string;
+  priority?: number;
+}
+
+export interface ResolvedSkillRoot {
+  name: string;
+  dir: string;
+  source: ResolvedSkillsDirSource | 'config_multi';
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface SkillCatalogEntry {
   name: string;
+  /** Original skill name inside its source root. Present for multi-root catalogs. */
+  canonical_name?: string;
+  /** Logical root name from `mcp.skill_roots`. Present for multi-root catalogs. */
+  source_root?: string;
   description: string;
   section: string;
   triggers: string[];
@@ -97,7 +113,9 @@ export interface SkillCatalogEntry {
 
 export interface ListSkillsResult {
   schema_version: 1;
-  skills_dir_source: ResolvedSkillsDirSource;
+  skills_dir_source: ResolvedSkillsDirSource | 'config_multi';
+  /** Logical roots used for a multi-root catalog. Absolute host paths are not exposed. */
+  skill_roots?: Array<{ name: string; source: ResolvedSkillRoot['source'] }>;
   count: number;
   skills: SkillCatalogEntry[];
   instructions: {
@@ -111,6 +129,8 @@ export interface ListSkillsResult {
 export interface GetSkillResult {
   schema_version: 1;
   name: string;
+  canonical_name?: string;
+  source_root?: string;
   /** Allowlisted projection — never the raw frontmatter object. */
   frontmatter: {
     name?: string;
@@ -166,6 +186,96 @@ export async function readMcpSkillsDir(ctx: OperationContext): Promise<string | 
   if (dbVal && dbVal.trim().length > 0) return dbVal;
   const fileVal = ctx.config?.mcp?.skills_dir;
   return fileVal && fileVal.trim().length > 0 ? fileVal : undefined;
+}
+
+function parseSkillRoots(raw: unknown): SkillRootConfig[] | undefined {
+  if (raw == null) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    throw new OperationError(
+      'invalid_params',
+      'mcp.skill_roots must be valid JSON.',
+      'Use a JSON array like [{"name":"codex","dir":"/path/to/skills"}].',
+    );
+  }
+  if (!Array.isArray(parsed)) {
+    throw new OperationError(
+      'invalid_params',
+      'mcp.skill_roots must be a JSON array.',
+      'Use a JSON array like [{"name":"codex","dir":"/path/to/skills"}].',
+    );
+  }
+  const roots = parsed.map((item, i): SkillRootConfig => {
+    if (typeof item !== 'object' || item === null) {
+      throw new OperationError('invalid_params', `mcp.skill_roots[${i}] must be an object.`);
+    }
+    const name = (item as SkillRootConfig).name;
+    const dir = (item as SkillRootConfig).dir;
+    const priority = (item as SkillRootConfig).priority;
+    if (typeof name !== 'string' || name.trim().length === 0) {
+      throw new OperationError('invalid_params', `mcp.skill_roots[${i}].name must be a non-empty string.`);
+    }
+    if (typeof dir !== 'string' || dir.trim().length === 0) {
+      throw new OperationError('invalid_params', `mcp.skill_roots[${i}].dir must be a non-empty string.`);
+    }
+    if (priority != null && typeof priority !== 'number') {
+      throw new OperationError('invalid_params', `mcp.skill_roots[${i}].priority must be a number.`);
+    }
+    return { name: name.trim(), dir: dir.trim(), priority };
+  });
+  return roots.length > 0 ? roots : undefined;
+}
+
+/**
+ * Read `mcp.skill_roots` from the DB plane, falling back to the file plane.
+ * When present, it supersedes `mcp.skills_dir` so one gbrain can publish a
+ * multi-host catalog without copying skills into a synthetic directory.
+ */
+export async function readMcpSkillRoots(ctx: OperationContext): Promise<SkillRootConfig[] | undefined> {
+  let dbVal: string | null = null;
+  try {
+    dbVal = await ctx.engine.getConfig('mcp.skill_roots');
+  } catch {
+    // ignore — fall through to file plane
+  }
+  if (dbVal && dbVal.trim().length > 0) return parseSkillRoots(dbVal);
+  return parseSkillRoots(ctx.config?.mcp?.skill_roots);
+}
+
+function assertRootNameShape(name: string): void {
+  if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+    throw new OperationError(
+      'invalid_params',
+      `Invalid skill root name: ${name}`,
+      'Root names may contain letters, digits, underscore, dot, and dash only.',
+    );
+  }
+}
+
+export function resolveSkillRoots(roots: SkillRootConfig[] | undefined): ResolvedSkillRoot[] {
+  if (!roots || roots.length === 0) return [];
+
+  const seen = new Set<string>();
+  return [...roots]
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+    .map((root): ResolvedSkillRoot => {
+      assertRootNameShape(root.name);
+      if (seen.has(root.name)) {
+        throw new OperationError('invalid_params', `Duplicate skill root name: ${root.name}`);
+      }
+      seen.add(root.name);
+      const dir = resolve(root.dir);
+      if (!existsSync(dir)) {
+        throw new OperationError(
+          'storage_error',
+          `Configured mcp.skill_roots dir does not exist: ${root.dir}`,
+          'Fix it with `gbrain config set mcp.skill_roots ...` or remove the missing root.',
+        );
+      }
+      return { name: root.name, dir, source: 'config_multi' };
+    });
 }
 
 /**
@@ -246,6 +356,63 @@ export function resolveSkillMdPath(skillsDir: string, name: string): string {
     );
   }
   return confineManifestPath(skillsDir, entry);
+}
+
+interface RootSkillMatch {
+  root: ResolvedSkillRoot;
+  canonicalName: string;
+}
+
+function splitRootQualifiedName(name: string): { rootName?: string; skillName: string } {
+  assertSkillNameShape(name);
+  const idx = name.indexOf(':');
+  if (idx < 0) return { skillName: name };
+  const rootName = name.slice(0, idx);
+  const skillName = name.slice(idx + 1);
+  assertRootNameShape(rootName);
+  assertSkillNameShape(skillName);
+  return { rootName, skillName };
+}
+
+function findSkillInRoots(roots: ResolvedSkillRoot[], name: string): RootSkillMatch {
+  const { rootName, skillName } = splitRootQualifiedName(name);
+  if (rootName) {
+    const root = roots.find(r => r.name === rootName);
+    if (!root) {
+      throw new OperationError('page_not_found', `Skill root not found: ${rootName}`);
+    }
+    // Let the single-root resolver enforce manifest/path confinement.
+    resolveSkillMdPath(root.dir, skillName);
+    return { root, canonicalName: skillName };
+  }
+
+  const matches: RootSkillMatch[] = [];
+  for (const root of roots) {
+    try {
+      resolveSkillMdPath(root.dir, skillName);
+      matches.push({ root, canonicalName: skillName });
+    } catch (e) {
+      if (e instanceof OperationError && e.code === 'page_not_found') continue;
+      // A malformed entry should not make name lookup silently succeed elsewhere.
+      throw e;
+    }
+  }
+  if (matches.length === 0) {
+    throw new OperationError(
+      'page_not_found',
+      `Skill not found: ${skillName}`,
+      'Call list_skills to see available skills.',
+    );
+  }
+  if (matches.length > 1) {
+    const names = matches.map(m => `${m.root.name}:${skillName}`).join(', ');
+    throw new OperationError(
+      'invalid_params',
+      `Skill name '${skillName}' exists in multiple roots.`,
+      `Use one of the names returned by list_skills: ${names}`,
+    );
+  }
+  return matches[0];
 }
 
 /**
@@ -465,6 +632,59 @@ export function buildSkillCatalog(
   };
 }
 
+/**
+ * Build a unified catalog across several host skill roots. Duplicate skill
+ * names are published as `root:name`; unique names keep their short form.
+ */
+export function buildSkillCatalogFromRoots(
+  ctx: OperationContext,
+  roots: ResolvedSkillRoot[],
+  opts: { section?: string } = {},
+): ListSkillsResult {
+  const merged: SkillCatalogEntry[] = [];
+  for (const root of roots) {
+    const catalog = buildSkillCatalog(ctx, root.dir, root.source === 'config_multi' ? 'config' : root.source, opts);
+    for (const skill of catalog.skills) {
+      merged.push({
+        ...skill,
+        canonical_name: skill.name,
+        source_root: root.name,
+      });
+    }
+  }
+
+  const counts = new Map<string, number>();
+  for (const skill of merged) {
+    const canonical = skill.canonical_name ?? skill.name;
+    counts.set(canonical, (counts.get(canonical) ?? 0) + 1);
+  }
+
+  const skills = merged.map(skill => {
+    const canonical = skill.canonical_name ?? skill.name;
+    const sourceRoot = skill.source_root;
+    if (sourceRoot && (counts.get(canonical) ?? 0) > 1) {
+      return { ...skill, name: `${sourceRoot}:${canonical}` };
+    }
+    return skill;
+  });
+
+  skills.sort((a, b) => a.name.localeCompare(b.name));
+
+  return {
+    schema_version: 1,
+    skills_dir_source: 'config_multi',
+    skill_roots: roots.map(r => ({ name: r.name, source: r.source })),
+    count: skills.length,
+    skills,
+    instructions: {
+      summary: SKILL_CATALOG_INSTRUCTIONS.summary,
+      how_to_use: [...SKILL_CATALOG_INSTRUCTIONS.how_to_use],
+      available_brain_tools: availableBrainTools(ctx),
+      fetch_op: 'get_skill',
+    },
+  };
+}
+
 /** Fetch one skill's full instructions (prose only, size-capped, sanitized). */
 export function getSkillDetail(
   ctx: OperationContext,
@@ -513,6 +733,25 @@ export function getSkillDetail(
       available_brain_tools: availableBrainTools(ctx),
       mutating,
     },
+  };
+}
+
+/** Fetch one skill from a multi-root catalog. */
+export function getSkillDetailFromRoots(
+  ctx: OperationContext,
+  roots: ResolvedSkillRoot[],
+  name: string,
+): GetSkillResult {
+  const match = findSkillInRoots(roots, name);
+  const detail = getSkillDetail(ctx, match.root.dir, match.canonicalName);
+  const publishedName = name.includes(':')
+    ? `${match.root.name}:${match.canonicalName}`
+    : detail.name;
+  return {
+    ...detail,
+    name: publishedName,
+    canonical_name: match.canonicalName,
+    source_root: match.root.name,
   };
 }
 

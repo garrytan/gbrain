@@ -2001,9 +2001,13 @@ const list_skills: Operation = {
     const sc = await import('./skill-catalog.ts');
     const publish = await sc.readMcpPublishSkills(ctx);
     sc.assertPublishEnabled(ctx, publish);
+    const roots = sc.resolveSkillRoots(await sc.readMcpSkillRoots(ctx));
+    const section = typeof p.section === 'string' ? p.section : undefined;
+    if (roots.length > 0) {
+      return sc.buildSkillCatalogFromRoots(ctx, roots, { section });
+    }
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir, source } = sc.resolveSkillsDir(ctx, override);
-    const section = typeof p.section === 'string' ? p.section : undefined;
     return sc.buildSkillCatalog(ctx, dir, source, { section });
   },
   scope: 'read',
@@ -2024,9 +2028,13 @@ const get_skill: Operation = {
     const sc = await import('./skill-catalog.ts');
     const publish = await sc.readMcpPublishSkills(ctx);
     sc.assertPublishEnabled(ctx, publish);
+    const name = typeof p.name === 'string' ? p.name : '';
+    const roots = sc.resolveSkillRoots(await sc.readMcpSkillRoots(ctx));
+    if (roots.length > 0) {
+      return sc.getSkillDetailFromRoots(ctx, roots, name);
+    }
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir } = sc.resolveSkillsDir(ctx, override);
-    const name = typeof p.name === 'string' ? p.name : '';
     return sc.getSkillDetail(ctx, dir, name);
   },
   scope: 'read',
