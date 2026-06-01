@@ -2,6 +2,108 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.2.0] - 2026-06-01
+
+**Your brain now tells you when it has imported pages but never connected them — and gives you a one-command fix.**
+
+Importing a page and curating it are two different things. Import drops the
+text in. Extraction is the step that reads the text and builds the graph:
+the typed edges (`founded`, `works_at`, `invested_in`, `advises`) and the
+dated timeline entries that make `gbrain think`, graph traversal, and link
+search actually work. On a lot of brains that second step had quietly never
+run at scale. One real 280K-page brain had a links table that was 99.7%
+untyped `mentions` — a bag of name-drops with almost no real relationships —
+and nothing anywhere told the owner. A single manual extraction added 12,500
+typed edges that should have been there all along.
+
+The reason: plain `gbrain sync` already extracts the pages it changes, but
+there was no way to sweep the historical backlog, and no health signal when
+extraction fell behind. If you weren't running the autopilot cycle, the gap
+grew invisibly.
+
+Three things fix that:
+
+- **`gbrain extract --stale`** — a new incremental sweep. It re-extracts only
+  the pages whose links are stale (never extracted, edited since they were
+  last extracted, or extracted by an older version), in small batches, safe to
+  cron. Reads page content straight from the database, so it works on
+  checkout-less Postgres/Supabase brains too. Pass `--catch-up` to run past
+  the default 30-minute budget until the backlog is empty; `--dry-run` to just
+  see the count.
+
+  ```
+  gbrain extract --stale            # sweep the backlog incrementally
+  gbrain extract --stale --catch-up # run until 0 remain
+  gbrain extract --stale --dry-run  # how many pages are behind?
+  ```
+
+- **A `links_extraction_lag` doctor check** — `gbrain doctor` now warns when a
+  meaningful fraction of your pages have un-extracted edges, and tells you to
+  run `gbrain extract --stale`. Warn-only by default: it will never break a
+  CI/cron pipeline that gates on the doctor exit code. Set
+  `GBRAIN_EXTRACTION_LAG_FAIL_PCT` if you want a hard failure above some
+  threshold.
+
+- **An end-of-sync nudge** — after a sync that leaves a backlog, `gbrain sync`
+  prints one line on stderr pointing you at `gbrain extract --stale`. Silence
+  it with `GBRAIN_SYNC_NO_EXTRACT_NUDGE=1`.
+
+Plus `gbrain sync --no-extract` to skip inline extraction on purpose (the
+pages then show as stale until you sweep them).
+
+The mechanism behind all of this is a per-page freshness watermark
+(`pages.links_extracted_at`). It treats a page as needing extraction when it
+was never extracted, when it was edited after its last extraction (the exact
+"I wrote a page via the MCP API and it never got connected" case), or when the
+extractor logic itself changed. Existing brains correctly show their real
+backlog on the first `gbrain doctor` after upgrade — that visibility is the
+whole point.
+
+### Itemized changes
+
+- New `gbrain extract --stale [--source-id <id>] [--catch-up] [--dry-run] [--json]`:
+  DB-source incremental link + timeline sweep. Small batches with a wall-clock
+  budget; stamps every processed page (including zero-link pages) only after the
+  link/timeline writes succeed, so a crash mid-sweep leaves pages stale and they
+  re-extract idempotently on the next run.
+- New `links_extraction_lag` doctor check, wired into both local `gbrain doctor`
+  and the thin-client/remote report. Warn at >20% stale
+  (`GBRAIN_EXTRACTION_LAG_WARN_PCT`), hard-fail only when
+  `GBRAIN_EXTRACTION_LAG_FAIL_PCT` is set. Vacuous-skips brains under 100 pages;
+  `--source <id>` scopes it. Strictly a SQL count — no filesystem/git access.
+- `gbrain sync` now stamps the extraction watermark for the pages it extracts
+  inline, and prints a one-line stderr nudge after a sync that leaves a backlog.
+- New `gbrain sync --no-extract` flag to skip inline extraction.
+- A manual `gbrain extract links --source db` / `extract all --source db` now
+  also clears the watermark for the pages it processes.
+- Migration v112 adds `pages.links_extracted_at` (nullable timestamp) plus a
+  composite `(source_id, links_extracted_at)` index. No backfill — existing
+  pages start unstamped so the real backlog surfaces. Metadata-only column add;
+  instant on both Postgres and PGLite.
+
+## To take advantage of v0.42.2.0
+
+`gbrain upgrade` applies migration v112 automatically. If `gbrain doctor` warns
+about a partial migration:
+
+1. **Apply migrations manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Check your extraction backlog and sweep it:**
+   ```bash
+   gbrain doctor --json            # look for links_extraction_lag
+   gbrain extract --stale --dry-run  # how many pages are behind
+   gbrain extract --stale --catch-up # sweep them all
+   ```
+3. **Verify the graph filled in:**
+   ```bash
+   gbrain doctor                   # links_extraction_lag should now be ok
+   ```
+   Typed edges (`SELECT link_type, count(*) FROM links GROUP BY 1`) should jump.
+4. **If anything looks wrong,** file an issue at
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+
 ## [0.41.38.0] - 2026-05-30
 
 **Two fixes for Supabase brains with a code source. `gbrain code-callers` and
