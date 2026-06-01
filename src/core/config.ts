@@ -158,13 +158,6 @@ export function validateResolvedConfig(config: MBrainConfig): void {
         'Disable offline mode or switch engine to sqlite',
       );
     }
-    if (config.embedding_provider === 'local') {
-      throw new MBrainError(
-        'Invalid engine/provider combination',
-        'embedding_provider="local" requires sqlite engine',
-        'Set embedding_provider="none" or switch engine to sqlite',
-      );
-    }
   }
 
   if (config.engine === 'sqlite' || config.engine === 'pglite') {

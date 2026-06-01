@@ -92,14 +92,19 @@ describe('engine factory', () => {
     expect(engine).toBeInstanceOf(SQLiteEngine);
   });
 
-  test('rejects local-only provider settings on postgres before bootstrap proceeds', async () => {
+  test('allows local embedding provider settings on postgres for Ollama-backed semantic query', async () => {
     const { resolveConfig } = await import('../src/core/engine-factory.ts');
 
-    expect(() => resolveConfig({
+    const config = resolveConfig({
       engine: 'postgres',
       database_url: 'postgresql://user:pass@localhost:5432/mbrain',
       embedding_provider: 'local',
-    })).toThrow(/embedding_provider.*requires sqlite/i);
+      embedding_model: 'nomic-embed-text',
+    });
+
+    expect(config.engine).toBe('postgres');
+    expect(config.embedding_provider).toBe('local');
+    expect(config.embedding_model).toBe('nomic-embed-text');
   });
 
   test('rejects unsupported engines before bootstrap proceeds', async () => {

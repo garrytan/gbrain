@@ -1086,11 +1086,11 @@ describe('CLI dispatch integration', () => {
     expect(result.content).toContain('System Pages');
   });
 
-  test('bootstrap rejects invalid engine/provider config before attempting a database connection', async () => {
+  test('bootstrap rejects unsupported provider config before attempting a database connection', async () => {
     writeUserConfig({
       engine: 'postgres',
       database_url: 'postgresql://user:pass@localhost:5432/mbrain',
-      embedding_provider: 'local',
+      embedding_provider: 'remote',
     });
 
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'stats'], {
@@ -1103,7 +1103,7 @@ describe('CLI dispatch integration', () => {
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
 
-    expect(stderr).toMatch(/embedding_provider.*requires sqlite/i);
+    expect(stderr).toMatch(/unsupported embedding_provider: remote/i);
     expect(stderr).not.toMatch(/cannot connect to database/i);
     expect(exitCode).toBe(1);
   });
