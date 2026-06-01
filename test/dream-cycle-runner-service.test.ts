@@ -22,6 +22,7 @@ describe('dream cycle phase runner', () => {
       'embedding_refresh',
       'context_refresh',
       'daily_report',
+      'auto_promote',
     ]);
 
     const result = await runDreamCycle(stubEngine(), {
