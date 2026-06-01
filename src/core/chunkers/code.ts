@@ -1062,6 +1062,24 @@ function extractSymbolName(node: any): string | null {
     if (nested) return nested;
   }
 
+  // TS/JS/TSX: `const Foo = () => {…}` / `let Bar = function(){…}`.
+  // export_statement reaches the lexical_declaration via the `declaration`
+  // recursion above; here we descend lexical_declaration/variable_declaration
+  // into their variable_declarator child and read its `name` field.
+  // EXACT node.type equality only — a substring/endsWith test would wrongly
+  // match Go's `var_declaration`/`const_declaration`, function_declaration, etc.
+  if (node.type === 'lexical_declaration' || node.type === 'variable_declaration') {
+    for (const child of node.namedChildren) {
+      if (child.type === 'variable_declarator') {
+        const nameNode = child.childForFieldName('name');
+        if (nameNode?.text?.trim()) {
+          const v = sanitize(nameNode.text);
+          if (v) return v;
+        }
+      }
+    }
+  }
+
   for (const child of node.namedChildren) {
     if (child.type.endsWith('identifier') || child.type === 'constant') {
       const v = sanitize(child.text);

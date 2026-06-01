@@ -424,3 +424,34 @@ describe('chunkCodeText — empty input', () => {
     expect(await chunkCodeText('   \n  ', 'foo.ts')).toEqual([]);
   });
 });
+
+describe('chunkCodeText — const-arrow symbol naming (TS/TSX call-graph fix)', () => {
+  // Regression pin: `export const Foo = () => {…}` (the dominant React/RN
+  // component + handler form) must extract symbolName so its call edges are
+  // not dropped at import time. Long name avoids small-sibling merging.
+  test('export const arrow function gets symbolName + qualified (TS)', async () => {
+    const src = `export const DiaryScreenComponentLongEnoughToAvoidMerge = () => {
+  const x = computeSomething();
+  return x;
+};
+`;
+    const result = await chunkCodeText(src, 'src/app/diary.ts', { chunkSizeTokens: 50 });
+    const c = result.find(
+      (c) => c.metadata.symbolName === 'DiaryScreenComponentLongEnoughToAvoidMerge',
+    );
+    expect(c).toBeDefined();
+    expect(c!.metadata.symbolNameQualified).toBe('DiaryScreenComponentLongEnoughToAvoidMerge');
+  });
+
+  test('plain const arrow (no export) also gets symbolName (TSX)', async () => {
+    const src = `const useDiaryFeedHookNameLongEnoughToAvoidMerge = () => {
+  return doWork();
+};
+`;
+    const result = await chunkCodeText(src, 'src/app/hook.tsx', { chunkSizeTokens: 50 });
+    const c = result.find(
+      (c) => c.metadata.symbolName === 'useDiaryFeedHookNameLongEnoughToAvoidMerge',
+    );
+    expect(c).toBeDefined();
+  });
+});
