@@ -1,6 +1,6 @@
-import { existsSync } from 'fs';
+import { existsSync, realpathSync, statSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { join, relative, resolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile } from '../core/import-file.ts';
 import { formatResult as formatOperationResult } from '../core/operations.ts';
@@ -515,7 +515,35 @@ async function resolveSyncTarget(engine: BrainEngine, opts: SyncOpts): Promise<S
   if (!repoPath) {
     throw new Error('No repo path specified. Use --repo or run mbrain init with --repo first.');
   }
+  const registry = await loadSubbrainRegistry(engine);
+  const registeredSubbrain = findRegisteredSubbrainForRepoPath(registry, repoPath);
+  if (registeredSubbrain) {
+    return subbrainSyncTarget(registeredSubbrain);
+  }
   return { id: null, repoPath, legacy: true };
+}
+
+function findRegisteredSubbrainForRepoPath(
+  registry: Awaited<ReturnType<typeof loadSubbrainRegistry>>,
+  repoPath: string,
+): SubbrainConfig | null {
+  const targetPath = realDirectoryPath(repoPath);
+  if (!targetPath) return null;
+
+  return Object.values(registry.subbrains)
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .find(subbrain => realDirectoryPath(subbrain.path) === targetPath)
+    ?? null;
+}
+
+function realDirectoryPath(repoPath: string): string | null {
+  try {
+    const requested = resolve(repoPath);
+    if (!existsSync(requested) || !statSync(requested).isDirectory()) return null;
+    return realpathSync(requested);
+  } catch {
+    return null;
+  }
 }
 
 async function performAllSubbrainSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {

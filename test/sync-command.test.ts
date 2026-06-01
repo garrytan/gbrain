@@ -268,6 +268,37 @@ describe('performSync incremental safety', () => {
     });
   });
 
+  test('configured repo path for a registered subbrain syncs with the subbrain prefix', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    writeFileSync(join(repoPath, 'people', 'alice.md'), [
+      '---',
+      'title: Alice',
+      '---',
+      '',
+      'Alice belongs to the office sub-brain.',
+    ].join('\n'));
+    const headCommit = commitAll(repoPath, 'seed office alice');
+
+    await withSqliteEngine(async (engine) => {
+      await engine.setConfig('sync.repo_path', repoPath);
+      await engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+        subbrains: {
+          office: { id: 'office', path: repoPath, prefix: 'office' },
+        },
+      }));
+
+      const result = await performSync(engine, { noPull: true });
+
+      expect(result.status).toBe('first_sync');
+      expect(await engine.getPage('office/people/alice')).not.toBeNull();
+      expect(await engine.getPage('people/alice')).toBeNull();
+      expect(await engine.getConfig('sync.subbrains.office.last_commit')).toBe(headCommit);
+      expect(await engine.getConfig('sync.last_commit')).toBeNull();
+      expect(await engine.getConfig('markdown.repo_path')).toBeNull();
+    });
+  });
+
   test('all-subbrains sync keeps checkpoints independent', async () => {
     const personalRepo = makeRepo();
     mkdirSync(join(personalRepo, 'people'), { recursive: true });

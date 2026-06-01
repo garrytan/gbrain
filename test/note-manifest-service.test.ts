@@ -101,4 +101,21 @@ describe('note manifest service', () => {
 
     expect(entry.tags).toEqual(['manifest', 'phase2']);
   });
+
+  test('buildNoteManifestEntry preserves a canonical page slug ending in .md', () => {
+    const entry = buildNoteManifestEntry({
+      page_id: 10,
+      slug: 'systems/rbln-kernel-poc-jcr-precsim.md',
+      path: 'systems/rbln-kernel-poc-jcr-precsim.md.md',
+      page: {
+        type: 'system',
+        title: 'PrecSim JCR',
+        compiled_truth: '# PrecSim JCR',
+        timeline: '',
+        frontmatter: {},
+      },
+    });
+
+    expect(entry.slug).toBe('systems/rbln-kernel-poc-jcr-precsim.md');
+  });
 });
