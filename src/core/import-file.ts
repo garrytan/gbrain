@@ -1104,6 +1104,11 @@ export async function importCodeFile(
           from_symbol_qualified: from.symbol_name_qualified,
           to_symbol_qualified: e.toSymbol,
           edge_type: e.edgeType,
+          // Thread the source so source-scoped reads (code-callers/callees with
+          // --source) match. Without this the edge lands source_id=NULL and is
+          // invisible to every scoped query. Default brain (no sourceId) → null,
+          // which correctly matches unscoped reads.
+          source_id: sourceId ?? null,
         });
       }
 
