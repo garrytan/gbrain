@@ -101,5 +101,5 @@ export const openrouter: Recipe = {
     },
   },
   setup_hint:
-    'Get an API key at https://openrouter.ai/settings/keys, then `export OPENROUTER_API_KEY=...` and use `openrouter:<provider>/<model>`. Optional overrides: OPENROUTER_BASE_URL (proxy), OPENROUTER_REFERER (attribution URL), OPENROUTER_TITLE (attribution name).',
+    'Get an API key at https://openrouter.ai/settings/keys, then `export OPENROUTER_API_KEY=...` or set `openrouter_api_key` in ~/.gbrain/config.json and use `openrouter:<provider>/<model>`. Optional overrides: OPENROUTER_BASE_URL (proxy), OPENROUTER_REFERER (attribution URL), OPENROUTER_TITLE (attribution name).',
 };

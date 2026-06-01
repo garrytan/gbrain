@@ -101,7 +101,7 @@ For GCP service-account / Vertex AI auth (production deployments), see the v0.32
 
 ### OpenRouter
 
-Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek, Meta Llama, Qwen, and dozens of other hosted providers. One key, many models. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` (e.g. `openrouter:openai/gpt-5.2`, `openrouter:anthropic/claude-sonnet-4.6`).
+Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek, Meta Llama, Qwen, and dozens of other hosted providers. One key, many models. Set `OPENROUTER_API_KEY` or `openrouter_api_key` in `~/.gbrain/config.json`, then use `openrouter:<provider>/<model>` (e.g. `openrouter:openai/gpt-5.2`, `openrouter:anthropic/claude-sonnet-4.6`).
 
 **Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024). OR's embedding catalog also includes `text-embedding-3-large`, `google/gemini-embedding-2-preview`, `qwen/qwen3-embedding-8b`, `bge-m3` — opt in via `--embedding-model openrouter:<id>`. Pricing matches the upstream provider (OR adds a small markup).
 

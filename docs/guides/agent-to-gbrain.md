@@ -159,7 +159,8 @@ proxy for worker env.
   If a brain DB ever traverses a trust boundary, secrets stay out.
 - **Free-form names.** `inherit:` accepts any snake_case config-key on your
   worker — `database_url`, `anthropic_api_key`, `openai_api_key`,
-  `voyage_api_key`, `groq_api_key`, `zeroentropy_api_key`, or any custom
+  `openrouter_api_key`, `voyage_api_key`, `groq_api_key`,
+  `zeroentropy_api_key`, or any custom
   field you stuff into `~/.gbrain/config.json`. The agent picks what it
   needs.
 - **`env:` still works** for non-secret values, or for cases where you
