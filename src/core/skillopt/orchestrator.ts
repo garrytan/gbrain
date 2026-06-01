@@ -93,7 +93,7 @@ import { preflight, formatPreflightReport } from './preflight.ts';
 import { isRejected, loadRejectedBuffer, makeRejectedEntry, saveRejectedBuffer } from './rejected-buffer.ts';
 import { runReflect } from './reflect.ts';
 import { acceptCandidate, bestPath, revertAllPending, skillPath } from './version-store.ts';
-import { runValidationGate } from './validate-gate.ts';
+import { runValidationGate, ValidationGateNoRolloutsError } from './validate-gate.ts';
 import type { SkillOptOpts, EditOp, RunReceipt } from './types.ts';
 
 export interface RunSkillOptResult {
@@ -278,6 +278,7 @@ async function runOptimizationLoop(
   let outcome: 'accepted' | 'no_improvement' | 'aborted' | 'errored' = 'no_improvement';
   let finalText = checkpoint.best_skill_text;
   let totalStepsRun = 0;
+  let runErrorDetail: string | undefined;
 
   try {
     await withBudgetTracker(tracker, async () => {
@@ -472,6 +473,7 @@ async function runOptimizationLoop(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    runErrorDetail = msg;
     if (msg.includes('BudgetExhausted') || msg.includes('budget_exhausted')) {
       outcome = 'aborted';
       logEvent({
@@ -487,7 +489,7 @@ async function runOptimizationLoop(
         kind: 'abort',
         run_id: runId,
         skill: skillName,
-        reason: 'sigint',
+        reason: err instanceof ValidationGateNoRolloutsError ? 'validation_failed' : 'internal_error',
         detail: msg,
       } as never);
     }
@@ -530,6 +532,7 @@ async function runOptimizationLoop(
     final_cost_usd: tracker.snapshot().cumulativeCostUsd,
     total_steps: totalStepsRun,
     epochs_completed: checkpoint.last_completed_epoch,
+    ...(runErrorDetail ? { error_detail: runErrorDetail } : {}),
   };
 
   logEvent({
@@ -541,6 +544,7 @@ async function runOptimizationLoop(
     total_steps: totalStepsRun,
     best_sel_score: checkpoint.best_sel_score,
     final_cost_usd: tracker.snapshot().cumulativeCostUsd,
+    ...(runErrorDetail ? { error_detail: runErrorDetail } : {}),
   } as never);
 
   // Clean checkpoint on success (resume not needed).

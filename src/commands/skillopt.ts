@@ -311,6 +311,9 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
       process.stderr.write(`[skillopt] Outcome: ${result.outcome}\n`);
       process.stderr.write(`[skillopt] Best sel-score: ${(result.receipt.best_sel_score ?? 0).toFixed(3)}\n`);
       process.stderr.write(`[skillopt] Final cost: $${(result.receipt.final_cost_usd ?? 0).toFixed(2)}\n`);
+      if ((result.outcome === 'errored' || result.outcome === 'aborted') && result.receipt.error_detail) {
+        process.stderr.write(`[skillopt] Error: ${result.receipt.error_detail}\n`);
+      }
       if (result.mutatedSkillFile) {
         process.stderr.write(`[skillopt] SKILL.md rewritten with ${result.receipt.total_steps ?? 0} optimization steps.\n`);
       } else if (result.proposedPath) {

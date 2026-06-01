@@ -201,6 +201,8 @@ export interface RunReceipt {
   final_cost_usd?: number;
   total_steps?: number;
   epochs_completed?: number;
+  /** Present when outcome=errored; intended for CLI/JSON diagnostics. */
+  error_detail?: string;
 }
 
 export interface HistoryRow {

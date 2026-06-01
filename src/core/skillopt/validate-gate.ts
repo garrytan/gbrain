@@ -27,6 +27,27 @@ import type { BenchmarkTask, GateInput, GateResult, ScoredRollout } from './type
 import { VALIDATION_EPSILON, VALIDATION_RUNS_PER_TASK } from './types.ts';
 import type { BrainEngine } from '../engine.ts';
 
+export interface ValidationGateFailure {
+  task_id: string;
+  error: string;
+}
+
+export class ValidationGateNoRolloutsError extends Error {
+  readonly code = 'validation_gate_no_rollouts' as const;
+  readonly failures: ValidationGateFailure[];
+
+  constructor(failures: ValidationGateFailure[]) {
+    const summary = failures
+      .slice(0, 3)
+      .map((f) => `${f.task_id}: ${f.error}`)
+      .join('; ');
+    const more = failures.length > 3 ? `; ... ${failures.length - 3} more` : '';
+    super(`validation gate produced zero scored rollouts; first errors: ${summary}${more}`);
+    this.name = 'ValidationGateNoRollouts';
+    this.failures = failures;
+  }
+}
+
 export interface ValidateGateOpts extends Omit<GateInput, 'selSet'> {
   selSet: BenchmarkTask[];
   engine: BrainEngine;
@@ -103,6 +124,12 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
     return { task_id: opts.selSet[idx]!.task_id, median: 0, runs: [] };
   });
   const scoredRollouts: ScoredRollout[] = settled.flatMap((s) => (s && s.ok) ? s.value.rollouts : []);
+  if (opts.selSet.length > 0 && scoredRollouts.length === 0) {
+    throw new ValidationGateNoRolloutsError(settled.map((s, idx) => ({
+      task_id: opts.selSet[idx]!.task_id,
+      error: (s && !s.ok) ? formatThrown(s.error) : 'no rollout result',
+    })));
+  }
   const selScore = perTaskMedians.length === 0
     ? 0
     : perTaskMedians.reduce((acc, r) => acc + r.median, 0) / perTaskMedians.length;
@@ -128,4 +155,9 @@ export function median(values: readonly number[]): number {
   return sorted.length % 2 === 1
     ? sorted[mid]!
     : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+function formatThrown(value: unknown): string {
+  if (value instanceof Error) return `${value.name}: ${value.message}`;
+  return String(value);
 }

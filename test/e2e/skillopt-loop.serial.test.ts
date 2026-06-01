@@ -170,6 +170,8 @@ interface StubOpts {
    * exist in the skill". Override to simulate broken/idiosyncratic agents.
    */
   targetText?: (skillText: string) => string;
+  /** Throw from every target-agent rollout to simulate gateway/toolLoop failure. */
+  targetError?: Error | string;
   /**
    * Optional per-call usage override for the budget-exhaustion test. When
    * set, every chat call reports this usage (driving cumulative cost up
@@ -229,6 +231,9 @@ function installStub(opts: StubOpts): void {
     }
 
     // Target-agent rollout.
+    if (opts.targetError !== undefined) {
+      throw typeof opts.targetError === 'string' ? new Error(opts.targetError) : opts.targetError;
+    }
     const model = chatOpts.model ?? 'anthropic:claude-sonnet-4-6';
     const fn = opts.targetText ?? defaultTargetText;
     return makeChatResult(fn(sys), model, usage);
@@ -406,6 +411,33 @@ describe('skillopt full-loop E2E (happy path + broken cases)', () => {
 
           expect(result.outcome).toBe('no_improvement');
           expect(result.mutatedSkillFile).toBe(false);
+          expect(fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8'))
+            .toBe(SKILL_PEOPLE_ONLY);
+          expect(loadHistory(fixture.skillsDir, SKILL).filter((r) => r.status === 'committed'))
+            .toHaveLength(0);
+        });
+      } finally {
+        uninstallStub();
+      }
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test('broken: all target rollouts fail surfaces errored, not no_improvement', async () => {
+    const fixture = setupFixture(SKILL_PEOPLE_ONLY);
+    try {
+      installStub({
+        targetError: 'gateway loop unavailable',
+      });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          const result = await runOnce(fixture);
+
+          expect(result.outcome).toBe('errored');
+          expect(result.mutatedSkillFile).toBe(false);
+          expect(result.receipt.error_detail).toContain('zero scored rollouts');
+          expect(result.receipt.error_detail).toContain('gateway loop unavailable');
           expect(fs.readFileSync(skillPath(fixture.skillsDir, SKILL), 'utf8'))
             .toBe(SKILL_PEOPLE_ONLY);
           expect(loadHistory(fixture.skillsDir, SKILL).filter((r) => r.status === 'committed'))

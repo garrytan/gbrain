@@ -33,11 +33,11 @@ export type SkilloptEvent =
       'no_improvement' | 'aborted' | 'errored'; epochs_completed: number;
       total_steps: number; baseline_sel_score?: number; best_sel_score?: number;
       baseline_test_score?: number; test_score?: number; final_cost_usd: number;
-      ts: string }
+      error_detail?: string; ts: string }
   | { kind: 'abort'; run_id: string; skill: string; reason: 'budget_exhausted' |
       'runtime_exhausted' | 'dirty_tree' | 'lock_busy' | 'sentinel_pending' |
-      'bundled_skill_no_flag' | 'd_sel_too_small' | 'sigint'; detail?: string;
-      ts: string };
+      'bundled_skill_no_flag' | 'd_sel_too_small' | 'validation_failed' |
+      'internal_error' | 'sigint'; detail?: string; ts: string };
 
 let _writer: AuditWriter<SkilloptEvent> | null = null;
 
