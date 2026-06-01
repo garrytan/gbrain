@@ -14,3 +14,4 @@ export * from './types/config.ts';
 export * from './types/task.ts';
 export * from './types/retrieval-trace.ts';
 export * from './types/errors.ts';
+export * from './types/auto-promote.ts';

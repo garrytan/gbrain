@@ -1,4 +1,5 @@
 import type {
+  AutoPromoteVerdictRow,
   CanonicalHandoffEntry,
   Chunk,
   ContextAtlasEntry,
@@ -274,6 +275,20 @@ export function rowToPersonalEpisodeEntry(row: Record<string, unknown>): Persona
     candidate_ids: parseJsonStringArray(row.candidate_ids),
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
+  };
+}
+
+export function rowToAutoPromoteVerdict(row: Record<string, unknown>): AutoPromoteVerdictRow {
+  const judgedAt = row.judged_at;
+  return {
+    candidate_id: row.candidate_id as string,
+    content_hash: row.content_hash as string,
+    runner_kind: row.runner_kind as string,
+    prompt_version: row.prompt_version as string,
+    decision: row.decision as string,
+    confidence: Number(row.confidence),
+    reasoning: (row.reasoning as string | null) ?? '',
+    judged_at: judgedAt instanceof Date ? judgedAt.toISOString() : String(judgedAt),
   };
 }
 

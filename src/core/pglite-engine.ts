@@ -33,6 +33,8 @@ import {
 import { buildPageCentroid } from './services/page-embedding.ts';
 import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts';
 import type {
+  AutoPromoteVerdictKey,
+  AutoPromoteVerdictRow,
   Page, PageInput, PageFilters, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions, PageType,
   NoteManifestEntry,
   NoteManifestEntryInput,
@@ -139,6 +141,7 @@ import {
   rowToPage,
   rowToChunk,
   rowToContextAtlasEntry,
+  rowToAutoPromoteVerdict,
   rowToContextMapEntry,
   rowToMemoryCandidateEntry,
   rowToMemoryCandidateContradictionEntry,
@@ -1592,6 +1595,42 @@ export class PGLiteEngine implements BrainEngine {
     );
     if (rows.length === 0) return null;
     return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async getAutoPromoteVerdict(key: AutoPromoteVerdictKey): Promise<AutoPromoteVerdictRow | null> {
+    const { rows } = await this.db.query(
+      `SELECT candidate_id, content_hash, runner_kind, prompt_version,
+              decision, confidence, reasoning, judged_at
+       FROM auto_promote_verdicts
+       WHERE candidate_id = $1 AND content_hash = $2 AND runner_kind = $3 AND prompt_version = $4`,
+      [key.candidate_id, key.content_hash, key.runner_kind, key.prompt_version],
+    );
+    if (rows.length === 0) return null;
+    return rowToAutoPromoteVerdict(rows[0] as Record<string, unknown>);
+  }
+
+  async putAutoPromoteVerdict(row: AutoPromoteVerdictRow): Promise<void> {
+    await this.db.query(
+      `INSERT INTO auto_promote_verdicts (
+         candidate_id, content_hash, runner_kind, prompt_version,
+         decision, confidence, reasoning, judged_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (candidate_id, content_hash, runner_kind, prompt_version) DO UPDATE SET
+         decision = EXCLUDED.decision,
+         confidence = EXCLUDED.confidence,
+         reasoning = EXCLUDED.reasoning,
+         judged_at = EXCLUDED.judged_at`,
+      [
+        row.candidate_id,
+        row.content_hash,
+        row.runner_kind,
+        row.prompt_version,
+        row.decision,
+        row.confidence,
+        row.reasoning,
+        row.judged_at,
+      ],
+    );
   }
 
   async listMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<MemoryCandidateEntry[]> {

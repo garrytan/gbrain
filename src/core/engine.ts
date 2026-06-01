@@ -1,4 +1,6 @@
-import type {BrainHealth,
+import type {AutoPromoteVerdictKey,
+  AutoPromoteVerdictRow,
+  BrainHealth,
   BrainStats,
   CanonicalHandoffEntry,
   CanonicalHandoffEntryInput,
@@ -199,6 +201,8 @@ export interface MemoryGovernanceStore {
   // Governance inbox foundations
   createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry>;
   getMemoryCandidateEntry(id: string): Promise<MemoryCandidateEntry | null>;
+  getAutoPromoteVerdict(key: AutoPromoteVerdictKey): Promise<AutoPromoteVerdictRow | null>;
+  putAutoPromoteVerdict(row: AutoPromoteVerdictRow): Promise<void>;
   listMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<MemoryCandidateEntry[]>;
   createMemoryCandidateStatusEvent(input: MemoryCandidateStatusEventInput): Promise<MemoryCandidateStatusEvent>;
   listMemoryCandidateStatusEvents(filters?: MemoryCandidateStatusEventFilters): Promise<MemoryCandidateStatusEvent[]>;

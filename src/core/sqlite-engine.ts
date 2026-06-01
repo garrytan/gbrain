@@ -35,6 +35,8 @@ import { selectLocalVectorChunkIds, selectLocalVectorPageIds } from './search/ve
 import { searchLocalVectors } from './search/vector-local.ts';
 import { slugifyPath } from './sync.ts';
 import type {
+  AutoPromoteVerdictKey,
+  AutoPromoteVerdictRow,
   Page, PageInput, PageFilters, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions, PageType,
   NoteManifestEntry,
   NoteManifestEntryInput,
@@ -2186,6 +2188,39 @@ export class SQLiteEngine implements BrainEngine {
       WHERE id = ?
     `).get(id) as Record<string, unknown> | null;
     return row ? rowToMemoryCandidateEntry(row) : null;
+  }
+
+  async getAutoPromoteVerdict(key: AutoPromoteVerdictKey): Promise<AutoPromoteVerdictRow | null> {
+    const row = this.database.query(`
+      SELECT candidate_id, content_hash, runner_kind, prompt_version,
+             decision, confidence, reasoning, judged_at
+      FROM auto_promote_verdicts
+      WHERE candidate_id = ? AND content_hash = ? AND runner_kind = ? AND prompt_version = ?
+    `).get(key.candidate_id, key.content_hash, key.runner_kind, key.prompt_version) as Record<string, unknown> | null;
+    return row ? rowToAutoPromoteVerdict(row) : null;
+  }
+
+  async putAutoPromoteVerdict(row: AutoPromoteVerdictRow): Promise<void> {
+    this.database.run(`
+      INSERT INTO auto_promote_verdicts (
+        candidate_id, content_hash, runner_kind, prompt_version,
+        decision, confidence, reasoning, judged_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(candidate_id, content_hash, runner_kind, prompt_version) DO UPDATE SET
+        decision = excluded.decision,
+        confidence = excluded.confidence,
+        reasoning = excluded.reasoning,
+        judged_at = excluded.judged_at
+    `, [
+      row.candidate_id,
+      row.content_hash,
+      row.runner_kind,
+      row.prompt_version,
+      row.decision,
+      row.confidence,
+      row.reasoning,
+      row.judged_at,
+    ]);
   }
 
   async listMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<MemoryCandidateEntry[]> {
@@ -4991,6 +5026,21 @@ export class SQLiteEngine implements BrainEngine {
           break;
         case 47:
           // Postgres/PGLite-only cleanup of dormant OAuth DCR revocation state.
+          break;
+        case 48:
+          this.database.exec(`
+            CREATE TABLE IF NOT EXISTS auto_promote_verdicts (
+              candidate_id    TEXT NOT NULL,
+              content_hash    TEXT NOT NULL,
+              runner_kind     TEXT NOT NULL,
+              prompt_version  TEXT NOT NULL,
+              decision        TEXT NOT NULL,
+              confidence      REAL NOT NULL,
+              reasoning       TEXT NOT NULL DEFAULT '',
+              judged_at       TEXT NOT NULL,
+              PRIMARY KEY (candidate_id, content_hash, runner_kind, prompt_version)
+            );
+          `);
           break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
@@ -8006,6 +8056,20 @@ function rowToPersonalEpisodeEntry(row: Record<string, unknown>): PersonalEpisod
     candidate_ids: parseJsonArray(row.candidate_ids),
     created_at: new Date(String(row.created_at)),
     updated_at: new Date(String(row.updated_at)),
+  };
+}
+
+function rowToAutoPromoteVerdict(row: Record<string, unknown>): AutoPromoteVerdictRow {
+  const judgedAt = row.judged_at;
+  return {
+    candidate_id: String(row.candidate_id),
+    content_hash: String(row.content_hash),
+    runner_kind: String(row.runner_kind),
+    prompt_version: String(row.prompt_version),
+    decision: String(row.decision),
+    confidence: Number(row.confidence),
+    reasoning: (row.reasoning as string | null) ?? '',
+    judged_at: judgedAt instanceof Date ? judgedAt.toISOString() : String(judgedAt),
   };
 }
 

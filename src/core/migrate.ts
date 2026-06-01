@@ -2904,6 +2904,23 @@ const MIGRATIONS: Migration[] = [
         DROP COLUMN IF EXISTS revoked_at;
     `,
   },
+  {
+    version: 48,
+    name: 'auto_promote_verdicts',
+    sql: `
+      CREATE TABLE IF NOT EXISTS auto_promote_verdicts (
+        candidate_id    TEXT NOT NULL,
+        content_hash    TEXT NOT NULL,
+        runner_kind     TEXT NOT NULL,
+        prompt_version  TEXT NOT NULL,
+        decision        TEXT NOT NULL,
+        confidence      REAL NOT NULL,
+        reasoning       TEXT NOT NULL DEFAULT '',
+        judged_at       TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (candidate_id, content_hash, runner_kind, prompt_version)
+      );
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
