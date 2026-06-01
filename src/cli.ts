@@ -190,6 +190,7 @@ const DIRECT_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
   config: async () => (await import('./commands/config.ts')).runConfig,
   doctor: async () => (await import('./commands/doctor.ts')).runDoctor,
   'memory-report': async () => (await import('./commands/memory-report.ts')).runMemoryReport,
+  'auto-promote': async () => (await import('./commands/auto-promote.ts')).runAutoPromoteCommand,
   migrate: async () => (await import('./commands/migrate-engine.ts')).runMigrateEngine,
   subbrain: async () => (await import('./commands/subbrain.ts')).runSubbrain,
 };

@@ -21,6 +21,7 @@ export interface MBrainConfig {
   anthropic_api_key?: string;
   storage?: StorageConfig;
   autopilot?: Record<string, unknown>;
+  auto_promote?: Record<string, unknown>;
 }
 
 export interface MBrainConfigInput {
@@ -36,6 +37,7 @@ export interface MBrainConfigInput {
   anthropic_api_key?: string;
   storage?: StorageConfig;
   autopilot?: Record<string, unknown>;
+  auto_promote?: Record<string, unknown>;
 }
 
 const VALID_ENGINES = new Set<EngineType>(['postgres', 'sqlite', 'pglite']);
@@ -113,6 +115,7 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
     openai_api_key: input.openai_api_key,
     anthropic_api_key: input.anthropic_api_key,
     autopilot: input.autopilot,
+    auto_promote: input.auto_promote,
   };
 
   validateResolvedConfig(resolved);
