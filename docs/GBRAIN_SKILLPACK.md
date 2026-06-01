@@ -78,6 +78,8 @@ How to structure your system.
 | [Sub-Agent Model Routing](guides/sub-agent-routing.md) | Which model for which task, signal detector pattern, cost optimization |
 | [The Three Search Modes](guides/search-modes.md) | Keyword, hybrid, direct. When to use each |
 | [Brain vs Agent Memory](guides/brain-vs-memory.md) | 3 layers: GBrain (world knowledge), agent memory, session |
+| [Production Brain, Balanced Cost](guides/production-brain-balanced-cost.md) | Canonical production posture: Postgres/Supabase for the real brain, PGLite for scratch, and deliberate cost knobs |
+| [Session Audit & Goal Discipline](guides/session-goal-discipline.md) | Audit repo/runtime truth first, name the proof gate early, then set or retune the session goal |
 
 ## Integrations
 
@@ -101,6 +103,7 @@ Keeping it running and up to date.
 |-------|---------------|
 | [Upgrades & Auto-Update](guides/upgrades-auto-update.md) | check-update, agent notifications, migration files |
 | [Live Sync](guides/live-sync.md) | Keep the index current: cron, --watch, webhook approaches |
+| [Session Audit & Goal Discipline](guides/session-goal-discipline.md) | The non-trivial-session workflow: audit first, document durable changes, and keep goals tied to proof |
 
 ## Getting Started
 

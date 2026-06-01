@@ -41,6 +41,27 @@ start here.
    agent-facing decision table: when to switch brain, when to switch source, how
    cross-brain federation works (latent-space only; the agent decides).
 5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+6. [`./docs/guides/session-goal-discipline.md`](./docs/guides/session-goal-discipline.md)
+   — for non-trivial sessions, do the audit first, name the acceptance gate early,
+   and set or continue the goal only after the scope is real.
+7. [`./docs/guides/production-brain-balanced-cost.md`](./docs/guides/production-brain-balanced-cost.md)
+   — for the durable production posture: Postgres/Supabase as canon, PGLite as
+   scratch, and explicit search-mode/cost choices.
+
+## Session discipline
+
+- For repo setup, design, MCP, skill, or workflow tasks, run `repo_inventory.py`
+  first when available, whether the copy is repo-local or provided by host tooling.
+- For non-trivial sessions, audit repo truth and runtime truth before proposing the lane.
+- If the work changes `AGENTS.md`, skills, workflows, MCP wiring, or other agent
+  surfaces, run an agent-surface audit before adding new durable workflow authority.
+- Name the acceptance gate early: test, build, screenshot, receipt, runtime readback, or
+  source-count/search parity.
+- If goals are available, set or continue the session goal **after** the audit, not from the
+  user's first rough wording.
+- Retune the goal only when the end state changes materially; do not churn it for every subtask.
+- If the work changes how operators should run this repo, update durable docs and the short
+  rule in `AGENTS.md` instead of leaving the decision in chat only.
 
 ## Trust boundary (critical)
 
@@ -54,6 +75,7 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 
 - **Configure:** [`docs/ENGINES.md`](./docs/ENGINES.md),
   [`docs/guides/live-sync.md`](./docs/guides/live-sync.md),
+  [`docs/guides/production-brain-balanced-cost.md`](./docs/guides/production-brain-balanced-cost.md),
   [`docs/mcp/DEPLOY.md`](./docs/mcp/DEPLOY.md).
 - **Debug:** [`docs/GBRAIN_VERIFY.md`](./docs/GBRAIN_VERIFY.md),
   [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.

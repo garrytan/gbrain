@@ -54,6 +54,27 @@ start here.
    agent-facing decision table: when to switch brain, when to switch source, how
    cross-brain federation works (latent-space only; the agent decides).
 5. [`./skills/RESOLVER.md`](./skills/RESOLVER.md) — skill dispatcher. Read before any task.
+6. [`./docs/guides/session-goal-discipline.md`](./docs/guides/session-goal-discipline.md)
+   — for non-trivial sessions, do the audit first, name the acceptance gate early,
+   and set or continue the goal only after the scope is real.
+7. [`./docs/guides/production-brain-balanced-cost.md`](./docs/guides/production-brain-balanced-cost.md)
+   — for the durable production posture: Postgres/Supabase as canon, PGLite as
+   scratch, and explicit search-mode/cost choices.
+
+## Session discipline
+
+- For repo setup, design, MCP, skill, or workflow tasks, run `repo_inventory.py`
+  first when available, whether the copy is repo-local or provided by host tooling.
+- For non-trivial sessions, audit repo truth and runtime truth before proposing the lane.
+- If the work changes `AGENTS.md`, skills, workflows, MCP wiring, or other agent
+  surfaces, run an agent-surface audit before adding new durable workflow authority.
+- Name the acceptance gate early: test, build, screenshot, receipt, runtime readback, or
+  source-count/search parity.
+- If goals are available, set or continue the session goal **after** the audit, not from the
+  user's first rough wording.
+- Retune the goal only when the end state changes materially; do not churn it for every subtask.
+- If the work changes how operators should run this repo, update durable docs and the short
+  rule in `AGENTS.md` instead of leaving the decision in chat only.
 
 ## Trust boundary (critical)
 
@@ -67,6 +88,7 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 
 - **Configure:** [`docs/ENGINES.md`](./docs/ENGINES.md),
   [`docs/guides/live-sync.md`](./docs/guides/live-sync.md),
+  [`docs/guides/production-brain-balanced-cost.md`](./docs/guides/production-brain-balanced-cost.md),
   [`docs/mcp/DEPLOY.md`](./docs/mcp/DEPLOY.md).
 - **Debug:** [`docs/GBRAIN_VERIFY.md`](./docs/GBRAIN_VERIFY.md),
   [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.
@@ -2652,6 +2674,7 @@ These apply to ALL brain-writing skills:
 | Trigger | Skill |
 |---------|-------|
 | "personalized version of this book", "mirror this book", "two-column book analysis", "apply this book to my life", "how does this book apply to me" | `skills/book-mirror/SKILL.md` |
+| "mirror this article", "personalized version of this article", "two-column article mirror", "apply this article to my life", "how does this article apply to me" | `skills/article-mirror/SKILL.md` |
 | "enrich this article", "enrich brain pages", "batch enrich", "make brain pages useful" | `skills/article-enrichment/SKILL.md` |
 | "strategic reading", "read this through the lens of", "apply this to my problem", "what can I learn from this about", "extract a playbook from" | `skills/strategic-reading/SKILL.md` |
 | "concept synthesis", "synthesize my concepts", "find patterns across my notes", "build my intellectual map", "trace idea evolution" | `skills/concept-synthesis/SKILL.md` |
@@ -3892,6 +3915,403 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
 
 ---
 
+*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+
+---
+
+## docs/guides/production-brain-balanced-cost.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/production-brain-balanced-cost.md
+
+# Production Brain, Balanced Cost
+
+## Goal
+Run the full production GBrain surface without paying frontier-model prices for every query. The canonical brain should be durable, agent-accessible, and easy to reason about, while the high-cost knobs stay opt-in.
+
+## What the User Gets
+Without this posture, the operator ends up with the worst mix: a fragile local runtime treated like production, retrieval settings that drift from intent, and surprise spend when the wrong model or mode gets used by default.
+
+With this posture, the setup is boring in the right places:
+
+- production brain on Postgres or Supabase
+- PGLite reserved for scratch, recovery, or one-machine experiments
+- explicit search-mode choice instead of silent defaults
+- low-cost embeddings where possible
+- stronger paid models only where they actually matter
+
+## Recommended Posture
+
+### Engine
+
+- **Production:** `gbrain init --supabase` or another real Postgres target.
+- **Scratch / recovery:** `gbrain init --pglite`.
+
+Why: the repo's own install and topology docs treat Supabase/Postgres as the
+production path for `1000+` files, multi-machine access, remote MCP, and
+persistent workers.
+
+### Search mode
+
+- **Recommended production default:** `balanced`
+- **Use `conservative`** when the operator is highly cost-sensitive or running
+  large volumes of Haiku-class loops.
+- **Use `tokenmax`** only when the operator explicitly wants max-context
+  retrieval and accepts the cost.
+
+Why: `balanced` is the Sonnet-tier sweet spot from
+[`INSTALL_FOR_AGENTS.md`](../../INSTALL_FOR_AGENTS.md). It keeps expansion off,
+raises the retrieval budget above `conservative`, and avoids the surprise-spend
+shape of `tokenmax`.
+
+### Model posture
+
+- **Embeddings:** start with a healthy local embedding model if one already
+  works. `ollama:bge-m3` at `1024` is a good middle lane when local throughput
+  is acceptable and the schema matches.
+- **Utility / expansion / cheap judgments:** Haiku-class.
+- **Default chat / reasoning / synthesis:** Sonnet-class.
+- **Deep-think / premium analysis:** Opus-class only when the task justifies it.
+
+Why: the largest avoidable costs usually come from retrieval payload size and
+chat-tier overuse, not from the Postgres engine itself. Keep the expensive tier
+narrow.
+
+### Remote access
+
+- **Local single-agent use:** `gbrain serve` over stdio is fine.
+- **Production remote/shared use:** `gbrain serve --http` on the production
+  brain.
+
+Why: remote/shared agent access is cleaner when the canonical brain lives on a
+real Postgres-backed surface. OAuth works on both engines, but the durable
+multi-agent lane belongs on Postgres/Supabase.
+
+## Audit Before You Cut Over
+
+Run these before changing anything:
+
+```bash
+git status --short --branch
+gbrain models
+gbrain providers list
+gbrain sources list --json
+gbrain sources current --json
+gbrain config show
+gbrain doctor --json
+gbrain stats
+```
+
+Read them in this order:
+
+1. **Routing truth:** `gbrain models`, `gbrain providers list`
+2. **Source truth:** `gbrain sources list --json`, `gbrain sources current --json`
+3. **Runtime truth:** `gbrain config show`, `gbrain doctor --json`, `gbrain stats`
+
+Do not describe the target posture as if it is already live. If the current
+brain is still `pglite` or still on `conservative`, say that plainly and keep
+`current state` separate from `recommended state`.
+
+## Cutover Plan
+
+1. **Freeze the current local brain**
+   - Keep the existing `~/.gbrain` state intact.
+   - Treat it as the fallback and comparison surface, not as the future source
+     of truth.
+
+2. **Stand up the production brain on Postgres/Supabase**
+   - Use `gbrain init --supabase`.
+   - Keep this brain separate from the scratch PGLite brain.
+
+3. **Confirm search mode with the operator**
+   - Do not skip the search-mode prompt.
+   - For the middle lane, recommend:
+     ```bash
+     gbrain config set search.mode balanced
+     ```
+   - Verify with:
+     ```bash
+     gbrain search modes
+     ```
+
+4. **Pin the model posture before bulk sync**
+   - Verify the embedding model and dimensions first.
+   - Do not switch between `768` and `1024`-dim embedding families casually.
+   - After any model change, re-check `embedding_provider` and
+     `embedding_width_consistency` in `gbrain doctor --json`.
+
+5. **Register sources explicitly**
+   - Add each source on purpose instead of assuming old local state will follow
+     you automatically.
+   - Use `gbrain sources list --json` after each add so the registry is
+     auditable.
+
+6. **Sync first, then fill the richer layers**
+   - Start with content parity:
+     ```bash
+     gbrain sync --all --parallel 4 --workers 4 --skip-failed
+     ```
+   - Then run the richer layers the operator actually wants:
+     - `gbrain extract all`
+     - `gbrain dream --source <id>` per stale source, or `gbrain autopilot`
+
+7. **Switch agent traffic only after proof**
+   - Point MCP / remote clients at the production brain only after the
+     acceptance gate passes.
+   - Leave the local PGLite brain available for scratch and recovery work.
+
+## Recommended `/goal`
+
+After the audit is done and the operator confirms the cost posture, a good goal
+for the execution lane is:
+
+```text
+Cut over the production GBrain to Postgres/Supabase, set search.mode=balanced,
+pin the embedding posture, re-register the intended sources, verify page/chunk
+and search parity, run the richer layers needed for real production use, and
+switch MCP traffic only after the acceptance gate passes.
+```
+
+Retune that goal only if one of these changes:
+
+- the operator picks a different search mode or cost posture,
+- the production engine target changes,
+- the intended source set changes materially, or
+- the acceptance gate proves the original objective is too vague to verify.
+
+## Cost Levers That Actually Matter
+
+1. **Search mode** is the first big lever.
+   - `conservative` is cheapest.
+   - `balanced` is the usual production value lane.
+   - `tokenmax` is the expensive lane.
+
+2. **Downstream chat tier** is the second big lever.
+   - Keep Sonnet-class as the default.
+   - Use Opus-class selectively.
+
+3. **Hosted embeddings are optional.**
+   - If local embeddings are healthy and acceptable in quality, keep them local
+     first.
+   - Pay for hosted embeddings only when recall quality or throughput is the
+     real bottleneck.
+
+4. **Expansion and premium probes should be opt-in.**
+   - `balanced` and `conservative` keep expansion off by default.
+   - Nightly eval and quality-probe loops should stay off until the operator
+     wants them.
+
+## Acceptance Gate
+
+Do not call the cutover done until these are true:
+
+1. `gbrain config show` or `gbrain search modes` confirms the chosen production
+   search mode.
+2. `gbrain sources list --json` on the production brain shows the intended
+   source registry.
+3. `gbrain stats` on the production brain shows page/chunk counts in the
+   expected range relative to the source repos being migrated.
+4. `gbrain doctor --json` shows:
+   - healthy embedding provider
+   - healthy embedding width consistency
+   - no source that should be live but has never synced
+5. A real MCP or CLI search smoke test succeeds against the production brain.
+6. If you claim the richer product surface is live, links/timeline extraction is
+   no longer silently `0` unless that layer was intentionally deferred.
+
+## Tricky Spots
+
+1. **"Full production" does not mean "turn every expensive knob on."** It means
+   the durable architecture is in place and the paid surfaces are used on
+   purpose.
+2. **PGLite is a great scratch brain and a risky production brain** once the
+   corpus gets large or remote/shared access matters.
+3. **Search mode is not a footnote.** The cost spread is large enough that the
+   operator must choose deliberately.
+4. **Brain routing and source routing are separate.** A clean production DB with
+   a messy source registry is still a messy operator experience.
+5. **Model/schema drift is real.** If embeddings move from one dimension family
+   to another, verify the schema before a long sync and before calling the
+   system healthy.
+
+## How to Verify
+
+1. Confirm the production recommendation is explicit: Postgres/Supabase for the
+   canonical brain, PGLite for scratch only.
+2. Confirm the search-mode recommendation is explicit and does not silently
+   accept defaults.
+3. Confirm the cost posture names the real levers: search mode, model tier,
+   hosted embeddings, and optional probe loops.
+4. Confirm the cutover gate uses live CLI readback, not hand-wavy claims.
+5. Before closeout, rerun the production-brain acceptance gate and
+   `git status --short --branch`.
+
+---
+*Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
+
+---
+
+## docs/guides/session-goal-discipline.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/session-goal-discipline.md
+
+# Session Audit And Goal Discipline
+
+## Goal
+Know how to start a non-trivial GBrain session the right way: audit repo and runtime truth first, do the needed research, write the right docs, set or continue the session goal only after the scope is real, and leave a clean verification trail.
+
+## What the User Gets
+Without this: the session starts with a vague objective, the agent grabs stale context, skips the expensive questions, mutates code before the shape of the work is understood, and ends with hand-wavy "done" claims. With this: the session starts from source truth, the real acceptance gate is named early, documentation keeps up with the work, goals stay useful instead of ornamental, and the closeout survives scrutiny.
+
+## Implementation
+
+```
+on non_trivial_session_start(task):
+    # 0. Protect the checkout first.
+    run("git status --short --branch")
+    if on_protected_branch():
+        move_to_branch_or_worktree()
+
+    # 1. Audit repo truth before proposing a lane.
+    if repo_inventory_available():
+        run("repo_inventory.py <repo>")
+    read("AGENTS.md")
+    read("CLAUDE.md")
+    inspect_nearby_docs_and_recent_commits()
+    if task_touches_agent_surface():
+        run("agent-surface-audit")
+
+    # 2. Audit runtime truth for the thing that actually matters.
+    if task_touches_gbrain_runtime():
+        run("gbrain models")
+        run("gbrain providers list")
+        run("gbrain sources list --json")
+        run("gbrain sources current --json")
+        # Serialize these three to avoid local lock contention.
+        run("gbrain config show")
+        run("gbrain doctor --json")
+        run("gbrain stats")
+
+    # 3. State the acceptance gate early.
+    acceptance_gate = pick_gate(
+        tests | build | screenshot | receipt | runtime_readback | source_count_parity
+    )
+
+    # 4. Decide whether this is strategy or execution.
+    if scope_is_fuzzy_or_architectural():
+        write_spec()
+        write_plan()
+    else:
+        execute_directly()
+
+    # 5. Set or continue the session goal AFTER the audit.
+    # The goal should name the actual end state, not the first hunch.
+    if goals_enabled_and_user_wants_goal():
+        set_or_continue_goal(
+            concrete_objective = describe_real_end_state(),
+            acceptance_gate = acceptance_gate
+        )
+
+    # 6. Autotune the goal only when the end state changes materially.
+    if user_changes_outcome() or audit_proves_goal_is_wrong():
+        tighten_plan_and_docs()
+        replace_goal_text_for_the_new_end_state()
+    else:
+        keep_goal_stable()
+
+    # 7. Route durable information to the right layer.
+    if info_is_world_knowledge():
+        write_to_gbrain()
+    elif info_is_operational_preference():
+        write_to_memory()
+    elif info_is_repo_operating_rule():
+        update_repo_docs_or_agents()
+
+    # 8. Close with proof, residue, and exact next move.
+    rerun_acceptance_gate()
+    rerun("git status --short --branch")
+    report(changed, verified, residue, next_move)
+```
+
+### The Session Audit Checklist
+
+1. **Branch safety**
+   - Confirm current branch state with `git status --short --branch`.
+   - If the work is non-trivial and the checkout is `main`, `master`, or another protected branch, stop and move to the repo's branch/worktree flow.
+
+2. **Repo truth**
+   - Read `AGENTS.md` and `CLAUDE.md` first.
+   - If the task is about repo setup, design, MCP, skill, or workflow, run
+     `repo_inventory.py` first when available. A repo-local copy is fine; a
+     shared host-tooling copy is also valid.
+   - If the work changes agent surfaces (`AGENTS.md`, skills, workflows, MCP
+     wiring, or copied workflow authority), run an agent-surface audit before
+     creating more durable workflow files.
+   - Read the closest docs before proposing a solution.
+
+3. **Runtime truth**
+   - For GBrain runtime questions, trust live CLI readback over stale summaries:
+     - `gbrain models`
+     - `gbrain providers list`
+     - `gbrain sources list --json`
+     - `gbrain sources current --json`
+   - For health checks, serialize:
+     - `gbrain config show`
+     - `gbrain doctor --json`
+     - `gbrain stats`
+
+4. **Acceptance gate**
+   - Pick the proof before doing the work.
+   - Examples:
+     - runtime migration -> source count parity + search parity + MCP smoke
+     - docs/process update -> file landed + instructions cross-linked + no contradiction with AGENTS
+     - workflow or agent-surface update -> inventory run + surface audit + durable doc cross-link
+     - bugfix -> focused test or reproducible runtime readback
+
+5. **Documentation**
+   - If the work changes how operators should run the system, write or update a durable doc in `docs/guides/`.
+   - If the work changes repo-local operating behavior, add the short version to `AGENTS.md`.
+   - If the thread is long or strategic, leave a handoff artifact or plan instead of burying the decision in chat.
+
+6. **Goal timing**
+   - Do not set the goal from the user's first rough phrasing if the scope is still muddy.
+   - Audit first, then set the goal once the real end state is visible.
+   - Good goals name the finished state and the proof:
+     - `Cut over the production GBrain to Postgres/Supabase, re-register sources, verify page/search parity, and switch MCP traffic.`
+     - `Finish the production-brain cost audit, write the operator guide, and leave the exact next migration move with receipts.`
+
+7. **Goal autotune rules**
+   - Keep the goal stable through tactic changes.
+   - Retune it only when:
+     - the user changes the desired outcome,
+     - the audit proves the current objective is too vague to verify, or
+     - the owning repo/runtime boundary changes the real job.
+   - Do not churn the goal for every subtask.
+   - Before retuning, update the plan/doc/handoff so the change is auditable.
+
+8. **Storage discipline**
+   - World facts -> GBrain
+   - Operating preferences and workflow continuity -> agent memory
+   - Repo-local process rules -> `AGENTS.md` and repo docs
+   - Current ephemeral discussion -> session only
+
+## Tricky Spots
+
+1. **A vague goal is worse than no goal.** If the goal is set before the audit, the rest of the session bends around the wrong objective. Audit first, then set the goal from evidence.
+2. **Runtime summaries drift.** On GBrain work, `gbrain models`, `providers list`, and `sources list/current` beat coarse summaries every time. Re-read them before closing.
+3. **`gbrain doctor --json` is noisy up front.** It streams phase markers before the final JSON payload. Wait for the command to finish, then interpret the final object.
+4. **Docs are part of the job.** If you changed how the system should be operated and you only mention it in chat, you did not finish the job.
+5. **Memory is not a dumping ground.** Save operational guidance to memory, but keep world knowledge in GBrain and repo-specific operating rules in the repo.
+6. **Don't let `/goal` become decorative.** If a goal cannot be proven with a real gate, rewrite it until it can.
+
+## How to Verify
+
+1. Start a non-trivial repo task and confirm the first moves are repo truth, runtime truth, and branch safety — not editing.
+2. Check that the acceptance gate is named before implementation starts.
+3. For a strategic task, confirm there is a durable doc or plan in the repo, not only chat output.
+4. For a GBrain runtime audit, confirm the session uses `gbrain models`, `gbrain providers list`, `gbrain sources list --json`, and `gbrain sources current --json` before making routing or cost claims.
+5. Before closeout, confirm the gate was rerun and `git status --short --branch` was checked again.
+
+---
 *Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*
 
 ---

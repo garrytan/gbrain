@@ -104,6 +104,18 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/live-sync.md",
       },
       {
+        title: "docs/guides/production-brain-balanced-cost.md",
+        description:
+          "Canonical production posture: Postgres/Supabase for the real brain, PGLite for scratch, and deliberate search-mode/model cost choices.",
+        path: "docs/guides/production-brain-balanced-cost.md",
+      },
+      {
+        title: "docs/guides/session-goal-discipline.md",
+        description:
+          "Non-trivial session workflow: audit repo/runtime truth first, name the proof gate early, then set or retune the session goal.",
+        path: "docs/guides/session-goal-discipline.md",
+      },
+      {
         title: "docs/guides/cron-schedule.md",
         description: "Recurring job scheduling.",
         path: "docs/guides/cron-schedule.md",
