@@ -21,10 +21,20 @@
 
 set -euo pipefail
 
-FIXTURE_DIR="test/fixtures/conversation-formats"
+FIXTURE_DIRS=(
+  "test/fixtures/conversation-formats"
+  "test/fixtures/iphone-backup"
+)
 
-if [ ! -d "$FIXTURE_DIR" ]; then
-  echo "[check-fixture-privacy] $FIXTURE_DIR does not exist; nothing to check"
+EXISTING_DIRS=()
+for dir in "${FIXTURE_DIRS[@]}"; do
+  if [ -d "$dir" ]; then
+    EXISTING_DIRS+=("$dir")
+  fi
+done
+
+if [ "${#EXISTING_DIRS[@]}" -eq 0 ]; then
+  echo "[check-fixture-privacy] no fixture directories found; nothing to check"
   exit 0
 fi
 
@@ -45,7 +55,7 @@ BANNED_TOKENS=(
 
 errors=0
 for token in "${BANNED_TOKENS[@]}"; do
-  matches=$(grep -ril "$token" "$FIXTURE_DIR" 2>/dev/null || true)
+  matches=$(grep -ril "$token" "${EXISTING_DIRS[@]}" 2>/dev/null || true)
   if [ -n "$matches" ]; then
     echo "[check-fixture-privacy] BANNED token '$token' found in:"
     echo "$matches" | sed 's/^/  - /'
@@ -61,4 +71,4 @@ if [ "$errors" -gt 0 ]; then
   exit 1
 fi
 
-echo "[check-fixture-privacy] OK: no banned tokens found in $FIXTURE_DIR"
+echo "[check-fixture-privacy] OK: no banned tokens found in ${EXISTING_DIRS[*]}"

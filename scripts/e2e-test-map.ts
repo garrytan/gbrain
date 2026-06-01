@@ -97,6 +97,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/ingestion-roundtrip.test.ts",
     "test/e2e/serve-http-ingest-webhook.test.ts",
   ],
+  "src/core/iphone/**": ["test/e2e/iphone-import-pglite.test.ts"],
+  "src/commands/import-iphone.ts": ["test/e2e/iphone-import-pglite.test.ts"],
+  "src/core/ingestion/sources/iphone-backup.ts": ["test/e2e/iphone-import-pglite.test.ts"],
   "src/core/minions/handlers/ingest-capture.ts": [
     "test/e2e/ingestion-roundtrip.test.ts",
     "test/e2e/serve-http-ingest-webhook.test.ts",
