@@ -26,16 +26,38 @@ working on this codebase, before touching anything else:
 
 ### Fork-specific rules (override upstream behavior)
 
-- **Embeddings now native** via v0.27 Vercel AI SDK gateway
-  (`google:gemini-embedding-001` + `--embedding-dimensions 1536`).
-  M3 cutover landed 2026-05-10: gemini-embed-shim retired, all 2718
-  pages re-embedded into a clean native vector space, shim launchd
-  service bootout'd, `skills/kos-jarvis/gemini-embed-shim/` archived.
-  Production env (5 plists + `~/.gbrain/config.json`) carries
-  `GOOGLE_GENERATIVE_AI_API_KEY` + `GBRAIN_EMBEDDING_MODEL` +
-  `GBRAIN_EMBEDDING_DIMENSIONS=1536`. **Don't reintroduce
-  `OPENAI_BASE_URL` or `OPENAI_API_KEY=stub` to plists** — it would
-  silently route around the native gateway.
+- **Embeddings: OpenAI `text-embedding-3-large` @ 1536d via the avman.ai
+  OpenAI-compatible relay** (§6.32 convergence, 2026-05-31). The whole
+  brain (38,056 chunks: `default` 6,940 + `mailagent-emails` 31,116) was
+  re-embedded into ONE coherent vector space after the prior state was
+  found incoherent: `~/.gbrain/config.json` said
+  `google:gemini-embedding-001`, but `default` actually held stale
+  gemini-bridge-shim vectors (norm ~0.70, mislabeled `text-embedding-3-large`)
+  and `mailagent-emails` held `zeroentropyai:zembed-1` (the daemon embedded
+  these at ingest under a prior ZE-default config; mailagent itself only sends
+  content via MCP `put_page` — `PageInput` has no embedding field, verified) —
+  three mismatched spaces a single
+  global query model could never serve. Production env (4 plists + `.env.local`
+  + `~/.gbrain/config.json` + DB-plane `config` table — ALL must agree) carries
+  `GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large`,
+  `GBRAIN_EMBEDDING_DIMENSIONS=1536`, `OPENAI_API_KEY` (the avman relay key) +
+  `OPENAI_BASE_URL=https://api.avman.ai/v1`. **`OPENAI_BASE_URL` is now
+  INTENTIONAL and REQUIRED** — it routes the native `openai` recipe's
+  `createOpenAI()` through the avman relay; the old M3 "never reintroduce
+  OPENAI_BASE_URL" prohibition is RETIRED (that warning was about the
+  retired gemini-embed-shim, not this deliberate convergence). Caveats baked
+  in: the `litellm` recipe is **unusable** for embedding here (upstream gbrain
+  bug — `diagnoseEmbedding` at `src/core/ai/gateway.ts:670` rejects it
+  unconditionally), so we use the native `openai` recipe + `OPENAI_BASE_URL`;
+  gbrain's embed path **mislabels** the per-chunk `model` column as the gateway
+  default, so after any re-embed run `UPDATE content_chunks SET
+  model='openai:text-embedding-3-large'` to fix the cosmetic label.
+  `GOOGLE_GENERATIVE_AI_API_KEY` and any ZeroEntropy key are now **vestigial**
+  for embedding (kept in env but unused). External writers (mailagent etc.) send
+  content via MCP `put_page` (no client embedding possible — `PageInput` has no
+  vector field), so the daemon embeds everything via openai@avman → past content
+  re-embedded + new content auto-unifies. **No writer-side change needed**; the
+  only rule is never wire a writer to bypass the daemon with pre-computed vectors. See §6.32.
 - **Chinese-first knowledge base.** Postgres tsvector has no CJK
   tokenizer, so **compound CJK queries (4+ Han characters without
   whitespace)** cannot be served by keyword search and require the
@@ -43,8 +65,8 @@ working on this codebase, before touching anything else:
   match fine via body-fragment containment (see §6.25 for the
   2026-05-15 15-query probe). Operationally: always ensure vector
   search is live (`gbrain serve --http` on :7225 reachable via
-  `kos.chenge.ink`, `GOOGLE_GENERATIVE_AI_API_KEY` env set in plist)
-  before declaring queries broken — the modal operator query on this
+  `kos.chenge.ink`, `OPENAI_API_KEY` + `OPENAI_BASE_URL` (avman relay) env
+  set in plist — §6.32) before declaring queries broken — the modal operator query on this
   brain is a compound CJK phrase that depends on it.
 - **9 KOS page kinds coexist with GBrain's 20-dir MECE.** KOS `kind`
   frontmatter (source/entity/concept/project/decision/synthesis/comparison/
