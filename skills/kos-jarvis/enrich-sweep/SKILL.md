@@ -70,6 +70,11 @@ Cost: ~86 Haiku calls × ~2k tokens = trivial (< $0.10 for full sweep)
 - Count mentions per canonical entity
 - Drop entities with single mention + no contextual weight (headers,
   asides, role titles without a name)
+- **Noise filter** (`mentionNoise`): drop pure-numeric names (`6314`) and
+  bug-tracker IDs (`bug-1266333`, `bug1266153`). Work-email corpora emit these
+  as bogus concept/project entities. Validated 2026-05-27 against Sweep #2:
+  22/637 hits, 0 false positives (product codes like `8021x`, `sg2008`,
+  `nist-sp-800-53` keep a non-digit char and survive).
 
 ### Phase C — Tier classification
 
@@ -124,15 +129,44 @@ Write `~/brain/agent/reports/enrich-sweep-<YYYY-MM-DD>.md` (mkdir -p):
   no stub writes, no Tavily. Pre-flight for Lucien to review before
   spending Tavily budget.
 - `--max-tier2 N` — Cap Tavily calls (default 30)
+- `--tier3-only` — Skip all Tavily Tier 2 augmentation (forces `--max-tier2 0`);
+  right default for company-internal corpora where web search returns wrong people
 - `--kind K` — Restrict to one kind (person / company / concept / project)
 - `--since DATE` — Only consider pages with `updated >= DATE`
 - `--limit N` — Process only the first N source pages (dev smoke test)
+- `--resume` — Skip Phase A/B/C entirely; re-run **Phase D only** from the
+  candidates cache written after Phase C of the last run. Idempotent
+  (already-written stubs are skipped via `pageExists`). Use after a fatal write
+  abort once the embedding key/billing is fixed — **zero re-NER**.
+
+## Resumability & fail-fast (added 2026-05-27)
+
+Two disk checkpoints under `~/.cache/kos-jarvis/`, keyed by resolved source id
+so different sources never collide (`lib/checkpoint.ts`):
+
+- **NER cache** `enrich-sweep-ner/<source>.jsonl` — one line per page extracted
+  during Phase A. A killed / timed-out run resumes NER instead of re-paying for
+  every Haiku call; a page is reused only when its `updated` is unchanged. Logged
+  as `resumed N/M from NER checkpoint`.
+- **Candidates cache** `enrich-sweep-candidates/<source>.json` — the full planned
+  candidate set, written after Phase C (also in `--plan`). Powers `--resume`.
+
+**Fail-fast** (Phase D): the FIRST write that fails with a *fatal* error — Google
+embedding spend cap, `RESOURCE_EXHAUSTED`, quota, invalid/unauthorized key — aborts
+the whole loop immediately (`isFatalWriteError`). The same error would hit every
+remaining write, so grinding through thousands of retries is pure waste (Sweep #2,
+2026-05-27, burned ~5h doing exactly that). Transient errors (network/500/429) keep
+the per-candidate "count as failed, continue" behavior. After an abort: fix the key
+/ billing, then `--resume` to finish the writes with no re-NER.
 
 ## Exit codes
 
 - `0` — clean, report written, at least one stub created or plan printed
-- `1` — fatal (ANTHROPIC_API_KEY missing, gbrain unreachable, or DB connection failure surfaced via `gbrain list`)
-- `2` — partial (some Haiku calls failed, some stubs rejected by gbrain)
+- `1` — fatal pre-flight (ANTHROPIC_API_KEY missing, gbrain unreachable, DB failure
+  via `gbrain list`, missing candidates cache on `--resume`) **or** a fail-fast
+  write abort (fatal embedding/auth error during Phase D)
+- `2` — partial (some Haiku calls failed, or some stubs rejected by gbrain with
+  non-fatal errors)
 
 ## Pre-flight checks (run.ts asserts)
 

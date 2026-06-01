@@ -21,6 +21,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import { extractWithRetry, type Extraction, type EntityKind } from "./lib/ner.ts";
 import { tavilySearch, buildEntityQuery, condense } from "./lib/tavily.ts";
 import { chooseSlug, renderStub, writeStub, type StubInput, type Tier } from "./lib/stub.ts";
+import {
+  nerCachePath,
+  loadNerCache,
+  appendNer,
+  candidatesCachePath,
+  saveCandidates,
+  loadCandidates,
+} from "./lib/checkpoint.ts";
 
 // ─────────────────────────── config ───────────────────────────
 
@@ -40,11 +48,12 @@ type Flags = {
   minMentions: number;
   onlyKind?: EntityKind;
   limit?: number;
+  resume: boolean;
   help: boolean;
 };
 
 function parseFlags(argv: string[]): Flags {
-  const f: Flags = { dry: false, plan: false, maxTier2: 30, tier3Only: false, minMentions: 2, help: false };
+  const f: Flags = { dry: false, plan: false, maxTier2: 30, tier3Only: false, minMentions: 2, resume: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry") f.dry = true;
@@ -54,6 +63,7 @@ function parseFlags(argv: string[]): Flags {
     else if (a === "--min-mentions") f.minMentions = Number(argv[++i]);
     else if (a === "--kind") f.onlyKind = argv[++i] as EntityKind;
     else if (a === "--limit") f.limit = Number(argv[++i]);
+    else if (a === "--resume") f.resume = true;
     else if (a === "--help" || a === "-h") f.help = true;
   }
   // --tier3-only forces maxTier2 to 0 — skip all Tavily Tier 2 augmentation.
@@ -78,6 +88,10 @@ Flags:
   --min-mentions N      Drop entities below N mentions across sources (default 2)
   --kind K              person | company | concept | project (single-kind mode)
   --limit N             Process only first N source pages (smoke test)
+  --resume              Skip NER/dedupe; re-run Phase D only from the candidates
+                        cache (written after Phase C of the last run). Idempotent:
+                        already-written stubs are skipped. Use after a fatal write
+                        abort (e.g. fixed a Google embedding spend cap / key).
   --help                This message
 `);
 }
@@ -177,6 +191,22 @@ function gbrainList(): ListRow[] {
     });
 }
 
+// Resolve the active source id the same way gbrainList does (GBRAIN_SOURCE env
+// → sole non-default source → 'default'). Used to key the on-disk checkpoints
+// so a mailagent-emails sweep and a default-source sweep never share a cache.
+function resolveSourceId(): string {
+  const dbUrl = process.env.DATABASE_URL
+    ?? `postgresql://${process.env.USER ?? 'chenyuanquan'}@127.0.0.1:5432/gbrain`;
+  const sql = `SELECT COALESCE(
+      NULLIF('${(process.env.GBRAIN_SOURCE ?? '').replace(/'/g, "''")}', ''),
+      (SELECT id FROM sources WHERE id != 'default' AND archived = false LIMIT 1),
+      'default'
+    );`;
+  const r = spawnSync("psql", [dbUrl, "-At", "-c", sql], { encoding: "utf-8" });
+  if (r.status !== 0) return process.env.GBRAIN_SOURCE || "default";
+  return r.stdout.trim() || "default";
+}
+
 function gbrainGet(slug: string): string {
   const r = spawnSync("gbrain", ["get", slug], { encoding: "utf-8" });
   if (r.status !== 0) return "";
@@ -274,7 +304,26 @@ function mentionNoise(c: Canonical): boolean {
   if (c.kind === "concept" && DOC_FILE_STOPWORDS.has(c.key)) return true;
   // Raw markdown filename survivors from NER (e.g. "SOUL.md" → "soul md")
   if (c.kind === "concept" && /\bmd$/.test(c.key) && c.key.length < 16) return true;
+  // Bug-tracker IDs + pure-numeric tokens — work-email corpus noise misclassified
+  // as concept/project. Validated 2026-05-27 vs the killed Sweep #2 partial:
+  // 22/637 hits, 0 false positives (product codes like "8021x", "sg2008",
+  // "nist-sp-800-53" keep a non-digit char, so they survive). c.key is the
+  // normalizeName output (hyphens→spaces), so \s* covers "bug-123" and "bug123".
+  if (/^\d+$/.test(c.key)) return true;
+  if (/^bug\s*\d+$/.test(c.key)) return true;
   return false;
+}
+
+// Fatal write errors that should ABORT the whole Phase D loop immediately
+// rather than retrying every remaining candidate. These are config/billing
+// problems (not transient): the same error will hit every single write, so
+// grinding through thousands of them (Sweep #2: 637 × 3 retries) is pure waste.
+// Transient errors (network blips, 500s, 429 rate-limits) are NOT matched here
+// and keep the per-candidate "count as failed, continue" behavior.
+function isFatalWriteError(msg: string): boolean {
+  return /spend(ing)?\s*cap|RESOURCE_EXHAUSTED|quota|api key not valid|invalid api key|\b401\b|\b403\b|unauthorized|permission denied/i.test(
+    msg,
+  );
 }
 
 // ─────────────────────────── existence check ───────────────────────────
@@ -337,7 +386,79 @@ type Summary = {
   tier1_blocked: string[];
   created_slugs: string[];
   failed_slugs: string[];
+  aborted: boolean;
 };
+
+// ─────────────────────────── Phase D + E (shared by full run and --resume) ───────────────────────────
+
+type PlannedCandidate = { canonical: Canonical; tier: Tier; tier1_blocked: boolean; slug: string };
+
+async function runWritePhase(newCandidates: PlannedCandidate[], summary: Summary, flags: Flags): Promise<void> {
+  // ── Phase D: write stubs (with Tavily for Tier 2) ──
+  console.log("[D] Writing stubs …");
+  let tavilyBudget = flags.maxTier2;
+  for (let di = 0; di < newCandidates.length; di++) {
+    const cand = newCandidates[di];
+    let tavilyBlock: string | undefined;
+    if (cand.tier === 2 && tavilyBudget > 0 && (cand.canonical.kind === "person" || cand.canonical.kind === "company")) {
+      const q = buildEntityQuery(cand.canonical.name, cand.canonical.kind);
+      const result = await tavilySearch(q);
+      summary.tavily_calls++;
+      tavilyBudget--;
+      tavilyBlock = condense(result);
+    }
+
+    const firstMention = cand.canonical.mentions
+      .map((m) => parseUpdatedFromFrontmatter(gbrainGet(m.source_slug)))
+      .filter((x): x is string => !!x)
+      .sort()[0];
+
+    const input: StubInput = {
+      slug: cand.slug,
+      name: cand.canonical.name,
+      aliases: [...cand.canonical.aliases],
+      kind: cand.canonical.kind,
+      tier: cand.tier,
+      mention_count: cand.canonical.mentions.length,
+      source_slugs: [...new Set(cand.canonical.mentions.map((m) => m.source_slug))],
+      first_mention_date: firstMention,
+      tavily_block: tavilyBlock,
+      seed_context: cand.canonical.mentions[0]?.context ?? "",
+      tier1_blocked: cand.tier1_blocked,
+    };
+
+    const res = writeStub(input, false);
+    if (res.ok) {
+      summary.stubs_written++;
+      summary.created_slugs.push(cand.slug);
+      console.log(`  ✓ ${cand.slug} (tier ${cand.tier}${cand.tier1_blocked ? "*" : ""})`);
+    } else {
+      summary.stubs_failed++;
+      summary.failed_slugs.push(cand.slug);
+      console.error(`  ✗ ${cand.slug}: ${res.message}`);
+      // Fail-fast: a fatal write error (spend cap / bad key) will hit EVERY
+      // remaining write the same way. Abort instead of grinding thousands of
+      // retries (Sweep #2 burned ~5h doing exactly that).
+      if (isFatalWriteError(res.message)) {
+        summary.aborted = true;
+        console.error(`\n✗✗ ABORT — fatal write error (likely Google embedding spend cap / invalid key).`);
+        console.error(`   Stopped before ${newCandidates.length - di - 1} remaining candidate(s) to avoid a pointless grind.`);
+        console.error(`   Fix billing / GOOGLE_GENERATIVE_AI_API_KEY, then resume WITHOUT re-running NER:`);
+        console.error(`     bun run skills/kos-jarvis/enrich-sweep/run.ts --resume`);
+        break;
+      }
+    }
+  }
+
+  // ── Phase E: report ──
+  summary.finished = new Date().toISOString();
+  writeReport(summary, newCandidates);
+  console.log(`\nReport: ${reportPath()}`);
+  console.log(
+    `Summary: ${summary.stubs_written} written, ${summary.stubs_failed} failed, ` +
+      `${summary.tavily_calls} Tavily calls${summary.aborted ? " — ABORTED early (resume with --resume)" : ""}`,
+  );
+}
 
 async function main() {
   const flags = parseFlags(process.argv.slice(2));
@@ -381,9 +502,53 @@ async function main() {
     tier1_blocked: [],
     created_slugs: [],
     failed_slugs: [],
+    aborted: false,
   };
 
   try {
+    const sourceId = resolveSourceId();
+    console.log(`source: ${sourceId}`);
+
+    // ── --resume: skip NER/dedupe, re-run Phase D only from the candidates cache ──
+    if (flags.resume) {
+      console.log("[resume] loading candidates cache (no NER) …");
+      const rows = gbrainList();
+      const knownSlugs = new Set(rows.map((r) => r.slug));
+      const aliasIndex = buildAliasIndex(rows);
+      const cached = loadCandidates(candidatesCachePath(sourceId));
+      if (!cached || cached.length === 0) {
+        console.error(`✗ no candidates cache at ${candidatesCachePath(sourceId)} — run a full sweep (or --plan) first.`);
+        process.exit(1);
+      }
+      let skipped = 0;
+      const resumeCandidates: PlannedCandidate[] = [];
+      for (const c of cached) {
+        const aliases = new Set(c.aliases);
+        if (pageExists(c.slug, knownSlugs, aliasIndex, aliases)) {
+          skipped++;
+          continue;
+        }
+        resumeCandidates.push({
+          canonical: {
+            key: "",
+            name: c.name,
+            aliases,
+            kind: c.kind,
+            mentions: c.mentions.map((m) => ({ name: c.name, kind: c.kind, context: m.context, source_slug: m.source_slug })),
+          },
+          tier: c.tier,
+          tier1_blocked: c.tier1_blocked,
+          slug: c.slug,
+        });
+        summary.by_tier[String(c.tier)]++;
+        summary.by_kind[c.kind]++;
+      }
+      summary.unique_entities = cached.length;
+      console.log(`[resume] ${resumeCandidates.length} to write, ${skipped} already exist (skipped)`);
+      await runWritePhase(resumeCandidates, summary, flags);
+      process.exit(summary.aborted ? 1 : summary.stubs_failed > 0 ? 2 : 0);
+    }
+
     // ── Phase A: collect ──
     console.log("[A] Listing brain …");
     let rows = gbrainList();
@@ -398,22 +563,37 @@ async function main() {
     if (flags.dry) {
       console.log("[A] --dry: skipping Haiku NER (would call Haiku for each page)");
     } else {
+      // Resumable NER: a per-page JSONL checkpoint means a killed / timed-out
+      // run picks up where it left off instead of re-paying for all the Haiku
+      // calls. A page is reused only when its `updated` is unchanged.
+      const nerPath = nerCachePath(sourceId);
+      const nerCache = loadNerCache(nerPath);
+      let resumed = 0;
       const anthropic = new Anthropic();
       let i = 0;
       for (const row of rows) {
         i++;
+        const hit = nerCache.get(row.slug);
+        if (hit && hit.updated === row.updated) {
+          extractions.push(...hit.ex);
+          resumed++;
+          process.stdout.write(`\r[A] NER ${i}/${rows.length} (cached) ${row.slug.slice(0, 42).padEnd(42)}`);
+          continue;
+        }
         process.stdout.write(`\r[A] NER ${i}/${rows.length} ${row.slug.slice(0, 50).padEnd(50)}`);
         const body = gbrainGet(row.slug);
         if (!body.trim()) continue;
         try {
           const ex = await extractWithRetry(body, row.slug, anthropic);
           extractions.push(...ex);
+          appendNer(nerPath, { slug: row.slug, updated: row.updated, ex });
         } catch (e) {
           summary.extraction_errors++;
           console.error(`\n    ! NER failed for ${row.slug}: ${e instanceof Error ? e.message : e}`);
         }
       }
       process.stdout.write("\n");
+      if (resumed > 0) console.log(`    resumed ${resumed}/${rows.length} from NER checkpoint (${nerPath})`);
     }
     summary.total_extractions = extractions.length;
     console.log(`[A] collected ${extractions.length} extractions (${summary.extraction_errors} errors)\n`);
@@ -452,6 +632,24 @@ async function main() {
         `tier2=${summary.by_tier["2"]}, tier3=${summary.by_tier["3"]})\n`,
     );
 
+    // Persist the planned candidates so --resume can re-run Phase D without
+    // re-paying for NER. Skip in --dry (no real candidates — don't clobber a
+    // good cache with []). --plan DOES write it, so a plan run can be resumed.
+    if (!flags.dry) {
+      saveCandidates(
+        candidatesCachePath(sourceId),
+        newCandidates.map((c) => ({
+          slug: c.slug,
+          name: c.canonical.name,
+          aliases: [...c.canonical.aliases],
+          kind: c.canonical.kind,
+          tier: c.tier,
+          tier1_blocked: c.tier1_blocked,
+          mentions: c.canonical.mentions.map((m) => ({ source_slug: m.source_slug, context: m.context })),
+        })),
+      );
+    }
+
     // Early exit for dry or plan modes
     if (flags.dry || flags.plan) {
       console.log(`[${flags.dry ? "DRY" : "PLAN"}] Candidate preview (top 20 by mentions):`);
@@ -470,60 +668,8 @@ async function main() {
       process.exit(0);
     }
 
-    // ── Phase D: write stubs (with Tavily for Tier 2) ──
-    console.log("[D] Writing stubs …");
-    let tavilyBudget = flags.maxTier2;
-    for (const cand of newCandidates) {
-      let tavilyBlock: string | undefined;
-      if (cand.tier === 2 && tavilyBudget > 0 && (cand.canonical.kind === "person" || cand.canonical.kind === "company")) {
-        const q = buildEntityQuery(cand.canonical.name, cand.canonical.kind);
-        const result = await tavilySearch(q);
-        summary.tavily_calls++;
-        tavilyBudget--;
-        tavilyBlock = condense(result);
-      }
-
-      const firstMention = cand.canonical.mentions
-        .map((m) => parseUpdatedFromFrontmatter(gbrainGet(m.source_slug)))
-        .filter((x): x is string => !!x)
-        .sort()[0];
-
-      const input: StubInput = {
-        slug: cand.slug,
-        name: cand.canonical.name,
-        aliases: [...cand.canonical.aliases],
-        kind: cand.canonical.kind,
-        tier: cand.tier,
-        mention_count: cand.canonical.mentions.length,
-        source_slugs: [...new Set(cand.canonical.mentions.map((m) => m.source_slug))],
-        first_mention_date: firstMention,
-        tavily_block: tavilyBlock,
-        seed_context: cand.canonical.mentions[0]?.context ?? "",
-        tier1_blocked: cand.tier1_blocked,
-      };
-
-      const res = writeStub(input, false);
-      if (res.ok) {
-        summary.stubs_written++;
-        summary.created_slugs.push(cand.slug);
-        console.log(`  ✓ ${cand.slug} (tier ${cand.tier}${cand.tier1_blocked ? "*" : ""})`);
-      } else {
-        summary.stubs_failed++;
-        summary.failed_slugs.push(cand.slug);
-        console.error(`  ✗ ${cand.slug}: ${res.message}`);
-      }
-    }
-
-    // ── Phase E: report ──
-    summary.finished = new Date().toISOString();
-    writeReport(summary, newCandidates);
-    console.log(`\nReport: ${reportPath()}`);
-    console.log(
-      `Summary: ${summary.stubs_written} written, ${summary.stubs_failed} failed, ` +
-        `${summary.tavily_calls} Tavily calls`,
-    );
-
-    process.exit(summary.stubs_failed > 0 ? 2 : 0);
+    await runWritePhase(newCandidates, summary, flags);
+    process.exit(summary.aborted ? 1 : summary.stubs_failed > 0 ? 2 : 0);
   } finally {
     releaseLock();
   }
