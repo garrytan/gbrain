@@ -6,6 +6,10 @@ import { verifySchema } from './schema-verify.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
+// #1570: the module singleton `sql` is shared by every module-style engine in
+// the process. Refcount its owners so a transient engine's disconnect() can't
+// tear down the connection a long-lived owner (the dream cycle) still needs.
+let sqlRefCount = 0;
 
 /**
  * Default pool size for Postgres connections. Users on the Supabase transaction
@@ -161,6 +165,8 @@ export function getConnection(): ReturnType<typeof postgres> {
 
 export async function connect(config: EngineConfig): Promise<void> {
   if (sql) {
+    // Another owner shares the already-open singleton — count it (#1570).
+    sqlRefCount++;
     // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
       console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
@@ -210,11 +216,13 @@ export async function connect(config: EngineConfig): Promise<void> {
     // Test connection
     await sql`SELECT 1`;
     connectedUrl = url;
+    sqlRefCount = 1; // first owner of the freshly-opened singleton (#1570)
 
     await setSessionDefaults(sql);
   } catch (e: unknown) {
     sql = null;
     connectedUrl = null;
+    sqlRefCount = 0;
     const msg = e instanceof Error ? e.message : String(e);
     throw new GBrainError(
       'Cannot connect to database',
@@ -237,9 +245,15 @@ export async function disconnect(): Promise<void> {
     logDbDisconnect('postgres', 'module');
   } catch { /* best-effort; never block disconnect on audit failure */ }
   if (sql) {
-    await sql.end();
-    sql = null;
-    connectedUrl = null;
+    // #1570 fix: only tear down the shared singleton when the LAST owner
+    // releases it, so a transient module-style engine's disconnect() can't
+    // null the connection a long-lived owner (the dream cycle) still uses.
+    sqlRefCount = Math.max(0, sqlRefCount - 1);
+    if (sqlRefCount === 0) {
+      await sql.end();
+      sql = null;
+      connectedUrl = null;
+    }
   }
 }
 
