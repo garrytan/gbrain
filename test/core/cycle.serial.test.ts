@@ -15,7 +15,7 @@ import { existsSync, unlinkSync } from 'fs';
 // ─── Mocks ──────────────────────────────────────────────────────────
 // Track what each phase was called with so tests can assert.
 
-let lintCalls: Array<{ target: string; fix: boolean; dryRun: boolean | undefined }> = [];
+let lintCalls: Array<{ target: string; fix: boolean; dryRun: boolean | undefined; engine: unknown }> = [];
 let backlinksCalls: Array<{ action: string; dir: string; dryRun: boolean | undefined }> = [];
 let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined; noExtract: boolean | undefined; sourceId: string | undefined }> = [];
 let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
@@ -25,7 +25,7 @@ let orphansCalls: number = 0;
 // Mock lint
 mock.module('../../src/commands/lint.ts', () => ({
   runLintCore: async (opts: any) => {
-    lintCalls.push({ target: opts.target, fix: opts.fix, dryRun: opts.dryRun });
+    lintCalls.push({ target: opts.target, fix: opts.fix, dryRun: opts.dryRun, engine: opts.engine });
     return { total_issues: 2, total_fixed: opts.dryRun ? 0 : 2, pages_scanned: 5 };
   },
 }));
@@ -208,6 +208,12 @@ describe('runCycle — phase selection', () => {
     expect(lintCalls.length).toBe(1);
     expect(backlinksCalls.length).toBe(0);
     expect(syncCalls.length).toBe(0);
+  });
+
+  test('cycle-owned engine is threaded into lint during full cycles', async () => {
+    await runCycle(sharedEngine, { brainDir: '/tmp/brain', phases: ['lint', 'sync'] });
+
+    expect(lintCalls.at(-1)?.engine).toBe(sharedEngine);
   });
 
   test('--phase orphans only runs orphans', async () => {
