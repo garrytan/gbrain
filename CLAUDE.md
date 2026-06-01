@@ -45,6 +45,15 @@ available in local mode versus what must fail with honest guidance.
 - `skills/_brain-filing-rules.md` — Cross-cutting brain filing rules (referenced by all brain-writing skills)
 - `docs/UPSTREAM_SYNC.md` — Historical/reference log for optional upstream cherry-picks from `garrytan/gbrain`. Consult it when evaluating upstream imports, not for routine `mbrain` feature work.
 - `openclaw.plugin.json` — ClawHub bundle plugin manifest
+- `src/core/auto-promote/verdict.ts` — `PromotionVerdict` type + fail-closed JSON parser
+- `src/core/auto-promote/config.ts` — `AutoPromoteConfig` + safe defaults (disabled by default)
+- `src/core/auto-promote/candidate-selector.ts` — deterministic eligibility bucketing for promotion candidates
+- `src/core/auto-promote/prompt.ts` — judge-only review prompt builder
+- `src/core/auto-promote/cli-executor.ts` — claude/codex subprocess executor (fills the `RestrictedRunnerExecutor` seam)
+- `src/core/auto-promote/promote-gate.ts` — deterministic gate: promotes confident verdicts via existing inbox services
+- `src/core/auto-promote/service.ts` — `runAutoPromote` orchestrator: select → judge (cached) → escalate → gate
+- `src/core/types/auto-promote.ts` — `AutoPromoteVerdictKey` / `AutoPromoteVerdictRow` types
+- `src/commands/auto-promote.ts` — `mbrain auto-promote` CLI command (`runAutoPromoteCommand`); default dry-run, `--apply` to mutate; config-gated (`auto_promote.enabled`, default off)
 
 ## Commands
 
@@ -52,15 +61,18 @@ Run `mbrain --help` or `mbrain --tools-json` for full command reference. For loc
 
 Deterministic brain-quality tools (no LLM calls, no DB connection, engine-agnostic): `mbrain publish` renders a brain page as a self-contained HTML (optionally AES-256-GCM encrypted behind a password), `mbrain check-backlinks check|fix` enforces the Iron Law of Back-Linking across a brain directory, `mbrain lint` flags LLM preambles, broken frontmatter, and placeholder dates (use `--fix` to auto-clean), and `mbrain report --type <name>` saves a timestamped report into `brain/reports/{type}/YYYY-MM-DD-HHMM.md`.
 
+`mbrain auto-promote` runs a judge-only LLM verdict on eligible memory candidates and, when confidence is high enough, promotes them via the deterministic gate (default dry-run; pass `--apply` to mutate). The command is config-gated (`auto_promote.enabled`, default off). A dream phase `auto_promote` (order 15) also exists in the dream cycle but **safely no-ops unless the runner dep is explicitly injected** — nightly auto-run via autopilot/dream-command is a planned follow-up; the CLI command is the current entry point.
+
 ## Testing
 
 `bun test` runs the repo test suite. Unit tests run without a database. Postgres-backed E2E coverage skips gracefully when `DATABASE_URL` is not set.
 
-Unit tests include `test/sqlite-engine.test.ts` (SQLite engine parity), `test/local-offline.test.ts` (offline profile + local embedding/rewrite semantics), `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts` (chunking), `test/sync.test.ts` (sync logic), `test/parity.test.ts` (operations contract parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config resolution), `test/files.test.ts` / `test/file-migration.test.ts` / `test/file-resolver.test.ts` (storage + file handling), `test/import-file.test.ts` / `test/import-resume.test.ts` (import pipeline), `test/upgrade.test.ts`, `test/doctor.test.ts`, `test/migrate.test.ts`, `test/setup-branching.test.ts`, `test/slug-validation.test.ts`, `test/storage.test.ts`, `test/supabase-admin.test.ts`, `test/yaml-lite.test.ts`, and `test/check-update.test.ts`.
+Unit tests include `test/sqlite-engine.test.ts` (SQLite engine parity), `test/local-offline.test.ts` (offline profile + local embedding/rewrite semantics), `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts` (chunking), `test/sync.test.ts` (sync logic), `test/parity.test.ts` (operations contract parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config resolution), `test/files.test.ts` / `test/file-migration.test.ts` / `test/file-resolver.test.ts` (storage + file handling), `test/import-file.test.ts` / `test/import-resume.test.ts` (import pipeline), `test/upgrade.test.ts`, `test/doctor.test.ts`, `test/migrate.test.ts`, `test/setup-branching.test.ts`, `test/slug-validation.test.ts`, `test/storage.test.ts`, `test/supabase-admin.test.ts`, `test/yaml-lite.test.ts`, and `test/check-update.test.ts`. Auto-promote unit tests: `test/auto-promote/{runner-policy-promotion,verdict,config,candidate-selector,prompt,cli-executor,verdict-cache,promote-gate,service,dream-phase,cli,digest}.test.ts`; migration v48 adds the `auto_promote_verdicts` verdict-cache table (Postgres/PGLite and SQLite).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys)
 - `test/e2e/upgrade.test.ts` runs check-update E2E against real GitHub API (network required)
+- `test/e2e/auto-promote.test.ts` — PGLite pipeline E2E; real-CLI path gated behind `MBRAIN_E2E_REAL_CLI`
 - Tier 2 (`skills.test.ts`) requires OpenClaw + API keys, runs nightly in CI
 - If `.env.testing` doesn't exist in this directory, check sibling worktrees for one:
   `find ../  -maxdepth 2 -name .env.testing -print -quit` and copy it here if found.
