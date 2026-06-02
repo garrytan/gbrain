@@ -1,0 +1,681 @@
+---
+title: "Setup Storybook with Vue"
+type: essay
+created: 2023-01-21
+updated: 2023-01-21
+source: chatgpt-export
+topic: coding-web
+message_count: 32
+tags: [chatgpt, knowledge, coding-web]
+---
+# Setup Storybook with Vue
+
+> **Source:** ChatGPT conversation
+> **Date:** 2023-01-21T19:58:49Z
+> **Messages:** 32
+> **Topic:** coding-web
+
+## Question
+
+Im trying to setup storybook in my vue project. im using tailwind css and postcss. currently storybook runs but the tailwind css is not working.
+
+## Answer
+
+In order to set up Tailwind CSS with Storybook in a Vue project, you'll need to do a few things:
+
+1. Install the Tailwind CSS package: 
+```
+npm install tailwindcss
+```
+
+2. Create a configuration file for Tailwind CSS by running the following command:
+```
+npx tailwind init
+```
+
+3. Create a new PostCSS config file (if you don't already have one) in the root of your project, and configure it to use the Tailwind CSS plugin:
+```
+module.exports = {
+  plugins: [require('tailwindcss'), require('autoprefixer')]
+}
+```
+
+4. Import the Tailwind CSS styles in your main.js file:
+```
+import './tailwind.css'
+```
+
+5. In your storybook config.js, you should import the same tailwind.css file
+```
+import '../tailwind.css';
+```
+
+6. In your .storybook/main.js, you should configure the webpack to use the postcss-loader.
+```
+const path = require('path');
+
+module.exports = {
+  stories: ['../src/**/*.stories.js'],
+  addons: ['@storybook/addon-actions', '@storybook/addon-links'],
+  webpackFinal: async (config) => {
+    config.module.rules.push({
+      test: /\.scss$/,
+      use: ['style-loader', 'css-loader', 'sass-loader'],
+      include: path.resolve(__dirname, '../'),
+    });
+    config.module.rules.push({
+      test: /\.css$/,
+      use: [
+        'style-loader',
+        {
+          loader: 'css-loader',
+          options: {
+            importLoaders: 1,
+            modules: {
+              localIdentName: '[path][name]__[local]--[hash:base64:5]',
+            },
+          },
+        },
+        'postcss-loader',
+      ],
+    });
+    return config;
+  },
+};
+```
+
+Make sure that you have done all above steps correctly and your project should be able to use Tailwind CSS with Storybook.
+
+
+## Question
+
+this is my main.js file import 'resources/css/app.css';
+
+module.exports = {
+  stories: ['../src/**/*.stories.mdx', '../src/**/*.stories.@(js|jsx|ts|tsx)'],
+  addons: [
+    '@storybook/addon-links',
+    '@storybook/addon-essentials',
+    '@storybook/addon-interactions',
+    {
+      name: '@storybook/addon-postcss',
+      options: {
+        postcssLoaderOptions: {
+          implementation: require('postcss'),
+        },
+      },
+    },
+  ],
+  framework: '@storybook/vue3',
+  core: {
+    builder: '@storybook/builder-webpack5',
+  },
+};
+
+
+## Answer
+
+It looks like you are correctly importing your CSS file in the main.js file, but it seems that you are not configuring the postcss-loader in your storybook config.js file.
+
+You can try adding the following code to your storybook config.js file, to configure the postcss-loader:
+```
+const path = require('path');
+
+module.exports = {
+  stories: ['../src/**/*.stories.mdx', '../src/**/*.stories.@(js|jsx|ts|tsx)'],
+  addons: [
+    '@storybook/addon-links',
+    '@storybook/addon-essentials',
+    '@storybook/addon-interactions',
+    {
+      name: '@storybook/addon-postcss',
+      options: {
+        postcssLoaderOptions: {
+          implementation: require('postcss'),
+        },
+      },
+    },
+  ],
+  framework: '@storybook/vue3',
+  core: {
+    builder: '@storybook/builder-webpack5',
+  },
+  webpackFinal: async (config) => {
+    config.module.rules.push({
+      test: /\.css$/,
+      use: ['style-loader', 'css-loader', 'postcss-loader'],
+      include: path.resolve(__dirname, '../'),
+    });
+    return config;
+  },
+};
+```
+
+This code will configure the webpack to use the postcss-loader for all .css files, including your app.css file.
+
+You should also check that you have correctly imported the postcss-loader and postcss packages in your project.
+```
+npm install postcss-loader postcss
+```
+
+If you are still facing issues, try checking your browser's developer console for any error messages that may provide additional information on what is causing the problem.
+
+
+## Question
+
+iframe.html:1 Refused to apply style from 'http://localhost:6007/src/index.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled.
+
+## Answer
+
+The error message you provided suggests that the browser is unable to apply the styles from your app.css file because the file's MIME type is 'text/html' instead of the expected 'text/css'. This can happen if the file is not being served correctly by the webpack development server.
+
+There are a few things you can try to fix this issue:
+
+1. Make sure that the path to your app.css file is correct. Double check that the path in your main.js file is correct and that the file is located in the expected location.
+
+2. Check that the webpack development server is correctly configured to serve static files. In your webpack config, you should have a rule that tells the development server to serve static files.
+
+3. Make sure that your postcss-loader is working correctly. You can check your browser's developer console to see if there are any error messages related to postcss-loader.
+
+4. If the above steps don't work, try reinstalling node_modules and restarting your development server.
+
+5. Check your browser setting if it's enable the strict MIME checking, if yes then disable it for your localhost.
+
+It's possible that one of these steps will help resolve the issue, but if not, please let me know and I will try to assist you further.
+
+
+## Question
+
+
+
+ERROR in ./resources/css/app.css
+Module build failed (from ./node_modules/mini-css-extract-plugin/dist/loader.js):
+ModuleBuildError: Module build failed (from ./node_modules/postcss-loader/dist/cjs.js):
+ReferenceError: path is not defined
+    at Object.<anonymous> (/Users/timwhite/Documents/GitHub/Jovie/tailwind.config.js:12:6)
+    at Module._compile (node:internal/modules/cjs/loader:1155:14)
+    at Object.Module._extensions..js (node:internal/modules/cjs/loader:1209:10)
+    at Module.load (node:internal/modules/cjs/loader:1033:32)
+    at Function.Module._load (node:internal/modules/cjs/loader:868:12)
+    at Module.require (node:internal/modules/cjs/loader:1057:19)
+    at require (node:internal/modules/cjs/helpers:103:18)
+    at getTailwindConfig (/Users/timwhite/Documents/GitHub/Jovie/node_modules/tailwindcss/lib/lib/setupTrackingContext.js:67:53)
+    at /Users/timwhite/Documents/GitHub/Jovie/node_modules/tailwindcss/lib/lib/setupTrackingContext.js:96:92
+    at /Users/timwhite/Docum
+
+## Answer
+
+The error message you provided suggests that there is an issue with the tailwind.config.js file. It seems that there is a reference to a "path" variable that is not defined in the file.
+
+This can happen if you are using a version of Tailwind CSS that is not compatible with your current setup. 
+
+Try updating your tailwindcss package to the latest version by running:
+```
+npm update tailwindcss
+```
+
+Also, you can try to run the command `npx tailwind init` again. This will generate a new tailwind.config.js file with the correct format.
+
+If the issue still persist, please double check the tailwind.config.js file and make sure that there are no undefined variables or syntax errors.
+
+Also, make sure that you are using the correct version of postcss-loader and postcss packages, try reinstalling them using:
+```
+npm install postcss-loader postcss
+```
+
+You may also try to remove the node_modules and package-lock.json and run npm install again.
+
+Let me know if this helps or if you need further assistance.
+
+
+## Question
+
+this is my tailwind config file:
+/** @type {import('tailwindcss').Config} */
+const colors = require('tailwindcss/colors');
+const defaultTheme = require('tailwindcss/defaultTheme');
+const plugin = require('tailwindcss/plugin');
+const { tailwindcssOriginSafelist } = require('@headlessui-float/vue');
+
+module.exports = {
+  content: [
+    './public/**/*.html',
+    './resources/**/*.blade.php',
+    './resources/**/*.js',
+    [path.join(__dirname, './src/**/*.(js|jsx|ts|tsx)')],
+    './resources/**/*.vue',
+    './vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php',
+    './node_modules/vue-tailwind-datepicker/**/*.js',
+  ],
+  darkMode: 'class',
+  safelist: [...tailwindcssOriginSafelist],
+  theme: {
+    extend: {
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+      },
+      animation: {
+        'spin-slow': 'spin 3s linear infinite',
+      },
+      aspectRatio: {
+        auto: 'auto',
+        square: '1 / 1',
+        
+
+## Answer
+
+The error message you provided is caused by the following line in your tailwind.config.js file:
+```
+[path.join(__dirname, './src/**/*.(js|jsx|ts|tsx)')],
+```
+It seems that you are using `path` variable without importing it.
+
+You can fix this error by importing the path module at the top of your tailwind.config.js file:
+```
+const path = require('path');
+```
+
+and change this line 
+```
+[path.join(__dirname, './src/**/*.(js|jsx|ts|tsx)')],
+```
+to 
+```
+path.join(__dirname, './src/**/*.(js|jsx|ts|tsx)')
+```
+
+Please make sure that you have the latest version of node.js installed, if you are still facing issues, try reinstalling node.js and running your project again. 
+
+Let me know if this helps or if you need further assistance.
+
+
+## Question
+
+timwhite@tims-mbp Jovie % npm run storybook                   
+
+> storybook
+> start-storybook -p 6006
+
+info @storybook/vue3 v6.5.15
+info 
+✔ Port 6006 is not available. Would you like to run Storybook on port 6007 instead? … yes
+info => Loading presets
+
+info Addon-docs: using MDX1
+info => Using PostCSS preset with postcss@8.4.21
+info => Using default Webpack5 setup
+<i> [webpack-dev-middleware] wait until bundle finished
+10% building 0/1 entries 0/0 dependencies 0/0 modules
+info => Using cached manager
+<i> [webpack-dev-middleware] wait until bundle finished: /__webpack_hmr
+99% done plugins webpack-hot-middlewarewebpack built preview c2c42ffc6ee2c686cdea in 14158ms
+ModuleBuildError: Module build failed (from ./node_modules/@storybook/addon-postcss/node_modules/postcss-loader/dist/cjs.js):
+SyntaxError
+
+(1:1) /Users/timwhite/Documents/GitHub/Jovie/node_modules/tailwindcss/tailwind.css Unknown word
+
+> 1 | import api from "!../style-loader/dist/runtime/injectStylesIntoStyleTag.js";
+    | ^
+  
+
+## Answer
+
+The error message you provided suggests that there is an issue with the tailwind.css file that is being imported by your Storybook configuration.
+
+It seems that the `!` and `!!` before the `../style-loader/dist/runtime/injectStylesIntoStyleTag.js` and `../css-loader/dist/cjs.js!../postcss-loader/dist/cjs.js!./tailwind.css` is causing an issue.
+
+You can try removing the `!` and `!!` before the imports in the tailwind.css file.
+
+Also, check if you have the latest version of tailwindcss and its dependencies, try reinstalling them using:
+```
+npm install tailwindcss postcss postcss-loader
+```
+
+You may also try to remove the node_modules and package-lock.json and run npm install again.
+
+Let me know if this helps or if you need further assistance.
+
+
+## Question
+
+sho wme the correct import line without the !
+
+## Answer
+
+Here is an example of how you can import the `injectStylesIntoStyleTag.js` file without the `!` and `!!`:
+
+```
+import api from "../style-loader/dist/runtime/injectStylesIntoStyleTag.js";
+```
+and this how to import 
+```
+import content from "!css-loader!postcss-loader!./tailwind.css";
+```
+Please note that the above examples may not be the exact path to the files in your project, you will need to adjust the path accordingly.
+
+Also, you need to make sure that your webpack configuration is set up correctly to handle the imports, and that you have the necessary loaders installed.
+
+Let me know if you have any questions or if you need further assistance.
+
+
+## Question
+
+this is webpack mix file
+
+const mix = require('laravel-mix');
+const tailwindcss = require('tailwindcss');
+const path = require('path');
+const Vapor = require('laravel-vapor');
+require('laravel-mix-webp');
+
+/*
+ |--------------------------------------------------------------------------
+ | Mix Asset Management
+ |--------------------------------------------------------------------------
+ |
+ | Mix provides a clean, fluent API for defining some Webpack build steps
+ | for your Laravel applications. By default, we are compiling the CSS
+ | file for the application as well as bundling up all the JS files.
+ |
+ */
+mix.browserSync('127.0.0.1');
+
+mix.ImageWebp({
+  from: 'resources/img',
+  to: 'public/img',
+  imageminWebpOptions: {
+    quality: 50,
+  },
+});
+
+mix
+  .js('resources/js/app.js', 'public/js')
+  .extract()
+  .vue()
+  .postCss('resources/css/app.css', 'public/css', [require('tailwindcss')])
+  .version();
+
+if (mix.inProduction()) {
+  mix.options({
+    terser: {
+      terserOptions: {
+       
+
+## Answer
+
+It looks like you are using Laravel Mix as your Webpack configuration. 
+You can see that you are using the `postCss` method to process your `app.css` file, and passing in the `tailwindcss` module as the postcss plugin.
+
+You need to adjust the path to the tailwind config file in the postCss method.
+```
+  .postCss('resources/css/app.css', 'public/css', [
+    tailwindcss(path.resolve(__dirname, './tailwind.config.js')),
+  ])
+```
+Also, you need to make sure that your tailwind config file is correctly set up and has the correct path to the tailwind.css file.
+
+It is also good to double check your dependencies versions.
+
+Let me know if this helps or if you need further assistance.
+
+
+## Question
+
+const mix = require('laravel-mix');
+const tailwindcss = require('tailwindcss');
+const path = require('path');
+const Vapor = require('laravel-vapor');
+require('laravel-mix-webp');
+
+/*
+ |--------------------------------------------------------------------------
+ | Mix Asset Management
+ |--------------------------------------------------------------------------
+ |
+ | Mix provides a clean, fluent API for defining some Webpack build steps
+ | for your Laravel applications. By default, we are compiling the CSS
+ | file for the application as well as bundling up all the JS files.
+ |
+ */
+mix.browserSync('127.0.0.1');
+
+mix.ImageWebp({
+  from: 'resources/img',
+  to: 'public/img',
+  imageminWebpOptions: {
+    quality: 50,
+  },
+});
+
+mix
+  .js('resources/js/app.js', 'public/js')
+  .extract()
+  .vue()
+  /*  .postCss('resources/css/app.css', 'public/css', [require('tailwindcss')]) */
+  .postCss('resources/css/app.css', 'public/css', [
+    tailwindcss(path.resolve(__dirname, './tailwind.config.js')),
+  
+
+## Answer
+
+This is the correct way to import and configure TailwindCSS in your Laravel Mix file. The important part is this line:
+
+.postCss('resources/css/app.css', 'public/css', [
+    tailwindcss(path.resolve(__dirname, './tailwind.config.js')),
+  ])
+
+It tells Mix to use the `postCss` method to process the `resources/css/app.css` file and output it to `public/css`, and it also passes in an array of postcss plugins. The `tailwindcss(path.resolve(__dirname, './tailwind.config.js'))` tells the tailwindcss to use the tailwind config file in the current directory.
+
+You also import path module and tailwindcss module as well to use it in your code.
+
+You also need to make sure that you have the correct version of tailwindcss and postcss-loader installed in your project.
+
+
+## Question
+
+/** @type {import('tailwindcss').Config} */
+const colors = require('tailwindcss/colors');
+const defaultTheme = require('tailwindcss/defaultTheme');
+const plugin = require('tailwindcss/plugin');
+const { tailwindcssOriginSafelist } = require('@headlessui-float/vue');
+const path = require('path');
+
+module.exports = {
+  content: [
+    './public/**/*.html',
+    './resources/**/*.blade.php',
+    './resources/**/*.js',
+    path.join(__dirname, './src/**/*.(js|jsx|ts|tsx)'),
+    './resources/**/*.vue',
+    './vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php',
+    './node_modules/vue-tailwind-datepicker/**/*.js',
+  ],
+  darkMode: 'class',
+  safelist: [...tailwindcssOriginSafelist],
+  theme: {
+    extend: {
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+      },
+      animation: {
+        'spin-slow': 'spin 3s linear infinite',
+      },
+      aspectRatio: {
+        auto: 'auto',
+        square: '1 / 1',
+        video
+
+## Answer
+
+It looks like the issue is with the path being passed to the `tailwindcss` function in your webpack mix file. Instead of passing `require('tailwindcss')`, you should pass the path to your tailwind config file, which in this case is `path.resolve(__dirname, './tailwind.config.js')`. This way, the correct config file will be used by the `tailwindcss` package, and the error should be resolved.
+
+
+## Question
+
+this is my tailwind config file
+
+/** @type {import('tailwindcss').Config} */
+const colors = require('tailwindcss/colors');
+const defaultTheme = require('tailwindcss/defaultTheme');
+const plugin = require('tailwindcss/plugin');
+const { tailwindcssOriginSafelist } = require('@headlessui-float/vue');
+const path = require('path');
+
+module.exports = {
+  content: [
+    './public/**/*.html',
+    './resources/**/*.blade.php',
+    './resources/**/*.js',
+    path.join(__dirname, './src/**/*.(js|jsx|ts|tsx)'),
+    './resources/**/*.vue',
+    './vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php',
+    './node_modules/vue-tailwind-datepicker/**/*.js',
+  ],
+  darkMode: 'class',
+  safelist: [...tailwindcssOriginSafelist],
+  theme: {
+    extend: {
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+      },
+      animation: {
+        'spin-slow': 'spin 3s linear infinite',
+      },
+      aspectRatio: {
+        auto: 'auto',
+     
+
+## Answer
+
+It looks like this is a Tailwind CSS configuration file. It defines various settings for the CSS framework, such as the color palette, font sizes, and custom CSS classes. It also specifies the content that should be processed by the framework, and includes settings for dark mode and safelisted selectors. Additionally, this file also defines custom color palettes and social media colors.
+
+
+## Question
+
+are there any issues with it
+
+## Answer
+
+I do not see any obvious issues with the tailwind config file you provided. However, there are a few things that could be improved.
+
+1. The variable `colors` is being used, but the import `colors` is not being used in the entire file.
+
+2. The variable `defaultTheme` is being used, but the import `defaultTheme` is not being used in the entire file.
+
+3. The variable `plugin` is being used, but the import `plugin` is not being used in the entire file.
+
+4. The same social media colors are declared twice.
+
+5. It is not clear what the content array is being used for.
+
+6. `darkMode: 'class'` is a new feature, which may cause compatibility issues if you are using an older version of tailwind.
+
+It's not a critical issues but it will be better if you can remove the unused imports and double declaration of some colors, and also provide some more context about the purpose of the content array.
+
+
+## Question
+
+timwhite@tims-mbp Jovie % npm run storybook                 
+
+> storybook
+> start-storybook -p 6006
+
+info @storybook/vue3 v6.5.15
+info 
+info => Loading presets
+info Addon-docs: using MDX1
+info => Using implicit CSS loaders
+info => Using default Webpack5 setup
+<i> [webpack-dev-middleware] wait until bundle finished
+10% building 0/1 entries 0/0 dependencies 0/0 modules
+info => Ignoring cached manager due to change in manager config
+<i> [webpack-dev-middleware] wait until bundle finished
+95% emitting emitassets by chunk 6.12 MiB (id hint: vendors)
+  assets by status 5.9 MiB [big]
+    asset vendors-node_modules_storybook_addon-actions_manager_js-node_modules_storybook_addon-backgrou-076004.manager.bundle.js 4.46 MiB [emitted] [big] (id hint: vendors)
+    asset vendors-node_modules_storybook_components_dist_esm_formatter-0d5cb0eb_js.manager.bundle.js 887 KiB [emitted] [big] (id hint: vendors)
+    asset vendors-node_modules_storybook_components_dist_esm_OverlayScrollbars-1355f44c_js.manager.
+
+## Answer
+
+It seems there is an issue with the path of the file 'resources/css/app.css', The error message is saying that it can't resolve the path of the file in the directory '/Users/timwhite/Documents/GitHub/Jovie/.storybook'. It could be that the path is not correct or the file is missing or not placed in the correct directory. You might want to check the path and make sure the file 'resources/css/app.css' is present in the correct directory.
+
+
+## Question
+
+99% done plugins webpack-hot-middlewarewebpack built preview a6776cb82df0aaa91874 in 8980ms
+ModuleNotFoundError: Module not found: Error: Can't resolve 'tailwind/tailwind.css' in '/Users/timwhite/Documents/GitHub/Jovie/.storybook'
+    at /Users/timwhite/Documents/GitHub/Jovie/node_modules/webpack/lib/Compilation.js:2016:28
+    at /Users/timwhite/Documents/GitHub/Jovie/node_modules/webpack/lib/NormalModuleFactory.js:798:13
+    at eval (eval at create (/Users/timwhite/Documents/GitHub/Jovie/node_modules/tapable/lib/HookCodeFactory.js:33:10), <anonymous>:10:1)
+    at /Users/timwhite/Documents/GitHub/Jovie/node_modules/webpack/lib/NormalModuleFactory.js:270:22
+    at eval (eval at create (/Users/timwhite/Documents/GitHub/Jovie/node_modules/tapable/lib/HookCodeFactory.js:33:10), <anonymous>:9:1)
+    at /Users/timwhite/Documents/GitHub/Jovie/node_modules/webpack/lib/NormalModuleFactory.js:434:22
+    at /Users/timwhite/Documents/GitHub/Jovie/node_modules/webpack/lib/NormalModuleFactory.js:116
+
+## Answer
+
+It seems that the issue is that the webpack configuration in your project is unable to find the 'tailwind/tailwind.css' file. This is likely because the path to the file is incorrect or the file itself is missing. You will need to check that the path to the file is correct and that the file exists in the specified location. Also make sure that you have imported the tailwind.css file in your main.js file. It may also be helpful to check your webpack config to ensure that it is set up to handle CSS imports correctly.
+
+
+## Question
+
+const path = require('path');
+
+module.exports = {
+  stories: ['../src/**/*.stories.mdx', '../src/**/*.stories.@(js|jsx|ts|tsx)'],
+  addons: [
+    '@storybook/addon-links',
+    '@storybook/addon-essentials',
+    '@storybook/addon-interactions',
+    /* {
+      name: "@storybook/addon-postcss",
+      options: {
+        postcssLoaderOptions: {
+          implementation: require("postcss"),
+        },
+      },
+    }, */
+  ],
+  framework: '@storybook/vue3',
+  core: {
+    builder: '@storybook/builder-webpack5',
+  },
+  webpackFinal: async (config) => {
+    config.module.rules.push({
+      test: /\.css$/,
+      use: ['style-loader', 'css-loader', 'postcss-loader'],
+      include: path.resolve(__dirname, '../'),
+    });
+    return config;
+  },
+};
+
+
+## Answer
+
+This is a configuration file for Storybook, a tool for developing and testing UI components in isolation. 
+
+- The `stories` property specifies the location of the component stories, which are used to create documentation and examples of the components.
+- The `addons` property lists the addons that are installed and enabled for the project, such as `@storybook/addon-links` and `@storybook/addon-essentials`.
+- The `framework` property specifies that the project is using Vue 3 as the framework.
+- The `core` property is used to configure various core settings for Storybook. In this case, the `builder` property is set to `@storybook/builder-webpack5`.
+- The `webpackFinal` property allows to make changes to the webpack config before it is used by Storybook. In this case, it's adding a rule to handle css files, and include them in the resolve path.
+
+
+## Question
+
+
+(1:1) /Users/timwhite/Documents/GitHub/Jovie/.storybook/tailwind.css Unknown word
+
+> 1 | import api from "!../node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js";
+    | ^
+  2 |             import content from "!!../node_modules/css-loader/dist/cjs.js!../node_modules/postcss-loader/dist/cjs.js!./tailwind.css";
+  3 | 
+
+## Answer
+
+This error message is indicating that the tailwind.css file is not being found or imported correctly in your storybook configuration. The import statement for the tailwind.css file is not pointing to the correct location. You can try to update the path in the import statement to the correct location of your tailwind.css file, then it will work fine. 
+It looks like you might be trying to import tailwind.css from a location outside the storybook folder.
+You can also check the location of the tailwind.css file in your project if it is correct or not.
+
