@@ -28,6 +28,7 @@ import {
   type LockRenewalState,
 } from './lock-renewal-tick.ts';
 import { lockRenewalAudit } from '../audit/lock-renewal-audit.ts';
+import { isRetryableConnError } from '../retry-matcher.ts';
 
 /**
  * Abort reasons that signal infrastructure failure (PgBouncer outage,
@@ -165,6 +166,23 @@ export class MinionWorker extends EventEmitter {
   private jobsCompleted = 0;
   /** Idempotency latch for gracefulShutdown — per-job and periodic check sites can race. */
   private gracefulShutdownFired = false;
+  /**
+   * Set true when the RSS watchdog (not a normal SIGTERM) initiated the
+   * drain. The CLI handler (src/commands/jobs.ts case 'work') reads this
+   * AFTER start() resolves and exits the process with
+   * WORKER_EXIT_RSS_WATCHDOG so the supervisor can classify the drain as
+   * `rss_watchdog` instead of a clean exit. The worker deliberately does
+   * NOT set process.exitCode itself — that would leak a non-zero code into
+   * embedding hosts (tests, other process owners) that call start()/stop()
+   * in-process. Ownership of process exit stays with the CLI, same as the
+   * engine-disconnect boundary.
+   */
+  private _rssWatchdogTriggered = false;
+  /** Peak observed RSS (MB) this process lifetime — surfaced in the watchdog
+   *  drain line and the 80% soft-warn so operators can size --max-rss. */
+  private _peakRssMb = 0;
+  /** Latch so the 80%-of-cap soft-warn fires once per crossing, not every check. */
+  private _softWarnFired = false;
 
   private opts: Required<MinionWorkerOpts>;
 
@@ -216,6 +234,16 @@ export class MinionWorker extends EventEmitter {
   /** Get registered handler names (used by claim query). */
   get registeredNames(): string[] {
     return Array.from(this.handlers.keys());
+  }
+
+  /**
+   * True when the RSS watchdog drained this worker (vs a normal SIGTERM
+   * shutdown). The CLI handler reads this after `start()` resolves to set
+   * the distinct WORKER_EXIT_RSS_WATCHDOG process exit code. See the field
+   * comment on `_rssWatchdogTriggered` for the ownership rationale.
+   */
+  get rssWatchdogTriggered(): boolean {
+    return this._rssWatchdogTriggered;
   }
 
   /** Emit 'unhealthy' with a no-listener fallback. The default contract is
@@ -466,12 +494,35 @@ export class MinionWorker extends EventEmitter {
         // Claim jobs up to concurrency limit
         if (this.inFlight.size < this.opts.concurrency) {
           const lockToken = `${this.workerId}:${Date.now()}`;
-          const job = await this.queue.claim(
-            lockToken,
-            this.opts.lockDuration,
-            this.opts.queue,
-            this.registeredNames,
-          );
+          let job: MinionJob | null;
+          try {
+            job = await this.queue.claim(
+              lockToken,
+              this.opts.lockDuration,
+              this.opts.queue,
+              this.registeredNames,
+            );
+          } catch (e) {
+            // issue #1678 (Codex #1): a reaped pooler socket / nulled instance
+            // pool throws a retryable conn error here. Blind-retrying claim is
+            // UNSAFE — if the UPDATE...RETURNING committed but the connection
+            // died before the row reached us, a retry would claim a SECOND
+            // job (invisible active job, no renewal, later stall). So instead:
+            // reconnect once and let the NEXT poll tick re-claim against a live
+            // pool. Non-retryable errors propagate (real bug → PM restart).
+            if (!isRetryableConnError(e)) throw e;
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error(`[worker] claim hit a connection error; reconnecting, retry on next tick: ${msg}`);
+            const reconnect = (this.engine as { reconnect?: () => Promise<void> }).reconnect;
+            if (reconnect) {
+              try { await reconnect.call(this.engine); }
+              catch (re) {
+                console.error(`[worker] reconnect after claim error failed: ${re instanceof Error ? re.message : String(re)}`);
+              }
+            }
+            await new Promise(resolve => setTimeout(resolve, this.opts.pollInterval));
+            continue;
+          }
 
           if (job) {
             // Quiet-hours gate: evaluated at claim time, not dispatch.
@@ -604,12 +655,37 @@ export class MinionWorker extends EventEmitter {
       return;
     }
     const rssMb = Math.round(rss / (1024 * 1024));
-    if (rssMb < this.opts.maxRssMb) return;
+    if (rssMb > this._peakRssMb) this._peakRssMb = rssMb;
 
+    // Names of the jobs in flight when memory crested — the diagnostic an
+    // operator needs to know WHICH job kind is the memory hog.
+    const inFlightKinds = Array.from(this.inFlight.values()).map(f => f.job.name);
+
+    // 80%-of-cap soft warn: fires once per crossing (re-arms once RSS drops
+    // back under the line) so operators get a heads-up BEFORE the kill rather
+    // than a silent death. Cheap: one extra comparison per check.
+    const softLine = Math.floor(this.opts.maxRssMb * 0.8);
+    if (rssMb < this.opts.maxRssMb) {
+      if (rssMb >= softLine && !this._softWarnFired) {
+        this._softWarnFired = true;
+        const ts = new Date().toISOString().slice(11, 19);
+        console.warn(
+          `[watchdog ${ts}] approaching cap: rss=${rssMb}MB (${Math.round((rssMb / this.opts.maxRssMb) * 100)}% of ${this.opts.maxRssMb}MB) ` +
+          `peak=${this._peakRssMb}MB in_flight=${inFlightKinds.join(',') || 'none'} — next overshoot will drain. ` +
+          `Raise --max-rss if this job kind legitimately needs more.`,
+        );
+      } else if (rssMb < softLine) {
+        this._softWarnFired = false;
+      }
+      return;
+    }
+
+    this._rssWatchdogTriggered = true;
     const ts = new Date().toISOString().slice(11, 19);
     console.warn(
-      `[watchdog ${ts}] rss=${rssMb}MB threshold=${this.opts.maxRssMb}MB ` +
-      `jobs_completed=${this.jobsCompleted} source=${source} — draining`,
+      `[watchdog ${ts}] rss=${rssMb}MB threshold=${this.opts.maxRssMb}MB peak=${this._peakRssMb}MB ` +
+      `jobs_completed=${this.jobsCompleted} in_flight=${inFlightKinds.join(',') || 'none'} source=${source} — draining ` +
+      `(raise --max-rss if this is legitimate working set, not a leak)`,
     );
     this.gracefulShutdown('watchdog');
   }
@@ -691,11 +767,17 @@ export class MinionWorker extends EventEmitter {
       consecutiveFailures: 0,
       cancelled: () => cancelled,
     };
+    // issue #1678 (Codex #2): hand the tick a bounded reconnect-once hook when
+    // the engine owns a pool that a transaction-mode pooler can reap. Postgres
+    // exposes reconnect(); PGLite (no pooler) doesn't, so the hook is absent
+    // and the tick keeps its legacy no-reconnect behavior.
+    const engineReconnect = (this.engine as { reconnect?: () => Promise<void> }).reconnect;
     const renewalDeps: LockRenewalDeps = {
       renewLock: (id, tok, dur) => this.queue.renewLock(id, tok, dur),
       audit: lockRenewalAudit,
       now: Date.now,
       setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
+      ...(engineReconnect ? { reconnect: () => engineReconnect.call(this.engine) } : {}),
     };
 
     const lockTimer = setInterval(() => {

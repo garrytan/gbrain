@@ -100,6 +100,354 @@ feature (it reads existing pages + links + facts). To use it:
   exhaustion so a resume doesn't re-charge already-completed pages.
 - Refused on thin-client / HTTP MCP installs (spends model budget + writes pages).
 
+## [0.42.5.0] - 2026-06-01
+
+**If your background worker has been dying every few minutes and the logs keep
+blaming the database, this release explains why and stops it. The real cause was
+almost never the database. It was a memory cap set way too low, killing
+legitimate work and leaving behind a trail of connection errors that looked like
+the problem but were only the symptom.**
+
+Here's what was happening. The worker has a safety valve that drains it when
+memory gets too high, meant to catch a runaway leak. The default cap was 2GB. But
+a brain doing embeddings legitimately needs around 10GB of working memory, so the
+valve fired on every heavy cycle, drained the worker mid-job, the pooler then
+reaped the half-open database socket, and every call after that threw "No
+database connection." One operator's worker exited 400+ times in 24 hours. The
+single line that would have explained it scrolled by once per cycle, buried under
+hundreds of database errors. It took hours to find.
+
+Three things were wrong, and all three are fixed:
+
+1. **The memory-cap drain looked exactly like a clean shutdown**, so nothing
+   counted it or alerted on it. Now it exits with its own distinct code, shows up
+   in `gbrain doctor` and supervisor logs as `rss_watchdog`, and after a few
+   loops in a window the supervisor prints a loud "worker OOM-looping: raise
+   --max-rss" line and backs off instead of hot-looping.
+2. **The 2GB default was a footgun.** It now auto-sizes from your machine's RAM
+   (half of it, clamped to 4-16GB), and it reads your container/cgroup limit so a
+   small container doesn't get a cap set above its real ceiling. Pass `--max-rss`
+   to override. You'll see the resolved number on worker startup.
+3. **The database errors that followed the drain had no recovery path** in the
+   job-lock code, so one reaped socket cascaded into a dead worker. Those hot
+   paths now reconnect and recover, and `CONNECTION_ENDED` (the pooler's
+   socket-reap error) is finally recognized as retryable everywhere.
+4. **The dream cycle could kill its own database connection.** While tracing the
+   same bug class, we found the `lint` phase created a second, competing
+   database connection to read four config values and then closed it — which
+   tore down the shared connection the rest of the cycle was using. On a
+   Postgres brain with a configured connection string, `gbrain dream` could die
+   mid-cycle with the same misleading "no database connection" error right after
+   linting. The lint phase now reuses the cycle's existing connection.
+
+Separately, this release fixes a long-standing invisible backlog: on a brain
+whose schema pack doesn't run the `extract_atoms` lens phase, that phase silently
+never ran in the nightly cycle and pages piled up forever with zero signal.
+`gbrain doctor` now counts that backlog and tells you the exact command to drain
+it, and there's a new first-class drain mode for grinding it down on demand.
+
+### How to take advantage
+
+Most of this is automatic on upgrade. To use the new pieces:
+
+- **Diagnose a watchdog loop fast:** `gbrain doctor` and `gbrain jobs supervisor
+  status` now break crashes out by cause. An `rss_watchdog` count means "raise
+  the cap," not "debug the database."
+- **Set the memory cap explicitly if you want:** `gbrain jobs work --max-rss
+  16384` (megabytes; `--max-rss 0` disables the watchdog). The worker prints the
+  resolved cap and where it came from on startup.
+- **Drain an atom backlog on demand:** `gbrain dream --phase extract_atoms
+  --drain --window 120 --json`. It holds the cycle lock once, processes batches
+  until the backlog empties or the window elapses, reports `{extracted,
+  remaining}`, and exits non-zero while work remains so a cron loop knows to run
+  again. `--dry-run` previews the count without doing work.
+- **See the backlog:** `gbrain doctor --json` includes an `extract_atoms_backlog`
+  check that warns (with the drain command) when eligible pages pile up under a
+  pack that doesn't run the phase.
+
+### To take advantage of v0.42.5.0
+
+`gbrain upgrade` applies everything. No schema migration in this release. If
+`gbrain doctor` still flags a watchdog loop after upgrade:
+
+1. Check the cause breakdown: `gbrain doctor --json` (look for
+   `rss_watchdog` under the supervisor check).
+2. Raise the cap to fit your embed working set:
+   ```bash
+   gbrain jobs work --max-rss 16384   # or pass via your supervisor/launchd unit
+   ```
+3. If `extract_atoms_backlog` warns, drain it:
+   ```bash
+   gbrain dream --phase extract_atoms --drain --window 120
+   ```
+4. If anything still looks wrong, file an issue with `gbrain doctor` output:
+   https://github.com/garrytan/gbrain/issues
+
+### Itemized changes
+
+- **Self-identifying watchdog exit.** New `WORKER_EXIT_RSS_WATCHDOG` exit code
+  (`src/core/minions/worker-exit-codes.ts`). The worker sets a flag on a memory
+  drain; the CLI (`gbrain jobs work`) exits with the distinct code so the
+  supervisor classifies it as `likely_cause=rss_watchdog` instead of a silent
+  clean exit. `src/core/minions/child-worker-supervisor.ts` tracks watchdog
+  exits in their own sliding window (independent of `crashCount`, so the >5-min
+  stable-run reset can't defeat the breaker) and emits a loud `rss_watchdog_loop`
+  `health_warn` plus a backoff once the window budget is exceeded.
+  `supervisor-audit.ts` gains an `rss_watchdog` crash bucket.
+- **Pre-kill soft warning + diagnostics.** The watchdog logs peak RSS and the
+  in-flight job kind, and warns once at 80% of the cap before the drain so you get
+  a heads-up rather than a silent death.
+- **Cgroup-aware auto-sized default.** `src/core/minions/rss-default.ts`:
+  `resolveDefaultMaxRssMb()` = `clamp(0.5 × min(cgroupLimit, totalRAM), 4096,
+  16384)` MB. Replaces the flat `2048` default in `gbrain jobs work`, `gbrain jobs
+  supervisor`, the autopilot-managed worker, and `MinionSupervisor`. Reads cgroup
+  v2 `memory.max` and v1 `memory.limit_in_bytes` so the cap stays below the real
+  process ceiling (graceful drain beats the kernel OOM-killer).
+- **Cycle lint phase reuses the shared engine (issue #1678, same disconnect
+  family).** `resolveLintContentSanity` in `src/commands/lint.ts` created a
+  module-style engine (`createEngine` without `poolSize` wraps the `db.ts`
+  singleton) for the content-sanity DB-plane config lift, then `disconnect()`ed
+  it — cascading to `db.disconnect()` and nulling the singleton the cycle's lint
+  phase shares. Every later phase then threw `connect() has not been called`
+  (most visibly `conversation_facts_backfill`'s `getConfig`). `LintOpts` gains an
+  optional `engine`; `runPhaseLint` (cycle) and the `lint` / `lint-fix` Minion
+  handlers pass their live engine so lint reuses it with zero connection churn.
+  Standalone `gbrain lint` (CLI_ONLY, no shared engine) keeps the create-own
+  path. Pinned by `test/lint-shared-engine.test.ts` (engine reused, never
+  disconnected) and the now-passing `test/e2e/cycle.test.ts` +
+  `test/e2e/dream.test.ts`. The E2E phase-count assertion was also made
+  non-brittle (asserts `ALL_PHASES.length` instead of a hardcoded number that
+  had drifted stale).
+- **Lock-path self-heal.** `src/core/retry-matcher.ts` now classifies
+  `CONNECTION_ENDED` (postgres.js's socket-reap code) as retryable via both code
+  and message. `PostgresEngine`'s `sql` getter no longer falls through to the
+  never-connected module singleton when an instance pool's connection went away;
+  it throws a clear, retryable error so the retry path rebuilds the pool.
+  `promoteDelayed` reconnects and retries on a reaped socket; `claim` recovers on
+  the next poll tick instead of crashing the worker (a blind retry could
+  double-claim a job); the lock-renewal tick rebuilds the pool once, bounded by
+  its own timeout, rather than racing a background retry against the renewal
+  deadline.
+- **Visible lens-phase backlog.** New `extract_atoms_backlog` check in `gbrain
+  doctor` counts eligible-but-unextracted pages and warns (with the `--drain`
+  command) when the active pack doesn't run the phase. The nightly cycle's
+  pack-gated skip now carries a `pack_gated: true` marker so it's greppable.
+- **First-class bounded drain.** `gbrain dream --phase extract_atoms --drain
+  [--window <seconds>]` holds the cycle lock once (the same lock id the routine
+  cycle uses, so they genuinely take turns), rediscovers eligibility each batch
+  (no stale-content extraction), reports `{extracted, skipped, remaining}`, and
+  exits non-zero while the backlog remains.
+
+### For contributors
+
+- New CI-guarded audit site `minion-lock` in `BATCH_AUDIT_SITES`
+  (`src/core/retry.ts`).
+- New modules: `worker-exit-codes.ts`, `rss-default.ts`, `cycle/extract-atoms-drain.ts`.
+- `packDeclaresPhase` and `countExtractAtomsBacklog` are now exported for the
+  doctor check.
+- ~70 new test cases across `test/rss-default.test.ts`,
+  `test/worker-watchdog-trigger.test.ts`, `test/child-worker-supervisor.test.ts`,
+  `test/supervisor-audit.test.ts`, `test/retry-matcher.test.ts`,
+  `test/worker-lock-renewal.test.ts`, `test/postgres-engine-getter-selfheal.test.ts`,
+  `test/queue-lock-retry.test.ts`, `test/doctor-extract-atoms-backlog.test.ts`,
+  `test/extract-atoms-drain.test.ts`, and the supervisor/dream flag suites.
+
+## [0.42.4.0] - 2026-06-01
+
+**`gbrain think` stops writing blank pages, and a bad `--model` now fails loud instead of going quiet.**
+
+If you ran `gbrain think --model anthropic/claude-sonnet-4-6 --save` (with a slash
+in the model name), gbrain used to quietly give up on the real model, fall back to
+a "no LLM available" stub, and save an empty synthesis page anyway — exit code 0,
+no error. One person ran this in a loop and got 200 blank pages before noticing.
+
+This release closes that whole class of silent failure:
+
+- **Slash-form model names work now.** `anthropic/claude-sonnet-4-6` is treated the
+  same as `anthropic:claude-sonnet-4-6`. A bare name like `claude-opus-4-7` still
+  defaults to Anthropic.
+- **An explicit `--model` you typed but can't run is a hard error.** Typo the model,
+  pick a provider with no API key, name a model that doesn't exist — `gbrain think`
+  exits 1 with a clear message (and a paste-ready fix when there is one), instead of
+  silently degrading to the stub. Omitting `--model` keeps the old graceful behavior:
+  no key, no `--save` still prints the gathered context and exits 0.
+- **An empty synthesis is never saved.** If the model returns nothing, malformed
+  output, or an empty answer, no page is written. `gbrain think --save` with no real
+  synthesis exits 1 and tells you nothing was saved.
+- **The nightly auto-think cycle got the same guard.** An empty synthesis no longer
+  counts as "done" or advances the cooldown, so the next cycle retries instead of
+  silently skipping for days.
+
+If you typed `--model` and it was unusable before, you were getting a blank page with
+exit 0. Now you get a real answer, or a real error. No silent middle.
+
+### How it works (the precise bits)
+
+- New `normalizeModelId` (`src/core/model-id.ts`) is the one shared `provider:model`
+  normalizer; it replaced four copies of a colon-only inline that mangled slash form.
+  A malformed leading separator (`:foo` / `/foo`) is returned unchanged so the
+  resolver throws loudly instead of coercing it to Anthropic.
+- New `validateModelId` + `probeChatModel` (`src/core/ai/gateway.ts`) are the shared
+  id-validity + key probe. `runThink` calls the probe before retrieval and hard-errors
+  on an explicit, unusable model.
+- `ThinkResult.synthesisOk` gates persistence: `persistSynthesis` returns a
+  `SYNTHESIS_EMPTY_NOT_PERSISTED` signal (never writes) when synthesis didn't happen.
+- `hasAnthropicKey` consolidated into `src/core/ai/anthropic-key.ts` (three private
+  copies collapsed to one).
+- The MCP `think` op enforces the same hard-error on an explicit unusable `model`.
+
+## To take advantage of v0.42.4.0
+
+Nothing to run — the fix is automatic on upgrade (`gbrain upgrade`). To verify:
+
+```bash
+# Slash form now works (with a real key):
+gbrain think "what do we know about acme-example" --model anthropic/claude-sonnet-4-6 --save
+
+# A bad model is now a loud error (exit 1), not a blank page:
+gbrain think "..." --model anthropic/claude-bogus-9 --save
+```
+
+If a bad `--model` still silently writes an empty page, file an issue with the
+command you ran and `gbrain doctor` output.
+
+### Itemized changes
+
+- `src/core/model-id.ts` — `normalizeModelId(input, defaultProvider?)`; slash→colon,
+  bare→default, empty/whitespace/leading-separator returned unchanged.
+- `src/core/ai/gateway.ts` — exported `validateModelId` + `ModelIdValidity` (registry
+  id-validity), `probeChatModel` + `ChatModelProbe` (validity + Anthropic-key
+  availability).
+- `src/core/ai/anthropic-key.ts` (new) — single shared `hasAnthropicKey()`.
+- `src/core/think/index.ts` — early explicit-model hard-throw, `modelExplicit` opt,
+  `synthesisOk` at all return sites, persist-skip signal, builder uses the shared probe.
+- `src/commands/think.ts` — `modelExplicit: !!model`, try/catch → exit 1, empty-slug
+  save guard, updated `--model` help.
+- `src/core/operations.ts` — MCP `think` op sets `modelExplicit`, maps `saved_slug` `''`→null.
+- `src/core/cycle/synthesize.ts` — `makeJudgeClient` routed through `validateModelId`.
+- `src/core/cycle/auto-think.ts` — empty synthesis → `partial`, no cooldown advance.
+- `src/core/facts/extract.ts`, `src/core/conversation-parser/llm-base.ts` — use the
+  shared normalizer + `hasAnthropicKey`.
+- Tests: `test/model-id.test.ts`, `test/ai/gateway-probe-chat-model.test.ts`,
+  `test/ai/anthropic-key.test.ts`, `test/think-gateway-adapter.test.ts`,
+  `test/think-pipeline.serial.test.ts`, `test/cycle/synthesize-gateway-adapter.test.ts`,
+  `test/auto-think-phase.test.ts`.
+## [0.42.3.0] - 2026-05-30
+
+**Search now returns the *confident handful* instead of a fixed wall of results
+— automatically. When you ask something with one clear answer, you get one
+result; when there are genuinely a few, you get those few; you stop getting 20
+loosely-related pages just because 20 was the limit. No flag to turn on — it is
+the default.**
+
+Here is the problem it fixes. Ask your brain "what's the door code for the
+cabin" and the old default would hand back 20 results: the right one on top, then
+19 things that merely mention cabins or codes. You (or the agent reading the
+results) then wade through the pile. That is fine for "show me everything about
+X," but it is noise when the question has a small answer. The new behavior,
+called **autocut**, looks at how the relevance scores drop off and cuts the list
+where the scores fall off a cliff. One obvious answer comes back as one result.
+A real cluster of three comes back as three. A broad question with no clear
+winner still returns the full set, so you never lose recall when you actually
+want breadth.
+
+The important detail, and why this is trustworthy where a naive version would
+not be: autocut cuts on the **reranker's** score, not the raw search score.
+gbrain already measured that the raw search score gap looks the same whether the
+top hit is right or wrong — it is not a reliable "is this the answer" signal. The
+cross-encoder reranker score *is*. So autocut only runs in the search modes where
+the reranker runs (the default `balanced` mode and `tokenmax`), and it is a clean
+no-op everywhere else. It can never return zero results when matches exist, and
+it never runs on a page the reranker did not actually score.
+
+### How to use it
+
+Nothing. It is on by default in the `balanced` and `tokenmax` search modes. The
+`conservative` mode (no reranker) is unaffected.
+
+Your agent gets one new lever on the `query` tool — `autocut: false` — to force
+the full top-K back when it deliberately wants breadth (broad exploration, "list
+everything about X," or when it suspects the top hit is wrong and wants to see
+the alternatives). It almost never needs to set it; the default is the smart path.
+
+Per-brain knobs if you want to tune or disable:
+
+```bash
+gbrain config set search.autocut false        # turn autocut off for this brain
+gbrain config set search.autocut_jump 0.30     # require a steeper cliff to cut (default 0.20)
+gbrain search modes                            # see autocut / autocut_jump per-mode
+gbrain query "what is X" --explain             # shows each result's rerank score + the cut
+```
+
+### What a concrete example looks like
+
+Query: "cabin door code" against a brain on the default mode. The reranker scores
+the candidates, autocut sees the cliff, and you get:
+
+| Result | Rerank score | Kept? |
+|---|---|---|
+| `notes/cabin-access` | 0.95 | yes (above the cliff) |
+| `notes/cabin-packing-list` | 0.22 | no (below the cliff) |
+| `notes/lake-house-wifi` | 0.18 | no |
+| ...17 more | <0.2 | no |
+
+One result instead of twenty. Ask "everything about the cabin" instead and the
+scores come back flat (no cliff) — autocut declines and you get the full set.
+
+### Things to know about
+
+- **One-time cache cold-start on upgrade.** The query cache key changed
+  (it now distinguishes autocut-on from autocut-off results), so every cached
+  search row is invalidated once on upgrade and the cache refills over the next
+  hour (`search.cache.ttl_seconds`, default 3600s). This is a global one-time
+  miss spike, including in `conservative` mode where autocut is a no-op — the
+  cache key is shared. Same pattern as prior search upgrades.
+- **`conservative` mode gets no precision change** — it has no reranker, so there
+  is no trustworthy cliff to cut on. Autocut is a documented no-op there. Use
+  `balanced` or `tokenmax` to get it.
+- **Default search mode reranks a few more candidates per query.** To make
+  autocut correct, the reranker now scores the full returned set (50 in
+  `tokenmax`, 25 in `balanced`, up from 30) so there is never a returned-but-
+  unscored result that autocut might wrongly drop. The extra rerank cost is
+  rounding error next to the downstream model.
+- **This is one wave of a larger retrieval redesign** ([#1663](https://github.com/garrytan/gbrain/issues/1663)).
+  Still to come: query-shape routing, a structural exact-lookup tier, and
+  automatic escalation to `think` on low-confidence queries. The issue stays open.
+
+### Itemized changes
+
+- **New `src/core/search/autocut.ts`** — pure score-discontinuity algorithm.
+  Normalizes the reranker scores, finds the largest gap, and cuts there when the
+  gap clears a sensitivity threshold (`autocut_jump`, default 0.20). Robust to
+  unsorted provider output (cuts on a sorted copy, keeps items in input order),
+  guards against unusable score scales (top ≤ 0, non-finite), and never returns
+  empty. No-ops when fewer than 2 results carry a reranker score (covers the
+  reranker's fail-open path).
+- **`query` tool gains an `autocut` boolean** — the ceiling override. Description
+  teaches the agent it is the smart default and `false` is the breadth escape
+  hatch, and distinguishes it from `adaptive_return` (cuts by score cliff vs.
+  caps by question intent). The keyword-only `search` tool is unchanged (no
+  reranker there).
+- **`gbrain search modes`** lists `autocut` + `autocut_jump` with per-knob source
+  attribution; **`--explain`** shows each result's rerank score and an autocut
+  summary line; the metric glossary documents `autocut.signal` + `autocut.gap_ratio`.
+- **Reranker now scores the full returned set** in `balanced` (25) and `tokenmax`
+  (50) so autocut never drops an unscored tail.
+- **Cache-meta fix (found during review):** the cached search path was silently
+  dropping the `adaptive_return` decision (and would have dropped `autocut`,
+  `mode`, `embedding_column`) from the metadata it reports. All are now carried
+  through, so `--explain` and eval-capture report the real decision on cache
+  writeback and hits.
+- `rerank_score` is now a first-class field on search results.
+- Cache-key version bumped (7 → 8) to fold in the autocut knobs (stacked on master's title_boost v=7).
+- **In-repo eval gate** (`bun run eval:autocut`, also runs in CI) measures the
+  precision-lift-without-recall-regression claim default-ON rests on, over
+  labeled qrels fixtures with realistic cross-encoder score distributions — no
+  API key, no external repo. Current result: mean precision 0.33 → 0.94, mean
+  recall 1.00 → 0.95, and **zero recall regression on enumeration queries**
+  (autocut declines on flat curves by construction). Floors are env-overridable.
+  A live-corpus PrecisionMemBench run remains an optional empirical confirmation,
+  not a blocker.
 ## [0.42.2.0] - 2026-05-30
 
 **One command now wires Claude Code, Codex, or Perplexity Computer to a remote
@@ -519,6 +867,7 @@ Every originally-deferred follow-up is included:
 - **Issue #1481 closed** — supersedes the original proposal with the
   decisions captured in plan
   `~/.claude/plans/system-instruction-you-are-working-drifting-falcon.md`.
+
 ## [0.41.38.0] - 2026-05-30
 
 **Two fixes for Supabase brains with a code source. `gbrain code-callers` and

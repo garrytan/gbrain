@@ -16,6 +16,14 @@ import type {
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
+import {
+  withRetry, BULK_RETRY_OPTS, resolveBulkRetryOpts, computeNextDelay,
+  isRetryableConnError,
+} from '../retry.ts';
+import {
+  logBatchRetry as auditLogBatchRetry,
+  logBatchExhausted as auditLogBatchExhausted,
+} from '../audit/batch-retry-audit.ts';
 
 /** Options for opting into protected-job-name submission. Passed as a separate
  *  4th arg to `MinionQueue.add()` (NOT folded into `opts`) so user-spread
@@ -1032,14 +1040,51 @@ export class MinionQueue {
     return rows.length > 0;
   }
 
+  /**
+   * issue #1678 — self-healing retry for the Minion hot-path lock SQL.
+   * ONLY promoteDelayed routes through this: it's idempotent (re-running the
+   * same UPDATE on already-promoted rows is a no-op), so a retry after a
+   * reaped pooler socket can't cause double-work. `claim` and `renewLock`
+   * deliberately do NOT use this — see their call sites for why (Codex #1/#2):
+   * blind-retrying claim can double-claim a job, and retrying renewLock races
+   * the renewal-tick's own timeout. The reconnect callback rebuilds the
+   * instance pool between attempts when the engine supports it (Postgres);
+   * PGLite has no pooler reaping so reconnect is absent and the retry is a
+   * cheap pass-through.
+   */
+  private async lockRetry<T>(fn: () => Promise<T>): Promise<T> {
+    const reconnect = (this.engine as { reconnect?: () => Promise<void> }).reconnect;
+    const opts = resolveBulkRetryOpts();
+    let prevDelay = 0;
+    try {
+      return await withRetry(fn, {
+        maxRetries: opts.maxRetries,
+        delayMs: opts.delayMs,
+        delayMaxMs: opts.delayMaxMs,
+        jitter: BULK_RETRY_OPTS.jitter,
+        auditSite: 'minion-lock',
+        onRetry: (attempt, err) => {
+          const delay = computeNextDelay(attempt - 1, prevDelay, opts.delayMs, opts.delayMaxMs, BULK_RETRY_OPTS.jitter);
+          prevDelay = delay;
+          auditLogBatchRetry('minion-lock', 1, attempt, delay, err);
+        },
+        reconnect: reconnect ? () => reconnect.call(this.engine) : undefined,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'RetryAbortError') throw err;
+      if (isRetryableConnError(err)) auditLogBatchExhausted('minion-lock', 1, opts.maxRetries + 1, err);
+      throw err;
+    }
+  }
+
   /** Promote delayed jobs whose delay_until has passed. Returns promoted jobs. */
   async promoteDelayed(): Promise<MinionJob[]> {
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    const rows = await this.lockRetry(() => this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting', delay_until = NULL,
         lock_token = NULL, lock_until = NULL, updated_at = now()
        WHERE status = 'delayed' AND delay_until <= now()
        RETURNING *`
-    );
+    ));
     return rows.map(rowToMinionJob);
   }
 

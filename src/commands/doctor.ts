@@ -2527,6 +2527,76 @@ export async function computeConversationFactsBacklogCheck(
 }
 
 /**
+ * issue #1678 — extract_atoms_backlog doctor check.
+ *
+ * Closes the "silent backlog" gap: extract_atoms is pack-gated, so on a brain
+ * whose active pack doesn't declare the phase it NEVER runs in the routine
+ * cycle and pages accumulate forever with zero signal (the cycle reports a
+ * clean `skipped`). This check counts the eligible-but-unextracted pages and,
+ * when the pack doesn't run the phase AND the backlog is real, WARNs with the
+ * exact `--drain` command.
+ *
+ * PAGE-BACKLOG-ONLY (Codex #11): extract_atoms also discovers transcript files
+ * at runtime; this counts DB pages only — labeled in details. No
+ * synthesize_concepts sibling this wave (Codex #12: that phase is a stub with
+ * no real eligibility predicate; a check would be a fake signal).
+ */
+export async function computeExtractAtomsBacklogCheck(
+  engine: BrainEngine,
+): Promise<Check> {
+  const name = 'extract_atoms_backlog';
+  const approx = 'page backlog only; transcript corpus not counted';
+  try {
+    const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
+    const backlog = await countExtractAtomsBacklog(engine); // brain-wide
+    if (backlog === null) {
+      return { name, status: 'warn', message: 'backlog query failed (could not count eligible pages)' };
+    }
+
+    const { packDeclaresPhase } = await import('../core/cycle.ts');
+    let declared = false;
+    try { declared = await packDeclaresPhase(engine, 'extract_atoms'); } catch { declared = false; }
+
+    if (backlog === 0) {
+      return {
+        name, status: 'ok',
+        message: 'no pages awaiting atom extraction',
+        details: { backlog, pack_declares_phase: declared, known_approximation: approx },
+      };
+    }
+
+    // The incident: pack does NOT run the phase but a real backlog exists →
+    // it will grow forever without a signal. WARN with the drain command.
+    if (!declared && backlog > 10) {
+      const fix = 'gbrain dream --phase extract_atoms --drain --window 120 (or declare extract_atoms in your active schema pack)';
+      return {
+        name, status: 'warn',
+        message: `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`,
+        details: { backlog, pack_declares_phase: false, fix_hint: fix, known_approximation: approx },
+      };
+    }
+
+    if (declared) {
+      // Pack runs it; the routine cycle drains in bounded batches. Informational.
+      return {
+        name, status: 'ok',
+        message: `${backlog} page(s) pending; active pack runs extract_atoms each cycle`,
+        details: { backlog, pack_declares_phase: true, known_approximation: approx },
+      };
+    }
+
+    // Not declared but below the warn threshold.
+    return {
+      name, status: 'ok',
+      message: `${backlog} page(s) eligible (below warn threshold; pack does not run extract_atoms)`,
+      details: { backlog, pack_declares_phase: false, known_approximation: approx },
+    };
+  } catch (err) {
+    return { name, status: 'warn', message: `extract_atoms_backlog check failed: ${(err as Error).message}` };
+  }
+}
+
+/**
  * v0.42 — extract_health doctor check.
  *
  * Reads the extract_rollup_7d table (migration v106) for the last 7 days
@@ -3602,6 +3672,18 @@ export async function buildChecks(
         }
       }
       checks.push(check);
+    } catch {
+      // Best-effort; backlog query failure shouldn't stop doctor.
+    }
+  }
+
+  // 3d.2b issue #1678 — extract_atoms_backlog. Surfaces the silent
+  // pack-gated-phase backlog: when the active pack doesn't run extract_atoms
+  // but eligible pages pile up, WARN with the `--drain` command. OK when the
+  // pack runs the phase (routine cycle drains it) or there's no backlog.
+  if (engine) {
+    try {
+      checks.push(await computeExtractAtomsBacklogCheck(engine));
     } catch {
       // Best-effort; backlog query failure shouldn't stop doctor.
     }

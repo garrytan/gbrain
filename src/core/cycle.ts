@@ -714,10 +714,15 @@ function checkAborted(signal?: AbortSignal): void {
 // keyword is the minimal seam that lets behavioral tests drive the
 // wrapper's result-mapping (counter → status enum + summary) without
 // going through runCycle's full setup cost.
-export async function runPhaseLint(brainDir: string, dryRun: boolean): Promise<PhaseResult> {
+export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: BrainEngine | null): Promise<PhaseResult> {
   try {
     const { runLintCore } = await import('../commands/lint.ts');
-    const result = await runLintCore({ target: brainDir, fix: true, dryRun });
+    // issue #1678: pass the cycle's live engine so lint's content-sanity
+    // DB-plane lift REUSES it instead of creating + disconnecting a
+    // competing module-style engine that nulls the shared db singleton
+    // mid-cycle (which broke every phase after lint with a misleading
+    // "connect() has not been called").
+    const result = await runLintCore({ target: brainDir, fix: true, dryRun, engine: engine ?? undefined });
     const issues = result.total_issues ?? 0;
     const fixed = result.total_fixed ?? 0;
     const remaining = Math.max(0, issues - fixed);
@@ -835,7 +840,7 @@ async function resolveSourceForDir(
 // Better to skip a pack-gated phase than to run it for a brain that
 // can't resolve its active pack. Skipped phases land in the cycle report
 // with `not_in_active_pack` so doctor can surface to the user.
-async function packDeclaresPhase(
+export async function packDeclaresPhase(
   engine: BrainEngine,
   phase: CyclePhase,
 ): Promise<boolean> {
@@ -1495,7 +1500,7 @@ export async function runCycle(
         phaseResults.push(skipNoBrainDir('lint'));
       } else {
         progress.start('cycle.lint');
-        const { result, duration_ms } = await timePhase(() => runPhaseLint(brainDir, dryRun));
+        const { result, duration_ms } = await timePhase(() => runPhaseLint(brainDir, dryRun, engine));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1669,12 +1674,17 @@ export async function runCycle(
           details: { reason: 'no_database' },
         });
       } else if (!(await packDeclaresPhase(engine, 'extract_atoms'))) {
+        // issue #1678: the routine cycle skip stays cheap (no per-tick backlog
+        // count), but the detail is greppable — `pack_gated: true` lets the
+        // `extract_atoms_backlog` doctor check / log scrapers tell a
+        // deliberately-off phase apart from a phase that ran with no work. The
+        // backlog signal itself lives in doctor (one count, on demand).
         phaseResults.push({
           phase: 'extract_atoms',
           status: 'skipped',
           duration_ms: 0,
-          summary: 'extract_atoms: active pack does not declare this phase',
-          details: { reason: 'not_in_active_pack' },
+          summary: 'extract_atoms: active pack does not declare this phase (run `gbrain dream --phase extract_atoms --drain` to drain a backlog)',
+          details: { reason: 'not_in_active_pack', pack_gated: true },
         });
       } else {
         progress.start('cycle.extract_atoms');
@@ -1779,12 +1789,16 @@ export async function runCycle(
           details: { reason: 'no_database' },
         });
       } else if (!(await packDeclaresPhase(engine, 'synthesize_concepts'))) {
+        // issue #1678: same greppable marker as extract_atoms. (No doctor
+        // backlog check for synthesize_concepts this wave — Codex #12: that
+        // phase has no real eligibility predicate yet, so a check would be a
+        // fake signal. Filed as a follow-up.)
         phaseResults.push({
           phase: 'synthesize_concepts',
           status: 'skipped',
           duration_ms: 0,
           summary: 'synthesize_concepts: active pack does not declare this phase',
-          details: { reason: 'not_in_active_pack' },
+          details: { reason: 'not_in_active_pack', pack_gated: true },
         });
       } else {
         progress.start('cycle.synthesize_concepts');

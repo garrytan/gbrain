@@ -25,6 +25,12 @@ const CONN_PATTERNS = [
   // postgres.js's auto-recovery between queries). Matches the literal
   // message shape from PR #1416's reported batch-loss incident.
   /No database connection/i,
+  // v0.42.5.0 (issue #1678): postgres.js throws errors carrying
+  // `code: 'CONNECTION_ENDED'` (a LIBRARY code, not an 08xxx SQLSTATE) when a
+  // transaction-mode pooler reaps an idle socket between queries. Without an
+  // explicit match it was only accidentally caught by /connection.*closed/i.
+  // Match the message form too for wrappers that fold the code into the text.
+  /CONNECTION_ENDED/i,
 ];
 
 interface PgError {
@@ -93,6 +99,9 @@ export function isRetryableConnError(err: unknown): boolean {
   //   08001 sqlclient_unable_to_establish_sqlconnection
   //   08004 sqlserver_rejected_establishment_of_sqlconnection
   if (code && /^08/.test(code)) return true;
+  // v0.42.5.0 (issue #1678): postgres.js's library-level connection-ended
+  // code. Not an 08xxx SQLSTATE, so the /^08/ test above misses it.
+  if (code === 'CONNECTION_ENDED') return true;
   // v0.41.2.1: typed-shape match for gbrain's own GBrainError
   // (problem === 'No database connection'). Avoids brittle string match
   // when the error wrapper is gbrain-internal.

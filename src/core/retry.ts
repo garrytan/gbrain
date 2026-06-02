@@ -93,6 +93,10 @@ export const BATCH_AUDIT_SITES = [
   'reindex.multimodal',
   // backfill-base.ts outer connection-retry layer.
   'backfill.outer',
+  // queue.ts Minion hot-path lock recovery (issue #1678): promoteDelayed
+  // self-heal on a reaped pooler socket. claim/renewLock deliberately do NOT
+  // route here (Codex #1/#2) — the poll loop and renewal-tick recover those.
+  'minion-lock',
 ] as const;
 
 export type BatchAuditSite = (typeof BATCH_AUDIT_SITES)[number];
