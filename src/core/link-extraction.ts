@@ -447,9 +447,13 @@ export async function extractPageLinks(
       if (!opts.globalBasename || typeof resolver.resolveBasenameMatches !== 'function') {
         continue;
       }
-      const matches = await resolver.resolveBasenameMatches(ref.name);
+      // Issue #972 (codex): resolve by the wikilink TARGET (ref.slug — the
+      // text inside `[[...]]` before any `|`), NOT the display alias
+      // (ref.name = match[2]). `[[struktura|the project]]` must resolve
+      // `struktura`, not "the project". The display text is for context only.
+      const matches = await resolver.resolveBasenameMatches(ref.slug);
       if (matches.length === 0) continue;
-      const idx = content.indexOf(ref.name);
+      const idx = content.indexOf(ref.slug);
       const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
       for (const matched of matches) {
         candidates.push({

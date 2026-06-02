@@ -313,6 +313,28 @@ describe('extractPageLinks', () => {
     expect(candidates[0].linkType).toBe('wikilink_basename');
   });
 
+  test('aliased wikilink resolves the TARGET, not the display text (codex #972)', async () => {
+    // `[[struktura|the project]]` must resolve basename `struktura`, never
+    // the alias "the project". Regression for the codex-caught bug where
+    // extractPageLinks resolved ref.name (display) instead of ref.slug.
+    const seen: string[] = [];
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) => {
+        seen.push(name);
+        return name === 'struktura' ? ['projects/struktura'] : [];
+      },
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/knowledge-graph',
+      'This relates to [[struktura|the project]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(seen).toContain('struktura');
+    expect(seen).not.toContain('the project');
+    expect(candidates.map(c => c.targetSlug)).toEqual(['projects/struktura']);
+  });
+
   test('bare wikilink with zero basename matches drops silently (no dangling row)', async () => {
     const resolver: SlugResolver = {
       resolve: async () => null,

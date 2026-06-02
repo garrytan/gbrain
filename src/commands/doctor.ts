@@ -897,9 +897,12 @@ export async function checkLinkResolutionOpportunity(
         for (const e of extractEntityRefs(content)) {
           if (!e.needsResolution) continue;
           bareCount++;
+          // Issue #972 (codex): match on the wikilink TARGET (e.slug), not
+          // the display alias (e.name) — mirrors extractPageLinks so the
+          // doctor estimate reflects what extraction actually resolves.
           const matches =
-            basenameIndex.get(e.name) ||
-            basenameIndex.get(e.name.toLowerCase()) ||
+            basenameIndex.get(e.slug) ||
+            basenameIndex.get(e.slug.toLowerCase()) ||
             [];
           if (matches.length > 0) {
             wouldResolveCount++;
