@@ -15,7 +15,6 @@ export interface AutoPromoteConfig {
     allow_contradictions: boolean;
   };
   escalation: { enabled: boolean; max_per_cycle: number };
-  restore_window_hours: number;
   dry_run: boolean;
 }
 
@@ -36,7 +35,6 @@ export function defaultAutoPromoteConfig(): AutoPromoteConfig {
       allow_contradictions: false,
     },
     escalation: { enabled: true, max_per_cycle: 20 },
-    restore_window_hours: 168,
     dry_run: false,
   };
 }
@@ -62,7 +60,6 @@ export function normalizeAutoPromoteConfig(input: Partial<AutoPromoteConfig> | n
       enabled: i.escalation?.enabled ?? d.escalation.enabled,
       max_per_cycle: Math.max(0, Math.floor(i.escalation?.max_per_cycle ?? d.escalation.max_per_cycle)),
     },
-    restore_window_hours: Math.max(0, Math.floor(i.restore_window_hours ?? d.restore_window_hours)),
     dry_run: i.dry_run ?? d.dry_run,
   };
 }

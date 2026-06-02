@@ -2846,6 +2846,28 @@ export class PostgresEngine implements BrainEngine {
     return rowToMemoryCandidateContradictionEntry(rows[0] as Record<string, unknown>);
   }
 
+  async listMemoryCandidateContradictionEntriesForCandidateIds(
+    candidateIds: string[],
+  ): Promise<MemoryCandidateContradictionEntry[]> {
+    if (candidateIds.length === 0) return [];
+    const sql = this.sql;
+    const entries: MemoryCandidateContradictionEntry[] = [];
+    for (const chunk of chunkInteractionIds(candidateIds)) {
+      const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
+      const rows = await sql.unsafe(
+        `SELECT id, scope_id, candidate_id, challenged_candidate_id, outcome, supersession_entry_id,
+                reviewed_at, review_reason, interaction_id, created_at, updated_at
+         FROM memory_candidate_contradiction_entries
+         WHERE candidate_id IN (${placeholders})
+            OR challenged_candidate_id IN (${placeholders})
+         ORDER BY created_at DESC, id ASC`,
+        chunk,
+      );
+      entries.push(...(rows as Record<string, unknown>[]).map(rowToMemoryCandidateContradictionEntry));
+    }
+    return sortByCreatedAtDescIdAsc(entries);
+  }
+
   async listMemoryCandidateContradictionEntriesByInteractionIds(
     interactionIds: string[],
   ): Promise<MemoryCandidateContradictionEntry[]> {

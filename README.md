@@ -278,7 +278,7 @@ That review flow is the Memory Inbox:
 
 ```text
 captured -> candidate -> staged_for_review
-                    -> promoted
+                    -> promoted -> canonical handoff -> durable memory write
                     -> rejected
                     -> superseded
 ```
@@ -290,7 +290,7 @@ The system keeps the audit trail behind that flow:
 - promotion preflight checks
 - rejection reasons
 - supersession links when newer memory replaces older memory
-- handoff records when a promoted candidate is ready for durable memory
+- canonical handoff records that carry promoted candidates into the owning durable memory domain
 - validity checks for stale or superseded claims
 - mutation ledger events for governed writes
 - memory realms and sessions for scoped write authority

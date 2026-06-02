@@ -50,7 +50,7 @@ available in local mode versus what must fail with honest guidance.
 - `src/core/auto-promote/candidate-selector.ts` — deterministic eligibility bucketing for promotion candidates
 - `src/core/auto-promote/prompt.ts` — judge-only review prompt builder
 - `src/core/auto-promote/cli-executor.ts` — claude/codex subprocess executor (fills the `RestrictedRunnerExecutor` seam)
-- `src/core/auto-promote/promote-gate.ts` — deterministic gate: promotes confident verdicts via existing inbox services
+- `src/core/auto-promote/promote-gate.ts` — deterministic gate: promotes confident verdicts, records canonical handoffs, and writes page-backed canonical notes through `put_page`
 - `src/core/auto-promote/service.ts` — `runAutoPromote` orchestrator: select → judge (cached) → escalate → gate
 - `src/core/types/auto-promote.ts` — `AutoPromoteVerdictKey` / `AutoPromoteVerdictRow` types
 - `src/commands/auto-promote.ts` — `mbrain auto-promote` CLI command (`runAutoPromoteCommand`); default dry-run, `--apply` to mutate; config-gated (`auto_promote.enabled`, default off)
@@ -61,7 +61,7 @@ Run `mbrain --help` or `mbrain --tools-json` for full command reference. For loc
 
 Deterministic brain-quality tools (no LLM calls, no DB connection, engine-agnostic): `mbrain publish` renders a brain page as a self-contained HTML (optionally AES-256-GCM encrypted behind a password), `mbrain check-backlinks check|fix` enforces the Iron Law of Back-Linking across a brain directory, `mbrain lint` flags LLM preambles, broken frontmatter, and placeholder dates (use `--fix` to auto-clean), and `mbrain report --type <name>` saves a timestamped report into `brain/reports/{type}/YYYY-MM-DD-HHMM.md`.
 
-`mbrain auto-promote` runs a judge-only LLM verdict on eligible Memory Inbox candidates and, when confidence is high enough, promotes the inbox rows via the deterministic gate (default dry-run; pass `--apply` to mutate inbox state). It does not directly write canonical pages. The command is config-gated (`auto_promote.enabled`, default off). A dream phase `auto_promote` (order 15) also exists in the dream cycle but **safely no-ops unless the runner dep is explicitly injected** — nightly auto-run via autopilot/dream-command is a planned follow-up; the CLI command is the current entry point.
+`mbrain auto-promote` runs a judge-only LLM verdict on eligible Memory Inbox candidates and, when confidence is high enough, the deterministic gate advances/promotes the inbox rows, records canonical handoff rows, and writes page-backed canonical notes through the existing `put_page` governance path (default dry-run; pass `--apply` to mutate). The command is config-gated (`auto_promote.enabled`, default off), excludes open contradictions by default, and rechecks target content hashes before canonical page writes. A dream phase `auto_promote` (order 15) also exists in the dream cycle and is wired into `mbrain dream` / autopilot dream runs when local runner use is explicitly allowed.
 
 ## Testing
 

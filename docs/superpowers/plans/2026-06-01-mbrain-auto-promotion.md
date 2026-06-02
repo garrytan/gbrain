@@ -4,7 +4,7 @@
 
 **Goal:** Let mbrain automatically promote eligible Memory Inbox candidates to canonical memory overnight, using `claude`/`codex` CLI as a judge-only verdict engine and a deterministic gate that executes the actual writes through existing governance.
 
-**Architecture:** A new deterministic pipeline (`runAutoPromote`) selects eligible candidates, asks a CLI runner (injected `RestrictedRunnerExecutor`) for a per-candidate JSON verdict, caches verdicts (escalate-once), escalates risky/deferred candidates once with a stronger model, then a deterministic gate promotes the confident `promote` verdicts via existing ops (`advance_memory_candidate_status` → `promote_memory_candidate_entry`/`apply_memory_patch_candidate`). Runs as a new `auto_promote` dream phase and a standalone `mbrain auto-promote` command. Spec: `docs/superpowers/specs/2026-06-01-mbrain-auto-promotion-design.md`.
+**Architecture:** A new deterministic pipeline (`runAutoPromote`) selects eligible candidates, asks a CLI runner (injected `RestrictedRunnerExecutor`) for a per-candidate JSON verdict, caches verdicts (escalate-once), escalates risky/deferred candidates once with a stronger model, then a deterministic gate promotes the confident `promote` verdicts via existing ops (`advance_memory_candidate_status` → `promote_memory_candidate_entry` → `record_canonical_handoff` → page-backed `put_page`). Runs as a new `auto_promote` dream phase and a standalone `mbrain auto-promote` command. Spec: `docs/superpowers/specs/2026-06-01-mbrain-auto-promotion-design.md`.
 
 **Tech Stack:** TypeScript + Bun, contract-first operations, BrainEngine (postgres/pglite/sqlite), existing restricted-runner framework, `bun test`.
 
@@ -273,9 +273,8 @@ describe('auto_promote config', () => {
     const c = defaultAutoPromoteConfig();
     expect(c.enabled).toBe(false);
     expect(c.confidence_threshold).toBe(0.8);
-    expect(c.restore_window_hours).toBe(168);
     expect(c.escalation.max_per_cycle).toBe(20);
-    expect(c.eligibility.sensitivities).toEqual(['public', 'work', 'personal']);
+    expect(c.eligibility.sensitivities).toEqual(['public', 'work']);
     expect(c.eligibility.evidence_kinds).toEqual(['direct_user_statement', 'source_extracted']);
   });
   it('clamps threshold into 0..1 and floors negatives', () => {
@@ -314,7 +313,6 @@ export interface AutoPromoteConfig {
     allow_contradictions: boolean;
   };
   escalation: { enabled: boolean; max_per_cycle: number };
-  restore_window_hours: number;
   dry_run: boolean;
 }
 
@@ -331,11 +329,10 @@ export function defaultAutoPromoteConfig(): AutoPromoteConfig {
     confidence_threshold: 0.8,
     eligibility: {
       evidence_kinds: ['direct_user_statement', 'source_extracted'],
-      sensitivities: ['public', 'work', 'personal'],
+      sensitivities: ['public', 'work'],
       allow_contradictions: false,
     },
     escalation: { enabled: true, max_per_cycle: 20 },
-    restore_window_hours: 168,
     dry_run: false,
   };
 }
@@ -361,7 +358,6 @@ export function normalizeAutoPromoteConfig(input: Partial<AutoPromoteConfig> | n
       enabled: i.escalation?.enabled ?? d.escalation.enabled,
       max_per_cycle: Math.max(0, Math.floor(i.escalation?.max_per_cycle ?? d.escalation.max_per_cycle)),
     },
-    restore_window_hours: Math.max(0, Math.floor(i.restore_window_hours ?? d.restore_window_hours)),
     dry_run: i.dry_run ?? d.dry_run,
   };
 }
@@ -459,8 +455,6 @@ export interface SelectionResult {
   excluded: { candidate: MemoryCandidateEntry; reason: string }[];
 }
 
-const PAGE_BACKED = new Set(['curated_note', 'procedure', 'profile_memory', 'personal_episode']);
-
 export function selectAutoPromoteCandidates(
   candidates: MemoryCandidateEntry[],
   policy: AutoPromoteConfig,
@@ -470,8 +464,12 @@ export function selectAutoPromoteCandidates(
     // Only act on not-yet-decided candidates.
     if (c.status !== 'captured' && c.status !== 'candidate') continue;
 
-    if (!c.target_object_type || c.target_object_type === 'other' || !c.target_object_id || !PAGE_BACKED.has(c.target_object_type)) {
+    if (!c.target_object_type || c.target_object_type === 'other' || !c.target_object_id) {
       result.excluded.push({ candidate: c, reason: 'target_not_clear' });
+      continue;
+    }
+    if (c.target_object_type !== 'curated_note') {
+      result.excluded.push({ candidate: c, reason: 'target_not_page_backed' });
       continue;
     }
     if (!policy.eligibility.sensitivities.includes(c.sensitivity as AutoPromoteConfig['eligibility']['sensitivities'][number])) {
@@ -853,7 +851,7 @@ git commit -m "feat(auto-promote): auto_promote_verdicts cache table + engine me
 - Create: `src/core/auto-promote/promote-gate.ts`
 - Test: `test/auto-promote/promote-gate.test.ts`
 
-**Design:** `runPromoteGate({ engine, verdicts, candidates, config, now, actor })`. For each verdict with `decision==='promote'` and `confidence >= config.confidence_threshold`: call `advanceMemoryCandidateStatus` (captured→candidate→staged_for_review as needed) then `promoteMemoryCandidateEntry` (or `apply_memory_patch_candidate` path when `proposed_patch` present). On `config.dry_run` it performs no mutation and returns the would-promote list. Snapshot recheck + mutation ledger + restore window are handled inside the existing ops; the gate passes `actor: 'mbrain:auto_promote'` and the verdict id for attribution. Returns `{ promoted: string[]; skipped: {id,reason}[] }`.
+**Design:** `runPromoteGate({ engine, verdicts, candidates, config, now, actor, target_snapshot_hashes })`. For each verdict with `decision==='promote'` and `confidence >= config.confidence_threshold`: call `advanceMemoryCandidateStatus` (captured→candidate→staged_for_review as needed), `promoteMemoryCandidateEntry`, `recordCanonicalHandoff`, then page-backed `put_page` with `canonical_handoff:*` and `memory_candidate:*` source refs. On `config.dry_run` it performs no mutation and returns the would-promote / would-canonicalize lists. Snapshot recheck, canonical handoff audit, mutation ledger, and page versioning are handled inside the existing ops; the gate passes `actor: 'mbrain:auto_promote'` and attribution metadata. Returns promoted, handoff, canonical-write, would-write, and skipped lists.
 
 - [ ] **Step 1: Write the failing test (PGLite, canonical block)**
 
@@ -1319,7 +1317,7 @@ git commit -m "feat(auto-promote): mbrain auto-promote command + runner/executor
 - Modify: `src/core/services/memory-review-report-service.ts`, `src/commands/memory-report.ts`
 - Test: `test/auto-promote/digest.test.ts`
 
-**Design:** Add an optional `auto_promote_summary?: { auto_promoted: number; escalated: number; deferred: number; excluded: number; generated_at: string }` to the report input and render it as a non-blocking section. `collectMemoryReportInput` reads the most recent auto-promote run summary (persist a small JSON row, or recompute counts from the mutation ledger filtered by `actor=mbrain:auto_promote` within the window). Simplest first iteration: render counts passed in by the caller; the dream phase result already carries them.
+**Design:** Add an optional `auto_promote_summary?: { auto_promoted: number; canonical_handoffs: number; canonical_writes: number; escalated: number; deferred: number; excluded: number; generated_at: string }` to the report input and render it as a non-blocking section. `collectMemoryReportInput` reads the most recent auto-promote run summary when persisted; simplest first iteration: render counts passed in by the caller, because the dream phase result already carries them.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1348,7 +1346,7 @@ Expected: FAIL (field/section missing).
 
 - [ ] **Step 3: Edit `memory-review-report-service.ts`**
 
-Add `auto_promote_summary` to `MemoryReviewReportInput` and to the report object; in `formatMemoryReviewReport`, append a section: `Auto-promoted: N | escalated: M | deferred: K | excluded: J (non-blocking; revert via mutation ledger actor=mbrain:auto_promote).` Render only when present.
+Add `auto_promote_summary` to `MemoryReviewReportInput` and to the report object; in `formatMemoryReviewReport`, append a section: `Inbox-promoted: N | canonical handoffs: H | canonical writes: W | escalated: M | deferred: K | excluded: J`. Render only when present.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1371,7 +1369,7 @@ git commit -m "feat(auto-promote): non-blocking auto-promote digest section in m
 
 - [ ] **Step 1: Write the E2E test (PGLite in-memory, stub executor)**
 
-Full pipeline: seed a low-risk eligible candidate + a risky one + a secret one → run `runAutoPromote` with a stub executor that returns `promote@0.95` for low-risk and `defer@0.3` for risky → assert: low-risk promoted (`status==='promoted'`), risky deferred (still `candidate`), secret excluded (still `candidate`), digest counts correct, and a second run promotes nothing new (cache hit). Add a `dry_run` case asserting zero status changes. Add a snapshot-change case: mutate the target page between judge and gate, assert the candidate is skipped (stays `candidate`). Follow the canonical PGLite block; no `DATABASE_URL`, no API keys.
+Full pipeline: seed a low-risk eligible candidate + a risky one + a secret one → run `runAutoPromote` with a stub executor that returns `promote@0.95` for low-risk and `defer@0.3` for risky → assert: low-risk promoted (`status==='promoted'`), canonical handoff recorded, page-backed canonical note updated via `put_page`, risky deferred (still `candidate`/unpromoted), secret excluded (still `candidate`), digest counts correct, and a second run promotes nothing new (cache hit). Add a `dry_run` case asserting zero status changes, zero handoffs, and zero page writes. Add a snapshot-change case: mutate the target page between judge and gate, assert the candidate is promoted/handoff-recorded but the canonical page write is skipped. Follow the canonical PGLite block; no `DATABASE_URL`, no API keys.
 
 - [ ] **Step 2: Run the E2E**
 
@@ -1413,7 +1411,7 @@ git commit -m "docs(auto-promote): document auto-promotion modules, phase, and c
 
 ## Self-Review
 
-**Spec coverage:** D1 judge-only/gate (Tasks 8,9) ✓ · D2 eligibility incl. personal (Tasks 3,4) ✓ · D3 nightly dream phase + manual command (Tasks 10,11) ✓ · D4 escalation + escalate-once cache + max_per_cycle (Tasks 7,9) ✓ · D5 CLI subprocess not HTTP (Task 6) ✓ · safety: dry_run (8,11), snapshot recheck (existing ops, asserted in 13), restore window/ledger (existing ops via actor tag), fallback zero-promote (9), digest non-blocking (12) ✓ · testing strategy (every task + 13) ✓.
+**Spec coverage:** D1 judge-only/gate (Tasks 8,9) ✓ · D2 eligibility with default public/work and opt-in personal (Tasks 3,4) ✓ · D3 nightly dream phase + manual command (Tasks 10,11) ✓ · D4 escalation + escalate-once cache + max_per_cycle (Tasks 7,9) ✓ · D5 CLI subprocess not HTTP (Task 6) ✓ · safety: dry_run (8,11), snapshot recheck (existing ops, asserted in 13), handoff/ledger/page-version audit via actor tag, fallback zero-promote (9), digest non-blocking (12) ✓ · testing strategy (every task + 13) ✓.
 
 **Placeholder scan:** `seedEligibleCandidate` is explicitly defined in Task 8 Step 3a by copying the existing inbox test pattern (not a vague TODO). The `apply_memory_patch_candidate` path is explicitly deferred with a guard in Task 8. Type/field verification notes point at exact file:line anchors. No "TBD"/"add error handling" placeholders.
 

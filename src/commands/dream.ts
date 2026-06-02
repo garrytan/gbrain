@@ -6,6 +6,7 @@ import {
   type DreamCycleRunInput,
   type DreamCycleRunResult,
 } from '../core/services/dream-cycle-runner-service.ts';
+import { createAutoPromoteDreamDependency } from './auto-promote.ts';
 
 export interface RunDreamDeps {
   runner?: (input: DreamCycleRunInput) => Promise<DreamCycleRunResult | Record<string, unknown>>;
@@ -26,6 +27,7 @@ export async function runDream(
     : await runDreamCycle(engine, input, {
         runtime: createSqlMaintenanceRuntimeAdapter(engine),
         lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
+        autoPromote: createAutoPromoteDreamDependency(engine),
       });
   console.log(JSON.stringify(result, null, 2));
 }

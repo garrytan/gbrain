@@ -67,10 +67,14 @@ describe('auto-promote E2E pipeline (PGLite, stub runner)', () => {
       expect(res.counts.selected_low_risk).toBe(1);
       expect(res.counts.selected_risky).toBe(1);
       expect(res.counts.auto_promoted).toBe(1);
+      expect(res.counts.canonical_handoffs).toBe(1);
+      expect(res.counts.canonical_writes).toBe(1);
       expect(res.counts.escalated).toBe(1);
       expect(res.counts.deferred).toBe(1);
       expect(res.counts.excluded).toBe(1);
       expect((await engine.getMemoryCandidateEntry('low'))?.status).toBe('promoted');
+      expect(await engine.listCanonicalHandoffEntries({ candidate_id: 'low' })).toHaveLength(1);
+      expect((await engine.getPage('concepts/acme'))?.compiled_truth).toContain('LOW RISK eligible fact');
       // The gate only advances candidates it PROMOTES. A `defer` verdict means the
       // gate never calls advanceToStaged, so `risky` stays at its seeded `captured` status.
       expect((await engine.getMemoryCandidateEntry('risky'))?.status).toBe('captured');
@@ -93,7 +97,10 @@ describe('auto-promote E2E pipeline (PGLite, stub runner)', () => {
       const cfg = { ...defaultAutoPromoteConfig(), enabled: true, dry_run: true };
       const res = await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: makeStubExecutor(counter), contextLoader: stubContext, runner: { kind: 'claude_code' } as any });
       expect(res.counts.auto_promoted).toBe(0);
+      expect(res.counts.canonical_handoffs).toBe(0);
+      expect(res.counts.canonical_writes).toBe(0);
       expect((await engine.getMemoryCandidateEntry('low'))?.status).not.toBe('promoted');
+      expect(await engine.listCanonicalHandoffEntries({ candidate_id: 'low' })).toHaveLength(0);
     });
   });
 });

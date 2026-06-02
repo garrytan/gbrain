@@ -43,7 +43,9 @@ self-closes without a human or a live agent session.
   holds canonical-write tools.
 - **D2 — Eligibility for auto-promotion:** `evidence_kind ∈
   {direct_user_statement, source_extracted}` AND no open conflict AND a clear
-  page/personal target AND `sensitivity ∈ {public, work, personal}`. Excluded:
+  `curated_note` page target AND `sensitivity` is allowed by config. Defaults
+  allow `public` and `work`; `personal` is allowed only when explicitly
+  configured. Excluded:
   `secret` (never canonical), `unknown` (router blocks canonical write anyway),
   `contradicts_existing`, inferred/ambiguous evidence, `target = other`.
 - **D3 — Trigger:** a new `auto_promote` dream-cycle phase that runs under
@@ -90,29 +92,33 @@ deterministic code executes.
    Stronger CLI model + more context; still-defer → stays candidate
         │
         ▼
-5) Deterministic Promote Gate   ← existing ops, NOT the CLI
+5) Deterministic Promote + Canonicalization Gate   ← existing ops, NOT the CLI
    for verdict.decision==='promote' && confidence>=threshold:
      advance_memory_candidate_status → promote_memory_candidate_entry
-                                       / apply_memory_patch_candidate
-   (existing preflight, snapshot recheck, mutation ledger, restore window)
+      → record_canonical_handoff
+      → put_page for page-backed canonical targets
+   (existing preflight, target snapshot recheck, mutation ledger, page version)
         │
         ▼
 6) Digest (notification only, non-blocking)
-   Record auto_promoted / escalated / deferred / excluded → daily memory report
+   Record auto_promoted / canonical_handoffs / canonical_writes /
+   escalated / deferred / excluded → daily memory report
 ```
 
 ### Invariants
 
-- The CLI produces verdicts only; canonical mutation is performed solely by the
-  deterministic gate (5).
+- The CLI produces verdicts only; inbox promotion, canonical handoff, and
+  canonical page mutation are performed solely by the deterministic gate (5).
 - Every auto-write is tagged `actor: mbrain:auto_promote` + verdict id, recorded
-  in the mutation ledger, and protected by a restore window — individually and
-  batch reversible.
+  in the mutation ledger, and backed by a page version. This makes manual review
+  and targeted repair possible; an automatic batch-rollback helper is out of
+  scope for this PR.
 - Runner absent → `deterministic_fallback`: nothing is auto-promoted; candidates
   remain (safe degrade to current behavior).
 - Mutating runs hold the existing `dream_cycle:{scope}` cycle lock.
 - Gate rechecks `target_snapshot_hash` at write time; if the target changed since
-  judgment, that candidate is skipped (no clobber) and stays a candidate.
+  judgment, the candidate can remain promoted/handoff-recorded, but the canonical
+  page write is skipped (no clobber) and reported for review.
 - Self-consumption guard: auto-promoted pages are canonical, not re-ingested as
   raw; dream-generated content is excluded from candidate input (existing
   `generated_by` filter).
@@ -170,17 +176,20 @@ tool — consistent with the existing "propose only" runner-policy model). Risky
 deferred candidates re-invoked with the configured escalation model + expanded
 context; bounded by `escalation.max_per_cycle`.
 
-### 5) Deterministic Promote Gate
+### 5) Deterministic Promote + Canonicalization Gate
 Pure orchestration over existing ops; no new write path:
 ```
 for verdict where decision === 'promote' && confidence >= threshold:
   advance_memory_candidate_status(captured → candidate → staged_for_review)
-  verdict.proposed_patch
-    ? apply_memory_patch_candidate(...)
-    : promote_memory_candidate_entry(...)
+  promote_memory_candidate_entry(...)
+  record_canonical_handoff(...)
+  if target_object_type === 'curated_note':
+    put_page(..., source_refs=[canonical_handoff, memory_candidate, ...candidate.source_refs])
 ```
 Honors `dry_run` (preview, zero mutation) and the cycle lock. Records
-candidate → verdict id → mutation event id → restore window.
+candidate → verdict id → canonical handoff id → mutation event id → restore
+window. `proposed_patch` remains fail-closed until a headless session/realm
+helper exists for `apply_memory_patch_candidate`.
 
 ### 6) Digest (notification only)
 Extend `memory-review-report-service` input with auto_promoted / escalated /
@@ -197,11 +206,10 @@ report.
   "confidence_threshold": 0.8,      // min verdict confidence to auto-promote
   "eligibility": {
     "evidence_kinds": ["direct_user_statement", "source_extracted"],
-    "sensitivities": ["public", "work", "personal"],
+    "sensitivities": ["public", "work"],
     "allow_contradictions": false
   },
   "escalation": { "enabled": true, "max_per_cycle": 20 },
-  "restore_window_hours": 168,      // 7 days
   "dry_run": false
 }
 ```
@@ -212,20 +220,21 @@ standalone `mbrain` command shares the logic (contract-first).
 
 | Failure | Guard |
 |---|---|
-| AI false-promote | confidence threshold; 7-day restore window; `actor=mbrain:auto_promote` + verdict id tag → batch revert a bad run |
-| Prompt-injection in candidate text | judge-only (no write tools); scoped + redacted context; secret/injection-flagged candidates excluded; gate eligibility + snapshot + restore window backstop |
+| AI false-promote | confidence threshold; `actor=mbrain:auto_promote` + verdict id tag; canonical handoff + mutation ledger + page version for targeted review/repair |
+| Prompt-injection in candidate text | judge-only (no write tools); scoped + redacted context; secret/injection-flagged candidates excluded; gate eligibility + snapshot recheck |
 | CLI unavailable / crash / timeout | `deterministic_fallback` → zero promotions, candidates remain (current behavior); per-call timeout; per-candidate independence |
-| Target changed between judge and write | gate rechecks `target_snapshot_hash`; mismatch → skip that candidate, stays candidate |
+| Target changed between judge and write | gate rechecks `target_snapshot_hash`; mismatch → candidate may be promoted and handoff-recorded, but the canonical page write is skipped and reported |
 | Concurrent dream runs | existing `dream_cycle:{scope}` cycle lock |
 | Self-consumption loop | auto-promoted pages are canonical, not re-ingested; dream-generated content excluded from candidate input |
 | Cost / call runaway | escalate-once verdict cache; `escalation.max_per_cycle`; CLI subscription covers usage |
-| Stop / suspected runaway | `enabled:false` master switch; `dry_run` preview; restore window mass-undo |
+| Stop / suspected runaway | `enabled:false` master switch; `dry_run` preview; review auto-promote ledger entries and page versions |
 
 ### Auditability
 Every auto-write carries: (1) the verdict (decision + reasoning + confidence +
-runner/model), (2) a mutation ledger entry, (3) a page version. "Why was this
-promoted?" → read the verdict reasoning. "Undo last night" → filter ledger by
-`actor=mbrain:auto_promote` + window, revert.
+runner/model), (2) a canonical handoff, (3) a mutation ledger entry, and (4) a
+page version for successful page writes. "Why was this promoted?" → read the
+verdict reasoning and handoff. "What changed last night?" → filter the ledger by
+`actor=mbrain:auto_promote` and inspect affected page versions.
 
 ## Testing
 
@@ -238,9 +247,9 @@ verdicts.
   promote-vs-apply branch; verdict cache escalate-once; config defaults +
   `enabled:false` no-op; fallback → zero promotions.
 - **Integration / E2E (PGLite in-memory, stub runner, no API keys, no real CLI):**
-  full pipeline (low_risk promoted / risky escalated / excluded untouched / ledger
-  + restore window / digest counts); snapshot-changed-mid-flight skip; dry_run zero
-  mutation; cycle-lock concurrency block; rollback by actor+window; injection/secret
+  full pipeline (low_risk promoted / risky escalated / excluded untouched /
+  handoff + page write + digest counts); snapshot-changed-mid-flight skip;
+  dry_run zero mutation; cycle-lock concurrency block; injection/secret
   candidate excluded.
 - **Real CLI (gated, optional, gbrain-Tier-2-style):** spawn real `claude`/`codex`
   with a tiny prompt, assert parseable JSON verdict. Skipped if CLI absent; not in
@@ -257,7 +266,6 @@ verdicts.
 ## Defaults to Confirm During Planning
 
 - `confidence_threshold` default `0.8`.
-- `restore_window_hours` default `168` (7 days).
 - `escalation.max_per_cycle` default `20`.
 - Exact CLI headless flags + JSON-output contract for `claude` and `codex`
   (verify against current CLI versions during implementation).

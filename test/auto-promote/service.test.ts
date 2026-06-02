@@ -22,6 +22,15 @@ async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1', overrid
     ...overrides,
   });
 }
+async function seedTargetPage(engine: BrainEngine, content = 'Acme is tracked in MBrain. [Source: User, direct message, 2026-04-20 9:00 AM KST]') {
+  return engine.putPage('concepts/acme', {
+    type: 'concept',
+    title: 'Acme',
+    compiled_truth: content,
+    timeline: '- **2026-04-20** | Initial Acme note. [Source: User, direct message, 2026-04-20 9:00 AM KST]',
+    frontmatter: {},
+  });
+}
 async function withEngine(fn: (engine: PGLiteEngine) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), 'mbrain-svc-'));
   const engine = new PGLiteEngine();
@@ -40,18 +49,57 @@ const stubExecutor = (decision: string, confidence: number) => async (_req?: any
   token_usage_json: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }, cost_estimate_usd: null,
 });
 const stubContext = async () => '';
+async function pageContext(engine: BrainEngine, targetRef: string) {
+  const page = await engine.getPage(targetRef);
+  return {
+    text: page ? `${page.compiled_truth}\n\n---\n\n${page.timeline}` : '',
+    content_hash: page?.content_hash ?? null,
+  };
+}
 
 describe('runAutoPromote', () => {
   it('promotes a low-risk candidate via a confident stub verdict', async () => {
     await withEngine(async (engine) => {
+      await seedTargetPage(engine);
       const candidate = await seedEligibleCandidate(engine);
       const res = await runAutoPromote({
         engine, config: { ...defaultAutoPromoteConfig(), enabled: true }, now: NOW,
-        runnerExecutor: stubExecutor('promote', 0.95), contextLoader: stubContext,
+        runnerExecutor: stubExecutor('promote', 0.95), contextLoader: (targetRef) => pageContext(engine, targetRef),
         runner: { kind: 'claude_code' } as any,
       });
       expect(res.counts.auto_promoted).toBe(1);
+      expect(res.counts.canonical_handoffs).toBe(1);
+      expect(res.counts.canonical_writes).toBe(1);
       expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).toBe('promoted');
+      expect((await engine.getPage('concepts/acme'))?.compiled_truth).toContain('Acme raised a seed round.');
+      expect(await engine.listCanonicalHandoffEntries({ candidate_id: candidate.id })).toHaveLength(1);
+    });
+  });
+  it('records a handoff but skips canonical write when the page changes after judgment', async () => {
+    await withEngine(async (engine) => {
+      const target = await seedTargetPage(engine);
+      const candidate = await seedEligibleCandidate(engine);
+      const res = await runAutoPromote({
+        engine,
+        config: { ...defaultAutoPromoteConfig(), enabled: true },
+        now: NOW,
+        runnerExecutor: async (req: any) => {
+          await seedTargetPage(engine, 'Acme changed after judgment. [Source: User, direct message, 2026-04-21 9:00 AM KST]');
+          return stubExecutor('promote', 0.95)(req);
+        },
+        contextLoader: async (targetRef) => {
+          const page = await engine.getPage(targetRef);
+          expect(page?.content_hash).toBe(target.content_hash);
+          return { text: page?.compiled_truth ?? '', content_hash: page?.content_hash ?? null };
+        },
+        runner: { kind: 'claude_code' } as any,
+      });
+
+      expect(res.counts.auto_promoted).toBe(1);
+      expect(res.counts.canonical_handoffs).toBe(1);
+      expect(res.counts.canonical_writes).toBe(0);
+      expect(res.excluded.find((entry) => entry.id === candidate.id)?.reason).toContain('content hash mismatch');
+      expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
     });
   });
   it('caches verdicts (executor called once across two runs)', async () => {
@@ -75,6 +123,39 @@ describe('runAutoPromote', () => {
 
       const rows = await (engine as any).db.query('SELECT * FROM auto_promote_verdicts');
       expect(rows.rows).toHaveLength(0);
+      expect(await engine.listCanonicalHandoffEntries({ candidate_id: 'cand-1' })).toHaveLength(0);
+    });
+  });
+  it('excludes candidates with unresolved contradictions before judging by default', async () => {
+    await withEngine(async (engine) => {
+      await seedTargetPage(engine);
+      const candidate = await seedEligibleCandidate(engine, 'conflicted');
+      await seedEligibleCandidate(engine, 'challenged', { sensitivity: 'secret' });
+      await engine.createMemoryCandidateContradictionEntry({
+        id: 'contradiction-open',
+        scope_id: 'workspace:default',
+        candidate_id: candidate.id,
+        challenged_candidate_id: 'challenged',
+        outcome: 'unresolved',
+        review_reason: 'Open contradiction fixture.',
+      });
+      let calls = 0;
+      const res = await runAutoPromote({
+        engine,
+        config: { ...defaultAutoPromoteConfig(), enabled: true },
+        now: NOW,
+        runnerExecutor: async (req: any) => {
+          calls++;
+          return stubExecutor('promote', 0.95)(req);
+        },
+        contextLoader: (targetRef) => pageContext(engine, targetRef),
+        runner: { kind: 'claude_code' } as any,
+      });
+
+      expect(calls).toBe(0);
+      expect(res.excluded.find((entry) => entry.id === candidate.id)?.reason).toBe('open_contradiction');
+      expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).toBe('captured');
+      expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
     });
   });
   it('misses cache when source refs or target context change', async () => {

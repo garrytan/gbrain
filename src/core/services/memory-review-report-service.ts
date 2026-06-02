@@ -137,6 +137,8 @@ export interface ReportConnectorHealth {
 
 export interface AutoPromoteReportSummary {
   auto_promoted: number;
+  canonical_handoffs?: number;
+  canonical_writes?: number;
   escalated: number;
   deferred: number;
   excluded: number;
@@ -356,8 +358,8 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
   if (report.auto_promote_summary) {
     const s = report.auto_promote_summary;
     lines.push('', 'Auto-promotion (non-blocking)');
-    lines.push(`- Inbox-promoted: ${s.auto_promoted} | escalated: ${s.escalated} | deferred: ${s.deferred} | excluded: ${s.excluded}`);
-    lines.push('- Review promoted inbox candidates before downstream canonical handoff.');
+    lines.push(`- Inbox-promoted: ${s.auto_promoted} | canonical handoffs: ${s.canonical_handoffs ?? 0} | canonical writes: ${s.canonical_writes ?? 0} | escalated: ${s.escalated} | deferred: ${s.deferred} | excluded: ${s.excluded}`);
+    lines.push('- Review any promoted-without-write or skipped canonicalization items before they become stale.');
   }
 
   return lines.join('\n');

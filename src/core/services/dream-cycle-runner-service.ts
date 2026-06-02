@@ -102,7 +102,7 @@ export interface DreamCycleRunDeps {
   };
   phaseHandlers?: Partial<Record<DreamCyclePhaseFamily, DreamCyclePhaseHandler>>;
   autoPromote?: {
-    run(input: { scope_id: string; now?: string; dry_run?: boolean }): Promise<{ counts: Record<string, number> }>;
+    run(input: { scope_id: string; now?: string; dry_run?: boolean; limit?: number }): Promise<{ counts: Record<string, number> }>;
   };
 }
 
@@ -523,6 +523,7 @@ async function runAutoPromotePhase(
     scope_id: context.input.scope_id,
     now: context.input.now,
     dry_run: context.input.dry_run || !context.input.write_candidates,
+    limit: context.input.limit,
   });
   const counts = result.counts ?? {};
   const hasActionableWork = Object.values(counts).some((count) => count > 0);
@@ -530,7 +531,7 @@ async function runAutoPromotePhase(
     status: hasActionableWork ? 'warn' : 'ok',
     counts,
     next_recommended_action: hasActionableWork ? 'Review auto-promotion results.' : null,
-    canonical_mutations: 0,
+    canonical_mutations: counts.canonical_writes ?? 0,
     llm_or_runner_used: true,
   };
 }

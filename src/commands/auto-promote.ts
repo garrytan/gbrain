@@ -48,15 +48,13 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
     return;
   }
 
-  const executor = createCliRunnerExecutor({ model: config.first_pass_model });
-  const contextLoader = async (ref: string) => (await engine.getPage(ref))?.compiled_truth ?? '';
   const result = await runAutoPromote({
     engine,
     config,
     now: new Date().toISOString(),
     runner,
-    runnerExecutor: executor,
-    contextLoader,
+    runnerExecutor: createCliRunnerExecutor({ model: config.first_pass_model }),
+    contextLoader: createPageContextLoader(engine),
     scope_id: parsed.scope_id,
     ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
   });
@@ -66,9 +64,56 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
   } else {
     const c = result.counts;
     console.log(
-      `auto-promote (${config.dry_run ? 'dry-run' : 'apply'}, runner=${runner.kind}): promoted ${c.auto_promoted}, escalated ${c.escalated}, deferred ${c.deferred}, excluded ${c.excluded} (low_risk=${c.selected_low_risk}, risky=${c.selected_risky})`,
+      `auto-promote (${config.dry_run ? 'dry-run' : 'apply'}, runner=${runner.kind}): promoted ${c.auto_promoted}, handoffs ${c.canonical_handoffs}, canonical_writes ${c.canonical_writes}, escalated ${c.escalated}, deferred ${c.deferred}, excluded ${c.excluded} (low_risk=${c.selected_low_risk}, risky=${c.selected_risky})`,
     );
   }
+}
+
+export function createAutoPromoteDreamDependency(engine: BrainEngine) {
+  return {
+    run: async (input: { scope_id: string; now?: string; dry_run?: boolean; limit?: number }) => {
+      const base = normalizeAutoPromoteConfig(loadConfig()?.auto_promote as Partial<AutoPromoteConfig> | undefined);
+      const config: AutoPromoteConfig = { ...base, dry_run: input.dry_run !== false };
+      if (!config.enabled) return { counts: zeroCounts() };
+      const availability = await detectRestrictedRunners({ priority: config.runner_priority });
+      const runner = selectSupportedRunner(availability.candidates, config.runner_priority);
+      if (!runner) return { counts: zeroCounts() };
+      const result = await runAutoPromote({
+        engine,
+        config,
+        now: input.now ?? new Date().toISOString(),
+        runner,
+        runnerExecutor: createCliRunnerExecutor({ model: config.first_pass_model }),
+        contextLoader: createPageContextLoader(engine),
+        scope_id: input.scope_id,
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      });
+      return { counts: result.counts };
+    },
+  };
+}
+
+function createPageContextLoader(engine: BrainEngine) {
+  return async (ref: string) => {
+    const page = await engine.getPage(ref);
+    return {
+      text: page ? `${page.compiled_truth}\n\n---\n\n${page.timeline}` : '',
+      content_hash: page?.content_hash ?? null,
+    };
+  };
+}
+
+function zeroCounts() {
+  return {
+    selected_low_risk: 0,
+    selected_risky: 0,
+    auto_promoted: 0,
+    canonical_handoffs: 0,
+    canonical_writes: 0,
+    escalated: 0,
+    deferred: 0,
+    excluded: 0,
+  };
 }
 
 function selectSupportedRunner(

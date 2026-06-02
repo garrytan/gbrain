@@ -214,6 +214,7 @@ export interface MemoryGovernanceStore {
   getMemoryCandidateSupersessionEntry(id: string): Promise<MemoryCandidateSupersessionEntry | null>;
   createMemoryCandidateContradictionEntry(input: MemoryCandidateContradictionEntryInput): Promise<MemoryCandidateContradictionEntry | null>;
   getMemoryCandidateContradictionEntry(id: string): Promise<MemoryCandidateContradictionEntry | null>;
+  listMemoryCandidateContradictionEntriesForCandidateIds(candidateIds: string[]): Promise<MemoryCandidateContradictionEntry[]>;
   createCanonicalHandoffEntry(input: CanonicalHandoffEntryInput): Promise<CanonicalHandoffEntry | null>;
   getCanonicalHandoffEntry(id: string): Promise<CanonicalHandoffEntry | null>;
   listCanonicalHandoffEntries(filters?: CanonicalHandoffFilters): Promise<CanonicalHandoffEntry[]>;

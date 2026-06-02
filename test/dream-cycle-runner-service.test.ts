@@ -184,6 +184,7 @@ describe('dream cycle phase runner', () => {
       dry_run: false,
       write_candidates: false,
       allow_local_runner: true,
+      limit: 7,
     }, {
       autoPromote: {
         run: async (input) => {
@@ -193,7 +194,7 @@ describe('dream cycle phase runner', () => {
       },
     });
 
-    expect(calls[0]).toMatchObject({ dry_run: true });
+    expect(calls[0]).toMatchObject({ dry_run: true, limit: 7 });
     expect(result.llm_or_runner_used).toBe(true);
     expect(result.phases.find((phase) => phase.family === 'auto_promote')).toMatchObject({
       status: 'warn',
