@@ -195,7 +195,10 @@ describe('CLI dispatch integration', () => {
       });
       const stdout = await new Response(proc.stdout).text();
       const exitCode = await proc.exited;
-      expect(stdout).toContain('Usage: gbrain init');
+      expect(stdout).toContain('gbrain init [flags]');
+      expect(stdout).toContain('--schema-pack');
+      expect(stdout).toContain('--mcp-only');
+      expect(stdout).not.toContain('run gbrain --help for the full command list');
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
       expect(exitCode).toBe(0);
     } finally {
