@@ -77,7 +77,7 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
   if (!chat) {
     throw new AIConfigError(
       `Provider "${recipe.id}" does not offer a chat touchpoint.`,
-      `Known providers with chat: openai, anthropic, google, openrouter, litellm-proxy, deepseek, groq, together, azure-openai, dashscope, minimax, zhipu, ollama, llama-server. Pick one for models.tier.subagent.`,
+      `Known providers with chat: openai, anthropic, google, openrouter, litellm, deepseek, groq, together, azure-openai, dashscope, minimax, zhipu, llama-server. Pick one for models.tier.subagent.`,
     );
   }
 

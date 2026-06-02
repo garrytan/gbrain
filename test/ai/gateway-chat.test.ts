@@ -29,8 +29,8 @@ import { AIConfigError } from '../../src/core/ai/errors.ts';
 import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 
 describe('chat touchpoint — recipe registry', () => {
-  test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
-    const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together'];
+  test('all seven chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
+    const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together', 'litellm'];
     for (const id of expected) {
       const r = getRecipe(id);
       expect(r, `recipe missing: ${id}`).toBeDefined();
@@ -60,6 +60,7 @@ describe('chat touchpoint — recipe registry', () => {
     expect(getRecipe('deepseek')!.base_url_default).toBe('https://api.deepseek.com/v1');
     expect(getRecipe('groq')!.base_url_default).toBe('https://api.groq.com/openai/v1');
     expect(getRecipe('together')!.base_url_default).toBe('https://api.together.xyz/v1');
+    expect(getRecipe('litellm')!.base_url_default).toBe('http://localhost:4000');
   });
 });
 

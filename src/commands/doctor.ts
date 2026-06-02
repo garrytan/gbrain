@@ -2213,8 +2213,11 @@ async function checkEmbeddingEnvOverride(engine: BrainEngine): Promise<Check> {
 async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../core/ai/capabilities.ts');
+    const { isAnthropicProvider } = await import('../core/model-config.ts');
     const tierSubagent = await engine.getConfig('models.tier.subagent');
     const modelsDefault = await engine.getConfig('models.default');
+    const gatewayLoopRaw = await engine.getConfig('agent.use_gateway_loop').catch(() => null);
+    const gatewayLoopEnabled = gatewayLoopRaw === 'true' || gatewayLoopRaw === '1';
 
     // Helper: explain a verdict in user-facing terms.
     const explain = (resolved: string, source: string): Check | null => {
@@ -2237,6 +2240,17 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
             `${source} is "${resolved}" which references an unknown provider. ` +
             `Use a recipe-declared provider. ` +
             `Fix: \`gbrain config set ${source} anthropic:claude-sonnet-4-6\` or pick another known provider.`,
+        };
+      }
+      if (!isAnthropicProvider(resolved) && !gatewayLoopEnabled) {
+        return {
+          name: 'subagent_capability',
+          status: 'warn',
+          message:
+            `${source} is "${resolved}" but agent.use_gateway_loop is not enabled. ` +
+            `Non-Anthropic subagent models run through the gateway loop; without it, subagent features fall back to Anthropic-only routing. ` +
+            `Fix: \`gbrain config set agent.use_gateway_loop true\`. ` +
+            `For maximum compatibility without the gateway loop, use an Anthropic model for ${source}.`,
         };
       }
       if (verdict === 'degraded:no_caching') {
@@ -2271,16 +2285,15 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
       const { loadConfig } = await import('../core/config.ts');
       const cfg = loadConfig();
       const chatModel = cfg?.chat_model;
-      const { isAnthropicProvider } = await import('../core/model-config.ts');
-      if (chatModel && !isAnthropicProvider(chatModel) && !process.env.ANTHROPIC_API_KEY) {
+      if (chatModel && !isAnthropicProvider(chatModel) && !gatewayLoopEnabled && !process.env.ANTHROPIC_API_KEY) {
         return {
           name: 'subagent_capability',
           status: 'warn',
           message:
             `chat_model is "${chatModel}" (non-Anthropic) and ANTHROPIC_API_KEY is not set. ` +
             `Subagent features (gbrain dream, gbrain agent run, gbrain autopilot) will fail at job submission ` +
-            `unless agent.use_gateway_loop=true. Chat alone (gbrain think) still works. ` +
-            `Either set ANTHROPIC_API_KEY or enable: \`gbrain config set agent.use_gateway_loop true\`.`,
+            `because agent.use_gateway_loop is disabled. Chat alone (gbrain think) still works. ` +
+            `Either set ANTHROPIC_API_KEY for the Anthropic fallback, or enable: \`gbrain config set agent.use_gateway_loop true\`.`,
         };
       }
     } catch { /* loadConfig may throw; fall through */ }
@@ -2289,8 +2302,10 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
       name: 'subagent_capability',
       status: 'ok',
       message: tierSubagent
-        ? `Subagent tier resolves to "${tierSubagent}" with full tool-loop capability`
-        : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
+        ? `Subagent tier resolves to "${tierSubagent}" with a supported tool-loop path`
+        : modelsDefault
+          ? `Subagent tier inherits "${modelsDefault}" with a supported tool-loop path`
+          : `Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability`,
     };
   } catch (e) {
     return {

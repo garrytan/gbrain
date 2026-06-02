@@ -40,6 +40,15 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    chat: {
+      // LiteLLM is a proxy surface: users choose the real upstream model.
+      // `fast` is the conventional cheap alias on this machine, but any
+      // proxied model id is allowed by the openai-compatible gateway path.
+      models: ['fast'],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: false,
+    },
   },
-  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
+  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model>, --embedding-dimensions <N>, and optionally --chat-model litellm:<model>.',
 };
