@@ -6,6 +6,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
+import { WORKER_EXIT_RSS_WATCHDOG } from '../core/minions/worker-exit-codes.ts';
 import type { MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
@@ -778,11 +779,14 @@ HANDLER TYPES (built in)
 
       const queueName = parseFlag(args, '--queue') ?? 'default';
       const concurrency = resolveWorkerConcurrency(args);
-      // --max-rss defaults to 2048 for bare workers (matching supervisor default).
-      // This catches memory-leak stalls that previously went undetected without
-      // a supervisor. Operators can opt out with `--max-rss 0`.
+      // --max-rss: explicit value wins (including 0 to disable the watchdog).
+      // Absent → cgroup-aware auto-size (issue #1678): the flat 2048MB default
+      // killed legit embed work (~10GB) on every cycle and produced a silent
+      // ~400×/24h respawn loop. See src/core/minions/rss-default.ts.
       const maxRssExplicit = parseMaxRssFlag(args);
-      const maxRssMb = maxRssExplicit ?? 2048;
+      const { resolveDefaultMaxRssMb, describeDefaultMaxRss } =
+        await import('../core/minions/rss-default.ts');
+      const maxRssMb = maxRssExplicit ?? resolveDefaultMaxRssMb();
 
       // --health-interval: self-health-check period in ms. 0 disables. Default: 60_000 (60s).
       // Provides DB liveness probes + stall detection for bare workers.
@@ -836,7 +840,15 @@ HANDLER TYPES (built in)
       });
 
       const isSupervisedChild = process.env.GBRAIN_SUPERVISED === '1';
-      const watchdogNote = maxRssMb > 0 ? `, watchdog: ${maxRssMb}MB` : '';
+      let watchdogNote = '';
+      if (maxRssMb > 0) {
+        if (maxRssExplicit !== undefined) {
+          watchdogNote = `, watchdog: ${maxRssMb}MB (explicit)`;
+        } else {
+          const d = describeDefaultMaxRss();
+          watchdogNote = `, watchdog: ${maxRssMb}MB (auto-sized from ${Math.round(d.basisMb / 1024)}GB ${d.source} RAM)`;
+        }
+      }
       const healthNote = !isSupervisedChild && healthCheckInterval > 0
         ? `, health-check: ${Math.round(healthCheckInterval / 1000)}s`
         : '';
@@ -856,6 +868,18 @@ HANDLER TYPES (built in)
         // tests in earlier waves of this branch.
         try { await engine.disconnect(); }
         catch (e) { console.error('[gbrain jobs work] engine disconnect failed during shutdown:', e); }
+
+        // If the RSS watchdog (not a normal SIGTERM) drained the worker, exit
+        // with the distinct WORKER_EXIT_RSS_WATCHDOG code so the supervisor
+        // classifies the drain as `rss_watchdog` (cause-keyed backoff + loud
+        // alert) instead of a silent `clean_exit`. The worker exposes the
+        // intent; the CLI owns process.exit (same ownership boundary as the
+        // engine-disconnect above). Explicit process.exit also guarantees the
+        // code even if a lingering handle would otherwise keep the process
+        // alive past natural exit (issue #1678, Codex #7).
+        if (worker.rssWatchdogTriggered) {
+          process.exit(WORKER_EXIT_RSS_WATCHDOG);
+        }
       }
       break;
     }
@@ -1021,9 +1045,13 @@ HANDLER TYPES (built in)
       const allowShellJobs = hasFlag(args, '--allow-shell-jobs') ||
                              !!process.env.GBRAIN_ALLOW_SHELL_JOBS;
       const detach = hasFlag(args, '--detach');
-      // Supervisor defaults --max-rss 2048 (MB) — main production path uses
-      // the supervisor, so the watchdog is on by default here.
-      const maxRssMb = parseMaxRssFlag(args) ?? 2048;
+      // Supervisor's --max-rss: explicit wins; absent → cgroup-aware auto-size
+      // (issue #1678). The supervisor is the main production path, so the
+      // watchdog is on by default — but at a realistic, RAM-relative cap
+      // instead of the old flat 2048MB footgun.
+      const { resolveDefaultMaxRssMb: resolveSupMaxRss } =
+        await import('../core/minions/rss-default.ts');
+      const maxRssMb = parseMaxRssFlag(args) ?? resolveSupMaxRss();
 
       const cliPath = parseFlag(args, '--cli-path') ?? resolveGbrainCliPath();
 
@@ -1207,7 +1235,9 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   worker.register('lint', async (job) => {
     const { runLintCore } = await import('./lint.ts');
     const target = typeof job.data.dir === 'string' ? job.data.dir : '.';
-    const result = await runLintCore({ target, fix: !!job.data.fix, dryRun: !!job.data.dryRun });
+    // issue #1678: reuse the worker's live engine for lint's content-sanity
+    // DB lift so it doesn't create + disconnect a competing engine.
+    const result = await runLintCore({ target, fix: !!job.data.fix, dryRun: !!job.data.dryRun, engine });
     return result;
   });
 
@@ -1258,7 +1288,8 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
   worker.register('lint-fix', async (job) => {
     const { runLintCore } = await import('./lint.ts');
     const target = typeof job.data.dir === 'string' ? job.data.dir : '.';
-    return await runLintCore({ target, fix: true, dryRun: false });
+    // issue #1678: reuse the worker's live engine (see 'lint' handler).
+    return await runLintCore({ target, fix: true, dryRun: false, engine });
   });
 
   worker.register('integrity-auto', async () => {
@@ -1640,10 +1671,6 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     if (!data.target_pack) {
       throw new Error(`unify-types: missing required 'target_pack' parameter`);
     }
-    // Build a minimal OperationContext shim. Real context is constructed
-    // by the CLI/MCP dispatch layer; handlers don't have one, so we build
-    // one with engine + null cfg + remote=false (trusted local caller —
-    // PROTECTED handler enforced at submit_job).
     const ctx = {
       engine,
       cfg: null,
@@ -1651,17 +1678,59 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
     } as unknown as import('../core/operations.ts').OperationContext;
     return await runUnifyTypes(ctx, {
       target_pack: data.target_pack,
-      apply: data.apply ?? true,            // worker invocation defaults to apply
+      apply: data.apply ?? true,
       sourceId: data.sourceId,
       onProgress: (msg: string) => {
-        // Stream to job.updateProgress (DB-backed) AND stderr (operator visibility).
         job.updateProgress({ phase: 'unify-types', message: msg }).catch(() => {});
         process.stderr.write(msg + '\n');
       },
     });
   });
 
-  process.stderr.write('[minion worker] brain-health-100 handlers registered (12 ops, 4 protected) + embed-backfill (v0.40) + embed-catch-up (v0.42) + unify-types (v0.42)\n');
+  // v0.42.0.0 SkillOpt Minion handler — for --background CLI invocations.
+  // PROTECTED by name so MCP submission rejects (only trusted CLI can
+  // submit). Threaded SkillOptOpts JSON in job.data.
+  worker.register('skillopt', async (job) => {
+    const { runSkillOpt } = await import('../core/skillopt/orchestrator.ts');
+    const data = (job.data ?? {}) as Record<string, unknown>;
+    const skillsDir = String(data.skills_dir ?? '');
+    const skillName = String(data.skill_name ?? '');
+    const benchmarkPath = String(data.benchmark_path ?? '');
+    if (!skillsDir || !skillName || !benchmarkPath) {
+      throw new Error(`skillopt handler: missing required job.data fields (skills_dir, skill_name, benchmark_path)`);
+    }
+    const result = await runSkillOpt({
+      engine,
+      skillName,
+      skillsDir,
+      benchmarkPath,
+      epochs: Number(data.epochs ?? 4),
+      batchSize: Number(data.batch_size ?? 8),
+      lr: Number(data.lr ?? 4),
+      lrSchedule: (data.lr_schedule as 'cosine' | 'linear' | 'constant') ?? 'cosine',
+      split: (data.split as [number, number, number]) ?? [4, 1, 5],
+      optimizerModel: String(data.optimizer_model ?? 'anthropic:claude-opus-4-7'),
+      targetModel: String(data.target_model ?? 'anthropic:claude-sonnet-4-6'),
+      judgeModel: String(data.judge_model ?? 'anthropic:claude-sonnet-4-6'),
+      mode: (data.mode as 'patch' | 'rewrite') ?? 'patch',
+      dryRun: Boolean(data.dry_run),
+      noMutate: Boolean(data.no_mutate),
+      allowMutateBundled: Boolean(data.allow_mutate_bundled),
+      bootstrapReviewed: Boolean(data.bootstrap_reviewed),
+      json: true,
+      maxCostUsd: Number(data.max_cost_usd ?? 5.0),
+      maxRuntimeMin: Number(data.max_runtime_min ?? 30),
+      force: Boolean(data.force),
+    });
+    return {
+      outcome: result.outcome,
+      receipt: result.receipt,
+      mutated_skill_file: result.mutatedSkillFile,
+      proposed_path: result.proposedPath,
+    };
+  });
+
+  process.stderr.write('[minion worker] brain-health-100 handlers registered (12 ops, 4 protected) + embed-backfill (v0.40) + embed-catch-up (v0.42) + unify-types (v0.42) + skillopt (v0.42.0.0, protected)\n');
 
   // Plugin discovery — one line per discovered plugin (mirrors the
   // openclaw-seam startup line convention from v0.11+). Loaded

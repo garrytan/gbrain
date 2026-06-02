@@ -40,6 +40,11 @@ const backoffFloor = parseInt(process.env.SUP_BACKOFF_FLOOR_MS ?? '1', 10);
 const healthInterval = parseInt(process.env.SUP_HEALTH_INTERVAL_MS ?? '999999', 10);
 const allowShellJobs = process.env.SUP_ALLOW_SHELL_JOBS === '1';
 const queueName = process.env.SUP_QUEUE ?? 'default';
+// SUP_MAX_RSS: when set, pin an explicit watchdog cap (tests the passthrough
+// path). When unset, MinionSupervisor auto-sizes cgroup-aware (issue #1678).
+const maxRssExplicit = process.env.SUP_MAX_RSS !== undefined
+  ? parseInt(process.env.SUP_MAX_RSS, 10)
+  : undefined;
 
 if (process.env.SUP_AUDIT_DIR) {
   process.env.GBRAIN_AUDIT_DIR = process.env.SUP_AUDIT_DIR;
@@ -57,6 +62,7 @@ const supervisor = new MinionSupervisor(mockEngine as BrainEngine, {
   allowShellJobs,
   json: true,
   _backoffFloorMs: backoffFloor,
+  ...(maxRssExplicit !== undefined ? { maxRssMb: maxRssExplicit } : {}),
   onEvent: (emission) => writeSupervisorEvent(emission, supervisorPid),
 });
 

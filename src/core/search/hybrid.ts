@@ -21,6 +21,7 @@ import {
   adaptiveReturnEnabled,
   type AdaptiveReturnDecision,
 } from './return-policy.ts';
+import { applyAutocut, type AutocutDecision } from './autocut.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { applyReranker } from './rerank.ts';
@@ -663,6 +664,11 @@ export async function hybridSearch(
       // override wins over mode bundle. Without this thread the eval gate
       // would be a no-op (both branches resolve to the same mode default).
       graph_signals: opts?.graph_signals,
+      // v0.42.3.0 — autocut per-call enable (boolean ceiling override).
+      // `false` forces the full top-K; per-call wins over config + bundle.
+      // Non-boolean AutocutInput shapes (Partial) aren't a v1 per-call surface,
+      // so only the boolean toggle threads here.
+      autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
     },
   });
 
@@ -1250,6 +1256,32 @@ export async function hybridSearch(
     adaptiveDecision = r.decision;
   }
 
+  // v0.42.3.0 — autocut (score-discontinuity result-sizing). The floor:
+  // default-ON in reranked modes (resolvedMode.autocut, resolved per-call >
+  // config > bundle like every other knob). Cuts the ranked set at the largest
+  // cross-encoder rerank-score cliff, BEFORE the limit slice, first page only.
+  // Runs AFTER adaptive-return so an agent-forced intent cap composes (both are
+  // trim-only with never-empty failsafes). The reranker scored the full
+  // returned set (mode.ts D4: top_n_in = searchLimit), so there is no un-scored
+  // tail to wrongly drop; applyAutocut additionally no-ops when <2 items carry
+  // a finite rerank_score (covers the fail-open reranker path, where
+  // applyReranker returns RRF order with no scores). minKeep is the fixed
+  // never-empty failsafe (1); jumpRatio comes from the resolved mode.
+  let autocutDecision: AutocutDecision | undefined;
+  if (resolvedMode.autocut && offset === 0) {
+    const r = applyAutocut(
+      returnPool,
+      (x) => x.rerank_score,
+      { enabled: true, jumpRatio: resolvedMode.autocut_jump, minKeep: 1 },
+      // Preserve alias-hop exact matches: applyAliasHop injects the canonical
+      // page AFTER reranking, so it has no rerank_score. Without this it would
+      // be dropped whenever autocut cuts on the scored set (Codex P1).
+      (x) => x.alias_hit === true,
+    );
+    returnPool = r.kept;
+    autocutDecision = r.decision;
+  }
+
   const sliced = returnPool.slice(offset, offset + limit);
   // v0.32.3 search-lite: budget enforcement at the main return path.
   // hybridSearchCached used to be the only place this fired; now bare
@@ -1269,6 +1301,7 @@ export async function hybridSearch(
       ? { token_budget: budgetMeta }
       : {}),
     ...(adaptiveDecision ? { adaptive_return: adaptiveDecision } : {}),
+    ...(autocutDecision ? { autocut: autocutDecision } : {}),
   });
   return budgeted;
 }
@@ -1328,6 +1361,11 @@ export async function hybridSearchCached(
       // override would write to one cache row but read from a different
       // one on the next call.
       graph_signals: opts?.graph_signals,
+      // v0.42.3.0 — autocut threaded through the cache resolver so the
+      // knobsHash `ac=` bit reflects the per-call ceiling override. Without
+      // this, an `autocut:false` (full top-K) call could be served a trimmed
+      // autocut-on cache row, or vice versa.
+      autocut: typeof opts?.autocut === 'boolean' ? opts.autocut : undefined,
     },
   });
   // v0.36 (D8 / CDX-2 + codex /ship #4): resolve column for the cache
@@ -1438,6 +1476,13 @@ export async function hybridSearchCached(
           similarity: cacheSimilarity,
           age_seconds: cacheAge,
         },
+        // Carry the trimmed-set decision fields from the cached row so cache
+        // HITS report the same autocut/adaptive/mode/column meta as a fresh
+        // run (Codex P2 — the cached result set was already trimmed).
+        ...(hit.meta?.mode ? { mode: hit.meta.mode } : {}),
+        ...(hit.meta?.embedding_column ? { embedding_column: hit.meta.embedding_column } : {}),
+        ...(hit.meta?.adaptive_return ? { adaptive_return: hit.meta.adaptive_return } : {}),
+        ...(hit.meta?.autocut ? { autocut: hit.meta.autocut } : {}),
         ...(opts?.tokenBudget && opts.tokenBudget > 0
           ? { token_budget: budgetMeta }
           : {}),
@@ -1470,13 +1515,21 @@ export async function hybridSearchCached(
   // Token budget pass (no-op when not set).
   const { results: budgeted, meta: budgetMeta } = enforceTokenBudget(results, opts?.tokenBudget);
 
-  // Compose the final meta and emit.
+  // Compose the final meta and emit. v0.42.3.0 (Codex #5): carry over the
+  // inner meta's decision fields — pre-fix this manual rebuild silently dropped
+  // adaptive_return (and would drop autocut), so cached writeback/hit paths and
+  // eval-capture under-reported the feature. Propagate mode + embedding_column
+  // too (same drop class).
   const finalMeta: HybridSearchMeta = {
     vector_enabled: innerMeta?.vector_enabled ?? false,
     detail_resolved: innerMeta?.detail_resolved ?? null,
     expansion_applied: innerMeta?.expansion_applied ?? false,
     intent: innerMeta?.intent,
     cache: { status: cacheStatus },
+    ...(innerMeta?.mode ? { mode: innerMeta.mode } : {}),
+    ...(innerMeta?.embedding_column ? { embedding_column: innerMeta.embedding_column } : {}),
+    ...(innerMeta?.adaptive_return ? { adaptive_return: innerMeta.adaptive_return } : {}),
+    ...(innerMeta?.autocut ? { autocut: innerMeta.autocut } : {}),
     ...(opts?.tokenBudget && opts.tokenBudget > 0
       ? { token_budget: budgetMeta }
       : {}),

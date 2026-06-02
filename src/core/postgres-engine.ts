@@ -121,6 +121,22 @@ export class PostgresEngine implements BrainEngine {
   // Instance connection (for workers) or fall back to module global (backward compat)
   get sql(): ReturnType<typeof postgres> {
     if (this._sql) return this._sql;
+    // issue #1678: an instance-pool engine whose _sql went null (a mid-process
+    // disconnect/reconnect, or a reaped socket) must NOT fall through to the
+    // module singleton — that singleton was never connected on a worker, so
+    // db.getConnection() throws the misleading "connect() has not been called".
+    // Throw a tailored RETRYABLE error instead (isRetryableConnError matches
+    // problem === 'No database connection'), so a caller wrapped in
+    // withRetry+reconnect rebuilds this instance's pool and recovers. The
+    // module / never-connected path (style 'module' or null) keeps the legacy
+    // getConnection() behavior.
+    if (this._connectionStyle === 'instance') {
+      throw new GBrainError(
+        'No database connection',
+        'instance connection pool was torn down (socket reaped or mid-process disconnect)',
+        'Transient — the operation reconnects and retries. If it persists, check pooler/Supavisor health.',
+      );
+    }
     return db.getConnection();
   }
 
@@ -793,7 +809,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
-    const conn = this._sql || db.getConnection();
+    const conn = this.sql;
     return conn.begin(async (tx) => {
       // Create a scoped engine with tx as its connection, no shared state mutation
       const txEngine = Object.create(this) as PostgresEngine;
@@ -804,7 +820,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {
-    const pool = this._sql || db.getConnection();
+    const pool = this.sql;
     const reserved = await pool.reserve();
     try {
       const conn: ReservedConnection = {
@@ -4113,7 +4129,7 @@ export class PostgresEngine implements BrainEngine {
     oldRow: number,
     newRow: Omit<TakeBatchInput, 'page_id' | 'row_num' | 'superseded_by'>,
   ): Promise<{ oldRow: number; newRow: number }> {
-    const conn = this._sql || db.getConnection();
+    const conn = this.sql;
     return await conn.begin(async (tx) => {
       const [existing] = await tx`
         SELECT resolved_at FROM takes WHERE page_id = ${pageId} AND row_num = ${oldRow}

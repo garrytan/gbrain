@@ -645,6 +645,11 @@ export interface SearchResult {
    *  Undefined when no reranker fired. The raw reranker relevance score
    *  is separately stamped as `rerank_score` for back-compat. */
   reranker_delta?: number;
+  /** Raw cross-encoder relevance score stamped by applyReranker on the
+   *  reranked head (undefined when no reranker fired). Distinct from `score`
+   *  (RRF + boosts). v0.42.3.0 autocut cuts on this — the trustworthy
+   *  separatrix — never on RRF/cosine. */
+  rerank_score?: number;
   /**
    * v0.42 (T19, plan D6) — multiplier applied by applyAliasResolvedBoost
    * (1.0 = unchanged; default 1.05x). Fires when the result's slug is
@@ -763,6 +768,14 @@ export interface SearchOpts {
    * See src/core/search/return-policy.ts.
    */
   adaptiveReturn?: import('./search/return-policy.ts').AdaptiveReturnInput;
+  /**
+   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default-ON in
+   * reranked modes (the floor). Pass `false` to force the full top-K for breadth
+   * / exploration (the ceiling override). Cuts the ranked set at the largest
+   * cross-encoder rerank-score cliff; no-op without a reranker. Only fires when
+   * offset===0. See src/core/search/autocut.ts.
+   */
+  autocut?: import('./search/autocut.ts').AutocutInput;
   type?: PageType;
   /**
    * v0.33: multi-type filter. When set, search results are filtered to
@@ -1298,6 +1311,12 @@ export interface HybridSearchMeta {
    * Omitted when the gate is off. Surfaced for `gbrain search --explain`.
    */
   adaptive_return?: import('./search/return-policy.ts').AdaptiveReturnDecision;
+  /**
+   * v0.42.3.0 — autocut decision (signal, cut point, kept/total, gapRatio).
+   * Omitted when autocut didn't run (no reranker). Surfaced for
+   * `gbrain search --explain`.
+   */
+  autocut?: import('./search/autocut.ts').AutocutDecision;
   /**
    * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
    * no budget was applied (backward-compatible with pre-search-lite

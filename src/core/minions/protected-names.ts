@@ -51,6 +51,11 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   // can't auto-apply; user must run `gbrain onboard --auto-with-prompt`
   // or submit explicitly via `gbrain jobs submit unify-types --allow-protected`.
   'unify-types',
+  // v0.42.0.0 — SkillOpt: optimizer Sonnet/Opus loops over a benchmark.
+  // Preemptive register entry (v1 is CLI-only foreground; future Minion
+  // handler must reject MCP submission). Costs user money (optimizer +
+  // judge + rollouts) so PROTECTED is the right posture.
+  'skillopt',
 ]);
 
 /** Check a job name against the protected set. Normalizes whitespace first. */

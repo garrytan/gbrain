@@ -483,3 +483,69 @@ describe('resolveLockRenewalKnobs', () => {
     expect(resolveLockRenewalKnobs({}, 30_000).maxFailuresForAudit).toBe(3);
   });
 });
+
+// issue #1678 (Codex #2): the bounded reconnect-once hook. NOT a withRetry on
+// renewLock (that races this tick's own timeout); a single pool rebuild before
+// the next tick so the next renewLock hits a live connection.
+describe('runLockRenewalTick: reconnect-once dep (issue #1678)', () => {
+  test('reconnect fires after a renewLock throw within deadline; result still ok', async () => {
+    const audit = freshAudit();
+    let reconnectCalls = 0;
+    const deps: LockRenewalDeps = {
+      renewLock: async () => { throw new Error('write CONNECTION_ENDED'); },
+      audit: audit.sink,
+      now: () => 1000, // well within deadline
+      setTimeout: makeFakeTimer().setTimeout,
+      reconnect: async () => { reconnectCalls++; },
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0 });
+    const result = await runLockRenewalTick(deps, state);
+    expect(result).toEqual({ kind: 'ok' });
+    expect(reconnectCalls).toBe(1);
+    expect(state.consecutiveFailures).toBe(1);
+  });
+
+  test('a reconnect throw is swallowed — tick still returns ok (no unhandledRejection class)', async () => {
+    const audit = freshAudit();
+    const deps: LockRenewalDeps = {
+      renewLock: async () => { throw new Error('Connection terminated unexpectedly'); },
+      audit: audit.sink,
+      now: () => 1000,
+      setTimeout: makeFakeTimer().setTimeout,
+      reconnect: async () => { throw new Error('reconnect failed: EHOSTUNREACH'); },
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0 });
+    const result = await runLockRenewalTick(deps, state);
+    expect(result).toEqual({ kind: 'ok' });
+  });
+
+  test('reconnect is NOT called on a successful renewal', async () => {
+    let reconnectCalls = 0;
+    const deps: LockRenewalDeps = {
+      renewLock: async () => true,
+      audit: freshAudit().sink,
+      now: () => 1000,
+      setTimeout: makeFakeTimer().setTimeout,
+      reconnect: async () => { reconnectCalls++; },
+    };
+    const result = await runLockRenewalTick(deps, makeState({ lastSuccessfulRenewalAt: 500 }));
+    expect(result).toEqual({ kind: 'ok' });
+    expect(reconnectCalls).toBe(0);
+  });
+
+  test('reconnect is NOT called when the tick aborts at the deadline', async () => {
+    let reconnectCalls = 0;
+    const deps: LockRenewalDeps = {
+      renewLock: async () => { throw new Error('write CONNECTION_ENDED'); },
+      audit: freshAudit().sink,
+      // sinceLastSuccess = 30000 - 0 = 30000 >= deadline (30000-5000=25000) → abort
+      now: () => 30_000,
+      setTimeout: makeFakeTimer().setTimeout,
+      reconnect: async () => { reconnectCalls++; },
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0 });
+    const result = await runLockRenewalTick(deps, state);
+    expect(result).toEqual({ kind: 'should_abort', reason: 'lock-renewal-failed' });
+    expect(reconnectCalls).toBe(0); // pointless to reconnect when we're giving up the lock
+  });
+});

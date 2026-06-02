@@ -255,10 +255,12 @@ export const INLINE_TIPS = [
   "`gbrain upgrade` runs post-upgrade + apply-migrations.",
 ];
 
-// Target so llms-full.txt fits in ~190k-token contexts with room to spare.
-// Bumped 600KB→700KB in v0.41.9.0, then 700KB→750KB in v0.41.37.0 — CLAUDE.md
-// crossed 700KB once the critical-fix-wave key-files annotations merged on top
-// of master's v0.41.34/35/36 additions (703KB). Still fits comfortably in
-// modern long-context models.
+// Target ~750KB so llms-full.txt fits in ~190k-token contexts with room to spare.
+// Bumped 600KB→700KB in v0.41.9.0, then 700KB→750KB once CLAUDE.md crossed 700KB:
+// it's ~540KB (77% of the bundle) and grows ~5-15KB per release with each feature's
+// Key Files annotation. Both master (v0.41.34-38 waves) and this branch (skillopt
+// wave) independently hit the 700KB line and bumped to the same 750KB. CLAUDE.md is
+// the whole point of the one-fetch bundle, so it stays inlined; the budget tracks
+// its legitimate growth. Still fits comfortably in 200k+ context models.
 // Generator prints a WARN if exceeded; ship with includeInFull=false exclusions.
 export const FULL_SIZE_BUDGET = 750_000;

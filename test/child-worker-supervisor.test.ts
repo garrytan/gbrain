@@ -55,6 +55,9 @@ async function runUntilTerminal(
     cleanRestartWindowMs: number;
     cleanRestartBudgetBackoffMs: number;
     stableRunResetMs: number;
+    watchdogLoopBudget: number;
+    watchdogLoopWindowMs: number;
+    watchdogBackoffMs: number;
     _now: () => number;
     stopAfterEvents: number; // safety net so a buggy test can't hang
   }>,
@@ -73,6 +76,9 @@ async function runUntilTerminal(
     cleanRestartWindowMs: overrides.cleanRestartWindowMs,
     cleanRestartBudgetBackoffMs: overrides.cleanRestartBudgetBackoffMs,
     stableRunResetMs: overrides.stableRunResetMs,
+    watchdogLoopBudget: overrides.watchdogLoopBudget,
+    watchdogLoopWindowMs: overrides.watchdogLoopWindowMs,
+    watchdogBackoffMs: overrides.watchdogBackoffMs,
     _now: overrides._now,
     isStopping: () => stopping,
     onMaxCrashesExceeded: (count, max) => {
@@ -402,6 +408,63 @@ esac
           expect(typeof e.runDurationMs).toBe('number');
           expect(e.likelyCause).toBe('clean_exit');
         }
+      } finally {
+        h.cleanup();
+      }
+    });
+  });
+
+  // issue #1678: RSS-watchdog exits (code 12) are cause-keyed and must NOT
+  // route through the generic crash path — the >5-min stable-run reset would
+  // defeat max_crashes and the 400×/24h loop would never stop being silent.
+  describe('rss_watchdog breaker (issue #1678)', () => {
+    it('code=12 is labeled rss_watchdog and never increments crashCount', async () => {
+      const h = makeHarness('wd-nocrash', 'exit 12');
+      try {
+        const { events, maxCrashesFired } = await runUntilTerminal(h, {
+          maxCrashes: 3,
+          _backoffFloorMs: 1,
+          stopAfterEvents: 18, // ~6 spawn/exit/backoff triples
+        });
+        const exited = events.filter(
+          (e): e is Extract<ChildSupervisorEvent, { kind: 'worker_exited' }> =>
+            e.kind === 'worker_exited',
+        );
+        // Looped well past maxCrashes WITHOUT tripping it — the whole point.
+        expect(maxCrashesFired).toBeNull();
+        expect(exited.length).toBeGreaterThan(3);
+        for (const e of exited) {
+          expect(e.code).toBe(12);
+          expect(e.likelyCause).toBe('rss_watchdog');
+          expect(e.crashCount).toBe(0); // never counted as a crash
+        }
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it('emits rss_watchdog_loop health_warn once the window budget is exceeded', async () => {
+      const h = makeHarness('wd-loop', 'exit 12');
+      try {
+        const { events } = await runUntilTerminal(h, {
+          maxCrashes: 99,
+          _backoffFloorMs: 1,
+          watchdogLoopBudget: 2,
+          watchdogLoopWindowMs: 600_000,
+          stopAfterEvents: 24,
+        });
+        const warns = events.filter(
+          (e): e is Extract<ChildSupervisorEvent, { kind: 'health_warn' }> =>
+            e.kind === 'health_warn' && e.reason === 'rss_watchdog_loop',
+        );
+        // Budget=2 → the 3rd+ watchdog exit in-window fires the loud alert.
+        expect(warns.length).toBeGreaterThan(0);
+        expect(warns[0].count).toBeGreaterThan(2);
+        // And every backoff after a watchdog exit is reason=rss_watchdog.
+        const wdBackoffs = events.filter(
+          (e) => e.kind === 'backoff' && e.reason === 'rss_watchdog',
+        );
+        expect(wdBackoffs.length).toBeGreaterThan(0);
       } finally {
         h.cleanup();
       }
