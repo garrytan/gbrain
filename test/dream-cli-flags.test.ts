@@ -105,4 +105,28 @@ describe('dream CLI flag wiring', () => {
       expect(dreamSrc).toContain('gbrain sources restore');
     });
   });
+
+  // issue #1678 — --drain bounded backlog drain wiring (structural).
+  describe('--drain wiring', () => {
+    test('declares --drain and --window flags', () => {
+      expect(dreamSrc).toContain("'--drain'");
+      expect(dreamSrc).toContain("'--window'");
+      expect(dreamSrc).toContain('windowSeconds');
+    });
+
+    test('--drain defaults to extract_atoms and rejects other phases', () => {
+      expect(dreamSrc).toContain("phase = 'extract_atoms'");
+      expect(dreamSrc).toContain('--drain currently supports only --phase extract_atoms');
+    });
+
+    test('drain holds the same cycle lock id (contends with the routine cycle)', () => {
+      expect(dreamSrc).toContain('cycleLockIdFor(resolvedSourceId)');
+      expect(dreamSrc).toContain('withRefreshingLock');
+    });
+
+    test('drain reports remaining + exits non-zero when incomplete', () => {
+      expect(dreamSrc).toContain('EXIT_DRAIN_INCOMPLETE');
+      expect(dreamSrc).toContain('cycle_already_running');
+    });
+  });
 });

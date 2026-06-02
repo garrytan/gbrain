@@ -592,11 +592,14 @@ export function classifyErrorCode(errorMsg: string): string {
     return 'EMBEDDING_OVERSIZE';
   }
 
-  // v0.41 content-sanity gate. Hard-blocks at importFromContent throw
-  // ContentSanityBlockError whose toString() embeds `PAGE_JUNK_PATTERN:`
-  // (see src/core/content-sanity.ts PAGE_JUNK_PATTERN_CODE). Soft-blocks
-  // (oversize alone) don't fail — the page lands with frontmatter.embed_skip
-  // set and never enters this classifier.
+  // v0.41/v0.42 content-sanity gate. The ONLY throw path is junk under the
+  // `reject` disposition (the v0.42 default is `quarantine`, which lands the
+  // page hidden and never enters this classifier). The thrown
+  // ContentSanityBlockError embeds `PAGE_JUNK_PATTERN:` (see
+  // src/core/content-sanity.ts PAGE_JUNK_PATTERN_CODE). Soft-block (oversize)
+  // and flag (markup-heavy) also never throw — the page lands. So a
+  // PAGE_JUNK_PATTERN row in sync-failures.jsonl on a v0.42 brain means the
+  // operator opted into reject mode.
   if (/PAGE_JUNK_PATTERN/i.test(errorMsg)) return 'PAGE_JUNK_PATTERN';
 
   return 'UNKNOWN';

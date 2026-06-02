@@ -1,6 +1,6 @@
 # GBrain
 
-**Search gives you raw pages. GBrain gives you the answer.** It's the brain layer your AI agent has been missing — the only one that does synthesis, graph traversal, and gap analysis in one box.
+**Search gives you raw pages. GBrain gives you the answer.** It's the brain layer your AI agent has been missing — the only one that does synthesis, graph traversal, and gap analysis in one box. Run a full autonomous agent on top of it, or just wire it into Claude Code or Codex as a supercharged retrieval layer in one command; either way your coding agent stops being amnesiac about everything that isn't code.
 
 I'm Garry Tan, President and CEO of Y Combinator. I built GBrain to run my own AI agents. It's the production brain behind my OpenClaw and Hermes deployments: **146,646 pages, 24,585 people, 5,339 companies**, 66 cron jobs running autonomously. My agent ingests meetings, emails, tweets, voice calls, and original ideas while I sleep. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight. I wake up smarter than when I went to bed — and so will you.
 
@@ -85,9 +85,29 @@ The agent installs GBrain, creates the brain, asks for your API keys, loads 43 s
 
 > **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new.
 
-### Install it into your existing agent
+### Quick start: Claude Code or Codex
 
-Already running Codex, Claude Code, Cursor, or another coding agent? Paste the same instruction in:
+Already running Claude Code or Codex? There are two ways to wire GBrain in, depending on what you want.
+
+**Just want a memory for your coding agent (recommended starting point).** Spin up a local brain and connect it in two commands — zero server, zero token, zero tunnel:
+
+```bash
+gbrain init --pglite                     # 2-second local brain (no Docker)
+claude mcp add gbrain -- gbrain serve    # or: codex mcp add gbrain -- gbrain serve
+```
+
+**Already have a brain on a remote host** (OpenClaw, Hermes, or any `gbrain serve --http`)? Point your laptop agents at it with one command each — `--install` wires it up and smoke-tests the token before handoff:
+
+```bash
+gbrain connect https://your-host/mcp --token gbrain_xxx --install               # Claude Code
+gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex --install # Codex
+```
+
+**[→ Full walkthrough: give your coding agent a memory](docs/tutorials/connect-coding-agent.md)** — both paths end to end, plus the brain-first protocol you paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it actually change how you work.
+
+### Install the full autonomous setup into your existing agent
+
+Want the whole thing — local brain, 43 skills, the overnight dream cycle that enriches while you sleep? Paste this into Codex, Claude Code, Cursor, or another coding agent:
 
 ```
 Retrieve and follow the instructions at:
@@ -112,11 +132,12 @@ Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.
 
 GBrain exposes 30+ tools over MCP (stdio and HTTP). The specific snippet depends on which client you use:
 
-- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — one command: `claude mcp add gbrain -- gbrain serve`. Zero server, zero tunnel.
+- **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — local: one command, `claude mcp add gbrain -- gbrain serve` (zero server, zero tunnel). Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
+- **[Codex](docs/mcp/CODEX.md)** — `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`). Codex reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands in Codex config.
 - **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve"]}` to your MCP config.
 - **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
 - **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.
-- **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — Settings → Connectors → add the URL + bearer token. Pro subscription required.
+- **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — `gbrain connect https://your-host/mcp --agent perplexity --oauth --register` mints a least-privilege OAuth client and prints the Issuer/Client ID/Secret to paste into Settings → Connectors (OAuth is the right path for a cloud connector; a bearer token also works for local use). Pro subscription required.
 - **[ChatGPT](docs/mcp/CHATGPT.md)** — uses OAuth 2.1 with PKCE (the hard requirement). Register a `chatgpt` client from the admin dashboard with grant type `authorization_code`.
 
 For the HTTP server itself:

@@ -2,6 +2,773 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.8.0] - 2026-06-01
+
+**Scraped junk stops landing in your brain as if it were real content, and when something looks off, your agent gets told instead of being left to guess.**
+
+Two junk pages had been landing via `gbrain sync`: a Cloudflare "checking your browser" screen ingested as if it were the article, and an 890K-char wall of mostly-boilerplate that got chunked and embedded at full cost. Both had to be hand-deleted. This release adds a content-quality gate at the one place every ingest path flows through, with a deliberately simple rule: hide only the unambiguous crap; for anything fuzzy, keep it usable and warn the agent.
+
+Three tiers, by how confident the gate is:
+
+| What it sees | What happens | Still searchable? |
+|---|---|---|
+| A known junk shape (Cloudflare / CAPTCHA / "checking your browser") | **quarantined** — lands hidden, reviewable | no (and writes zero chunks) |
+| Looks boilerplate-ish (mostly markup, little prose) | **flagged** — stays put, agent warned | yes, with a `content_flag` note |
+| Unusually large | not embedded (existing behavior), agent warned | by title via `get_page` |
+
+The flag is the important part. A page that's *probably* junk but might be a legit reference table or API doc never disappears. It stays searchable, and when your agent retrieves it, the result carries a `content_flag` ("this looks like boilerplate, examine if you expected real content"). Your agent decides. Books and long prose are unaffected (they're prose, not markup, so the boilerplate check never fires on them).
+
+**How to use it.** It's on by default. Nothing to configure. To see what got caught:
+
+```bash
+gbrain quarantine list                     # hidden junk
+gbrain quarantine list --include-flagged   # + the "examine me" pages
+gbrain quarantine scan --apply             # retroactively catch junk that predates the gate
+gbrain quarantine clear <slug>             # release a false positive
+```
+
+`gbrain doctor` gains `quarantined_pages` and `flagged_pages` checks so you see the counts at a glance.
+
+**Tuning (optional).**
+
+```bash
+gbrain config set content_sanity.junk_disposition reject    # hard-reject junk instead of quarantining
+gbrain config set content_sanity.prose_check_enabled false  # turn off the fuzzy markup flag entirely
+gbrain config set content_sanity.max_markup_ratio 0.9       # how markup-heavy before flagging (default 0.85)
+```
+
+**What's safe to know about.** Quarantine and flag are frontmatter markers, no schema migration. Quarantined pages stay reviewable via `gbrain get` and re-surface the moment you fix the source and re-sync. The markup heuristic is a flag, never a hide, so a false positive costs your agent a one-line note, not a vanished page.
+
+**What we caught before shipping.** Two independent review passes found bugs the first didn't. A remote agent with write access could have planted a `quarantine` marker on clean content to silently hide a page, or smuggled text into the agent-warning channel; both are now stripped at the trust boundary so only the gate sets those markers. And the gate's timestamp was leaking into the change-detection hash, which would have made every flagged page re-embed on every sync forever; the marker is now excluded from the hash, so a flagged page re-syncs as unchanged.
+
+### To take advantage of v0.42.6.0
+
+`gbrain upgrade` handles this automatically (no schema migration). The gate is on by default for every new sync. To sweep junk that's already in your brain from before this release:
+
+```bash
+gbrain quarantine scan            # dry-run: see what would be caught
+gbrain quarantine scan --apply    # mark it
+gbrain doctor                     # confirm quarantined_pages / flagged_pages counts
+```
+
+If a legitimate page got caught, `gbrain quarantine clear <slug>` releases it. If anything looks wrong, file an issue at https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+
+### Itemized changes
+
+#### Added
+- **Content-quality gate** (`src/core/content-sanity.ts`): three new interstitial junk patterns (`cloudflare_checking_browser`, `cf_browser_verification`, `enable_javascript_cookies`) plus a prose-vs-markup heuristic (`assessProse`) that flags boilerplate-shaped pages. The pass runs only in the warn-tier byte window, excludes code from the ratio, and exempts `page_kind: code` pages.
+- **`src/core/quarantine.ts`** (new): two frontmatter markers, `quarantine` (hides from search) and `content_flag` (warns, stays searchable), siblings of the existing `embed_skip` marker.
+- **`gbrain quarantine` CLI** (`list` / `clear` / `scan`) for reviewing, releasing, and retroactively applying the gate.
+- **Agent-warning channel**: `SearchResult.content_flag` (stamped post-fusion in `hybridSearch`, including the keyword-only `search` op path) and a top-level `content_flag` on the `get_page` op, so an agent sees the warning whether it searches or fetches a page directly.
+- **Doctor checks** `quarantined_pages` + `flagged_pages` (run on both Postgres and PGLite).
+- Config keys `content_sanity.junk_disposition` (quarantine|reject), `max_markup_ratio`, `prose_check_enabled` (file/env/DB planes; `GBRAIN_MAX_MARKUP_RATIO` env).
+
+#### Changed
+- The ingest narrow waist (`importFromContent`) now routes junk to quarantine (default) or reject, markup-heavy to flag, oversize to soft-block + flag. `buildVisibilityClause` excludes quarantined pages from all six search call sites (flagged pages stay visible).
+- `gbrain sources audit` is disposition-aware (reports would-quarantine vs would-reject, plus a would-flag bucket); `gbrain lint` gains a `markup-heavy` rule.
+- New `BrainEngine.getContentFlagsByPageIds` (both engines) backs the search-result warning stamp.
+
+#### Fixed
+- Gate-owned markers (`quarantine` / `content_flag` / `embed_skip`) are stripped from incoming frontmatter for untrusted (remote MCP) callers, so a write-scoped client can't hide a page or inject text into the agent-warning channel.
+- Gate marker timestamps are excluded from the page content hash, so flagged/quarantined pages no longer look "changed" on every re-sync (which would have forced endless re-chunk/re-embed).
+
+## [0.42.7.0] - 2026-06-01
+
+**Your brain now tells you when it has imported pages but never connected them — and gives you a one-command fix.**
+
+Importing a page and curating it are two different things. Import drops the
+text in. Extraction is the step that reads the text and builds the graph:
+the typed edges (`founded`, `works_at`, `invested_in`, `advises`) and the
+dated timeline entries that make `gbrain think`, graph traversal, and link
+search actually work. On a lot of brains that second step had quietly never
+run at scale. One real 280K-page brain had a links table that was 99.7%
+untyped `mentions` — a bag of name-drops with almost no real relationships —
+and nothing anywhere told the owner. A single manual extraction added 12,500
+typed edges that should have been there all along.
+
+The reason: plain `gbrain sync` already extracts the pages it changes, but
+there was no way to sweep the historical backlog, and no health signal when
+extraction fell behind. If you weren't running the autopilot cycle, the gap
+grew invisibly.
+
+Three things fix that:
+
+- **`gbrain extract --stale`** — a new incremental sweep. It re-extracts only
+  the pages whose links are stale (never extracted, edited since they were
+  last extracted, or extracted by an older version), in small batches, safe to
+  cron. Reads page content straight from the database, so it works on
+  checkout-less Postgres/Supabase brains too. Pass `--catch-up` to run past
+  the default 30-minute budget until the backlog is empty; `--dry-run` to just
+  see the count.
+
+  ```
+  gbrain extract --stale            # sweep the backlog incrementally
+  gbrain extract --stale --catch-up # run until 0 remain
+  gbrain extract --stale --dry-run  # how many pages are behind?
+  ```
+
+- **A `links_extraction_lag` doctor check** — `gbrain doctor` now warns when a
+  meaningful fraction of your pages have un-extracted edges, and tells you to
+  run `gbrain extract --stale`. Warn-only by default: it will never break a
+  CI/cron pipeline that gates on the doctor exit code. Set
+  `GBRAIN_EXTRACTION_LAG_FAIL_PCT` if you want a hard failure above some
+  threshold.
+
+- **An end-of-sync nudge** — after a sync that leaves a backlog, `gbrain sync`
+  prints one line on stderr pointing you at `gbrain extract --stale`. Silence
+  it with `GBRAIN_SYNC_NO_EXTRACT_NUDGE=1`.
+
+Plus `gbrain sync --no-extract` to skip inline extraction on purpose (the
+pages then show as stale until you sweep them).
+
+The mechanism behind all of this is a per-page freshness watermark
+(`pages.links_extracted_at`). It treats a page as needing extraction when it
+was never extracted, when it was edited after its last extraction (the exact
+"I wrote a page via the MCP API and it never got connected" case), or when the
+extractor logic itself changed. Existing brains correctly show their real
+backlog on the first `gbrain doctor` after upgrade — that visibility is the
+whole point.
+
+### Itemized changes
+
+- New `gbrain extract --stale [--source-id <id>] [--catch-up] [--dry-run] [--json]`:
+  DB-source incremental link + timeline sweep. Small batches with a wall-clock
+  budget; stamps every processed page (including zero-link pages) only after the
+  link/timeline writes succeed, so a crash mid-sweep leaves pages stale and they
+  re-extract idempotently on the next run.
+- New `links_extraction_lag` doctor check, wired into both local `gbrain doctor`
+  and the thin-client/remote report. Warn at >20% stale
+  (`GBRAIN_EXTRACTION_LAG_WARN_PCT`), hard-fail only when
+  `GBRAIN_EXTRACTION_LAG_FAIL_PCT` is set. Vacuous-skips brains under 100 pages;
+  `--source <id>` scopes it. Strictly a SQL count — no filesystem/git access.
+- `gbrain sync` now stamps the extraction watermark for the pages it extracts
+  inline, and prints a one-line stderr nudge after a sync that leaves a backlog.
+- New `gbrain sync --no-extract` flag to skip inline extraction.
+- A manual `gbrain extract links --source db` / `extract all --source db` now
+  also clears the watermark for the pages it processes.
+- Migration v112 adds `pages.links_extracted_at` (nullable timestamp) plus a
+  composite `(source_id, links_extracted_at)` index. No backfill — existing
+  pages start unstamped so the real backlog surfaces. Metadata-only column add;
+  instant on both Postgres and PGLite.
+
+## To take advantage of v0.42.7.0
+
+`gbrain upgrade` applies migration v112 automatically. If `gbrain doctor` warns
+about a partial migration:
+
+1. **Apply migrations manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Check your extraction backlog and sweep it:**
+   ```bash
+   gbrain doctor --json            # look for links_extraction_lag
+   gbrain extract --stale --dry-run  # how many pages are behind
+   gbrain extract --stale --catch-up # sweep them all
+   ```
+3. **Verify the graph filled in:**
+   ```bash
+   gbrain doctor                   # links_extraction_lag should now be ok
+   ```
+   Typed edges (`SELECT link_type, count(*) FROM links GROUP BY 1`) should jump.
+4. **If anything looks wrong,** file an issue at
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+## [0.42.6.0] - 2026-06-01
+
+**Most of your people and company pages are one-line stubs. `gbrain enrich --thin`
+now develops them at scale using only what your brain already knows, no web
+lookups, and every claim it writes is cited back to the note it came from.**
+
+Your brain is full of scattered knowledge about a person that never made it onto
+their page: a meeting where they presented, a deal they led, another person's
+page that mentions them, a fact you captured months ago. The stub page still
+says "Stub page." `gbrain enrich --thin` finds the most-referenced stubs, pulls
+together everything the brain knows about each one (search + backlinks + facts +
+raw notes), and makes one grounded model call per page to consolidate it into a
+real, cited dossier. When the brain doesn't know enough, it skips the page
+instead of making things up.
+
+This is deliberately brain-internal. gbrain's own model tooling can only see your
+brain (search, get_page, facts, backlinks), not the web or LinkedIn, so this
+develops what you already have rather than researching new facts. Web research
+stays the job of the agent-driven `enrich` skill.
+
+How to run it:
+
+```bash
+# See what it would do + a cost estimate, no spend:
+gbrain enrich --thin --dry-run --json
+
+# Develop the top 3 most-referenced stubs, cheap model, $0.50 cap:
+gbrain enrich --thin --limit 3 --max-usd 0.50 --model anthropic:claude-haiku-4-5
+```
+
+It's resumable (`--resume`), budget-capped (`--max-usd`, best-effort under
+`--workers > 1`; pin `--workers 1` for a hard ceiling), and source-scoped
+(`--source`). Enriched pages get `enriched_at` + `enriched_by` frontmatter so a
+recency guard skips them on the next run, and the budget cap is the real money
+gate.
+
+There's also an opt-in autopilot phase (`cycle.enrich_thin.enabled`, default OFF)
+that trickles a few thin pages per source each cycle so the brain compounds over
+time, with both per-source and brain-wide cost + walltime caps.
+
+What you'd see: a stub people page that read "Stub page." comes back as a
+multi-section dossier with `[Source: meetings/2026-summit]` style citations on
+each claim, and re-running confirms it's no longer selected.
+
+Things to know: untrusted note content can't break out of the model prompt (the
+retrieved context is escaped, including the data-envelope delimiters), and
+`enrich` is refused on thin-client / HTTP MCP installs because it spends model
+budget and writes pages — run it on the host.
+
+## To take advantage of v0.42.6.0
+
+`gbrain upgrade` brings the new command in. No migration is required for the core
+feature (it reads existing pages + links + facts). To use it:
+
+1. **Preview first:**
+   ```bash
+   gbrain enrich --thin --dry-run --json
+   ```
+2. **Run a small, capped batch:**
+   ```bash
+   gbrain enrich --thin --limit 3 --max-usd 0.50 --model anthropic:claude-haiku-4-5
+   ```
+3. **(Optional) turn on the autopilot trickle:**
+   ```bash
+   gbrain config set cycle.enrich_thin.enabled true
+   gbrain dream --phase enrich_thin --dry-run
+   ```
+4. **If anything looks wrong,** file an issue with `gbrain doctor` output:
+   https://github.com/garrytan/gbrain/issues
+
+### Itemized changes
+
+- **`gbrain enrich --thin`** — batch develops thin (stub) pages via brain-internal
+  grounded synthesis. Flags: `--order inbound-links|salience|updated`,
+  `--types person,company`, `--limit`, `--workers`, `--model`, `--max-usd`,
+  `--min-context`, `--reenrich-after`, `--source`, `--dry-run`, `--resume`,
+  `--background [--follow]`, `--json`, `--yes`.
+- **New engine method `listEnrichCandidates`** (Postgres + PGLite parity) — one
+  source-aware SQL query: thin-filter + per-page source-correct inbound-link
+  count + `enriched_at` recency guard + whitelisted ORDER BY + LIMIT, returning a
+  lightweight projection (no page bodies) so ranking 100K stubs stays cheap.
+- **Opt-in `enrich_thin` autopilot phase** (default OFF) with per-source and
+  brain-wide cost + walltime caps; develops `max_pages_per_tick` (default 3) per
+  source.
+- **`--background`** fans out one Minion job per source (or one job with
+  `--source`); the per-source idempotency key carries the full run config so a
+  re-run with different flags enqueues new work instead of returning the old job.
+- **Provenance:** enriched pages stamp `enriched_at` + `enriched_by: cli:enrich`
+  (survives `put_page` write-through); the recency guard reads `enriched_at`.
+- **Prompt-injection hardening:** retrieved brain content is sanitized before it
+  enters the prompt, including neutralizing the `<context>` data-envelope
+  delimiters so an untrusted note can't close the envelope and inject
+  instructions.
+- **Budget honesty:** a final-call cost overage is now flagged on the result even
+  when the gateway swallowed the throw; the checkpoint is flushed on budget
+  exhaustion so a resume doesn't re-charge already-completed pages.
+- Refused on thin-client / HTTP MCP installs (spends model budget + writes pages).
+
+## [0.42.5.0] - 2026-06-01
+
+**If your background worker has been dying every few minutes and the logs keep
+blaming the database, this release explains why and stops it. The real cause was
+almost never the database. It was a memory cap set way too low, killing
+legitimate work and leaving behind a trail of connection errors that looked like
+the problem but were only the symptom.**
+
+Here's what was happening. The worker has a safety valve that drains it when
+memory gets too high, meant to catch a runaway leak. The default cap was 2GB. But
+a brain doing embeddings legitimately needs around 10GB of working memory, so the
+valve fired on every heavy cycle, drained the worker mid-job, the pooler then
+reaped the half-open database socket, and every call after that threw "No
+database connection." One operator's worker exited 400+ times in 24 hours. The
+single line that would have explained it scrolled by once per cycle, buried under
+hundreds of database errors. It took hours to find.
+
+Three things were wrong, and all three are fixed:
+
+1. **The memory-cap drain looked exactly like a clean shutdown**, so nothing
+   counted it or alerted on it. Now it exits with its own distinct code, shows up
+   in `gbrain doctor` and supervisor logs as `rss_watchdog`, and after a few
+   loops in a window the supervisor prints a loud "worker OOM-looping: raise
+   --max-rss" line and backs off instead of hot-looping.
+2. **The 2GB default was a footgun.** It now auto-sizes from your machine's RAM
+   (half of it, clamped to 4-16GB), and it reads your container/cgroup limit so a
+   small container doesn't get a cap set above its real ceiling. Pass `--max-rss`
+   to override. You'll see the resolved number on worker startup.
+3. **The database errors that followed the drain had no recovery path** in the
+   job-lock code, so one reaped socket cascaded into a dead worker. Those hot
+   paths now reconnect and recover, and `CONNECTION_ENDED` (the pooler's
+   socket-reap error) is finally recognized as retryable everywhere.
+4. **The dream cycle could kill its own database connection.** While tracing the
+   same bug class, we found the `lint` phase created a second, competing
+   database connection to read four config values and then closed it — which
+   tore down the shared connection the rest of the cycle was using. On a
+   Postgres brain with a configured connection string, `gbrain dream` could die
+   mid-cycle with the same misleading "no database connection" error right after
+   linting. The lint phase now reuses the cycle's existing connection.
+
+Separately, this release fixes a long-standing invisible backlog: on a brain
+whose schema pack doesn't run the `extract_atoms` lens phase, that phase silently
+never ran in the nightly cycle and pages piled up forever with zero signal.
+`gbrain doctor` now counts that backlog and tells you the exact command to drain
+it, and there's a new first-class drain mode for grinding it down on demand.
+
+### How to take advantage
+
+Most of this is automatic on upgrade. To use the new pieces:
+
+- **Diagnose a watchdog loop fast:** `gbrain doctor` and `gbrain jobs supervisor
+  status` now break crashes out by cause. An `rss_watchdog` count means "raise
+  the cap," not "debug the database."
+- **Set the memory cap explicitly if you want:** `gbrain jobs work --max-rss
+  16384` (megabytes; `--max-rss 0` disables the watchdog). The worker prints the
+  resolved cap and where it came from on startup.
+- **Drain an atom backlog on demand:** `gbrain dream --phase extract_atoms
+  --drain --window 120 --json`. It holds the cycle lock once, processes batches
+  until the backlog empties or the window elapses, reports `{extracted,
+  remaining}`, and exits non-zero while work remains so a cron loop knows to run
+  again. `--dry-run` previews the count without doing work.
+- **See the backlog:** `gbrain doctor --json` includes an `extract_atoms_backlog`
+  check that warns (with the drain command) when eligible pages pile up under a
+  pack that doesn't run the phase.
+
+### To take advantage of v0.42.5.0
+
+`gbrain upgrade` applies everything. No schema migration in this release. If
+`gbrain doctor` still flags a watchdog loop after upgrade:
+
+1. Check the cause breakdown: `gbrain doctor --json` (look for
+   `rss_watchdog` under the supervisor check).
+2. Raise the cap to fit your embed working set:
+   ```bash
+   gbrain jobs work --max-rss 16384   # or pass via your supervisor/launchd unit
+   ```
+3. If `extract_atoms_backlog` warns, drain it:
+   ```bash
+   gbrain dream --phase extract_atoms --drain --window 120
+   ```
+4. If anything still looks wrong, file an issue with `gbrain doctor` output:
+   https://github.com/garrytan/gbrain/issues
+
+### Itemized changes
+
+- **Self-identifying watchdog exit.** New `WORKER_EXIT_RSS_WATCHDOG` exit code
+  (`src/core/minions/worker-exit-codes.ts`). The worker sets a flag on a memory
+  drain; the CLI (`gbrain jobs work`) exits with the distinct code so the
+  supervisor classifies it as `likely_cause=rss_watchdog` instead of a silent
+  clean exit. `src/core/minions/child-worker-supervisor.ts` tracks watchdog
+  exits in their own sliding window (independent of `crashCount`, so the >5-min
+  stable-run reset can't defeat the breaker) and emits a loud `rss_watchdog_loop`
+  `health_warn` plus a backoff once the window budget is exceeded.
+  `supervisor-audit.ts` gains an `rss_watchdog` crash bucket.
+- **Pre-kill soft warning + diagnostics.** The watchdog logs peak RSS and the
+  in-flight job kind, and warns once at 80% of the cap before the drain so you get
+  a heads-up rather than a silent death.
+- **Cgroup-aware auto-sized default.** `src/core/minions/rss-default.ts`:
+  `resolveDefaultMaxRssMb()` = `clamp(0.5 × min(cgroupLimit, totalRAM), 4096,
+  16384)` MB. Replaces the flat `2048` default in `gbrain jobs work`, `gbrain jobs
+  supervisor`, the autopilot-managed worker, and `MinionSupervisor`. Reads cgroup
+  v2 `memory.max` and v1 `memory.limit_in_bytes` so the cap stays below the real
+  process ceiling (graceful drain beats the kernel OOM-killer).
+- **Cycle lint phase reuses the shared engine (issue #1678, same disconnect
+  family).** `resolveLintContentSanity` in `src/commands/lint.ts` created a
+  module-style engine (`createEngine` without `poolSize` wraps the `db.ts`
+  singleton) for the content-sanity DB-plane config lift, then `disconnect()`ed
+  it — cascading to `db.disconnect()` and nulling the singleton the cycle's lint
+  phase shares. Every later phase then threw `connect() has not been called`
+  (most visibly `conversation_facts_backfill`'s `getConfig`). `LintOpts` gains an
+  optional `engine`; `runPhaseLint` (cycle) and the `lint` / `lint-fix` Minion
+  handlers pass their live engine so lint reuses it with zero connection churn.
+  Standalone `gbrain lint` (CLI_ONLY, no shared engine) keeps the create-own
+  path. Pinned by `test/lint-shared-engine.test.ts` (engine reused, never
+  disconnected) and the now-passing `test/e2e/cycle.test.ts` +
+  `test/e2e/dream.test.ts`. The E2E phase-count assertion was also made
+  non-brittle (asserts `ALL_PHASES.length` instead of a hardcoded number that
+  had drifted stale).
+- **Lock-path self-heal.** `src/core/retry-matcher.ts` now classifies
+  `CONNECTION_ENDED` (postgres.js's socket-reap code) as retryable via both code
+  and message. `PostgresEngine`'s `sql` getter no longer falls through to the
+  never-connected module singleton when an instance pool's connection went away;
+  it throws a clear, retryable error so the retry path rebuilds the pool.
+  `promoteDelayed` reconnects and retries on a reaped socket; `claim` recovers on
+  the next poll tick instead of crashing the worker (a blind retry could
+  double-claim a job); the lock-renewal tick rebuilds the pool once, bounded by
+  its own timeout, rather than racing a background retry against the renewal
+  deadline.
+- **Visible lens-phase backlog.** New `extract_atoms_backlog` check in `gbrain
+  doctor` counts eligible-but-unextracted pages and warns (with the `--drain`
+  command) when the active pack doesn't run the phase. The nightly cycle's
+  pack-gated skip now carries a `pack_gated: true` marker so it's greppable.
+- **First-class bounded drain.** `gbrain dream --phase extract_atoms --drain
+  [--window <seconds>]` holds the cycle lock once (the same lock id the routine
+  cycle uses, so they genuinely take turns), rediscovers eligibility each batch
+  (no stale-content extraction), reports `{extracted, skipped, remaining}`, and
+  exits non-zero while the backlog remains.
+
+### For contributors
+
+- New CI-guarded audit site `minion-lock` in `BATCH_AUDIT_SITES`
+  (`src/core/retry.ts`).
+- New modules: `worker-exit-codes.ts`, `rss-default.ts`, `cycle/extract-atoms-drain.ts`.
+- `packDeclaresPhase` and `countExtractAtomsBacklog` are now exported for the
+  doctor check.
+- ~70 new test cases across `test/rss-default.test.ts`,
+  `test/worker-watchdog-trigger.test.ts`, `test/child-worker-supervisor.test.ts`,
+  `test/supervisor-audit.test.ts`, `test/retry-matcher.test.ts`,
+  `test/worker-lock-renewal.test.ts`, `test/postgres-engine-getter-selfheal.test.ts`,
+  `test/queue-lock-retry.test.ts`, `test/doctor-extract-atoms-backlog.test.ts`,
+  `test/extract-atoms-drain.test.ts`, and the supervisor/dream flag suites.
+
+## [0.42.4.0] - 2026-06-01
+
+**`gbrain think` stops writing blank pages, and a bad `--model` now fails loud instead of going quiet.**
+
+If you ran `gbrain think --model anthropic/claude-sonnet-4-6 --save` (with a slash
+in the model name), gbrain used to quietly give up on the real model, fall back to
+a "no LLM available" stub, and save an empty synthesis page anyway — exit code 0,
+no error. One person ran this in a loop and got 200 blank pages before noticing.
+
+This release closes that whole class of silent failure:
+
+- **Slash-form model names work now.** `anthropic/claude-sonnet-4-6` is treated the
+  same as `anthropic:claude-sonnet-4-6`. A bare name like `claude-opus-4-7` still
+  defaults to Anthropic.
+- **An explicit `--model` you typed but can't run is a hard error.** Typo the model,
+  pick a provider with no API key, name a model that doesn't exist — `gbrain think`
+  exits 1 with a clear message (and a paste-ready fix when there is one), instead of
+  silently degrading to the stub. Omitting `--model` keeps the old graceful behavior:
+  no key, no `--save` still prints the gathered context and exits 0.
+- **An empty synthesis is never saved.** If the model returns nothing, malformed
+  output, or an empty answer, no page is written. `gbrain think --save` with no real
+  synthesis exits 1 and tells you nothing was saved.
+- **The nightly auto-think cycle got the same guard.** An empty synthesis no longer
+  counts as "done" or advances the cooldown, so the next cycle retries instead of
+  silently skipping for days.
+
+If you typed `--model` and it was unusable before, you were getting a blank page with
+exit 0. Now you get a real answer, or a real error. No silent middle.
+
+### How it works (the precise bits)
+
+- New `normalizeModelId` (`src/core/model-id.ts`) is the one shared `provider:model`
+  normalizer; it replaced four copies of a colon-only inline that mangled slash form.
+  A malformed leading separator (`:foo` / `/foo`) is returned unchanged so the
+  resolver throws loudly instead of coercing it to Anthropic.
+- New `validateModelId` + `probeChatModel` (`src/core/ai/gateway.ts`) are the shared
+  id-validity + key probe. `runThink` calls the probe before retrieval and hard-errors
+  on an explicit, unusable model.
+- `ThinkResult.synthesisOk` gates persistence: `persistSynthesis` returns a
+  `SYNTHESIS_EMPTY_NOT_PERSISTED` signal (never writes) when synthesis didn't happen.
+- `hasAnthropicKey` consolidated into `src/core/ai/anthropic-key.ts` (three private
+  copies collapsed to one).
+- The MCP `think` op enforces the same hard-error on an explicit unusable `model`.
+
+## To take advantage of v0.42.4.0
+
+Nothing to run — the fix is automatic on upgrade (`gbrain upgrade`). To verify:
+
+```bash
+# Slash form now works (with a real key):
+gbrain think "what do we know about acme-example" --model anthropic/claude-sonnet-4-6 --save
+
+# A bad model is now a loud error (exit 1), not a blank page:
+gbrain think "..." --model anthropic/claude-bogus-9 --save
+```
+
+If a bad `--model` still silently writes an empty page, file an issue with the
+command you ran and `gbrain doctor` output.
+
+### Itemized changes
+
+- `src/core/model-id.ts` — `normalizeModelId(input, defaultProvider?)`; slash→colon,
+  bare→default, empty/whitespace/leading-separator returned unchanged.
+- `src/core/ai/gateway.ts` — exported `validateModelId` + `ModelIdValidity` (registry
+  id-validity), `probeChatModel` + `ChatModelProbe` (validity + Anthropic-key
+  availability).
+- `src/core/ai/anthropic-key.ts` (new) — single shared `hasAnthropicKey()`.
+- `src/core/think/index.ts` — early explicit-model hard-throw, `modelExplicit` opt,
+  `synthesisOk` at all return sites, persist-skip signal, builder uses the shared probe.
+- `src/commands/think.ts` — `modelExplicit: !!model`, try/catch → exit 1, empty-slug
+  save guard, updated `--model` help.
+- `src/core/operations.ts` — MCP `think` op sets `modelExplicit`, maps `saved_slug` `''`→null.
+- `src/core/cycle/synthesize.ts` — `makeJudgeClient` routed through `validateModelId`.
+- `src/core/cycle/auto-think.ts` — empty synthesis → `partial`, no cooldown advance.
+- `src/core/facts/extract.ts`, `src/core/conversation-parser/llm-base.ts` — use the
+  shared normalizer + `hasAnthropicKey`.
+- Tests: `test/model-id.test.ts`, `test/ai/gateway-probe-chat-model.test.ts`,
+  `test/ai/anthropic-key.test.ts`, `test/think-gateway-adapter.test.ts`,
+  `test/think-pipeline.serial.test.ts`, `test/cycle/synthesize-gateway-adapter.test.ts`,
+  `test/auto-think-phase.test.ts`.
+## [0.42.3.0] - 2026-05-30
+
+**Search now returns the *confident handful* instead of a fixed wall of results
+— automatically. When you ask something with one clear answer, you get one
+result; when there are genuinely a few, you get those few; you stop getting 20
+loosely-related pages just because 20 was the limit. No flag to turn on — it is
+the default.**
+
+Here is the problem it fixes. Ask your brain "what's the door code for the
+cabin" and the old default would hand back 20 results: the right one on top, then
+19 things that merely mention cabins or codes. You (or the agent reading the
+results) then wade through the pile. That is fine for "show me everything about
+X," but it is noise when the question has a small answer. The new behavior,
+called **autocut**, looks at how the relevance scores drop off and cuts the list
+where the scores fall off a cliff. One obvious answer comes back as one result.
+A real cluster of three comes back as three. A broad question with no clear
+winner still returns the full set, so you never lose recall when you actually
+want breadth.
+
+The important detail, and why this is trustworthy where a naive version would
+not be: autocut cuts on the **reranker's** score, not the raw search score.
+gbrain already measured that the raw search score gap looks the same whether the
+top hit is right or wrong — it is not a reliable "is this the answer" signal. The
+cross-encoder reranker score *is*. So autocut only runs in the search modes where
+the reranker runs (the default `balanced` mode and `tokenmax`), and it is a clean
+no-op everywhere else. It can never return zero results when matches exist, and
+it never runs on a page the reranker did not actually score.
+
+### How to use it
+
+Nothing. It is on by default in the `balanced` and `tokenmax` search modes. The
+`conservative` mode (no reranker) is unaffected.
+
+Your agent gets one new lever on the `query` tool — `autocut: false` — to force
+the full top-K back when it deliberately wants breadth (broad exploration, "list
+everything about X," or when it suspects the top hit is wrong and wants to see
+the alternatives). It almost never needs to set it; the default is the smart path.
+
+Per-brain knobs if you want to tune or disable:
+
+```bash
+gbrain config set search.autocut false        # turn autocut off for this brain
+gbrain config set search.autocut_jump 0.30     # require a steeper cliff to cut (default 0.20)
+gbrain search modes                            # see autocut / autocut_jump per-mode
+gbrain query "what is X" --explain             # shows each result's rerank score + the cut
+```
+
+### What a concrete example looks like
+
+Query: "cabin door code" against a brain on the default mode. The reranker scores
+the candidates, autocut sees the cliff, and you get:
+
+| Result | Rerank score | Kept? |
+|---|---|---|
+| `notes/cabin-access` | 0.95 | yes (above the cliff) |
+| `notes/cabin-packing-list` | 0.22 | no (below the cliff) |
+| `notes/lake-house-wifi` | 0.18 | no |
+| ...17 more | <0.2 | no |
+
+One result instead of twenty. Ask "everything about the cabin" instead and the
+scores come back flat (no cliff) — autocut declines and you get the full set.
+
+### Things to know about
+
+- **One-time cache cold-start on upgrade.** The query cache key changed
+  (it now distinguishes autocut-on from autocut-off results), so every cached
+  search row is invalidated once on upgrade and the cache refills over the next
+  hour (`search.cache.ttl_seconds`, default 3600s). This is a global one-time
+  miss spike, including in `conservative` mode where autocut is a no-op — the
+  cache key is shared. Same pattern as prior search upgrades.
+- **`conservative` mode gets no precision change** — it has no reranker, so there
+  is no trustworthy cliff to cut on. Autocut is a documented no-op there. Use
+  `balanced` or `tokenmax` to get it.
+- **Default search mode reranks a few more candidates per query.** To make
+  autocut correct, the reranker now scores the full returned set (50 in
+  `tokenmax`, 25 in `balanced`, up from 30) so there is never a returned-but-
+  unscored result that autocut might wrongly drop. The extra rerank cost is
+  rounding error next to the downstream model.
+- **This is one wave of a larger retrieval redesign** ([#1663](https://github.com/garrytan/gbrain/issues/1663)).
+  Still to come: query-shape routing, a structural exact-lookup tier, and
+  automatic escalation to `think` on low-confidence queries. The issue stays open.
+
+### Itemized changes
+
+- **New `src/core/search/autocut.ts`** — pure score-discontinuity algorithm.
+  Normalizes the reranker scores, finds the largest gap, and cuts there when the
+  gap clears a sensitivity threshold (`autocut_jump`, default 0.20). Robust to
+  unsorted provider output (cuts on a sorted copy, keeps items in input order),
+  guards against unusable score scales (top ≤ 0, non-finite), and never returns
+  empty. No-ops when fewer than 2 results carry a reranker score (covers the
+  reranker's fail-open path).
+- **`query` tool gains an `autocut` boolean** — the ceiling override. Description
+  teaches the agent it is the smart default and `false` is the breadth escape
+  hatch, and distinguishes it from `adaptive_return` (cuts by score cliff vs.
+  caps by question intent). The keyword-only `search` tool is unchanged (no
+  reranker there).
+- **`gbrain search modes`** lists `autocut` + `autocut_jump` with per-knob source
+  attribution; **`--explain`** shows each result's rerank score and an autocut
+  summary line; the metric glossary documents `autocut.signal` + `autocut.gap_ratio`.
+- **Reranker now scores the full returned set** in `balanced` (25) and `tokenmax`
+  (50) so autocut never drops an unscored tail.
+- **Cache-meta fix (found during review):** the cached search path was silently
+  dropping the `adaptive_return` decision (and would have dropped `autocut`,
+  `mode`, `embedding_column`) from the metadata it reports. All are now carried
+  through, so `--explain` and eval-capture report the real decision on cache
+  writeback and hits.
+- `rerank_score` is now a first-class field on search results.
+- Cache-key version bumped (7 → 8) to fold in the autocut knobs (stacked on master's title_boost v=7).
+- **In-repo eval gate** (`bun run eval:autocut`, also runs in CI) measures the
+  precision-lift-without-recall-regression claim default-ON rests on, over
+  labeled qrels fixtures with realistic cross-encoder score distributions — no
+  API key, no external repo. Current result: mean precision 0.33 → 0.94, mean
+  recall 1.00 → 0.95, and **zero recall regression on enumeration queries**
+  (autocut declines on flat curves by construction). Floors are env-overridable.
+  A live-corpus PrecisionMemBench run remains an optional empirical confirmation,
+  not a blocker.
+## [0.42.2.0] - 2026-05-30
+
+**One command now wires Claude Code, Codex, or Perplexity Computer to a remote
+gbrain when all you have is a bearer token. `gbrain connect <url> --token <tok>`
+prints a paste-ready block, or `--install` runs it for you and checks the token
+actually works before you walk away.**
+
+If your brain runs somewhere as an HTTP server (`gbrain serve --http`) and you
+have a token, connecting an agent used to mean remembering the exact
+`claude mcp add ... -H "Authorization: Bearer ..."` incantation, getting the
+`/mcp` path right, and hoping the token was valid. Now you run one command.
+It normalizes the URL (adds `/mcp`, rejects a bare host so you don't silently
+point at the wrong thing), and the block it prints tells the agent to call
+`get_brain_identity` and `list_skills` so it immediately knows whose brain this
+is and everything it can do. No local brain, no proxy, no OAuth dance: the agent
+talks straight to your remote over HTTP.
+
+Pick your agent with `--agent`:
+
+- **claude-code** (default): `claude mcp add ... -H "Authorization: Bearer ..."`.
+  `--install` runs it.
+- **codex**: `codex mcp add <name> --url <url> --bearer-token-env-var
+  GBRAIN_REMOTE_TOKEN`. Codex reads the token from the env var at runtime, so the
+  secret never lands in Codex's config file. `--install` runs it.
+- **perplexity**: prints the exact connector fields to paste into Perplexity's
+  Settings → Connectors (it's a GUI connector, so no `--install`). Defaults to a
+  bearer token, but since Perplexity is a cloud service the recommended path is
+  **OAuth**: `--agent perplexity --oauth --register` mints a least-privilege
+  client and prints the Issuer URL + Client ID + Client Secret. OAuth means the
+  connector mints short-lived, scoped access tokens instead of holding a
+  long-lived full-access secret.
+- **generic**: prints the URL + `Authorization` header (or OAuth fields with
+  `--oauth`) for any other MCP client.
+
+How to use it (run anywhere gbrain is installed):
+
+```
+gbrain auth create "claude-code"                          # mint a token on the host
+gbrain connect https://your-host/mcp --token gbrain_xxx   # print the paste block
+gbrain connect https://your-host --token gbrain_xxx --install   # or wire it + verify the token
+```
+
+`--install` runs `claude mcp add` for you, then makes one real call to your brain
+so a wrong or expired token fails right then instead of silently 401-ing on the
+agent's first question. `--json` gives you a machine-readable version with the
+token redacted (pass `--show-token` if you really want it inlined).
+
+A note on the token: a `gbrain auth create` token is long-lived and full-access.
+The printed block single-quotes it so pasting it can't accidentally run shell
+code, the command refuses to send it to a link-local or cloud-metadata address,
+and error output never echoes it. Keep it private, and prefer a scoped token if
+your host supports one.
+
+**Two ways to give a coding agent a memory, written down end to end.** Connecting
+to a remote brain is one funnel. The other is starting from nothing: `gbrain init
+--pglite` gives you a local brain in 2 seconds, and `claude mcp add gbrain --
+gbrain serve` (or `codex mcp add gbrain -- gbrain serve`) wires it straight into
+your agent with no server, no token, no tunnel. The new tutorial,
+[Give your coding agent a memory](docs/tutorials/connect-coding-agent.md), walks
+both funnels with copy-paste commands, then hands you the brain-first protocol to
+paste into `CLAUDE.md` / `AGENTS.md` and the four habits that make it worth it
+(brain-first lookup, ambient capture, briefing from your brain, whoknows). The
+README now has a "Quick start: Claude Code or Codex" fork that separates the
+lightweight retrieval path from the full autonomous install, and `INSTALL.md`
+shows the one-command wire-up right where the standalone CLI section ends.
+
+**`gbrain serve --http` now tells you when your skills are invisible.** If
+`mcp.publish_skills` is OFF, a connected agent can search and write but can't call
+`list_skills` / `get_skill` — so your skill catalog (the thing that makes an
+OpenClaw setup special) silently doesn't show up. The startup banner now prints a
+`Skills: published / not published` line, and when it's off you get a one-line
+nudge with the exact fix: `gbrain config set mcp.publish_skills true`. New brains
+from `gbrain init` default it ON; brains upgraded from before stay OFF until you
+opt in, which is the common gotcha.
+
+**Fixed: `connect` told agents to call a tool that doesn't exist over MCP.** The
+self-orientation block named `capture` as a core tool, but `capture` is a CLI-only
+convenience command, not an MCP tool — an agent that followed the instruction got
+"unknown tool." The block now names `put_page`, the real MCP write tool. A new
+end-to-end test spawns `gbrain serve` over stdio and drives the official MCP SDK
+client through `initialize` → `tools/list` → `tools/call`, so the advertised tool
+set is now pinned against what the server actually exposes (the local stdio funnel
+had zero coverage before this).
+
+## To take advantage of v0.42.2.0
+
+`gbrain upgrade` is all you need. `gbrain connect` is available immediately after
+upgrade. To wire up a coding agent:
+
+1. On the brain host (or anywhere gbrain is installed), mint a token:
+   ```bash
+   gbrain auth create "claude-code"
+   ```
+2. Generate the onboarding block (or wire it directly):
+   ```bash
+   gbrain connect https://your-host/mcp --token <the-token>
+   # or, on the machine you want to connect:
+   gbrain connect https://your-host/mcp --token <the-token> --install
+   ```
+3. Paste the printed block into Claude Code. It connects the MCP server and
+   tells the agent to call `get_brain_identity` + `list_skills`.
+4. Verify: in Claude Code, ask it to `search` for something in your brain.
+
+If anything looks wrong, `gbrain connect --help` lists every flag, and
+`docs/mcp/CLAUDE_CODE.md` covers the local-stdio path too.
+
+### Itemized changes
+
+#### Added
+- **`gbrain connect <mcp-url>`** generates (or, with `--install`, runs) the MCP
+  wiring for a remote gbrain from a bearer token. Flags: `--token`, `--name`,
+  `--agent claude-code|codex|perplexity|generic`, `--install`, `--yes`, `--force`,
+  `--json`, `--show-token`, `--timeout-ms`. Reads the token from `--token` or
+  `$GBRAIN_REMOTE_TOKEN`; in print mode the token is optional (it emits a
+  `<paste-your-token>` placeholder).
+- **Per-agent setup**: `--agent codex` emits `codex mcp add ... --bearer-token-env-var
+  GBRAIN_REMOTE_TOKEN` (token read from the env var at runtime, never written to
+  Codex config; `--install` runs it). `--agent perplexity` prints the URL + token
+  for Perplexity's Settings → Connectors GUI (no `--install`). `--agent generic`
+  prints the URL + `Authorization` header for any other MCP client. Docs:
+  `docs/mcp/CLAUDE_CODE.md` (leads with `gbrain connect`, keeps the local stdio
+  path), new `docs/mcp/CODEX.md`, updated `docs/mcp/PERPLEXITY.md`, and the README.
+- **`--install` smoke-tests the token.** After registering the server it makes a
+  real `get_brain_identity` call over the bearer connection and warns loudly on
+  a 401, unreachable host, or timeout, so a bad token fails at setup instead of
+  on the agent's first request. Supported for claude-code and codex (Perplexity
+  is GUI-only).
+- **OAuth client-credentials path (`--oauth`, perplexity + generic).** The
+  correct path when the credential lives on a third-party cloud: instead of a
+  long-lived full-access bearer token, the connector gets an Issuer URL + Client
+  ID + Client Secret and mints its own short-lived, scoped access tokens.
+  `--oauth --register` mints a least-privilege client on the host in one command;
+  `--oauth --client-id X --client-secret Y` uses an existing one (runs anywhere).
+  The full chain (register → OAuth discovery → `/token` → tool call) is proven by
+  a new end-to-end test against a live server.
+
+#### Fixed
+- **`gbrain auth create <name>` no longer drops the name.** On the bare form
+  (no `--takes-holders` flag) the name was silently discarded and the command
+  printed usage instead of minting a token. It now creates the token as
+  documented.
+
+#### Security
+- The connection command single-quotes the rendered `claude mcp add` so a token
+  containing shell metacharacters can't run code when the block is pasted;
+  validates the token to keep it out of HTTP headers; refuses to send the token
+  to link-local / cloud-metadata addresses (including IPv4-mapped IPv6 forms);
+  redacts the token from all error output and from `--json` unless `--show-token`;
+  and requires `--yes` for `--install` in a non-interactive shell.
+
 ## [0.42.1.0] - 2026-05-29
 
 **Skill self-improvement no longer starts from a blank file.**
@@ -271,6 +1038,7 @@ Every originally-deferred follow-up is included:
 - **Issue #1481 closed** — supersedes the original proposal with the
   decisions captured in plan
   `~/.claude/plans/system-instruction-you-are-working-drifting-falcon.md`.
+
 ## [0.41.38.0] - 2026-05-30
 
 **Two fixes for Supabase brains with a code source. `gbrain code-callers` and

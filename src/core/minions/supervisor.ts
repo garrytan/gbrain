@@ -27,6 +27,7 @@
  */
 
 import { detectTini } from './spawn-helpers.ts';
+import { resolveDefaultMaxRssMb } from './rss-default.ts';
 import {
   ChildWorkerSupervisor,
   type ChildSupervisorEvent,
@@ -79,7 +80,9 @@ export interface SupervisorOpts {
   /** JSON mode: emit JSONL events on stderr, reserve stdout for data payloads. Default: false. */
   json: boolean;
   /** RSS threshold (MB) passed to the spawned worker as `--max-rss N`.
-   *  Default: 2048. Set to 0 to spawn the worker without a watchdog. */
+   *  When omitted, the constructor auto-sizes cgroup-aware via
+   *  resolveDefaultMaxRssMb() (issue #1678) instead of a flat default.
+   *  Set to 0 to spawn the worker without a watchdog. */
   maxRssMb: number;
   /** Optional event sink (Lane C audit writer). Called for every lifecycle event. */
   onEvent?: (event: SupervisorEmission) => void;
@@ -158,6 +161,15 @@ export class MinionSupervisor {
   constructor(engine: BrainEngine, opts: Partial<SupervisorOpts> & { cliPath: string }) {
     this.engine = engine;
     this.opts = { ...DEFAULTS, ...opts };
+
+    // issue #1678 (Codex #4): when the caller didn't pin an explicit cap,
+    // auto-size cgroup-aware instead of the flat DEFAULTS.maxRssMb footgun.
+    // The CLI (jobs.ts supervisor) already resolves this and passes a concrete
+    // number; this covers direct-API / programmatic construction so the
+    // standalone supervisor never silently runs on the old 2048 default.
+    if (opts.maxRssMb === undefined) {
+      this.opts.maxRssMb = resolveDefaultMaxRssMb();
+    }
 
     // Detect tini for zombie reaping. Resolved once at construction so we
     // don't shell out on every respawn. Belt-and-suspenders with the
@@ -502,6 +514,11 @@ export class MinionSupervisor {
           count: event.count,
           window_ms: event.windowMs,
           queue: this.opts.queue,
+          // issue #1678 (A3): the supervisor knows the --max-rss it spawned
+          // with; name it in the OOM-loop alert so the operator's fix
+          // ("raise --max-rss") is one glance away. Peak RSS stays in the
+          // worker's own stderr line (the supervisor never sees it).
+          ...(event.reason === 'rss_watchdog_loop' ? { max_rss_mb: this.opts.maxRssMb } : {}),
         });
         return;
     }

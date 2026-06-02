@@ -344,10 +344,12 @@ describe('BATCH_AUDIT_SITES typed enum + isBatchAuditSite guard (D10c codex)', (
       'extract.links_fs', 'extract.timeline_fs',
       'extract.links_db', 'extract.timeline_db',
       'extract.by_mention',
+      'extract.stale',
       'mcp.put_page.autolink',
       'sync.import_file',
       'reindex.markdown', 'reindex.multimodal',
       'backfill.outer',
+      'minion-lock',
     ]);
     expect(new Set<string>([...BATCH_AUDIT_SITES])).toEqual(expected);
   });

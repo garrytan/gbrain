@@ -191,12 +191,16 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
 
   if (spawnManagedWorker) {
     const cliPath = resolveGbrainCliPath();
-    // Inject the RSS watchdog default (2048 MB) for the autopilot-supervised
-    // worker. Bare `gbrain jobs work` has no default; the supervisor and
-    // autopilot are the production paths that opt in.
+    // Cgroup-aware auto-sized RSS watchdog cap (issue #1678). The old flat
+    // 2048MB killed legit embed work (~10GB) on every cycle → silent
+    // ~400×/24h respawn loop. resolveDefaultMaxRssMb clamps 0.5×min(cgroup,
+    // RAM) to [4096,16384]. Bare `gbrain jobs work` resolves the same default;
+    // we pass it explicitly so the spawn log + child agree.
+    const { resolveDefaultMaxRssMb } = await import('../core/minions/rss-default.ts');
+    const autopilotMaxRssMb = resolveDefaultMaxRssMb();
     childSupervisor = new ChildWorkerSupervisor({
       cliPath,
-      args: ['jobs', 'work', '--max-rss', '2048'],
+      args: ['jobs', 'work', '--max-rss', String(autopilotMaxRssMb)],
       // process.env clone; autopilot doesn't gate shell jobs the way the
       // standalone supervisor does (autopilot is the operator-trust path).
       env: { ...process.env },
@@ -212,7 +216,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         // existing logs see the same lines.
         if (event.kind === 'worker_spawned') {
           console.log(
-            `[autopilot] Minions worker spawned (pid: ${event.pid}, watchdog: 2048MB${event.tini ? ', tini: active' : ''})`,
+            `[autopilot] Minions worker spawned (pid: ${event.pid}, watchdog: ${autopilotMaxRssMb}MB${event.tini ? ', tini: active' : ''})`,
           );
         } else if (event.kind === 'worker_spawn_failed') {
           console.error(

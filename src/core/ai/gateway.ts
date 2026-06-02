@@ -41,6 +41,7 @@ import type {
   EmbedMultimodalOpts,
   MultimodalBatchResult,
   MultimodalInput,
+  ParsedModelId,
   Recipe,
   TouchpointKind,
 } from './types.ts';
@@ -48,6 +49,7 @@ import { resolveRecipe, assertTouchpoint, parseModelId } from './model-resolver.
 import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
+import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 
@@ -2211,6 +2213,75 @@ export interface ChatOpts {
    * ignored on providers without `supports_prompt_cache`.
    */
   cacheSystem?: boolean;
+}
+
+/**
+ * v0.41.x (#1698) — id-validity core. Shared by `runThink`'s explicit-model gate
+ * (via `probeChatModel`) AND `makeJudgeClient` in `cycle/synthesize.ts`.
+ *
+ * Validates that a `provider:model` string resolves to a real recipe AND that the
+ * recipe supports the chat touchpoint (catches typo'd native models like
+ * `anthropic:claude-bogus-9`). Both checks read the recipe REGISTRY, not gateway
+ * `_config`, so this works before `configureGateway()` has run — which is why
+ * `makeJudgeClient` reuses this layer instead of the full `probeChatModel` (whose
+ * `isAvailable` layer would reject non-Anthropic-no-key + unconfigured-gateway).
+ *
+ * Order matters: `resolveRecipe` first (unknown_provider), then `assertTouchpoint`
+ * (unknown_model). `isAvailable` alone collapses both into a bare `false`.
+ */
+export type ModelIdValidity =
+  | { ok: true; parsed: ParsedModelId; recipe: Recipe }
+  | { ok: false; reason: 'unknown_provider' | 'unknown_model'; detail: string; fix?: string };
+
+export function validateModelId(modelStr: string): ModelIdValidity {
+  let parsed: ParsedModelId;
+  let recipe: Recipe;
+  try {
+    ({ parsed, recipe } = resolveRecipe(modelStr));
+  } catch (e) {
+    if (e instanceof AIConfigError) return { ok: false, reason: 'unknown_provider', detail: e.message, fix: e.fix };
+    throw e;
+  }
+  try {
+    assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
+  } catch (e) {
+    if (e instanceof AIConfigError) return { ok: false, reason: 'unknown_model', detail: e.message, fix: e.fix };
+    throw e;
+  }
+  return { ok: true, parsed, recipe };
+}
+
+/**
+ * v0.41.x (#1698) — full chat-model probe = id-validity + key availability.
+ * Used by `runThink`'s explicit-`--model` gate (where a model the user typed but
+ * can't run SHOULD hard-error, not silently degrade), AND by `tryBuildGatewayClient`
+ * + `makeJudgeClient`. One shared predicate, no drift.
+ *
+ * The key layer uses `hasAnthropicKey` (env OR gbrain config file), which is
+ * gateway-config-INDEPENDENT — it works before `configureGateway()` and in unit
+ * tests, and preserves the historical key-detection source (codex #6; the prior
+ * draft used `isAvailable`, which reads gateway `_config.env` and would have
+ * regressed the builder + broken every test that skips `configureGateway`).
+ * Non-Anthropic providers are checked LAZILY at `gateway.chat()` time (build the
+ * client, let the call surface AIConfigError) — matches the deliberate
+ * per-transcript-degrade contract (test A9: a deepseek judge with no key returns
+ * a client, not null).
+ */
+export type ChatModelProbe =
+  | { ok: true }
+  | { ok: false; reason: 'unknown_provider' | 'unknown_model' | 'unavailable'; detail: string; fix?: string };
+
+export function probeChatModel(modelStr: string): ChatModelProbe {
+  const v = validateModelId(modelStr);
+  if (!v.ok) return { ok: false, reason: v.reason, detail: v.detail, fix: v.fix };
+  if (v.parsed.providerId === 'anthropic' && !hasAnthropicKey()) {
+    return {
+      ok: false,
+      reason: 'unavailable',
+      detail: 'no Anthropic API key configured (set ANTHROPIC_API_KEY or run: gbrain config set anthropic_api_key ...)',
+    };
+  }
+  return { ok: true };
 }
 
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {

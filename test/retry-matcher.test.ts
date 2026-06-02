@@ -75,6 +75,24 @@ describe('isRetryableConnError', () => {
   test('does not match arbitrary errors', () => {
     expect(isRetryableConnError(new Error('something else'))).toBe(false);
   });
+
+  // issue #1678: postgres.js's transaction-mode pooler reaps idle sockets and
+  // throws errors carrying `code: 'CONNECTION_ENDED'` (a library code, not an
+  // 08xxx SQLSTATE). Must be retryable via BOTH the code and the message form.
+  test('matches CONNECTION_ENDED via code', () => {
+    expect(isRetryableConnError(pgError('CONNECTION_ENDED', 'write CONNECTION_ENDED'))).toBe(true);
+  });
+
+  test('matches CONNECTION_ENDED via message even without the code', () => {
+    expect(isRetryableConnError(new Error('write CONNECTION_ENDED localhost:6543'))).toBe(true);
+  });
+
+  // The getter self-heal throws a GBrainError whose `problem` field is
+  // 'No database connection' — the existing typed-shape match must keep firing.
+  test('matches the instance-pool-reaped GBrainError shape (problem field)', () => {
+    const err = { problem: 'No database connection', message: 'instance pool torn down' };
+    expect(isRetryableConnError(err)).toBe(true);
+  });
 });
 
 describe('isRetryableError', () => {

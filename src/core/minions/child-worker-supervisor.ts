@@ -40,6 +40,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { buildSpawnInvocation, detectTini } from './spawn-helpers.ts';
 import { classifyWorkerExit } from './exit-classification.ts';
 import { calculateBackoffMs } from './supervisor.ts';
+import { WORKER_EXIT_RSS_WATCHDOG } from './worker-exit-codes.ts';
 
 export type ChildSupervisorEvent =
   | { kind: 'worker_spawned'; pid: number; tini: boolean }
@@ -56,11 +57,11 @@ export type ChildSupervisorEvent =
       kind: 'backoff';
       ms: number;
       crashCount: number;
-      reason: 'clean_exit' | 'crash' | 'budget_exceeded';
+      reason: 'clean_exit' | 'crash' | 'budget_exceeded' | 'rss_watchdog';
     }
   | {
       kind: 'health_warn';
-      reason: 'clean_restart_budget_exceeded';
+      reason: 'clean_restart_budget_exceeded' | 'rss_watchdog_loop';
       count: number;
       windowMs: number;
     };
@@ -92,6 +93,26 @@ export interface ChildWorkerSupervisorOpts {
   cleanRestartBudgetBackoffMs?: number;
 
   /**
+   * v0.42.5.0 (issue #1678) — RSS-watchdog loop breaker, cause-keyed and
+   * INDEPENDENT of crashCount/max_crashes. A watchdog drain
+   * (WORKER_EXIT_RSS_WATCHDOG) means the worker hit its memory cap, not that
+   * the code is defective — so it does NOT count toward max_crashes (that
+   * would stop ALL job processing, worse than slow-looping). Instead we
+   * always apply `watchdogBackoffMs` (so an instant-OOM-on-startup can't
+   * hot-loop) and, when more than `watchdogLoopBudget` watchdog exits land
+   * inside `watchdogLoopWindowMs`, emit a loud `rss_watchdog_loop` health_warn
+   * so the operator sees "raise --max-rss" instead of chasing a phantom
+   * connection/lock failure. NOTE: the stable-run reset that defeats
+   * max_crashes for >5-min runs is exactly why a SEPARATE window is required
+   * here — routing watchdog exits through the crash path would never trip.
+   */
+  watchdogLoopBudget?: number;
+  /** Sliding window for the watchdog-loop breaker. Default 10 minutes. */
+  watchdogLoopWindowMs?: number;
+  /** Backoff applied after every watchdog drain. Default 30 seconds. */
+  watchdogBackoffMs?: number;
+
+  /**
    * Test-only override: minimum backoff in ms between child respawns.
    * Tests pass `1` to make crash-loops finish in < 1s. Not exposed via CLI.
    * @internal
@@ -114,6 +135,9 @@ const DEFAULTS = {
   cleanRestartBudget: 10,
   cleanRestartWindowMs: 60_000,
   cleanRestartBudgetBackoffMs: 1_000,
+  watchdogLoopBudget: 3,
+  watchdogLoopWindowMs: 10 * 60 * 1000,
+  watchdogBackoffMs: 30_000,
 } as const;
 
 export class ChildWorkerSupervisor {
@@ -122,6 +146,9 @@ export class ChildWorkerSupervisor {
   private _crashCount = 0;
   private _lastExitCode: number | null = null;
   private _cleanRestartTimestamps: number[] = [];
+  /** Sliding window of RSS-watchdog exit timestamps (issue #1678). Separate
+   *  from crashCount so the >5-min stable-run reset can't defeat the breaker. */
+  private _watchdogExitTimestamps: number[] = [];
   private _child: ChildProcess | null = null;
   private _inBackoff = false;
   private _lastStartTime = 0;
@@ -291,7 +318,20 @@ export class ChildWorkerSupervisor {
         // through the shared `classifyWorkerExit` helper so doctor.ts and
         // jobs.ts (audit-log consumers) read the same rule.
         this._lastExitCode = code;
-        if (classifyWorkerExit({ code }) === 'clean_exit') {
+        if (code === WORKER_EXIT_RSS_WATCHDOG) {
+          // issue #1678: RSS-watchdog drain. NOT a code defect — leave
+          // crashCount untouched so it never trips max_crashes (which would
+          // stop ALL job processing). Tracked in its own window so the
+          // breaker survives the >5-min stable-run reset that defeats the
+          // generic crash path.
+          const nowMs = this.now();
+          this._watchdogExitTimestamps.push(nowMs);
+          const windowMs = this.opts.watchdogLoopWindowMs ?? DEFAULTS.watchdogLoopWindowMs;
+          const cutoff = nowMs - windowMs;
+          this._watchdogExitTimestamps = this._watchdogExitTimestamps.filter(
+            (t) => t > cutoff,
+          );
+        } else if (classifyWorkerExit({ code }) === 'clean_exit') {
           const nowMs = this.now();
           this._cleanRestartTimestamps.push(nowMs);
           const windowMs = this.opts.cleanRestartWindowMs ?? DEFAULTS.cleanRestartWindowMs;
@@ -315,6 +355,8 @@ export class ChildWorkerSupervisor {
           likelyCause = 'oom_or_external_kill';
         } else if (signal === 'SIGTERM') {
           likelyCause = 'graceful_shutdown';
+        } else if (code === WORKER_EXIT_RSS_WATCHDOG) {
+          likelyCause = 'rss_watchdog';
         } else if (code === 1) {
           likelyCause = 'runtime_error';
         } else if (code === 0) {
@@ -378,6 +420,42 @@ export class ChildWorkerSupervisor {
         crashCount: this._crashCount,
         reason: 'clean_exit',
       });
+      return;
+    }
+
+    // issue #1678: RSS-watchdog drain. Always back off (so an instant-OOM on
+    // startup can't hot-loop) and, when more than `watchdogLoopBudget` drains
+    // land inside the window, emit the loud `rss_watchdog_loop` alert. crashCount
+    // is untouched (the worker is fine; the cap is too low), so this branch
+    // never trips max_crashes — the workload keeps running, just paced + loud.
+    if (this._lastExitCode === WORKER_EXIT_RSS_WATCHDOG) {
+      const count = this._watchdogExitTimestamps.length;
+      const budget = this.opts.watchdogLoopBudget ?? DEFAULTS.watchdogLoopBudget;
+      const windowMs = this.opts.watchdogLoopWindowMs ?? DEFAULTS.watchdogLoopWindowMs;
+      if (count > budget) {
+        this.opts.onEvent({
+          kind: 'health_warn',
+          reason: 'rss_watchdog_loop',
+          count,
+          windowMs,
+        });
+      }
+      const watchdogBackoff =
+        this.opts._backoffFloorMs !== undefined
+          ? this.opts._backoffFloorMs
+          : this.opts.watchdogBackoffMs ?? DEFAULTS.watchdogBackoffMs;
+      this.opts.onEvent({
+        kind: 'backoff',
+        ms: Math.round(watchdogBackoff),
+        crashCount: this._crashCount,
+        reason: 'rss_watchdog',
+      });
+      this._inBackoff = true;
+      try {
+        await this.sleep(watchdogBackoff);
+      } finally {
+        this._inBackoff = false;
+      }
       return;
     }
 
