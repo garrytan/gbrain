@@ -213,6 +213,28 @@ describe('performSync incremental safety', () => {
     });
   });
 
+  test('incremental sync imports committed Hangul-named markdown files', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'concepts'), { recursive: true });
+    writeFileSync(join(repoPath, 'concepts', 'seed.md'), '# Seed\n');
+    await commitAll(repoPath, 'seed');
+
+    await withSqliteEngine(async (engine) => {
+      await performSync(engine, { repoPath, noPull: true });
+
+      writeFileSync(join(repoPath, 'concepts', '한글테스트.md'), '# 한글 테스트\n\n본문입니다.\n');
+      const headCommit = commitAll(repoPath, 'add hangul file');
+
+      const result = await performSync(engine, { repoPath, noPull: true });
+
+      expect(result.status).toBe('synced');
+      expect(result.added).toBe(1);
+      expect(result.pagesAffected).toContain('concepts/한글테스트');
+      expect(await engine.getPage('concepts/한글테스트')).not.toBeNull();
+      expect(await engine.getConfig('sync.last_commit')).toBe(headCommit);
+    });
+  });
+
   test('full sync rejects import errors instead of reporting first_sync success', async () => {
     const repoPath = makeRepo();
     mkdirSync(join(repoPath, 'concepts'), { recursive: true });

@@ -24,6 +24,9 @@ export interface RawManifestEntry {
   oldPath?: string;
 }
 
+const CJK_SLUG_CHARS = '\\u3400-\\u4DBF\\u4E00-\\u9FFF\\u3040-\\u309F\\u30A0-\\u30FF\\uAC00-\\uD7AF';
+const SLUGIFY_KEEP_RE = new RegExp(`[^a-z0-9.\\s_\\-${CJK_SLUG_CHARS}]`, 'g');
+
 /**
  * Parse the output of `git diff --name-status -M LAST..HEAD` into structured entries.
  *
@@ -106,8 +109,9 @@ export function slugifySegment(segment: string): string {
   return segment
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
+    .normalize('NFC')                     // Recompose Hangul syllables after NFD
     .toLowerCase()
-    .replace(/[^a-z0-9.\s_-]/g, '')      // Keep alphanumeric, dots, spaces, underscores, hyphens
+    .replace(SLUGIFY_KEEP_RE, '')         // Keep alphanumeric, CJK, dots, spaces, underscores, hyphens
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens

@@ -147,6 +147,11 @@ describe('pathToSlug', () => {
   test('strips special characters', () => {
     expect(pathToSlug('notes/meeting (march 2024).md')).toBe('notes/meeting-march-2024');
   });
+
+  test('preserves CJK path segments', () => {
+    expect(pathToSlug('concepts/한글테스트.md')).toBe('concepts/한글테스트');
+    expect(pathToSlug('inbox/品牌圣经.md')).toBe('inbox/品牌圣经');
+  });
 });
 
 describe('isSyncable edge cases', () => {
