@@ -1747,7 +1747,28 @@ async function handleCliOnly(command: string, args: string[]) {
       }
     }
   } finally {
+    // v0.42.1.0 LOCAL PATCH (see PATCH.md): give the CLI_ONLY dispatch path
+    // the same force-exit-after-main contract the op-dispatch path already has
+    // (cli.ts ~244-256 / 315-316). Without it, a write command like
+    // `gbrain capture` on a MULTI-CHUNK page leaves an async handle open (or
+    // engine.disconnect() itself hangs on PGLite — see the C13 note at ~239),
+    // so the process never exits and pins PGLite's single-writer lock. Every
+    // later gbrain command then dies with "Timed out waiting for PGLite lock"
+    // until the zombie is SIGKILLed. Bound disconnect with an unref'd hard
+    // deadline, then force-exit once it returns. Daemons (serve) are excluded
+    // by shouldForceExitAfterMain(); serve also keeps its no-disconnect rule.
+    const forceExit = shouldForceExitAfterMain();
+    let hardExitTimer: ReturnType<typeof setTimeout> | undefined;
+    if (forceExit) {
+      hardExitTimer = setTimeout(() => {
+        console.warn('[cli] engine.disconnect() did not return within 10000ms — force-exiting');
+        process.exit(0);
+      }, 10_000);
+      hardExitTimer.unref?.();
+    }
     if (command !== 'serve') await engine.disconnect();
+    if (hardExitTimer) clearTimeout(hardExitTimer);
+    if (forceExit) process.exit(0);
   }
 }
 
