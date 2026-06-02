@@ -24,6 +24,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { operations, type OperationContext } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
 
@@ -59,6 +60,13 @@ beforeEach(async () => {
     compiled_truth: 'Beta-source Alice page.',
     frontmatter: { type: 'person' },
   }, { sourceId: 'beta' });
+
+  await engine.putPage('people/beta-only', {
+    type: 'person',
+    title: 'Beta Only',
+    compiled_truth: 'Only visible through beta source scope.',
+    frontmatter: { type: 'person' },
+  }, { sourceId: 'beta' });
 });
 
 describe('#1436 — resolveSlugs honors source scope', () => {
@@ -77,6 +85,31 @@ describe('#1436 — resolveSlugs honors source scope', () => {
 
     const alphaOnly = await engine.resolveSlugs('people/alice', { sourceIds: ['alpha'] });
     expect(alphaOnly).toEqual(['people/alice']);
+  });
+
+  test('exact get_page honors AuthInfo.allowedSources over scalar ctx.sourceId', async () => {
+    const getPage = operations.find(o => o.name === 'get_page');
+    if (!getPage) throw new Error('get_page operation missing');
+    const ctx = {
+      engine,
+      config: { engine: 'pglite' },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+      remote: true,
+      sourceId: 'alpha',
+      auth: {
+        token: 'test-token',
+        clientId: 'test-client',
+        scopes: ['read'],
+        sourceId: 'alpha',
+        allowedSources: ['alpha', 'beta'],
+      },
+    } as unknown as OperationContext;
+
+    const page = await getPage.handler(ctx, { slug: 'people/beta-only' }) as { title: string; source_id: string };
+
+    expect(page.title).toBe('Beta Only');
+    expect(page.source_id).toBe('beta');
   });
 
   test('unscoped call (no opts) preserves pre-fix back-compat for internal callers', async () => {

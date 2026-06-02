@@ -517,25 +517,17 @@ const get_page: Operation = {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
-    // v0.31.8 (D20): thread ctx.sourceId through read-side ops. Only pass
-    // sourceId when it's set on ctx — when unset (local CLI default chain
-    // resolves to no source), the engine two-branch query falls through to
-    // the cross-source view, preserving pre-v0.31.8 behavior. MCP callers
-    // (stdio + HTTP) populate ctx.sourceId via the transport layer.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    // v0.41.13 #1436: fuzzy resolveSlugs ALSO needs source scope — pre-fix
-    // it was unscoped, so a remote `get_page` with `fuzzy: true` could
-    // return candidates from sources outside ctx.auth.allowedSources /
-    // ctx.sourceId. sourceScopeOpts(ctx) is the canonical precedence
-    // ladder (federated array > scalar > nothing) shared with every other
-    // read-side handler.
-    const fuzzyScope = sourceScopeOpts(ctx);
+    // v0.42.x Plan 3: exact reads must honor the same source-scope ladder as
+    // fuzzy resolution. Federated OAuth clients carry auth.allowedSources,
+    // which sourceScopeOpts converts to sourceIds; array scope wins over the
+    // scalar ctx.sourceId.
+    const sourceOpts = sourceScopeOpts(ctx);
 
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
-      const candidates = await ctx.engine.resolveSlugs(slug, fuzzyScope);
+      const candidates = await ctx.engine.resolveSlugs(slug, sourceOpts);
       if (candidates.length === 1) {
         page = await ctx.engine.getPage(candidates[0], { includeDeleted, ...sourceOpts });
         resolved_slug = candidates[0];
@@ -555,7 +547,7 @@ const get_page: Operation = {
     // inside bumpLastRetrievedAt (D2).
     bumpLastRetrievedAt(ctx.engine, [page.id]);
 
-    const tags = await ctx.engine.getTags(page.slug, sourceOpts);
+    const tags = await ctx.engine.getTags(page.slug, { sourceId: page.source_id });
     // Privacy boundary for the per-token allow-list (v0.28.6 for takes,
     // v0.32.2 for facts).
     //
