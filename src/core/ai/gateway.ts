@@ -1072,6 +1072,37 @@ async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any;
   return { model, recipe, modelId: parsed.modelId };
 }
 
+/**
+ * Wall-clock ceiling for a single embedding HTTP request. Plain `fetch`
+ * (Bun/Node) has NO default request timeout, so a stalled provider socket
+ * makes the `await` never settle. The AI SDK's `maxRetries` only fires on a
+ * SETTLED error response — a half-open socket never settles, so it can't help.
+ * For an `openai-compatible` provider (ZeroEntropy, Voyage, generic) we own
+ * the `fetch`, so we attach a timeout here. Without it, an intermittently
+ * stalled embed request hangs `gbrain capture`/import indefinitely INSIDE
+ * `embedBatch` — long before the `finally`/disconnect runs — and on PGLite
+ * pins the single-writer lock until an external SIGKILL (garrytan/gbrain#1762).
+ * 60s is generous vs. observed 2–7s latencies while still bounding lock-hold.
+ */
+const EMBED_FETCH_TIMEOUT_MS = 60_000;
+
+/**
+ * Wrap a fetch implementation so every embedding request carries a wall-clock
+ * timeout. Composes with (never clobbers) any caller/SDK-supplied AbortSignal
+ * — e.g. the `abortSignal` threaded from a wall-clock budget — so the request
+ * is cancelled by whichever fires first.
+ */
+function withEmbedFetchTimeout(inner?: typeof fetch): typeof fetch {
+  const base = inner ?? fetch;
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const timeout = AbortSignal.timeout(EMBED_FETCH_TIMEOUT_MS);
+    const signal = init?.signal
+      ? AbortSignal.any([init.signal, timeout])
+      : timeout;
+    return base(input, { ...(init ?? {}), signal });
+  }) as unknown as typeof fetch;
+}
+
 function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
   switch (recipe.implementation) {
     case 'native-openai': {
@@ -1113,17 +1144,20 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       // ZeroEntropy needs zeroEntropyCompatFetch (URL path + body input_type
       // + response shape rewrite + OOM caps). Same per-recipe-id branch
       // pattern as voyage so adding a third compat shim is one more case.
-      const fetchWrapper =
+      const innerFetch =
         compat.fetch ??
         (recipe.id === 'voyage'
           ? voyageCompatFetch
           : recipe.id === 'zeroentropyai'
           ? zeroEntropyCompatFetch
           : undefined);
+      // Always wrap so the embed request can never hang forever, regardless of
+      // recipe (a missing per-request timeout was the root cause of #1762).
+      const fetchWrapper = withEmbedFetchTimeout(innerFetch);
       const client = createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
-        ...(fetchWrapper ? { fetch: fetchWrapper } : {}),
+        fetch: fetchWrapper,
         ...auth,
       });
       return client.textEmbeddingModel(modelId);

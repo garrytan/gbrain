@@ -1747,16 +1747,50 @@ async function handleCliOnly(command: string, args: string[]) {
       }
     }
   } finally {
-    // v0.42.1.0 LOCAL PATCH (see PATCH.md): give the CLI_ONLY dispatch path
-    // the same force-exit-after-main contract the op-dispatch path already has
-    // (cli.ts ~244-256 / 315-316). Without it, a write command like
-    // `gbrain capture` on a MULTI-CHUNK page leaves an async handle open (or
-    // engine.disconnect() itself hangs on PGLite — see the C13 note at ~239),
-    // so the process never exits and pins PGLite's single-writer lock. Every
-    // later gbrain command then dies with "Timed out waiting for PGLite lock"
-    // until the zombie is SIGKILLed. Bound disconnect with an unref'd hard
-    // deadline, then force-exit once it returns. Daemons (serve) are excluded
-    // by shouldForceExitAfterMain(); serve also keeps its no-disconnect rule.
+    // v0.42.1.0 LOCAL PATCH (see PATCH.md item #3): the CLI_ONLY dispatch path
+    // (which owns `gbrain capture`) lacked the op-dispatch finally's
+    // drain-before-disconnect contract (cli.ts ~290-317). That was the TRUE
+    // root cause of the multi-chunk capture hang:
+    //
+    //   `put_page` fires a fire-and-forget facts:absorb job into the bounded
+    //   FactsQueue (operations.ts ~875, mode:'queue') AFTER printing the
+    //   receipt. On a multi-chunk page that in-flight Haiku job is still
+    //   running when this finally tears the engine down. `engine.disconnect()`
+    //   nulls `_db` out from under the job; the job's "PGLite not connected"
+    //   error path re-pumps the queue via queueMicrotask, and that microtask
+    //   storm interleaving with PGLite's WASM message pump spins `db.close()`
+    //   in a 100%-CPU userspace busy-loop that NEVER returns. Because the
+    //   busy-loop pins the JS thread, the unref'd hard-deadline setTimeout
+    //   below can never fire (a same-thread timer needs an event-loop turn the
+    //   busy WASM call never yields — verified: a Worker-thread watchdog can't
+    //   preempt it either). disconnect()'s lock-release in its finally is
+    //   therefore never reached, so the PGLite single-writer lock stays pinned
+    //   and every later gbrain command dies "Timed out waiting for PGLite lock"
+    //   until the zombie is SIGKILLed.
+    //
+    // Fix: DRAIN the fire-and-forget work (facts queue + any pending
+    // last-retrieved writes) BEFORE disconnect, so the job finishes cleanly
+    // against a live engine and `db.close()` returns in ~10ms instead of
+    // busy-looping. This mirrors the op-dispatch finally exactly. The
+    // force-exit hard-deadline below is KEPT as defense-in-depth, but it is no
+    // longer the only thing standing between the user and a wedged brain — and
+    // it can't be (it can't preempt a WASM busy-loop). Daemons (serve) keep
+    // their no-disconnect rule and are excluded from force-exit by
+    // shouldForceExitAfterMain().
+    if (command !== 'serve') {
+      try {
+        const { awaitPendingLastRetrievedWrites } = await import('./core/last-retrieved.ts');
+        await awaitPendingLastRetrievedWrites();
+      } catch { /* best-effort; never block disconnect on drain failure */ }
+      try {
+        // 2s timeout: pages that enqueue no facts pay one ~0ms check; capture/
+        // import that DO enqueue pay up to 2s while the in-flight Haiku job
+        // settles against the still-live engine. drainPending does NOT abort
+        // in-flight work (see facts/queue.ts) so the job completes its write.
+        const { getFactsQueue } = await import('./core/facts/queue.ts');
+        await getFactsQueue().drainPending({ timeout: 2000 });
+      } catch { /* best-effort; never block disconnect on drain failure */ }
+    }
     const forceExit = shouldForceExitAfterMain();
     let hardExitTimer: ReturnType<typeof setTimeout> | undefined;
     if (forceExit) {
