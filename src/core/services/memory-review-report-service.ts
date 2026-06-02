@@ -135,6 +135,14 @@ export interface ReportConnectorHealth {
   credential_status: 'current' | 'rotation_due' | 'rotating' | 'revoked';
 }
 
+export interface AutoPromoteReportSummary {
+  auto_promoted: number;
+  escalated: number;
+  deferred: number;
+  excluded: number;
+  generated_at: string;
+}
+
 export interface MemoryReviewReportInput {
   scope_id: string;
   generated_at: string;
@@ -153,6 +161,7 @@ export interface MemoryReviewReportInput {
   runner_jobs?: ReportRunnerJob[];
   jobs?: ReportMaintenanceJob[];
   connector_health?: ReportConnectorHealth[];
+  auto_promote_summary?: AutoPromoteReportSummary;
 }
 
 export interface SourceIngestSummary {
@@ -229,6 +238,7 @@ export interface MemoryReviewReport {
     connector_health: ReportConnectorHealth[];
   };
   actions: MemoryReportAction[];
+  auto_promote_summary?: AutoPromoteReportSummary;
 }
 
 export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryReviewReport {
@@ -308,6 +318,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       sources: unhealthySources,
       policyDenials,
     }),
+    ...(input.auto_promote_summary !== undefined ? { auto_promote_summary: input.auto_promote_summary } : {}),
   };
 }
 
@@ -321,26 +332,32 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
 
   if (isEmptyReport(report)) {
     lines.push('', 'No reportable memory exceptions.');
-    return lines.join('\n');
-  }
+  } else {
+    lines.push('', 'Summary');
+    for (const [key, value] of Object.entries(report.summary)) {
+      if (value > 0) lines.push(`- ${key}: ${value}`);
+    }
 
-  lines.push('', 'Summary');
-  for (const [key, value] of Object.entries(report.summary)) {
-    if (value > 0) lines.push(`- ${key}: ${value}`);
-  }
+    if (report.sections.canonical_memories.length > 0) {
+      lines.push('', 'Canonical Memories');
+      for (const memory of report.sections.canonical_memories) {
+        lines.push(`- ${memory.id}: ${redactSecrets(memory.summary)}`);
+      }
+    }
 
-  if (report.sections.canonical_memories.length > 0) {
-    lines.push('', 'Canonical Memories');
-    for (const memory of report.sections.canonical_memories) {
-      lines.push(`- ${memory.id}: ${redactSecrets(memory.summary)}`);
+    if (report.actions.length > 0) {
+      lines.push('', 'Actions');
+      for (const action of report.actions) {
+        lines.push(`- ${action.kind}: ${action.target_kind}/${action.target_id} via ${action.route}`);
+      }
     }
   }
 
-  if (report.actions.length > 0) {
-    lines.push('', 'Actions');
-    for (const action of report.actions) {
-      lines.push(`- ${action.kind}: ${action.target_kind}/${action.target_id} via ${action.route}`);
-    }
+  if (report.auto_promote_summary) {
+    const s = report.auto_promote_summary;
+    lines.push('', 'Auto-promotion (non-blocking)');
+    lines.push(`- Inbox-promoted: ${s.auto_promoted} | escalated: ${s.escalated} | deferred: ${s.deferred} | excluded: ${s.excluded}`);
+    lines.push('- Review promoted inbox candidates before downstream canonical handoff.');
   }
 
   return lines.join('\n');

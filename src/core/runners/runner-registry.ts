@@ -1,3 +1,6 @@
+import { accessSync, constants } from 'fs';
+import { delimiter, join } from 'path';
+
 export const RESTRICTED_RUNNER_KINDS = [
   'claude_code',
   'codex',
@@ -130,8 +133,8 @@ async function buildCandidate(
 
   const command = RUNNER_COMMANDS[kind];
   const safeCommand = command && /^[a-z0-9_-]+$/i.test(command) ? command : null;
-  const commandExists = safeCommand && probe.commandExists
-    ? await probe.commandExists(safeCommand)
+  const commandExists = safeCommand
+    ? await (probe.commandExists ?? ((command) => commandExistsOnPath(command, env)))(safeCommand)
     : false;
   return baseCandidate(
     kind,
@@ -141,6 +144,26 @@ async function buildCandidate(
     probe,
     env,
   );
+}
+
+export function commandExistsOnPath(command: string, env: Record<string, string | undefined> = process.env): boolean {
+  if (!/^[a-z0-9_-]+$/i.test(command)) return false;
+  const pathValue = env.PATH ?? '';
+  if (!pathValue) return false;
+  const extensions = process.platform === 'win32'
+    ? (env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
+    : [''];
+  for (const dir of pathValue.split(delimiter).filter(Boolean)) {
+    for (const ext of extensions) {
+      try {
+        accessSync(join(dir, `${command}${ext}`), constants.X_OK);
+        return true;
+      } catch {
+        // Keep probing PATH entries.
+      }
+    }
+  }
+  return false;
 }
 
 function baseCandidate(
