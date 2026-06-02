@@ -92,6 +92,11 @@ export interface ExtractedLink {
   to_slug: string;
   link_type: string;
   context: string;
+  // Issue #972: provenance for FS-source edges. Set to 'wikilink-resolved'
+  // on basename-matched bare wikilinks so the FS path tags them the same way
+  // the DB / put_page paths do. Undefined for ordinary markdown edges (the
+  // engine defaults those to 'markdown').
+  link_source?: string;
 }
 
 export interface ExtractedTimelineEntry {
@@ -352,6 +357,9 @@ export async function extractLinksFromFile(
         context: isBasename
           ? `wikilink (basename match): [${name}]`
           : `markdown link: [${name}]`,
+        // Issue #972: tag basename edges so the FS path matches DB/put_page
+        // provenance and migration v112's widened CHECK is exercised here too.
+        link_source: isBasename ? 'wikilink-resolved' : undefined,
       });
     }
   }
@@ -1108,7 +1116,7 @@ export async function extractLinksForSlugs(
     try {
       const content = readFileSync(filePath, 'utf-8');
       for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename })) {
-        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, undefined, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
+        try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, link.link_source, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
       }
     } catch { /* skip */ }
   }

@@ -90,6 +90,9 @@ describe('issue #972 — FS-source (gbrain extract links default)', () => {
     const strk = outLinks.find(l => l.to_slug === 'projects/struktura');
     expect(strk).toBeDefined();
     expect(strk!.link_type).toBe('wikilink_basename');
+    // Issue #972 (T1): FS-source basename edges carry the same provenance
+    // tag as DB / put_page, not the default 'markdown'.
+    expect(strk!.link_source).toBe('wikilink-resolved');
   });
 
   test('back-compat: flag OFF → ZERO basename edges from same repro', async () => {
