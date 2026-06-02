@@ -159,6 +159,17 @@ export interface LockRenewalDeps {
    * harmless — at worst we have a dangling reject that no one awaits).
    */
   setTimeout: (cb: () => void, ms: number) => unknown;
+  /**
+   * issue #1678 (Codex #2): OPTIONAL pool rebuild. When a renewLock throw
+   * looks like a reaped / nulled connection, the tick calls this ONCE
+   * (bounded by callTimeoutMs) before returning `ok`, so the NEXT tick's
+   * renewLock hits a live pool. This is deliberately NOT a `withRetry` around
+   * renewLock — a background retry would outlive this tick's own timeout race
+   * and could refresh a lock after the worker already gave it up (two holders).
+   * Absent on engines without a pool (PGLite) and in the legacy tests; the
+   * no-reconnect path behaves exactly as before.
+   */
+  reconnect?: () => Promise<void>;
 }
 
 /**
@@ -235,6 +246,30 @@ export async function runLockRenewalTick(
       } catch { /* audit best-effort */ }
       return { kind: 'should_abort', reason: 'lock-renewal-failed' };
     }
+
+    // issue #1678 (Codex #2): not yet at the deadline, so we'll retry on the
+    // next tick. If the engine can rebuild its pool, do it ONCE now (bounded
+    // by callTimeoutMs) so the next renewLock sees a live connection instead
+    // of throwing the same reaped-socket error until the deadline. Best-effort:
+    // a reconnect throw/timeout is swallowed (next tick retries) and must NEVER
+    // escape this catch — that would re-introduce the unhandledRejection class
+    // this module was built to close.
+    if (deps.reconnect) {
+      const reconnect = deps.reconnect;
+      try {
+        await Promise.race([
+          reconnect(),
+          new Promise<never>((_, reject) => {
+            deps.setTimeout(
+              () => reject(new Error(`reconnect timed out after ${state.knobs.callTimeoutMs}ms`)),
+              state.knobs.callTimeoutMs,
+            );
+          }),
+        ]);
+      } catch { /* reconnect best-effort; next tick retries against a fresh attempt */ }
+      if (state.cancelled()) return { kind: 'cancelled' };
+    }
+
     return { kind: 'ok' }; // counter incremented; not yet at deadline
   }
 

@@ -141,6 +141,11 @@ export interface CrashSummary {
   by_cause: {
     runtime_error: number;
     oom_or_external_kill: number;
+    /** v0.42.5.0: worker drained itself because RSS crossed the watchdog cap
+     *  (issue #1678). A real problem (the cap is too low for the workload, or a
+     *  leak) but distinct from an OOM-killer SIGKILL — surfaced as its own
+     *  bucket so operators see "raise --max-rss" signal, not generic crashes. */
+    rss_watchdog: number;
     unknown: number;
     legacy: number;
   };
@@ -185,7 +190,7 @@ export function isCrashExit(event: SupervisorEmission): boolean {
 export function summarizeCrashes(events: SupervisorEmission[]): CrashSummary {
   const summary: CrashSummary = {
     total: 0,
-    by_cause: { runtime_error: 0, oom_or_external_kill: 0, unknown: 0, legacy: 0 },
+    by_cause: { runtime_error: 0, oom_or_external_kill: 0, rss_watchdog: 0, unknown: 0, legacy: 0 },
     clean_exits: 0,
   };
   for (const e of events) {
@@ -198,6 +203,7 @@ export function summarizeCrashes(events: SupervisorEmission[]): CrashSummary {
     const cause = e.likely_cause as string | undefined;
     if (cause === 'runtime_error') summary.by_cause.runtime_error++;
     else if (cause === 'oom_or_external_kill') summary.by_cause.oom_or_external_kill++;
+    else if (cause === 'rss_watchdog') summary.by_cause.rss_watchdog++;
     else if (cause === 'unknown') summary.by_cause.unknown++;
     else summary.by_cause.legacy++;  // pre-v0.34 fallback OR future unrecognized cause
   }

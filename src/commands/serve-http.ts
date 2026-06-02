@@ -374,6 +374,27 @@ export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentC
   }));
 }
 
+/**
+ * Skill-publishing status for the startup banner + operator nudge. When OFF,
+ * connected agents (Codex / Claude Code / Perplexity / Cowork) cannot call
+ * `list_skills` / `get_skill`, so the host's skill catalog is INVISIBLE to them
+ * — the core tools (search / query / get_page / put_page / capture / think /
+ * find_experts) still work. Pure so the banner value + nudge copy are
+ * unit-tested without standing up a server. See `readMcpPublishSkills`
+ * (skill-catalog.ts) for the config resolution this status reflects.
+ */
+export function skillPublishStatus(publishSkills: boolean): { bannerValue: string; nudge: string | null } {
+  if (publishSkills) return { bannerValue: 'published', nudge: null };
+  return {
+    bannerValue: 'not published',
+    nudge:
+      "[serve-http] NOTE: skill publishing is OFF — connected agents can't call " +
+      'list_skills / get_skill, so this brain’s skill catalog is invisible to them ' +
+      '(core tools like search / query / think still work). Enable it with: ' +
+      'gbrain config set mcp.publish_skills true',
+  };
+}
+
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
@@ -397,6 +418,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       '[serve-http] WARNING: --public-url is set but --bind is not. Default bind changed to 127.0.0.1 in v0.34.1; remote clients reaching the public URL will be refused. Pass --bind 0.0.0.0 to accept all interfaces.',
     );
   }
+
+  // Skill-publishing status for the banner + nudge. Mirrors readMcpPublishSkills
+  // (skill-catalog.ts): the DB plane (`gbrain config set`) wins over the file
+  // plane. When OFF, a connected coding agent can't see the host's skill
+  // catalog — surface that to the operator at startup rather than letting them
+  // discover it via an empty list_skills on the agent side.
+  let publishSkills = false;
+  try {
+    const dbVal = await engine.getConfig('mcp.publish_skills');
+    publishSkills = dbVal != null ? dbVal === 'true' : config?.mcp?.publish_skills === true;
+  } catch {
+    publishSkills = config?.mcp?.publish_skills === true;
+  }
+  const skillStatus = skillPublishStatus(publishSkills);
+  if (skillStatus.nudge) console.error(skillStatus.nudge);
 
   // Engine-aware SQL adapter. Routes through engine.executeRaw on both
   // Postgres and PGLite — the OAuth/admin/auth surface no longer requires
@@ -2068,6 +2104,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
 ║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║
 ║  DCR:       ${(enableDcr ? 'enabled' : 'disabled').padEnd(40)}║
+║  Skills:    ${skillStatus.bannerValue.padEnd(40)}║
 ║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║
 ╠══════════════════════════════════════════════════════╣
 ║  Admin:     http://localhost:${port}/admin${' '.repeat(Math.max(0, 19 - String(port).length))}║

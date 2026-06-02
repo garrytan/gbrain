@@ -968,9 +968,19 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
   walk(src.local_path);
 
   const literals = loadOperatorLiterals();
+  // Disposition-aware labelling (Codex #5): under the default `quarantine`
+  // disposition the junk bucket is "would-quarantine" (hidden, page lands),
+  // NOT "would-block". Read the configured disposition so the dry-run report
+  // tells the truth about what would happen.
+  const { loadConfig: _loadCfgAudit } = await import('../core/config.ts');
+  const _csAudit = _loadCfgAudit()?.content_sanity ?? {};
+  const junkDisposition: 'quarantine' | 'reject' =
+    _csAudit.junk_disposition === 'reject' ? 'reject' : 'quarantine';
+  const junkLabel = junkDisposition === 'reject' ? 'would-reject' : 'would-quarantine';
   const sizes: number[] = [];
   const wouldHardBlock: Array<{ file: string; matched: string[]; bytes: number }> = [];
   const wouldSoftBlock: Array<{ file: string; bytes: number }> = [];
+  const wouldFlag: Array<{ file: string; reason: string; bytes: number }> = [];
   const wouldWarn: Array<{ file: string; bytes: number }> = [];
   const patternHits: Record<string, number> = {};
   // v0.41.11.0 — facts-backfill estimator (E4). Walks the same files
@@ -1001,15 +1011,20 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
       compiled_truth: parsed.compiled_truth,
       timeline: parsed.timeline ?? '',
       title: parsed.title,
+      max_markup_ratio: _csAudit.max_markup_ratio,
+      prose_check_enabled: _csAudit.prose_check_enabled,
+      page_kind: parsed.type,
       extra_literals: literals,
     });
     sizes.push(sanity.bytes);
-    if (sanity.shouldHardBlock) {
+    if (sanity.shouldQuarantine) {
       const matched = [...sanity.junk_pattern_matches, ...sanity.literal_substring_matches];
       for (const name of matched) {
         patternHits[name] = (patternHits[name] ?? 0) + 1;
       }
       wouldHardBlock.push({ file, matched, bytes: sanity.bytes });
+    } else if (sanity.shouldFlag && sanity.flag_reason === 'markup_heavy') {
+      wouldFlag.push({ file, reason: 'markup_heavy', bytes: sanity.bytes });
     } else if (sanity.shouldSkipEmbed) {
       wouldSoftBlock.push({ file, bytes: sanity.bytes });
     } else if (sanity.reasons.includes('oversize_warn')) {
@@ -1047,12 +1062,18 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
       local_path: src.local_path,
       total_files: files.length,
       distribution: { p50: p(0.5), p99: p(0.99), max: sizes[sizes.length - 1] ?? 0 },
+      junk_disposition: junkDisposition,
+      // `hard_block_count` retained as the junk bucket name for JSON
+      // back-compat; `junk_disposition` tells consumers whether that's a
+      // hide (quarantine) or a throw (reject).
       hard_block_count: wouldHardBlock.length,
+      flag_count: wouldFlag.length,
       soft_block_count: wouldSoftBlock.length,
       warn_count: wouldWarn.length,
       pattern_hits: patternHits,
       facts_backfill_estimate: factsBackfillEstimate,
       hard_blocks: wouldHardBlock.slice(0, 20),
+      flags: wouldFlag.slice(0, 20),
       soft_blocks: wouldSoftBlock.slice(0, 20),
       ...(includeWarns ? { warns: wouldWarn.slice(0, 20) } : {}),
     }, null, 2));
@@ -1064,8 +1085,9 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
   if (sizes.length > 0) {
     console.log(`Size distribution: p50=${p(0.5)} bytes, p99=${p(0.99)} bytes, max=${sizes[sizes.length - 1]} bytes`);
   }
-  console.log(`Would-hard-block: ${wouldHardBlock.length}`);
-  console.log(`Would-soft-block: ${wouldSoftBlock.length}`);
+  console.log(`Junk (${junkLabel}): ${wouldHardBlock.length}`);
+  console.log(`Would-flag (markup-heavy, stays searchable): ${wouldFlag.length}`);
+  console.log(`Would-soft-block (oversize, skip embedding): ${wouldSoftBlock.length}`);
   if (includeWarns) {
     console.log(`Would-warn: ${wouldWarn.length}`);
   }
@@ -1081,7 +1103,7 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
     );
   }
   if (wouldHardBlock.length > 0) {
-    console.log('\nTop hard-blocks:');
+    console.log(`\nTop junk (${junkLabel}):`);
     for (const h of wouldHardBlock.slice(0, 10)) {
       console.log(`  ${h.file} [${h.matched.join(', ')}] (${h.bytes}b)`);
     }

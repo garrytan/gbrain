@@ -34,7 +34,7 @@ import {
 } from './search/embedding-column.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
-  Chunk, ChunkInput, StaleChunkRow,
+  Chunk, ChunkInput, StaleChunkRow, StalePageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -47,13 +47,14 @@ import type {
   EvalCaptureFailure, EvalCaptureFailureReason,
   SalienceOpts, SalienceResult, AnomaliesOpts, AnomalyResult,
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
+  EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
-import { GBrainError, PAGE_SORT_SQL } from './types.ts';
+import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import * as db from './db.ts';
 import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
-import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
@@ -121,6 +122,22 @@ export class PostgresEngine implements BrainEngine {
   // Instance connection (for workers) or fall back to module global (backward compat)
   get sql(): ReturnType<typeof postgres> {
     if (this._sql) return this._sql;
+    // issue #1678: an instance-pool engine whose _sql went null (a mid-process
+    // disconnect/reconnect, or a reaped socket) must NOT fall through to the
+    // module singleton — that singleton was never connected on a worker, so
+    // db.getConnection() throws the misleading "connect() has not been called".
+    // Throw a tailored RETRYABLE error instead (isRetryableConnError matches
+    // problem === 'No database connection'), so a caller wrapped in
+    // withRetry+reconnect rebuilds this instance's pool and recovers. The
+    // module / never-connected path (style 'module' or null) keeps the legacy
+    // getConnection() behavior.
+    if (this._connectionStyle === 'instance') {
+      throw new GBrainError(
+        'No database connection',
+        'instance connection pool was torn down (socket reaped or mid-process disconnect)',
+        'Transient — the operation reconnects and retries. If it persists, check pooler/Supavisor health.',
+      );
+    }
     return db.getConnection();
   }
 
@@ -457,7 +474,9 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'generation') AS pages_generation_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'embedding_signature') AS pages_embedding_signature_exists
+                WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'embedding_signature') AS pages_embedding_signature_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'pages' AND column_name = 'links_extracted_at') AS pages_links_extracted_at_exists
     `;
     const probe = probeRows[0]!;
 
@@ -533,6 +552,7 @@ export class PostgresEngine implements BrainEngine {
       sources_trust_fm_exists?: boolean;
       pages_generation_exists?: boolean;
       pages_embedding_signature_exists?: boolean;
+      pages_links_extracted_at_exists?: boolean;
     };
     const needsContextualRetrievalColumns = (probe.pages_exists
         && (!probeCr.pages_cr_mode_exists || !probeCr.pages_corpus_generation_exists))
@@ -546,6 +566,12 @@ export class PostgresEngine implements BrainEngine {
     // v0.41.31 (v108): pages.embedding_signature for real stale semantics.
     // No SCHEMA_SQL index references it; bootstrap is defense-in-depth.
     const needsPagesEmbeddingSignature = probe.pages_exists && !probeCr.pages_embedding_signature_exists;
+    // v0.42.7 (v112): pages.links_extracted_at link-extraction freshness
+    // watermark. pages_links_extracted_at_idx in SCHEMA_SQL references it;
+    // pre-v112 brains crash without the column, so bootstrap adds it before
+    // SCHEMA_SQL replay creates the index. v112 runs later via runMigrations
+    // and is idempotent.
+    const needsPagesLinksExtractedAt = probe.pages_exists && !probeCr.pages_links_extracted_at_exists;
 
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
@@ -555,7 +581,8 @@ export class PostgresEngine implements BrainEngine {
         && !needsPagesLastRetrievedAt
         && !needsPagesProvenance
         && !needsContextualRetrievalColumns && !needsPagesGeneration
-        && !needsPagesEmbeddingSignature) return;
+        && !needsPagesEmbeddingSignature
+        && !needsPagesLinksExtractedAt) return;
 
     process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
 
@@ -790,10 +817,22 @@ export class PostgresEngine implements BrainEngine {
         ALTER TABLE pages ADD COLUMN IF NOT EXISTS embedding_signature TEXT;
       `);
     }
+
+    if (needsPagesLinksExtractedAt) {
+      // v112 (pages_links_extracted_at): link-extraction freshness watermark.
+      // pages_links_extracted_at_idx in SCHEMA_SQL references it, so bootstrap
+      // adds the column before the blob's CREATE INDEX runs. The index itself
+      // lands via the blob (CREATE INDEX IF NOT EXISTS) and v112 (CONCURRENTLY);
+      // bootstrap only adds the column. v112 runs later via runMigrations and is
+      // idempotent.
+      await conn.unsafe(`
+        ALTER TABLE pages ADD COLUMN IF NOT EXISTS links_extracted_at TIMESTAMPTZ;
+      `);
+    }
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
-    const conn = this._sql || db.getConnection();
+    const conn = this.sql;
     return conn.begin(async (tx) => {
       // Create a scoped engine with tx as its connection, no shared state mutation
       const txEngine = Object.create(this) as PostgresEngine;
@@ -804,7 +843,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {
-    const pool = this._sql || db.getConnection();
+    const pool = this.sql;
     const reserved = await pool.reserve();
     try {
       const conn: ReservedConnection = {
@@ -2336,6 +2375,74 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
+  // ── v0.42.7 (#1696): link/timeline extraction freshness watermark ──
+
+  /** Shared stale-for-extraction predicate. Returns `{ where, params }`. */
+  private buildStalePagesWhere(opts?: { sourceId?: string; versionTs?: string }): { where: string; params: unknown[] } {
+    const conds: string[] = ['deleted_at IS NULL'];
+    const params: unknown[] = [];
+    if (opts?.versionTs) {
+      params.push(opts.versionTs);
+      conds.push(`(links_extracted_at IS NULL OR links_extracted_at < $${params.length}::timestamptz OR updated_at > links_extracted_at)`);
+    } else {
+      conds.push('(links_extracted_at IS NULL OR updated_at > links_extracted_at)');
+    }
+    if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      conds.push(`source_id = $${params.length}`);
+    }
+    return { where: conds.join(' AND '), params };
+  }
+
+  async countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string }): Promise<number> {
+    const { where, params } = this.buildStalePagesWhere(opts);
+    const rows = await this.sql.unsafe(
+      `SELECT count(*)::int AS count FROM pages WHERE ${where}`,
+      params as Parameters<typeof this.sql.unsafe>[1],
+    );
+    return Number((rows[0] as { count?: number } | undefined)?.count ?? 0);
+  }
+
+  async listStalePagesForExtraction(opts: {
+    batchSize: number;
+    afterPageId?: number;
+    sourceId?: string;
+    versionTs?: string;
+  }): Promise<StalePageRow[]> {
+    const { where, params } = this.buildStalePagesWhere(opts);
+    let afterClause = '';
+    if (opts.afterPageId != null) {
+      params.push(opts.afterPageId);
+      afterClause = ` AND id > $${params.length}`;
+    }
+    params.push(opts.batchSize);
+    const limitIdx = params.length;
+    const rows = await this.sql.unsafe(
+      `SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at
+         FROM pages
+         WHERE ${where}${afterClause}
+         ORDER BY id
+         LIMIT $${limitIdx}`,
+      params as Parameters<typeof this.sql.unsafe>[1],
+    );
+    return (rows as Record<string, unknown>[]).map(rowToStalePage);
+  }
+
+  async markPagesExtractedBatch(refs: Array<{ slug: string; source_id: string; extractedAt?: string }>, defaultExtractedAt: string): Promise<void> {
+    if (refs.length === 0) return;
+    const slugs = refs.map(r => r.slug);
+    const srcs = refs.map(r => r.source_id);
+    // Per-ref timestamp (D4 race fix): extract --stale passes each row's read
+    // updated_at; sites that omit it fall back to defaultExtractedAt.
+    const tss = refs.map(r => r.extractedAt ?? defaultExtractedAt);
+    const sql = this.sql;
+    await sql`
+      UPDATE pages p SET links_extracted_at = v.ts::timestamptz
+      FROM unnest(${slugs}::text[], ${srcs}::text[], ${tss}::text[]) AS v(slug, source_id, ts)
+      WHERE p.slug = v.slug AND p.source_id = v.source_id
+    `;
+  }
+
   // Links
   async addLink(
     from: string,
@@ -2868,6 +2975,27 @@ export class PostgresEngine implements BrainEngine {
         hits: Number(r.hits),
         cross_source_hits: Number(r.cross_source_hits),
       });
+    }
+    return result;
+  }
+
+  async getContentFlagsByPageIds(
+    pageIds: number[],
+  ): Promise<Map<number, { reason: string; detail: string }>> {
+    const result = new Map<number, { reason: string; detail: string }>();
+    if (pageIds.length === 0) return result;
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT id,
+             frontmatter -> 'content_flag' ->> 'reason' AS reason,
+             frontmatter -> 'content_flag' ->> 'detail' AS detail
+      FROM pages
+      WHERE id = ANY(${pageIds}::int[])
+        AND frontmatter ? 'content_flag'
+    `;
+    for (const r of rows as unknown as { id: number; reason: string | null; detail: string | null }[]) {
+      if (!r.reason) continue;
+      result.set(Number(r.id), { reason: r.reason, detail: r.detail ?? '' });
     }
     return result;
   }
@@ -4113,7 +4241,7 @@ export class PostgresEngine implements BrainEngine {
     oldRow: number,
     newRow: Omit<TakeBatchInput, 'page_id' | 'row_num' | 'superseded_by'>,
   ): Promise<{ oldRow: number; newRow: number }> {
-    const conn = this._sql || db.getConnection();
+    const conn = this.sql;
     return await conn.begin(async (tx) => {
       const [existing] = await tx`
         SELECT resolved_at FROM takes WHERE page_id = ${pageId} AND row_num = ${oldRow}
@@ -5071,6 +5199,67 @@ export class PostgresEngine implements BrainEngine {
       take_count: Number(r.take_count ?? 0),
       take_avg_weight: Number(r.take_avg_weight ?? 0),
       score: Number(r.score ?? 0),
+    }));
+  }
+
+  async listEnrichCandidates(opts: EnrichCandidatesOpts): Promise<EnrichCandidate[]> {
+    // v0.41.39 (issue #1700). Empty types → no rows (no SQL).
+    if (!opts.types || opts.types.length === 0) return [];
+    const sql = this.sql;
+    const limit = Math.max(1, Math.min(opts.limit ?? 50, 5000));
+    const threshold = Math.max(0, opts.thinThreshold);
+
+    // Source scope: array wins over scalar (canonical precedence).
+    const sourceCondition = opts.sourceIds && opts.sourceIds.length > 0
+      ? sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+      : opts.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
+
+    // Re-enrich recency guard. enriched_at is written as toISOString() so a
+    // lexical text comparison is correct AND can't throw on a malformed value
+    // (a ::timestamptz cast would). Pages never enriched (NULL) are eligible.
+    const reenrichMs = opts.reenrichAfterMs ?? 0;
+    const recencyCondition = reenrichMs > 0
+      ? sql`AND NOT (
+            p.frontmatter ->> 'enriched_at' IS NOT NULL
+            AND p.frontmatter ->> 'enriched_at' > ${new Date(Date.now() - reenrichMs).toISOString()}
+          )`
+      : sql``;
+
+    // Whitelisted ORDER BY (no injection — enum maps to a literal fragment).
+    const orderKey = ENRICH_ORDER_SQL[opts.order] ? opts.order : 'inbound-links';
+    const orderBy = sql.unsafe(ENRICH_ORDER_SQL[orderKey]);
+
+    const rows = await sql`
+      SELECT
+        p.slug,
+        p.source_id,
+        p.title,
+        p.type,
+        (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) AS body_len,
+        COALESCE((
+          SELECT COUNT(*)
+            FROM links l
+           WHERE l.to_page_id = p.id
+             AND l.link_source IS DISTINCT FROM 'mentions'
+        ), 0)::int AS inbound_count
+      FROM pages p
+      WHERE p.deleted_at IS NULL
+        AND p.type = ANY(${opts.types}::text[])
+        AND (char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, ''))) < ${threshold}
+        ${sourceCondition}
+        ${recencyCondition}
+      ORDER BY ${orderBy}
+      LIMIT ${limit}
+    `;
+    return rows.map((r: Record<string, unknown>) => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      title: String(r.title ?? ''),
+      type: r.type as EnrichCandidate['type'],
+      body_len: Number(r.body_len ?? 0),
+      inbound_count: Number(r.inbound_count ?? 0),
     }));
   }
 

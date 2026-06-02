@@ -1,11 +1,13 @@
 import { describe, test, expect } from 'bun:test';
 import {
   assessContentSanity,
+  assessProse,
   ContentSanityBlockError,
   BUILT_IN_JUNK_PATTERNS,
   PAGE_JUNK_PATTERN_CODE,
   DEFAULT_BYTES_WARN,
   DEFAULT_BYTES_BLOCK,
+  DEFAULT_MAX_MARKUP_RATIO,
   type OperatorLiteral,
 } from '../src/core/content-sanity.ts';
 
@@ -106,8 +108,8 @@ describe('assessContentSanity — size boundaries', () => {
 // ─── 6 BUILT-IN PATTERNS ──────────────────────────────────────
 
 describe('assessContentSanity — built-in junk patterns', () => {
-  test('built-in pattern count is locked at 7 (v0.41.13 added cloudflare_challenge_title)', () => {
-    expect(BUILT_IN_JUNK_PATTERNS.length).toBe(7);
+  test('built-in pattern count is locked at 10 (v0.42 added 3 interstitial patterns)', () => {
+    expect(BUILT_IN_JUNK_PATTERNS.length).toBe(10);
     const names = BUILT_IN_JUNK_PATTERNS.map((p) => p.name);
     expect(names).toContain('cloudflare_attention_required');
     expect(names).toContain('cloudflare_just_a_moment');
@@ -528,5 +530,113 @@ describe('ContentSanityBlockError', () => {
       expect(e).toBeInstanceOf(ContentSanityBlockError);
       expect((e as Error).message).toContain('PAGE_JUNK_PATTERN');
     }
+  });
+});
+
+// ─── v0.42 (#1699) interstitial patterns ──────────────────────
+
+describe('assessContentSanity — v0.42 interstitial patterns', () => {
+  test.each([
+    ['Checking your browser before accessing example.com', 'cloudflare_checking_browser'],
+    ['cf-browser-verification token here', 'cf_browser_verification'],
+    ['Please enable JavaScript and cookies to continue', 'enable_javascript_cookies'],
+  ])('body %j → quarantine signal (%s)', (body, pattern) => {
+    const r = assessContentSanity({ compiled_truth: body, timeline: '', title: 'x' });
+    expect(r.junk_pattern_matches).toContain(pattern);
+    expect(r.shouldQuarantine).toBe(true);
+  });
+});
+
+// ─── v0.42 prose / markup heuristic ───────────────────────────
+
+describe('assessProse', () => {
+  test('pure prose → low markup ratio', () => {
+    const r = assessProse('This is a normal paragraph of writing with several real sentences in it.');
+    expect(r.markup_ratio).toBeLessThan(0.3);
+    expect(r.prose_chars).toBeGreaterThan(0);
+  });
+  test('nav/table blob → high markup ratio', () => {
+    const nav = '| [a](http://x) | [b](http://y) | [c](http://z) |\n'.repeat(50);
+    const r = assessProse(nav);
+    expect(r.markup_ratio).toBeGreaterThan(DEFAULT_MAX_MARKUP_RATIO);
+  });
+  test('code excluded from denominator — code-heavy doc is NOT high markup', () => {
+    const codeDoc = 'Here is the function:\n\n```ts\n' + 'const x = compute(a, b, c);\n'.repeat(200) + '```\n\nThat is how it works.';
+    const r = assessProse(codeDoc);
+    expect(r.markup_ratio).toBeLessThan(DEFAULT_MAX_MARKUP_RATIO);
+  });
+  test('empty body → zero ratio (no divide-by-zero)', () => {
+    const r = assessProse('');
+    expect(r.markup_ratio).toBe(0);
+    expect(r.total_chars).toBe(0);
+  });
+});
+
+// ─── v0.42 confidence split + warn-tier gate ──────────────────
+
+describe('assessContentSanity — confidence split (Q1=A)', () => {
+  const navLine = '| [a](http://x) | [b](http://y) | [c](http://z) | [d](http://w) |\n';
+
+  test('markup-heavy in warn window → shouldFlag(markup_heavy), NOT shouldQuarantine', () => {
+    const body = navLine.repeat(1200); // ~60K, > 50K warn, < 500K block
+    const r = assessContentSanity({ compiled_truth: body, timeline: '', title: 'nav' });
+    expect(r.shouldFlag).toBe(true);
+    expect(r.flag_reason).toBe('markup_heavy');
+    expect(r.shouldQuarantine).toBe(false);
+    expect(r.reasons).toContain('high_markup');
+  });
+
+  test('shouldQuarantine is NEVER set by high_markup alone (regression)', () => {
+    const body = navLine.repeat(1200);
+    const r = assessContentSanity({ compiled_truth: body, timeline: '', title: 'nav' });
+    // No junk pattern / literal → quarantine must stay false even though markup tripped.
+    expect(r.shouldQuarantine).toBe(false);
+    expect(r.shouldHardBlock).toBe(false); // alias parity
+  });
+
+  test('A1/A2 FP guard: small page below bytes_warn never enters prose pass, never flags', () => {
+    // A tiny markup-heavy stub (well under 50K) must NOT be flagged.
+    const body = navLine.repeat(5); // ~300 bytes
+    const r = assessContentSanity({ compiled_truth: body, timeline: '', title: 'stub' });
+    expect(r.prose_chars).toBeNull();    // prose pass did not run
+    expect(r.markup_ratio).toBeNull();
+    expect(r.shouldFlag).toBe(false);
+    expect(r.shouldQuarantine).toBe(false);
+  });
+
+  test('page_kind=code is exempt from the prose pass', () => {
+    const body = navLine.repeat(1200);
+    const r = assessContentSanity({ compiled_truth: body, timeline: '', title: 'c', page_kind: 'code' });
+    expect(r.markup_ratio).toBeNull();
+    expect(r.shouldFlag).toBe(false);
+  });
+
+  test('prose_check_enabled=false suppresses markup flagging', () => {
+    const body = navLine.repeat(1200);
+    const r = assessContentSanity({ compiled_truth: body, timeline: '', title: 'n', prose_check_enabled: false });
+    expect(r.markup_ratio).toBeNull();
+    expect(r.shouldFlag).toBe(false);
+  });
+
+  test('oversize → shouldSkipEmbed + shouldFlag(oversized), pure-prose 890K stays NOT-quarantined', () => {
+    const r = assessContentSanity({ compiled_truth: 'normal prose. '.repeat(70_000), timeline: '', title: 'book' });
+    expect(r.oversize).toBe(true);
+    expect(r.shouldSkipEmbed).toBe(true);
+    expect(r.shouldFlag).toBe(true);
+    expect(r.flag_reason).toBe('oversized');
+    expect(r.shouldQuarantine).toBe(false);
+    // Over block threshold → prose pass skipped (no markup_ratio).
+    expect(r.markup_ratio).toBeNull();
+  });
+
+  test('junk + oversize → quarantine wins (no flag, no embed_skip)', () => {
+    const r = assessContentSanity({
+      compiled_truth: 'Cloudflare Ray ID: x\n' + 'a'.repeat(600_000),
+      timeline: '',
+      title: 't',
+    });
+    expect(r.shouldQuarantine).toBe(true);
+    expect(r.shouldSkipEmbed).toBe(false);
+    expect(r.shouldFlag).toBe(false);
   });
 });

@@ -14,6 +14,21 @@
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
 
+/**
+ * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
+ * shape of `extractPageLinks` / `inferLinkType` / `parseTimelineEntries` changes
+ * meaningfully, so the extraction freshness watermark (`pages.links_extracted_at`)
+ * treats every previously-stamped page as stale and re-extracts it on the next
+ * `gbrain extract --stale` sweep. Same role CHUNKER_VERSION plays for chunking.
+ *
+ * Consumed by `countStalePagesForExtraction` / `listStalePagesForExtraction`
+ * (both engines) and the `links_extraction_lag` doctor check: a page is stale
+ * when `links_extracted_at IS NULL OR links_extracted_at < LINK_EXTRACTOR_VERSION_TS
+ * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
+ * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
+ */
+export const LINK_EXTRACTOR_VERSION_TS = '2026-05-31T00:00:00Z';
+
 // ─── Entity references ──────────────────────────────────────────
 
 export interface EntityRef {

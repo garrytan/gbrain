@@ -78,10 +78,22 @@ describe('makeJudgeClient — construction-time provider probe', () => {
     // The deepseek recipe declares DEEPSEEK_API_KEY in auth_env.required;
     // makeJudgeClient delegates that probe to gateway.chat at call time
     // (where it would throw AIConfigError, caught per-transcript by the loop).
+    // #1698 C1: this MUST stay green — validateModelId (id-validity only) does NOT
+    // reject a non-anthropic provider for a missing key (no isAvailable here).
     await withEnv({ DEEPSEEK_API_KEY: undefined }, async () => {
       const judge = makeJudgeClient('deepseek:deepseek-chat');
       expect(judge).not.toBeNull();
       expect(typeof judge?.create).toBe('function');
+    });
+  });
+
+  test('A8b (#1698): typo native model → null at construction (validateModelId unknown_model)', async () => {
+    // Pre-#1698 makeJudgeClient only checked the provider (resolveRecipe) and would
+    // have returned a client that failed at call time. Now the shared validateModelId
+    // core runs assertTouchpoint, so a typo'd native model is rejected up front.
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test-A8b' }, async () => {
+      const judge = makeJudgeClient('anthropic:claude-bogus-9');
+      expect(judge).toBeNull();
     });
   });
 });
