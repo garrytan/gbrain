@@ -64,7 +64,7 @@ interface SyncTarget {
 }
 
 function git(repoPath: string, ...args: string[]): string {
-  return execFileSync('git', ['-C', repoPath, ...args], {
+  return execFileSync('git', ['-c', 'core.quotepath=false', '-C', repoPath, ...args], {
     encoding: 'utf-8',
     timeout: 30000,
   }).trim();
