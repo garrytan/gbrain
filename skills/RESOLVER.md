@@ -34,8 +34,8 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 
 | Trigger | Skill |
 |---------|-------|
-| "OCR 校對", "校對掃描文稿", "幫我校對這段 OCR" | `skills/ocr-proofread/SKILL.md` |
-| "掃描書籍校正", "OCR 結果有錯", "correct scanned text" | `skills/ocr-proofread/SKILL.md` |
+| "OCR 校對", "校對掃描文稿", "幫我校對這段 OCR" | `skills/media-ingest/SKILL.md` (OCR 掃描文件走 media-ingest) |
+| "掃描書籍校正", "OCR 結果有錯", "correct scanned text" | `skills/media-ingest/SKILL.md` |
 | Batch OCR of image/PDF directory (automated) | `scripts/ocr-batch.py` (see skill for usage) |
 
 ## Thinking skills (from GStack)
@@ -97,7 +97,8 @@ When multiple skills could match:
 2. If the user mentions a URL, route by content type (link → idea-ingest, video → media-ingest)
 3. If the user mentions a person/company, check if enrich or query fits better
 4. Chaining is explicit in each skill's Phases section
-5. When in doubt, ask the user
+5. **citation audit vs maintain vs citation-fixer**: "fix citations" or "citation format" → `citation-fixer`; "brain health check" or "maintenance run" → `maintain`. Do not route citation-specific requests to maintain.
+6. When in doubt, ask the user
 
 ## Conventions (cross-cutting)
 

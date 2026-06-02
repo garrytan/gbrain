@@ -85,6 +85,8 @@ When sources conflict, note the contradiction with both citations.
 
 Scale enrichment to importance. Don't waste API calls on low-value entities.
 
+> **Convention:** notability gate — see `skills/conventions/quality.md` before creating any new page.
+
 | Tier | Who | Effort | Sources |
 |------|-----|--------|---------|
 | 1 (key) | Inner circle, close collaborators, key contacts | Full pipeline | All available APIs + deep web research |
