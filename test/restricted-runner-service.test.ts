@@ -1,10 +1,28 @@
 import { describe, expect, test } from 'bun:test';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { SCHEMA_SQL } from '../src/core/schema-embedded.ts';
 import { buildRunnerArtifactRecord, buildRunnerMessageRecord } from '../src/core/runners/runner-jobs.ts';
+import { commandExistsOnPath } from '../src/core/runners/runner-registry.ts';
 import { createRestrictedRunnerService } from '../src/core/services/restricted-runner-service.ts';
 import type { SourceChunkRecord } from '../src/core/source-registry/raw-ingest.ts';
 
 describe('restricted runner service', () => {
+  test('default command probe checks executables on PATH without shelling out', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mbrain-runner-path-'));
+    try {
+      const executable = join(dir, 'fake-runner');
+      writeFileSync(executable, '#!/bin/sh\nexit 0\n');
+      chmodSync(executable, 0o755);
+
+      expect(commandExistsOnPath('fake-runner', { PATH: dir })).toBe(true);
+      expect(commandExistsOnPath('missing-runner', { PATH: dir })).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('detects local Claude Code availability without running shell payloads', async () => {
     const probeCalls: string[] = [];
     const service = createRestrictedRunnerService({

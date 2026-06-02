@@ -9,6 +9,7 @@ import { createAutopilotService, type AutopilotService } from '../core/services/
 import { runDreamCycle, type DreamCycleRunInput, type DreamCycleRunResult } from '../core/services/dream-cycle-runner-service.ts';
 import { parseDreamArgs } from './dream.ts';
 import type { AutopilotMode } from '../core/maintenance/autopilot.ts';
+import { createAutoPromoteDreamDependency } from './auto-promote.ts';
 
 export interface RunAutopilotDeps {
   service?: AutopilotService;
@@ -109,6 +110,7 @@ export async function runAutopilot(args: string[], deps: RunAutopilotDeps = {}):
           : runDreamCycle(engine, input, {
             ...(runtime ? { runtime } : {}),
             lifecycleForgetting: maybeCreateLifecycleForgettingServiceForEngine(engine, () => input.now ?? new Date().toISOString()),
+            autoPromote: createAutoPromoteDreamDependency(engine),
           }),
       } : {}),
     });

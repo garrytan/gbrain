@@ -21,6 +21,7 @@ export interface MBrainConfig {
   anthropic_api_key?: string;
   storage?: StorageConfig;
   autopilot?: Record<string, unknown>;
+  auto_promote?: Record<string, unknown>;
 }
 
 export interface MBrainConfigInput {
@@ -36,6 +37,7 @@ export interface MBrainConfigInput {
   anthropic_api_key?: string;
   storage?: StorageConfig;
   autopilot?: Record<string, unknown>;
+  auto_promote?: Record<string, unknown>;
 }
 
 const VALID_ENGINES = new Set<EngineType>(['postgres', 'sqlite', 'pglite']);
@@ -113,6 +115,7 @@ export function resolveConfig(input: MBrainConfigInput): MBrainConfig {
     openai_api_key: input.openai_api_key,
     anthropic_api_key: input.anthropic_api_key,
     autopilot: input.autopilot,
+    auto_promote: input.auto_promote,
   };
 
   validateResolvedConfig(resolved);
@@ -156,13 +159,6 @@ export function validateResolvedConfig(config: MBrainConfig): void {
         'Invalid Postgres config',
         'offline=true is only supported for local engines',
         'Disable offline mode or switch engine to sqlite',
-      );
-    }
-    if (config.embedding_provider === 'local') {
-      throw new MBrainError(
-        'Invalid engine/provider combination',
-        'embedding_provider="local" requires sqlite engine',
-        'Set embedding_provider="none" or switch engine to sqlite',
       );
     }
   }

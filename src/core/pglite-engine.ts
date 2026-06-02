@@ -33,6 +33,8 @@ import {
 import { buildPageCentroid } from './services/page-embedding.ts';
 import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts';
 import type {
+  AutoPromoteVerdictKey,
+  AutoPromoteVerdictRow,
   Page, PageInput, PageFilters, PageLineSpanProjection, PageLineSpanProjectionOptions, PageProjection, PageProjectionOptions, PageType,
   NoteManifestEntry,
   NoteManifestEntryInput,
@@ -139,6 +141,7 @@ import {
   rowToPage,
   rowToChunk,
   rowToContextAtlasEntry,
+  rowToAutoPromoteVerdict,
   rowToContextMapEntry,
   rowToMemoryCandidateEntry,
   rowToMemoryCandidateContradictionEntry,
@@ -1594,6 +1597,42 @@ export class PGLiteEngine implements BrainEngine {
     return rowToMemoryCandidateEntry(rows[0] as Record<string, unknown>);
   }
 
+  async getAutoPromoteVerdict(key: AutoPromoteVerdictKey): Promise<AutoPromoteVerdictRow | null> {
+    const { rows } = await this.db.query(
+      `SELECT candidate_id, content_hash, runner_kind, prompt_version,
+              decision, confidence, reasoning, judged_at
+       FROM auto_promote_verdicts
+       WHERE candidate_id = $1 AND content_hash = $2 AND runner_kind = $3 AND prompt_version = $4`,
+      [key.candidate_id, key.content_hash, key.runner_kind, key.prompt_version],
+    );
+    if (rows.length === 0) return null;
+    return rowToAutoPromoteVerdict(rows[0] as Record<string, unknown>);
+  }
+
+  async putAutoPromoteVerdict(row: AutoPromoteVerdictRow): Promise<void> {
+    await this.db.query(
+      `INSERT INTO auto_promote_verdicts (
+         candidate_id, content_hash, runner_kind, prompt_version,
+         decision, confidence, reasoning, judged_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (candidate_id, content_hash, runner_kind, prompt_version) DO UPDATE SET
+         decision = EXCLUDED.decision,
+         confidence = EXCLUDED.confidence,
+         reasoning = EXCLUDED.reasoning,
+         judged_at = EXCLUDED.judged_at`,
+      [
+        row.candidate_id,
+        row.content_hash,
+        row.runner_kind,
+        row.prompt_version,
+        row.decision,
+        row.confidence,
+        row.reasoning,
+        row.judged_at,
+      ],
+    );
+  }
+
   async listMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<MemoryCandidateEntry[]> {
     const limit = filters?.limit ?? 100;
     const offset = filters?.offset ?? 0;
@@ -2698,6 +2737,27 @@ export class PGLiteEngine implements BrainEngine {
       return null;
     }
     return rowToMemoryCandidateContradictionEntry(rows[0] as Record<string, unknown>);
+  }
+
+  async listMemoryCandidateContradictionEntriesForCandidateIds(
+    candidateIds: string[],
+  ): Promise<MemoryCandidateContradictionEntry[]> {
+    if (candidateIds.length === 0) return [];
+    const entries: MemoryCandidateContradictionEntry[] = [];
+    for (const chunk of chunkInteractionIds(candidateIds)) {
+      const placeholders = chunk.map((_, index) => `$${index + 1}`).join(', ');
+      const { rows } = await this.db.query(
+        `SELECT id, scope_id, candidate_id, challenged_candidate_id, outcome, supersession_entry_id,
+                reviewed_at, review_reason, interaction_id, created_at, updated_at
+         FROM memory_candidate_contradiction_entries
+         WHERE candidate_id IN (${placeholders})
+            OR challenged_candidate_id IN (${placeholders})
+         ORDER BY created_at DESC, id ASC`,
+        chunk,
+      );
+      entries.push(...(rows as Record<string, unknown>[]).map(rowToMemoryCandidateContradictionEntry));
+    }
+    return sortByCreatedAtDescIdAsc(entries);
   }
 
   async listMemoryCandidateContradictionEntriesByInteractionIds(

@@ -39,6 +39,18 @@ export interface PhaseDefinition {
   output_collection_key: 'workloads' | 'benchmarks';
 }
 
+export interface PhaseRunnerInput {
+  definition: PhaseDefinition;
+  phase1BaselinePath: string | null;
+}
+
+export type PhaseRunner = (input: PhaseRunnerInput) => Phase8LongitudinalPhaseSummary;
+
+export interface RunLongitudinalEvaluationInput {
+  phase1BaselinePath?: string | null;
+  phaseRunner?: PhaseRunner;
+}
+
 export const PHASE_DEFINITIONS: readonly PhaseDefinition[] = [
   {
     phase: 'phase1',
@@ -162,9 +174,14 @@ export const PHASE_DEFINITIONS: readonly PhaseDefinition[] = [
 ] as const;
 
 export async function runLongitudinalEvaluation(
-  phase1BaselinePath?: string | null,
+  input: RunLongitudinalEvaluationInput | string | null = null,
 ): Promise<Phase8Payload> {
-  const phaseSummaries = PHASE_DEFINITIONS.map((definition) => runPhase(definition, phase1BaselinePath ?? null));
+  const normalized = normalizeRunInput(input);
+  const runner = normalized.phaseRunner ?? runPhase;
+  const phaseSummaries = PHASE_DEFINITIONS.map((definition) => runner({
+    definition,
+    phase1BaselinePath: normalized.phase1BaselinePath,
+  }));
   const acceptance = evaluateLongitudinalAcceptance(phaseSummaries);
 
   return {
@@ -173,6 +190,16 @@ export async function runLongitudinalEvaluation(
     phase: 'phase8',
     phase_summaries: phaseSummaries,
     acceptance,
+  };
+}
+
+function normalizeRunInput(input: RunLongitudinalEvaluationInput | string | null): Required<RunLongitudinalEvaluationInput> {
+  if (typeof input === 'string') {
+    return { phase1BaselinePath: input, phaseRunner: runPhase };
+  }
+  return {
+    phase1BaselinePath: input?.phase1BaselinePath ?? null,
+    phaseRunner: input?.phaseRunner ?? runPhase,
   };
 }
 
@@ -238,10 +265,8 @@ export function evaluateLongitudinalAcceptance(
   };
 }
 
-function runPhase(
-  definition: PhaseDefinition,
-  phase1BaselinePath: string | null,
-): Phase8LongitudinalPhaseSummary {
+function runPhase(input: PhaseRunnerInput): Phase8LongitudinalPhaseSummary {
+  const { definition, phase1BaselinePath } = input;
   const command = ['bun', 'run', definition.path, '--json'];
   if (definition.phase === 'phase1' && phase1BaselinePath) {
     command.push('--baseline', phase1BaselinePath);
@@ -298,7 +323,7 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const payload = await runLongitudinalEvaluation(phase1BaselinePath);
+  const payload = await runLongitudinalEvaluation({ phase1BaselinePath });
   const outcome = getProcessOutcome(payload);
   console.log(outcome.stdout);
 

@@ -21,7 +21,8 @@ export type DreamCyclePhaseFamily =
   | 'projection_reconcile'
   | 'embedding_refresh'
   | 'context_refresh'
-  | 'daily_report';
+  | 'daily_report'
+  | 'auto_promote';
 
 export type DreamCyclePhaseStatus = 'ok' | 'warn' | 'failed' | 'skipped';
 export type DreamCycleSkipReason = 'phase_not_available' | 'runner_unavailable';
@@ -100,6 +101,9 @@ export interface DreamCycleRunDeps {
     holder_kind: string;
   };
   phaseHandlers?: Partial<Record<DreamCyclePhaseFamily, DreamCyclePhaseHandler>>;
+  autoPromote?: {
+    run(input: { scope_id: string; now?: string; dry_run?: boolean; limit?: number }): Promise<{ counts: Record<string, number> }>;
+  };
 }
 
 export type DreamCyclePhaseHandler = (
@@ -133,6 +137,7 @@ export const DREAM_CYCLE_PHASE_FAMILIES: readonly DreamCyclePhaseRegistryEntry[]
   { order: 12, family: 'embedding_refresh', owner_phase: 'Phase 05', runner_backed: false, implemented: true },
   { order: 13, family: 'context_refresh', owner_phase: 'Phase 05', runner_backed: false, implemented: true },
   { order: 14, family: 'daily_report', owner_phase: 'Phase 12', runner_backed: false, implemented: true },
+  { order: 15, family: 'auto_promote', owner_phase: 'Phase 07', runner_backed: true, implemented: true },
 ] as const;
 
 export async function runDreamCycle(
@@ -206,6 +211,9 @@ function defaultPhaseHandler(
   if (registry.family === 'consolidation') return runConsolidationPhase;
   if (registry.family === 'forgetting_review') {
     return (context) => runForgettingReviewPhase(context, deps);
+  }
+  if (registry.family === 'auto_promote') {
+    return (context) => runAutoPromotePhase(context, deps);
   }
   if (registry.implemented) return runImplementedReadOnlyPhase;
   return undefined;
@@ -334,6 +342,7 @@ async function readImplementedPhaseCounts(
       };
     case 'consolidation':
     case 'forgetting_review':
+    case 'auto_promote':
       return {};
   }
 }
@@ -373,6 +382,7 @@ function hasActionablePhaseWork(
       return (counts.failed_jobs ?? 0) > 0 || (counts.failed_runner_jobs ?? 0) > 0;
     case 'consolidation':
     case 'forgetting_review':
+    case 'auto_promote':
       return Object.values(counts).some((count) => count > 0);
   }
 }
@@ -406,6 +416,8 @@ function nextActionForImplementedPhase(family: DreamCyclePhaseFamily): string {
     case 'consolidation':
     case 'forgetting_review':
       return 'Review dream cycle phase output.';
+    case 'auto_promote':
+      return 'Review auto-promotion results.';
   }
 }
 
@@ -490,6 +502,37 @@ async function runForgettingReviewPhase(
         : null,
     canonical_mutations: 0,
     llm_or_runner_used: false,
+  };
+}
+
+async function runAutoPromotePhase(
+  context: DreamCyclePhaseContext,
+  deps: DreamCycleRunDeps,
+): Promise<Partial<DreamCyclePhaseResult>> {
+  if (!deps.autoPromote || !context.input.allow_local_runner) {
+    return {
+      status: 'skipped',
+      skip_reason: 'runner_unavailable',
+      next_recommended_action: 'Enable restricted runner policy before auto-promotion.',
+      counts: {},
+      canonical_mutations: 0,
+      llm_or_runner_used: false,
+    };
+  }
+  const result = await deps.autoPromote.run({
+    scope_id: context.input.scope_id,
+    now: context.input.now,
+    dry_run: context.input.dry_run || !context.input.write_candidates,
+    limit: context.input.limit,
+  });
+  const counts = result.counts ?? {};
+  const hasActionableWork = Object.values(counts).some((count) => count > 0);
+  return {
+    status: hasActionableWork ? 'warn' : 'ok',
+    counts,
+    next_recommended_action: hasActionableWork ? 'Review auto-promotion results.' : null,
+    canonical_mutations: counts.canonical_writes ?? 0,
+    llm_or_runner_used: true,
   };
 }
 

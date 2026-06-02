@@ -19,6 +19,7 @@ export const RUNNER_TASK_TYPES = [
   'forgetting_review',
   'source_summary',
   'daily_report',
+  'candidate_promotion_review',
 ] as const;
 
 export type RunnerTaskType = typeof RUNNER_TASK_TYPES[number];
@@ -33,6 +34,7 @@ export const ALLOWED_RUNNER_TOOLS = [
   'propose_expire_archive',
   'draft_source_summary',
   'draft_report_section',
+  'emit_promotion_verdict',
 ] as const;
 
 export type AllowedRunnerToolName = typeof ALLOWED_RUNNER_TOOLS[number];
@@ -127,6 +129,9 @@ const TASK_TOOL_ALLOWLIST: Record<RunnerTaskType, AllowedRunnerToolName[]> = {
     'read_assertion_context',
     'draft_source_summary',
     'draft_report_section',
+  ],
+  candidate_promotion_review: [
+    'emit_promotion_verdict',
   ],
 };
 

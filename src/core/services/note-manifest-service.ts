@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { NoteManifestEntry, NoteManifestEntryInput, NoteManifestHeading, Page, PageInput } from '../types.ts';
 import { slugifyPath } from '../sync.ts';
-import { importContentHash } from '../utils.ts';
+import { importContentHash, validateSlug } from '../utils.ts';
 import { extractFrontmatterSourceRefs, mergeSourceRefs } from './corpus-lane-service.ts';
 
 export const DEFAULT_NOTE_MANIFEST_SCOPE_ID = 'workspace:default';
@@ -21,7 +21,7 @@ export interface BuildNoteManifestEntryInput {
 
 export function buildNoteManifestEntry(input: BuildNoteManifestEntryInput): NoteManifestEntryInput {
   const scopeId = input.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID;
-  const slug = slugifyPath(input.slug);
+  const slug = validateSlug(input.slug);
   const path = normalizeManifestPath(input.path);
   const page = input.page;
   const tags = canonicalizeTags(input.tags ?? []);

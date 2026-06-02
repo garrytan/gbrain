@@ -6,6 +6,21 @@ All notable changes to MBrain will be documented in this file.
 
 ### Added
 
+- **MBrain can now auto-promote eligible Memory Inbox candidates into canonical memory — no per-candidate clicking.**
+  Run `mbrain auto-promote` (preview by default; pass `--apply` to write) and your
+  installed `claude`/`codex` CLI judges each eligible candidate with a JSON-only
+  verdict, then a deterministic gate advances/promotes the confident ones,
+  records canonical handoff rows, and writes page-backed canonical notes through
+  the existing `put_page` governance path — the CLI never holds canonical-write
+  tools, and all candidate/context text is treated as untrusted.
+  Verdicts are cached (escalate-once), risky or low-evidence candidates get one
+  stronger-model escalation pass, and `secret`/`unknown` candidates are never
+  eligible. Open contradictions are excluded by default, and target content hashes
+  are rechecked before page writes so stale judgments cannot clobber changed
+  canonical pages. Opt-in and conservative by design: `auto_promote.enabled`
+  defaults off, the confidence threshold defaults to 0.8, and a config-gated
+  `auto_promote` dream phase (order 15) is wired into both `mbrain dream` and
+  autopilot dream runs when local runner use is explicitly allowed.
 - **ChatGPT-style OAuth clients can now connect to the self-hosted MCP server.**
   `mbrain serve --http --oauth` adds OAuth discovery, protected-resource
   metadata, Dynamic Client Registration, PKCE authorization code exchange, and

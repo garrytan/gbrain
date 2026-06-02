@@ -1,4 +1,6 @@
-import type {BrainHealth,
+import type {AutoPromoteVerdictKey,
+  AutoPromoteVerdictRow,
+  BrainHealth,
   BrainStats,
   CanonicalHandoffEntry,
   CanonicalHandoffEntryInput,
@@ -199,6 +201,8 @@ export interface MemoryGovernanceStore {
   // Governance inbox foundations
   createMemoryCandidateEntry(input: MemoryCandidateEntryInput): Promise<MemoryCandidateEntry>;
   getMemoryCandidateEntry(id: string): Promise<MemoryCandidateEntry | null>;
+  getAutoPromoteVerdict(key: AutoPromoteVerdictKey): Promise<AutoPromoteVerdictRow | null>;
+  putAutoPromoteVerdict(row: AutoPromoteVerdictRow): Promise<void>;
   listMemoryCandidateEntries(filters?: MemoryCandidateFilters): Promise<MemoryCandidateEntry[]>;
   createMemoryCandidateStatusEvent(input: MemoryCandidateStatusEventInput): Promise<MemoryCandidateStatusEvent>;
   listMemoryCandidateStatusEvents(filters?: MemoryCandidateStatusEventFilters): Promise<MemoryCandidateStatusEvent[]>;
@@ -210,6 +214,7 @@ export interface MemoryGovernanceStore {
   getMemoryCandidateSupersessionEntry(id: string): Promise<MemoryCandidateSupersessionEntry | null>;
   createMemoryCandidateContradictionEntry(input: MemoryCandidateContradictionEntryInput): Promise<MemoryCandidateContradictionEntry | null>;
   getMemoryCandidateContradictionEntry(id: string): Promise<MemoryCandidateContradictionEntry | null>;
+  listMemoryCandidateContradictionEntriesForCandidateIds(candidateIds: string[]): Promise<MemoryCandidateContradictionEntry[]>;
   createCanonicalHandoffEntry(input: CanonicalHandoffEntryInput): Promise<CanonicalHandoffEntry | null>;
   getCanonicalHandoffEntry(id: string): Promise<CanonicalHandoffEntry | null>;
   listCanonicalHandoffEntries(filters?: CanonicalHandoffFilters): Promise<CanonicalHandoffEntry[]>;
