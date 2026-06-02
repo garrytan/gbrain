@@ -265,6 +265,11 @@
       "description": "Batch scan brain, extract entities, create people/company stubs. KOS-Jarvis fork extension."
     },
     {
+      "name": "kos-jarvis/synthesis-sweep",
+      "path": "kos-jarvis/synthesis-sweep/SKILL.md",
+      "description": "Opus per-entity dossier synthesis (Wisdom layer): cluster an entity's mentioning sources via the link graph into a deep evidence-cited high-level page. KOS-Jarvis fork extension."
+    },
+    {
       "name": "kos-jarvis/image-ingest",
       "path": "kos-jarvis/image-ingest/SKILL.md",
       "description": "Daily cron walking IMAGE_SOURCE_DIR, importing images via Voyage multimodal-3 (v0.36.6.0 cross-modal). Scaffolded — awaits VOYAGE_API_KEY + IMAGE_SOURCE_DIR fill."
