@@ -443,14 +443,9 @@ describe('getSourceStatus', () => {
     await withEnv2(async () => {
       const userPath = join(GBRAIN_HOME, 'na-fixture');
       mkdirSync(userPath, { recursive: true });
-      // path-only source still gets validateRepoState — but with no expected
-      // URL, it just probes existence + .git. Path exists with no .git → 'no-git'.
-      // To match contract docstring we'd want 'not-applicable' only when
-      // local_path is null. Test the truthful behavior:
       await addSource(engine, { id: 'status-no-url', localPath: userPath });
       const s = await getSourceStatus(engine, 'status-no-url');
-      // local_path set but no .git: returns 'no-git'
-      expect(s.clone_state).toBe('no-git');
+      expect(s.clone_state).toBe('not-applicable');
       expect(s.remote_url).toBeNull();
       rmSync(userPath, { recursive: true, force: true });
     });

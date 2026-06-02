@@ -656,8 +656,8 @@ export async function getSourceStatus(
 
   const remoteUrl = getRemoteUrl(src.config);
   let cloneState: SourceStatus['clone_state'] = 'not-applicable';
-  if (src.local_path) {
-    cloneState = validateRepoState(src.local_path, remoteUrl ?? undefined);
+  if (src.local_path && remoteUrl) {
+    cloneState = validateRepoState(src.local_path, remoteUrl);
   }
 
   return {
