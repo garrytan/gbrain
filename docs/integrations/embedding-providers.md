@@ -147,7 +147,7 @@ Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1
 
 `llama.cpp`'s `llama-server --embeddings` endpoint. No env required. Optional `LLAMA_SERVER_BASE_URL` (default `http://localhost:8080/v1`) and `LLAMA_SERVER_API_KEY`.
 
-User-driven models: launch llama-server with `--model <gguf-path> --embeddings`, then run `gbrain init --embedding-model llama-server:<your-id> --embedding-dimensions <N>`. The recipe refuses the implicit shorthand `--model llama-server` because there's no canonical first model.
+User-driven models: launch llama-server with `--model <gguf-path> --embeddings`, then run `gbrain init --embedding-model llama-server:<your-id> --embedding-dimensions <N>`. The recipe refuses the implicit shorthand `--model llama-server` because there's no canonical first model. For OpenAI-compatible local services such as BGE/TEI-compatible proxies, set `LLAMA_SERVER_BASE_URL` to the service's `/v1` endpoint and use the model id reported by `/v1/models`; the explicit `--embedding-dimensions` value becomes the schema contract.
 
 ### LiteLLM proxy (universal escape hatch)
 

@@ -673,6 +673,7 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
+    !parsed.modelId &&
     (recipe.id === 'litellm' || isUserProvided)
   ) {
     return {

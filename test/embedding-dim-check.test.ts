@@ -237,6 +237,41 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  test('user-provided local llama-server model accepts explicit schema dimensions', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:bge-small-en-v1.5',
+      embedding_dimensions: 384,
+    });
+    expect(got).toEqual({
+      ok: true,
+      dim: 384,
+      model: 'llama-server:bge-small-en-v1.5',
+      provider: 'llama-server',
+      recipeDefault: 0,
+    });
+  });
+
+  test('user-provided LiteLLM proxy model accepts explicit schema dimensions', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'litellm:any-proxied-embedding-model',
+      embedding_dimensions: 384,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.dim).toBe(384);
+      expect(got.provider).toBe('litellm');
+      expect(got.model).toBe('litellm:any-proxied-embedding-model');
+    }
+  });
+
+  test('user-provided models still require a positive explicit dimension', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:bge-small-en-v1.5',
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/positive integer/);
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);

@@ -266,9 +266,11 @@ export interface ResolveSchemaEmbeddingDimOpts {
  *  4. Resolved dim is a positive integer.
  *  5. Resolved dim ≤ PGVECTOR_COLUMN_MAX_DIMS (16000).
  *  6. If user passed `embedding_dimensions`, it either matches
- *     `recipe.touchpoints.embedding.default_dims` OR is in the recipe's
- *     `dims_options` list (Matryoshka providers). Otherwise reject — the
- *     user picked a model that doesn't support custom dims.
+ *     `recipe.touchpoints.embedding.default_dims`, is in the recipe's
+ *     `dims_options` list (Matryoshka providers), or belongs to a
+ *     `user_provided_models` recipe where the explicit dimension is the
+ *     schema contract. Otherwise reject — the user picked a model that
+ *     doesn't support custom dims.
  */
 export function resolveSchemaEmbeddingDim(opts: ResolveSchemaEmbeddingDimOpts): ResolveSchemaDimResult {
   try {
@@ -409,6 +411,14 @@ function isCustomDimValidForProvider(
   requestedDims: number,
   dimsOptions: number[] | undefined,
 ): CustomDimCheck {
+  // Tier 0: bring-your-own-model recipes cannot know dimensions statically.
+  // The user-provided dimension is the schema contract; runtime D12 guards still
+  // reject vectors whose actual length disagrees with this value before storage.
+  const embeddingTouchpoint = recipe.touchpoints.embedding;
+  if (embeddingTouchpoint?.user_provided_models === true) {
+    return { valid: true, error: '' };
+  }
+
   // Tier 1: recipe-declared dims_options.
   if (dimsOptions && dimsOptions.length > 0) {
     if (dimsOptions.includes(requestedDims)) return { valid: true, error: '' };

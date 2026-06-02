@@ -294,4 +294,25 @@ describe('v0.37 T12 — happy path with picker-bypassing explicit flag', () => {
     expect(cfg.embedding_model).toBe('voyage:voyage-3-large');
     expect(cfg.embedding_dimensions).toBe(1024);
   }, 120000);
+
+  test('user-provided local embedding model accepts explicit dimensions', async () => {
+    const localHome = makeTempHome();
+    try {
+      const r = await runCli([
+        'init', '--pglite',
+        '--embedding-model', 'llama-server:bge-small-en-v1.5',
+        '--embedding-dimensions', '384',
+      ], {
+        gbrainHome: localHome,
+        env: {},
+      });
+      expect(r.exitCode).toBe(0);
+
+      const cfg = JSON.parse(readFileSync(join(localHome, '.gbrain', 'config.json'), 'utf-8'));
+      expect(cfg.embedding_model).toBe('llama-server:bge-small-en-v1.5');
+      expect(cfg.embedding_dimensions).toBe(384);
+    } finally {
+      rmSync(localHome, { recursive: true, force: true });
+    }
+  }, 120000);
 });

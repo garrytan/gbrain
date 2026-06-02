@@ -16,6 +16,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   configureGateway,
+  diagnoseEmbedding,
   embedQuery,
   isAvailable,
   resetGateway,
@@ -172,5 +173,37 @@ describe('isAvailable(touchpoint, modelOverride) — D10', () => {
       env: { OPENAI_API_KEY: 'sk-test' },
     });
     expect(isAvailable('embedding', 'totally:unknown')).toBe(false);
+  });
+
+  test('user-provided llama-server embedding model is available when model id is explicit', () => {
+    configureGateway({
+      embedding_model: 'llama-server:bge-small-en-v1.5',
+      embedding_dimensions: 384,
+      env: {},
+    });
+
+    expect(diagnoseEmbedding()).toEqual({
+      ok: true,
+      model: 'llama-server:bge-small-en-v1.5',
+      provider: 'llama-server',
+      recipeId: 'llama-server',
+    });
+    expect(isAvailable('embedding')).toBe(true);
+  });
+
+  test('user-provided LiteLLM embedding model is available when model id is explicit', () => {
+    configureGateway({
+      embedding_model: 'litellm:custom-proxy-model',
+      embedding_dimensions: 384,
+      env: {},
+    });
+
+    expect(diagnoseEmbedding()).toEqual({
+      ok: true,
+      model: 'litellm:custom-proxy-model',
+      provider: 'litellm',
+      recipeId: 'litellm',
+    });
+    expect(isAvailable('embedding')).toBe(true);
   });
 });
