@@ -287,6 +287,50 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
   });
 
+  test('empty extraction result writes a sentinel cache row (re-grind fix)', async () => {
+    const pages = [buildPage({ slug: 'wiki/concepts/quiet-page', body: 'Prose that yields no takes.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => []; // extractor finds nothing
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(result.status).toBe('ok');
+    const details = result.details as Record<string, unknown>;
+    expect(details.proposals_inserted).toBe(0);
+    expect(details.empty_results_cached).toBe(1);
+
+    // Exactly one sentinel row INSERT, marked so it can never be confused
+    // with a real proposal.
+    const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]!.params[5]).toBe(''); // claim_text — empty marker
+    expect(inserts[0]!.params[6]).toBe('empty_result'); // kind
+    expect(inserts[0]!.params[12]).toBe('superseded'); // status — terminal
+  });
+
+  test('second run after an empty result is a cache hit (no repeat LLM call)', async () => {
+    const body = 'Prose that yields no takes.';
+    const ch = contentHash(body);
+    const pages = [buildPage({ slug: 'wiki/concepts/quiet-page', body })];
+    // Simulate the sentinel row written by a prior run: it occupies the same
+    // composite idempotency key a real proposal would.
+    const existing = new Set([`default|wiki/concepts/quiet-page|${ch}|${PROPOSE_TAKES_PROMPT_VERSION}`]);
+    const { engine, captured } = buildMockEngine({ pages, existingProposals: existing });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      return [];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(extractorCalls).toBe(0); // the LLM is never called again
+    const details = result.details as Record<string, unknown>;
+    expect(details.cache_hits).toBe(1);
+    expect(details.empty_results_cached).toBe(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+  });
+
   test('passes existing fence rows to extractor as dedup context (F2 fix)', async () => {
     const body = `# Page
 
