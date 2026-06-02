@@ -93,4 +93,19 @@ describe('formatRecipeTable', () => {
     expect(lines[3]).toContain('zeroentropyai');
     expect(lines[3]).toContain('✗ missing ZEROENTROPY_API_KEY');
   });
+
+  test('openai-codex row surfaces plan billing without treating OPENAI_API_KEY as ready', () => {
+    const codex = getRecipe('openai-codex');
+    expect(codex).toBeDefined();
+    const out = formatRecipeTable([codex!], { OPENAI_API_KEY: 'sk-public-only' });
+    const line = out.split('\n').find(row => row.startsWith('openai-codex'));
+    expect(line).toBeDefined();
+    expect(line).toContain('✗ Codex auth unavailable');
+    expect(line).toContain('ChatGPT/Codex plan-billed');
+    expect(line).toContain('public OpenAI API key not used');
+    expect(line).toContain('quota/rate limits apply');
+    expect(line).not.toContain('✓ ready');
+    expect(line).not.toContain('sk-public-only');
+    expect(line).not.toContain('$0/1M');
+  });
 });

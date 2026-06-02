@@ -18,7 +18,8 @@ import {
   type CodexAuthResolveOptions,
   type CodexCredentialSnapshot,
 } from '../core/ai/codex-auth.ts';
-import type { Recipe } from '../core/ai/types.ts';
+import type { BillingMetadata, Recipe } from '../core/ai/types.ts';
+import { splitProviderModelId } from '../core/model-id.ts';
 
 // v2: `tier` widened to include `codex-responses` for metadata-only Codex recipes.
 const SCHEMA_VERSION = 2;
@@ -33,6 +34,9 @@ interface ProviderOption {
   cost_per_1m_tokens_usd?: number;
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;
+  billing?: BillingMetadata;
+  billing_mode?: BillingMetadata['mode'];
+  public_openai_api_key_used?: boolean;
   price_last_verified?: string;
   env_ready: boolean;
   base_url?: string;
@@ -73,6 +77,30 @@ function configureFromEnv(options: ProvidersCommandOptions = {}): void {
 
 function isCodexRecipe(recipe: Recipe): boolean {
   return recipe.tier === 'codex-responses' || recipe.implementation === 'codex-responses';
+}
+
+function codexBillingSummary(recipe: Recipe): string | null {
+  const billing = recipe.touchpoints.chat?.billing;
+  if (!isCodexRecipe(recipe) || billing?.mode !== 'plan-billed') return null;
+  return 'ChatGPT/Codex plan-billed; public OpenAI API key not used; quota/rate limits apply';
+}
+
+function codexSetupHint(): string {
+  return 'Uses ChatGPT/Codex auth and the Codex Responses transport. OPENAI_API_KEY is ignored for this provider; ChatGPT/Codex plan quotas and rate limits still apply.';
+}
+
+function recipeForModelString(modelStr: string | undefined): Recipe | undefined {
+  const providerId = splitProviderModelId(modelStr).provider;
+  return providerId ? getRecipe(providerId) : undefined;
+}
+
+function chatBillingFields(recipe: Recipe, billing: BillingMetadata | undefined): Partial<ProviderOption> {
+  if (!billing) return {};
+  return {
+    billing,
+    billing_mode: billing.mode,
+    ...(isCodexRecipe(recipe) ? { public_openai_api_key_used: false } : {}),
+  };
 }
 
 function resolveCodexForProviders(
@@ -126,11 +154,13 @@ export function formatRecipeTable(
     const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
     const codexSnapshot = isCodexRecipe(r) ? resolveCodexForProviders(env, options) : undefined;
     const ready = envReady(r, env, options);
-    const status = ready
+    const baseStatus = ready
       ? '✓ ready'
       : codexSnapshot
         ? `✗ ${codexAuthFailureDetail(codexSnapshot)}`
         : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
+    const billingSummary = codexBillingSummary(r);
+    const status = billingSummary ? `${baseStatus} · ${billingSummary}` : baseStatus;
     rows.push(
       r.id.padEnd(idCol) +
       r.tier.padEnd(18) +
@@ -213,9 +243,8 @@ async function runTest(args: string[], options: ProvidersCommandOptions = {}): P
 
   // If --model passed, override gateway for this test (touchpoint-aware).
   if (modelArg) {
-    const [providerId, ...modelParts] = modelArg.split(':');
-    const modelId = modelParts.join(':');
-    const recipe = getRecipe(providerId);
+    const { model: modelId } = splitProviderModelId(modelArg);
+    const recipe = recipeForModelString(modelArg);
 
     // codex finding #10: when `--model` is passed, the user is probing a
     // model in isolation. They may be misled into thinking the test result
@@ -260,17 +289,32 @@ async function runTest(args: string[], options: ProvidersCommandOptions = {}): P
     void modelId; // intentionally unused but preserved for readability
   }
 
+  const probedModel = modelArg ?? (() => {
+    try {
+      const cfg = loadConfig();
+      return tpArg === 'embedding' ? cfg?.embedding_model : cfg?.chat_model;
+    } catch {
+      return undefined;
+    }
+  })();
+  const probedRecipe = recipeForModelString(probedModel);
+
   if (!gwIsAvailable(tpArg)) {
-    const overrideProvider = modelArg?.split(':')[0];
-    const overrideRecipe = overrideProvider ? getRecipe(overrideProvider) : undefined;
     const label = `${tpArg[0]?.toUpperCase()}${tpArg.slice(1)}`;
-    if (overrideRecipe && isCodexRecipe(overrideRecipe)) {
+    if (probedRecipe && isCodexRecipe(probedRecipe)) {
       const snapshot = resolveCodexForProviders(process.env, options);
       console.error(`${label} provider unavailable: ${codexAuthFailureDetail(snapshot)}`);
+      const billingSummary = codexBillingSummary(probedRecipe);
+      if (billingSummary) console.error(`Billing: ${billingSummary}`);
     } else {
       console.error(`${label} provider not configured or not ready. Run \`gbrain providers list\` to see status.`);
     }
     process.exit(1);
+  }
+
+  if (probedRecipe && isCodexRecipe(probedRecipe)) {
+    const billingSummary = codexBillingSummary(probedRecipe);
+    if (billingSummary) console.log(`Billing: ${billingSummary}`);
   }
 
   console.log(`Probing ${tpArg} provider...`);
@@ -343,12 +387,19 @@ function runEnv(args: string[], options: ProvidersCommandOptions = {}): void {
   }
   if (isCodexRecipe(recipe)) {
     const snapshot = resolveCodexForProviders(process.env, options);
+    const billingSummary = codexBillingSummary(recipe);
     console.log(`\nCodex auth: ${codexAuthFailureDetail(snapshot)}`);
+    if (billingSummary) console.log(`Billing: ${billingSummary}`);
+    const quotaHint = recipe.touchpoints.chat?.billing?.quota_hint;
+    if (quotaHint) console.log(`Limits: ${quotaHint}`);
     console.log('Public OpenAI API key: not used for openai-codex');
+    console.log('Readiness: Codex auth only; OPENAI_API_KEY does not make openai-codex ready.');
     const baseURL = providerBaseUrl(recipe, loadConfig());
     if (baseURL) console.log(`Base URL: ${baseURL}`);
   }
-  if (recipe.setup_hint) {
+  if (isCodexRecipe(recipe)) {
+    console.log(`\n${codexSetupHint()}`);
+  } else if (recipe.setup_hint) {
     console.log(`\n${recipe.setup_hint}`);
   }
 }
@@ -414,6 +465,7 @@ async function runExplain(args: string[], cmdOptions: ProvidersCommandOptions = 
         model: m.models[0],
         cost_per_1m_input_usd: m.cost_per_1m_input_usd,
         cost_per_1m_output_usd: m.cost_per_1m_output_usd,
+        ...chatBillingFields(r, m.billing),
         price_last_verified: m.price_last_verified,
         env_ready: envReady(r, process.env, cmdOptions),
         ...(baseURL ? { base_url: baseURL } : {}),
@@ -466,9 +518,10 @@ async function runExplain(args: string[], cmdOptions: ProvidersCommandOptions = 
   console.log('');
   console.log('Chat options:');
   for (const o of providerOptions.filter(x => x.touchpoint === 'chat')) {
-    const inCost = o.cost_per_1m_input_usd !== undefined ? `in $${o.cost_per_1m_input_usd}` : '—';
-    const outCost = o.cost_per_1m_output_usd !== undefined ? `out $${o.cost_per_1m_output_usd}` : '—';
-    console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${inCost.padEnd(12)} ${outCost.padEnd(12)} ${o.tier}`);
+    const price = o.billing_mode === 'plan-billed'
+      ? 'plan-billed; public OpenAI API key not used; quota/rate limits apply'
+      : `${(o.cost_per_1m_input_usd !== undefined ? `in $${o.cost_per_1m_input_usd}` : '—').padEnd(12)} ${(o.cost_per_1m_output_usd !== undefined ? `out $${o.cost_per_1m_output_usd}` : '—').padEnd(12)}`;
+    console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${price.padEnd(72)} ${o.tier}`);
   }
   console.log('');
   console.log(`Recommended: ${matrix.recommended}`);
@@ -487,7 +540,7 @@ function prosFor(r: Recipe, touchpoint: TouchpointFilter): string[] {
     else if (r.id === 'deepseek') out.push('25-40x cheaper than Anthropic', 'Strong reasoning');
     else if (r.id === 'groq') out.push('500 tok/s inference', 'Cheap fallback');
     else if (r.id === 'together') out.push('Open-weights house', 'Llama / Qwen / Mixtral');
-    else if (r.id === 'openai-codex') out.push('ChatGPT/Codex plan billed', 'No public OpenAI API spend');
+    else if (r.id === 'openai-codex') out.push('ChatGPT/Codex plan-billed', 'No public OpenAI API spend');
     return out;
   }
   if (r.id === 'openai') out.push('Default', 'High quality', 'Wide compatibility');
@@ -502,7 +555,7 @@ function prosFor(r: Recipe, touchpoint: TouchpointFilter): string[] {
 function consFor(r: Recipe): string[] {
   const out: string[] = [];
   if (r.tier === 'native' && r.id !== 'ollama') out.push('Paid');
-  if (r.id === 'openai-codex') out.push('Codex auth/transport pending in this feature');
+  if (r.id === 'openai-codex') out.push('Requires Codex auth; plan quota/rate limits apply');
   if (r.id === 'ollama') out.push('Requires Ollama daemon running');
   if (r.id === 'litellm') out.push('Requires LiteLLM proxy + config');
   return out;

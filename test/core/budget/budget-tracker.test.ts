@@ -170,6 +170,45 @@ describe('BudgetTracker.reserve', () => {
     ).not.toThrow();
   });
 
+  test('v0.42.x: provider recipe chat pricing covers OpenAI under --max-cost', () => {
+    // SkillOpt can run with Royce's OpenAI model. Pre-fix, BudgetTracker only
+    // consulted ANTHROPIC_PRICING for chat calls, so `openai:gpt-5.2` hit TX2
+    // no_pricing under every --max-cost-bounded SkillOpt run.
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'openai:gpt-5.2',
+        estimatedInputTokens: 1000,
+        maxOutputTokens: 1000,
+        kind: 'chat',
+      }),
+    ).not.toThrow();
+    const audit = readAudit();
+    expect(audit[0].event).toBe('reserve');
+  });
+
+  test('openai-codex plan-billed chat reserve does not no_pricing throw under --max-cost', () => {
+    const t = new BudgetTracker({ maxCostUsd: 0.000001, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'openai-codex:gpt-5.5',
+        estimatedInputTokens: 10_000_000,
+        maxOutputTokens: 10_000_000,
+        kind: 'chat',
+      }),
+    ).not.toThrow();
+    expect(t.totalSpent).toBe(0);
+
+    const audit = readAudit();
+    expect(audit.length).toBe(1);
+    expect(audit[0].event).toBe('reserve');
+    expect(audit[0].billing_mode).toBe('plan-billed');
+    expect(audit[0].public_api_spend_usd).toBe(0);
+    expect(audit[0].projected_cost_usd).toBeUndefined();
+    expect(String(audit[0].billing_display)).toContain('ChatGPT/Codex plan billing');
+    expect(String(audit[0].quota_hint)).toContain('quotas and rate limits');
+  });
+
   test('no cap + unknown pricing: warns once per process, no throw', () => {
     const t = new BudgetTracker({ label: 'test', auditPath });
     expect(() =>
@@ -350,6 +389,28 @@ describe('BudgetTracker.record', () => {
     const audit = readAudit();
     expect(audit.some((e) => e.event === 'record_unpriced')).toBe(true);
     expect(t.totalSpent).toBe(0);
+  });
+
+  test('openai-codex plan-billed record keeps public API spend at zero', () => {
+    const t = new BudgetTracker({ maxCostUsd: 0.000001, label: 'test', auditPath });
+    expect(() =>
+      t.record({
+        modelId: 'openai-codex:gpt-5.5',
+        inputTokens: 2_000_000,
+        outputTokens: 3_000_000,
+        kind: 'chat',
+      } as any),
+    ).not.toThrow();
+    expect(t.totalSpent).toBe(0);
+    expect(t.snapshot().cumulativeCostUsd).toBe(0);
+    expect(t.snapshot().callsRecorded).toBe(1);
+
+    const audit = readAudit();
+    expect(audit.length).toBe(1);
+    expect(audit[0].event).toBe('record');
+    expect(audit[0].billing_mode).toBe('plan-billed');
+    expect(audit[0].public_api_spend_usd).toBe(0);
+    expect(audit[0].actual_cost_usd).toBeUndefined();
   });
 
   test('embed record uses embedding-pricing map', () => {

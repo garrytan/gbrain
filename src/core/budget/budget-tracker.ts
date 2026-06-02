@@ -35,6 +35,8 @@ import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
+import { listRecipes } from '../ai/recipes/index.ts';
+import type { BillingMetadata } from '../ai/types.ts';
 
 export type BudgetKind = 'chat' | 'embed' | 'rerank';
 
@@ -194,6 +196,21 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
   }
+  // v0.42.x: hosted non-Anthropic chat recipes carry their own pricing.
+  // SkillOpt always runs with a max-cost cap, so OpenAI/DeepSeek/etc. must be
+  // priceable here or every rollout hard-fails before the provider call.
+  if (kind === 'chat' && providerId && modelTail) {
+    const recipe = listRecipes().find((r) => r.id === providerId);
+    const chat = recipe?.touchpoints.chat;
+    if (
+      chat &&
+      chat.models.includes(modelTail) &&
+      chat.cost_per_1m_input_usd !== undefined &&
+      chat.cost_per_1m_output_usd !== undefined
+    ) {
+      return { input: chat.cost_per_1m_input_usd, output: chat.cost_per_1m_output_usd };
+    }
+  }
   // v0.40.6.1: zero-price local-inference rerank providers so the budget
   // tracker's TX2 hard-fail doesn't trip on `llama-server-reranker:<model>`
   // under `--max-cost`. Only the rerank kind — chat/embed already have
@@ -202,6 +219,30 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     return { input: 0, output: 0 };
   }
   return null;
+}
+
+interface PlanBillingInfo {
+  billing: BillingMetadata & { mode: 'plan-billed' };
+}
+
+function lookupPlanBilling(modelId: string, kind: BudgetKind): PlanBillingInfo | null {
+  if (kind !== 'chat') return null;
+  const { provider: providerId, model: modelTail } = splitProviderModelId(modelId);
+  if (!providerId || !modelTail) return null;
+
+  const recipe = listRecipes().find((r) => r.id === providerId);
+  const chat = recipe?.touchpoints.chat;
+  if (!chat || !chat.models.includes(modelTail) || chat.billing?.mode !== 'plan-billed') return null;
+  return { billing: chat.billing as BillingMetadata & { mode: 'plan-billed' } };
+}
+
+function planBillingAuditFields(info: PlanBillingInfo): Record<string, unknown> {
+  return {
+    billing_mode: info.billing.mode,
+    billing_display: info.billing.display,
+    quota_hint: info.billing.quota_hint ?? null,
+    public_api_spend_usd: 0,
+  };
 }
 
 function costForUsage(modelId: string, inputTokens: number, outputTokens: number, kind: BudgetKind): number | null {
@@ -270,6 +311,24 @@ export class BudgetTracker {
     );
 
     if (projected === null) {
+      const planBilling = lookupPlanBilling(estimate.modelId, estimate.kind);
+      if (planBilling) {
+        appendAuditLine(this.auditPath, {
+          schema_version: 1,
+          ts: new Date().toISOString(),
+          event: 'reserve',
+          label: this.opts.label,
+          kind: estimate.kind,
+          model: estimate.modelId,
+          sub_label: estimate.label,
+          estimated_input_tokens: estimate.estimatedInputTokens,
+          max_output_tokens: estimate.maxOutputTokens,
+          cumulative_cost_usd: this.cumulativeUsd,
+          max_cost_usd: this.opts.maxCostUsd ?? null,
+          ...planBillingAuditFields(planBilling),
+        });
+        return;
+      }
       if (this.opts.maxCostUsd !== undefined) {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
@@ -360,6 +419,25 @@ export class BudgetTracker {
     const cost = costForUsage(actual.modelId, actual.inputTokens, actual.outputTokens ?? 0, kind);
 
     if (cost === null) {
+      const planBilling = lookupPlanBilling(actual.modelId, kind);
+      if (planBilling) {
+        appendAuditLine(this.auditPath, {
+          schema_version: 1,
+          ts: new Date().toISOString(),
+          event: 'record',
+          label: this.opts.label,
+          kind,
+          model: actual.modelId,
+          sub_label: actual.label,
+          input_tokens: actual.inputTokens,
+          output_tokens: actual.outputTokens ?? 0,
+          embedding_dims: actual.embeddingDims ?? null,
+          cumulative_cost_usd: this.cumulativeUsd,
+          max_cost_usd: this.opts.maxCostUsd ?? null,
+          ...planBillingAuditFields(planBilling),
+        });
+        return;
+      }
       // Unpriced model: record audit but skip cumulative math. Cap (if set)
       // already rejected this call at reserve(); a record() here means the
       // unpriced warn-once path let it through (cap unset).

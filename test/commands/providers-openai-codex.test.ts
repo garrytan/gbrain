@@ -120,15 +120,21 @@ describe('openai-codex provider readiness', () => {
       const table = formatRecipeTable(listRecipes(), process.env, codexOptions());
       const pureLine = codexLine(table);
       expect(pureLine).toContain('✗ Codex auth unavailable');
+      expect(pureLine).toContain('ChatGPT/Codex plan-billed');
+      expect(pureLine).toContain('public OpenAI API key not used');
+      expect(pureLine).toContain('quota/rate limits apply');
       expect(pureLine).not.toContain('✓ ready');
-      expect(pureLine).not.toContain('sk-public-key-not-codex');
+      expect(pureLine).not.toContain('sk-pub...odex');
 
       const captured = await captureRun(() => runProviders('list', [], codexOptions()));
       expect(captured.exitCode).toBeUndefined();
       const line = codexLine(captured.stdout);
       expect(line).toContain('✗ Codex auth unavailable');
+      expect(line).toContain('ChatGPT/Codex plan-billed');
+      expect(line).toContain('public OpenAI API key not used');
+      expect(line).toContain('quota/rate limits apply');
       expect(line).not.toContain('✓ ready');
-      expect(captured.stdout).not.toContain('sk-public-key-not-codex');
+      expect(captured.stdout).not.toContain('sk-pub...odex');
     });
   });
 
@@ -136,7 +142,11 @@ describe('openai-codex provider readiness', () => {
     await withProvidersEnv({ [OPENAI_CODEX_ACCESS_TOKEN]: VALID_TOKEN }, async () => {
       const captured = await captureRun(() => runProviders('list', [], codexOptions()));
       expect(captured.exitCode).toBeUndefined();
-      expect(codexLine(captured.stdout)).toContain('✓ ready');
+      const line = codexLine(captured.stdout);
+      expect(line).toContain('✓ ready');
+      expect(line).toContain('ChatGPT/Codex plan-billed');
+      expect(line).toContain('public OpenAI API key not used');
+      expect(line).toContain('quota/rate limits apply');
     });
   });
 
@@ -149,8 +159,14 @@ describe('openai-codex provider readiness', () => {
       expect(captured.exitCode).toBeUndefined();
       expect(captured.stdout).toContain('OPENAI_CODEX_ACCESS_TOKEN');
       expect(captured.stdout).toContain('Codex auth: Codex auth ready');
+      expect(captured.stdout).toContain('Billing: ChatGPT/Codex plan-billed');
+      expect(captured.stdout).toContain('quota/rate limits apply');
+      expect(captured.stdout).toContain('Limits: Subject to ChatGPT/Codex plan quotas and rate limits.');
       expect(captured.stdout).toContain('Public OpenAI API key: not used for openai-codex');
+      expect(captured.stdout).toContain('Readiness: Codex auth only; OPENAI_API_KEY does not make openai-codex ready.');
       expect(captured.stdout).toContain('Base URL: http://codex-proxy.example.test/v1');
+      expect(captured.stdout).not.toContain('transport pending');
+      expect(captured.stdout).not.toContain('Transport/auth are pending');
       expect(captured.stdout).not.toContain(VALID_TOKEN);
     });
   });
@@ -163,6 +179,12 @@ describe('openai-codex provider readiness', () => {
       const option = matrix.options.find((candidate: any) => candidate.id === 'openai-codex:gpt-5.5');
       expect(option).toBeDefined();
       expect(option.env_ready).toBe(false);
+      expect(option.billing_mode).toBe('plan-billed');
+      expect(option.billing.display).toContain('ChatGPT/Codex plan billing');
+      expect(option.billing.quota_hint).toContain('quotas and rate limits');
+      expect(option.public_openai_api_key_used).toBe(false);
+      expect(option.cost_per_1m_input_usd).toBeUndefined();
+      expect(option.cost_per_1m_output_usd).toBeUndefined();
       expect(matrix.env_detected.OPENAI_API_KEY).toBe(true);
       expect(JSON.stringify(matrix)).not.toContain('sk-public-key-not-codex');
     });
