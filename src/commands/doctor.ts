@@ -30,6 +30,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import {
   extractEntityRefs,
   isGlobalBasenameEnabled,
+  buildBasenameIndex,
+  queryBasenameIndex,
 } from '../core/link-extraction.ts';
 import { isSourceUnchangedSinceSync } from '../core/git-head.ts';
 // v0.41.32.0: remote staleness reads the stored newest_content_at column via
@@ -857,21 +859,11 @@ export async function checkLinkResolutionOpportunity(
     if (allSlugs.size === 0) {
       return { name, status: 'ok', message: 'Brain is empty — nothing to scan' };
     }
-    // Build a basename → slug[] index ONCE for the entire scan. Mirrors
-    // the resolver's in-memory index shape; key by raw tail + lowercase
-    // tail so case-only variants still hit.
-    const basenameIndex = new Map<string, string[]>();
-    const addKey = (key: string, slug: string) => {
-      const existing = basenameIndex.get(key);
-      if (existing) existing.push(slug);
-      else basenameIndex.set(key, [slug]);
-    };
-    for (const slug of allSlugs) {
-      const tail = slug.includes('/') ? slug.slice(slug.lastIndexOf('/') + 1) : slug;
-      addKey(tail, slug);
-      const lower = tail.toLowerCase();
-      if (lower !== tail) addKey(lower, slug);
-    }
+    // Build a basename → slug[] index ONCE for the entire scan via the shared
+    // builder (issue #972 codex [P2] DRY) — same key set (raw/lower/slugified)
+    // as extraction, so this estimate matches what extraction actually
+    // resolves. Pre-fix the doctor omitted the slugified key and undercounted.
+    const basenameIndex = buildBasenameIndex(allSlugs);
 
     let bareCount = 0;
     let wouldResolveCount = 0;
@@ -898,12 +890,9 @@ export async function checkLinkResolutionOpportunity(
           if (!e.needsResolution) continue;
           bareCount++;
           // Issue #972 (codex): match on the wikilink TARGET (e.slug), not
-          // the display alias (e.name) — mirrors extractPageLinks so the
-          // doctor estimate reflects what extraction actually resolves.
-          const matches =
-            basenameIndex.get(e.slug) ||
-            basenameIndex.get(e.slug.toLowerCase()) ||
-            [];
+          // the display alias (e.name), via the shared query so the doctor
+          // estimate equals what extraction actually resolves.
+          const matches = queryBasenameIndex(basenameIndex, e.slug);
           if (matches.length > 0) {
             wouldResolveCount++;
             for (const m of matches) distinctTargets.add(m);

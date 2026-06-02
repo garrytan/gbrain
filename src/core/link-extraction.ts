@@ -765,6 +765,54 @@ export interface SlugResolver {
 }
 
 /**
+ * Issue #972 (codex [P2] DRY): the ONE basename matcher. Before this, three
+ * surfaces (makeResolver, FS `resolveBasenameMatchesFromSlugs`, the doctor
+ * `link_resolution_opportunity` check) each hand-rolled their own key set +
+ * sort, and they drifted — the doctor omitted the slugified key, so its
+ * "N would resolve" estimate undercounted what extraction actually produces.
+ * All three now build/query through these two functions so they cannot drift.
+ *
+ * Keying: raw tail + lowercase tail + slugified tail. A slug's tail is its
+ * final `/`-segment (or the whole slug when it has no `/`).
+ */
+export function normalizeBasename(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+}
+
+/** Stable order: shorter slug first (likely closer to brain root), then lexical. */
+function basenameSort(a: string, b: string): number {
+  return (a.length - b.length) || a.localeCompare(b);
+}
+
+/** Build a `key → slug[]` index over a slug collection. Keys: raw/lower/slugified tail. */
+export function buildBasenameIndex(slugs: Iterable<string>): Map<string, string[]> {
+  const idx = new Map<string, string[]>();
+  const addKey = (key: string, slug: string) => {
+    const existing = idx.get(key);
+    if (existing) { if (!existing.includes(slug)) existing.push(slug); }
+    else idx.set(key, [slug]);
+  };
+  for (const slug of slugs) {
+    const tail = slug.includes('/') ? slug.slice(slug.lastIndexOf('/') + 1) : slug;
+    addKey(tail, slug);
+    const lower = tail.toLowerCase();
+    if (lower !== tail) addKey(lower, slug);
+    const slugified = normalizeBasename(tail);
+    if (slugified && slugified !== tail && slugified !== lower) addKey(slugified, slug);
+  }
+  return idx;
+}
+
+/** Look a name up in a basename index (raw → lower → slugified), stable-sorted. */
+export function queryBasenameIndex(idx: Map<string, string[]>, name: string): string[] {
+  if (!name || typeof name !== 'string') return [];
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  const hit = idx.get(trimmed) ?? idx.get(trimmed.toLowerCase()) ?? idx.get(normalizeBasename(trimmed));
+  return hit ? [...hit].sort(basenameSort) : [];
+}
+
+/**
  * Create a resolver scoped to a single extract run or single put_page call.
  *
  * mode: 'batch' (migration / gbrain extract) — pg_trgm only, NO search
@@ -809,31 +857,9 @@ export function makeResolver(
       // same-tail page in a DIFFERENT source and create a cross-source edge.
       // #972 is "global basename across folders," not "cross-source federation."
       const all = await engine.getAllSlugs(opts.sourceId ? { sourceId: opts.sourceId } : undefined);
-      const addKey = (key: string, slug: string) => {
-        const existing = idx.get(key);
-        if (existing) {
-          // Defensive: avoid duplicate slugs in the same bucket. Pages
-          // share a (slug, source_id) PK so this should only fire on a
-          // case-only collision between raw + slugified keys.
-          if (!existing.includes(slug)) existing.push(slug);
-        } else {
-          idx.set(key, [slug]);
-        }
-      };
-      for (const slug of all) {
-        const tail = slug.includes('/') ? slug.slice(slug.lastIndexOf('/') + 1) : slug;
-        // Raw tail (preserves case so `[[Fast-Weigh]]` hits its own line).
-        addKey(tail, slug);
-        // Lowercase tail (so case-only mismatches still resolve).
-        const lower = tail.toLowerCase();
-        if (lower !== tail) addKey(lower, slug);
-        // Slugified tail (so `[[Fast Weigh]]` / `[[Fast.Weigh]]` reach
-        // the same `fast-weigh`-suffixed page).
-        const slugified = norm(tail);
-        if (slugified && slugified !== tail && slugified !== lower) {
-          addKey(slugified, slug);
-        }
-      }
+      // Issue #972 (codex [P2] DRY): one shared index builder for all surfaces.
+      basenameIndex = buildBasenameIndex(all);
+      return basenameIndex;
     } catch {
       // Index build failed — empty map → resolveBasenameMatches finds
       // nothing, resolver continues as if the flag was off. Never throw.
@@ -844,17 +870,9 @@ export function makeResolver(
 
   return {
     async resolveBasenameMatches(name: string): Promise<string[]> {
-      if (!name || typeof name !== 'string') return [];
-      const trimmed = name.trim();
-      if (!trimmed) return [];
-      const idx = await ensureBasenameIndex();
-      const raw = idx.get(trimmed);
-      if (raw) return [...raw];
-      const lower = idx.get(trimmed.toLowerCase());
-      if (lower) return [...lower];
-      const slugified = idx.get(norm(trimmed));
-      if (slugified) return [...slugified];
-      return [];
+      // Issue #972 (codex [P2] DRY): shared query so resolver + FS + doctor
+      // return the same matches in the same stable order.
+      return queryBasenameIndex(await ensureBasenameIndex(), name);
     },
 
     async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {

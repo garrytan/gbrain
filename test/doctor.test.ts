@@ -1281,6 +1281,25 @@ describe('issue #972 — link_resolution_opportunity check', () => {
     expect(check.message).toContain('below the 20% / 5-link threshold');
   });
 
+  test('counts slugified-only matches (shared matcher, codex #972 DRY)', async () => {
+    // `[[Fast Weigh]]` (space) only resolves to `companies/fast-weigh` via the
+    // slugified key. Pre-consolidation the doctor index keyed raw+lower only
+    // and would have reported "none have basename matches"; the shared matcher
+    // adds the slugified key so the estimate matches what extraction resolves.
+    await engine.putPage('companies/fast-weigh', {
+      type: 'company', title: 'Fast-Weigh', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[Fast Weigh]] for context.', timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    // 1/1 resolves (below the 5-link warn floor → ok) but it DID resolve.
+    expect(check.message).toContain('1/1');
+    expect(check.message).toContain('would resolve');
+    expect(check.message).not.toContain('none have basename matches');
+  });
+
   test('check is wired into runDoctor AND doctorReportRemote (source-grep)', async () => {
     const source = await Bun.file(
       new URL('../src/commands/doctor.ts', import.meta.url),

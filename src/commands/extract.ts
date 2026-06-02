@@ -37,6 +37,7 @@ import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
   extractFrontmatterLinks, isGlobalBasenameEnabled,
   WIKILINK_BASENAME_LINK_TYPE,
+  buildBasenameIndex, queryBasenameIndex,
   type UnresolvedFrontmatterRef,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
@@ -228,25 +229,10 @@ export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<st
 export function resolveBasenameMatchesFromSlugs(
   name: string, allSlugs: Set<string>,
 ): string[] {
-  if (!name || typeof name !== 'string') return [];
-  const trimmed = name.trim();
-  if (!trimmed) return [];
-  const slugify = (s: string) =>
-    s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
-  const lower = trimmed.toLowerCase();
-  const slugified = slugify(trimmed);
-  const matches: string[] = [];
-  for (const slug of allSlugs) {
-    const tail = slug.includes('/') ? slug.slice(slug.lastIndexOf('/') + 1) : slug;
-    if (tail === trimmed || tail.toLowerCase() === lower || tail === slugified
-        || slugify(tail) === slugified) {
-      matches.push(slug);
-    }
-  }
-  // Stable ordering: shorter slugs first (likely closer to brain root),
-  // then lexical. Keeps test fixtures predictable + dedup downstream.
-  matches.sort((a, b) => (a.length - b.length) || a.localeCompare(b));
-  return matches;
+  // Issue #972 (codex [P2] DRY): delegate to the shared matcher so the FS
+  // path keys + sorts identically to the resolver and doctor. (Per-call
+  // index build is O(N), the same cost as the prior inline scan.)
+  return queryBasenameIndex(buildBasenameIndex(allSlugs), name);
 }
 
 /**
