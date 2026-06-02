@@ -8,6 +8,45 @@ let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
 
 /**
+ * v0.42.x (fix/dream-cycle-db-connection): remember the last URL the module
+ * singleton was successfully connected with, so getConnection() can lazily
+ * rebuild the pool if a mid-process callee (e.g. a dream-cycle phase that
+ * disconnects a module-style engine) nulled `sql` out from under a later
+ * phase. Without this, the dream cycle's sync/synthesize phases throw
+ * "connect() has not been called" even though the process is fully
+ * configured — the singleton-null bug tracked in #1570. Persisting the URL
+ * (not the whole EngineConfig) is enough: every other postgres option is
+ * derived deterministically from the URL in buildPool().
+ */
+let lastConnectedUrl: string | null = null;
+
+/**
+ * Build a postgres.js pool from a URL using the same options connect() uses.
+ * Synchronous: postgres() does not open a socket until the first query, so
+ * this is safe to call from the synchronous getConnection() lazy-reconnect
+ * path. The connectivity probe (SELECT 1) that connect() runs is intentionally
+ * NOT repeated here — a lazy rebuild trusts that the URL worked once.
+ */
+function buildPool(url: string): ReturnType<typeof postgres> {
+  const prepare = resolvePrepare(url);
+  const timeouts = resolveSessionTimeouts();
+  const opts: Record<string, unknown> = {
+    max: resolvePoolSize(),
+    idle_timeout: 20,
+    connect_timeout: 10,
+    types: { bigint: postgres.BigInt },
+    onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
+  };
+  if (Object.keys(timeouts).length > 0) {
+    opts.connection = timeouts;
+  }
+  if (typeof prepare === 'boolean') {
+    opts.prepare = prepare;
+  }
+  return postgres(url, opts);
+}
+
+/**
  * Default pool size for Postgres connections. Users on the Supabase transaction
  * pooler (port 6543) or any multi-tenant pooler can lower this to avoid
  * MaxClients errors when `gbrain upgrade` spawns subprocesses that each open
@@ -150,6 +189,18 @@ export async function setSessionDefaults(_sql: ReturnType<typeof postgres>): Pro
 
 export function getConnection(): ReturnType<typeof postgres> {
   if (!sql) {
+    // v0.42.x (fix/dream-cycle-db-connection): self-heal the singleton-null
+    // bug (#1570). If we were connected earlier this process and a mid-process
+    // callee tore the singleton down (the dream cycle disconnecting a
+    // module-style engine between phases), rebuild the pool from the
+    // remembered URL instead of throwing. This makes the sync/synthesize
+    // dream phases — which reach for the module singleton AFTER an earlier
+    // phase's teardown — robust without re-plumbing every caller's engine.
+    if (lastConnectedUrl) {
+      sql = buildPool(lastConnectedUrl);
+      connectedUrl = lastConnectedUrl;
+      return sql;
+    }
     throw new GBrainError(
       'No database connection',
       'connect() has not been called',
@@ -178,38 +229,21 @@ export async function connect(config: EngineConfig): Promise<void> {
   }
 
   try {
+    // PgBouncer transaction-mode warning is preserved here (buildPool stays
+    // quiet for the lazy-reconnect path; the user only needs to see this once
+    // on the explicit connect()).
     const prepare = resolvePrepare(url);
-    const timeouts = resolveSessionTimeouts();
-    const opts: Record<string, unknown> = {
-      max: resolvePoolSize(),
-      idle_timeout: 20,
-      connect_timeout: 10,
-      types: {
-        // Register pgvector type
-        bigint: postgres.BigInt,
-      },
-      // Silence postgres NOTICE-level messages by default ("relation already
-      // exists, skipping" floods stdout under idempotent CREATE statements
-      // during migrations + initSchema, and breaks stdout-parsing callers like
-      // `gbrain jobs submit --json | ...`). Opt back in with GBRAIN_PG_NOTICES=1.
-      onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
-    };
-    if (Object.keys(timeouts).length > 0) {
-      opts.connection = timeouts;
+    if (prepare === false) {
+      console.warn(
+        '[gbrain] Prepared statements disabled (PgBouncer transaction-mode convention on port 6543). Override with GBRAIN_PREPARE=true if your pooler runs in session mode.',
+      );
     }
-    if (typeof prepare === 'boolean') {
-      opts.prepare = prepare;
-      if (!prepare) {
-        console.warn(
-          '[gbrain] Prepared statements disabled (PgBouncer transaction-mode convention on port 6543). Override with GBRAIN_PREPARE=true if your pooler runs in session mode.',
-        );
-      }
-    }
-    sql = postgres(url, opts);
+    sql = buildPool(url);
 
     // Test connection
     await sql`SELECT 1`;
     connectedUrl = url;
+    lastConnectedUrl = url; // remember for getConnection() lazy reconnect (#1570)
 
     await setSessionDefaults(sql);
   } catch (e: unknown) {
@@ -240,6 +274,10 @@ export async function disconnect(): Promise<void> {
     await sql.end();
     sql = null;
     connectedUrl = null;
+    // NOTE: lastConnectedUrl is intentionally NOT cleared here — it is the
+    // memory that lets getConnection() lazily rebuild the pool if a later
+    // same-process phase needs the singleton after this teardown (#1570).
+    // A genuine process exit discards the module state anyway.
   }
 }
 
