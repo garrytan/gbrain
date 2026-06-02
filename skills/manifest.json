@@ -270,6 +270,11 @@
       "description": "Opus per-entity dossier synthesis (Wisdom layer): cluster an entity's mentioning sources via the link graph into a deep evidence-cited high-level page. KOS-Jarvis fork extension."
     },
     {
+      "name": "kos-jarvis/corpus-synth",
+      "path": "kos-jarvis/corpus-synth/SKILL.md",
+      "description": "Opus corpus-level viewpoint synthesis (top of DIKW): map a whole source, propose themes + cross-document tensions, then deeply synthesize each into a 观点与洞察 page. Top-down (no embedding dependency); borrows gbrain's min_evidence gate + content_hash idempotency. KOS-Jarvis fork extension."
+    },
+    {
       "name": "kos-jarvis/image-ingest",
       "path": "kos-jarvis/image-ingest/SKILL.md",
       "description": "Daily cron walking IMAGE_SOURCE_DIR, importing images via Voyage multimodal-3 (v0.36.6.0 cross-modal). Scaffolded — awaits VOYAGE_API_KEY + IMAGE_SOURCE_DIR fill."

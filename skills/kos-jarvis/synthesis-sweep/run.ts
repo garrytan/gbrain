@@ -53,6 +53,7 @@ const NEIGHBOR_TYPES = ["email", "source"] as const;
 
 const CACHE_DIR = join(homedir(), ".cache", "kos-jarvis", "synthesis-sweep");
 const LOCK = join(homedir(), ".cache", "kos-jarvis", "synthesis-sweep.lock");
+let lockFile = LOCK; // becomes per-shard when --shard I/N is used
 
 type Flags = {
   source?: string;
@@ -62,6 +63,10 @@ type Flags = {
   charCap: number;
   tokenBudget: number; // budget in tokens (×1.5 → chars; CJK-measured)
   concurrency: number;
+  shardIndex: number;
+  shardTotal: number;
+  refreshStale: boolean;
+  staleDelta: number;
   dry: boolean;
   plan: boolean;
   resume: boolean;
@@ -74,6 +79,10 @@ function parseFlags(argv: string[]): Flags {
     charCap: 4000,
     tokenBudget: WANT_1M ? 900_000 : 450_000,
     concurrency: 4,
+    shardIndex: 0,
+    shardTotal: 1,
+    refreshStale: false,
+    staleDelta: 5,
     dry: false,
     plan: false,
     resume: false,
@@ -89,6 +98,9 @@ function parseFlags(argv: string[]): Flags {
     else if (a === "--char-cap") f.charCap = parseInt(next(), 10);
     else if (a === "--token-budget") f.tokenBudget = parseInt(next(), 10);
     else if (a === "--concurrency") f.concurrency = parseInt(next(), 10);
+    else if (a === "--shard") { const [i, n] = next().split("/").map((x) => parseInt(x, 10)); f.shardIndex = i; f.shardTotal = n; }
+    else if (a === "--refresh-stale") f.refreshStale = true;
+    else if (a === "--stale-delta") f.staleDelta = parseInt(next(), 10);
     else if (a === "--dry") f.dry = true;
     else if (a === "--plan") f.plan = true;
     else if (a === "--resume") f.resume = true;
@@ -110,6 +122,9 @@ const HELP = `synthesis-sweep — Opus per-entity dossier synthesis (Wisdom laye
   --plan               Select + preview targets, no LLM, no writes
   --dry                Alias of --plan
   --resume             Skip entities already in the checkpoint
+  --refresh-stale      Also re-synthesize done entities whose evidence GREW:
+                       current neighbors - neighbors-at-last-dossier >= --stale-delta
+  --stale-delta N      Min neighbor growth to trigger a refresh (default 5)
   -h, --help           This help
 
 Env: ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL (CRS, /v1) required; SYNTH_CONTEXT_1M=1
@@ -141,28 +156,37 @@ function checkpointPath(scope: string): string {
   return join(CACHE_DIR, `${sanitizeId(scope)}.jsonl`);
 }
 
-function loadDone(path: string): Set<string> {
-  const done = new Set<string>();
+// Map slug → neighbor count recorded at synthesis time. Neighbors = the total
+// mentioning sources the entity had when its dossier was written. Prefer the
+// explicit `neighbors` field; fall back to sources+dropped for pre-refresh-stale
+// checkpoints (which always recorded both). Keep the MAX across re-syntheses so
+// the staleness baseline tracks the freshest dossier.
+function loadDone(path: string): Map<string, number> {
+  const done = new Map<string, number>();
   if (!existsSync(path)) return done;
   for (const line of readFileSync(path, "utf-8").split("\n")) {
     if (!line.trim()) continue;
-    try { done.add(JSON.parse(line).slug); } catch { /* skip */ }
+    try {
+      const r = JSON.parse(line);
+      const n = typeof r.neighbors === "number" ? r.neighbors : (r.sources ?? 0) + (r.dropped ?? 0);
+      done.set(r.slug, Math.max(done.get(r.slug) ?? 0, n));
+    } catch { /* skip */ }
   }
   return done;
 }
 
-function markDone(path: string, rec: { slug: string; in_tokens: number; out_tokens: number; sources: number; dropped: number }): void {
+function markDone(path: string, rec: { slug: string; neighbors: number; in_tokens: number; out_tokens: number; sources: number; dropped: number }): void {
   appendFileSync(path, JSON.stringify(rec) + "\n");
 }
 
 function acquireLock(): void {
-  if (existsSync(LOCK)) {
-    console.error(`Another synthesis-sweep is running (lock: ${LOCK}). Remove it if stale.`);
+  if (existsSync(lockFile)) {
+    console.error(`Another synthesis-sweep is running (lock: ${lockFile}). Remove it if stale.`);
     process.exit(1);
   }
-  writeFileSync(LOCK, String(process.pid));
+  writeFileSync(lockFile, String(process.pid));
 }
-function releaseLock(): void { try { unlinkSync(LOCK); } catch { /* noop */ } }
+function releaseLock(): void { try { unlinkSync(lockFile); } catch { /* noop */ } }
 
 // fatal LLM errors that would hit every subsequent call → abort the whole run
 function isFatalLLMError(msg: string): boolean {
@@ -258,7 +282,7 @@ async function synthesize(client: Anthropic, t: Target, g: Gathered): Promise<{ 
   const content = `${buildPrompt(t)}\n\n=== 源材料 ===\n${g.text}`;
   const extra = WANT_1M ? { headers: { "anthropic-beta": BETA_1M } } : undefined;
   let lastErr = "";
-  for (let attempt = 1; attempt <= 6; attempt++) {
+  for (let attempt = 1; attempt <= 8; attempt++) {
     try {
       // Stream (required for the high MAX_TOKENS cap) and await the accumulated
       // final message. Long dossiers stream over minutes without tripping the
@@ -272,7 +296,7 @@ async function synthesize(client: Anthropic, t: Target, g: Gathered): Promise<{ 
       // Guard: a degraded retry (e.g. after a CF 524) can return a near-empty
       // body that still 200s. Don't checkpoint garbage — treat short output as
       // a retryable failure so the entity is re-synthesized, not silently lost.
-      if (text.trim().length < 400) throw new Error(`short/empty response (${text.trim().length} chars)`);
+      if (text.trim().length < 150) throw new Error(`short/empty response (${text.trim().length} chars)`);
       return { text, in: resp.usage?.input_tokens ?? 0, out: resp.usage?.output_tokens ?? 0 };
     } catch (e: any) {
       lastErr = e?.message ?? String(e);
@@ -281,15 +305,18 @@ async function synthesize(client: Anthropic, t: Target, g: Gathered): Promise<{ 
       // maxRetries already retried+backed-off before surfacing here). Other
       // transient (timeout / 5xx / network) → shorter linear backoff.
       const status = e?.status ?? e?.statusCode ?? 0;
-      // 429/529 = rate/overload; 503/524 = CF/origin timeout on big slow
-      // requests — all want a long backoff, not a tight retry.
-      const rateLimited = status === 429 || status === 503 || status === 524 || status === 529
+      // 429/529 = rate/overload; 503/524 = CF/origin timeout; 500 "No available
+      // Claude accounts" = CRS opus account-pool exhausted. All want a long
+      // backoff (退避等待 for capacity to free up), not a tight retry.
+      const poolExhausted = status === 500 || /no available|no .*account|accounts support/i.test(lastErr);
+      const rateLimited = status === 429 || status === 503 || status === 524 || status === 529 || poolExhausted
         || /overloaded|rate.?limit|too many requests|timeout occurred|error 524/i.test(lastErr);
       const retryAfterS = Number(e?.headers?.["retry-after"]) || 0;
-      const wait = rateLimited
+      const base = rateLimited
         ? Math.min(Math.max(retryAfterS * 1000, 30_000 * 2 ** (attempt - 1)), 300_000)
         : Math.min(5_000 * attempt, 60_000);
-      console.error(`    ! ${t.slug} attempt ${attempt}/6 ${rateLimited ? "RATE-LIMIT" : "transient"} (${lastErr.slice(0, 90)}) — backoff ${Math.round(wait / 1000)}s`);
+      const wait = Math.round(base * (0.8 + Math.random() * 0.4)); // jitter desyncs workers
+      console.error(`    ! ${t.slug} attempt ${attempt}/8 ${poolExhausted ? "POOL-EXHAUSTED" : rateLimited ? "RATE-LIMIT" : "transient"} (${lastErr.slice(0, 90)}) — backoff ${Math.round(wait / 1000)}s`);
       await new Promise((r) => setTimeout(r, wait));
     }
   }
@@ -316,11 +343,25 @@ async function main() {
 
   const scope = f.source ?? "all";
   const ckptPath = checkpointPath(scope);
-  const done = f.resume || existsSync(ckptPath) ? loadDone(ckptPath) : new Set<string>();
+  const done = f.resume || existsSync(ckptPath) ? loadDone(ckptPath) : new Map<string, number>();
 
-  console.log(`[A] selecting entities (source=${scope}, min-neighbors=${f.minNeighbors}${f.kind ? `, kind=${f.kind}` : ""}) …`);
-  const targets = selectTargets(f).filter((t) => !done.has(t.slug));
-  console.log(`    ${targets.length} entities to synthesize${done.size ? ` (${done.size} already done, skipped)` : ""}\n`);
+  console.log(`[A] selecting entities (source=${scope}, min-neighbors=${f.minNeighbors}${f.kind ? `, kind=${f.kind}` : ""}${f.refreshStale ? `, refresh-stale Δ≥${f.staleDelta}` : ""}) …`);
+  if (f.shardTotal > 1) lockFile = join(homedir(), ".cache", "kos-jarvis", `synthesis-sweep.shard${f.shardIndex}.lock`);
+  // Target = never-synthesized (new) OR, with --refresh-stale, a done entity whose
+  // mentioning-source count grew by >= --stale-delta since its dossier was written.
+  type Tagged = { t: Target; status: "new" | "refresh" };
+  let tagged: Tagged[] = selectTargets(f)
+    .map((t): Tagged | null => {
+      const prev = done.get(t.slug);
+      if (prev === undefined) return { t, status: "new" };
+      if (f.refreshStale && t.neighbors - prev >= f.staleDelta) return { t, status: "refresh" };
+      return null; // done + fresh enough → skip
+    })
+    .filter((x): x is Tagged => x !== null);
+  if (f.shardTotal > 1) tagged = tagged.filter((_, i) => i % f.shardTotal === f.shardIndex);
+  const nRefresh = tagged.filter((x) => x.status === "refresh").length;
+  let targets = tagged.map((x) => x.t);
+  console.log(`    ${targets.length} entities to synthesize (${targets.length - nRefresh} new${nRefresh ? `, ${nRefresh} stale→refresh` : ""}${done.size ? `; ${done.size} in checkpoint` : ""})\n`);
 
   if (f.plan) {
     for (const t of targets.slice(0, 30)) {
@@ -347,7 +388,7 @@ async function main() {
       const w = writePage(t.slug, renderPage(t, s.text, g, MODEL), t.source_id);
       if (!w.ok) { summary.failed++; console.log(`[B] ${n}/${total} ${t.slug.slice(0, 40).padEnd(40)} ✗ write: ${w.msg}`); return; }
       summary.synthesized++; summary.in_tokens += s.in; summary.out_tokens += s.out; summary.dropped_sources += g.dropped;
-      markDone(ckptPath, { slug: t.slug, in_tokens: s.in, out_tokens: s.out, sources: g.included, dropped: g.dropped });
+      markDone(ckptPath, { slug: t.slug, neighbors: t.neighbors, in_tokens: s.in, out_tokens: s.out, sources: g.included, dropped: g.dropped });
       console.log(`[B] ${n}/${total} ${t.slug.slice(0, 40).padEnd(40)} ✓ ${s.in}→${s.out} tok (${g.included}/${g.total} src${g.dropped ? `, drop ${g.dropped}` : ""})`);
     } catch (e: any) {
       const msg = e?.message ?? String(e);

@@ -74,3 +74,4 @@ server/kos-compat-api.std*.log.*.archive.gz
 # in-repo placement.
 .gbrain/oauth-clients/
 **/oauth-clients/*.json
+docs/omada/*.pdf

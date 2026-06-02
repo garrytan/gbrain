@@ -72,6 +72,12 @@ synthesized / failed / dropped-source counts + Opus token totals.
   (default 450000; `SYNTH_CONTEXT_1M=1` → 900000 + 1M beta header)
 - `--plan` / `--dry` — select + preview targets (gather sizes), no LLM, no writes
 - `--resume` — skip entities already in the checkpoint
+- `--refresh-stale` — also re-synthesize **done** entities whose evidence GREW:
+  re-run when `current_neighbors − neighbors_at_last_dossier ≥ --stale-delta`.
+  Closes the incremental gap where a per-entity dossier goes stale as new pages
+  (e.g. daily 舆情 writes) mention an already-synthesized entity. The baseline is
+  read from the checkpoint (`neighbors`, or `sources+dropped` for pre-feature rows).
+- `--stale-delta N` — min neighbor growth to trigger a refresh (default 5)
 
 ## Token budget & CJK (measured 2026-06-02)
 
