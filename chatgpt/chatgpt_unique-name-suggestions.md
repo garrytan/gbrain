@@ -25,8 +25,6 @@ Im building a liberties brand. I need a good unique name for it. Can you suggest
 
 ## Assistant
 
-Sure, here are some ideas for a unique name for your liberties brand:
-
 1. Freedify
 2. Freeology
 3. Liberteza
@@ -124,8 +122,6 @@ Keep trying. Something that feels expensive but modern.
 ---
 
 ## Assistant
-
-Sure, here are some other options that may fit the bill for your modern and luxurious lingerie brand:
 
 1. Vionté
 2. Veluora
@@ -244,8 +240,6 @@ Keep trying
 ---
 
 ## Assistant
-
-Sure, here are some additional sci-fi inspired name options for your lingerie brand:
 
 1. Galaxy Chic
 2. Cosmic Couture

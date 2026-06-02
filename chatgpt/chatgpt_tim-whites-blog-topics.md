@@ -25,10 +25,6 @@ Tim White is a songwriter based in los angeles. he also founded the AI CRM start
 
 ## Assistant
 
-
-
-Sure! Here are 10 ideas for blog posts that Tim White could write on his Medium profile:
-
 1. How I Founded Jovie: My Journey to Building an AI CRM Startup
 2. The Intersection of Music and Entrepreneurship: Lessons Learned from My Career as a Songwriter and Founder
 3. From Bravo to Tech: How I Applied My Production Skills to the Startup World

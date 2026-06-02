@@ -238,7 +238,6 @@ This is heavy work. Run on a cadence, not on every signal:
 - `skills/voice-note-ingest/SKILL.md` — same for audio channels
 - `skills/idea-ingest/SKILL.md` — same for links / articles
 
-
 ## Contract
 
 This skill guarantees:

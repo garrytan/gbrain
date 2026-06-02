@@ -96,7 +96,6 @@ import neverSayAWordAlbumArt from "./../assets/img/never-say-a-word-album-art.jp
 import { ChevronRightIcon } from "@heroicons/vue/20/solid";
 </script>
 
-
 ---
 
 ## Assistant
@@ -169,7 +168,6 @@ This should make your component more maintainable and ensure it renders as expec
 ## User
 
 if the date is june 21 we need to change the text to say out now
-
 
 ---
 
@@ -345,8 +343,6 @@ great and finally instead of the <slot></slot> we should show the <div class="mt
 ---
 
 ## Assistant
-
-Sure, here is the updated template with the `<slot></slot>` replaced by the specified `<div>` containing the "Listen" section with streaming icons:
 
 ```html
 <template>

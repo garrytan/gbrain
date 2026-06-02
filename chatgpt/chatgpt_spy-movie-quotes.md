@@ -25,8 +25,6 @@ GIVE ME SPY MOVIE QUOTES
 
 ## Assistant
 
-Sure, here are some iconic spy movie quotes:
-
 1. "The name's Bond. James Bond." – **James Bond (Various Films)**
 
 2. "I spy with my little eye... something that begins with 'F'." – **Harry Tasker, "True Lies"**

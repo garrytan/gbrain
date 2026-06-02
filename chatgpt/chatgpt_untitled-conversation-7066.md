@@ -211,7 +211,6 @@ Note that the exact steps for using Axios in a Chrome extension may vary dependi
 
 ## User
 
-
 let notificationId = 0;
 export function installNotifier() {
   document.documentElement.setAttribute("data-jovie-extension-installed", "true");
@@ -434,7 +433,6 @@ If you are still having trouble with this error, consult the Axios
 
 i have done import axios from 'axios';
 
-
 ---
 
 ## Assistant
@@ -522,8 +520,6 @@ but can you apply this to my code
 ---
 
 ## Assistant
-
-Sure, here is how you can use the `adapter` function to make an HTTP request using Axios in your code:
 
 ```
 import axios from 'axios';

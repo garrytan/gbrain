@@ -129,7 +129,6 @@ How about **Lena Harper**?
   </div>
 </template>
 
-
 Modify this contact page to be for the bubblegum factory and have our new publicist lena harper. We'll give her a good email to
 
 ---
@@ -265,8 +264,6 @@ thebubblegumfactory.la is our site
 ---
 
 ## Assistant
-
-Sure, here is the updated template with the correct website:
 
 ```html
 <template>

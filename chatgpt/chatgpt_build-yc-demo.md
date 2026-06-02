@@ -1041,4 +1041,3 @@ Focus on:
 - what should be mocked
 - what needs data-testid selectors for Playwright
 - risks that could break the demo recording
-```

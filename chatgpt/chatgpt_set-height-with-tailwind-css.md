@@ -50,7 +50,6 @@ export default {
 };
 </script>
 
-
 convert the height to be set with tailwind css
 
 ---
@@ -83,8 +82,6 @@ explicity write out the height options for all common tailwind heights. do not u
 ---
 
 ## Assistant
-
-Sure! Here are the common height options in Tailwind CSS:
 
 ```html
 <template>

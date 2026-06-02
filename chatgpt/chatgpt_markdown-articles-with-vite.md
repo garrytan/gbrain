@@ -844,7 +844,6 @@ import singerTimWhiteInTheStudio from "./../assets/img/singer_tim_white_in_the_s
 import neverSayAWordAlbumArt from "./../assets/img/never-say-a-word-album-art.jpg";
 </script>
 
-
 ---
 
 ## Assistant

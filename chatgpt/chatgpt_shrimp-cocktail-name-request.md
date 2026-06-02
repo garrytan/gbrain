@@ -37,8 +37,6 @@ give me 10 options
 
 ## Assistant
 
-Sure, here are ten themed names for the shrimp cocktail:
-
 1. **Roswell Shrimp Cocktail**
 2. **Illuminati Shrimp Delight**
 3. **Area 51 Shrimp Cocktail**
@@ -80,7 +78,6 @@ Price: 2.79
 Price: 2.05
 0.36 homestyle vanilla bean ice cream 
 
-
 ---
 
 ## Assistant
@@ -120,8 +117,6 @@ more american
 ---
 
 ## Assistant
-
-Sure, here are some more American-themed names for the shrimp cocktail and chicken satay:
 
 **Shrimp Cocktail:**
 1. **Founding Fathers' Shrimp**

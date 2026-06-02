@@ -30,7 +30,6 @@ useSeoMeta({
 })
 </script>
 
-
 We need to modify this to contain our set from our site site
 
 <!DOCTYPE html>
@@ -61,14 +60,12 @@ We need to modify this to contain our set from our site site
 <meta name="robots" content="index, follow" />
     <title>Tim White - LA Based DJ, Music Producer, & Singer/Songwriter</title>
 
-
   </head>
   <body>
     <div id="app"></div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
-
 
 ---
 
@@ -144,7 +141,6 @@ useSeoMeta({
   robots: "index, follow",
 });
 </script>
-
 
 How can I get the favicon changed
 
@@ -273,7 +269,7 @@ Only add the stuff that is custom to this page like the title and description
 
 ## Assistant
 
-Sure, here is the updated `TimWhiteBio.vue` page component with only the custom title and description for the Tim White bio page:
+vue` page component with only the custom title and description for the Tim White bio page:
 
 ```vue
 <template>

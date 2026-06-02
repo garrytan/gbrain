@@ -25,8 +25,6 @@ list supplement brands
 
 ## Assistant
 
-
-
 Here are some popular supplement brands:
 
 1. Optimum Nutrition
@@ -61,8 +59,6 @@ give me their instagram handles
 ---
 
 ## Assistant
-
-Sure! Here are the Instagram handles for the supplement brands mentioned:
 
 1. Optimum Nutrition - @optimumnutrition
 2. Garden of Life - @gardenoflife
@@ -152,8 +148,6 @@ remove everything before the @ symbol on each line
 ---
 
 ## Assistant
-
-Sure, here are the usernames for the supplement brands without anything before the "@" symbol:
 
 @optimumnutrition
 @gardenoflife

@@ -243,8 +243,6 @@ Initial release of Jovie.
 
 Today we rolled out the first release of Jovie.
 
-
-
 ---
 
 ## Assistant
@@ -717,7 +715,6 @@ This release focuses on improving the UI and performance of the CRM. We've made 
 
 you missed some stuff at the end
 
-
 Chrome Extension & Twitter SupportChrome Extension & Twitter Support
  Vote on new features & contribute your own ideas to the Jovie Roadmap.
 
@@ -822,7 +819,6 @@ This release focuses on improving the UI and performance of the CRM. We've made 
 ## User
 
 ok now just ocnvert this part
-
 
 Chrome Extension & Twitter SupportChrome Extension & Twitter Support
  Vote on new features & contribute your own ideas to the Jovie Roadmap.

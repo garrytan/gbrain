@@ -50,8 +50,6 @@ Can we add some flavor
 
 ## Assistant
 
-Sure, here are a few ideas to add some flavor to your White Russian:
-
 ### Vanilla White Russian
 - Add 1/2 teaspoon of vanilla extract to the drink for a subtle vanilla flavor.
 

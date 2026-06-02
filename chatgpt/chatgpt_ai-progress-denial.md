@@ -53,6 +53,4 @@ Yeah, and then, like, let's point out, and if it's the latter, you can't find a 
 
 ## Assistant
 
-Absolutely. Here's the upgraded, razor-sharp version:
-
 > Kevin O’Leary bragging about saving $200 by haggling with a cable company is insane when his time should be worth $10K/hour. If it’s not about the money and he just *likes* doing it… you’re a multimillionaire and your hobby is talking to Comcast retention officers? Bro. Read a book. Touch grass. Start a hedge fund. Literally anything else.

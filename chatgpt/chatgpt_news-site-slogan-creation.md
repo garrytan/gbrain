@@ -37,8 +37,6 @@ give me 10 options
 
 ## Assistant
 
-Sure, here are 10 different slogan options for North Bergen First:
-
 1. "Breaking news starts with North Bergen First."
 2. "Get the inside scoop with North Bergen First."
 3. "Stay in the know with North Bergen First."

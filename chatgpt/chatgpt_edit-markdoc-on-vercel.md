@@ -230,7 +230,6 @@ If you still want to try Edge Config, keep your answers ultra-concise and store 
 
 ## User
 
-
 🔧 DEBUG MODE
 −
 WHERE:
@@ -371,8 +370,6 @@ Made for musicians, by musicians
 Privacy
 Terms
 Toggle theme
-
-
 
 Rewrite our hero copy with ycombinator best practices and apple level copywriting
 

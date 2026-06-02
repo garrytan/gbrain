@@ -100,8 +100,6 @@ do this again but with much larger letters
 
 ## Assistant
 
-Sure! Here is an example of ASCII art that spells the word "JOVIE" with a smiley face for the letter "O", using larger letters:
-
 ```
                  _____   _____   _____   _____   _____   
                 /     \ /     \ /     \ /     \ /     \  
@@ -119,7 +117,6 @@ You can also try using other symbols and characters to create a more detailed sm
 ```
 
 I hope this helps! Let me know if you have any other questions.
-
 
 ---
 

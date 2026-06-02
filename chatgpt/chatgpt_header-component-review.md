@@ -78,4 +78,3 @@ Review and refactor the following **Header component** so that it:
 Here is the current Header component code and any relevant styles/theme tokens:
 
 [PASTE HEADER COMPONENT CODE + STYLES HERE]
-```

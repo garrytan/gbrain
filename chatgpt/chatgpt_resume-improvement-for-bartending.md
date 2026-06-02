@@ -45,7 +45,6 @@ SKILLS
 2017 – 2021 2005 - 2018 2009 - 2012
 Highly technical & proficient with computers. Experience installing and supporting AV systems (sound, lighting, projection, etc). Event host. Singer/songwriter. Fitness enthusiast.
 
-
 ---
 
 ## Assistant
@@ -128,7 +127,6 @@ Remember to tailor each application to the job description provided by the emplo
 fix this Seeking a position as a bartender aligned with my previous experience in high-volume atmospheres.
  I enjoy fast-paced environments that leverage my problem-solving and interpersonal skills.
 
-
 ---
 
 ## Assistant
@@ -144,7 +142,6 @@ Certainly, here's a more polished version of your objective statement:
 Experience in a high-volume atmosphere. Experience with Toast and Square POS systems. 
 Singer/songwriter. Fitness enthusiast. 
 
-
 ---
 
 ## Assistant
@@ -158,7 +155,6 @@ Here's a concise and polished way to incorporate your experience and interests i
 ## User
 
 dd experience with clover and square POS
-
 
 ---
 

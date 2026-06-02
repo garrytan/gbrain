@@ -144,8 +144,6 @@ lets try point number 2
 
 ## Assistant
 
-Sure! Here is an example of how you could use a component factory function to create the appropriate input component for each `dataType`:
-
 ```
 <template>
   <td
@@ -224,8 +222,6 @@ show me the full component code but also try point 4
 
 ## Assistant
 
-Sure! Here is the updated component code that uses a component factory function to create the appropriate input component for each `dataType` and also uses a `switch` statement in the `onKeyDown` method:
-
 ```
 <template>
   <td
@@ -302,7 +298,6 @@ export default {
         case 'checkbox':
           return 'checkbox-input';
 
-
 ---
 
 ## User
@@ -312,8 +307,6 @@ show me the full inputComponent function
 ---
 
 ## Assistant
-
-Sure! Here is the full `inputComponent` computed property:
 
 ```
 computed: {
@@ -345,4 +338,3 @@ The component factory function in the template then uses this value to render th
 ```
 
 I hope this helps! Let me know if you have any questions.
-

@@ -675,5 +675,3 @@ Explain:
 - what shipping becomes
 
 Be brutally honest.
-```
-

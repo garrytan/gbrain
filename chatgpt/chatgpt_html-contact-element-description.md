@@ -27,7 +27,6 @@ tags: [chatgpt, import, code, long-form]
 
 This is a block of HTML code that appears to be a contact element on a website or application. The contact element has a class of "contact" and several attributes, including "data-qa-role" and "data-qa-uid." Within the contact element, there are several nested div elements that contain information about the contact, such as their name, avatar, and message. Additionally, there is a "contact__expiration-status" class that indicates the conversation with this contact will expire in 24 hours.
 
-
 ---
 
 ## User
@@ -65,7 +64,6 @@ messageBlocks.forEach(function(messageBlock){
 ```
 Keep in mind that the above examples are assuming that your chrome extension has the necessary permissions to access the page's DOM.
 
-
 ---
 
 ## User
@@ -76,7 +74,6 @@ can you rename xpathExpression to be more clear and specific. Also lets add log 
 
 ## Assistant
 
-Sure, here is an updated version of the xpathExpression variable with a more clear and specific name:
 ```
 const newThreadMessageXPath = "//div[@class='contact-avatar contact-avatar--color-expiration-status-average']/ancestor::div[@class='contact has-notifications']";
 ```
@@ -94,7 +91,6 @@ while (messageElement) {
 }
 ```
 Please be aware that `innerText` property will not work for all browser as it is not standard.
-
 
 ---
 
@@ -129,7 +125,6 @@ for (let i = 0; i < newThreads.snapshotLength; i++) {
 }
 ```
 This will locate each message block that is a new thread with no replies, log the name of the contact, clicks on the element, and insert text "Hey there" + contact name into text input element if found.
-
 
 ---
 
@@ -171,7 +166,6 @@ for (let i = 0; i < result.snapshotLength; i++) {
 }
 ```
 You can use `console.log()` statements to print out information at different points in the code, so you can see what's happening and find any errors. In this case, it will log the number of new threads found, the name of each new thread, and whether the text area was found or not.
-
 
 ---
 
@@ -216,4 +210,3 @@ while (element = xpathResult.iterateNext()) {
 ```
 
 Please keep in mind that, this is just a sample code, it may not work as it is and you might need to adjust it according to your requirement.
-

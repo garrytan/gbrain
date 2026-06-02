@@ -469,8 +469,6 @@ Document findings based on code analysis with note that visual verification is r
 
 Start by reading project_index.json, then launch the browser to explore the application visually.
 
-
-
 ---
 
 ## Assistant

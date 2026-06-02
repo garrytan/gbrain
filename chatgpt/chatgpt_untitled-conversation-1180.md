@@ -41,8 +41,6 @@ if (info.linkUrl.startsWith("https://twitter.com") || info.linkUrl.startsWith("h
 
 This code checks if the link starts with `https://twitter.com` or `https://instagram.com` and creates a new tab only in those cases. Otherwise, it does nothing.
 
-
-
 ---
 
 ## User
@@ -68,8 +66,6 @@ if (info.linkUrl.startsWith("https://twitter.com") ||
 
 This code checks if the link starts with `https://twitter.com`, `https://instagram.com`, `https://facebook.com`, or `https://linkedin.com` and creates a new tab only in those cases. Otherwise, it does nothing.
 
-
-
 ---
 
 ## User
@@ -79,8 +75,6 @@ can you rewrite it to check only for instagram, twitter, tiktok, and twitch
 ---
 
 ## Assistant
-
-Sure, here is an example that checks only for Instagram, Twitter, TikTok, and Twitch:
 
 ```
 if (info.linkUrl.startsWith("https://instagram.com") ||
@@ -94,5 +88,3 @@ if (info.linkUrl.startsWith("https://instagram.com") ||
 ```
 
 This code checks if the link starts with `https://instagram.com`, `https://twitter.com`, `https://tiktok.com`, or `https://twitch.com` and creates a new tab only in those cases. Otherwise, it does nothing.
-
-

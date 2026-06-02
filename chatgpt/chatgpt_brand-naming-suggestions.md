@@ -25,10 +25,6 @@ Im creating a new brand. I need to call it something. I want a name that isn’t
 
 ## Assistant
 
-
-
-Sure, here are some suggestions for a new brand name that meets your criteria:
-
 1. Vyzo
 2. Tylt
 3. Zelio
@@ -61,8 +57,6 @@ Not bad. Let’s hear some more. Maybe ones that start with a t
 ---
 
 ## Assistant
-
-Sure, here are some more suggestions that start with the letter T:
 
 1. Tivo
 2. Taza
@@ -167,8 +161,6 @@ Keep going
 
 ## Assistant
 
-Sure, here are some more suggestions for a brand name that is 3 syllables or less:
-
 1. Tivo
 2. Lora
 3. Velo
@@ -237,8 +229,6 @@ Maybe let’s try something in Latin. Try something like luxury or sexy or passi
 
 ## Assistant
 
-Sure, here are some suggestions for words related to luxury, passion, desire, and love in Latin:
-
 1. Luxuria - meaning luxury, extravagance, or excess
 2. Amor - meaning love or affection
 3. Voluptas - meaning pleasure or sensual delight
@@ -261,8 +251,6 @@ Now take these root words and make new words using them
 ---
 
 ## Assistant
-
-Sure, here are some suggestions for new words based on the Latin root words:
 
 1. Luxoria - a luxurious brand or product
 2. Amoria - a brand focused on love or affection
@@ -337,8 +325,6 @@ Make it sound like it’s a brand from a sci-fi movie
 
 ## Assistant
 
-Sure, here are some suggestions for new words based on the Latin root words that sound like they're from a sci-fi movie:
-
 1. Luxorion - a high-tech luxury brand from the future
 2. Amorion - a brand of advanced love and relationship technology
 3. Voluptron - a brand of cutting-edge pleasure and entertainment products
@@ -361,8 +347,6 @@ Make it easier to pronounce
 ---
 
 ## Assistant
-
-Sure, here are some simplified versions of the sci-fi inspired brand names that are easier to pronounce:
 
 1. Luxion - a futuristic luxury brand
 2. Amoriax - a brand of advanced love and relationship products

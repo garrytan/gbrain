@@ -297,6 +297,3 @@ Do not map unavailable Mercury data to `isDefaultAlive: false`.
 - `/app/admin/ops`
 - `/app/admin`
 - `/app/admin/ops?mode=kiosk`
-```
-
-

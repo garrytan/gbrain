@@ -27,7 +27,6 @@ Can you beatbox
 
 I am an AI language model and don't have the physical capability to make sounds, but I can give you examples of beatboxing if you would like.
 
-
 ---
 
 ## User
@@ -38,11 +37,8 @@ Yes please do
 
 ## Assistant
 
-Sure, here are a few examples of beatboxing:
-
 1. "Boots and cats, boots and cats, boots, boots and cats, boots and cats."
 2. "Boom-bap, boom-bap, skrrt skrrt, boom-bap, boom-bap, skrrt skrrt."
 3. "Tick-tock, tick-tock, tick-tock, tick-tock, tick-tock, tick-tock."
 
 Note that these are simple examples and professional beatboxers can create much more complex and impressive sounds.
-

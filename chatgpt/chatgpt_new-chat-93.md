@@ -207,7 +207,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 //inject css in the current browser tab
 
-
 ---
 
 ## Assistant
@@ -262,8 +261,6 @@ Can you write a permission justification for each?
 ---
 
 ## Assistant
-
-Sure, here are some possible permission justifications for the permissions requested in the previous example:
 
 1. `INTERNET`: This permission is necessary to allow the app to access the internet and retrieve data from the remote API.
 2. `ACCESS_NETWORK_STATE`: This permission is necessary to check the state of the network connection and determine whether the app can access the internet.

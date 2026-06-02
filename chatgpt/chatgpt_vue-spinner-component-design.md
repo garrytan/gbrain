@@ -67,13 +67,11 @@ export default {
 };
 </script>
 
-
 ---
 
 ## Assistant
 
 This is a Vue.js component that uses an SVG to display a spinning loading indicator. The component accepts two props, "spinnerSize" and "spinnerColor", which are used to set the size and color of the spinner. The component uses the "class" binding to apply CSS classes based on the values of the props. The CSS classes determine the size and color of the spinner. Additionally, it uses currentColor and currentFill  to change the color of the spinner when it is hovered.
-
 
 ---
 
@@ -100,7 +98,6 @@ There are a few ways this component could potentially be improved:
 6. You can also make use of the v-lazy-image component to make the spinner more performant.
 
 These are just a few examples, and the best approach will depend on the specific requirements of your project.
-
 
 ---
 
@@ -156,8 +153,6 @@ dont do that. instead show an example of 1
 ---
 
 ## Assistant
-
-Sure, here is an example of how you can use a computed property to map prop values to CSS class names:
 
 ```
 <template>

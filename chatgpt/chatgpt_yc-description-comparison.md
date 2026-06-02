@@ -658,7 +658,6 @@ That's it.
 
 and use the image of me at universal music group for subtle social proof.
 
-
 ---
 
 ## Assistant

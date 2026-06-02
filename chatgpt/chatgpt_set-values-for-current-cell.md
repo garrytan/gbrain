@@ -33,8 +33,6 @@ write a function to go in the table component that handles the emitted event and
 
 ## Assistant
 
-Sure! Here is a function that you can use in the table component to handle the emitted event and set the new values for the current cell:
-
 ```
 handleUpdateCurrentCell(newCell) {
   this.currentCell = {
@@ -77,4 +75,3 @@ export default {
 This will bind the `handleUpdateCurrentCell` function to the `update:currentCell` event emitted by the row component, so that when the event is emitted, the function will be called and the `currentCell` property in the table component will be updated with the new values.
 
 I hope this helps! Let me know if you have any questions or need further clarification.
-

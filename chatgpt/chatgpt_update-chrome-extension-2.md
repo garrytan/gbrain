@@ -46,7 +46,6 @@ on:
           name: chrome-extension-${{ github.sha }}
           path: chrome-extension-${{ github.event.pull_request.head.sha }}.zip
 
-
 walk me through setting up the above github action for my chrome extension
 
 ---
@@ -162,8 +161,6 @@ ok ive made the file. now i need to tag a commit and push it.. show me the steps
 
 ## Assistant
 
-Sure, here are the steps to tag a commit and push it:
-
 1. Open a terminal or command prompt in your project directory.
 2. Make sure you have committed all your changes to the repository using the `git add .` and `git commit -m "commit message"` commands.
 3. Run the following command to create a new tag: `git tag -a v1.0.0 -m "version 1.0.0"`. Replace "v1.0.0" with the version number you want to use for the tag, and "version 1.0.0" with a description of the version.
@@ -222,7 +219,6 @@ Run npm run prod
 
 > jovie-extension@1.0.0 prod
 > npm run production
-
 
 > jovie-extension@1.0.0 production
 > cross-env NODE_ENV=production node_modules/webpack/bin/webpack.js  webpack --config webpack.prod.js --progress --env=production
@@ -318,10 +314,9 @@ If the above solution does not work, you can try upgrading or downgrading the co
 > jovie-extension@1.0.0 build
 > npm run build:tailwind && npm run prod
 
-
 > jovie-extension@1.0.0 build:tailwind
 > NODE_ENV=production postcss src/tailwind.css -o dist/tailwind.dist.css
 
 'NODE_ENV' is not recognized as an internal or external command,
 operable program or batch file.
-PS C:\Users\Tim White\Documents\GitHub\Jovie_Chrome_Extension> 
+PS C:\Users\Tim White\Documents\GitHub\Jovie_Chrome_Extension>

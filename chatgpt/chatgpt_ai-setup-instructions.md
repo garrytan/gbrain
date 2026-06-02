@@ -507,9 +507,6 @@ Perfect! Now I can see the Supabase side of the
 ╰─────────────────────────────────────────────────────────────────╯
   ⏵⏵ bypass permissions on (shift+tab to cycle)                 ◯
 
-
-
-
 Search google and reddit etc for people having issues here and list solutions
 
 ---

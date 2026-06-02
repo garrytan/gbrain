@@ -250,4 +250,3 @@ Best for demos, emotional storytelling, and creator-facing moments.
 Best for investors, YC, strategic partners, distributors, and company positioning.
 
 The content AI should choose the framing based on audience. For high-level strategy, investor language, and durable positioning, prioritize the second framing.
-```

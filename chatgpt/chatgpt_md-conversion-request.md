@@ -85,4 +85,3 @@ pull all the questions on this page into a md
 - What batch do you want to apply for?
 - Which future batch do you want to do?
 - Why apply for a future batch rather than the upcoming one?
-```

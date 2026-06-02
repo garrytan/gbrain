@@ -25,8 +25,6 @@ what are the most expensive resorts in the world
 
 ## Assistant
 
-
-
 There are many luxurious resorts around the world that offer top-notch amenities and services, with prices to match. Here are some of the most expensive resorts in the world:
 
 1. The Royal Mansour, Marrakech, Morocco: With its opulent suites, private riads, and lavish spa, the Royal Mansour is one of the world's most exclusive hotels. Prices for a suite start at around $2,000 per night.
@@ -50,8 +48,6 @@ make a table of the most expensive resorts in the world. in one column put the n
 ---
 
 ## Assistant
-
-Sure, here is a table of 10 of the most expensive resorts in the world:
 
 | Resort Name                | City and Country           | Estimated Price per Night (USD) |
 |----------------------------|----------------------------|--------------------------------|

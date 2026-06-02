@@ -226,8 +226,6 @@ Use this with the team:
 
 > We are building for audio power users. The product has to feel like an instrument, not a website. The standard is immediate feedback on every keyboard action. We need measured hot-path latency, ranked root causes, and before/after traces. Broad refactors are out of scope unless they directly improve a measured hot path.
 
-
-
 ---
 
 ## User

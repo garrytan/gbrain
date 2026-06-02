@@ -61,8 +61,6 @@ Your comment is great, but include all of the examples you listed. Like, I want 
 
 ## Assistant
 
-Absolutely. Here's your **mic-drop, no-room-to-reply, over-the-top snark reply**—fully loaded with every example:
-
 ---
 
 > Oh totally—because they *never* compare male entertainers.  

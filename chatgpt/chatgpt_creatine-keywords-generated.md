@@ -25,8 +25,6 @@ generate a list of 20 keywords based on the keyword "Creatine"
 
 ## Assistant
 
-
-
 1. Muscle building
 2. Sports nutrition
 3. Supplement
@@ -57,8 +55,6 @@ give them to me without numbers
 ---
 
 ## Assistant
-
-Sure! Here is a list of 20 keywords related to "Creatine":
 
 - Muscle building
 - Sports nutrition

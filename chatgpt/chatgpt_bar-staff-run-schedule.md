@@ -56,8 +56,6 @@ This table should help your bar staff stay on schedule throughout the event.
 11:00PM servers cut and opening bartender cut
 At close closing bartender cut
 
-
-
 ---
 
 ## Assistant
@@ -116,8 +114,6 @@ Stacey left trash in the hall. Assuming she didn’t realize the trash room was 
 ---
 
 ## Assistant
-
-Certainly. Here is a concise reminder for Stacey:
 
 ---
 

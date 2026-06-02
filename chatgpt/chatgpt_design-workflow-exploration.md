@@ -516,4 +516,3 @@ Avoid:
 - Merely polishing the current layout
 
 Output one complete redesigned Releases page screen in context.
-```

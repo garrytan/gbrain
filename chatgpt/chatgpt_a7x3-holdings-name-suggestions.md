@@ -25,8 +25,6 @@ we need a legal name for the holding company for our llc A7X3.  Something like A
 
 ## Assistant
 
-Sure, here are 10 alternative name suggestions for your holding company, based on the information provided:
-
 1. A7X3 Ventures LLC
 2. Apex Holdings LLC
 3. NextGen A7X3 LLC
@@ -113,8 +111,6 @@ give me more options
 ---
 
 ## Assistant
-
-Sure, here are 10 more alternative name suggestions for your holding company:
 
 1. A7X3 Global LLC
 2. Worldwide Ascendancy LLC

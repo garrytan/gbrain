@@ -21,7 +21,6 @@ tags: [chatgpt, import, long-form]
 
 turn the following data into a table
 
-
 DT MODEL MANAGEMENT
 Los Angeles, USA
 
@@ -167,7 +166,6 @@ Los Angeles, USA
 ## User
 
 add these
-
 
 Models.com
 Rankings | 
@@ -738,8 +736,6 @@ i need it in a table like before with locations in a cell comma seperated
 
 ## Assistant
 
-Sure, here is the list in a table format with locations separated by commas in a single cell:
-
 | Agency Name                    | Location                       |
 |--------------------------------|--------------------------------|
 | APM MODEL MANAGEMENT           | New York, USA                  |
@@ -855,4 +851,4 @@ Sure! Here's the merged table with all the information:
 | LUMIEN CREATIVE              | New York, USA                                   | Standard Listing |
 | LULU MANAGEMENT              | New York, USA                                   | Basic Listing    |
 | MAJOR MODEL MANAGEMENT       | New York, USA                                   | Top Listing      |
-| MARILYN AGENCY               | New York, USA                                   | Top Listing     
+| MARILYN AGENCY               | New York, USA                                   | Top Listing

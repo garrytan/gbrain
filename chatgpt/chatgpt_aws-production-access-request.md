@@ -48,7 +48,6 @@ To request production access for US-East-1 on your AWS account, you can follow t
 
 I hope this helps! Let me know if you have any other questions.
 
-
 ---
 
 ## User
@@ -58,8 +57,6 @@ please compose a message for me to put in the form. I am using ses for transacti
 ---
 
 ## Assistant
-
-Sure! Here is a sample message you can use to request production access for your AWS account:
 
 "Hello,
 
@@ -84,10 +81,8 @@ add details from below:
 tell us how often you send email: 
 We send email when a user takes an action that triggers an email, including requesting a one-time password on intial signup, requesting a password reset, deleting their account, or signing up for the first time.
 
-
 how you maintain your recipient lists:
 our list is managed in a secure mysql database on aws.  Emails are added automtically by the user and removed if the user deletes their account.  Further we have unsubscribe links and users who click them are supressed from future sending.
-
 
 how you manage bounces, complaints, and unsubscribe requests:
 users are requred to verify their email on sign up with a one time password code.  This ensures every email is valid.  Further, we have front end validation on signup to ensure only valid emails can be used in sign up.  

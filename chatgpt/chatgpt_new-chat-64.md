@@ -27,8 +27,6 @@ Give me a list of lyric ideas that match the syllables and end rhyme of the foll
 
 ## Assistant
 
-Sure! Here are some lyric ideas matching the syllables and end rhyme of "Just another Saturday":
-
 1. "Lost within the Milky Way"
 2. "Dancing 'til the break of day"
 3. "Wish that you would come and stay"

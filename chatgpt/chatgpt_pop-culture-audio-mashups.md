@@ -27,8 +27,6 @@ come up with more of these
 
 ## Assistant
 
-Sure, here are a few more ideas:
-
 1. **Audio Clip 1:** "Houston, we have a problem..."
    **Audio Clip 2:** "...I love it when a plan comes together!" (The A-Team)
 
@@ -116,8 +114,6 @@ try more
 
 ## Assistant
 
-Sure, here are a few more funny ones:
-
 1. **Audio Clip 1:** "Ask not what your country can do for you..."
    **Audio Clip 2:** "...but can you smell what The Rock is cooking?" (The Rock, WWE)
 
@@ -154,7 +150,6 @@ Sure, here are a few more funny ones:
 
 do There could be 100 ppl in a room and 99 don’t believe in you 
 
-
 ---
 
 ## Assistant
@@ -188,8 +183,6 @@ more
 ---
 
 ## Assistant
-
-Sure, here are a few more:
 
 1. **Audio Clip 1:** "There could be 100 people in a room and 99 don’t believe in you..."
    **Audio Clip 2:** "...but I'm king of the world!" (Titanic)
@@ -272,8 +265,6 @@ use …makes me want a hot dog real bad
 ---
 
 ## Assistant
-
-Sure, here are more combinations:
 
 1. **Audio Clip 1:** "There could be 100 people in a room and 99 don’t believe in you..."
    **Audio Clip 2:** "...makes me want a hot dog real bad." (Jennifer Coolidge, Legally Blonde)

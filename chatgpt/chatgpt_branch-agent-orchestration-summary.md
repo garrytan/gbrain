@@ -642,7 +642,6 @@ The practical answer: **yes, defer product for two hours**. The first two hours 
 
 go wide and think of the world class 100x version of this and what we could be automating today that will get us to default alive faster.
 
-
 ---
 
 ## User

@@ -148,8 +148,6 @@ Great, give me a slantastic comment about how... That's awesome, it'll show me h
 
 ## Assistant
 
-Absolutely. Here are a few **concise, slantastic** takes in that tone:
-
 ---
 
 **1.**  
@@ -291,8 +289,6 @@ This video is of Mark Andreessen, and it's wrongly attributing it to someone els
 ---
 
 ## Assistant
-
-Absolutely. Here’s a slantastic, savage roast that’s funny and pointed—without mercy:
 
 ---
 

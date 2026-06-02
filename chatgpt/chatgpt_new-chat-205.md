@@ -43,8 +43,6 @@ show me how to merge a branch called staging into a branch called main with the 
 
 ## Assistant
 
-Sure! Here are the steps to merge a branch called `staging` into a branch called `main` with the `--force` flag:
-
 1. Make sure you're on the target branch (`main`):
 
    ```

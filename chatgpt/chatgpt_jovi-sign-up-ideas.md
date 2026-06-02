@@ -708,7 +708,6 @@ Event               | Notes
 - Optional “Tip + Message” that sends note to artist inbox.
 ```
 
-
 ---
 
 ## User
@@ -809,4 +808,3 @@ Event                         | Payload
 - A/B test different corner positions and copy (“Scan to tip quickly!”).
 
 ---
-```
