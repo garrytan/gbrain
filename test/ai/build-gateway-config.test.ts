@@ -29,6 +29,7 @@ const PASSTHROUGHS: Array<{ envVar: string; recipeId: string }> = [
   { envVar: 'LMSTUDIO_BASE_URL', recipeId: 'lmstudio' },
   { envVar: 'LITELLM_BASE_URL', recipeId: 'litellm' },
   { envVar: 'OPENROUTER_BASE_URL', recipeId: 'openrouter' },
+  { envVar: 'OPENAI_CODEX_BASE_URL', recipeId: 'openai-codex' },
 ];
 
 const TEST_VALUE = 'http://proxy.example.test/v1';

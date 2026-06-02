@@ -51,6 +51,13 @@ import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import {
+  codexAuthAvailable,
+  codexAuthFailureDetail,
+  codexAuthSetupHint,
+  resolveCodexAuthSnapshot,
+  type CodexCredentialSnapshot,
+} from './codex-auth.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 
 const MAX_CHARS = 8000;
@@ -95,15 +102,29 @@ const _modelCache = new Map<string, any>();
 const _extendedModels: Map<string, Set<string>> = new Map();
 
 const CODEX_PENDING_DETAIL =
-  'OpenAI Codex provider is metadata-only in this commit; pending Codex auth/transport seam.';
+  'OpenAI Codex auth is configured; Codex Responses streaming transport is pending in this commit.';
 
 function isCodexResponsesRecipe(recipe: Recipe): boolean {
   return recipe.tier === 'codex-responses' || recipe.implementation === 'codex-responses';
 }
 
+function getCodexAuthSnapshot(cfg: AIGatewayConfig): CodexCredentialSnapshot {
+  return cfg.codex_auth ?? resolveCodexAuthSnapshot({
+    ...(cfg.codex_auth_options ?? {}),
+    env: cfg.env,
+  });
+}
+
+function codexAuthError(recipe: Recipe, snapshot: CodexCredentialSnapshot | undefined): AIConfigError {
+  return new AIConfigError(
+    `${recipe.name} chat is unavailable: ${codexAuthFailureDetail(snapshot)}`,
+    codexAuthSetupHint(snapshot),
+  );
+}
+
 function codexPendingError(recipe: Recipe): AIConfigError {
   return new AIConfigError(
-    `${recipe.name} chat is unavailable: pending Codex auth/transport seam.`,
+    `${recipe.name} chat transport is pending: ${CODEX_PENDING_DETAIL}`,
     recipe.setup_hint,
   );
 }
@@ -383,6 +404,11 @@ export function configureGateway(config: AIGatewayConfig): void {
     reranker_model: config.reranker_model,
     base_urls: config.base_urls,
     env: config.env,
+    codex_auth: config.codex_auth ?? resolveCodexAuthSnapshot({
+      ...(config.codex_auth_options ?? {}),
+      env: config.env,
+    }),
+    codex_auth_options: config.codex_auth_options,
   };
   _modelCache.clear();
   _shrinkState.clear();
@@ -764,9 +790,13 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
     const touchpointConfig = recipe.touchpoints[touchpoint as 'expansion' | 'chat' | 'reranker'];
     if (!touchpointConfig) return false;
 
-    // Commit 1 registers Codex recipe metadata only. Empty auth_env.required
-    // must not make it chat-ready until the Codex auth/transport seam exists.
-    if (touchpoint === 'chat' && isCodexResponsesRecipe(recipe)) return false;
+    // Codex auth is resolved through its own local/auth-source seam, never
+    // OPENAI_API_KEY. Transport still lands later; availability means a valid
+    // credential snapshot is present so callers can distinguish auth from
+    // pending transport.
+    if (touchpoint === 'chat' && isCodexResponsesRecipe(recipe)) {
+      return codexAuthAvailable(getCodexAuthSnapshot(_config!));
+    }
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
     const required = recipe.auth_env?.required ?? [];
@@ -2293,11 +2323,13 @@ export function probeChatModel(modelStr: string): ChatModelProbe {
   const v = validateModelId(modelStr);
   if (!v.ok) return { ok: false, reason: v.reason, detail: v.detail, fix: v.fix };
   if (isCodexResponsesRecipe(v.recipe)) {
+    const snapshot = _config ? getCodexAuthSnapshot(_config) : undefined;
+    if (snapshot && codexAuthAvailable(snapshot)) return { ok: true };
     return {
       ok: false,
       reason: 'unavailable',
-      detail: CODEX_PENDING_DETAIL,
-      fix: v.recipe.setup_hint,
+      detail: codexAuthFailureDetail(snapshot),
+      fix: codexAuthSetupHint(snapshot),
     };
   }
   if (v.parsed.providerId === 'anthropic' && !hasAnthropicKey()) {
@@ -2353,8 +2385,11 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
         ...auth,
       }).languageModel(modelId);
     }
-    case 'codex-responses':
+    case 'codex-responses': {
+      const snapshot = getCodexAuthSnapshot(cfg);
+      if (!codexAuthAvailable(snapshot)) throw codexAuthError(recipe, snapshot);
       throw codexPendingError(recipe);
+    }
     default:
       throw new AIConfigError(`Unknown implementation: ${(recipe as any).implementation}`);
   }

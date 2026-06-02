@@ -10,6 +10,14 @@ import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwCha
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
+import {
+  codexAuthAvailable,
+  codexAuthFailureDetail,
+  codexAuthSetupHint,
+  resolveCodexAuthSnapshot,
+  type CodexAuthResolveOptions,
+  type CodexCredentialSnapshot,
+} from '../core/ai/codex-auth.ts';
 import type { Recipe } from '../core/ai/types.ts';
 
 // v2: `tier` widened to include `codex-responses` for metadata-only Codex recipes.
@@ -27,12 +35,29 @@ interface ProviderOption {
   cost_per_1m_output_usd?: number;
   price_last_verified?: string;
   env_ready: boolean;
+  base_url?: string;
   tier: Recipe['tier'];
   pros: string[];
   cons: string[];
 }
 
-function configureFromEnv(): void {
+export interface ProvidersCommandOptions {
+  /** Fixture/path/read/clock seam for offline Codex auth tests. */
+  codexAuth?: Omit<CodexAuthResolveOptions, 'env'>;
+}
+
+function providerBaseUrls(config?: { provider_base_urls?: Record<string, string> } | null): Record<string, string> | undefined {
+  const envBaseUrls: Record<string, string> = {};
+  if (process.env.OPENAI_CODEX_BASE_URL) envBaseUrls['openai-codex'] = process.env.OPENAI_CODEX_BASE_URL;
+  const merged = { ...envBaseUrls, ...(config?.provider_base_urls ?? {}) };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function providerBaseUrl(recipe: Recipe, config?: { provider_base_urls?: Record<string, string> } | null): string | undefined {
+  return providerBaseUrls(config)?.[recipe.id] ?? recipe.base_url_default;
+}
+
+function configureFromEnv(options: ProvidersCommandOptions = {}): void {
   const config = loadConfig();
   configureGateway({
     embedding_model: config?.embedding_model,
@@ -40,20 +65,32 @@ function configureFromEnv(): void {
     expansion_model: config?.expansion_model,
     chat_model: config?.chat_model,
     chat_fallback_chain: config?.chat_fallback_chain,
-    base_urls: config?.provider_base_urls,
+    base_urls: providerBaseUrls(config),
     env: { ...process.env },
+    codex_auth_options: options.codexAuth,
   });
 }
 
-function isCodexAuthPending(recipe: Recipe): boolean {
+function isCodexRecipe(recipe: Recipe): boolean {
   return recipe.tier === 'codex-responses' || recipe.implementation === 'codex-responses';
 }
 
-export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
-  // Commit 1 registers Codex metadata only. Do not mark it ready from empty
-  // auth_env.required or from public OPENAI_API_KEY; the real Codex auth seam
-  // lands in a later commit.
-  if (isCodexAuthPending(recipe)) return false;
+function resolveCodexForProviders(
+  env: Record<string, string | undefined>,
+  options: ProvidersCommandOptions = {},
+): CodexCredentialSnapshot {
+  const codexAuth = options.codexAuth ?? { source: 'env' as const };
+  return resolveCodexAuthSnapshot({ ...codexAuth, env });
+}
+
+export function envReady(
+  recipe: Recipe,
+  env: NodeJS.ProcessEnv = process.env,
+  options: ProvidersCommandOptions = {},
+): boolean {
+  if (isCodexRecipe(recipe)) {
+    return codexAuthAvailable(resolveCodexForProviders(env, options));
+  }
   const required = recipe.auth_env?.required ?? [];
   if (required.length === 0) return true; // e.g. local Ollama
   return required.every(k => !!env[k]);
@@ -67,7 +104,11 @@ export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): 
  * Returns the multi-line string (joined with `\n`). Callers handle stdout vs.
  * stderr routing themselves.
  */
-export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = process.env): string {
+export function formatRecipeTable(
+  recipes: Recipe[],
+  env: NodeJS.ProcessEnv = process.env,
+  options: ProvidersCommandOptions = {},
+): string {
   const rows: string[] = [];
   // Dynamic column width: longest recipe id + 1 space, floor at 14 (the
   // historical default). v0.40.6.1 introduced `llama-server-reranker` (21 chars)
@@ -83,11 +124,12 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
     const hasEmbed = !!r.touchpoints.embedding && (r.touchpoints.embedding.models.length > 0);
     const hasExpand = !!r.touchpoints.expansion;
     const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
-    const ready = envReady(r, env);
+    const codexSnapshot = isCodexRecipe(r) ? resolveCodexForProviders(env, options) : undefined;
+    const ready = envReady(r, env, options);
     const status = ready
       ? '✓ ready'
-      : isCodexAuthPending(r)
-        ? '✗ pending Codex auth/transport seam'
+      : codexSnapshot
+        ? `✗ ${codexAuthFailureDetail(codexSnapshot)}`
         : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
     rows.push(
       r.id.padEnd(idCol) +
@@ -101,18 +143,23 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
   return rows.join('\n');
 }
 
-export async function runProviders(subcommand: string | undefined, args: string[]): Promise<void> {
-  configureFromEnv();
+export async function runProviders(
+  subcommand: string | undefined,
+  args: string[],
+  options: ProvidersCommandOptions = {},
+): Promise<void> {
+  const runtimeOptions: ProvidersCommandOptions = options.codexAuth ? options : { ...options, codexAuth: {} };
+  configureFromEnv(runtimeOptions);
 
   switch (subcommand) {
     case 'list':
-      return runList(args);
+      return runList(args, runtimeOptions);
     case 'test':
-      return runTest(args);
+      return runTest(args, runtimeOptions);
     case 'env':
-      return runEnv(args);
+      return runEnv(args, runtimeOptions);
     case 'explain':
-      return runExplain(args);
+      return runExplain(args, runtimeOptions);
     case undefined:
     case '--help':
     case '-h':
@@ -148,11 +195,11 @@ EXAMPLES
 `);
 }
 
-function runList(_args: string[]): void {
-  console.log(formatRecipeTable(listRecipes()));
+function runList(_args: string[], options: ProvidersCommandOptions = {}): void {
+  console.log(formatRecipeTable(listRecipes(), process.env, options));
 }
 
-async function runTest(args: string[]): Promise<void> {
+async function runTest(args: string[], options: ProvidersCommandOptions = {}): Promise<void> {
   const modelIdx = args.indexOf('--model');
   const modelArg = modelIdx >= 0 ? args[modelIdx + 1] : undefined;
 
@@ -198,12 +245,16 @@ async function runTest(args: string[]): Promise<void> {
       configureGateway({
         embedding_model: modelArg,
         embedding_dimensions: dims,
+        base_urls: providerBaseUrls(loadConfig()),
         env: { ...process.env },
+        codex_auth_options: options.codexAuth,
       });
     } else {
       configureGateway({
         chat_model: modelArg,
+        base_urls: providerBaseUrls(loadConfig()),
         env: { ...process.env },
+        codex_auth_options: options.codexAuth,
       });
     }
     void modelId; // intentionally unused but preserved for readability
@@ -213,8 +264,9 @@ async function runTest(args: string[]): Promise<void> {
     const overrideProvider = modelArg?.split(':')[0];
     const overrideRecipe = overrideProvider ? getRecipe(overrideProvider) : undefined;
     const label = `${tpArg[0]?.toUpperCase()}${tpArg.slice(1)}`;
-    if (overrideRecipe && isCodexAuthPending(overrideRecipe)) {
-      console.error(`${label} provider unavailable: pending Codex auth/transport seam.`);
+    if (overrideRecipe && isCodexRecipe(overrideRecipe)) {
+      const snapshot = resolveCodexForProviders(process.env, options);
+      console.error(`${label} provider unavailable: ${codexAuthFailureDetail(snapshot)}`);
     } else {
       console.error(`${label} provider not configured or not ready. Run \`gbrain providers list\` to see status.`);
     }
@@ -255,7 +307,7 @@ async function runTest(args: string[]): Promise<void> {
   }
 }
 
-function runEnv(args: string[]): void {
+function runEnv(args: string[], options: ProvidersCommandOptions = {}): void {
   const id = args[0];
   if (!id) {
     console.error('Usage: gbrain providers env <id>');
@@ -289,12 +341,19 @@ function runEnv(args: string[]): void {
   if (recipe.auth_env?.setup_url) {
     console.log(`\nSetup: ${recipe.auth_env.setup_url}`);
   }
+  if (isCodexRecipe(recipe)) {
+    const snapshot = resolveCodexForProviders(process.env, options);
+    console.log(`\nCodex auth: ${codexAuthFailureDetail(snapshot)}`);
+    console.log('Public OpenAI API key: not used for openai-codex');
+    const baseURL = providerBaseUrl(recipe, loadConfig());
+    if (baseURL) console.log(`Base URL: ${baseURL}`);
+  }
   if (recipe.setup_hint) {
     console.log(`\n${recipe.setup_hint}`);
   }
 }
 
-async function runExplain(args: string[]): Promise<void> {
+async function runExplain(args: string[], cmdOptions: ProvidersCommandOptions = {}): Promise<void> {
   const asJson = args.includes('--json') || args.includes('-j');
 
   const recipes = listRecipes();
@@ -310,19 +369,23 @@ async function runExplain(args: string[]): Promise<void> {
 
   // Parallel probes for local providers (1s timeout each)
   const [ollama, lmstudio] = await Promise.all([probeOllama(), probeLMStudio()]);
+  const config = loadConfig();
+  const baseUrls = providerBaseUrls(config);
 
-  const options: ProviderOption[] = [];
+  const providerOptions: ProviderOption[] = [];
   for (const r of recipes) {
+    const baseURL = baseUrls?.[r.id] ?? r.base_url_default;
     if (r.touchpoints.embedding && r.touchpoints.embedding.models.length > 0) {
       const m = r.touchpoints.embedding;
-      options.push({
+      providerOptions.push({
         id: `${r.id}:${m.models[0]}`,
         touchpoint: 'embedding',
         model: m.models[0],
         dims: m.default_dims,
         cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
         price_last_verified: m.price_last_verified,
-        env_ready: envReady(r) || (r.id === 'ollama' && ollama.models_endpoint_valid === true),
+        env_ready: envReady(r, process.env, cmdOptions) || (r.id === 'ollama' && ollama.models_endpoint_valid === true),
+        ...(baseURL ? { base_url: baseURL } : {}),
         tier: r.tier,
         pros: prosFor(r, 'embedding'),
         cons: consFor(r),
@@ -330,13 +393,14 @@ async function runExplain(args: string[]): Promise<void> {
     }
     if (r.touchpoints.expansion) {
       const m = r.touchpoints.expansion;
-      options.push({
+      providerOptions.push({
         id: `${r.id}:${m.models[0]}`,
         touchpoint: 'expansion',
         model: m.models[0],
         cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
         price_last_verified: m.price_last_verified,
-        env_ready: envReady(r),
+        env_ready: envReady(r, process.env, cmdOptions),
+        ...(baseURL ? { base_url: baseURL } : {}),
         tier: r.tier,
         pros: prosFor(r, 'expansion'),
         cons: consFor(r),
@@ -344,14 +408,15 @@ async function runExplain(args: string[]): Promise<void> {
     }
     if (r.touchpoints.chat && r.touchpoints.chat.models.length > 0) {
       const m = r.touchpoints.chat;
-      options.push({
+      providerOptions.push({
         id: `${r.id}:${m.models[0]}`,
         touchpoint: 'chat',
         model: m.models[0],
         cost_per_1m_input_usd: m.cost_per_1m_input_usd,
         cost_per_1m_output_usd: m.cost_per_1m_output_usd,
         price_last_verified: m.price_last_verified,
-        env_ready: envReady(r),
+        env_ready: envReady(r, process.env, cmdOptions),
+        ...(baseURL ? { base_url: baseURL } : {}),
         tier: r.tier,
         pros: prosFor(r, 'chat'),
         cons: consFor(r),
@@ -359,7 +424,7 @@ async function runExplain(args: string[]): Promise<void> {
     }
   }
 
-  const recommended = pickRecommended(options, env_detected, ollama.models_endpoint_valid === true);
+  const recommended = pickRecommended(providerOptions, env_detected, ollama.models_endpoint_valid === true);
 
   const matrix = {
     schema_version: SCHEMA_VERSION,
@@ -369,7 +434,7 @@ async function runExplain(args: string[]): Promise<void> {
       ollama: { url: process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434/v1', reachable: ollama.reachable, models_endpoint_valid: ollama.models_endpoint_valid === true },
       lmstudio: { url: process.env.LMSTUDIO_BASE_URL ?? 'http://localhost:1234/v1', reachable: lmstudio.reachable, models_endpoint_valid: lmstudio.models_endpoint_valid === true },
     },
-    options,
+    options: providerOptions,
     recommended: recommended.id,
     recommended_reason: recommended.reason,
   };
@@ -387,20 +452,20 @@ async function runExplain(args: string[]): Promise<void> {
   console.log(`  Ollama @ ${matrix.local_probes.ollama.url}  ${matrix.local_probes.ollama.models_endpoint_valid ? '✓ reachable' : '✗ not detected'}`);
   console.log('');
   console.log('Embedding options:');
-  for (const o of options.filter(x => x.touchpoint === 'embedding')) {
+  for (const o of providerOptions.filter(x => x.touchpoint === 'embedding')) {
     const cost = o.cost_per_1m_tokens_usd !== undefined ? `$${o.cost_per_1m_tokens_usd}/1M` : '—';
     const dims = o.dims ? `${o.dims}d` : '—';
     console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${dims.padEnd(8)} ${cost.padEnd(10)} ${o.tier}`);
   }
   console.log('');
   console.log('Expansion options:');
-  for (const o of options.filter(x => x.touchpoint === 'expansion')) {
+  for (const o of providerOptions.filter(x => x.touchpoint === 'expansion')) {
     const cost = o.cost_per_1m_tokens_usd !== undefined ? `$${o.cost_per_1m_tokens_usd}/1M` : '—';
     console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${cost.padEnd(10)} ${o.tier}`);
   }
   console.log('');
   console.log('Chat options:');
-  for (const o of options.filter(x => x.touchpoint === 'chat')) {
+  for (const o of providerOptions.filter(x => x.touchpoint === 'chat')) {
     const inCost = o.cost_per_1m_input_usd !== undefined ? `in $${o.cost_per_1m_input_usd}` : '—';
     const outCost = o.cost_per_1m_output_usd !== undefined ? `out $${o.cost_per_1m_output_usd}` : '—';
     console.log(`  ${o.env_ready ? '✓' : '✗'} ${o.id.padEnd(44)} ${inCost.padEnd(12)} ${outCost.padEnd(12)} ${o.tier}`);

@@ -1840,6 +1840,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
   if (process.env.OPENROUTER_BASE_URL) envBaseUrls['openrouter'] = process.env.OPENROUTER_BASE_URL;
+  if (process.env.OPENAI_CODEX_BASE_URL) envBaseUrls['openai-codex'] = process.env.OPENAI_CODEX_BASE_URL;
 
   return {
     embedding_model: c.embedding_model,

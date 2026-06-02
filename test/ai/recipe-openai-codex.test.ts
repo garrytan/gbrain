@@ -17,6 +17,16 @@ import {
 } from '../../src/core/ai/gateway.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
 
+const missingCodexAuth = { codexAuth: { source: 'env' as const } };
+const validCodexAuthSnapshot = {
+  ok: true as const,
+  source: 'env' as const,
+  accessToken: 'fixture-token-not-real',
+  tokenType: 'bearer' as const,
+  expiresAtMs: Date.UTC(2030, 0, 1, 1, 0, 0),
+  expiresAt: '2030-01-01T01:00:00.000Z',
+};
+
 afterEach(() => {
   resetGateway();
 });
@@ -67,16 +77,16 @@ describe('recipe: openai-codex', () => {
     });
   });
 
-  test('remains provider-pending despite empty required env or OPENAI_API_KEY', () => {
+  test('requires Codex-plan auth and never falls back to public OPENAI_API_KEY', () => {
     const r = getRecipe('openai-codex')!;
-    expect(envReady(r, {})).toBe(false);
-    expect(envReady(r, { OPENAI_API_KEY: 'sk-pub...odex' })).toBe(false);
+    expect(envReady(r, {}, missingCodexAuth)).toBe(false);
+    expect(envReady(r, { OPENAI_API_KEY: 'sk-pub...odex' }, missingCodexAuth)).toBe(false);
 
-    const out = formatRecipeTable([r], { OPENAI_API_KEY: 'sk-pub...odex' });
+    const out = formatRecipeTable([r], { OPENAI_API_KEY: 'sk-pub...odex' }, missingCodexAuth);
     const line = out.split('\n').find(row => row.startsWith('openai-codex'));
     expect(line).toBeDefined();
     expect(line).toContain('codex-responses');
-    expect(line).toContain('✗ pending Codex auth/transport seam');
+    expect(line).toContain('✗ Codex auth unavailable');
     expect(line).not.toContain('✓ ready');
   });
 
@@ -84,9 +94,10 @@ describe('recipe: openai-codex', () => {
     configureGateway({
       chat_model: 'openai-codex:gpt-5.5',
       env: {
-        OPENAI_API_KEY: 'sk-public-api-key-must-not-count',
+        OPENAI_API_KEY: 'sk-pub...ount',
         OPENAI_CODEX_ACCESS_TOKEN: 'future-token-must-not-count-yet',
       },
+      codex_auth_options: missingCodexAuth.codexAuth,
     });
 
     expect(isAvailable('chat')).toBe(false);
@@ -96,14 +107,15 @@ describe('recipe: openai-codex', () => {
     expect(probe.ok).toBe(false);
     if (!probe.ok) {
       expect(probe.reason).toBe('unavailable');
-      expect(probe.detail).toContain('pending Codex auth/transport');
+      expect(probe.detail).toContain('Codex auth unavailable');
     }
   });
 
   test('chat throws a clear Codex pending error instead of unknown implementation', async () => {
     configureGateway({
       chat_model: 'openai-codex:gpt-5.5',
-      env: { OPENAI_CODEX_ACCESS_TOKEN: 'future-token-must-not-count-yet' },
+      env: {},
+      codex_auth: validCodexAuthSnapshot,
     });
 
     const promise = chat({
@@ -117,6 +129,6 @@ describe('recipe: openai-codex', () => {
         messages: [{ role: 'user', content: 'Reply with just: pong' }],
         maxTokens: 16,
       }),
-    ).rejects.toThrow(/pending Codex auth\/transport/);
+    ).rejects.toThrow(/Codex Responses streaming transport is pending/);
   });
 });

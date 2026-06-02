@@ -1,3 +1,5 @@
+import type { CodexAuthResolveOptions, CodexCredentialSnapshot } from './codex-auth.ts';
+
 /**
  * AI provider types.
  *
@@ -380,6 +382,13 @@ export interface AIGatewayConfig {
   base_urls?: Record<string, string>;
   /** Env snapshot read once at configuration time. Gateway never reads process.env at call time. */
   env: Record<string, string | undefined>;
+  /**
+   * Codex credential snapshot materialized at configure time. When omitted,
+   * configureGateway resolves it synchronously from codex_auth_options/defaults.
+   */
+  codex_auth?: CodexCredentialSnapshot;
+  /** Fixture/path/read/clock seam for Codex auth resolution. */
+  codex_auth_options?: CodexAuthResolveOptions;
 }
 
 export interface ParsedModelId {
