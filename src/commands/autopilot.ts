@@ -116,6 +116,97 @@ export function shouldSpawnAutopilotWorker(args: string[]): boolean {
   return !args.includes('--no-worker');
 }
 
+/**
+ * v0.41.x #1525 — positional subcommand translation.
+ *
+ * Pre-fix, `gbrain autopilot status` silently fell through to "start daemon"
+ * because `runAutopilot()` only branched on flag forms (`--status`, etc.).
+ * `status` was treated as a stray positional and ignored.
+ *
+ * This translator maps known positional subcommands to their flag form so
+ * `autopilot status` is equivalent to `autopilot --status`, then rejects
+ * any unrecognized positional with a fail-loud error before any side
+ * effect (lockfile, daemon spawn, sync dispatch) runs.
+ *
+ * Scope decisions:
+ *   - Known aliases: `status` → `--status`, `install` → `--install`,
+ *     `uninstall` → `--uninstall`, `start` → (drop; default daemon launch).
+ *   - `stop` is intentionally NOT aliased here. Stopping a running daemon
+ *     is a new behavior (read PID from lock, SIGTERM, drain) that deserves
+ *     its own design and PR. Users typing `gbrain autopilot stop` today get
+ *     the unknown-positional error with the canonical alternatives.
+ *   - At most one positional allowed; multiple positionals fail loud.
+ */
+const AUTOPILOT_VALUE_FLAGS = new Set(['--repo', '--interval']);
+const AUTOPILOT_POSITIONAL_ALIASES: Record<string, string | null> = {
+  status: '--status',
+  install: '--install',
+  uninstall: '--uninstall',
+  start: null, // drop the positional; default behavior is daemon launch
+};
+
+export type PositionalTranslation =
+  | { ok: true; args: string[] }
+  | {
+      ok: false;
+      reason: 'unknown_subcommand' | 'multiple_subcommands';
+      message: string;
+    };
+
+export function translatePositionalSubcommands(args: string[]): PositionalTranslation {
+  const out: string[] = [];
+  let positionalSeen = false;
+  let i = 0;
+  while (i < args.length) {
+    const a = args[i];
+    if (AUTOPILOT_VALUE_FLAGS.has(a)) {
+      // Pass through the flag and its value untouched. If the value is
+      // missing at end-of-argv, fall through so the existing parseArg
+      // path can report the broken usage.
+      out.push(a);
+      if (i + 1 < args.length) {
+        out.push(args[i + 1]);
+        i += 2;
+      } else {
+        i += 1;
+      }
+      continue;
+    }
+    if (a.startsWith('-')) {
+      out.push(a);
+      i += 1;
+      continue;
+    }
+    // Positional subcommand.
+    if (positionalSeen) {
+      const known = Object.keys(AUTOPILOT_POSITIONAL_ALIASES).join(', ');
+      return {
+        ok: false,
+        reason: 'multiple_subcommands',
+        message: `Multiple subcommands given. Use only one of: ${known}.`,
+      };
+    }
+    positionalSeen = true;
+    if (a in AUTOPILOT_POSITIONAL_ALIASES) {
+      const alias = AUTOPILOT_POSITIONAL_ALIASES[a];
+      if (alias) out.push(alias);
+      i += 1;
+      continue;
+    }
+    const known = Object.keys(AUTOPILOT_POSITIONAL_ALIASES).join(', ');
+    return {
+      ok: false,
+      reason: 'unknown_subcommand',
+      message:
+        `Unknown subcommand: \`${a}\`.\n` +
+        `Allowed subcommands: ${known}.\n` +
+        `Or use the flag form: --status, --install, --uninstall.\n` +
+        `Run \`gbrain autopilot --help\` for full usage.`,
+    };
+  }
+  return { ok: true, args: out };
+}
+
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
@@ -123,12 +214,28 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       '       gbrain autopilot --install [--repo <path>]\n' +
       '       gbrain autopilot --uninstall\n' +
       '       gbrain autopilot --status [--json]\n\n' +
+      'Subcommand aliases:\n' +
+      '       gbrain autopilot status     → --status\n' +
+      '       gbrain autopilot install    → --install\n' +
+      '       gbrain autopilot uninstall  → --uninstall\n' +
+      '       gbrain autopilot start      → (default daemon launch)\n\n' +
       'Self-maintaining brain daemon. Runs the full maintenance cycle\n' +
       '(lint + backlinks + sync + extract + embed + orphans) on an interval.\n\n' +
       'For a one-shot cron-triggered cycle, see `gbrain dream`.',
     );
     return;
   }
+
+  // v0.41.x #1525: translate positional subcommands to their flag form
+  // BEFORE any side effect (lockfile, daemon spawn, sync dispatch).
+  // Unknown positionals fail loud here rather than silently starting
+  // the daemon.
+  const translated = translatePositionalSubcommands(args);
+  if (!translated.ok) {
+    console.error(translated.message);
+    process.exit(2);
+  }
+  args = translated.args;
 
   if (args.includes('--install')) {
     await installDaemon(engine, args);
