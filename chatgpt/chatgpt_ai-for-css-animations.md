@@ -1,13 +1,19 @@
 ---
-title: "AI for CSS Animations"
-type: guide
-created: 2025-12-31
-updated: 2025-12-31
-source: chatgpt-export
 conversation_id: 69549c9e-3eb4-832f-9acc-3d7bc2748093
+created: 2025-12-31
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: AI for CSS Animations
+type: guide
+updated: 2025-12-31
 ---
+
 # AI for CSS Animations
 
 > Conversation ID: 69549c9e-3eb4-832f-9acc-3d7bc2748093

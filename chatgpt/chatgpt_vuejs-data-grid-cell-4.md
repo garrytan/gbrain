@@ -1,13 +1,20 @@
 ---
-title: "Vue.js data grid cell"
-type: guide
-created: 2023-02-22
-updated: 2023-02-22
-source: chatgpt-export
 conversation_id: f31763d2-10bb-4972-bf98-210980d29b2e
+created: 2023-02-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js data grid cell
+type: guide
+updated: 2023-02-22
 ---
+
 # Vue.js data grid cell
 
 > Conversation ID: f31763d2-10bb-4972-bf98-210980d29b2e

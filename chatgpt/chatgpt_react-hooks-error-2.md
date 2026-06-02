@@ -1,13 +1,19 @@
 ---
-title: "React Hooks Error"
-type: note
-created: 2026-01-28
-updated: 2026-01-28
-source: chatgpt-export
 conversation_id: 697960d3-2b88-832c-95be-41b66495fae5
+created: 2026-01-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: React Hooks Error
+type: note
+updated: 2026-01-28
 ---
+
 # React Hooks Error
 
 > Conversation ID: 697960d3-2b88-832c-95be-41b66495fae5

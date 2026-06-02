@@ -1,13 +1,18 @@
 ---
-title: "Album Sales 2024: 12 Artists"
-type: note
-created: 2024-05-23
-updated: 2024-05-23
-source: chatgpt-export
 conversation_id: 1bb6ff40-46c9-4cd4-bf86-159827e26876
+created: 2024-05-23
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Album Sales 2024: 12 Artists'
+type: note
+updated: 2024-05-23
 ---
+
 # Album Sales 2024: 12 Artists
 
 > Conversation ID: 1bb6ff40-46c9-4cd4-bf86-159827e26876

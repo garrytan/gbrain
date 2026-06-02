@@ -1,13 +1,20 @@
 ---
-title: "Artist Profiles Carousel SEO"
-type: essay
-created: 2026-05-08
-updated: 2026-05-08
-source: chatgpt-export
 conversation_id: 69fe377a-a184-83e8-b17c-df594e975fb5
+created: 2026-05-08
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Artist Profiles Carousel SEO
+type: essay
+updated: 2026-05-08
 ---
+
 # Artist Profiles Carousel SEO
 
 > Conversation ID: 69fe377a-a184-83e8-b17c-df594e975fb5

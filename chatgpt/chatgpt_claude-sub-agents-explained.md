@@ -1,13 +1,18 @@
 ---
-title: "Claude sub-agents explained"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6973ba43-b428-832e-be6d-d8609a495a81
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude sub-agents explained
+type: note
+updated: 2026-01-23
 ---
+
 # Claude sub-agents explained
 
 > Conversation ID: 6973ba43-b428-832e-be6d-d8609a495a81

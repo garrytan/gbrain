@@ -1,13 +1,19 @@
 ---
-title: "Share Progress Flow Design"
-type: note
-created: 2025-07-09
-updated: 2025-07-09
-source: chatgpt-export
 conversation_id: 686ee2bb-67a4-8007-aeea-a7d166eb692b
+created: 2025-07-09
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Share Progress Flow Design
+type: note
+updated: 2025-07-09
 ---
+
 # Share Progress Flow Design
 
 > Conversation ID: 686ee2bb-67a4-8007-aeea-a7d166eb692b

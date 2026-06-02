@@ -1,13 +1,18 @@
 ---
-title: "Adjusting Parfait with Pecans"
-type: note
-created: 2024-02-01
-updated: 2024-02-02
-source: chatgpt-export
 conversation_id: 807f9082-b27c-4be5-9165-67671ae24c9f
+created: 2024-02-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Adjusting Parfait with Pecans
+type: note
+updated: 2024-02-02
 ---
+
 # Adjusting Parfait with Pecans
 
 > Conversation ID: 807f9082-b27c-4be5-9165-67671ae24c9f

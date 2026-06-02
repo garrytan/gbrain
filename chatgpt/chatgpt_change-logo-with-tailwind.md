@@ -1,13 +1,19 @@
 ---
-title: "Change logo with Tailwind"
-type: note
-created: 2025-12-16
-updated: 2025-12-16
-source: chatgpt-export
 conversation_id: 6941b4fe-2738-8329-9785-ad311f646b43
+created: 2025-12-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Change logo with Tailwind
+type: note
+updated: 2025-12-16
 ---
+
 # Change logo with Tailwind
 
 > Conversation ID: 6941b4fe-2738-8329-9785-ad311f646b43

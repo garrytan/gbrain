@@ -1,13 +1,18 @@
 ---
-title: "Framer to Linear Design"
-type: note
-created: 2026-01-03
-updated: 2026-01-03
-source: chatgpt-export
 conversation_id: 69594f9a-b05c-832e-9332-97f559fbac96
+created: 2026-01-03
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Framer to Linear Design
+type: note
+updated: 2026-01-03
 ---
+
 # Framer to Linear Design
 
 > Conversation ID: 69594f9a-b05c-832e-9332-97f559fbac96

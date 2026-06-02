@@ -1,13 +1,18 @@
 ---
-title: "Tailwind CSS v4 Features"
-type: note
-created: 2025-06-15
-updated: 2025-06-15
-source: chatgpt-export
 conversation_id: 684f26e6-31ec-8007-b8c4-89a3ed292e95
+created: 2025-06-15
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tailwind CSS v4 Features
+type: note
+updated: 2025-06-15
 ---
+
 # Tailwind CSS v4 Features
 
 > Conversation ID: 684f26e6-31ec-8007-b8c4-89a3ed292e95

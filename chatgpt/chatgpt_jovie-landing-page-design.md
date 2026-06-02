@@ -1,13 +1,20 @@
 ---
-title: "Jovie Landing Page Design"
-type: guide
-created: 2026-04-10
-updated: 2026-04-10
-source: chatgpt-export
 conversation_id: 69d86b38-51c0-83e8-bfca-4ac0975c03d6
+created: 2026-04-10
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie Landing Page Design
+type: guide
+updated: 2026-04-10
 ---
+
 # Jovie Landing Page Design
 
 > Conversation ID: 69d86b38-51c0-83e8-bfca-4ac0975c03d6

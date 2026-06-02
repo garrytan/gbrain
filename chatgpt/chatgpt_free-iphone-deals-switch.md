@@ -1,13 +1,18 @@
 ---
-title: "Free iPhone deals switch"
-type: note
-created: 2025-08-26
-updated: 2025-08-26
-source: chatgpt-export
 conversation_id: 68ae1aa4-3304-832b-893b-253add1099dc
+created: 2025-08-26
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Free iPhone deals switch
+type: note
+updated: 2025-08-26
 ---
+
 # Free iPhone deals switch
 
 > Conversation ID: 68ae1aa4-3304-832b-893b-253add1099dc

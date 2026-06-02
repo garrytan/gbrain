@@ -1,13 +1,18 @@
 ---
-title: "Vue.js ButtonGroup Story."
-type: note
-created: 2023-02-04
-updated: 2023-02-04
-source: chatgpt-export
 conversation_id: 03efb8dd-65ed-46c7-89ac-e3a26599d276
+created: 2023-02-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js ButtonGroup Story.
+type: note
+updated: 2023-02-04
 ---
+
 # Vue.js ButtonGroup Story.
 
 > Conversation ID: 03efb8dd-65ed-46c7-89ac-e3a26599d276

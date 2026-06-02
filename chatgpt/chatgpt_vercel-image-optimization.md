@@ -1,13 +1,18 @@
 ---
-title: "Vercel image optimization"
-type: note
-created: 2025-08-20
-updated: 2025-08-20
-source: chatgpt-export
 conversation_id: 68a5ed6f-d5f0-832f-8b1c-c85a6b82f9ae
+created: 2025-08-20
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel image optimization
+type: note
+updated: 2025-08-20
 ---
+
 # Vercel image optimization
 
 > Conversation ID: 68a5ed6f-d5f0-832f-8b1c-c85a6b82f9ae

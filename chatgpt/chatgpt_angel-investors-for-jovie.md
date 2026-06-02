@@ -1,13 +1,18 @@
 ---
-title: "Angel Investors for Jovie"
-type: note
-created: 2026-02-16
-updated: 2026-02-16
-source: chatgpt-export
 conversation_id: 699261e6-f8b4-8329-95f5-c6968907a3cd
+created: 2026-02-16
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Angel Investors for Jovie
+type: note
+updated: 2026-02-16
 ---
+
 # Angel Investors for Jovie
 
 > Conversation ID: 699261e6-f8b4-8329-95f5-c6968907a3cd

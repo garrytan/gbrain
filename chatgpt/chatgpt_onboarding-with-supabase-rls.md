@@ -1,13 +1,18 @@
 ---
-title: "Onboarding with Supabase RLS"
-type: note
-created: 2025-08-21
-updated: 2025-08-21
-source: chatgpt-export
 conversation_id: 68a6b62f-2fb4-832f-87cc-de5a970c126e
+created: 2025-08-21
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Onboarding with Supabase RLS
+type: note
+updated: 2025-08-21
 ---
+
 # Onboarding with Supabase RLS
 
 > Conversation ID: 68a6b62f-2fb4-832f-87cc-de5a970c126e

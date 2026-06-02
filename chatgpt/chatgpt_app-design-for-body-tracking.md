@@ -1,13 +1,19 @@
 ---
-title: "App design for body tracking"
-type: note
-created: 2025-11-09
-updated: 2025-11-17
-source: chatgpt-export
 conversation_id: 6910d287-e4cc-832e-ba78-8d1fde4e064f
+created: 2025-11-09
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: App design for body tracking
+type: note
+updated: 2025-11-17
 ---
+
 # App design for body tracking
 
 > Conversation ID: 6910d287-e4cc-832e-ba78-8d1fde4e064f

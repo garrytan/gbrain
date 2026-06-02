@@ -1,13 +1,20 @@
 ---
-title: "SwiftLint and hooks"
-type: guide
-created: 2025-11-17
-updated: 2025-11-17
-source: chatgpt-export
 conversation_id: 691a6b5c-cfec-8329-83a1-f46cf702f286
+created: 2025-11-17
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: SwiftLint and hooks
+type: guide
+updated: 2025-11-17
 ---
+
 # SwiftLint and hooks
 
 > Conversation ID: 691a6b5c-cfec-8329-83a1-f46cf702f286

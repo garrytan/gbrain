@@ -1,13 +1,20 @@
 ---
-title: "Flutter Laravel Login Controller"
-type: essay
-created: 2024-01-09
-updated: 2024-01-10
-source: chatgpt-export
 conversation_id: 9d0108fe-3a53-4c38-8c95-1f9e7d6394af
+created: 2024-01-09
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 139
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Flutter Laravel Login Controller
+type: essay
+updated: 2024-01-10
 ---
+
 # Flutter Laravel Login Controller
 
 > Conversation ID: 9d0108fe-3a53-4c38-8c95-1f9e7d6394af

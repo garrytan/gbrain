@@ -1,13 +1,18 @@
 ---
-title: "Spotify Apple Music Analytics"
-type: note
-created: 2025-12-27
-updated: 2025-12-27
-source: chatgpt-export
 conversation_id: 694f46bf-b57c-832d-90b4-1011c906c489
+created: 2025-12-27
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spotify Apple Music Analytics
+type: note
+updated: 2025-12-27
 ---
+
 # Spotify Apple Music Analytics
 
 > Conversation ID: 694f46bf-b57c-832d-90b4-1011c906c489

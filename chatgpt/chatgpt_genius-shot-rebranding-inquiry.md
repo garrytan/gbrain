@@ -1,13 +1,19 @@
 ---
-title: "Genius Shot Rebranding Inquiry"
-type: essay
-created: 2026-01-12
-updated: 2026-01-12
-source: chatgpt-export
 conversation_id: 6965699d-1314-8331-98c8-6b9a49b9de79
+created: 2026-01-12
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 7
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Genius Shot Rebranding Inquiry
+type: essay
+updated: 2026-01-12
 ---
+
 # Genius Shot Rebranding Inquiry
 
 > Conversation ID: 6965699d-1314-8331-98c8-6b9a49b9de79

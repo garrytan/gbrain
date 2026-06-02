@@ -1,13 +1,18 @@
 ---
-title: "T-Mobile activation steps"
-type: note
-created: 2025-12-02
-updated: 2025-12-02
-source: chatgpt-export
 conversation_id: 692e2ece-fa18-832a-afc9-c2c5b7b40ac1
+created: 2025-12-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: T-Mobile activation steps
+type: note
+updated: 2025-12-02
 ---
+
 # T-Mobile activation steps
 
 > Conversation ID: 692e2ece-fa18-832a-afc9-c2c5b7b40ac1

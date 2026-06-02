@@ -1,13 +1,20 @@
 ---
-title: "Next.js Overview"
-type: essay
-created: 2025-06-15
-updated: 2025-06-16
-source: chatgpt-export
 conversation_id: 684e27a5-b504-8007-bfe3-71ee4147f48d
+created: 2025-06-15
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 82
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Next.js Overview
+type: essay
+updated: 2025-06-16
 ---
+
 # Next.js Overview
 
 > Conversation ID: 684e27a5-b504-8007-bfe3-71ee4147f48d

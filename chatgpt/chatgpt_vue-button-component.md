@@ -1,13 +1,19 @@
 ---
-title: "Vue Button Component"
-type: guide
-created: 2023-05-31
-updated: 2023-05-31
-source: chatgpt-export
 conversation_id: e72b9412-b8e6-4970-9d8a-a58f70ee26b7
+created: 2023-05-31
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 3
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue Button Component
+type: guide
+updated: 2023-05-31
 ---
+
 # Vue Button Component
 
 > Conversation ID: e72b9412-b8e6-4970-9d8a-a58f70ee26b7

@@ -1,13 +1,20 @@
 ---
-title: "MVP pricing strategy"
-type: essay
-created: 2025-11-29
-updated: 2025-12-02
-source: chatgpt-export
 conversation_id: 692b3e57-1b5c-832a-bbc2-f139f1cebad4
+created: 2025-11-29
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 32
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: MVP pricing strategy
+type: essay
+updated: 2025-12-02
 ---
+
 # MVP pricing strategy
 
 > Conversation ID: 692b3e57-1b5c-832a-bbc2-f139f1cebad4

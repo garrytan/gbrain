@@ -1,13 +1,18 @@
 ---
-title: "XDJ Connections Overview"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679ea05f-5bf0-8007-9959-9f59bc19ca0d
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: XDJ Connections Overview
+type: note
+updated: 2025-02-01
 ---
+
 # XDJ Connections Overview
 
 > Conversation ID: 679ea05f-5bf0-8007-9959-9f59bc19ca0d

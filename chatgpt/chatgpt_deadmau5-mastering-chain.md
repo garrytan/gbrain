@@ -1,13 +1,18 @@
 ---
-title: "Deadmau5 Mastering Chain"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679dd1fe-2edc-8007-baa1-0208abd369da
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Deadmau5 Mastering Chain
+type: note
+updated: 2025-02-01
 ---
+
 # Deadmau5 Mastering Chain
 
 > Conversation ID: 679dd1fe-2edc-8007-baa1-0208abd369da

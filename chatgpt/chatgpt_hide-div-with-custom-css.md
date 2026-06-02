@@ -1,13 +1,19 @@
 ---
-title: "Hide Div with Custom CSS"
-type: note
-created: 2023-04-19
-updated: 2023-04-19
-source: chatgpt-export
 conversation_id: 822e8c87-8f1e-47b3-9c2e-d1de8ee0fc24
+created: 2023-04-19
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Hide Div with Custom CSS
+type: note
+updated: 2023-04-19
 ---
+
 # Hide Div with Custom CSS
 
 > Conversation ID: 822e8c87-8f1e-47b3-9c2e-d1de8ee0fc24

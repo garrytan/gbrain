@@ -1,13 +1,18 @@
 ---
-title: "Zustand vs React Hook Form"
-type: note
-created: 2026-01-14
-updated: 2026-01-14
-source: chatgpt-export
 conversation_id: 6967de3a-d620-832e-9f11-b573a6575ef2
+created: 2026-01-14
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Zustand vs React Hook Form
+type: note
+updated: 2026-01-14
 ---
+
 # Zustand vs React Hook Form
 
 > Conversation ID: 6967de3a-d620-832e-9f11-b573a6575ef2

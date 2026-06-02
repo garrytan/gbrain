@@ -1,13 +1,20 @@
 ---
-title: "Music Streaming Alternatives"
-type: guide
-created: 2024-05-27
-updated: 2024-05-27
-source: chatgpt-export
 conversation_id: c00acb87-ef78-4aa0-9c8e-7f198a6f79dd
+created: 2024-05-27
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Music Streaming Alternatives
+type: guide
+updated: 2024-05-27
 ---
+
 # Music Streaming Alternatives
 
 > Conversation ID: c00acb87-ef78-4aa0-9c8e-7f198a6f79dd

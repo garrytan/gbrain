@@ -1,13 +1,20 @@
 ---
-title: "Pricing and workflow comparison"
-type: essay
-created: 2025-12-20
-updated: 2025-12-20
-source: chatgpt-export
 conversation_id: 694610d9-d960-8325-84b3-e40fc0f1bcf2
+created: 2025-12-20
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 14
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Pricing and workflow comparison
+type: essay
+updated: 2025-12-20
 ---
+
 # Pricing and workflow comparison
 
 > Conversation ID: 694610d9-d960-8325-84b3-e40fc0f1bcf2

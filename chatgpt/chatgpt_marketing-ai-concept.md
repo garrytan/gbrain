@@ -1,13 +1,18 @@
 ---
-title: "Marketing AI Concept"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a08c81c-a48c-83e8-be05-8b705e5c800d
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Marketing AI Concept
+type: note
+updated: 2026-05-16
 ---
+
 # Marketing AI Concept
 
 > Conversation ID: 6a08c81c-a48c-83e8-be05-8b705e5c800d

@@ -1,13 +1,18 @@
 ---
-title: "Supplement Brand Facebook Ads."
-type: note
-created: 2023-04-11
-updated: 2023-04-11
-source: chatgpt-export
 conversation_id: 9262e303-e46a-4319-8129-947802f6793f
+created: 2023-04-11
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Supplement Brand Facebook Ads.
+type: note
+updated: 2023-04-11
 ---
+
 # Supplement Brand Facebook Ads.
 
 > Conversation ID: 9262e303-e46a-4319-8129-947802f6793f

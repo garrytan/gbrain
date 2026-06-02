@@ -1,13 +1,18 @@
 ---
-title: "Landing Page Design Tips"
-type: note
-created: 2026-02-15
-updated: 2026-02-16
-source: chatgpt-export
 conversation_id: 69910f07-88ec-8329-ad3f-b73a1090abb6
+created: 2026-02-15
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Landing Page Design Tips
+type: note
+updated: 2026-02-16
 ---
+
 # Landing Page Design Tips
 
 > Conversation ID: 69910f07-88ec-8329-ad3f-b73a1090abb6

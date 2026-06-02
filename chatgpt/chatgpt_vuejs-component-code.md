@@ -1,13 +1,19 @@
 ---
-title: "Vue.js component code"
-type: guide
-created: 2022-12-24
-updated: 2022-12-24
-source: chatgpt-export
 conversation_id: ae823834-2dad-473b-810d-82a1182bfb57
+created: 2022-12-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js component code
+type: guide
+updated: 2022-12-24
 ---
+
 # Vue.js component code
 
 > Conversation ID: ae823834-2dad-473b-810d-82a1182bfb57

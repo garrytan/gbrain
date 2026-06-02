@@ -1,13 +1,19 @@
 ---
-title: "Set Value in Vue Store"
-type: note
-created: 2023-06-07
-updated: 2023-06-07
-source: chatgpt-export
 conversation_id: dd277303-299b-48cd-bdff-699a0cddfbc5
+created: 2023-06-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Set Value in Vue Store
+type: note
+updated: 2023-06-07
 ---
+
 # Set Value in Vue Store
 
 > Conversation ID: dd277303-299b-48cd-bdff-699a0cddfbc5

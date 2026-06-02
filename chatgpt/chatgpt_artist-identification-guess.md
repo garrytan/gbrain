@@ -1,13 +1,18 @@
 ---
-title: "Artist Identification Guess"
-type: note
-created: 2025-04-15
-updated: 2025-04-15
-source: chatgpt-export
 conversation_id: 67febc8c-bc10-8007-ac74-87ea748c4fcb
+created: 2025-04-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Artist Identification Guess
+type: note
+updated: 2025-04-15
 ---
+
 # Artist Identification Guess
 
 > Conversation ID: 67febc8c-bc10-8007-ac74-87ea748c4fcb

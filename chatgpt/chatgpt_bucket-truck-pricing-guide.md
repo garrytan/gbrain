@@ -1,13 +1,18 @@
 ---
-title: "Bucket Truck Pricing Guide"
-type: note
-created: 2024-01-19
-updated: 2024-01-19
-source: chatgpt-export
 conversation_id: 22908a27-aadd-49f6-996e-f431b85f4d79
+created: 2024-01-19
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Bucket Truck Pricing Guide
+type: note
+updated: 2024-01-19
 ---
+
 # Bucket Truck Pricing Guide
 
 > Conversation ID: 22908a27-aadd-49f6-996e-f431b85f4d79

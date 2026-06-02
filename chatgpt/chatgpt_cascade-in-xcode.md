@@ -1,13 +1,20 @@
 ---
-title: "Cascade in Xcode"
-type: guide
-created: 2025-11-14
-updated: 2025-11-14
-source: chatgpt-export
 conversation_id: 69179178-cb48-8331-afc0-379b957bdc9f
+created: 2025-11-14
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Cascade in Xcode
+type: guide
+updated: 2025-11-14
 ---
+
 # Cascade in Xcode
 
 > Conversation ID: 69179178-cb48-8331-afc0-379b957bdc9f

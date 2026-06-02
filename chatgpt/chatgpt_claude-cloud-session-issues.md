@@ -1,13 +1,19 @@
 ---
-title: "Claude Cloud Session Issues"
-type: note
-created: 2026-04-11
-updated: 2026-04-11
-source: chatgpt-export
 conversation_id: 69dac68a-4a94-83e8-a843-198ad31e8cb6
+created: 2026-04-11
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Claude Cloud Session Issues
+type: note
+updated: 2026-04-11
 ---
+
 # Claude Cloud Session Issues
 
 > Conversation ID: 69dac68a-4a94-83e8-a843-198ad31e8cb6

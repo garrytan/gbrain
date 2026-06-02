@@ -1,13 +1,19 @@
 ---
-title: "Music Interface Design Ideas"
-type: note
-created: 2026-04-26
-updated: 2026-05-05
-source: chatgpt-export
 conversation_id: 69ed8daa-1c24-83e8-bb98-b06fdd57003b
+created: 2026-04-26
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Music Interface Design Ideas
+type: note
+updated: 2026-05-05
 ---
+
 # Music Interface Design Ideas
 
 > Conversation ID: 69ed8daa-1c24-83e8-bb98-b06fdd57003b

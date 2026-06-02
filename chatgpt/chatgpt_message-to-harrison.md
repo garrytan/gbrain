@@ -1,13 +1,19 @@
 ---
-title: "Message to Harrison"
-type: note
-created: 2025-10-10
-updated: 2025-10-10
-source: chatgpt-export
 conversation_id: 68e86916-ec90-8329-a6b9-46ec4f7cbc27
+created: 2025-10-10
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Message to Harrison
+type: note
+updated: 2025-10-10
 ---
+
 # Message to Harrison
 
 > Conversation ID: 68e86916-ec90-8329-a6b9-46ec4f7cbc27

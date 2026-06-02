@@ -1,13 +1,18 @@
 ---
-title: "VSCode Vue Open File"
-type: note
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: 98bf7a98-e758-4727-9639-2f4a65c15d3e
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: VSCode Vue Open File
+type: note
+updated: 2022-12-23
 ---
+
 # VSCode Vue Open File
 
 > Conversation ID: 98bf7a98-e758-4727-9639-2f4a65c15d3e

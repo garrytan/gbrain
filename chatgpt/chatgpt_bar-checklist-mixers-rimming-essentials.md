@@ -1,13 +1,18 @@
 ---
-title: "Bar Checklist: Mixers, Rimming, Essentials"
-type: note
-created: 2024-07-11
-updated: 2024-07-11
-source: chatgpt-export
 conversation_id: 02ce5fb5-a4c4-49e4-b8b6-5cdf4ab93925
+created: 2024-07-11
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Bar Checklist: Mixers, Rimming, Essentials'
+type: note
+updated: 2024-07-11
 ---
+
 # Bar Checklist: Mixers, Rimming, Essentials
 
 > Conversation ID: 02ce5fb5-a4c4-49e4-b8b6-5cdf4ab93925

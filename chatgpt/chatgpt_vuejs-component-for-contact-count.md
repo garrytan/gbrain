@@ -1,13 +1,19 @@
 ---
-title: "Vue.js component for contact count."
-type: note
-created: 2023-02-22
-updated: 2023-02-22
-source: chatgpt-export
 conversation_id: 1b67f2ae-d521-4753-9b76-a73fe3373b5f
+created: 2023-02-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js component for contact count.
+type: note
+updated: 2023-02-22
 ---
+
 # Vue.js component for contact count.
 
 > Conversation ID: 1b67f2ae-d521-4753-9b76-a73fe3373b5f

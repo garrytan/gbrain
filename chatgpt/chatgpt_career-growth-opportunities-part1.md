@@ -1,13 +1,19 @@
 ---
-title: "Career Growth Opportunities"
-type: essay
-created: 2025-02-25
-updated: 2025-10-29
-source: chatgpt-export
 conversation_id: 67bd4d37-ee70-8007-901f-f6c4d4b848a5
+created: 2025-02-25
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 249
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Career Growth Opportunities
+type: essay
+updated: 2025-10-29
 ---
+
 # Career Growth Opportunities
 
 > Conversation ID: 67bd4d37-ee70-8007-901f-f6c4d4b848a5

@@ -1,13 +1,18 @@
 ---
-title: "ProAc Studio 100 Overview"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679e99e9-d254-8007-aace-5f132e58166d
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: ProAc Studio 100 Overview
+type: note
+updated: 2025-02-01
 ---
+
 # ProAc Studio 100 Overview
 
 > Conversation ID: 679e99e9-d254-8007-aace-5f132e58166d

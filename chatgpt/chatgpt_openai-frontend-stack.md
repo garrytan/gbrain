@@ -1,13 +1,20 @@
 ---
-title: "OpenAI frontend stack"
-type: essay
-created: 2025-09-17
-updated: 2025-09-17
-source: chatgpt-export
 conversation_id: 68ca0e04-0b24-8328-89b6-3d60d32002c7
+created: 2025-09-17
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: OpenAI frontend stack
+type: essay
+updated: 2025-09-17
 ---
+
 # OpenAI frontend stack
 
 > Conversation ID: 68ca0e04-0b24-8328-89b6-3d60d32002c7

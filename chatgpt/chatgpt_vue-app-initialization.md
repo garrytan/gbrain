@@ -1,13 +1,18 @@
 ---
-title: "Vue App Initialization"
-type: note
-created: 2023-05-12
-updated: 2023-05-12
-source: chatgpt-export
 conversation_id: 7998e2cc-9214-44f9-9344-038f982ca2a2
+created: 2023-05-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue App Initialization
+type: note
+updated: 2023-05-12
 ---
+
 # Vue App Initialization
 
 > Conversation ID: 7998e2cc-9214-44f9-9344-038f982ca2a2

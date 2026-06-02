@@ -1,13 +1,20 @@
 ---
-title: "Linear Design System OKLCH"
-type: guide
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695ece54-b8c4-8327-9dfb-5d71e8f4ee18
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Linear Design System OKLCH
+type: guide
+updated: 2026-01-07
 ---
+
 # Linear Design System OKLCH
 
 > Conversation ID: 695ece54-b8c4-8327-9dfb-5d71e8f4ee18

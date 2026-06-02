@@ -1,13 +1,19 @@
 ---
-title: "Tip Distribution Comparison"
-type: essay
-created: 2024-08-13
-updated: 2024-08-13
-source: chatgpt-export
 conversation_id: 23ca32c0-d57c-4c18-8d45-4057b8bdb109
+created: 2024-08-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Tip Distribution Comparison
+type: essay
+updated: 2024-08-13
 ---
+
 # Tip Distribution Comparison
 
 > Conversation ID: 23ca32c0-d57c-4c18-8d45-4057b8bdb109

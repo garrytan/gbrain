@@ -1,13 +1,18 @@
 ---
-title: "Colin Farrell & Britney Spears' Heights"
-type: note
-created: 2023-10-29
-updated: 2023-10-30
-source: chatgpt-export
 conversation_id: fa7c946a-bb5e-494f-84c6-9e8aff65eb3f
+created: 2023-10-29
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Colin Farrell & Britney Spears' Heights
+type: note
+updated: 2023-10-30
 ---
+
 # Colin Farrell & Britney Spears' Heights
 
 > Conversation ID: fa7c946a-bb5e-494f-84c6-9e8aff65eb3f

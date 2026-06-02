@@ -1,13 +1,19 @@
 ---
-title: "Docker Command Not Found."
-type: note
-created: 2023-03-02
-updated: 2023-03-02
-source: chatgpt-export
 conversation_id: 676616e1-9975-42c6-a800-9471ae7fc35b
+created: 2023-03-02
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Docker Command Not Found.
+type: note
+updated: 2023-03-02
 ---
+
 # Docker Command Not Found.
 
 > Conversation ID: 676616e1-9975-42c6-a800-9471ae7fc35b

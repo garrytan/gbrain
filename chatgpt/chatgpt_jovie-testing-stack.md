@@ -1,13 +1,20 @@
 ---
-title: "Jovie testing stack"
-type: guide
-created: 2025-08-20
-updated: 2025-08-20
-source: chatgpt-export
 conversation_id: 68a645e0-9478-832f-b0e1-101272c242f4
+created: 2025-08-20
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie testing stack
+type: guide
+updated: 2025-08-20
 ---
+
 # Jovie testing stack
 
 > Conversation ID: 68a645e0-9478-832f-b0e1-101272c242f4

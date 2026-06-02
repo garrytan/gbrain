@@ -1,13 +1,20 @@
 ---
-title: "Embed Laylo in Vue"
-type: essay
-created: 2024-03-08
-updated: 2024-03-09
-source: chatgpt-export
 conversation_id: 794c8719-9cf0-4a8b-b5f4-bfd8aba3cdaf
+created: 2024-03-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 24
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Embed Laylo in Vue
+type: essay
+updated: 2024-03-09
 ---
+
 # Embed Laylo in Vue
 
 > Conversation ID: 794c8719-9cf0-4a8b-b5f4-bfd8aba3cdaf

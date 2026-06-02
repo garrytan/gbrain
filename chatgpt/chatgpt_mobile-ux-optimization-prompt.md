@@ -1,13 +1,20 @@
 ---
-title: "Mobile UX Optimization Prompt"
-type: guide
-created: 2026-02-15
-updated: 2026-02-15
-source: chatgpt-export
 conversation_id: 6991ffae-2438-8332-bbca-4a2855a4d9bc
+created: 2026-02-15
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Mobile UX Optimization Prompt
+type: guide
+updated: 2026-02-15
 ---
+
 # Mobile UX Optimization Prompt
 
 > Conversation ID: 6991ffae-2438-8332-bbca-4a2855a4d9bc

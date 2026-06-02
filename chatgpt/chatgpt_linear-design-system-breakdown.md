@@ -1,13 +1,20 @@
 ---
-title: "Linear Design System Breakdown"
-type: essay
-created: 2026-01-08
-updated: 2026-01-08
-source: chatgpt-export
 conversation_id: 695eff83-6484-8332-aa3c-cffb973b44a9
+created: 2026-01-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 9
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Linear Design System Breakdown
+type: essay
+updated: 2026-01-08
 ---
+
 # Linear Design System Breakdown
 
 > Conversation ID: 695eff83-6484-8332-aa3c-cffb973b44a9

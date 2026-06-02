@@ -1,13 +1,19 @@
 ---
-title: "Vue.js customizable spinner."
-type: guide
-created: 2023-03-25
-updated: 2023-03-25
-source: chatgpt-export
 conversation_id: 28fb1b0b-d6f3-4c5c-81c8-46077b356964
+created: 2023-03-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js customizable spinner.
+type: guide
+updated: 2023-03-25
 ---
+
 # Vue.js customizable spinner.
 
 > Conversation ID: 28fb1b0b-d6f3-4c5c-81c8-46077b356964

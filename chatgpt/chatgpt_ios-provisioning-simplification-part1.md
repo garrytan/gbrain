@@ -1,13 +1,20 @@
 ---
-title: "iOS provisioning simplification"
-type: essay
-created: 2025-07-20
-updated: 2025-07-22
-source: chatgpt-export
 conversation_id: 687d47a6-7a4c-8326-8f6a-208085f789a9
+created: 2025-07-20
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 42
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS provisioning simplification
+type: essay
+updated: 2025-07-22
 ---
+
 # iOS provisioning simplification
 
 > Conversation ID: 687d47a6-7a4c-8326-8f6a-208085f789a9

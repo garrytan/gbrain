@@ -1,13 +1,18 @@
 ---
-title: "Spy Music Playlist Suggestions"
-type: note
-created: 2024-07-03
-updated: 2024-07-03
-source: chatgpt-export
 conversation_id: b429d3be-dfcf-45fd-a24f-d94382fbb020
+created: 2024-07-03
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spy Music Playlist Suggestions
+type: note
+updated: 2024-07-03
 ---
+
 # Spy Music Playlist Suggestions
 
 > Conversation ID: b429d3be-dfcf-45fd-a24f-d94382fbb020

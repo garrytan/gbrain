@@ -1,13 +1,18 @@
 ---
-title: "iPhone 11 trade-in value"
-type: note
-created: 2025-11-30
-updated: 2025-11-30
-source: chatgpt-export
 conversation_id: 692bb3e0-5388-832e-8d5c-13b2bbe72b76
+created: 2025-11-30
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iPhone 11 trade-in value
+type: note
+updated: 2025-11-30
 ---
+
 # iPhone 11 trade-in value
 
 > Conversation ID: 692bb3e0-5388-832e-8d5c-13b2bbe72b76

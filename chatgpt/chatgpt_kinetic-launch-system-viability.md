@@ -1,13 +1,18 @@
 ---
-title: "Kinetic Launch System Viability"
-type: note
-created: 2025-07-05
-updated: 2025-07-05
-source: chatgpt-export
 conversation_id: 68695047-f44c-8007-86bf-a8e02585256c
+created: 2025-07-05
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Kinetic Launch System Viability
+type: note
+updated: 2025-07-05
 ---
+
 # Kinetic Launch System Viability
 
 > Conversation ID: 68695047-f44c-8007-86bf-a8e02585256c

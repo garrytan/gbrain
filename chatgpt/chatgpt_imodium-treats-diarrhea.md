@@ -1,13 +1,18 @@
 ---
-title: "Imodium treats diarrhea."
-type: note
-created: 2024-01-14
-updated: 2024-01-15
-source: chatgpt-export
 conversation_id: 7402d233-c54d-4173-bc75-a101c36402e2
+created: 2024-01-14
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Imodium treats diarrhea.
+type: note
+updated: 2024-01-15
 ---
+
 # Imodium treats diarrhea.
 
 > Conversation ID: 7402d233-c54d-4173-bc75-a101c36402e2

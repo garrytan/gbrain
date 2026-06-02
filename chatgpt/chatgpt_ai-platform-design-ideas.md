@@ -1,13 +1,20 @@
 ---
-title: "AI Platform Design Ideas"
-type: essay
-created: 2026-04-21
-updated: 2026-04-21
-source: chatgpt-export
 conversation_id: 69e80210-e0bc-83e8-bccd-307511f17a27
+created: 2026-04-21
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 14
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: AI Platform Design Ideas
+type: essay
+updated: 2026-04-21
 ---
+
 # AI Platform Design Ideas
 
 > Conversation ID: 69e80210-e0bc-83e8-bccd-307511f17a27

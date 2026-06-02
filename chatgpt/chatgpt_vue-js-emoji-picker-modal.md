@@ -1,13 +1,20 @@
 ---
-title: "Vue JS Emoji Picker Modal"
-type: guide
-created: 2022-12-29
-updated: 2022-12-29
-source: chatgpt-export
 conversation_id: ee8911a3-b63b-4bf0-ae2d-025d2366e2cf
+created: 2022-12-29
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue JS Emoji Picker Modal
+type: guide
+updated: 2022-12-29
 ---
+
 # Vue JS Emoji Picker Modal
 
 > Conversation ID: ee8911a3-b63b-4bf0-ae2d-025d2366e2cf

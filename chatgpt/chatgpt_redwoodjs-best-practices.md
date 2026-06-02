@@ -1,13 +1,18 @@
 ---
-title: "RedwoodJS best practices"
-type: note
-created: 2025-11-28
-updated: 2025-11-29
-source: chatgpt-export
 conversation_id: 6929fbec-2140-8331-b839-2352365f1d0a
+created: 2025-11-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: RedwoodJS best practices
+type: note
+updated: 2025-11-29
 ---
+
 # RedwoodJS best practices
 
 > Conversation ID: 6929fbec-2140-8331-b839-2352365f1d0a

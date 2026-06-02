@@ -1,13 +1,20 @@
 ---
-title: "Feature suggestions for growth"
-type: essay
-created: 2025-12-02
-updated: 2025-12-03
-source: chatgpt-export
 conversation_id: 692f629a-a4f0-832c-82af-f5a8bbb9fac5
+created: 2025-12-02
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 20
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Feature suggestions for growth
+type: essay
+updated: 2025-12-03
 ---
+
 # Feature suggestions for growth
 
 > Conversation ID: 692f629a-a4f0-832c-82af-f5a8bbb9fac5

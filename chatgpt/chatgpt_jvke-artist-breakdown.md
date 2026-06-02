@@ -1,13 +1,18 @@
 ---
-title: "JVKE Artist Breakdown"
-type: note
-created: 2025-07-06
-updated: 2025-07-06
-source: chatgpt-export
 conversation_id: 686ab041-26cc-8007-a486-6632fcaee5e0
+created: 2025-07-06
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: JVKE Artist Breakdown
+type: note
+updated: 2025-07-06
 ---
+
 # JVKE Artist Breakdown
 
 > Conversation ID: 686ab041-26cc-8007-a486-6632fcaee5e0

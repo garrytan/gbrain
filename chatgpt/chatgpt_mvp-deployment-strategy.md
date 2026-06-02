@@ -1,13 +1,20 @@
 ---
-title: "MVP deployment strategy"
-type: essay
-created: 2025-08-17
-updated: 2025-08-18
-source: chatgpt-export
 conversation_id: 68a25554-5240-8325-89a1-57f45a87f2ee
+created: 2025-08-17
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 22
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: MVP deployment strategy
+type: essay
+updated: 2025-08-18
 ---
+
 # MVP deployment strategy
 
 > Conversation ID: 68a25554-5240-8325-89a1-57f45a87f2ee

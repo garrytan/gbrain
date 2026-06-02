@@ -1,13 +1,20 @@
 ---
-title: "Vue.js component for grid."
-type: guide
-created: 2023-02-25
-updated: 2023-02-25
-source: chatgpt-export
 conversation_id: 13c65105-3fa3-42db-aa06-4b2da35e815c
+created: 2023-02-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js component for grid.
+type: guide
+updated: 2023-02-25
 ---
+
 # Vue.js component for grid.
 
 > Conversation ID: 13c65105-3fa3-42db-aa06-4b2da35e815c

@@ -1,13 +1,18 @@
 ---
-title: "XLN Audio Products Overview"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679dcb7e-a6c0-8007-b265-0baff60ae697
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: XLN Audio Products Overview
+type: note
+updated: 2025-02-01
 ---
+
 # XLN Audio Products Overview
 
 > Conversation ID: 679dcb7e-a6c0-8007-b265-0baff60ae697

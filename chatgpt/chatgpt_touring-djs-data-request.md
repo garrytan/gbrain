@@ -1,13 +1,18 @@
 ---
-title: "Touring DJs Data Request"
-type: note
-created: 2026-04-28
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f1373a-0a44-83e8-b097-a8fb7cbeea9a
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Touring DJs Data Request
+type: note
+updated: 2026-04-29
 ---
+
 # Touring DJs Data Request
 
 > Conversation ID: 69f1373a-0a44-83e8-b097-a8fb7cbeea9a

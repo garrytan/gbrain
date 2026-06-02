@@ -1,14 +1,20 @@
 ---
-title: "Package.json Laravel Vue.js
-"
-type: guide
-created: 2023-01-22
-updated: 2023-01-22
-source: chatgpt-export
 conversation_id: 88c14130-9641-41ec-8477-23dc5113a7e4
+created: 2023-01-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: 'Package.json Laravel Vue.js '
+type: guide
+updated: 2023-01-22
 ---
+
 # Package.json Laravel Vue.js
 
 

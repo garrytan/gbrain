@@ -1,13 +1,18 @@
 ---
-title: "Sidebar Design Recommendations"
-type: note
-created: 2026-04-23
-updated: 2026-04-23
-source: chatgpt-export
 conversation_id: 69e9b7c8-2d0c-83e8-ab19-cd9241877e91
+created: 2026-04-23
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sidebar Design Recommendations
+type: note
+updated: 2026-04-23
 ---
+
 # Sidebar Design Recommendations
 
 > Conversation ID: 69e9b7c8-2d0c-83e8-ab19-cd9241877e91

@@ -1,13 +1,19 @@
 ---
-title: "Memoization in React"
-type: guide
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6973c979-9cb8-832a-bc77-b7536280036f
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Memoization in React
+type: guide
+updated: 2026-01-23
 ---
+
 # Memoization in React
 
 > Conversation ID: 6973c979-9cb8-832a-bc77-b7536280036f

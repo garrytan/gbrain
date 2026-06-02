@@ -1,13 +1,19 @@
 ---
-title: "Clerk Supabase Integration"
-type: note
-created: 2025-07-05
-updated: 2025-07-05
-source: chatgpt-export
 conversation_id: 6869b3b3-f0a8-8007-a263-e1d2ba65f46b
+created: 2025-07-05
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Clerk Supabase Integration
+type: note
+updated: 2025-07-05
 ---
+
 # Clerk Supabase Integration
 
 > Conversation ID: 6869b3b3-f0a8-8007-a263-e1d2ba65f46b

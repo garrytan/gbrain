@@ -1,13 +1,18 @@
 ---
-title: "Tailscale pricing options"
-type: note
-created: 2026-05-27
-updated: 2026-05-27
-source: chatgpt-export
 conversation_id: 6a166711-ac24-83e8-a05c-760ad26e628e
+created: 2026-05-27
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tailscale pricing options
+type: note
+updated: 2026-05-27
 ---
+
 # Tailscale pricing options
 
 > Conversation ID: 6a166711-ac24-83e8-a05c-760ad26e628e

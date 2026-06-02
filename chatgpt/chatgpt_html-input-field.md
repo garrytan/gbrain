@@ -1,13 +1,19 @@
 ---
-title: "HTML Input Field."
-type: note
-created: 2023-05-04
-updated: 2023-05-04
-source: chatgpt-export
 conversation_id: f43463a5-0b4c-47c5-88a5-3bf1abd2cce5
+created: 2023-05-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: HTML Input Field.
+type: note
+updated: 2023-05-04
 ---
+
 # HTML Input Field.
 
 > Conversation ID: f43463a5-0b4c-47c5-88a5-3bf1abd2cce5

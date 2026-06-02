@@ -1,13 +1,18 @@
 ---
-title: "Concise Jovie Template"
-type: note
-created: 2023-05-22
-updated: 2023-05-22
-source: chatgpt-export
 conversation_id: c933ce39-6aea-4d80-ba69-c73ab1b61537
+created: 2023-05-22
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Concise Jovie Template
+type: note
+updated: 2023-05-22
 ---
+
 # Concise Jovie Template
 
 > Conversation ID: c933ce39-6aea-4d80-ba69-c73ab1b61537

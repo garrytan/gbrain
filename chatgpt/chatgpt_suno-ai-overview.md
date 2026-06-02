@@ -1,13 +1,18 @@
 ---
-title: "Suno AI overview"
-type: note
-created: 2025-11-21
-updated: 2025-11-21
-source: chatgpt-export
 conversation_id: 6920dad2-56fc-8326-9a68-e4a44623b5dc
+created: 2025-11-21
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Suno AI overview
+type: note
+updated: 2025-11-21
 ---
+
 # Suno AI overview
 
 > Conversation ID: 6920dad2-56fc-8326-9a68-e4a44623b5dc

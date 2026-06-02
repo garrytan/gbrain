@@ -1,13 +1,18 @@
 ---
-title: "Tools to Extract Design"
-type: note
-created: 2026-02-20
-updated: 2026-02-20
-source: chatgpt-export
 conversation_id: 6998e1ab-2f78-832a-b3a6-c04ba00e8418
+created: 2026-02-20
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tools to Extract Design
+type: note
+updated: 2026-02-20
 ---
+
 # Tools to Extract Design
 
 > Conversation ID: 6998e1ab-2f78-832a-b3a6-c04ba00e8418

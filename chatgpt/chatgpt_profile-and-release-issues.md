@@ -1,13 +1,19 @@
 ---
-title: "Profile and Release Issues"
-type: essay
-created: 2026-04-21
-updated: 2026-04-21
-source: chatgpt-export
 conversation_id: 69e7db35-88f0-83e8-a255-f929d97f4e9d
+created: 2026-04-21
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Profile and Release Issues
+type: essay
+updated: 2026-04-21
 ---
+
 # Profile and Release Issues
 
 > Conversation ID: 69e7db35-88f0-83e8-a255-f929d97f4e9d

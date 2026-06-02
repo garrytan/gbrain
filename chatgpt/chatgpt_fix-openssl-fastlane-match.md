@@ -1,13 +1,19 @@
 ---
-title: "Fix OpenSSL Fastlane Match"
-type: note
-created: 2025-11-23
-updated: 2025-11-23
-source: chatgpt-export
 conversation_id: 69235a04-02e8-832e-a0df-1e195254ba69
+created: 2025-11-23
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Fix OpenSSL Fastlane Match
+type: note
+updated: 2025-11-23
 ---
+
 # Fix OpenSSL Fastlane Match
 
 > Conversation ID: 69235a04-02e8-832e-a0df-1e195254ba69

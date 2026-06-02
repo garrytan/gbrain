@@ -1,13 +1,18 @@
 ---
-title: "Crime London Brand Overview"
-type: note
-created: 2024-09-04
-updated: 2024-09-04
-source: chatgpt-export
 conversation_id: dcf866fd-504e-4b30-86a8-d24ed5fc3ed1
+created: 2024-09-04
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Crime London Brand Overview
+type: note
+updated: 2024-09-04
 ---
+
 # Crime London Brand Overview
 
 > Conversation ID: dcf866fd-504e-4b30-86a8-d24ed5fc3ed1

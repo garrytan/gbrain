@@ -1,13 +1,20 @@
 ---
-title: "Tailwind Design System"
-type: guide
-created: 2026-02-01
-updated: 2026-02-01
-source: chatgpt-export
 conversation_id: 697fc8d1-060c-8325-9fb7-63bb94e20c1b
+created: 2026-02-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Tailwind Design System
+type: guide
+updated: 2026-02-01
 ---
+
 # Tailwind Design System
 
 > Conversation ID: 697fc8d1-060c-8325-9fb7-63bb94e20c1b

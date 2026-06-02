@@ -1,13 +1,20 @@
 ---
-title: "AI plan for iOS refactor"
-type: guide
-created: 2025-07-25
-updated: 2025-07-25
-source: chatgpt-export
 conversation_id: 688333b1-43c4-8321-9c83-1b7a1d3bf4dc
+created: 2025-07-25
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 12
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: AI plan for iOS refactor
+type: guide
+updated: 2025-07-25
 ---
+
 # AI plan for iOS refactor
 
 > Conversation ID: 688333b1-43c4-8321-9c83-1b7a1d3bf4dc

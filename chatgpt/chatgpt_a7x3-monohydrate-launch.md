@@ -1,13 +1,18 @@
 ---
-title: "A7X3 Monohydrate Launch"
-type: note
-created: 2023-03-21
-updated: 2023-03-21
-source: chatgpt-export
 conversation_id: d88f626e-e292-4c4a-81bb-03cf8e4903f8
+created: 2023-03-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: A7X3 Monohydrate Launch
+type: note
+updated: 2023-03-21
 ---
+
 # A7X3 Monohydrate Launch
 
 > Conversation ID: d88f626e-e292-4c4a-81bb-03cf8e4903f8

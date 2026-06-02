@@ -1,13 +1,18 @@
 ---
-title: "Depp's Business Ventures"
-type: note
-created: 2024-04-12
-updated: 2024-04-13
-source: chatgpt-export
 conversation_id: 813f0aea-5ae9-47a2-82c1-f3c405345a02
+created: 2024-04-12
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 14
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Depp's Business Ventures
+type: note
+updated: 2024-04-13
 ---
+
 # Depp's Business Ventures
 
 > Conversation ID: 813f0aea-5ae9-47a2-82c1-f3c405345a02

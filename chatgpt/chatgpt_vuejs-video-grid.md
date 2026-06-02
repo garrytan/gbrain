@@ -1,13 +1,18 @@
 ---
-title: "Vue.js video grid"
-type: note
-created: 2023-03-01
-updated: 2023-03-01
-source: chatgpt-export
 conversation_id: 7b54e66f-999b-4a8a-ae47-8f6f3b6d0834
+created: 2023-03-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js video grid
+type: note
+updated: 2023-03-01
 ---
+
 # Vue.js video grid
 
 > Conversation ID: 7b54e66f-999b-4a8a-ae47-8f6f3b6d0834

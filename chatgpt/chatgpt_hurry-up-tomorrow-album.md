@@ -1,13 +1,18 @@
 ---
-title: "Hurry Up Tomorrow Album"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679dca08-9c98-8007-99db-fbb15e9f89fb
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Hurry Up Tomorrow Album
+type: note
+updated: 2025-02-01
 ---
+
 # Hurry Up Tomorrow Album
 
 > Conversation ID: 679dca08-9c98-8007-99db-fbb15e9f89fb

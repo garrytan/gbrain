@@ -1,13 +1,19 @@
 ---
-title: "World Class Jovie App"
-type: note
-created: 2026-05-21
-updated: 2026-05-21
-source: chatgpt-export
 conversation_id: 6a0f4af7-bf08-83e8-93dc-38608df1192e
+created: 2026-05-21
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 3
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: World Class Jovie App
+type: note
+updated: 2026-05-21
 ---
+
 # World Class Jovie App
 
 > Conversation ID: 6a0f4af7-bf08-83e8-93dc-38608df1192e

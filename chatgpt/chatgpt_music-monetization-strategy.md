@@ -1,13 +1,19 @@
 ---
-title: "Music Monetization Strategy"
-type: note
-created: 2026-01-18
-updated: 2026-01-18
-source: chatgpt-export
 conversation_id: 696d186d-eca0-832e-bf68-c68a78636a32
+created: 2026-01-18
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Music Monetization Strategy
+type: note
+updated: 2026-01-18
 ---
+
 # Music Monetization Strategy
 
 > Conversation ID: 696d186d-eca0-832e-bf68-c68a78636a32

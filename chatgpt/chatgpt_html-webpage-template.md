@@ -1,13 +1,20 @@
 ---
-title: "HTML Webpage Template."
-type: guide
-created: 2023-02-25
-updated: 2023-02-25
-source: chatgpt-export
 conversation_id: ec611373-8047-4316-be5c-577e92769a01
+created: 2023-02-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: HTML Webpage Template.
+type: guide
+updated: 2023-02-25
 ---
+
 # HTML Webpage Template.
 
 > Conversation ID: ec611373-8047-4316-be5c-577e92769a01

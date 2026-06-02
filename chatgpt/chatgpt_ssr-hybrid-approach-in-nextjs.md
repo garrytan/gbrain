@@ -1,13 +1,18 @@
 ---
-title: "SSR Hybrid Approach in Next.js"
-type: note
-created: 2026-02-02
-updated: 2026-02-02
-source: chatgpt-export
 conversation_id: 698000c8-4624-832d-8e85-bdd15bbd4e00
+created: 2026-02-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: SSR Hybrid Approach in Next.js
+type: note
+updated: 2026-02-02
 ---
+
 # SSR Hybrid Approach in Next.js
 
 > Conversation ID: 698000c8-4624-832d-8e85-bdd15bbd4e00

@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Emitting Events"
-type: guide
-created: 2022-12-24
-updated: 2022-12-24
-source: chatgpt-export
 conversation_id: 7cbcb9b8-146e-4c76-a764-ce4b9814c1bd
+created: 2022-12-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Emitting Events
+type: guide
+updated: 2022-12-24
 ---
+
 # Vue.js Emitting Events
 
 > Conversation ID: 7cbcb9b8-146e-4c76-a764-ce4b9814c1bd

@@ -1,13 +1,18 @@
 ---
-title: "DJ Coachella Headliner"
-type: note
-created: 2025-04-12
-updated: 2025-04-12
-source: chatgpt-export
 conversation_id: 67fabd8b-ff3c-8007-9c53-d53070894889
+created: 2025-04-12
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 5
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJ Coachella Headliner
+type: note
+updated: 2025-04-12
 ---
+
 # DJ Coachella Headliner
 
 > Conversation ID: 67fabd8b-ff3c-8007-9c53-d53070894889

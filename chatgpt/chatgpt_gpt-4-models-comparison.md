@@ -1,13 +1,18 @@
 ---
-title: "GPT-4 Models Comparison"
-type: note
-created: 2025-05-25
-updated: 2025-05-25
-source: chatgpt-export
 conversation_id: 68334902-5dec-8007-ae05-296b1b50e815
+created: 2025-05-25
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: GPT-4 Models Comparison
+type: note
+updated: 2025-05-25
 ---
+
 # GPT-4 Models Comparison
 
 > Conversation ID: 68334902-5dec-8007-ae05-296b1b50e815

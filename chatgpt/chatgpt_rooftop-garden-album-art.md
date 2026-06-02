@@ -1,13 +1,18 @@
 ---
-title: "Rooftop Garden Album Art"
-type: note
-created: 2024-03-20
-updated: 2024-03-20
-source: chatgpt-export
 conversation_id: 1bd5dc9a-c2e6-4778-9e39-9864ddfef42e
+created: 2024-03-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Rooftop Garden Album Art
+type: note
+updated: 2024-03-20
 ---
+
 # Rooftop Garden Album Art
 
 > Conversation ID: 1bd5dc9a-c2e6-4778-9e39-9864ddfef42e

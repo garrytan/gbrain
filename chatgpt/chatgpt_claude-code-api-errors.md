@@ -1,13 +1,19 @@
 ---
-title: "Claude code api errors"
-type: guide
-created: 2025-09-02
-updated: 2025-09-02
-source: chatgpt-export
 conversation_id: 68b75bbc-ae80-8323-a7df-6380fa901408
+created: 2025-09-02
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude code api errors
+type: guide
+updated: 2025-09-02
 ---
+
 # Claude code api errors
 
 > Conversation ID: 68b75bbc-ae80-8323-a7df-6380fa901408

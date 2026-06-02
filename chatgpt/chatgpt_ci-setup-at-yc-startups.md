@@ -1,13 +1,18 @@
 ---
-title: "CI setup at YC startups"
-type: note
-created: 2025-12-22
-updated: 2025-12-22
-source: chatgpt-export
 conversation_id: 69497695-54f0-8327-bbe2-c3647e139e97
+created: 2025-12-22
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: CI setup at YC startups
+type: note
+updated: 2025-12-22
 ---
+
 # CI setup at YC startups
 
 > Conversation ID: 69497695-54f0-8327-bbe2-c3647e139e97

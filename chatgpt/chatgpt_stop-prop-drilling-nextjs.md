@@ -1,13 +1,19 @@
 ---
-title: "Stop Prop Drilling Next.js"
-type: guide
-created: 2026-01-14
-updated: 2026-01-14
-source: chatgpt-export
 conversation_id: 6967d645-4348-832f-8b97-88ed195fe004
+created: 2026-01-14
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Stop Prop Drilling Next.js
+type: guide
+updated: 2026-01-14
 ---
+
 # Stop Prop Drilling Next.js
 
 > Conversation ID: 6967d645-4348-832f-8b97-88ed195fe004

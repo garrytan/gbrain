@@ -1,13 +1,18 @@
 ---
-title: "Create Weight Tracking Spreadsheet"
-type: note
-created: 2023-11-07
-updated: 2023-11-07
-source: chatgpt-export
 conversation_id: 583c0704-ea2c-4200-98ad-1c60da65d45c
+created: 2023-11-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Create Weight Tracking Spreadsheet
+type: note
+updated: 2023-11-07
 ---
+
 # Create Weight Tracking Spreadsheet
 
 > Conversation ID: 583c0704-ea2c-4200-98ad-1c60da65d45c

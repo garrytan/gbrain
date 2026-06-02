@@ -1,13 +1,18 @@
 ---
-title: "View iOS App API"
-type: note
-created: 2024-04-10
-updated: 2024-04-10
-source: chatgpt-export
 conversation_id: 76cedf31-0eaf-47f2-9ed3-41b47270a380
+created: 2024-04-10
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: View iOS App API
+type: note
+updated: 2024-04-10
 ---
+
 # View iOS App API
 
 > Conversation ID: 76cedf31-0eaf-47f2-9ed3-41b47270a380

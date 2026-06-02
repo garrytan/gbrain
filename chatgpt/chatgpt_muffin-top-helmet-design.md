@@ -1,13 +1,19 @@
 ---
-title: "Muffin Top Helmet Design"
-type: guide
-created: 2025-05-24
-updated: 2025-05-24
-source: chatgpt-export
 conversation_id: 68317c31-4fd0-8007-91d2-4c395907baa8
+created: 2025-05-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 16
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Muffin Top Helmet Design
+type: guide
+updated: 2025-05-24
 ---
+
 # Muffin Top Helmet Design
 
 > Conversation ID: 68317c31-4fd0-8007-91d2-4c395907baa8

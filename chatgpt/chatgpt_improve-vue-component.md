@@ -1,13 +1,20 @@
 ---
-title: "Improve Vue component"
-type: guide
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: 21624845-784a-4f68-a48e-29856cf408fd
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Improve Vue component
+type: guide
+updated: 2022-12-23
 ---
+
 # Improve Vue component
 
 > Conversation ID: 21624845-784a-4f68-a48e-29856cf408fd

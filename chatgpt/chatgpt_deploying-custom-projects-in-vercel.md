@@ -1,13 +1,18 @@
 ---
-title: "Deploying custom projects in Vercel"
-type: note
-created: 2025-05-18
-updated: 2025-05-18
-source: chatgpt-export
 conversation_id: 682a1a7d-5ab8-8007-9429-2ab9d4139585
+created: 2025-05-18
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Deploying custom projects in Vercel
+type: note
+updated: 2025-05-18
 ---
+
 # Deploying custom projects in Vercel
 
 > Conversation ID: 682a1a7d-5ab8-8007-9429-2ab9d4139585

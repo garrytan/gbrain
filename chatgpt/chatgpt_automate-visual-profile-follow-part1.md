@@ -1,13 +1,20 @@
 ---
-title: "Automate Visual Profile Follow."
-type: essay
-created: 2024-04-29
-updated: 2024-04-29
-source: chatgpt-export
 conversation_id: 4678d502-ac9a-4345-a61d-b7f4c1f7a6ff
+created: 2024-04-29
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 43
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Automate Visual Profile Follow.
+type: essay
+updated: 2024-04-29
 ---
+
 # Automate Visual Profile Follow.
 
 > Conversation ID: 4678d502-ac9a-4345-a61d-b7f4c1f7a6ff

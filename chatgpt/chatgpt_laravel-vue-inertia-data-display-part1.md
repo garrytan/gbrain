@@ -1,13 +1,20 @@
 ---
-title: "Laravel, Vue & Inertia: Data Display"
-type: essay
-created: 2023-11-23
-updated: 2023-12-02
-source: chatgpt-export
 conversation_id: 8a2cc099-3db5-4c29-95a2-79d991e8536a
+created: 2023-11-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 26
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: 'Laravel, Vue & Inertia: Data Display'
+type: essay
+updated: 2023-12-02
 ---
+
 # Laravel, Vue & Inertia: Data Display
 
 > Conversation ID: 8a2cc099-3db5-4c29-95a2-79d991e8536a

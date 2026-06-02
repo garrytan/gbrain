@@ -1,13 +1,18 @@
 ---
-title: "Experiential marketing agencies LA"
-type: note
-created: 2025-12-10
-updated: 2025-12-10
-source: chatgpt-export
 conversation_id: 6939c27c-4284-8325-bf0e-249ae9371b5c
+created: 2025-12-10
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Experiential marketing agencies LA
+type: note
+updated: 2025-12-10
 ---
+
 # Experiential marketing agencies LA
 
 > Conversation ID: 6939c27c-4284-8325-bf0e-249ae9371b5c

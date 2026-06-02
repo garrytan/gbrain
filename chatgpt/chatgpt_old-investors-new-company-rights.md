@@ -1,13 +1,19 @@
 ---
-title: "Old investors new company rights"
-type: essay
-created: 2025-12-14
-updated: 2025-12-14
-source: chatgpt-export
 conversation_id: 693e1255-142c-832b-a46c-55f2416573c7
+created: 2025-12-14
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Old investors new company rights
+type: essay
+updated: 2025-12-14
 ---
+
 # Old investors new company rights
 
 > Conversation ID: 693e1255-142c-832b-a46c-55f2416573c7

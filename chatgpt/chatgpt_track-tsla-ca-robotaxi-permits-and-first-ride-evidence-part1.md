@@ -1,13 +1,19 @@
 ---
-title: "Track TSLA CA robotaxi permits and first-ride evidence"
-type: essay
-created: 2025-08-23
-updated: 2025-08-26
-source: chatgpt-export
 conversation_id: 68aa11ab-7738-8325-8db3-c83ef1d7cbca
+created: 2025-08-23
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 25
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Track TSLA CA robotaxi permits and first-ride evidence
+type: essay
+updated: 2025-08-26
 ---
+
 # Track TSLA CA robotaxi permits and first-ride evidence
 
 > Conversation ID: 68aa11ab-7738-8325-8db3-c83ef1d7cbca

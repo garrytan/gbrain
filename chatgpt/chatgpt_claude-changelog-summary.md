@@ -1,13 +1,18 @@
 ---
-title: "Claude Changelog Summary"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6972c60d-a534-8326-9607-2bafca94dc15
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude Changelog Summary
+type: note
+updated: 2026-01-23
 ---
+
 # Claude Changelog Summary
 
 > Conversation ID: 6972c60d-a534-8326-9607-2bafca94dc15

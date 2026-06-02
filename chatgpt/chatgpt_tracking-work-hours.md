@@ -1,13 +1,19 @@
 ---
-title: "Tracking work hours"
-type: note
-created: 2025-12-22
-updated: 2025-12-22
-source: chatgpt-export
 conversation_id: 694994d9-8860-8328-8bd3-a3e3a5318730
+created: 2025-12-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Tracking work hours
+type: note
+updated: 2025-12-22
 ---
+
 # Tracking work hours
 
 > Conversation ID: 694994d9-8860-8328-8bd3-a3e3a5318730

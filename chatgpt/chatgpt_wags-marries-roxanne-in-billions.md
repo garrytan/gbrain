@@ -1,13 +1,18 @@
 ---
-title: "Wags marries Roxanne in Billions"
-type: note
-created: 2024-01-26
-updated: 2024-01-26
-source: chatgpt-export
 conversation_id: c8957e57-3c34-4044-b788-a85733d4e465
+created: 2024-01-26
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Wags marries Roxanne in Billions
+type: note
+updated: 2024-01-26
 ---
+
 # Wags marries Roxanne in Billions
 
 > Conversation ID: c8957e57-3c34-4044-b788-a85733d4e465

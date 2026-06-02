@@ -1,13 +1,19 @@
 ---
-title: "Jovie logo brainstorming"
-type: note
-created: 2026-04-13
-updated: 2026-04-14
-source: chatgpt-export
 conversation_id: 69dd7dfe-fc08-83e8-9025-fe671e627a29
+created: 2026-04-13
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Jovie logo brainstorming
+type: note
+updated: 2026-04-14
 ---
+
 # Jovie logo brainstorming
 
 > Conversation ID: 69dd7dfe-fc08-83e8-9025-fe671e627a29

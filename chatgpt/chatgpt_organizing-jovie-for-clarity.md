@@ -1,13 +1,18 @@
 ---
-title: "Organizing Jovie for Clarity"
-type: note
-created: 2026-05-25
-updated: 2026-05-25
-source: chatgpt-export
 conversation_id: 6a13aa14-838c-83e8-93be-0b9def1c0c44
+created: 2026-05-25
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Organizing Jovie for Clarity
+type: note
+updated: 2026-05-25
 ---
+
 # Organizing Jovie for Clarity
 
 > Conversation ID: 6a13aa14-838c-83e8-93be-0b9def1c0c44

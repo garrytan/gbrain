@@ -1,13 +1,19 @@
 ---
-title: "Windsurf vs Claude Code"
-type: note
-created: 2025-11-14
-updated: 2025-11-14
-source: chatgpt-export
 conversation_id: 69168757-b464-832e-8977-e0943f47137f
+created: 2025-11-14
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Windsurf vs Claude Code
+type: note
+updated: 2025-11-14
 ---
+
 # Windsurf vs Claude Code
 
 > Conversation ID: 69168757-b464-832e-8977-e0943f47137f

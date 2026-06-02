@@ -1,13 +1,18 @@
 ---
-title: "Short-Form Pop Culture Producer"
-type: note
-created: 2023-06-13
-updated: 2023-06-13
-source: chatgpt-export
 conversation_id: 0baa7865-6a73-4b7b-8afe-b57dc8ca4ce2
+created: 2023-06-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Short-Form Pop Culture Producer
+type: note
+updated: 2023-06-13
 ---
+
 # Short-Form Pop Culture Producer
 
 > Conversation ID: 0baa7865-6a73-4b7b-8afe-b57dc8ca4ce2

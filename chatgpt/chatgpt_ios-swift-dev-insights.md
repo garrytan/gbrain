@@ -1,13 +1,18 @@
 ---
-title: "iOS Swift Dev Insights"
-type: note
-created: 2025-07-11
-updated: 2025-07-11
-source: chatgpt-export
 conversation_id: 687197d5-6eb8-8007-8f65-e0a662f93f75
+created: 2025-07-11
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iOS Swift Dev Insights
+type: note
+updated: 2025-07-11
 ---
+
 # iOS Swift Dev Insights
 
 > Conversation ID: 687197d5-6eb8-8007-8f65-e0a662f93f75

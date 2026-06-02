@@ -1,13 +1,20 @@
 ---
-title: "Env Management for Startups"
-type: guide
-created: 2025-12-23
-updated: 2025-12-23
-source: chatgpt-export
 conversation_id: 694b1d0d-6a80-8325-ac5d-d0d029db9878
+created: 2025-12-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Env Management for Startups
+type: guide
+updated: 2025-12-23
 ---
+
 # Env Management for Startups
 
 > Conversation ID: 694b1d0d-6a80-8325-ac5d-d0d029db9878

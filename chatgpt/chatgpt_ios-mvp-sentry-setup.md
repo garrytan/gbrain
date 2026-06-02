@@ -1,13 +1,20 @@
 ---
-title: "iOS MVP Sentry Setup"
-type: guide
-created: 2026-05-25
-updated: 2026-05-25
-source: chatgpt-export
 conversation_id: 6a139a71-1ae4-83e8-a40b-1646f8987e6e
+created: 2026-05-25
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 5
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS MVP Sentry Setup
+type: guide
+updated: 2026-05-25
 ---
+
 # iOS MVP Sentry Setup
 
 > Conversation ID: 6a139a71-1ae4-83e8-a40b-1646f8987e6e

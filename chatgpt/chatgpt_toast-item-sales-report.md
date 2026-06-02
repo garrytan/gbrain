@@ -1,13 +1,18 @@
 ---
-title: "Toast item sales report"
-type: note
-created: 2025-09-22
-updated: 2025-09-22
-source: chatgpt-export
 conversation_id: 68d0a085-d824-832b-85a9-42d0760c9918
+created: 2025-09-22
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Toast item sales report
+type: note
+updated: 2025-09-22
 ---
+
 # Toast item sales report
 
 > Conversation ID: 68d0a085-d824-832b-85a9-42d0760c9918

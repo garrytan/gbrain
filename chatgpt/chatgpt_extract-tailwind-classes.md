@@ -1,13 +1,19 @@
 ---
-title: "Extract Tailwind Classes"
-type: note
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695ec21a-e670-8330-b5d1-7fd64a0a7db7
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Extract Tailwind Classes
+type: note
+updated: 2026-01-07
 ---
+
 # Extract Tailwind Classes
 
 > Conversation ID: 695ec21a-e670-8330-b5d1-7fd64a0a7db7

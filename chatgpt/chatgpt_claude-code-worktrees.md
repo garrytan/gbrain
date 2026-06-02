@@ -1,13 +1,19 @@
 ---
-title: "Claude Code Worktrees"
-type: note
-created: 2026-01-18
-updated: 2026-01-18
-source: chatgpt-export
 conversation_id: 696c2bae-87f0-8333-8f8d-53d287d8109b
+created: 2026-01-18
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude Code Worktrees
+type: note
+updated: 2026-01-18
 ---
+
 # Claude Code Worktrees
 
 > Conversation ID: 696c2bae-87f0-8333-8f8d-53d287d8109b

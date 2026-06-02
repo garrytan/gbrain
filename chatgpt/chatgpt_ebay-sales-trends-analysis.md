@@ -1,13 +1,18 @@
 ---
-title: "eBay sales trends analysis"
-type: note
-created: 2025-09-21
-updated: 2025-09-21
-source: chatgpt-export
 conversation_id: 68cf880d-ac50-8323-9355-8357cdc777a2
+created: 2025-09-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: eBay sales trends analysis
+type: note
+updated: 2025-09-21
 ---
+
 # eBay sales trends analysis
 
 > Conversation ID: 68cf880d-ac50-8323-9355-8357cdc777a2

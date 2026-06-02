@@ -1,13 +1,18 @@
 ---
-title: "Next-Gen DJ Character"
-type: note
-created: 2025-05-18
-updated: 2025-05-18
-source: chatgpt-export
 conversation_id: 682a49eb-3b0c-8007-9d56-41779c76b07b
+created: 2025-05-18
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Next-Gen DJ Character
+type: note
+updated: 2025-05-18
 ---
+
 # Next-Gen DJ Character
 
 > Conversation ID: 682a49eb-3b0c-8007-9d56-41779c76b07b

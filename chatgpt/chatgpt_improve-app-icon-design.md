@@ -1,13 +1,18 @@
 ---
-title: "Improve app icon design"
-type: note
-created: 2025-11-17
-updated: 2025-11-17
-source: chatgpt-export
 conversation_id: 691b50dc-faf0-8327-b580-e6ec8099b2c6
+created: 2025-11-17
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Improve app icon design
+type: note
+updated: 2025-11-17
 ---
+
 # Improve app icon design
 
 > Conversation ID: 691b50dc-faf0-8327-b580-e6ec8099b2c6

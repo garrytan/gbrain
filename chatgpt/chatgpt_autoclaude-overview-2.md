@@ -1,13 +1,18 @@
 ---
-title: "AutoClaude Overview"
-type: note
-created: 2025-12-28
-updated: 2025-12-28
-source: chatgpt-export
 conversation_id: 6951b635-4204-832b-9f92-fbea55b053fa
+created: 2025-12-28
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AutoClaude Overview
+type: note
+updated: 2025-12-28
 ---
+
 # AutoClaude Overview
 
 > Conversation ID: 6951b635-4204-832b-9f92-fbea55b053fa

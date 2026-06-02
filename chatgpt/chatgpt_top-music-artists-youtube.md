@@ -1,13 +1,18 @@
 ---
-title: "Top music artists youtube"
-type: note
-created: 2025-12-14
-updated: 2025-12-14
-source: chatgpt-export
 conversation_id: 693e3a86-dc84-832d-948a-d7d6af63ae4e
+created: 2025-12-14
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Top music artists youtube
+type: note
+updated: 2025-12-14
 ---
+
 # Top music artists youtube
 
 > Conversation ID: 693e3a86-dc84-832d-948a-d7d6af63ae4e

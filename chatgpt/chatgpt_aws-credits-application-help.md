@@ -1,13 +1,18 @@
 ---
-title: "AWS Credits Application Help"
-type: note
-created: 2026-05-10
-updated: 2026-05-10
-source: chatgpt-export
 conversation_id: 6a00d3a3-6160-83e8-a0e3-b9ddebace0f4
+created: 2026-05-10
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AWS Credits Application Help
+type: note
+updated: 2026-05-10
 ---
+
 # AWS Credits Application Help
 
 > Conversation ID: 6a00d3a3-6160-83e8-a0e3-b9ddebace0f4

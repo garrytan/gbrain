@@ -1,13 +1,19 @@
 ---
-title: "MUFFINTOP Launch Playbook"
-type: guide
-created: 2025-05-11
-updated: 2025-05-11
-source: chatgpt-export
 conversation_id: 6820fe1e-35f8-8007-b148-7bc3be0e28b7
+created: 2025-05-11
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: MUFFINTOP Launch Playbook
+type: guide
+updated: 2025-05-11
 ---
+
 # MUFFINTOP Launch Playbook
 
 > Conversation ID: 6820fe1e-35f8-8007-b148-7bc3be0e28b7

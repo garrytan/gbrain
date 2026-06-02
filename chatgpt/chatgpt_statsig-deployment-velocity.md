@@ -1,13 +1,18 @@
 ---
-title: "Statsig Deployment Velocity"
-type: note
-created: 2026-01-06
-updated: 2026-01-06
-source: chatgpt-export
 conversation_id: 695d919a-5184-832a-a320-77d01d98e36f
+created: 2026-01-06
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Statsig Deployment Velocity
+type: note
+updated: 2026-01-06
 ---
+
 # Statsig Deployment Velocity
 
 > Conversation ID: 695d919a-5184-832a-a320-77d01d98e36f

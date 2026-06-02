@@ -1,13 +1,18 @@
 ---
-title: "Career plan for startup path"
-type: note
-created: 2025-11-16
-updated: 2025-11-16
-source: chatgpt-export
 conversation_id: 691a5c4f-bc50-8329-826f-86d5835dbae3
+created: 2025-11-16
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Career plan for startup path
+type: note
+updated: 2025-11-16
 ---
+
 # Career plan for startup path
 
 > Conversation ID: 691a5c4f-bc50-8329-826f-86d5835dbae3

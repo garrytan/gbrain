@@ -1,13 +1,18 @@
 ---
-title: "Music artist list request"
-type: note
-created: 2025-08-28
-updated: 2025-08-28
-source: chatgpt-export
 conversation_id: 68afafd9-7f58-8332-8d2f-f56bf25d91a7
+created: 2025-08-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 14
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Music artist list request
+type: note
+updated: 2025-08-28
 ---
+
 # Music artist list request
 
 > Conversation ID: 68afafd9-7f58-8332-8d2f-f56bf25d91a7

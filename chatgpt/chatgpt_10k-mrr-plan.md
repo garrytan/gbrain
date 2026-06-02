@@ -1,13 +1,19 @@
 ---
-title: "10k MRR plan"
-type: note
-created: 2025-08-07
-updated: 2025-08-07
-source: chatgpt-export
 conversation_id: 68952326-e5f8-832c-80df-ec1dd47fb5d9
+created: 2025-08-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: 10k MRR plan
+type: note
+updated: 2025-08-07
 ---
+
 # 10k MRR plan
 
 > Conversation ID: 68952326-e5f8-832c-80df-ec1dd47fb5d9

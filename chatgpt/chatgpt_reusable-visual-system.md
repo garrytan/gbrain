@@ -1,13 +1,19 @@
 ---
-title: "Reusable Visual System"
-type: note
-created: 2026-03-23
-updated: 2026-03-23
-source: chatgpt-export
 conversation_id: 69c1b16a-887c-83e8-abcf-8ef67c987b4f
+created: 2026-03-23
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Reusable Visual System
+type: note
+updated: 2026-03-23
 ---
+
 # Reusable Visual System
 
 > Conversation ID: 69c1b16a-887c-83e8-abcf-8ef67c987b4f

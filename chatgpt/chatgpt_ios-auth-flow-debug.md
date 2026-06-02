@@ -1,13 +1,20 @@
 ---
-title: "iOS Auth Flow Debug"
-type: guide
-created: 2026-05-24
-updated: 2026-05-24
-source: chatgpt-export
 conversation_id: 6a132d99-2af8-83e8-8c2d-e976648155bc
+created: 2026-05-24
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS Auth Flow Debug
+type: guide
+updated: 2026-05-24
 ---
+
 # iOS Auth Flow Debug
 
 > Conversation ID: 6a132d99-2af8-83e8-8c2d-e976648155bc

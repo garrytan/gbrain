@@ -1,13 +1,19 @@
 ---
-title: "Extract tailwind button styles"
-type: note
-created: 2025-12-15
-updated: 2025-12-15
-source: chatgpt-export
 conversation_id: 694093b2-8180-8325-8501-e447eda5064a
+created: 2025-12-15
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Extract tailwind button styles
+type: note
+updated: 2025-12-15
 ---
+
 # Extract tailwind button styles
 
 > Conversation ID: 694093b2-8180-8325-8501-e447eda5064a

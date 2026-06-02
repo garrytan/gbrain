@@ -1,13 +1,20 @@
 ---
-title: "Design Spacing Assistance"
-type: guide
-created: 2026-05-14
-updated: 2026-05-15
-source: chatgpt-export
 conversation_id: 6a064829-f7cc-83e8-9bca-595ed0b2e0fc
+created: 2026-05-14
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Design Spacing Assistance
+type: guide
+updated: 2026-05-15
 ---
+
 # Design Spacing Assistance
 
 > Conversation ID: 6a064829-f7cc-83e8-9bca-595ed0b2e0fc

@@ -1,13 +1,18 @@
 ---
-title: "Visual Timer Clarification"
-type: note
-created: 2025-04-15
-updated: 2025-04-15
-source: chatgpt-export
 conversation_id: 67fde8f7-1a98-8007-9ab4-5d1f0fe71bb3
+created: 2025-04-15
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Visual Timer Clarification
+type: note
+updated: 2025-04-15
 ---
+
 # Visual Timer Clarification
 
 > Conversation ID: 67fde8f7-1a98-8007-9ab4-5d1f0fe71bb3

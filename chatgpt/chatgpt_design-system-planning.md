@@ -1,13 +1,19 @@
 ---
-title: "Design System Planning"
-type: note
-created: 2026-02-01
-updated: 2026-02-01
-source: chatgpt-export
 conversation_id: 697fdb19-dec0-832d-84ea-d503b12befb4
+created: 2026-02-01
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Design System Planning
+type: note
+updated: 2026-02-01
 ---
+
 # Design System Planning
 
 > Conversation ID: 697fdb19-dec0-832d-84ea-d503b12befb4

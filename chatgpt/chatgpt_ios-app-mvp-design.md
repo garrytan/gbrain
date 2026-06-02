@@ -1,13 +1,19 @@
 ---
-title: "iOS App MVP Design"
-type: note
-created: 2026-04-13
-updated: 2026-04-13
-source: chatgpt-export
 conversation_id: 69dd4d2a-7af0-83e8-903f-39ab4603d92b
+created: 2026-04-13
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: iOS App MVP Design
+type: note
+updated: 2026-04-13
 ---
+
 # iOS App MVP Design
 
 > Conversation ID: 69dd4d2a-7af0-83e8-903f-39ab4603d92b

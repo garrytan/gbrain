@@ -1,13 +1,19 @@
 ---
-title: "Integrate Tailwind CSS in Webpack"
-type: note
-created: 2023-02-12
-updated: 2023-02-12
-source: chatgpt-export
 conversation_id: f9c940af-c884-40c9-99a4-5ed5e52aad4c
+created: 2023-02-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Integrate Tailwind CSS in Webpack
+type: note
+updated: 2023-02-12
 ---
+
 # Integrate Tailwind CSS in Webpack
 
 > Conversation ID: f9c940af-c884-40c9-99a4-5ed5e52aad4c

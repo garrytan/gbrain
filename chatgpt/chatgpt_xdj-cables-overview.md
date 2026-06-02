@@ -1,13 +1,18 @@
 ---
-title: "XDJ Cables Overview"
-type: note
-created: 2025-01-24
-updated: 2025-01-24
-source: chatgpt-export
 conversation_id: 67939457-0918-8007-922a-4a3dc2eb7afe
+created: 2025-01-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: XDJ Cables Overview
+type: note
+updated: 2025-01-24
 ---
+
 # XDJ Cables Overview
 
 > Conversation ID: 67939457-0918-8007-922a-4a3dc2eb7afe

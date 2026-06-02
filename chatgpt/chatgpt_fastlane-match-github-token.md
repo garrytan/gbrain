@@ -1,13 +1,19 @@
 ---
-title: "Fastlane match GitHub token"
-type: note
-created: 2025-07-23
-updated: 2025-07-23
-source: chatgpt-export
 conversation_id: 68810b06-6490-8329-8795-643b2738701d
+created: 2025-07-23
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Fastlane match GitHub token
+type: note
+updated: 2025-07-23
 ---
+
 # Fastlane match GitHub token
 
 > Conversation ID: 68810b06-6490-8329-8795-643b2738701d

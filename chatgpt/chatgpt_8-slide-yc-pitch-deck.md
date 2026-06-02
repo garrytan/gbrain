@@ -1,13 +1,18 @@
 ---
-title: "8-Slide YC Pitch Deck"
-type: note
-created: 2026-04-22
-updated: 2026-04-22
-source: chatgpt-export
 conversation_id: 69e83cf7-2d58-83e8-b47a-b05a72ce161a
+created: 2026-04-22
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 8-Slide YC Pitch Deck
+type: note
+updated: 2026-04-22
 ---
+
 # 8-Slide YC Pitch Deck
 
 > Conversation ID: 69e83cf7-2d58-83e8-b47a-b05a72ce161a

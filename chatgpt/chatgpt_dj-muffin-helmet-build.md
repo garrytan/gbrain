@@ -1,13 +1,18 @@
 ---
-title: "DJ Muffin Helmet Build"
-type: note
-created: 2025-05-18
-updated: 2025-05-18
-source: chatgpt-export
 conversation_id: 682a2bdb-2d88-8007-b264-7bde35f8103b
+created: 2025-05-18
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJ Muffin Helmet Build
+type: note
+updated: 2025-05-18
 ---
+
 # DJ Muffin Helmet Build
 
 > Conversation ID: 682a2bdb-2d88-8007-b264-7bde35f8103b

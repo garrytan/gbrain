@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Checkbox Component Fix"
-type: note
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: ae335e0b-60f6-4586-a568-fd52a3b09ded
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Checkbox Component Fix
+type: note
+updated: 2022-12-23
 ---
+
 # Vue.js Checkbox Component Fix
 
 > Conversation ID: ae335e0b-60f6-4586-a568-fd52a3b09ded

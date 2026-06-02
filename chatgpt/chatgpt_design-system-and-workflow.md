@@ -1,13 +1,20 @@
 ---
-title: "Design System and Workflow"
-type: guide
-created: 2026-04-28
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69f106b6-ac58-83e8-87a3-99681a844ec3
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Design System and Workflow
+type: guide
+updated: 2026-04-28
 ---
+
 # Design System and Workflow
 
 > Conversation ID: 69f106b6-ac58-83e8-87a3-99681a844ec3

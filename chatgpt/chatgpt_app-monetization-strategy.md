@@ -1,13 +1,18 @@
 ---
-title: "App Monetization Strategy"
-type: note
-created: 2026-05-21
-updated: 2026-05-21
-source: chatgpt-export
 conversation_id: 6a0f471d-d164-83e8-8658-c7cc0216905f
+created: 2026-05-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: App Monetization Strategy
+type: note
+updated: 2026-05-21
 ---
+
 # App Monetization Strategy
 
 > Conversation ID: 6a0f471d-d164-83e8-8658-c7cc0216905f

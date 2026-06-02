@@ -1,13 +1,19 @@
 ---
-title: "Fastlane project automation"
-type: note
-created: 2025-07-16
-updated: 2025-07-16
-source: chatgpt-export
 conversation_id: 68770b9a-ae38-8007-9c7c-94f5489f52d3
+created: 2025-07-16
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 16
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Fastlane project automation
+type: note
+updated: 2025-07-16
 ---
+
 # Fastlane project automation
 
 > Conversation ID: 68770b9a-ae38-8007-9c7c-94f5489f52d3

@@ -1,13 +1,19 @@
 ---
-title: "Connect QLab to Next.js"
-type: note
-created: 2025-09-25
-updated: 2025-09-25
-source: chatgpt-export
 conversation_id: 68d5c633-9f6c-8320-ad65-bf7bf345ce26
+created: 2025-09-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Connect QLab to Next.js
+type: note
+updated: 2025-09-25
 ---
+
 # Connect QLab to Next.js
 
 > Conversation ID: 68d5c633-9f6c-8320-ad65-bf7bf345ce26

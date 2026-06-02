@@ -1,13 +1,18 @@
 ---
-title: "Session Studio overview"
-type: note
-created: 2025-11-28
-updated: 2025-11-28
-source: chatgpt-export
 conversation_id: 692a134a-c380-832f-ac5b-b4bfe584ac35
+created: 2025-11-28
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Session Studio overview
+type: note
+updated: 2025-11-28
 ---
+
 # Session Studio overview
 
 > Conversation ID: 692a134a-c380-832f-ac5b-b4bfe584ac35

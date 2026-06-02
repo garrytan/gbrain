@@ -1,13 +1,18 @@
 ---
-title: "Vue.js Blog Post Component"
-type: note
-created: 2023-01-05
-updated: 2023-01-05
-source: chatgpt-export
 conversation_id: 2c140090-b1d0-4218-8c26-07c865d23bbe
+created: 2023-01-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js Blog Post Component
+type: note
+updated: 2023-01-05
 ---
+
 # Vue.js Blog Post Component
 
 > Conversation ID: 2c140090-b1d0-4218-8c26-07c865d23bbe

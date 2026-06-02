@@ -1,13 +1,18 @@
 ---
-title: "Dynamic Vue Routes Access"
-type: note
-created: 2023-01-06
-updated: 2023-01-06
-source: chatgpt-export
 conversation_id: dcc3d788-ed57-4229-8a47-54a374546e44
+created: 2023-01-06
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Dynamic Vue Routes Access
+type: note
+updated: 2023-01-06
 ---
+
 # Dynamic Vue Routes Access
 
 > Conversation ID: dcc3d788-ed57-4229-8a47-54a374546e44

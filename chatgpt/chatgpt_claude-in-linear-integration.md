@@ -1,13 +1,18 @@
 ---
-title: "Claude in Linear Integration"
-type: note
-created: 2025-12-23
-updated: 2025-12-23
-source: chatgpt-export
 conversation_id: 694ad7f9-f5c8-8333-8007-15e609481c2c
+created: 2025-12-23
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude in Linear Integration
+type: note
+updated: 2025-12-23
 ---
+
 # Claude in Linear Integration
 
 > Conversation ID: 694ad7f9-f5c8-8333-8007-15e609481c2c

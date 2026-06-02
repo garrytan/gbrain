@@ -1,13 +1,18 @@
 ---
-title: "Syntax Error in ColorDot.vue"
-type: note
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: 586ef6af-b60e-4c6c-b36f-fceae05702bd
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Syntax Error in ColorDot.vue
+type: note
+updated: 2023-02-05
 ---
+
 # Syntax Error in ColorDot.vue
 
 > Conversation ID: 586ef6af-b60e-4c6c-b36f-fceae05702bd

@@ -1,13 +1,18 @@
 ---
-title: "Audit MVP for Jovie"
-type: note
-created: 2025-08-21
-updated: 2025-08-21
-source: chatgpt-export
 conversation_id: 68a6d4f6-db24-832c-b989-07fed656ddab
+created: 2025-08-21
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Audit MVP for Jovie
+type: note
+updated: 2025-08-21
 ---
+
 # Audit MVP for Jovie
 
 > Conversation ID: 68a6d4f6-db24-832c-b989-07fed656ddab

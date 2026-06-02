@@ -1,13 +1,18 @@
 ---
-title: "Update pitch deck"
-type: note
-created: 2026-05-09
-updated: 2026-05-09
-source: chatgpt-export
 conversation_id: 69fec24e-e71c-83e8-8165-e8879bbfb314
+created: 2026-05-09
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Update pitch deck
+type: note
+updated: 2026-05-09
 ---
+
 # Update pitch deck
 
 > Conversation ID: 69fec24e-e71c-83e8-8165-e8879bbfb314

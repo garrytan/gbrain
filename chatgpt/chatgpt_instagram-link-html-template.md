@@ -1,13 +1,20 @@
 ---
-title: "Instagram Link HTML Template"
-type: guide
-created: 2024-05-24
-updated: 2024-05-24
-source: chatgpt-export
 conversation_id: 8dde67e9-0729-41bc-b32b-4b2044b751a8
+created: 2024-05-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Instagram Link HTML Template
+type: guide
+updated: 2024-05-24
 ---
+
 # Instagram Link HTML Template
 
 > Conversation ID: 8dde67e9-0729-41bc-b32b-4b2044b751a8

@@ -1,13 +1,18 @@
 ---
-title: "Screen design improvements"
-type: note
-created: 2025-11-22
-updated: 2025-11-22
-source: chatgpt-export
 conversation_id: 69210966-c854-8325-98f0-1cfb7ce9767f
+created: 2025-11-22
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Screen design improvements
+type: note
+updated: 2025-11-22
 ---
+
 # Screen design improvements
 
 > Conversation ID: 69210966-c854-8325-98f0-1cfb7ce9767f

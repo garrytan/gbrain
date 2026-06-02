@@ -1,13 +1,18 @@
 ---
-title: "OpenAI overview"
-type: note
-created: 2025-11-26
-updated: 2025-11-26
-source: chatgpt-export
 conversation_id: 692684fb-d55c-832e-a2b4-49d17473abc6
+created: 2025-11-26
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: OpenAI overview
+type: note
+updated: 2025-11-26
 ---
+
 # OpenAI overview
 
 > Conversation ID: 692684fb-d55c-832e-a2b4-49d17473abc6

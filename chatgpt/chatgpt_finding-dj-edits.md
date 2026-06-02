@@ -1,13 +1,18 @@
 ---
-title: "Finding DJ Edits"
-type: note
-created: 2025-01-16
-updated: 2025-01-16
-source: chatgpt-export
 conversation_id: 6788abf3-a038-8007-a773-cf42859c6833
+created: 2025-01-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Finding DJ Edits
+type: note
+updated: 2025-01-16
 ---
+
 # Finding DJ Edits
 
 > Conversation ID: 6788abf3-a038-8007-a773-cf42859c6833

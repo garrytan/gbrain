@@ -1,13 +1,19 @@
 ---
-title: "Avatar wireframe rendering request"
-type: note
-created: 2025-06-09
-updated: 2025-06-09
-source: chatgpt-export
 conversation_id: 68476c1e-7720-8007-b5e1-398dd7d1dc73
+created: 2025-06-09
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Avatar wireframe rendering request
+type: note
+updated: 2025-06-09
 ---
+
 # Avatar wireframe rendering request
 
 > Conversation ID: 68476c1e-7720-8007-b5e1-398dd7d1dc73

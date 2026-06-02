@@ -1,13 +1,19 @@
 ---
-title: "Vue.js component for Vimeo"
-type: note
-created: 2023-03-01
-updated: 2023-03-01
-source: chatgpt-export
 conversation_id: 1c531311-00fa-4084-a6a2-57feb19339ff
+created: 2023-03-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js component for Vimeo
+type: note
+updated: 2023-03-01
 ---
+
 # Vue.js component for Vimeo
 
 > Conversation ID: 1c531311-00fa-4084-a6a2-57feb19339ff

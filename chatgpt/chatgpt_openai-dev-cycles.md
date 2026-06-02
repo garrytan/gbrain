@@ -1,13 +1,19 @@
 ---
-title: "OpenAI dev cycles"
-type: note
-created: 2025-11-26
-updated: 2025-11-26
-source: chatgpt-export
 conversation_id: 6927784a-c4b4-832f-b3ef-770212e9a36a
+created: 2025-11-26
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: OpenAI dev cycles
+type: note
+updated: 2025-11-26
 ---
+
 # OpenAI dev cycles
 
 > Conversation ID: 6927784a-c4b4-832f-b3ef-770212e9a36a

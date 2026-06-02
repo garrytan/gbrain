@@ -1,13 +1,20 @@
 ---
-title: "Landing Page Redesign"
-type: essay
-created: 2026-04-23
-updated: 2026-04-24
-source: chatgpt-export
 conversation_id: 69eaa5f4-cd3c-83e8-82ea-3b8496dbca2a
+created: 2026-04-23
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 12
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Landing Page Redesign
+type: essay
+updated: 2026-04-24
 ---
+
 # Landing Page Redesign
 
 > Conversation ID: 69eaa5f4-cd3c-83e8-82ea-3b8496dbca2a

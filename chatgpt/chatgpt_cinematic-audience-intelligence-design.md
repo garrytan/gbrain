@@ -1,13 +1,18 @@
 ---
-title: "Cinematic Audience Intelligence Design"
-type: note
-created: 2026-04-28
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69f006e7-92f8-83e8-91d5-09403a153d80
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cinematic Audience Intelligence Design
+type: note
+updated: 2026-04-28
 ---
+
 # Cinematic Audience Intelligence Design
 
 > Conversation ID: 69f006e7-92f8-83e8-91d5-09403a153d80

@@ -1,13 +1,18 @@
 ---
-title: "UI Mockup for Artist Profile"
-type: note
-created: 2026-05-15
-updated: 2026-05-15
-source: chatgpt-export
 conversation_id: 6a066e0b-d0e4-83e8-bee9-660b692877f9
+created: 2026-05-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: UI Mockup for Artist Profile
+type: note
+updated: 2026-05-15
 ---
+
 # UI Mockup for Artist Profile
 
 > Conversation ID: 6a066e0b-d0e4-83e8-bee9-660b692877f9

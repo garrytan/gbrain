@@ -1,13 +1,18 @@
 ---
-title: "Design System Application"
-type: note
-created: 2026-03-01
-updated: 2026-03-01
-source: chatgpt-export
 conversation_id: 69a4b0dc-884c-832b-9950-a975e535cd1b
+created: 2026-03-01
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Design System Application
+type: note
+updated: 2026-03-01
 ---
+
 # Design System Application
 
 > Conversation ID: 69a4b0dc-884c-832b-9950-a975e535cd1b

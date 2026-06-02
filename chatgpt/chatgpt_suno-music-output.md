@@ -1,13 +1,18 @@
 ---
-title: "Suno music output"
-type: note
-created: 2025-12-13
-updated: 2025-12-13
-source: chatgpt-export
 conversation_id: 693dc403-1abc-832c-95d7-6bbfe3bac3f1
+created: 2025-12-13
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Suno music output
+type: note
+updated: 2025-12-13
 ---
+
 # Suno music output
 
 > Conversation ID: 693dc403-1abc-832c-95d7-6bbfe3bac3f1

@@ -1,13 +1,18 @@
 ---
-title: "Pitch Deck Strategy"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a07d983-83a0-83e8-a39a-cd16d0cbf916
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pitch Deck Strategy
+type: note
+updated: 2026-05-16
 ---
+
 # Pitch Deck Strategy
 
 > Conversation ID: 6a07d983-83a0-83e8-a39a-cd16d0cbf916

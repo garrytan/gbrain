@@ -1,13 +1,18 @@
 ---
-title: "DJM-900 Overview"
-type: note
-created: 2025-01-30
-updated: 2025-01-30
-source: chatgpt-export
 conversation_id: 679ae73c-cb98-8007-b9ee-4b9c2bc5ebd0
+created: 2025-01-30
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJM-900 Overview
+type: note
+updated: 2025-01-30
 ---
+
 # DJM-900 Overview
 
 > Conversation ID: 679ae73c-cb98-8007-b9ee-4b9c2bc5ebd0

@@ -1,13 +1,18 @@
 ---
-title: "Next.js overview"
-type: note
-created: 2025-08-02
-updated: 2025-08-02
-source: chatgpt-export
 conversation_id: 688e61fb-b884-832c-8909-d68c0798efb9
+created: 2025-08-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Next.js overview
+type: note
+updated: 2025-08-02
 ---
+
 # Next.js overview
 
 > Conversation ID: 688e61fb-b884-832c-8909-d68c0798efb9

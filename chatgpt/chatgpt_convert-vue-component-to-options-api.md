@@ -1,13 +1,18 @@
 ---
-title: "Convert Vue Component To Options API"
-type: note
-created: 2023-01-13
-updated: 2023-01-13
-source: chatgpt-export
 conversation_id: 315b9cd4-cca2-4a4e-aafd-1550acc5ebe0
+created: 2023-01-13
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Convert Vue Component To Options API
+type: note
+updated: 2023-01-13
 ---
+
 # Convert Vue Component To Options API
 
 > Conversation ID: 315b9cd4-cca2-4a4e-aafd-1550acc5ebe0

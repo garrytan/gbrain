@@ -1,13 +1,19 @@
 ---
-title: "Music Industry Message Draft"
-type: note
-created: 2026-05-26
-updated: 2026-05-26
-source: chatgpt-export
 conversation_id: 6a1515f2-4654-83e8-843d-5f7a2cd6e457
+created: 2026-05-26
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Music Industry Message Draft
+type: note
+updated: 2026-05-26
 ---
+
 # Music Industry Message Draft
 
 > Conversation ID: 6a1515f2-4654-83e8-843d-5f7a2cd6e457

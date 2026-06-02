@@ -1,13 +1,18 @@
 ---
-title: "Tirzepatide Dosage Adjustment"
-type: note
-created: 2025-04-27
-updated: 2025-04-27
-source: chatgpt-export
 conversation_id: 680e5dc8-474c-8007-bf93-256ed6f54710
+created: 2025-04-27
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tirzepatide Dosage Adjustment
+type: note
+updated: 2025-04-27
 ---
+
 # Tirzepatide Dosage Adjustment
 
 > Conversation ID: 680e5dc8-474c-8007-bf93-256ed6f54710

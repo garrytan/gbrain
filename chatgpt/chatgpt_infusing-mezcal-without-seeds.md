@@ -1,13 +1,18 @@
 ---
-title: "Infusing Mezcal Without Seeds"
-type: note
-created: 2024-08-07
-updated: 2024-08-07
-source: chatgpt-export
 conversation_id: 9ae31dc1-6d88-443f-9ce1-3e83ce95d500
+created: 2024-08-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Infusing Mezcal Without Seeds
+type: note
+updated: 2024-08-07
 ---
+
 # Infusing Mezcal Without Seeds
 
 > Conversation ID: 9ae31dc1-6d88-443f-9ce1-3e83ce95d500

@@ -1,13 +1,19 @@
 ---
-title: "Improve answers with Jovie"
-type: guide
-created: 2026-05-22
-updated: 2026-05-22
-source: chatgpt-export
 conversation_id: 6a0fe892-b5ec-83e8-93f9-5db51045b207
+created: 2026-05-22
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Improve answers with Jovie
+type: guide
+updated: 2026-05-22
 ---
+
 # Improve answers with Jovie
 
 > Conversation ID: 6a0fe892-b5ec-83e8-93f9-5db51045b207

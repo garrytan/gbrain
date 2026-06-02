@@ -1,13 +1,18 @@
 ---
-title: "Rosiario Dawson"
-type: note
-created: 2026-02-03
-updated: 2026-02-03
-source: chatgpt-export
 conversation_id: 6981720f-bc14-8325-a6c5-5ee8d511a648
+created: 2026-02-03
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Rosiario Dawson
+type: note
+updated: 2026-02-03
 ---
+
 # Rosiario Dawson
 
 > Conversation ID: 6981720f-bc14-8325-a6c5-5ee8d511a648

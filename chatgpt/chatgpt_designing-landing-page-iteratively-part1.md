@@ -1,13 +1,20 @@
 ---
-title: "Designing Landing Page Iteratively"
-type: essay
-created: 2026-04-14
-updated: 2026-04-17
-source: chatgpt-export
 conversation_id: 69ddb2ef-0af4-83e8-893a-ea53f7ff714e
+created: 2026-04-14
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 48
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Designing Landing Page Iteratively
+type: essay
+updated: 2026-04-17
 ---
+
 # Designing Landing Page Iteratively
 
 > Conversation ID: 69ddb2ef-0af4-83e8-893a-ea53f7ff714e

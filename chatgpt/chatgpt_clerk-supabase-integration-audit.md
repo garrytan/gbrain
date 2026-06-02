@@ -1,13 +1,20 @@
 ---
-title: "Clerk Supabase integration audit"
-type: essay
-created: 2025-08-18
-updated: 2025-08-18
-source: chatgpt-export
 conversation_id: 68a38b5f-59ac-832d-966f-8492ab754503
+created: 2025-08-18
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Clerk Supabase integration audit
+type: essay
+updated: 2025-08-18
 ---
+
 # Clerk Supabase integration audit
 
 > Conversation ID: 68a38b5f-59ac-832d-966f-8492ab754503

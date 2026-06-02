@@ -1,13 +1,18 @@
 ---
-title: "Tailwind CSS Border Types"
-type: note
-created: 2023-02-07
-updated: 2023-02-07
-source: chatgpt-export
 conversation_id: 0e5f01e6-800a-43f4-8ff2-7ff1490a0c37
+created: 2023-02-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tailwind CSS Border Types
+type: note
+updated: 2023-02-07
 ---
+
 # Tailwind CSS Border Types
 
 > Conversation ID: 0e5f01e6-800a-43f4-8ff2-7ff1490a0c37

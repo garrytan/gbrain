@@ -1,13 +1,18 @@
 ---
-title: "Producer Life Struggles"
-type: note
-created: 2025-05-24
-updated: 2025-05-24
-source: chatgpt-export
 conversation_id: 68321eb2-21cc-8007-9ee8-f3c52fa6da38
+created: 2025-05-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Producer Life Struggles
+type: note
+updated: 2025-05-24
 ---
+
 # Producer Life Struggles
 
 > Conversation ID: 68321eb2-21cc-8007-9ee8-f3c52fa6da38

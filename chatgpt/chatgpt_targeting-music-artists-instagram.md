@@ -1,13 +1,19 @@
 ---
-title: "Targeting Music Artists Instagram"
-type: note
-created: 2024-06-22
-updated: 2024-06-22
-source: chatgpt-export
 conversation_id: 5c9ad336-7e39-49cd-bcc6-be6046feaae5
+created: 2024-06-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Targeting Music Artists Instagram
+type: note
+updated: 2024-06-22
 ---
+
 # Targeting Music Artists Instagram
 
 > Conversation ID: 5c9ad336-7e39-49cd-bcc6-be6046feaae5

@@ -1,13 +1,19 @@
 ---
-title: "iOS App Competitor Analysis"
-type: essay
-created: 2025-07-09
-updated: 2025-07-09
-source: chatgpt-export
 conversation_id: 686de2e9-a534-8007-9cbe-a8a5a4f096ad
+created: 2025-07-09
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: iOS App Competitor Analysis
+type: essay
+updated: 2025-07-09
 ---
+
 # iOS App Competitor Analysis
 
 > Conversation ID: 686de2e9-a534-8007-9cbe-a8a5a4f096ad

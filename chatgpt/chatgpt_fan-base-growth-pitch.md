@@ -1,13 +1,19 @@
 ---
-title: "Fan base growth pitch"
-type: note
-created: 2025-12-12
-updated: 2025-12-13
-source: chatgpt-export
 conversation_id: 693c8af7-fba4-8330-93b7-4ee4b7ab1785
+created: 2025-12-12
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 34
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Fan base growth pitch
+type: note
+updated: 2025-12-13
 ---
+
 # Fan base growth pitch
 
 > Conversation ID: 693c8af7-fba4-8330-93b7-4ee4b7ab1785

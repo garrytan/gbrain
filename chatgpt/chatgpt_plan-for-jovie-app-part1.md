@@ -1,13 +1,20 @@
 ---
-title: "Plan for Jovie App"
-type: essay
-created: 2024-06-25
-updated: 2024-06-25
-source: chatgpt-export
 conversation_id: 358c958f-327c-4d2a-8725-7432a5720030
+created: 2024-06-25
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 91
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Plan for Jovie App
+type: essay
+updated: 2024-06-25
 ---
+
 # Plan for Jovie App
 
 > Conversation ID: 358c958f-327c-4d2a-8725-7432a5720030

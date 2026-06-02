@@ -1,13 +1,18 @@
 ---
-title: "Release Plan Checklist"
-type: note
-created: 2026-04-22
-updated: 2026-04-22
-source: chatgpt-export
 conversation_id: 69e81601-18e8-83e8-9030-705f91fd2a2d
+created: 2026-04-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Release Plan Checklist
+type: note
+updated: 2026-04-22
 ---
+
 # Release Plan Checklist
 
 > Conversation ID: 69e81601-18e8-83e8-9030-705f91fd2a2d

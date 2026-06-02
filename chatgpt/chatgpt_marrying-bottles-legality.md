@@ -1,13 +1,18 @@
 ---
-title: "Marrying Bottles Legality"
-type: note
-created: 2024-07-27
-updated: 2024-07-27
-source: chatgpt-export
 conversation_id: ede55925-5e97-49d2-becc-c3efe25983ab
+created: 2024-07-27
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Marrying Bottles Legality
+type: note
+updated: 2024-07-27
 ---
+
 # Marrying Bottles Legality
 
 > Conversation ID: ede55925-5e97-49d2-becc-c3efe25983ab

@@ -1,13 +1,18 @@
 ---
-title: "Kobalt brands explained"
-type: note
-created: 2025-08-28
-updated: 2025-08-28
-source: chatgpt-export
 conversation_id: 68afd5a7-4124-8333-baed-6b2b4be7e43d
+created: 2025-08-28
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Kobalt brands explained
+type: note
+updated: 2025-08-28
 ---
+
 # Kobalt brands explained
 
 > Conversation ID: 68afd5a7-4124-8333-baed-6b2b4be7e43d

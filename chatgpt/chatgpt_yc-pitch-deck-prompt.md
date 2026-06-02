@@ -1,13 +1,20 @@
 ---
-title: "YC Pitch Deck Prompt"
-type: guide
-created: 2026-05-29
-updated: 2026-05-29
-source: chatgpt-export
 conversation_id: 6a18dd19-b7bc-83e8-995c-1d2151e857eb
+created: 2026-05-29
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: YC Pitch Deck Prompt
+type: guide
+updated: 2026-05-29
 ---
+
 # YC Pitch Deck Prompt
 
 > Conversation ID: 6a18dd19-b7bc-83e8-995c-1d2151e857eb

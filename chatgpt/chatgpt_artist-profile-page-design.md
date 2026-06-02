@@ -1,13 +1,19 @@
 ---
-title: "Artist Profile Page Design"
-type: essay
-created: 2026-04-19
-updated: 2026-04-19
-source: chatgpt-export
 conversation_id: 69e52142-5660-83e8-b6c5-bd650242c4a1
+created: 2026-04-19
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Artist Profile Page Design
+type: essay
+updated: 2026-04-19
 ---
+
 # Artist Profile Page Design
 
 > Conversation ID: 69e52142-5660-83e8-b6c5-bd650242c4a1

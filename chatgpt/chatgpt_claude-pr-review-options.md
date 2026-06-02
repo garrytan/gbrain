@@ -1,13 +1,19 @@
 ---
-title: "Claude PR review options"
-type: note
-created: 2025-12-16
-updated: 2025-12-17
-source: chatgpt-export
 conversation_id: 6941c52b-cfe8-8332-b669-94973d3ae87f
+created: 2025-12-16
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude PR review options
+type: note
+updated: 2025-12-17
 ---
+
 # Claude PR review options
 
 > Conversation ID: 6941c52b-cfe8-8332-b669-94973d3ae87f

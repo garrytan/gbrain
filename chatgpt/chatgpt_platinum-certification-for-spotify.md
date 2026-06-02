@@ -1,13 +1,18 @@
 ---
-title: "Platinum Certification for Spotify"
-type: note
-created: 2024-06-28
-updated: 2024-06-28
-source: chatgpt-export
 conversation_id: dc430f2d-d395-40e6-bf58-feb6c879bf98
+created: 2024-06-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 16
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Platinum Certification for Spotify
+type: note
+updated: 2024-06-28
 ---
+
 # Platinum Certification for Spotify
 
 > Conversation ID: dc430f2d-d395-40e6-bf58-feb6c879bf98

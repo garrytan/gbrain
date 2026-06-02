@@ -1,13 +1,18 @@
 ---
-title: "Best mobile profile UI"
-type: note
-created: 2025-12-03
-updated: 2025-12-03
-source: chatgpt-export
 conversation_id: 69309da6-e760-832c-951f-fbf33541b6d8
+created: 2025-12-03
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Best mobile profile UI
+type: note
+updated: 2025-12-03
 ---
+
 # Best mobile profile UI
 
 > Conversation ID: 69309da6-e760-832c-951f-fbf33541b6d8

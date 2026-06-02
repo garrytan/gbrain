@@ -1,13 +1,19 @@
 ---
-title: "Laravel Mix and Webpack"
-type: guide
-created: 2023-01-03
-updated: 2023-01-03
-source: chatgpt-export
 conversation_id: e56e2559-3690-4ef7-9500-9c4bb978402c
+created: 2023-01-03
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Laravel Mix and Webpack
+type: guide
+updated: 2023-01-03
 ---
+
 # Laravel Mix and Webpack
 
 > Conversation ID: e56e2559-3690-4ef7-9500-9c4bb978402c

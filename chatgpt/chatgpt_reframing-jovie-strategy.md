@@ -1,13 +1,20 @@
 ---
-title: "Reframing Jovie Strategy"
-type: essay
-created: 2026-04-26
-updated: 2026-04-26
-source: chatgpt-export
 conversation_id: 69ee58a5-1c1c-83e8-9dce-f0bb7cf1670d
+created: 2026-04-26
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Reframing Jovie Strategy
+type: essay
+updated: 2026-04-26
 ---
+
 # Reframing Jovie Strategy
 
 > Conversation ID: 69ee58a5-1c1c-83e8-9dce-f0bb7cf1670d

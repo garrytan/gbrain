@@ -1,13 +1,20 @@
 ---
-title: "Spotify to DSP Mapping"
-type: guide
-created: 2026-01-16
-updated: 2026-01-16
-source: chatgpt-export
 conversation_id: 696a8965-3380-8327-b49b-f0cd625bbfe5
+created: 2026-01-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Spotify to DSP Mapping
+type: guide
+updated: 2026-01-16
 ---
+
 # Spotify to DSP Mapping
 
 > Conversation ID: 696a8965-3380-8327-b49b-f0cd625bbfe5

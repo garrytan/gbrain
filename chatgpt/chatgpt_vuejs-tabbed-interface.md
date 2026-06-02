@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Tabbed Interface"
-type: guide
-created: 2023-01-04
-updated: 2023-01-04
-source: chatgpt-export
 conversation_id: 853520e6-0ee3-410e-92c7-30a3a44e492e
+created: 2023-01-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Tabbed Interface
+type: guide
+updated: 2023-01-04
 ---
+
 # Vue.js Tabbed Interface
 
 > Conversation ID: 853520e6-0ee3-410e-92c7-30a3a44e492e

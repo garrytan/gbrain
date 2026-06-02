@@ -1,13 +1,19 @@
 ---
-title: "RGB to Tailwind CSS"
-type: note
-created: 2023-06-01
-updated: 2023-06-01
-source: chatgpt-export
 conversation_id: 7089e71d-48f1-45f9-9bda-5202ab6b1584
+created: 2023-06-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: RGB to Tailwind CSS
+type: note
+updated: 2023-06-01
 ---
+
 # RGB to Tailwind CSS
 
 > Conversation ID: 7089e71d-48f1-45f9-9bda-5202ab6b1584

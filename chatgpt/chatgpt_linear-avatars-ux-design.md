@@ -1,13 +1,18 @@
 ---
-title: "Linear avatars UX design"
-type: note
-created: 2025-12-18
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 69438fde-77f0-8327-8648-2f8af96368ef
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Linear avatars UX design
+type: note
+updated: 2025-12-18
 ---
+
 # Linear avatars UX design
 
 > Conversation ID: 69438fde-77f0-8327-8648-2f8af96368ef

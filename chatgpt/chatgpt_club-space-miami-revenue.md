@@ -1,13 +1,18 @@
 ---
-title: "Club Space Miami Revenue"
-type: note
-created: 2023-11-12
-updated: 2023-11-12
-source: chatgpt-export
 conversation_id: c6c97282-b43a-4024-b204-4d7f25d49065
+created: 2023-11-12
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Club Space Miami Revenue
+type: note
+updated: 2023-11-12
 ---
+
 # Club Space Miami Revenue
 
 > Conversation ID: c6c97282-b43a-4024-b204-4d7f25d49065

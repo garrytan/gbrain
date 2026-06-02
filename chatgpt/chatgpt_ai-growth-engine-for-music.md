@@ -1,13 +1,19 @@
 ---
-title: "AI Growth Engine for Music"
-type: note
-created: 2026-05-09
-updated: 2026-05-09
-source: chatgpt-export
 conversation_id: 69fe9ad2-e884-83e8-9377-642b1cb45ccf
+created: 2026-05-09
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: AI Growth Engine for Music
+type: note
+updated: 2026-05-09
 ---
+
 # AI Growth Engine for Music
 
 > Conversation ID: 69fe9ad2-e884-83e8-9377-642b1cb45ccf

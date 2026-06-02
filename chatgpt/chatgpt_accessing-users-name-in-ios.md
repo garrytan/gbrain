@@ -1,13 +1,18 @@
 ---
-title: "Accessing User's Name in iOS"
-type: note
-created: 2024-01-29
-updated: 2024-01-29
-source: chatgpt-export
 conversation_id: bb38a069-f4af-427d-92a5-913e89dbe34d
+created: 2024-01-29
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Accessing User's Name in iOS
+type: note
+updated: 2024-01-29
 ---
+
 # Accessing User's Name in iOS
 
 > Conversation ID: bb38a069-f4af-427d-92a5-913e89dbe34d

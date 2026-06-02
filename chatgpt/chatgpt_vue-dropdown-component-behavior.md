@@ -1,14 +1,19 @@
 ---
-title: "Vue Dropdown Component Behavior
-"
-type: guide
-created: 2023-01-28
-updated: 2023-01-28
-source: chatgpt-export
 conversation_id: 069ef773-10bc-451a-ba86-c972afd5ef87
+created: 2023-01-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Vue Dropdown Component Behavior '
+type: guide
+updated: 2023-01-28
 ---
+
 # Vue Dropdown Component Behavior
 
 

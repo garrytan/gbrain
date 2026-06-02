@@ -1,13 +1,18 @@
 ---
-title: "Vercel Geist Storybook usage"
-type: note
-created: 2025-12-07
-updated: 2025-12-08
-source: chatgpt-export
 conversation_id: 6935c922-6b64-832d-bcf5-822634aad358
+created: 2025-12-07
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel Geist Storybook usage
+type: note
+updated: 2025-12-08
 ---
+
 # Vercel Geist Storybook usage
 
 > Conversation ID: 6935c922-6b64-832d-bcf5-822634aad358

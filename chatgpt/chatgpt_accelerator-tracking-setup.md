@@ -1,13 +1,19 @@
 ---
-title: "Accelerator Tracking Setup"
-type: note
-created: 2026-01-22
-updated: 2026-03-02
-source: chatgpt-export
 conversation_id: 6972787f-8124-8328-b076-3f91924b835d
+created: 2026-01-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 13
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Accelerator Tracking Setup
+type: note
+updated: 2026-03-02
 ---
+
 # Accelerator Tracking Setup
 
 > Conversation ID: 6972787f-8124-8328-b076-3f91924b835d

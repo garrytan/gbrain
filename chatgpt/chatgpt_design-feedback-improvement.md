@@ -1,13 +1,18 @@
 ---
-title: "Design Feedback Improvement"
-type: note
-created: 2026-05-11
-updated: 2026-05-12
-source: chatgpt-export
 conversation_id: 6a0267d2-3260-83e8-8bde-ae6fa0fcac4d
+created: 2026-05-11
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Design Feedback Improvement
+type: note
+updated: 2026-05-12
 ---
+
 # Design Feedback Improvement
 
 > Conversation ID: 6a0267d2-3260-83e8-8bde-ae6fa0fcac4d

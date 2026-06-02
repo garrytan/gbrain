@@ -1,13 +1,18 @@
 ---
-title: "Track Titles Extracted"
-type: note
-created: 2024-05-20
-updated: 2024-05-20
-source: chatgpt-export
 conversation_id: 57ac989f-e738-4547-9fc5-839f85f31407
+created: 2024-05-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Track Titles Extracted
+type: note
+updated: 2024-05-20
 ---
+
 # Track Titles Extracted
 
 > Conversation ID: 57ac989f-e738-4547-9fc5-839f85f31407

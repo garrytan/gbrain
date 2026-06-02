@@ -1,13 +1,18 @@
 ---
-title: "Cannot access master files."
-type: note
-created: 2024-02-29
-updated: 2024-02-29
-source: chatgpt-export
 conversation_id: 25dbea3b-596d-4e81-933e-e6ad3ac50308
+created: 2024-02-29
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cannot access master files.
+type: note
+updated: 2024-02-29
 ---
+
 # Cannot access master files.
 
 > Conversation ID: 25dbea3b-596d-4e81-933e-e6ad3ac50308

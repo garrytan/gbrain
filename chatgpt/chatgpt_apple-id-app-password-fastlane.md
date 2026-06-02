@@ -1,13 +1,19 @@
 ---
-title: "Apple ID app password Fastlane"
-type: note
-created: 2025-11-23
-updated: 2025-11-23
-source: chatgpt-export
 conversation_id: 69233fc5-99f8-8329-9b55-11e3c7aaabd5
+created: 2025-11-23
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Apple ID app password Fastlane
+type: note
+updated: 2025-11-23
 ---
+
 # Apple ID app password Fastlane
 
 > Conversation ID: 69233fc5-99f8-8329-9b55-11e3c7aaabd5

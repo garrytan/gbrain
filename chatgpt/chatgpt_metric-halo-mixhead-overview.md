@@ -1,13 +1,18 @@
 ---
-title: "Metric Halo MixHead Overview"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679dce91-8d10-8007-8b09-b615f2da03b1
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Metric Halo MixHead Overview
+type: note
+updated: 2025-02-01
 ---
+
 # Metric Halo MixHead Overview
 
 > Conversation ID: 679dce91-8d10-8007-8b09-b615f2da03b1

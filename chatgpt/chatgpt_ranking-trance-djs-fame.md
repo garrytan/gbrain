@@ -1,13 +1,19 @@
 ---
-title: "Ranking Trance DJs' Fame"
-type: note
-created: 2023-11-18
-updated: 2023-11-18
-source: chatgpt-export
 conversation_id: d7d823c4-f20d-45e1-90a4-4cb68e971413
+created: 2023-11-18
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Ranking Trance DJs' Fame
+type: note
+updated: 2023-11-18
 ---
+
 # Ranking Trance DJs' Fame
 
 > Conversation ID: d7d823c4-f20d-45e1-90a4-4cb68e971413

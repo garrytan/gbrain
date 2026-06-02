@@ -1,13 +1,20 @@
 ---
-title: "Mobile UX Guardrails"
-type: guide
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f1a74a-5740-83e8-b190-fa37688e455a
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Mobile UX Guardrails
+type: guide
+updated: 2026-04-29
 ---
+
 # Mobile UX Guardrails
 
 > Conversation ID: 69f1a74a-5740-83e8-b190-fa37688e455a

@@ -1,13 +1,19 @@
 ---
-title: "Syncing Audio Across 12 Rooms"
-type: note
-created: 2024-07-03
-updated: 2024-07-03
-source: chatgpt-export
 conversation_id: 163e87e2-78ed-4a40-b59d-04c39b2cdde3
+created: 2024-07-03
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Syncing Audio Across 12 Rooms
+type: note
+updated: 2024-07-03
 ---
+
 # Syncing Audio Across 12 Rooms
 
 > Conversation ID: 163e87e2-78ed-4a40-b59d-04c39b2cdde3

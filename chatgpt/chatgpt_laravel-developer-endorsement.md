@@ -1,13 +1,18 @@
 ---
-title: "Laravel developer endorsement."
-type: note
-created: 2023-04-16
-updated: 2023-04-16
-source: chatgpt-export
 conversation_id: fa0d89f9-0f78-4c4c-90ef-80cd8d97df55
+created: 2023-04-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Laravel developer endorsement.
+type: note
+updated: 2023-04-16
 ---
+
 # Laravel developer endorsement.
 
 > Conversation ID: fa0d89f9-0f78-4c4c-90ef-80cd8d97df55

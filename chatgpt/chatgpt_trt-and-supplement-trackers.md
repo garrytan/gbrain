@@ -1,13 +1,18 @@
 ---
-title: "TRT and supplement trackers"
-type: note
-created: 2025-11-22
-updated: 2025-11-22
-source: chatgpt-export
 conversation_id: 69222e17-5150-8328-82de-50a57de70ebc
+created: 2025-11-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: TRT and supplement trackers
+type: note
+updated: 2025-11-22
 ---
+
 # TRT and supplement trackers
 
 > Conversation ID: 69222e17-5150-8328-82de-50a57de70ebc

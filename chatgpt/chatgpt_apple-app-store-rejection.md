@@ -1,13 +1,18 @@
 ---
-title: "Apple App Store Rejection"
-type: note
-created: 2026-02-25
-updated: 2026-02-25
-source: chatgpt-export
 conversation_id: 699f534f-6aa0-8332-93e6-18ac289fdd55
+created: 2026-02-25
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Apple App Store Rejection
+type: note
+updated: 2026-02-25
 ---
+
 # Apple App Store Rejection
 
 > Conversation ID: 699f534f-6aa0-8332-93e6-18ac289fdd55

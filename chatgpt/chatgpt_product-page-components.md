@@ -1,13 +1,19 @@
 ---
-title: "Product Page Components"
-type: note
-created: 2026-04-28
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69f04c12-8cb4-83e8-afca-05e999217e45
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Product Page Components
+type: note
+updated: 2026-04-28
 ---
+
 # Product Page Components
 
 > Conversation ID: 69f04c12-8cb4-83e8-afca-05e999217e45

@@ -1,13 +1,18 @@
 ---
-title: "GPT-5.4 Overview"
-type: note
-created: 2026-03-06
-updated: 2026-03-06
-source: chatgpt-export
 conversation_id: 69ab314e-8de8-8327-9d0b-148a5f3e0eba
+created: 2026-03-06
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: GPT-5.4 Overview
+type: note
+updated: 2026-03-06
 ---
+
 # GPT-5.4 Overview
 
 > Conversation ID: 69ab314e-8de8-8327-9d0b-148a5f3e0eba

@@ -1,13 +1,19 @@
 ---
-title: "Runway and Fundraising Strategy"
-type: essay
-created: 2026-02-14
-updated: 2026-02-14
-source: chatgpt-export
 conversation_id: 6990dfdf-dd50-8330-a2da-6f21ac797f1e
+created: 2026-02-14
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Runway and Fundraising Strategy
+type: essay
+updated: 2026-02-14
 ---
+
 # Runway and Fundraising Strategy
 
 > Conversation ID: 6990dfdf-dd50-8330-a2da-6f21ac797f1e

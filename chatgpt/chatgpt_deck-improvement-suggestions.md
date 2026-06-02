@@ -1,13 +1,19 @@
 ---
-title: "Deck Improvement Suggestions"
-type: note
-created: 2026-05-10
-updated: 2026-05-11
-source: chatgpt-export
 conversation_id: 6a011a8d-08a8-83e8-8271-8bf6073e98e5
+created: 2026-05-10
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Deck Improvement Suggestions
+type: note
+updated: 2026-05-11
 ---
+
 # Deck Improvement Suggestions
 
 > Conversation ID: 6a011a8d-08a8-83e8-8271-8bf6073e98e5

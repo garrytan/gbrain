@@ -1,13 +1,18 @@
 ---
-title: "Agent-First Strategy for Jovie"
-type: note
-created: 2026-05-23
-updated: 2026-05-23
-source: chatgpt-export
 conversation_id: 6a113248-75f0-83e8-926e-df37969fe38d
+created: 2026-05-23
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Agent-First Strategy for Jovie
+type: note
+updated: 2026-05-23
 ---
+
 # Agent-First Strategy for Jovie
 
 > Conversation ID: 6a113248-75f0-83e8-926e-df37969fe38d

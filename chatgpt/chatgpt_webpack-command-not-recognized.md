@@ -1,13 +1,20 @@
 ---
-title: "Webpack Command not Recognized"
-type: guide
-created: 2023-01-10
-updated: 2023-01-10
-source: chatgpt-export
 conversation_id: afaf4624-f1e3-4eef-8925-9d8510dbc18d
+created: 2023-01-10
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 20
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Webpack Command not Recognized
+type: guide
+updated: 2023-01-10
 ---
+
 # Webpack Command not Recognized
 
 > Conversation ID: afaf4624-f1e3-4eef-8925-9d8510dbc18d

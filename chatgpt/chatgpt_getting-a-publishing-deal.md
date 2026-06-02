@@ -1,13 +1,18 @@
 ---
-title: "Getting a Publishing Deal"
-type: note
-created: 2023-10-27
-updated: 2023-10-27
-source: chatgpt-export
 conversation_id: ddbea39f-b9bc-4767-aca0-33f99d66e046
+created: 2023-10-27
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 12
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Getting a Publishing Deal
+type: note
+updated: 2023-10-27
 ---
+
 # Getting a Publishing Deal
 
 > Conversation ID: ddbea39f-b9bc-4767-aca0-33f99d66e046

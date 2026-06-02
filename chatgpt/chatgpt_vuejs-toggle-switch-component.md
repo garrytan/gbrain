@@ -1,13 +1,19 @@
 ---
-title: "Vue.js toggle switch component"
-type: guide
-created: 2023-05-05
-updated: 2023-05-05
-source: chatgpt-export
 conversation_id: 9f819a90-21b2-461c-b192-7afc71535b5f
+created: 2023-05-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js toggle switch component
+type: guide
+updated: 2023-05-05
 ---
+
 # Vue.js toggle switch component
 
 > Conversation ID: 9f819a90-21b2-461c-b192-7afc71535b5f

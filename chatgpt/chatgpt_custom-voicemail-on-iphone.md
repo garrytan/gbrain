@@ -1,13 +1,19 @@
 ---
-title: "Custom Voicemail on iPhone"
-type: note
-created: 2026-03-27
-updated: 2026-03-27
-source: chatgpt-export
 conversation_id: 69c6dfae-7508-83e8-9e33-04d93219125d
+created: 2026-03-27
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Custom Voicemail on iPhone
+type: note
+updated: 2026-03-27
 ---
+
 # Custom Voicemail on iPhone
 
 > Conversation ID: 69c6dfae-7508-83e8-9e33-04d93219125d

@@ -1,13 +1,18 @@
 ---
-title: "LinkedIn Investor Strategy"
-type: note
-created: 2026-01-25
-updated: 2026-01-25
-source: chatgpt-export
 conversation_id: 6975633b-feb8-8331-96e1-e855b5f3a640
+created: 2026-01-25
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: LinkedIn Investor Strategy
+type: note
+updated: 2026-01-25
 ---
+
 # LinkedIn Investor Strategy
 
 > Conversation ID: 6975633b-feb8-8331-96e1-e855b5f3a640

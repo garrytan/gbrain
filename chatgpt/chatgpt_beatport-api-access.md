@@ -1,13 +1,18 @@
 ---
-title: "Beatport API Access"
-type: note
-created: 2026-01-25
-updated: 2026-01-25
-source: chatgpt-export
 conversation_id: 69767504-65d8-8325-8325-2aa1b00a5a98
+created: 2026-01-25
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Beatport API Access
+type: note
+updated: 2026-01-25
 ---
+
 # Beatport API Access
 
 > Conversation ID: 69767504-65d8-8325-8325-2aa1b00a5a98

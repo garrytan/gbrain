@@ -1,13 +1,20 @@
 ---
-title: "Codex Goals for Jovie"
-type: guide
-created: 2026-05-24
-updated: 2026-05-24
-source: chatgpt-export
 conversation_id: 6a126388-9548-83e8-ac37-1d0680af0948
+created: 2026-05-24
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Codex Goals for Jovie
+type: guide
+updated: 2026-05-24
 ---
+
 # Codex Goals for Jovie
 
 > Conversation ID: 6a126388-9548-83e8-ac37-1d0680af0948

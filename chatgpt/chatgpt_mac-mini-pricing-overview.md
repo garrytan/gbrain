@@ -1,13 +1,19 @@
 ---
-title: "Mac Mini Pricing Overview"
-type: note
-created: 2026-04-30
-updated: 2026-04-30
-source: chatgpt-export
 conversation_id: 69f2dc7a-bccc-83e8-9f5a-16083f85d086
+created: 2026-04-30
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Mac Mini Pricing Overview
+type: note
+updated: 2026-04-30
 ---
+
 # Mac Mini Pricing Overview
 
 > Conversation ID: 69f2dc7a-bccc-83e8-9f5a-16083f85d086

@@ -1,13 +1,18 @@
 ---
-title: "OpenClaw vs Claude Cowork"
-type: note
-created: 2026-02-21
-updated: 2026-02-21
-source: chatgpt-export
 conversation_id: 69990d48-2c04-8327-aacf-2b0625530b34
+created: 2026-02-21
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: OpenClaw vs Claude Cowork
+type: note
+updated: 2026-02-21
 ---
+
 # OpenClaw vs Claude Cowork
 
 > Conversation ID: 69990d48-2c04-8327-aacf-2b0625530b34

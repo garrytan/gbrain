@@ -1,13 +1,18 @@
 ---
-title: "Jovie Intro Blurb"
-type: note
-created: 2026-05-27
-updated: 2026-05-27
-source: chatgpt-export
 conversation_id: 6a173b7f-09cc-83e8-afed-c66f68c8b9d3
+created: 2026-05-27
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Jovie Intro Blurb
+type: note
+updated: 2026-05-27
 ---
+
 # Jovie Intro Blurb
 
 > Conversation ID: 6a173b7f-09cc-83e8-afed-c66f68c8b9d3

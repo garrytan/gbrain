@@ -1,13 +1,18 @@
 ---
-title: "Script for Jovie Trailer"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: f3f9bcda-b7cd-41ed-9382-4160ecb2551a
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Script for Jovie Trailer
+type: note
+updated: 2022-12-21
 ---
+
 # Script for Jovie Trailer
 
 > Conversation ID: f3f9bcda-b7cd-41ed-9382-4160ecb2551a

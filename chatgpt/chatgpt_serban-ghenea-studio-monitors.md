@@ -1,13 +1,18 @@
 ---
-title: "Serban Ghenea Studio Monitors"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679e99de-7888-8007-b103-2d95c42de417
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Serban Ghenea Studio Monitors
+type: note
+updated: 2025-02-01
 ---
+
 # Serban Ghenea Studio Monitors
 
 > Conversation ID: 679e99de-7888-8007-b103-2d95c42de417

@@ -1,13 +1,18 @@
 ---
-title: "Tip Pool Distribution Analysis"
-type: note
-created: 2024-08-13
-updated: 2024-08-13
-source: chatgpt-export
 conversation_id: 6ae11969-c0ee-4ac8-afa0-16d2aeefaf40
+created: 2024-08-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tip Pool Distribution Analysis
+type: note
+updated: 2024-08-13
 ---
+
 # Tip Pool Distribution Analysis
 
 > Conversation ID: 6ae11969-c0ee-4ac8-afa0-16d2aeefaf40

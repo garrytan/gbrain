@@ -1,13 +1,20 @@
 ---
-title: "Bolt vs Stripe for Jovie"
-type: guide
-created: 2025-09-13
-updated: 2025-09-14
-source: chatgpt-export
 conversation_id: 68c5d0b0-d554-832c-8ed2-80a9ff659f76
+created: 2025-09-13
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Bolt vs Stripe for Jovie
+type: guide
+updated: 2025-09-14
 ---
+
 # Bolt vs Stripe for Jovie
 
 > Conversation ID: 68c5d0b0-d554-832c-8ed2-80a9ff659f76

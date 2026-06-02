@@ -1,13 +1,19 @@
 ---
-title: "Fitness Tracking and Plan"
-type: essay
-created: 2023-11-16
-updated: 2023-11-16
-source: chatgpt-export
 conversation_id: c3b7f408-3629-4259-afd8-5cb6ff1d5869
+created: 2023-11-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 11
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Fitness Tracking and Plan
+type: essay
+updated: 2023-11-16
 ---
+
 # Fitness Tracking and Plan
 
 > Conversation ID: c3b7f408-3629-4259-afd8-5cb6ff1d5869

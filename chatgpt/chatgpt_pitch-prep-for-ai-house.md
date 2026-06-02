@@ -1,13 +1,19 @@
 ---
-title: "Pitch Prep for AI House"
-type: note
-created: 2026-05-28
-updated: 2026-05-28
-source: chatgpt-export
 conversation_id: 6a189f00-26e4-83e8-95fa-31a2496ed84e
+created: 2026-05-28
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Pitch Prep for AI House
+type: note
+updated: 2026-05-28
 ---
+
 # Pitch Prep for AI House
 
 > Conversation ID: 6a189f00-26e4-83e8-95fa-31a2496ed84e

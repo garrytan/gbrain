@@ -1,14 +1,19 @@
 ---
-title: "Configure Storybook For Vue3 
-"
-type: guide
-created: 2023-01-22
-updated: 2023-01-22
-source: chatgpt-export
 conversation_id: dd0d796d-518f-44d7-8f2f-bb4ea942feb0
+created: 2023-01-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Configure Storybook For Vue3 '
+type: guide
+updated: 2023-01-22
 ---
+
 # Configure Storybook For Vue3 
 
 

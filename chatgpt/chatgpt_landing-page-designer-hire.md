@@ -1,13 +1,18 @@
 ---
-title: "Landing Page Designer Hire"
-type: note
-created: 2026-02-24
-updated: 2026-02-24
-source: chatgpt-export
 conversation_id: 699d641a-8664-8327-8c61-662857a5ec13
+created: 2026-02-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Landing Page Designer Hire
+type: note
+updated: 2026-02-24
 ---
+
 # Landing Page Designer Hire
 
 > Conversation ID: 699d641a-8664-8327-8c61-662857a5ec13

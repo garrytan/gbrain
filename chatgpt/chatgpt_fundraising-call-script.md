@@ -1,13 +1,19 @@
 ---
-title: "Fundraising Call Script"
-type: essay
-created: 2026-05-28
-updated: 2026-05-28
-source: chatgpt-export
 conversation_id: 6a18d366-c128-83e8-8871-a2a263427b73
+created: 2026-05-28
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 3
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Fundraising Call Script
+type: essay
+updated: 2026-05-28
 ---
+
 # Fundraising Call Script
 
 > Conversation ID: 6a18d366-c128-83e8-8871-a2a263427b73

@@ -1,13 +1,18 @@
 ---
-title: "Segment Animation Landing Page"
-type: note
-created: 2026-01-16
-updated: 2026-01-16
-source: chatgpt-export
 conversation_id: 696aaad6-5c44-8329-98f0-25c2948c12df
+created: 2026-01-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Segment Animation Landing Page
+type: note
+updated: 2026-01-16
 ---
+
 # Segment Animation Landing Page
 
 > Conversation ID: 696aaad6-5c44-8329-98f0-25c2948c12df

@@ -1,13 +1,18 @@
 ---
-title: "Cosmic Gate LA Concert"
-type: note
-created: 2024-05-24
-updated: 2024-05-24
-source: chatgpt-export
 conversation_id: 6ac5cbd2-fc3e-4bd9-b983-75bded41d3bd
+created: 2024-05-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cosmic Gate LA Concert
+type: note
+updated: 2024-05-24
 ---
+
 # Cosmic Gate LA Concert
 
 > Conversation ID: 6ac5cbd2-fc3e-4bd9-b983-75bded41d3bd

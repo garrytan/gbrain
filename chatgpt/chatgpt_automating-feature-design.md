@@ -1,13 +1,20 @@
 ---
-title: "Automating Feature Design"
-type: guide
-created: 2026-05-10
-updated: 2026-05-10
-source: chatgpt-export
 conversation_id: 6a00c907-fce4-83e8-8bd0-5a2e926cd771
+created: 2026-05-10
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Automating Feature Design
+type: guide
+updated: 2026-05-10
 ---
+
 # Automating Feature Design
 
 > Conversation ID: 6a00c907-fce4-83e8-8bd0-5a2e926cd771

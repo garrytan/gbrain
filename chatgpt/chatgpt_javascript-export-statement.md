@@ -1,13 +1,19 @@
 ---
-title: "JavaScript Export Statement."
-type: guide
-created: 2023-03-01
-updated: 2023-03-01
-source: chatgpt-export
 conversation_id: 16793d64-71c1-4b9b-b8bf-97da9417c416
+created: 2023-03-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 9
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: JavaScript Export Statement.
+type: guide
+updated: 2023-03-01
 ---
+
 # JavaScript Export Statement.
 
 > Conversation ID: 16793d64-71c1-4b9b-b8bf-97da9417c416

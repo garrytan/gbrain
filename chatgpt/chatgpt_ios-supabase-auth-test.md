@@ -1,13 +1,20 @@
 ---
-title: "iOS Supabase Auth Test"
-type: essay
-created: 2025-07-02
-updated: 2025-07-04
-source: chatgpt-export
 conversation_id: 6864cbff-c9ec-8007-b9bd-8c709253f398
+created: 2025-07-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 38
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS Supabase Auth Test
+type: essay
+updated: 2025-07-04
 ---
+
 # iOS Supabase Auth Test
 
 > Conversation ID: 6864cbff-c9ec-8007-b9bd-8c709253f398

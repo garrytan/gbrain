@@ -1,13 +1,18 @@
 ---
-title: "Top 10 DJs 2024"
-type: note
-created: 2025-01-25
-updated: 2025-01-25
-source: chatgpt-export
 conversation_id: 67946dc2-75fc-8007-84ac-2baaae8dbc99
+created: 2025-01-25
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Top 10 DJs 2024
+type: note
+updated: 2025-01-25
 ---
+
 # Top 10 DJs 2024
 
 > Conversation ID: 67946dc2-75fc-8007-84ac-2baaae8dbc99

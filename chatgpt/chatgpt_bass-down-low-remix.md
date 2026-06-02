@@ -1,13 +1,18 @@
 ---
-title: "Bass Down Low Remix"
-type: note
-created: 2025-01-17
-updated: 2025-01-17
-source: chatgpt-export
 conversation_id: 678a0b3e-cdf8-8007-845b-99119489169c
+created: 2025-01-17
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Bass Down Low Remix
+type: note
+updated: 2025-01-17
 ---
+
 # Bass Down Low Remix
 
 > Conversation ID: 678a0b3e-cdf8-8007-845b-99119489169c

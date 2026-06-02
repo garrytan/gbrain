@@ -1,13 +1,18 @@
 ---
-title: "Seeking Management and Publishing Recommendations"
-type: note
-created: 2023-11-02
-updated: 2023-11-02
-source: chatgpt-export
 conversation_id: d16d584f-c020-4ad5-b466-7d051b4ee5f5
+created: 2023-11-02
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Seeking Management and Publishing Recommendations
+type: note
+updated: 2023-11-02
 ---
+
 # Seeking Management and Publishing Recommendations
 
 > Conversation ID: d16d584f-c020-4ad5-b466-7d051b4ee5f5

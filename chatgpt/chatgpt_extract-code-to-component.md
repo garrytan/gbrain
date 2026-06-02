@@ -1,13 +1,19 @@
 ---
-title: "Extract code to component"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: 76758d64-7bbe-4f50-a658-785ea0117ad6
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Extract code to component
+type: note
+updated: 2022-12-21
 ---
+
 # Extract code to component
 
 > Conversation ID: 76758d64-7bbe-4f50-a658-785ea0117ad6

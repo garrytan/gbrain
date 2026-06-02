@@ -1,13 +1,19 @@
 ---
-title: "Pitching Documentary Series."
-type: note
-created: 2023-03-07
-updated: 2023-03-07
-source: chatgpt-export
 conversation_id: b13c79c8-123c-4a46-8c95-f019a76d3c0f
+created: 2023-03-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Pitching Documentary Series.
+type: note
+updated: 2023-03-07
 ---
+
 # Pitching Documentary Series.
 
 > Conversation ID: b13c79c8-123c-4a46-8c95-f019a76d3c0f

@@ -1,13 +1,18 @@
 ---
-title: "Leveraging Skills for Jovie"
-type: note
-created: 2026-05-07
-updated: 2026-05-07
-source: chatgpt-export
 conversation_id: 69fcd2e2-5dc4-83e8-9091-3ed65c8d51f1
+created: 2026-05-07
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Leveraging Skills for Jovie
+type: note
+updated: 2026-05-07
 ---
+
 # Leveraging Skills for Jovie
 
 > Conversation ID: 69fcd2e2-5dc4-83e8-9091-3ed65c8d51f1

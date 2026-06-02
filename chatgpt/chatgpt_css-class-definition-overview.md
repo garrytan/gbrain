@@ -1,13 +1,19 @@
 ---
-title: "CSS Class Definition Overview"
-type: note
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: 470aa11f-b686-40b0-b7cc-0005bc2675d1
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: CSS Class Definition Overview
+type: note
+updated: 2023-02-05
 ---
+
 # CSS Class Definition Overview
 
 > Conversation ID: 470aa11f-b686-40b0-b7cc-0005bc2675d1

@@ -1,13 +1,18 @@
 ---
-title: "Artist Data via API"
-type: note
-created: 2026-02-08
-updated: 2026-02-08
-source: chatgpt-export
 conversation_id: 6988d1e6-5bb8-832b-b7d1-a2aed64f985a
+created: 2026-02-08
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Artist Data via API
+type: note
+updated: 2026-02-08
 ---
+
 # Artist Data via API
 
 > Conversation ID: 6988d1e6-5bb8-832b-b7d1-a2aed64f985a

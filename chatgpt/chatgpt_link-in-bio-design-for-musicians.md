@@ -1,13 +1,20 @@
 ---
-title: "Link-in-Bio Design for Musicians"
-type: guide
-created: 2026-04-02
-updated: 2026-04-02
-source: chatgpt-export
 conversation_id: 69cdc251-77d0-83e8-81f9-55c66fb3d336
+created: 2026-04-02
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 5
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Link-in-Bio Design for Musicians
+type: guide
+updated: 2026-04-02
 ---
+
 # Link-in-Bio Design for Musicians
 
 > Conversation ID: 69cdc251-77d0-83e8-81f9-55c66fb3d336

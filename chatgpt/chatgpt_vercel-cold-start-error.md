@@ -1,13 +1,19 @@
 ---
-title: "Vercel Cold Start Error"
-type: guide
-created: 2026-01-22
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 697270ba-3580-8326-a8c1-1ff70eae8efb
+created: 2026-01-22
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vercel Cold Start Error
+type: guide
+updated: 2026-01-23
 ---
+
 # Vercel Cold Start Error
 
 > Conversation ID: 697270ba-3580-8326-a8c1-1ff70eae8efb

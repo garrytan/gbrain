@@ -1,13 +1,18 @@
 ---
-title: "iOS Automations and Shortcuts"
-type: note
-created: 2025-05-23
-updated: 2025-05-23
-source: chatgpt-export
 conversation_id: 68310581-5004-8007-a24b-7ecda7189302
+created: 2025-05-23
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iOS Automations and Shortcuts
+type: note
+updated: 2025-05-23
 ---
+
 # iOS Automations and Shortcuts
 
 > Conversation ID: 68310581-5004-8007-a24b-7ecda7189302

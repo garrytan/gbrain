@@ -1,13 +1,20 @@
 ---
-title: "Vercel error to Linear"
-type: guide
-created: 2025-12-21
-updated: 2025-12-21
-source: chatgpt-export
 conversation_id: 69482283-b900-8332-be3e-39716daa0208
+created: 2025-12-21
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vercel error to Linear
+type: guide
+updated: 2025-12-21
 ---
+
 # Vercel error to Linear
 
 > Conversation ID: 69482283-b900-8332-be3e-39716daa0208

@@ -1,13 +1,20 @@
 ---
-title: "Refactor Vue component with Nuxt"
-type: essay
-created: 2024-06-25
-updated: 2024-06-26
-source: chatgpt-export
 conversation_id: c82a66b1-d1b6-46c1-93c2-6f6828f8266a
+created: 2024-06-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 102
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Refactor Vue component with Nuxt
+type: essay
+updated: 2024-06-26
 ---
+
 # Refactor Vue component with Nuxt
 
 > Conversation ID: c82a66b1-d1b6-46c1-93c2-6f6828f8266a

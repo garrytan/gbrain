@@ -1,13 +1,18 @@
 ---
-title: "Audience and Releases UX"
-type: note
-created: 2026-05-05
-updated: 2026-05-05
-source: chatgpt-export
 conversation_id: 69fa466c-ab50-83e8-b4e7-26cecc504ecb
+created: 2026-05-05
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 7
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Audience and Releases UX
+type: note
+updated: 2026-05-05
 ---
+
 # Audience and Releases UX
 
 > Conversation ID: 69fa466c-ab50-83e8-b4e7-26cecc504ecb

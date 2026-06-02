@@ -1,13 +1,20 @@
 ---
-title: "Agentic OS for Artists"
-type: essay
-created: 2026-05-14
-updated: 2026-05-15
-source: chatgpt-export
 conversation_id: 6a05ff24-7be4-83e8-9684-4948d28e123c
+created: 2026-05-14
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 14
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Agentic OS for Artists
+type: essay
+updated: 2026-05-15
 ---
+
 # Agentic OS for Artists
 
 > Conversation ID: 6a05ff24-7be4-83e8-9684-4948d28e123c

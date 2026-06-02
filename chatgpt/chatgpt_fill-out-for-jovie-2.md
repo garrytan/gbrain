@@ -1,13 +1,18 @@
 ---
-title: "Fill Out for Jovie"
-type: note
-created: 2026-05-22
-updated: 2026-05-22
-source: chatgpt-export
 conversation_id: 6a10a104-4f0c-83e8-a775-adb898fbbb5d
+created: 2026-05-22
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fill Out for Jovie
+type: note
+updated: 2026-05-22
 ---
+
 # Fill Out for Jovie
 
 > Conversation ID: 6a10a104-4f0c-83e8-a775-adb898fbbb5d

@@ -1,13 +1,19 @@
 ---
-title: "Focus element in Vue.js"
-type: guide
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: 619729d4-63c3-457f-99e6-94ae98258f21
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Focus element in Vue.js
+type: guide
+updated: 2022-12-21
 ---
+
 # Focus element in Vue.js
 
 > Conversation ID: 619729d4-63c3-457f-99e6-94ae98258f21

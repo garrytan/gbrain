@@ -1,13 +1,18 @@
 ---
-title: "Figma AI Features"
-type: note
-created: 2026-01-16
-updated: 2026-01-16
-source: chatgpt-export
 conversation_id: 696aab06-72a0-832d-aca7-3f73b0892174
+created: 2026-01-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Figma AI Features
+type: note
+updated: 2026-01-16
 ---
+
 # Figma AI Features
 
 > Conversation ID: 696aab06-72a0-832d-aca7-3f73b0892174

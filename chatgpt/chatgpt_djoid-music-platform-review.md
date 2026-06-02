@@ -1,13 +1,18 @@
 ---
-title: "Djoid Music Platform Review"
-type: note
-created: 2025-03-05
-updated: 2025-03-05
-source: chatgpt-export
 conversation_id: 67c82565-5cc0-8007-933e-0e0e2a223e08
+created: 2025-03-05
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Djoid Music Platform Review
+type: note
+updated: 2025-03-05
 ---
+
 # Djoid Music Platform Review
 
 > Conversation ID: 67c82565-5cc0-8007-933e-0e0e2a223e08

@@ -1,13 +1,18 @@
 ---
-title: "Statsig Startup Program"
-type: note
-created: 2026-01-04
-updated: 2026-01-04
-source: chatgpt-export
 conversation_id: 695abceb-6f70-8328-afcd-85e7758d76c8
+created: 2026-01-04
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Statsig Startup Program
+type: note
+updated: 2026-01-04
 ---
+
 # Statsig Startup Program
 
 > Conversation ID: 695abceb-6f70-8328-afcd-85e7758d76c8

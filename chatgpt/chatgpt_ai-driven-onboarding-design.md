@@ -1,13 +1,19 @@
 ---
-title: "AI-Driven Onboarding Design"
-type: note
-created: 2026-04-30
-updated: 2026-04-30
-source: chatgpt-export
 conversation_id: 69f2a403-b31c-83e8-b37d-b6930925750a
+created: 2026-04-30
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: AI-Driven Onboarding Design
+type: note
+updated: 2026-04-30
 ---
+
 # AI-Driven Onboarding Design
 
 > Conversation ID: 69f2a403-b31c-83e8-b37d-b6930925750a

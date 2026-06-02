@@ -1,14 +1,19 @@
 ---
-title: "Vue Data Grid Cell Component
-"
-type: guide
-created: 2023-01-11
-updated: 2023-01-11
-source: chatgpt-export
 conversation_id: 38a66b53-a120-4831-a643-2ab9f7c7b666
+created: 2023-01-11
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 7
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Vue Data Grid Cell Component '
+type: guide
+updated: 2023-01-11
 ---
+
 # Vue Data Grid Cell Component
 
 

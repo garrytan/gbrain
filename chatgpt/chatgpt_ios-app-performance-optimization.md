@@ -1,13 +1,18 @@
 ---
-title: "iOS App Performance Optimization"
-type: note
-created: 2025-07-09
-updated: 2025-07-09
-source: chatgpt-export
 conversation_id: 686ed1eb-a140-8007-b338-84f96addbf85
+created: 2025-07-09
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iOS App Performance Optimization
+type: note
+updated: 2025-07-09
 ---
+
 # iOS App Performance Optimization
 
 > Conversation ID: 686ed1eb-a140-8007-b338-84f96addbf85

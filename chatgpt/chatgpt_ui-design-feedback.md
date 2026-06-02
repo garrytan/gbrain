@@ -1,13 +1,18 @@
 ---
-title: "UI Design Feedback"
-type: note
-created: 2025-07-09
-updated: 2025-07-09
-source: chatgpt-export
 conversation_id: 686eff49-6f44-8007-9ae7-2281d7ea974b
+created: 2025-07-09
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: UI Design Feedback
+type: note
+updated: 2025-07-09
 ---
+
 # UI Design Feedback
 
 > Conversation ID: 686eff49-6f44-8007-9ae7-2281d7ea974b

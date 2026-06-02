@@ -1,13 +1,19 @@
 ---
-title: "Beat competitor with thesis"
-type: note
-created: 2025-08-20
-updated: 2025-08-20
-source: chatgpt-export
 conversation_id: 68a55a34-9500-8326-8dff-e96373ea94de
+created: 2025-08-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Beat competitor with thesis
+type: note
+updated: 2025-08-20
 ---
+
 # Beat competitor with thesis
 
 > Conversation ID: 68a55a34-9500-8326-8dff-e96373ea94de

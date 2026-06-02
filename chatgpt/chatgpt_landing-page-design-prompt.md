@@ -1,13 +1,19 @@
 ---
-title: "Landing Page Design Prompt"
-type: guide
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695dadf8-c984-832b-be02-785f89d13291
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Landing Page Design Prompt
+type: guide
+updated: 2026-01-07
 ---
+
 # Landing Page Design Prompt
 
 > Conversation ID: 695dadf8-c984-832b-be02-785f89d13291

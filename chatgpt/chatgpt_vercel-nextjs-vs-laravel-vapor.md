@@ -1,13 +1,18 @@
 ---
-title: "Vercel Next.js vs Laravel Vapor"
-type: note
-created: 2025-06-22
-updated: 2025-06-22
-source: chatgpt-export
 conversation_id: 68582971-b28c-8007-ad82-5807ff7a4281
+created: 2025-06-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel Next.js vs Laravel Vapor
+type: note
+updated: 2025-06-22
 ---
+
 # Vercel Next.js vs Laravel Vapor
 
 > Conversation ID: 68582971-b28c-8007-ad82-5807ff7a4281

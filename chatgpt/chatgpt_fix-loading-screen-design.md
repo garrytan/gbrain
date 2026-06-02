@@ -1,13 +1,19 @@
 ---
-title: "Fix loading screen design"
-type: note
-created: 2025-09-03
-updated: 2025-09-03
-source: chatgpt-export
 conversation_id: 68b7f328-0510-8332-9c13-77ec3575b44a
+created: 2025-09-03
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Fix loading screen design
+type: note
+updated: 2025-09-03
 ---
+
 # Fix loading screen design
 
 > Conversation ID: 68b7f328-0510-8332-9c13-77ec3575b44a

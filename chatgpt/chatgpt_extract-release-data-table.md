@@ -1,13 +1,19 @@
 ---
-title: "Extract Release Data Table"
-type: note
-created: 2024-02-07
-updated: 2024-02-07
-source: chatgpt-export
 conversation_id: 8bca5ec7-ed26-4de9-ab5a-e79100b95b4f
+created: 2024-02-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Extract Release Data Table
+type: note
+updated: 2024-02-07
 ---
+
 # Extract Release Data Table
 
 > Conversation ID: 8bca5ec7-ed26-4de9-ab5a-e79100b95b4f

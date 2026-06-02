@@ -1,13 +1,18 @@
 ---
-title: "IconComposer in Xcode"
-type: note
-created: 2025-11-17
-updated: 2025-11-17
-source: chatgpt-export
 conversation_id: 691b5d0d-8fa8-8332-8d29-5b7676ac3ee9
+created: 2025-11-17
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 7
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: IconComposer in Xcode
+type: note
+updated: 2025-11-17
 ---
+
 # IconComposer in Xcode
 
 > Conversation ID: 691b5d0d-8fa8-8332-8d29-5b7676ac3ee9

@@ -1,13 +1,18 @@
 ---
-title: "React Dropzone vs Uppy"
-type: note
-created: 2026-01-12
-updated: 2026-01-12
-source: chatgpt-export
 conversation_id: 69653ea2-f78c-8325-8466-5dd064fb4fef
+created: 2026-01-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: React Dropzone vs Uppy
+type: note
+updated: 2026-01-12
 ---
+
 # React Dropzone vs Uppy
 
 > Conversation ID: 69653ea2-f78c-8325-8466-5dd064fb4fef

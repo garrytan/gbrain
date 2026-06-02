@@ -1,13 +1,18 @@
 ---
-title: "Claude Linear Agent Explanation"
-type: note
-created: 2026-01-15
-updated: 2026-01-15
-source: chatgpt-export
 conversation_id: 6968669f-875c-832a-ade8-082330a7e2d0
+created: 2026-01-15
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude Linear Agent Explanation
+type: note
+updated: 2026-01-15
 ---
+
 # Claude Linear Agent Explanation
 
 > Conversation ID: 6968669f-875c-832a-ade8-082330a7e2d0

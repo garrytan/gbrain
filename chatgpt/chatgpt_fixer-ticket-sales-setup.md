@@ -1,13 +1,18 @@
 ---
-title: "Fixer ticket sales setup"
-type: note
-created: 2025-09-23
-updated: 2025-09-23
-source: chatgpt-export
 conversation_id: 68d30d6c-4d54-8325-9933-86c7d0154624
+created: 2025-09-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fixer ticket sales setup
+type: note
+updated: 2025-09-23
 ---
+
 # Fixer ticket sales setup
 
 > Conversation ID: 68d30d6c-4d54-8325-9933-86c7d0154624

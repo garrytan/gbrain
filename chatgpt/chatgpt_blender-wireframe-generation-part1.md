@@ -1,13 +1,20 @@
 ---
-title: "Blender Wireframe Generation"
-type: essay
-created: 2025-06-21
-updated: 2025-06-21
-source: chatgpt-export
 conversation_id: 68563517-7130-8007-a8e0-4e0c0bca89cc
+created: 2025-06-21
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 96
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Blender Wireframe Generation
+type: essay
+updated: 2025-06-21
 ---
+
 # Blender Wireframe Generation
 
 > Conversation ID: 68563517-7130-8007-a8e0-4e0c0bca89cc

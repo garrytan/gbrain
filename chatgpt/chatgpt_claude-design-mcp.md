@@ -1,13 +1,18 @@
 ---
-title: "Claude Design MCP"
-type: note
-created: 2026-04-25
-updated: 2026-04-25
-source: chatgpt-export
 conversation_id: 69ed1e83-3c6c-83e8-90c6-3d8feb918c63
+created: 2026-04-25
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude Design MCP
+type: note
+updated: 2026-04-25
 ---
+
 # Claude Design MCP
 
 > Conversation ID: 69ed1e83-3c6c-83e8-90c6-3d8feb918c63

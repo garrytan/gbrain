@@ -1,13 +1,20 @@
 ---
-title: "Spotify Integrations Overview"
-type: essay
-created: 2024-06-10
-updated: 2024-06-10
-source: chatgpt-export
 conversation_id: c2ab2307-1a57-42d1-8436-7a93ef7b8607
+created: 2024-06-10
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 26
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Spotify Integrations Overview
+type: essay
+updated: 2024-06-10
 ---
+
 # Spotify Integrations Overview
 
 > Conversation ID: c2ab2307-1a57-42d1-8436-7a93ef7b8607

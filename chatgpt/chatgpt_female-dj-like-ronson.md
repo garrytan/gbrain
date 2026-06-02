@@ -1,13 +1,19 @@
 ---
-title: "Female DJ like Ronson"
-type: note
-created: 2023-11-30
-updated: 2023-11-30
-source: chatgpt-export
 conversation_id: b521568b-27a3-4f49-8e05-ed76e7cf32a3
+created: 2023-11-30
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 15
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Female DJ like Ronson
+type: note
+updated: 2023-11-30
 ---
+
 # Female DJ like Ronson
 
 > Conversation ID: b521568b-27a3-4f49-8e05-ed76e7cf32a3

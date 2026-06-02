@@ -1,13 +1,20 @@
 ---
-title: "Claude prompt for UI"
-type: guide
-created: 2025-11-17
-updated: 2025-11-17
-source: chatgpt-export
 conversation_id: 691a8292-f414-8328-bc8d-5416d71cae30
+created: 2025-11-17
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Claude prompt for UI
+type: guide
+updated: 2025-11-17
 ---
+
 # Claude prompt for UI
 
 > Conversation ID: 691a8292-f414-8328-bc8d-5416d71cae30

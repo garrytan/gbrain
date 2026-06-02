@@ -1,13 +1,18 @@
 ---
-title: "Xcode vs TestFlight performance"
-type: note
-created: 2025-11-22
-updated: 2025-11-22
-source: chatgpt-export
 conversation_id: 69224400-8508-8329-b60e-1e46d51918f5
+created: 2025-11-22
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Xcode vs TestFlight performance
+type: note
+updated: 2025-11-22
 ---
+
 # Xcode vs TestFlight performance
 
 > Conversation ID: 69224400-8508-8329-b60e-1e46d51918f5

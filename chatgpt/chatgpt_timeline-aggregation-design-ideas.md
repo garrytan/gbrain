@@ -1,13 +1,20 @@
 ---
-title: "Timeline Aggregation Design Ideas"
-type: essay
-created: 2025-07-13
-updated: 2025-07-13
-source: chatgpt-export
 conversation_id: 6873ec70-ba64-8007-9523-1f17426ea36e
+created: 2025-07-13
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 16
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Timeline Aggregation Design Ideas
+type: essay
+updated: 2025-07-13
 ---
+
 # Timeline Aggregation Design Ideas
 
 > Conversation ID: 6873ec70-ba64-8007-9523-1f17426ea36e

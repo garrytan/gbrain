@@ -1,13 +1,20 @@
 ---
-title: "Jovie UX Refactor Plan"
-type: essay
-created: 2026-05-17
-updated: 2026-05-17
-source: chatgpt-export
 conversation_id: 6a0a1f8c-4f38-83e8-9544-9bf264b322c0
+created: 2026-05-17
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie UX Refactor Plan
+type: essay
+updated: 2026-05-17
 ---
+
 # Jovie UX Refactor Plan
 
 > Conversation ID: 6a0a1f8c-4f38-83e8-9544-9bf264b322c0

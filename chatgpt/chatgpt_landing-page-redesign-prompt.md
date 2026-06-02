@@ -1,13 +1,19 @@
 ---
-title: "Landing Page Redesign Prompt"
-type: note
-created: 2026-03-01
-updated: 2026-03-01
-source: chatgpt-export
 conversation_id: 69a3c49b-8c04-8327-847e-d7070943ce57
+created: 2026-03-01
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Landing Page Redesign Prompt
+type: note
+updated: 2026-03-01
 ---
+
 # Landing Page Redesign Prompt
 
 > Conversation ID: 69a3c49b-8c04-8327-847e-d7070943ce57

@@ -1,13 +1,20 @@
 ---
-title: "Luxury Music Studio Scene"
-type: guide
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f162d3-99bc-83e8-af26-50d7c98cd69e
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 9
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Luxury Music Studio Scene
+type: guide
+updated: 2026-04-29
 ---
+
 # Luxury Music Studio Scene
 
 > Conversation ID: 69f162d3-99bc-83e8-af26-50d7c98cd69e

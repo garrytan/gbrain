@@ -1,13 +1,18 @@
 ---
-title: "Audio job opportunities"
-type: note
-created: 2025-11-21
-updated: 2025-11-21
-source: chatgpt-export
 conversation_id: 6920dd81-da3c-832b-a703-9248efb034aa
+created: 2025-11-21
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Audio job opportunities
+type: note
+updated: 2025-11-21
 ---
+
 # Audio job opportunities
 
 > Conversation ID: 6920dd81-da3c-832b-a703-9248efb034aa

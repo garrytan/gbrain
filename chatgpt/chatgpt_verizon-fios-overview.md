@@ -1,13 +1,18 @@
 ---
-title: "Verizon Fios Overview"
-type: note
-created: 2026-01-03
-updated: 2026-01-03
-source: chatgpt-export
 conversation_id: 6958858b-6a84-832f-9cc8-3f79d0a99b3b
+created: 2026-01-03
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Verizon Fios Overview
+type: note
+updated: 2026-01-03
 ---
+
 # Verizon Fios Overview
 
 > Conversation ID: 6958858b-6a84-832f-9cc8-3f79d0a99b3b

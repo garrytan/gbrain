@@ -1,13 +1,19 @@
 ---
-title: "Next.js commit hooks"
-type: note
-created: 2025-09-27
-updated: 2025-09-27
-source: chatgpt-export
 conversation_id: 68d73a9a-a248-8328-8bf1-3a014a0ca8da
+created: 2025-09-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 3
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Next.js commit hooks
+type: note
+updated: 2025-09-27
 ---
+
 # Next.js commit hooks
 
 > Conversation ID: 68d73a9a-a248-8328-8bf1-3a014a0ca8da

@@ -1,13 +1,19 @@
 ---
-title: "Vue Vite Resolve Error"
-type: guide
-created: 2024-04-08
-updated: 2024-04-08
-source: chatgpt-export
 conversation_id: a130ff4f-bd22-4c4e-96af-dd35f5e15803
+created: 2024-04-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue Vite Resolve Error
+type: guide
+updated: 2024-04-08
 ---
+
 # Vue Vite Resolve Error
 
 > Conversation ID: a130ff4f-bd22-4c4e-96af-dd35f5e15803

@@ -1,13 +1,19 @@
 ---
-title: "Design System Audit"
-type: note
-created: 2026-04-30
-updated: 2026-04-30
-source: chatgpt-export
 conversation_id: 69f2bbad-8858-83e8-9c3a-360188feb36b
+created: 2026-04-30
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Design System Audit
+type: note
+updated: 2026-04-30
 ---
+
 # Design System Audit
 
 > Conversation ID: 69f2bbad-8858-83e8-9c3a-360188feb36b

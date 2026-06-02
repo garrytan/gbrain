@@ -1,13 +1,18 @@
 ---
-title: "Calvin Harris Overview"
-type: note
-created: 2025-01-17
-updated: 2025-01-17
-source: chatgpt-export
 conversation_id: 678a09e7-5528-8007-ba93-d24cc24a7800
+created: 2025-01-17
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Calvin Harris Overview
+type: note
+updated: 2025-01-17
 ---
+
 # Calvin Harris Overview
 
 > Conversation ID: 678a09e7-5528-8007-ba93-d24cc24a7800

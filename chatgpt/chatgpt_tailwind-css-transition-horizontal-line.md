@@ -1,13 +1,19 @@
 ---
-title: "Tailwind CSS Transition Horizontal Line"
-type: guide
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: 78796ac3-6c57-40ef-af8c-1b804d493fed
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind CSS Transition Horizontal Line
+type: guide
+updated: 2022-12-23
 ---
+
 # Tailwind CSS Transition Horizontal Line
 
 > Conversation ID: 78796ac3-6c57-40ef-af8c-1b804d493fed

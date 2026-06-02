@@ -1,13 +1,19 @@
 ---
-title: "Vue Component: Colored Initials"
-type: note
-created: 2023-05-06
-updated: 2023-05-06
-source: chatgpt-export
 conversation_id: 12dcefb2-e159-4cd7-a476-e0ecaf1cd55e
+created: 2023-05-06
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Vue Component: Colored Initials'
+type: note
+updated: 2023-05-06
 ---
+
 # Vue Component: Colored Initials
 
 > Conversation ID: 12dcefb2-e159-4cd7-a476-e0ecaf1cd55e

@@ -1,13 +1,18 @@
 ---
-title: "Logo design improvements"
-type: note
-created: 2025-08-18
-updated: 2025-08-18
-source: chatgpt-export
 conversation_id: 68a34552-358c-8321-ad90-23e1f28479f7
+created: 2025-08-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Logo design improvements
+type: note
+updated: 2025-08-18
 ---
+
 # Logo design improvements
 
 > Conversation ID: 68a34552-358c-8321-ad90-23e1f28479f7

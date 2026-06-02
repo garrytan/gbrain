@@ -1,13 +1,19 @@
 ---
-title: "Jovie changelog updates."
-type: note
-created: 2023-02-20
-updated: 2023-02-20
-source: chatgpt-export
 conversation_id: c141d161-ea75-47d1-88e5-e6ec0f27583f
+created: 2023-02-20
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Jovie changelog updates.
+type: note
+updated: 2023-02-20
 ---
+
 # Jovie changelog updates.
 
 > Conversation ID: c141d161-ea75-47d1-88e5-e6ec0f27583f

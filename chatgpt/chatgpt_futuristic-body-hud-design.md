@@ -1,13 +1,20 @@
 ---
-title: "Futuristic Body HUD Design"
-type: guide
-created: 2025-06-09
-updated: 2025-06-09
-source: chatgpt-export
 conversation_id: 68473b72-2f1c-8007-a801-65f8b571d126
+created: 2025-06-09
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 28
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Futuristic Body HUD Design
+type: guide
+updated: 2025-06-09
 ---
+
 # Futuristic Body HUD Design
 
 > Conversation ID: 68473b72-2f1c-8007-a801-65f8b571d126

@@ -1,13 +1,18 @@
 ---
-title: "Pre-seed Pitch Deck"
-type: note
-created: 2026-05-14
-updated: 2026-05-14
-source: chatgpt-export
 conversation_id: 6a05238f-fc6c-83e8-ba39-ce836a1993a9
+created: 2026-05-14
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pre-seed Pitch Deck
+type: note
+updated: 2026-05-14
 ---
+
 # Pre-seed Pitch Deck
 
 > Conversation ID: 6a05238f-fc6c-83e8-ba39-ce836a1993a9

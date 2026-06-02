@@ -1,13 +1,18 @@
 ---
-title: "Tidal vs Spotify Debate"
-type: note
-created: 2025-07-06
-updated: 2025-07-06
-source: chatgpt-export
 conversation_id: 686ab928-48b4-8007-91ae-1edc59fe3b01
+created: 2025-07-06
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tidal vs Spotify Debate
+type: note
+updated: 2025-07-06
 ---
+
 # Tidal vs Spotify Debate
 
 > Conversation ID: 686ab928-48b4-8007-91ae-1edc59fe3b01

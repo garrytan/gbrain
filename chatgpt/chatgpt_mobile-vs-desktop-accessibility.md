@@ -1,13 +1,18 @@
 ---
-title: "Mobile vs Desktop Accessibility"
-type: note
-created: 2024-07-02
-updated: 2024-07-02
-source: chatgpt-export
 conversation_id: 4b793359-dcfe-42be-b7e6-6780fe824adc
+created: 2024-07-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Mobile vs Desktop Accessibility
+type: note
+updated: 2024-07-02
 ---
+
 # Mobile vs Desktop Accessibility
 
 > Conversation ID: 4b793359-dcfe-42be-b7e6-6780fe824adc

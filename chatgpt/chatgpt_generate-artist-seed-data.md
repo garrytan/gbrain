@@ -1,13 +1,20 @@
 ---
-title: "Generate artist seed data"
-type: guide
-created: 2025-08-20
-updated: 2025-08-20
-source: chatgpt-export
 conversation_id: 68a564b4-e8fc-832c-9c56-1d3c126ca6fc
+created: 2025-08-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 13
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Generate artist seed data
+type: guide
+updated: 2025-08-20
 ---
+
 # Generate artist seed data
 
 > Conversation ID: 68a564b4-e8fc-832c-9c56-1d3c126ca6fc

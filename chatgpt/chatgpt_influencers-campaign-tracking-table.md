@@ -1,13 +1,18 @@
 ---
-title: "Influencers Campaign Tracking Table"
-type: note
-created: 2024-06-22
-updated: 2024-06-22
-source: chatgpt-export
 conversation_id: f4c5ede2-4507-4d4e-986a-0f4e50d03271
+created: 2024-06-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Influencers Campaign Tracking Table
+type: note
+updated: 2024-06-22
 ---
+
 # Influencers Campaign Tracking Table
 
 > Conversation ID: f4c5ede2-4507-4d4e-986a-0f4e50d03271

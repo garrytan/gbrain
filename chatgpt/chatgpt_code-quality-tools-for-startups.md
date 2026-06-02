@@ -1,13 +1,18 @@
 ---
-title: "Code Quality Tools for Startups"
-type: note
-created: 2025-12-30
-updated: 2025-12-30
-source: chatgpt-export
 conversation_id: 69531df0-2ea4-832b-983a-1ed6ca181c3f
+created: 2025-12-30
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Code Quality Tools for Startups
+type: note
+updated: 2025-12-30
 ---
+
 # Code Quality Tools for Startups
 
 > Conversation ID: 69531df0-2ea4-832b-983a-1ed6ca181c3f

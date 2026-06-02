@@ -1,13 +1,19 @@
 ---
-title: "Marketing Highlights: Take Me Over"
-type: essay
-created: 2024-03-25
-updated: 2024-03-25
-source: chatgpt-export
 conversation_id: 85e5a54a-465c-41ce-8985-f98c92c5da2d
+created: 2024-03-25
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 14
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: 'Marketing Highlights: Take Me Over'
+type: essay
+updated: 2024-03-25
 ---
+
 # Marketing Highlights: Take Me Over
 
 > Conversation ID: 85e5a54a-465c-41ce-8985-f98c92c5da2d

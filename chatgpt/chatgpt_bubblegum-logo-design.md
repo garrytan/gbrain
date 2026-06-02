@@ -1,13 +1,18 @@
 ---
-title: "Bubblegum Logo Design"
-type: note
-created: 2024-05-27
-updated: 2024-05-27
-source: chatgpt-export
 conversation_id: dea148a4-25a9-46f0-8b30-51af65478c5c
+created: 2024-05-27
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Bubblegum Logo Design
+type: note
+updated: 2024-05-27
 ---
+
 # Bubblegum Logo Design
 
 > Conversation ID: dea148a4-25a9-46f0-8b30-51af65478c5c

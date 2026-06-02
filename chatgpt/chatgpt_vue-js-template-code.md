@@ -1,13 +1,18 @@
 ---
-title: "Vue JS template code"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: 42320d5f-6f81-4714-8166-92d03291ed73
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue JS template code
+type: note
+updated: 2022-12-21
 ---
+
 # Vue JS template code
 
 > Conversation ID: 42320d5f-6f81-4714-8166-92d03291ed73

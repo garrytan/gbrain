@@ -1,13 +1,19 @@
 ---
-title: "Research on SymphonyOS and Jovie"
-type: essay
-created: 2026-04-30
-updated: 2026-05-01
-source: chatgpt-export
 conversation_id: 69f35d46-6c80-83e8-8b96-7ff545a84d53
+created: 2026-04-30
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Research on SymphonyOS and Jovie
+type: essay
+updated: 2026-05-01
 ---
+
 # Research on SymphonyOS and Jovie
 
 > Conversation ID: 69f35d46-6c80-83e8-8b96-7ff545a84d53

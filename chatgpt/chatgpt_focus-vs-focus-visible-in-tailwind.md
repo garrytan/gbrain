@@ -1,13 +1,19 @@
 ---
-title: "Focus vs focus-visible in Tailwind"
-type: note
-created: 2025-08-17
-updated: 2025-08-17
-source: chatgpt-export
 conversation_id: 68a16ceb-af3c-832f-882b-4532e88c1a01
+created: 2025-08-17
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Focus vs focus-visible in Tailwind
+type: note
+updated: 2025-08-17
 ---
+
 # Focus vs focus-visible in Tailwind
 
 > Conversation ID: 68a16ceb-af3c-832f-882b-4532e88c1a01

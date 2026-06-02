@@ -1,13 +1,18 @@
 ---
-title: "Workout schedule adjustment"
-type: note
-created: 2025-08-23
-updated: 2025-08-24
-source: chatgpt-export
 conversation_id: 68aa29ab-35e8-832b-b7f9-85cb1a71d956
+created: 2025-08-23
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Workout schedule adjustment
+type: note
+updated: 2025-08-24
 ---
+
 # Workout schedule adjustment
 
 > Conversation ID: 68aa29ab-35e8-832b-b7f9-85cb1a71d956

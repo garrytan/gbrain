@@ -1,13 +1,18 @@
 ---
-title: "Pacific Design Center: 1975"
-type: note
-created: 2024-05-29
-updated: 2024-05-29
-source: chatgpt-export
 conversation_id: 4958fc15-ccfd-49e4-a8a0-1645ad933595
+created: 2024-05-29
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Pacific Design Center: 1975'
+type: note
+updated: 2024-05-29
 ---
+
 # Pacific Design Center: 1975
 
 > Conversation ID: 4958fc15-ccfd-49e4-a8a0-1645ad933595

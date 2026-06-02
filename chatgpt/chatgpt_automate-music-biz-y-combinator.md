@@ -1,13 +1,18 @@
 ---
-title: "Automate Music Biz Y Combinator"
-type: note
-created: 2026-04-30
-updated: 2026-04-30
-source: chatgpt-export
 conversation_id: 69f2ce20-9868-83e8-81b9-369e934c70f5
+created: 2026-04-30
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Automate Music Biz Y Combinator
+type: note
+updated: 2026-04-30
 ---
+
 # Automate Music Biz Y Combinator
 
 > Conversation ID: 69f2ce20-9868-83e8-81b9-369e934c70f5

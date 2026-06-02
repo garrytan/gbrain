@@ -1,13 +1,20 @@
 ---
-title: "Alexa Spotify queue command"
-type: guide
-created: 2025-08-27
-updated: 2025-08-27
-source: chatgpt-export
 conversation_id: 68ae5265-1140-8324-bdfa-2670096bb2dc
+created: 2025-08-27
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Alexa Spotify queue command
+type: guide
+updated: 2025-08-27
 ---
+
 # Alexa Spotify queue command
 
 > Conversation ID: 68ae5265-1140-8324-bdfa-2670096bb2dc

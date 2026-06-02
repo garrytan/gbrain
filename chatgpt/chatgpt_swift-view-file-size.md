@@ -1,13 +1,18 @@
 ---
-title: "Swift view file size"
-type: note
-created: 2025-07-15
-updated: 2025-07-15
-source: chatgpt-export
 conversation_id: 6875b27a-09f8-8007-9a92-aa2213d4c2cc
+created: 2025-07-15
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Swift view file size
+type: note
+updated: 2025-07-15
 ---
+
 # Swift view file size
 
 > Conversation ID: 6875b27a-09f8-8007-9a92-aa2213d4c2cc

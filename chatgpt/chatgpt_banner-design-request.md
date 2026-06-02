@@ -1,13 +1,18 @@
 ---
-title: "Banner Design Request"
-type: note
-created: 2025-06-02
-updated: 2025-06-02
-source: chatgpt-export
 conversation_id: 683d1b02-d334-8007-9b9e-8335d759225e
+created: 2025-06-02
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Banner Design Request
+type: note
+updated: 2025-06-02
 ---
+
 # Banner Design Request
 
 > Conversation ID: 683d1b02-d334-8007-9b9e-8335d759225e

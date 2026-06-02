@@ -1,13 +1,20 @@
 ---
-title: "Branch · Luxury Music Studio Scene"
-type: guide
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f16c54-b7b0-83e8-a0fc-4d2e76bff11a
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 11
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Branch · Luxury Music Studio Scene
+type: guide
+updated: 2026-04-29
 ---
+
 # Branch · Luxury Music Studio Scene
 
 > Conversation ID: 69f16c54-b7b0-83e8-a0fc-4d2e76bff11a

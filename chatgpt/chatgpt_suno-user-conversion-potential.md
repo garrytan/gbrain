@@ -1,13 +1,20 @@
 ---
-title: "Suno User Conversion Potential"
-type: guide
-created: 2026-05-16
-updated: 2026-05-17
-source: chatgpt-export
 conversation_id: 6a08fc21-d3f4-83e8-9fe9-e9a6fadf0fea
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 15
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Suno User Conversion Potential
+type: guide
+updated: 2026-05-17
 ---
+
 # Suno User Conversion Potential
 
 > Conversation ID: 6a08fc21-d3f4-83e8-9fe9-e9a6fadf0fea

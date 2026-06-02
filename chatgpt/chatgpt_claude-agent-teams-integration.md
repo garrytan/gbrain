@@ -1,13 +1,18 @@
 ---
-title: "Claude Agent Teams Integration"
-type: note
-created: 2026-02-09
-updated: 2026-02-09
-source: chatgpt-export
 conversation_id: 698a4e0b-6228-8332-a2b4-77a35324aea4
+created: 2026-02-09
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude Agent Teams Integration
+type: note
+updated: 2026-02-09
 ---
+
 # Claude Agent Teams Integration
 
 > Conversation ID: 698a4e0b-6228-8332-a2b4-77a35324aea4

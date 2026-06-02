@@ -1,13 +1,18 @@
 ---
-title: "Landing Page Design Spec"
-type: note
-created: 2026-04-26
-updated: 2026-04-26
-source: chatgpt-export
 conversation_id: 69ee5450-f2b0-83e8-8436-766a05b6f799
+created: 2026-04-26
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 5
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Landing Page Design Spec
+type: note
+updated: 2026-04-26
 ---
+
 # Landing Page Design Spec
 
 > Conversation ID: 69ee5450-f2b0-83e8-8436-766a05b6f799

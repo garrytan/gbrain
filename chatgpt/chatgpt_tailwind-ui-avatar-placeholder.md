@@ -1,13 +1,19 @@
 ---
-title: "Tailwind UI Avatar Placeholder"
-type: note
-created: 2026-01-24
-updated: 2026-01-24
-source: chatgpt-export
 conversation_id: 697531dd-5dd0-832b-b2c6-493045bc37eb
+created: 2026-01-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind UI Avatar Placeholder
+type: note
+updated: 2026-01-24
 ---
+
 # Tailwind UI Avatar Placeholder
 
 > Conversation ID: 697531dd-5dd0-832b-b2c6-493045bc37eb

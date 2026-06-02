@@ -1,13 +1,20 @@
 ---
-title: "Refactorando Plantilla Vue"
-type: essay
-created: 2024-06-07
-updated: 2024-06-07
-source: chatgpt-export
 conversation_id: d095dd49-1c5f-4863-97bc-539851c9b913
+created: 2024-06-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 19
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Refactorando Plantilla Vue
+type: essay
+updated: 2024-06-07
 ---
+
 # Refactorando Plantilla Vue
 
 > Conversation ID: d095dd49-1c5f-4863-97bc-539851c9b913

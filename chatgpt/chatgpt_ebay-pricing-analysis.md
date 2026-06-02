@@ -1,13 +1,18 @@
 ---
-title: "eBay pricing analysis"
-type: note
-created: 2025-07-24
-updated: 2025-07-24
-source: chatgpt-export
 conversation_id: 68828c69-6b08-8326-99b4-a59d2c5a6530
+created: 2025-07-24
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: eBay pricing analysis
+type: note
+updated: 2025-07-24
 ---
+
 # eBay pricing analysis
 
 > Conversation ID: 68828c69-6b08-8326-99b4-a59d2c5a6530

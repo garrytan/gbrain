@@ -1,13 +1,19 @@
 ---
-title: "Fix JavaScript function"
-type: note
-created: 2022-12-24
-updated: 2022-12-24
-source: chatgpt-export
 conversation_id: 63490436-db13-4f02-8301-2fcf66897465
+created: 2022-12-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Fix JavaScript function
+type: note
+updated: 2022-12-24
 ---
+
 # Fix JavaScript function
 
 > Conversation ID: 63490436-db13-4f02-8301-2fcf66897465

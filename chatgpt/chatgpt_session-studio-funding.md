@@ -1,13 +1,19 @@
 ---
-title: "Session Studio Funding"
-type: note
-created: 2026-02-24
-updated: 2026-02-24
-source: chatgpt-export
 conversation_id: 699d3d7b-3ee8-8327-80fb-d8b474c76f36
+created: 2026-02-24
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Session Studio Funding
+type: note
+updated: 2026-02-24
 ---
+
 # Session Studio Funding
 
 > Conversation ID: 699d3d7b-3ee8-8327-80fb-d8b474c76f36

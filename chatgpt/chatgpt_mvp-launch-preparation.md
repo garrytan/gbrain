@@ -1,13 +1,19 @@
 ---
-title: "MVP launch preparation"
-type: note
-created: 2025-08-23
-updated: 2025-08-23
-source: chatgpt-export
 conversation_id: 68aa24eb-95c4-8324-8282-17d22950d896
+created: 2025-08-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: MVP launch preparation
+type: note
+updated: 2025-08-23
 ---
+
 # MVP launch preparation
 
 > Conversation ID: 68aa24eb-95c4-8324-8282-17d22950d896

@@ -1,13 +1,20 @@
 ---
-title: "Vue.js Pricing Template"
-type: guide
-created: 2023-03-03
-updated: 2023-03-03
-source: chatgpt-export
 conversation_id: 9f678771-a959-4403-a235-846b61b840eb
+created: 2023-03-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js Pricing Template
+type: guide
+updated: 2023-03-03
 ---
+
 # Vue.js Pricing Template
 
 > Conversation ID: 9f678771-a959-4403-a235-846b61b840eb

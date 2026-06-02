@@ -1,13 +1,19 @@
 ---
-title: "Dance Remix Single Release."
-type: note
-created: 2024-05-06
-updated: 2024-05-06
-source: chatgpt-export
 conversation_id: ef518661-55bf-4642-bcbf-725e1752a585
+created: 2024-05-06
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Dance Remix Single Release.
+type: note
+updated: 2024-05-06
 ---
+
 # Dance Remix Single Release.
 
 > Conversation ID: ef518661-55bf-4642-bcbf-725e1752a585

@@ -1,13 +1,19 @@
 ---
-title: "Hide Album Art Image"
-type: guide
-created: 2024-03-07
-updated: 2024-03-07
-source: chatgpt-export
 conversation_id: e23a82e6-003a-4692-bc02-ea68d4a7395b
+created: 2024-03-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Hide Album Art Image
+type: guide
+updated: 2024-03-07
 ---
+
 # Hide Album Art Image
 
 > Conversation ID: e23a82e6-003a-4692-bc02-ea68d4a7395b

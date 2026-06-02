@@ -1,13 +1,20 @@
 ---
-title: "Vue.js Routes Summary"
-type: guide
-created: 2023-01-04
-updated: 2023-01-04
-source: chatgpt-export
 conversation_id: 3af8fe42-0d0d-4f8c-a5f2-15149510dcc4
+created: 2023-01-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js Routes Summary
+type: guide
+updated: 2023-01-04
 ---
+
 # Vue.js Routes Summary
 
 > Conversation ID: 3af8fe42-0d0d-4f8c-a5f2-15149510dcc4

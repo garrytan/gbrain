@@ -1,13 +1,18 @@
 ---
-title: "Logo Design Request"
-type: note
-created: 2026-01-03
-updated: 2026-01-03
-source: chatgpt-export
 conversation_id: 695870e4-e060-8332-b92a-90af8d78e5d4
+created: 2026-01-03
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Logo Design Request
+type: note
+updated: 2026-01-03
 ---
+
 # Logo Design Request
 
 > Conversation ID: 695870e4-e060-8332-b92a-90af8d78e5d4

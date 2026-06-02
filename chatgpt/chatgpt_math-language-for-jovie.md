@@ -1,13 +1,18 @@
 ---
-title: "Math language for Jovie"
-type: note
-created: 2025-09-13
-updated: 2025-09-13
-source: chatgpt-export
 conversation_id: 68c5d263-2db8-832e-9352-fcbeadd3e882
+created: 2025-09-13
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Math language for Jovie
+type: note
+updated: 2025-09-13
 ---
+
 # Math language for Jovie
 
 > Conversation ID: 68c5d263-2db8-832e-9352-fcbeadd3e882

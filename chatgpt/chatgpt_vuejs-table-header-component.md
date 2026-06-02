@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Table Header Component"
-type: guide
-created: 2023-02-07
-updated: 2023-02-07
-source: chatgpt-export
 conversation_id: 1a493638-c144-4d82-b36d-fcce03d4e939
+created: 2023-02-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Table Header Component
+type: guide
+updated: 2023-02-07
 ---
+
 # Vue.js Table Header Component
 
 > Conversation ID: 1a493638-c144-4d82-b36d-fcce03d4e939

@@ -1,13 +1,18 @@
 ---
-title: "Kaskade Artist Profile"
-type: note
-created: 2025-01-16
-updated: 2025-01-16
-source: chatgpt-export
 conversation_id: 678896c8-2698-8007-afe0-cd438f5876aa
+created: 2025-01-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Kaskade Artist Profile
+type: note
+updated: 2025-01-16
 ---
+
 # Kaskade Artist Profile
 
 > Conversation ID: 678896c8-2698-8007-afe0-cd438f5876aa

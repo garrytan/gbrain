@@ -1,13 +1,18 @@
 ---
-title: "Eleven Labs Startup Grants"
-type: note
-created: 2026-05-29
-updated: 2026-05-29
-source: chatgpt-export
 conversation_id: 6a19cc0b-dd40-83e8-9992-e8ac406f38c7
+created: 2026-05-29
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Eleven Labs Startup Grants
+type: note
+updated: 2026-05-29
 ---
+
 # Eleven Labs Startup Grants
 
 > Conversation ID: 6a19cc0b-dd40-83e8-9992-e8ac406f38c7

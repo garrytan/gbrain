@@ -1,13 +1,18 @@
 ---
-title: "GPT Model Comparison Coding"
-type: note
-created: 2025-03-24
-updated: 2025-03-24
-source: chatgpt-export
 conversation_id: 67e0eb8e-6ea0-8007-94c2-a3df0815965a
+created: 2025-03-24
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: GPT Model Comparison Coding
+type: note
+updated: 2025-03-24
 ---
+
 # GPT Model Comparison Coding
 
 > Conversation ID: 67e0eb8e-6ea0-8007-94c2-a3df0815965a

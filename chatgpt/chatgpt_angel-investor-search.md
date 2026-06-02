@@ -1,13 +1,18 @@
 ---
-title: "Angel Investor Search"
-type: note
-created: 2026-04-22
-updated: 2026-04-22
-source: chatgpt-export
 conversation_id: 69e8725f-9aa8-83e8-9145-83192ae7aaca
+created: 2026-04-22
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Angel Investor Search
+type: note
+updated: 2026-04-22
 ---
+
 # Angel Investor Search
 
 > Conversation ID: 69e8725f-9aa8-83e8-9145-83192ae7aaca

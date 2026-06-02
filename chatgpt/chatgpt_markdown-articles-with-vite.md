@@ -1,13 +1,20 @@
 ---
-title: "Markdown Articles with Vite"
-type: essay
-created: 2024-06-03
-updated: 2024-06-03
-source: chatgpt-export
 conversation_id: b8af11bf-9919-4fa2-8382-6dd47da841b5
+created: 2024-06-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 18
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Markdown Articles with Vite
+type: essay
+updated: 2024-06-03
 ---
+
 # Markdown Articles with Vite
 
 > Conversation ID: b8af11bf-9919-4fa2-8382-6dd47da841b5

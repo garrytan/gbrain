@@ -1,13 +1,19 @@
 ---
-title: "Clerk Vercel Preview Setup"
-type: note
-created: 2026-01-15
-updated: 2026-01-15
-source: chatgpt-export
 conversation_id: 69684d89-4100-832b-ad52-aadad9aef9b5
+created: 2026-01-15
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Clerk Vercel Preview Setup
+type: note
+updated: 2026-01-15
 ---
+
 # Clerk Vercel Preview Setup
 
 > Conversation ID: 69684d89-4100-832b-ad52-aadad9aef9b5

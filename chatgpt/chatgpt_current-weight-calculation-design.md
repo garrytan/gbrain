@@ -1,13 +1,20 @@
 ---
-title: "Current Weight Calculation Design"
-type: essay
-created: 2025-06-15
-updated: 2025-06-15
-source: chatgpt-export
 conversation_id: 684e721c-29d4-8007-83d7-0f1f9ab4f94a
+created: 2025-06-15
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 16
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Current Weight Calculation Design
+type: essay
+updated: 2025-06-15
 ---
+
 # Current Weight Calculation Design
 
 > Conversation ID: 684e721c-29d4-8007-83d7-0f1f9ab4f94a

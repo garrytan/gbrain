@@ -1,13 +1,18 @@
 ---
-title: "Black Backslash Logo"
-type: note
-created: 2024-02-27
-updated: 2024-02-27
-source: chatgpt-export
 conversation_id: b457fec2-ef4c-4aba-a63b-f487cb4b81b1
+created: 2024-02-27
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Black Backslash Logo
+type: note
+updated: 2024-02-27
 ---
+
 # Black Backslash Logo
 
 > Conversation ID: b457fec2-ef4c-4aba-a63b-f487cb4b81b1

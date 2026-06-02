@@ -1,13 +1,19 @@
 ---
-title: "Startups and ChatGPT Competition"
-type: note
-created: 2023-11-10
-updated: 2023-11-10
-source: chatgpt-export
 conversation_id: d1d48608-5d95-4179-9ca2-92dbf192c51f
+created: 2023-11-10
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 21
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Startups and ChatGPT Competition
+type: note
+updated: 2023-11-10
 ---
+
 # Startups and ChatGPT Competition
 
 > Conversation ID: d1d48608-5d95-4179-9ca2-92dbf192c51f

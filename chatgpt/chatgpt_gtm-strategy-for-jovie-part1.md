@@ -1,13 +1,20 @@
 ---
-title: "GTM strategy for Jovie"
-type: essay
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a08a9fa-8fd8-83e8-b4fe-7855827e9614
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 28
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: GTM strategy for Jovie
+type: essay
+updated: 2026-05-16
 ---
+
 # GTM strategy for Jovie
 
 > Conversation ID: 6a08a9fa-8fd8-83e8-b4fe-7855827e9614

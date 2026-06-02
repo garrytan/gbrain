@@ -1,13 +1,18 @@
 ---
-title: "Tailwind scrollbar options"
-type: note
-created: 2026-01-21
-updated: 2026-01-21
-source: chatgpt-export
 conversation_id: 6970603a-38f4-832b-bfa1-0c54c877429b
+created: 2026-01-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tailwind scrollbar options
+type: note
+updated: 2026-01-21
 ---
+
 # Tailwind scrollbar options
 
 > Conversation ID: 6970603a-38f4-832b-bfa1-0c54c877429b

@@ -1,13 +1,18 @@
 ---
-title: "Mixing tirzepatide safety"
-type: note
-created: 2025-09-14
-updated: 2025-09-14
-source: chatgpt-export
 conversation_id: 68c6404e-6434-8325-8bfe-ea1b76663f01
+created: 2025-09-14
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Mixing tirzepatide safety
+type: note
+updated: 2025-09-14
 ---
+
 # Mixing tirzepatide safety
 
 > Conversation ID: 68c6404e-6434-8325-8bfe-ea1b76663f01

@@ -1,13 +1,19 @@
 ---
-title: "UI UX Issues and Fixes"
-type: note
-created: 2026-02-01
-updated: 2026-02-01
-source: chatgpt-export
 conversation_id: 697f9f9d-615c-8333-8bac-e6ee8bb5b036
+created: 2026-02-01
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: UI UX Issues and Fixes
+type: note
+updated: 2026-02-01
 ---
+
 # UI UX Issues and Fixes
 
 > Conversation ID: 697f9f9d-615c-8333-8bac-e6ee8bb5b036

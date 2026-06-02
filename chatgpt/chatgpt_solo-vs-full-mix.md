@@ -1,13 +1,19 @@
 ---
-title: "Solo vs Full Mix"
-type: note
-created: 2026-06-01
-updated: 2026-06-01
-source: chatgpt-export
 conversation_id: 6a1ceec1-8140-83e8-94c0-22b72eb3eb34
+created: 2026-06-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Solo vs Full Mix
+type: note
+updated: 2026-06-01
 ---
+
 # Solo vs Full Mix
 
 > Conversation ID: 6a1ceec1-8140-83e8-94c0-22b72eb3eb34

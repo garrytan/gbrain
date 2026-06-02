@@ -1,13 +1,18 @@
 ---
-title: "MBP Release Rumors 2026"
-type: note
-created: 2026-01-28
-updated: 2026-01-28
-source: chatgpt-export
 conversation_id: 697a7c0f-a9a8-8327-a35b-174e18540df7
+created: 2026-01-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: MBP Release Rumors 2026
+type: note
+updated: 2026-01-28
 ---
+
 # MBP Release Rumors 2026
 
 > Conversation ID: 697a7c0f-a9a8-8327-a35b-174e18540df7

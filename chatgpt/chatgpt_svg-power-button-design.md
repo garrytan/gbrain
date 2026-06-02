@@ -1,13 +1,18 @@
 ---
-title: "SVG Power Button Design"
-type: note
-created: 2023-12-02
-updated: 2023-12-02
-source: chatgpt-export
 conversation_id: d23ea339-6c56-4afb-bce8-9230c713dbf8
+created: 2023-12-02
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: SVG Power Button Design
+type: note
+updated: 2023-12-02
 ---
+
 # SVG Power Button Design
 
 > Conversation ID: d23ea339-6c56-4afb-bce8-9230c713dbf8

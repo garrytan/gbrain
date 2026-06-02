@@ -1,13 +1,19 @@
 ---
-title: "Basic auth in Next.js"
-type: guide
-created: 2025-09-22
-updated: 2025-09-22
-source: chatgpt-export
 conversation_id: 68d175dd-0a64-8326-8d0d-6d003f044701
+created: 2025-09-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Basic auth in Next.js
+type: guide
+updated: 2025-09-22
 ---
+
 # Basic auth in Next.js
 
 > Conversation ID: 68d175dd-0a64-8326-8d0d-6d003f044701

@@ -1,13 +1,18 @@
 ---
-title: "Cinematic Studio Sunset"
-type: note
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f17470-770c-83e8-b3b5-1ab8f5d7f46f
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cinematic Studio Sunset
+type: note
+updated: 2026-04-29
 ---
+
 # Cinematic Studio Sunset
 
 > Conversation ID: 69f17470-770c-83e8-b3b5-1ab8f5d7f46f

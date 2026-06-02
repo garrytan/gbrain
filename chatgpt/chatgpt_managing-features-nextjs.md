@@ -1,13 +1,19 @@
 ---
-title: "Managing Features Next.js"
-type: note
-created: 2026-02-16
-updated: 2026-02-16
-source: chatgpt-export
 conversation_id: 69939a8f-c4c4-832d-9757-9ea5887af119
+created: 2026-02-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Managing Features Next.js
+type: note
+updated: 2026-02-16
 ---
+
 # Managing Features Next.js
 
 > Conversation ID: 69939a8f-c4c4-832d-9757-9ea5887af119

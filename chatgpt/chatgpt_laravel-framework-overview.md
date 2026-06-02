@@ -1,13 +1,20 @@
 ---
-title: "Laravel Framework Overview"
-type: guide
-created: 2025-06-14
-updated: 2025-06-14
-source: chatgpt-export
 conversation_id: 684db361-db00-8007-9d7e-89d2656f2ba0
+created: 2025-06-14
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Laravel Framework Overview
+type: guide
+updated: 2025-06-14
 ---
+
 # Laravel Framework Overview
 
 > Conversation ID: 684db361-db00-8007-9d7e-89d2656f2ba0

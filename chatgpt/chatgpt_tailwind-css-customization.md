@@ -1,13 +1,19 @@
 ---
-title: "Tailwind CSS Customization"
-type: note
-created: 2023-03-26
-updated: 2023-03-26
-source: chatgpt-export
 conversation_id: e20eecff-0b5e-4f1a-8bd0-87bf812b1aa4
+created: 2023-03-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Tailwind CSS Customization
+type: note
+updated: 2023-03-26
 ---
+
 # Tailwind CSS Customization
 
 > Conversation ID: e20eecff-0b5e-4f1a-8bd0-87bf812b1aa4

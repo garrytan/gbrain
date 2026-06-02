@@ -1,13 +1,18 @@
 ---
-title: "Vercel Neon GitHub sync"
-type: note
-created: 2025-08-26
-updated: 2025-08-26
-source: chatgpt-export
 conversation_id: 68ae39c7-bfec-8322-9033-dd5873bdb478
+created: 2025-08-26
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel Neon GitHub sync
+type: note
+updated: 2025-08-26
 ---
+
 # Vercel Neon GitHub sync
 
 > Conversation ID: 68ae39c7-bfec-8322-9033-dd5873bdb478

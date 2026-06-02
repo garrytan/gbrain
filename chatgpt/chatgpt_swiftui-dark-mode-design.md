@@ -1,13 +1,19 @@
 ---
-title: "SwiftUI Dark Mode Design"
-type: guide
-created: 2025-07-01
-updated: 2025-07-02
-source: chatgpt-export
 conversation_id: 68646dbb-19d0-8007-aa9e-d8e1b4700b23
+created: 2025-07-01
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: SwiftUI Dark Mode Design
+type: guide
+updated: 2025-07-02
 ---
+
 # SwiftUI Dark Mode Design
 
 > Conversation ID: 68646dbb-19d0-8007-aa9e-d8e1b4700b23

@@ -1,13 +1,19 @@
 ---
-title: "Startup Fundraising Advice"
-type: essay
-created: 2026-05-23
-updated: 2026-05-23
-source: chatgpt-export
 conversation_id: 6a11e25d-8714-83e8-9ae0-caf66fd2ccf5
+created: 2026-05-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 13
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Startup Fundraising Advice
+type: essay
+updated: 2026-05-23
 ---
+
 # Startup Fundraising Advice
 
 > Conversation ID: 6a11e25d-8714-83e8-9ae0-caf66fd2ccf5

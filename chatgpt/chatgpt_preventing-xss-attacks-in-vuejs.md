@@ -1,14 +1,18 @@
 ---
-title: "Preventing XSS Attacks in Vue.js
-"
-type: note
-created: 2023-01-25
-updated: 2023-01-25
-source: chatgpt-export
 conversation_id: 8b61123f-f6cd-441d-b696-5e20ca317690
+created: 2023-01-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Preventing XSS Attacks in Vue.js '
+type: note
+updated: 2023-01-25
 ---
+
 # Preventing XSS Attacks in Vue.js
 
 

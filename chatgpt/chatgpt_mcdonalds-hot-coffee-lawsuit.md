@@ -1,13 +1,18 @@
 ---
-title: "McDonald's Hot Coffee Lawsuit"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 697310fc-3088-8326-a6cc-4ed818895109
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: McDonald's Hot Coffee Lawsuit
+type: note
+updated: 2026-01-23
 ---
+
 # McDonald's Hot Coffee Lawsuit
 
 > Conversation ID: 697310fc-3088-8326-a6cc-4ed818895109

@@ -1,13 +1,18 @@
 ---
-title: "MCP RevenueCat overview"
-type: note
-created: 2025-11-27
-updated: 2025-11-27
-source: chatgpt-export
 conversation_id: 6928c6df-708c-8325-aca3-d977898a32e9
+created: 2025-11-27
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: MCP RevenueCat overview
+type: note
+updated: 2025-11-27
 ---
+
 # MCP RevenueCat overview
 
 > Conversation ID: 6928c6df-708c-8325-aca3-d977898a32e9

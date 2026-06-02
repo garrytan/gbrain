@@ -1,13 +1,19 @@
 ---
-title: "Router-link usage: Vue.js"
-type: note
-created: 2023-05-07
-updated: 2023-05-07
-source: chatgpt-export
 conversation_id: a281893f-08d0-48ce-842a-874ed8873b2e
+created: 2023-05-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Router-link usage: Vue.js'
+type: note
+updated: 2023-05-07
 ---
+
 # Router-link usage: Vue.js
 
 > Conversation ID: a281893f-08d0-48ce-842a-874ed8873b2e

@@ -1,13 +1,19 @@
 ---
-title: "Server scheduling laws 90048"
-type: note
-created: 2025-10-16
-updated: 2025-10-16
-source: chatgpt-export
 conversation_id: 68f03d79-32dc-832f-b6a8-eb5e90b35193
+created: 2025-10-16
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Server scheduling laws 90048
+type: note
+updated: 2025-10-16
 ---
+
 # Server scheduling laws 90048
 
 > Conversation ID: 68f03d79-32dc-832f-b6a8-eb5e90b35193

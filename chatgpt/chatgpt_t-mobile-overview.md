@@ -1,13 +1,18 @@
 ---
-title: "T-Mobile overview"
-type: note
-created: 2025-08-26
-updated: 2025-08-26
-source: chatgpt-export
 conversation_id: 68ae1add-fbac-8329-820d-f854306a2fbd
+created: 2025-08-26
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: T-Mobile overview
+type: note
+updated: 2025-08-26
 ---
+
 # T-Mobile overview
 
 > Conversation ID: 68ae1add-fbac-8329-820d-f854306a2fbd

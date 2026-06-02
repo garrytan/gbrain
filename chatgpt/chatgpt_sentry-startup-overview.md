@@ -1,13 +1,18 @@
 ---
-title: "Sentry Startup Overview"
-type: note
-created: 2026-01-21
-updated: 2026-01-21
-source: chatgpt-export
 conversation_id: 69712aad-c8d4-8329-9f23-5f7c28e8e51d
+created: 2026-01-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sentry Startup Overview
+type: note
+updated: 2026-01-21
 ---
+
 # Sentry Startup Overview
 
 > Conversation ID: 69712aad-c8d4-8329-9f23-5f7c28e8e51d

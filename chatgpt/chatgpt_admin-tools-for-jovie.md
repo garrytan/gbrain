@@ -1,13 +1,18 @@
 ---
-title: "Admin tools for Jovie"
-type: note
-created: 2025-12-06
-updated: 2025-12-06
-source: chatgpt-export
 conversation_id: 693465c8-d598-8331-baeb-df45829a253f
+created: 2025-12-06
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Admin tools for Jovie
+type: note
+updated: 2025-12-06
 ---
+
 # Admin tools for Jovie
 
 > Conversation ID: 693465c8-d598-8331-baeb-df45829a253f

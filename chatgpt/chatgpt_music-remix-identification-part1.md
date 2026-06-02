@@ -1,13 +1,20 @@
 ---
-title: "Music Remix Identification."
-type: essay
-created: 2024-06-08
-updated: 2024-06-09
-source: chatgpt-export
 conversation_id: e5c6b9df-4cdf-440b-82d7-5c715b1a73a0
+created: 2024-06-08
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 31
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Music Remix Identification.
+type: essay
+updated: 2024-06-09
 ---
+
 # Music Remix Identification.
 
 > Conversation ID: e5c6b9df-4cdf-440b-82d7-5c715b1a73a0

@@ -1,13 +1,19 @@
 ---
-title: "Router integration with Claude"
-type: note
-created: 2026-05-30
-updated: 2026-05-30
-source: chatgpt-export
 conversation_id: 6a1b4801-4328-83e8-9209-46eb3b317760
+created: 2026-05-30
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 3
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Router integration with Claude
+type: note
+updated: 2026-05-30
 ---
+
 # Router integration with Claude
 
 > Conversation ID: 6a1b4801-4328-83e8-9209-46eb3b317760

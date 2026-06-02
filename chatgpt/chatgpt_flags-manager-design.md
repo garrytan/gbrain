@@ -1,13 +1,20 @@
 ---
-title: "Flags Manager Design"
-type: guide
-created: 2026-05-24
-updated: 2026-05-24
-source: chatgpt-export
 conversation_id: 6a132570-12b0-83e8-9f3d-14c10afdfc39
+created: 2026-05-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Flags Manager Design
+type: guide
+updated: 2026-05-24
 ---
+
 # Flags Manager Design
 
 > Conversation ID: 6a132570-12b0-83e8-9f3d-14c10afdfc39

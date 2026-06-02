@@ -1,13 +1,18 @@
 ---
-title: "Page Design Audit"
-type: note
-created: 2026-01-16
-updated: 2026-01-16
-source: chatgpt-export
 conversation_id: 696a9755-2d50-8331-a7c9-de907ae5a39b
+created: 2026-01-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Page Design Audit
+type: note
+updated: 2026-01-16
 ---
+
 # Page Design Audit
 
 > Conversation ID: 696a9755-2d50-8331-a7c9-de907ae5a39b

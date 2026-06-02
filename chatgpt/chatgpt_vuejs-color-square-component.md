@@ -1,13 +1,19 @@
 ---
-title: "VueJS Color Square Component"
-type: note
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: ab0b2ac8-1719-4b2e-9fc5-9643afa39e85
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: VueJS Color Square Component
+type: note
+updated: 2023-02-05
 ---
+
 # VueJS Color Square Component
 
 > Conversation ID: ab0b2ac8-1719-4b2e-9fc5-9643afa39e85

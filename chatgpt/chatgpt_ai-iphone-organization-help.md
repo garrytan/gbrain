@@ -1,13 +1,18 @@
 ---
-title: "AI iPhone Organization Help"
-type: note
-created: 2026-05-27
-updated: 2026-05-27
-source: chatgpt-export
 conversation_id: 6a16663a-a3a0-83e8-a2ac-1d17bde38db3
+created: 2026-05-27
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AI iPhone Organization Help
+type: note
+updated: 2026-05-27
 ---
+
 # AI iPhone Organization Help
 
 > Conversation ID: 6a16663a-a3a0-83e8-a2ac-1d17bde38db3

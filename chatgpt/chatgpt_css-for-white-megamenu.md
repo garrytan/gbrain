@@ -1,13 +1,20 @@
 ---
-title: "CSS for White MegaMenu."
-type: essay
-created: 2023-04-02
-updated: 2023-04-02
-source: chatgpt-export
 conversation_id: aa330af9-0143-4f80-a8d0-4c4657395490
+created: 2023-04-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 60
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: CSS for White MegaMenu.
+type: essay
+updated: 2023-04-02
 ---
+
 # CSS for White MegaMenu.
 
 > Conversation ID: aa330af9-0143-4f80-a8d0-4c4657395490

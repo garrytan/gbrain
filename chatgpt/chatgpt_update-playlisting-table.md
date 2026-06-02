@@ -1,13 +1,18 @@
 ---
-title: "Update Playlisting Table"
-type: note
-created: 2024-06-05
-updated: 2024-06-05
-source: chatgpt-export
 conversation_id: c11af44d-0f91-4a87-82ba-9c3a502eee78
+created: 2024-06-05
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Update Playlisting Table
+type: note
+updated: 2024-06-05
 ---
+
 # Update Playlisting Table
 
 > Conversation ID: c11af44d-0f91-4a87-82ba-9c3a502eee78

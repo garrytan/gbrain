@@ -1,13 +1,20 @@
 ---
-title: "Vue.js profile picture component"
-type: guide
-created: 2023-04-29
-updated: 2023-04-29
-source: chatgpt-export
 conversation_id: 530029d0-fe75-4786-b54e-f3f66b9a9c42
+created: 2023-04-29
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js profile picture component
+type: guide
+updated: 2023-04-29
 ---
+
 # Vue.js profile picture component
 
 > Conversation ID: 530029d0-fe75-4786-b54e-f3f66b9a9c42

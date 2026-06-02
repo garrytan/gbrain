@@ -1,13 +1,19 @@
 ---
-title: "DJ Set Playlist Ideas"
-type: note
-created: 2025-02-22
-updated: 2025-02-22
-source: chatgpt-export
 conversation_id: 67b91d12-51a8-8007-8734-825bb8fb64bc
+created: 2025-02-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: DJ Set Playlist Ideas
+type: note
+updated: 2025-02-22
 ---
+
 # DJ Set Playlist Ideas
 
 > Conversation ID: 67b91d12-51a8-8007-8734-825bb8fb64bc

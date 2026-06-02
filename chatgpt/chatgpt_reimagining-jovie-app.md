@@ -1,13 +1,18 @@
 ---
-title: "Reimagining Jovie App"
-type: note
-created: 2026-05-10
-updated: 2026-05-10
-source: chatgpt-export
 conversation_id: 69ffe084-d7ec-83e8-b56e-df7f5bdf45df
+created: 2026-05-10
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Reimagining Jovie App
+type: note
+updated: 2026-05-10
 ---
+
 # Reimagining Jovie App
 
 > Conversation ID: 69ffe084-d7ec-83e8-b56e-df7f5bdf45df

@@ -1,13 +1,20 @@
 ---
-title: "Jack Clark Claude Use"
-type: guide
-created: 2026-01-15
-updated: 2026-01-15
-source: chatgpt-export
 conversation_id: 69694091-ef58-8333-8e5d-85ff6daf1159
+created: 2026-01-15
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jack Clark Claude Use
+type: guide
+updated: 2026-01-15
 ---
+
 # Jack Clark Claude Use
 
 > Conversation ID: 69694091-ef58-8333-8e5d-85ff6daf1159

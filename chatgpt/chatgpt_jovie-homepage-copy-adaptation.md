@@ -1,13 +1,18 @@
 ---
-title: "Jovie Homepage Copy Adaptation"
-type: note
-created: 2026-02-25
-updated: 2026-02-25
-source: chatgpt-export
 conversation_id: 699f4be8-d18c-8333-8fbb-a0b8a26bf2bf
+created: 2026-02-25
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Jovie Homepage Copy Adaptation
+type: note
+updated: 2026-02-25
 ---
+
 # Jovie Homepage Copy Adaptation
 
 > Conversation ID: 699f4be8-d18c-8333-8fbb-a0b8a26bf2bf

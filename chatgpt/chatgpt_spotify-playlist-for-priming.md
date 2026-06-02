@@ -1,13 +1,18 @@
 ---
-title: "Spotify Playlist for Priming"
-type: note
-created: 2026-03-23
-updated: 2026-03-23
-source: chatgpt-export
 conversation_id: 69c1cd51-909c-83e8-85e9-b3a2e792b2c3
+created: 2026-03-23
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spotify Playlist for Priming
+type: note
+updated: 2026-03-23
 ---
+
 # Spotify Playlist for Priming
 
 > Conversation ID: 69c1cd51-909c-83e8-85e9-b3a2e792b2c3

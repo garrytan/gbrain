@@ -1,13 +1,18 @@
 ---
-title: "Best Model for Design Systems"
-type: note
-created: 2026-01-08
-updated: 2026-01-08
-source: chatgpt-export
 conversation_id: 695f2245-8478-8329-8e18-9a8fc3cc8946
+created: 2026-01-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Best Model for Design Systems
+type: note
+updated: 2026-01-08
 ---
+
 # Best Model for Design Systems
 
 > Conversation ID: 695f2245-8478-8329-8e18-9a8fc3cc8946

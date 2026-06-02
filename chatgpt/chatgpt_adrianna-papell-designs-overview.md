@@ -1,13 +1,18 @@
 ---
-title: "Adrianna Papell Designs Overview"
-type: note
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695ec4fd-be00-832c-97df-9c2e27edfa95
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Adrianna Papell Designs Overview
+type: note
+updated: 2026-01-07
 ---
+
 # Adrianna Papell Designs Overview
 
 > Conversation ID: 695ec4fd-be00-832c-97df-9c2e27edfa95

@@ -1,13 +1,18 @@
 ---
-title: "iPhone 17 Pro case compatibility"
-type: note
-created: 2025-12-02
-updated: 2025-12-02
-source: chatgpt-export
 conversation_id: 692e3ff2-660c-8332-8d1a-dfd93b552a4e
+created: 2025-12-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iPhone 17 Pro case compatibility
+type: note
+updated: 2025-12-02
 ---
+
 # iPhone 17 Pro case compatibility
 
 > Conversation ID: 692e3ff2-660c-8332-8d1a-dfd93b552a4e

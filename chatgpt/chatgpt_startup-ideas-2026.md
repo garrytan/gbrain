@@ -1,13 +1,18 @@
 ---
-title: "Startup Ideas 2026"
-type: note
-created: 2026-02-20
-updated: 2026-02-20
-source: chatgpt-export
 conversation_id: 6998e5d8-174c-8330-b46c-fe5c4e8be4d8
+created: 2026-02-20
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Startup Ideas 2026
+type: note
+updated: 2026-02-20
 ---
+
 # Startup Ideas 2026
 
 > Conversation ID: 6998e5d8-174c-8330-b46c-fe5c4e8be4d8

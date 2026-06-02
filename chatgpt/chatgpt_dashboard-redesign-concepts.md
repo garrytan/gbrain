@@ -1,13 +1,19 @@
 ---
-title: "Dashboard Redesign Concepts"
-type: note
-created: 2026-04-24
-updated: 2026-04-24
-source: chatgpt-export
 conversation_id: 69eb87d7-1e14-83e8-b92e-6e0d71322e80
+created: 2026-04-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Dashboard Redesign Concepts
+type: note
+updated: 2026-04-24
 ---
+
 # Dashboard Redesign Concepts
 
 > Conversation ID: 69eb87d7-1e14-83e8-b92e-6e0d71322e80

@@ -1,13 +1,18 @@
 ---
-title: "AI Label Ops for Artists"
-type: note
-created: 2026-04-30
-updated: 2026-04-30
-source: chatgpt-export
 conversation_id: 69f2e598-d61c-83e8-b28d-1ece99768908
+created: 2026-04-30
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AI Label Ops for Artists
+type: note
+updated: 2026-04-30
 ---
+
 # AI Label Ops for Artists
 
 > Conversation ID: 69f2e598-d61c-83e8-b28d-1ece99768908

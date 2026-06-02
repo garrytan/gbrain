@@ -1,13 +1,19 @@
 ---
-title: "Design improvement mockup"
-type: guide
-created: 2025-11-13
-updated: 2025-11-13
-source: chatgpt-export
 conversation_id: 69166f0e-41cc-832b-bf31-e10147ddd9eb
+created: 2025-11-13
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Design improvement mockup
+type: guide
+updated: 2025-11-13
 ---
+
 # Design improvement mockup
 
 > Conversation ID: 69166f0e-41cc-832b-bf31-e10147ddd9eb

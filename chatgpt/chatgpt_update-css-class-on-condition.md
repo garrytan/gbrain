@@ -1,13 +1,19 @@
 ---
-title: "Update CSS Class on Condition"
-type: note
-created: 2022-12-24
-updated: 2022-12-24
-source: chatgpt-export
 conversation_id: 47c46c45-05d6-4b83-8bee-04bc07c76ef0
+created: 2022-12-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Update CSS Class on Condition
+type: note
+updated: 2022-12-24
 ---
+
 # Update CSS Class on Condition
 
 > Conversation ID: 47c46c45-05d6-4b83-8bee-04bc07c76ef0

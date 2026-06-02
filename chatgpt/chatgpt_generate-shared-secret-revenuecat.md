@@ -1,13 +1,20 @@
 ---
-title: "Generate Shared Secret RevenueCat"
-type: guide
-created: 2025-06-10
-updated: 2025-06-10
-source: chatgpt-export
 conversation_id: 68479884-2a90-8007-af45-c9d13151cd4e
+created: 2025-06-10
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 26
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Generate Shared Secret RevenueCat
+type: guide
+updated: 2025-06-10
 ---
+
 # Generate Shared Secret RevenueCat
 
 > Conversation ID: 68479884-2a90-8007-af45-c9d13151cd4e

@@ -1,13 +1,18 @@
 ---
-title: "Mobile UI Fixes"
-type: note
-created: 2026-03-01
-updated: 2026-03-01
-source: chatgpt-export
 conversation_id: 69a49a7c-14c8-8333-a66d-ae076d97fd7c
+created: 2026-03-01
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Mobile UI Fixes
+type: note
+updated: 2026-03-01
 ---
+
 # Mobile UI Fixes
 
 > Conversation ID: 69a49a7c-14c8-8333-a66d-ae076d97fd7c

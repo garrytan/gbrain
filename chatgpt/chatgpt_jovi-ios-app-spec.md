@@ -1,13 +1,19 @@
 ---
-title: "Jovi iOS App Spec"
-type: note
-created: 2026-04-11
-updated: 2026-04-11
-source: chatgpt-export
 conversation_id: 69d9aaf4-d604-83e8-acba-9d404a883250
+created: 2026-04-11
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Jovi iOS App Spec
+type: note
+updated: 2026-04-11
 ---
+
 # Jovi iOS App Spec
 
 > Conversation ID: 69d9aaf4-d604-83e8-acba-9d404a883250

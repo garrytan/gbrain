@@ -1,13 +1,18 @@
 ---
-title: "Luxury Recording Studio Malibu"
-type: note
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f17fee-6f28-83e8-baf9-cc09bc5ef202
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Luxury Recording Studio Malibu
+type: note
+updated: 2026-04-29
 ---
+
 # Luxury Recording Studio Malibu
 
 > Conversation ID: 69f17fee-6f28-83e8-baf9-cc09bc5ef202

@@ -1,13 +1,18 @@
 ---
-title: "Statsig iOS support"
-type: note
-created: 2025-11-21
-updated: 2025-11-21
-source: chatgpt-export
 conversation_id: 6920dd2f-28e0-8332-b89c-2645b4ebbf04
+created: 2025-11-21
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Statsig iOS support
+type: note
+updated: 2025-11-21
 ---
+
 # Statsig iOS support
 
 > Conversation ID: 6920dd2f-28e0-8332-b89c-2645b4ebbf04

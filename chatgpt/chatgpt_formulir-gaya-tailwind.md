@@ -1,13 +1,19 @@
 ---
-title: "Formulir Gaya Tailwind"
-type: guide
-created: 2024-02-27
-updated: 2024-02-27
-source: chatgpt-export
 conversation_id: 37f64f22-35a5-4f32-9f95-c062cc763863
+created: 2024-02-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Formulir Gaya Tailwind
+type: guide
+updated: 2024-02-27
 ---
+
 # Formulir Gaya Tailwind
 
 > Conversation ID: 37f64f22-35a5-4f32-9f95-c062cc763863

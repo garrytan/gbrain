@@ -1,13 +1,20 @@
 ---
-title: "Footer CPA Animation Idea"
-type: guide
-created: 2026-04-27
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69efd159-a238-83e8-8103-984ee74450b2
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Footer CPA Animation Idea
+type: guide
+updated: 2026-04-28
 ---
+
 # Footer CPA Animation Idea
 
 > Conversation ID: 69efd159-a238-83e8-8103-984ee74450b2

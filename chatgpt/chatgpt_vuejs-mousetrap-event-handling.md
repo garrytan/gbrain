@@ -1,13 +1,19 @@
 ---
-title: "Vue.js MouseTrap Event Handling"
-type: note
-created: 2022-12-20
-updated: 2022-12-20
-source: chatgpt-export
 conversation_id: e37f73dc-11cf-45cc-847d-2d17e3d47c08
+created: 2022-12-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js MouseTrap Event Handling
+type: note
+updated: 2022-12-20
 ---
+
 # Vue.js MouseTrap Event Handling
 
 > Conversation ID: e37f73dc-11cf-45cc-847d-2d17e3d47c08

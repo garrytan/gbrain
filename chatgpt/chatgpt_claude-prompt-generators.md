@@ -1,13 +1,18 @@
 ---
-title: "Claude prompt generators"
-type: note
-created: 2025-12-21
-updated: 2025-12-21
-source: chatgpt-export
 conversation_id: 69486271-bf84-832b-a622-5655fa000398
+created: 2025-12-21
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude prompt generators
+type: note
+updated: 2025-12-21
 ---
+
 # Claude prompt generators
 
 > Conversation ID: 69486271-bf84-832b-a622-5655fa000398

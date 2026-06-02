@@ -1,13 +1,20 @@
 ---
-title: "OTP Autofill on iOS/macOS"
-type: guide
-created: 2025-12-28
-updated: 2025-12-28
-source: chatgpt-export
 conversation_id: 69519d9f-2090-832c-8a48-d39fa6c538e4
+created: 2025-12-28
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: OTP Autofill on iOS/macOS
+type: guide
+updated: 2025-12-28
 ---
+
 # OTP Autofill on iOS/macOS
 
 > Conversation ID: 69519d9f-2090-832c-8a48-d39fa6c538e4

@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Table Class Generation"
-type: guide
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: 4a83ba55-4f3e-4023-b5de-7e0075891695
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Table Class Generation
+type: guide
+updated: 2023-02-05
 ---
+
 # Vue.js Table Class Generation
 
 > Conversation ID: 4a83ba55-4f3e-4023-b5de-7e0075891695

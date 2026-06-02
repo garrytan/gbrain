@@ -1,13 +1,20 @@
 ---
-title: "HTML Contact Element Description"
-type: guide
-created: 2023-01-27
-updated: 2023-01-27
-source: chatgpt-export
 conversation_id: 65d8b9af-2d6f-4006-ac85-cbcede206a8a
+created: 2023-01-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 12
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: HTML Contact Element Description
+type: guide
+updated: 2023-01-27
 ---
+
 # HTML Contact Element Description
 
 > Conversation ID: 65d8b9af-2d6f-4006-ac85-cbcede206a8a

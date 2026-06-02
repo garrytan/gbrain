@@ -1,13 +1,20 @@
 ---
-title: "Jovie Analysis and Plan"
-type: essay
-created: 2026-05-07
-updated: 2026-05-08
-source: chatgpt-export
 conversation_id: 69fcff88-de48-83e8-815f-62b8cbd5bfc9
+created: 2026-05-07
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 23
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie Analysis and Plan
+type: essay
+updated: 2026-05-08
 ---
+
 # Jovie Analysis and Plan
 
 > Conversation ID: 69fcff88-de48-83e8-815f-62b8cbd5bfc9

@@ -1,13 +1,19 @@
 ---
-title: "Startup application strategy"
-type: essay
-created: 2025-08-08
-updated: 2025-08-08
-source: chatgpt-export
 conversation_id: 68963504-8698-8332-9917-a43c91c90003
+created: 2025-08-08
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 20
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Startup application strategy
+type: essay
+updated: 2025-08-08
 ---
+
 # Startup application strategy
 
 > Conversation ID: 68963504-8698-8332-9917-a43c91c90003

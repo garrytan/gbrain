@@ -1,13 +1,20 @@
 ---
-title: "Flutter Laravel Account Registration"
-type: essay
-created: 2024-01-22
-updated: 2024-01-23
-source: chatgpt-export
 conversation_id: e4340e58-4bab-4d78-97b9-0c5e8585317a
+created: 2024-01-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 77
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Flutter Laravel Account Registration
+type: essay
+updated: 2024-01-23
 ---
+
 # Flutter Laravel Account Registration
 
 > Conversation ID: e4340e58-4bab-4d78-97b9-0c5e8585317a

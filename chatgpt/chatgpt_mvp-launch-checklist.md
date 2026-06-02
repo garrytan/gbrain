@@ -1,13 +1,19 @@
 ---
-title: "MVP launch checklist"
-type: essay
-created: 2025-12-21
-updated: 2025-12-21
-source: chatgpt-export
 conversation_id: 694828f1-f1fc-832f-948b-50add9969674
+created: 2025-12-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 18
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: MVP launch checklist
+type: essay
+updated: 2025-12-21
 ---
+
 # MVP launch checklist
 
 > Conversation ID: 694828f1-f1fc-832f-948b-50add9969674

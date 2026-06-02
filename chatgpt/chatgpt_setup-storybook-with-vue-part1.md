@@ -1,13 +1,20 @@
 ---
-title: "Setup Storybook with Vue"
-type: essay
-created: 2023-01-21
-updated: 2023-01-21
-source: chatgpt-export
 conversation_id: f6baaa4c-c7e2-4718-8dda-38eda649b486
+created: 2023-01-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 32
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Setup Storybook with Vue
+type: essay
+updated: 2023-01-21
 ---
+
 # Setup Storybook with Vue
 
 > Conversation ID: f6baaa4c-c7e2-4718-8dda-38eda649b486

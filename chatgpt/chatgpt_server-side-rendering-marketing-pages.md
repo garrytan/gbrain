@@ -1,13 +1,18 @@
 ---
-title: "Server-Side Rendering Marketing Pages"
-type: note
-created: 2023-01-04
-updated: 2023-01-04
-source: chatgpt-export
 conversation_id: 24aa83da-7bac-48f1-a477-e4300068d42b
+created: 2023-01-04
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Server-Side Rendering Marketing Pages
+type: note
+updated: 2023-01-04
 ---
+
 # Server-Side Rendering Marketing Pages
 
 > Conversation ID: 24aa83da-7bac-48f1-a477-e4300068d42b

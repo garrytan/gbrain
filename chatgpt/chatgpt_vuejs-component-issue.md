@@ -1,13 +1,20 @@
 ---
-title: "Vue.js component issue"
-type: guide
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: bb3fcf62-1531-4f17-9379-8bc16eef9cef
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js component issue
+type: guide
+updated: 2022-12-21
 ---
+
 # Vue.js component issue
 
 > Conversation ID: bb3fcf62-1531-4f17-9379-8bc16eef9cef

@@ -1,13 +1,18 @@
 ---
-title: "LogYourBody Favicon Design"
-type: note
-created: 2025-06-08
-updated: 2025-06-08
-source: chatgpt-export
 conversation_id: 6845eeac-e08c-8007-a3fa-b47fc1da9884
+created: 2025-06-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: LogYourBody Favicon Design
+type: note
+updated: 2025-06-08
 ---
+
 # LogYourBody Favicon Design
 
 > Conversation ID: 6845eeac-e08c-8007-a3fa-b47fc1da9884

@@ -1,13 +1,18 @@
 ---
-title: "CarPlay audio issue fix"
-type: note
-created: 2025-08-02
-updated: 2025-08-02
-source: chatgpt-export
 conversation_id: 688e81f7-0dec-832c-bf09-2e18616e7579
+created: 2025-08-02
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: CarPlay audio issue fix
+type: note
+updated: 2025-08-02
 ---
+
 # CarPlay audio issue fix
 
 > Conversation ID: 688e81f7-0dec-832c-bf09-2e18616e7579

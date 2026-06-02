@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Component Grid."
-type: guide
-created: 2023-02-25
-updated: 2023-02-25
-source: chatgpt-export
 conversation_id: a1499be7-81ef-4ac0-81d6-4c3b4cb8d2ef
+created: 2023-02-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Component Grid.
+type: guide
+updated: 2023-02-25
 ---
+
 # Vue.js Component Grid.
 
 > Conversation ID: a1499be7-81ef-4ac0-81d6-4c3b4cb8d2ef

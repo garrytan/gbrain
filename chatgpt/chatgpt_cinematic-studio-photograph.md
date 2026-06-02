@@ -1,13 +1,18 @@
 ---
-title: "Cinematic Studio Photograph"
-type: note
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f16b32-a934-83e8-86eb-13db8870c6ce
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cinematic Studio Photograph
+type: note
+updated: 2026-04-29
 ---
+
 # Cinematic Studio Photograph
 
 > Conversation ID: 69f16b32-a934-83e8-86eb-13db8870c6ce

@@ -1,13 +1,18 @@
 ---
-title: "LLM Contrastive Correction"
-type: note
-created: 2026-02-25
-updated: 2026-02-25
-source: chatgpt-export
 conversation_id: 699f3837-06a8-8333-9296-0b306f8f721a
+created: 2026-02-25
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: LLM Contrastive Correction
+type: note
+updated: 2026-02-25
 ---
+
 # LLM Contrastive Correction
 
 > Conversation ID: 699f3837-06a8-8333-9296-0b306f8f721a

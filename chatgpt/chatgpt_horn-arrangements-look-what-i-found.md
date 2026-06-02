@@ -1,13 +1,18 @@
 ---
-title: "Horn arrangements Look What I Found"
-type: note
-created: 2025-09-05
-updated: 2025-09-05
-source: chatgpt-export
 conversation_id: 68bab1c5-7264-832b-adb5-8e91af898c98
+created: 2025-09-05
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Horn arrangements Look What I Found
+type: note
+updated: 2025-09-05
 ---
+
 # Horn arrangements Look What I Found
 
 > Conversation ID: 68bab1c5-7264-832b-adb5-8e91af898c98

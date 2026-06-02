@@ -1,13 +1,20 @@
 ---
-title: "Cinematic DJ Demo Script"
-type: essay
-created: 2026-05-18
-updated: 2026-05-18
-source: chatgpt-export
 conversation_id: 6a0b639f-7120-83e8-b434-1836512dca65
+created: 2026-05-18
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 7
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Cinematic DJ Demo Script
+type: essay
+updated: 2026-05-18
 ---
+
 # Cinematic DJ Demo Script
 
 > Conversation ID: 6a0b639f-7120-83e8-b434-1836512dca65

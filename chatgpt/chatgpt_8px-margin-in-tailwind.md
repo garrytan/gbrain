@@ -1,13 +1,18 @@
 ---
-title: "8px margin in Tailwind"
-type: note
-created: 2026-01-10
-updated: 2026-01-10
-source: chatgpt-export
 conversation_id: 6961d320-9400-832a-9b7f-775bb24b04c3
+created: 2026-01-10
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 8px margin in Tailwind
+type: note
+updated: 2026-01-10
 ---
+
 # 8px margin in Tailwind
 
 > Conversation ID: 6961d320-9400-832a-9b7f-775bb24b04c3

@@ -1,13 +1,18 @@
 ---
-title: "Design upgrade suggestions"
-type: note
-created: 2025-11-22
-updated: 2025-11-22
-source: chatgpt-export
 conversation_id: 69212255-bc7c-8325-8ab2-90254b3f6c38
+created: 2025-11-22
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Design upgrade suggestions
+type: note
+updated: 2025-11-22
 ---
+
 # Design upgrade suggestions
 
 > Conversation ID: 69212255-bc7c-8325-8ab2-90254b3f6c38

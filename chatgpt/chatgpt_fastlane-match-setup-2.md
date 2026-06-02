@@ -1,13 +1,20 @@
 ---
-title: "Fastlane match setup"
-type: guide
-created: 2025-07-23
-updated: 2025-07-23
-source: chatgpt-export
 conversation_id: 688033da-5f1c-8329-9358-b8072a04feb7
+created: 2025-07-23
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 26
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Fastlane match setup
+type: guide
+updated: 2025-07-23
 ---
+
 # Fastlane match setup
 
 > Conversation ID: 688033da-5f1c-8329-9358-b8072a04feb7

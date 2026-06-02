@@ -1,13 +1,18 @@
 ---
-title: "Android Security Tools Request"
-type: note
-created: 2025-03-14
-updated: 2025-03-14
-source: chatgpt-export
 conversation_id: 67d37f39-81d8-8007-93ad-f6817b55206b
+created: 2025-03-14
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 5
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Android Security Tools Request
+type: note
+updated: 2025-03-14
 ---
+
 # Android Security Tools Request
 
 > Conversation ID: 67d37f39-81d8-8007-93ad-f6817b55206b

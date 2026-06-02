@@ -1,13 +1,19 @@
 ---
-title: "JavaScript Function Fix"
-type: note
-created: 2023-02-12
-updated: 2023-02-12
-source: chatgpt-export
 conversation_id: f7f0f4d0-4aa6-41b0-a250-3e3ed2099a58
+created: 2023-02-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: JavaScript Function Fix
+type: note
+updated: 2023-02-12
 ---
+
 # JavaScript Function Fix
 
 > Conversation ID: f7f0f4d0-4aa6-41b0-a250-3e3ed2099a58

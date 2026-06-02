@@ -1,13 +1,18 @@
 ---
-title: "ChatGPT Changelog January 2026"
-type: note
-created: 2026-01-27
-updated: 2026-01-27
-source: chatgpt-export
 conversation_id: 69786f42-2024-8331-81ba-796fd7b944f3
+created: 2026-01-27
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: ChatGPT Changelog January 2026
+type: note
+updated: 2026-01-27
 ---
+
 # ChatGPT Changelog January 2026
 
 > Conversation ID: 69786f42-2024-8331-81ba-796fd7b944f3

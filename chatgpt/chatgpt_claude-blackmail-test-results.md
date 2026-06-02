@@ -1,13 +1,18 @@
 ---
-title: "Claude Blackmail Test Results"
-type: note
-created: 2025-05-26
-updated: 2025-05-26
-source: chatgpt-export
 conversation_id: 6834a6ba-7d84-8007-a735-f1cbc0f9ae60
+created: 2025-05-26
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude Blackmail Test Results
+type: note
+updated: 2025-05-26
 ---
+
 # Claude Blackmail Test Results
 
 > Conversation ID: 6834a6ba-7d84-8007-a735-f1cbc0f9ae60

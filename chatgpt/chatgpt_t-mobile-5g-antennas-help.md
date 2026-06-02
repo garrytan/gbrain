@@ -1,13 +1,18 @@
 ---
-title: "T-Mobile 5G Antennas Help"
-type: note
-created: 2026-01-10
-updated: 2026-01-10
-source: chatgpt-export
 conversation_id: 6961e8fd-ccf8-832b-832c-ca8e6ab8b4c7
+created: 2026-01-10
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: T-Mobile 5G Antennas Help
+type: note
+updated: 2026-01-10
 ---
+
 # T-Mobile 5G Antennas Help
 
 > Conversation ID: 6961e8fd-ccf8-832b-832c-ca8e6ab8b4c7

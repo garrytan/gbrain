@@ -1,13 +1,18 @@
 ---
-title: "\"Vue Default Export TypeError\""
-type: note
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: b42ba47c-6a55-49e2-b687-42bff6d61394
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: '"Vue Default Export TypeError"'
+type: note
+updated: 2023-02-05
 ---
+
 # "Vue Default Export TypeError"
 
 > Conversation ID: b42ba47c-6a55-49e2-b687-42bff6d61394

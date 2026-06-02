@@ -1,13 +1,18 @@
 ---
-title: "Transfer T-Mobile account line"
-type: note
-created: 2025-12-02
-updated: 2025-12-02
-source: chatgpt-export
 conversation_id: 692e3131-1434-832c-8f69-44d55319bb3c
+created: 2025-12-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Transfer T-Mobile account line
+type: note
+updated: 2025-12-02
 ---
+
 # Transfer T-Mobile account line
 
 > Conversation ID: 692e3131-1434-832c-8f69-44d55319bb3c

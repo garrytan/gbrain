@@ -1,13 +1,19 @@
 ---
-title: "Modifying Vue Method: Editable Check"
-type: note
-created: 2023-06-03
-updated: 2023-06-03
-source: chatgpt-export
 conversation_id: 4f0dbe7c-a2c0-401e-9330-90528be9e067
+created: 2023-06-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Modifying Vue Method: Editable Check'
+type: note
+updated: 2023-06-03
 ---
+
 # Modifying Vue Method: Editable Check
 
 > Conversation ID: 4f0dbe7c-a2c0-401e-9330-90528be9e067

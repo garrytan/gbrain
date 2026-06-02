@@ -1,13 +1,20 @@
 ---
-title: "Jovie link-in-bio plan"
-type: essay
-created: 2025-08-02
-updated: 2025-08-03
-source: chatgpt-export
 conversation_id: 688d9f04-bbf4-832c-b3fe-81c1b3f013ad
+created: 2025-08-02
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 110
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie link-in-bio plan
+type: essay
+updated: 2025-08-03
 ---
+
 # Jovie link-in-bio plan
 
 > Conversation ID: 688d9f04-bbf4-832c-b3fe-81c1b3f013ad

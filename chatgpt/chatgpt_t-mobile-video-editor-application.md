@@ -1,13 +1,18 @@
 ---
-title: "T-Mobile Video Editor Application"
-type: note
-created: 2025-06-09
-updated: 2025-06-09
-source: chatgpt-export
 conversation_id: 6846fca8-ba64-8007-b72f-a2f315e4df6f
+created: 2025-06-09
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: T-Mobile Video Editor Application
+type: note
+updated: 2025-06-09
 ---
+
 # T-Mobile Video Editor Application
 
 > Conversation ID: 6846fca8-ba64-8007-b72f-a2f315e4df6f

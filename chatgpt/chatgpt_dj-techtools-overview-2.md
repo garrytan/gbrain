@@ -1,13 +1,18 @@
 ---
-title: "DJ TechTools Overview"
-type: note
-created: 2025-01-20
-updated: 2025-01-20
-source: chatgpt-export
 conversation_id: 678ede24-dc40-8007-bd76-10e187f7c7fb
+created: 2025-01-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJ TechTools Overview
+type: note
+updated: 2025-01-20
 ---
+
 # DJ TechTools Overview
 
 > Conversation ID: 678ede24-dc40-8007-bd76-10e187f7c7fb

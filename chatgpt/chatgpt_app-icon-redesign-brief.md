@@ -1,13 +1,18 @@
 ---
-title: "App Icon Redesign Brief"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a07e0cf-6564-83e8-9c41-b1afc409c487
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: App Icon Redesign Brief
+type: note
+updated: 2026-05-16
 ---
+
 # App Icon Redesign Brief
 
 > Conversation ID: 6a07e0cf-6564-83e8-9c41-b1afc409c487

@@ -1,13 +1,18 @@
 ---
-title: "Claude capabilities overview"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6972c5f8-0860-832a-aa03-6eecf998c6fe
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude capabilities overview
+type: note
+updated: 2026-01-23
 ---
+
 # Claude capabilities overview
 
 > Conversation ID: 6972c5f8-0860-832a-aa03-6eecf998c6fe

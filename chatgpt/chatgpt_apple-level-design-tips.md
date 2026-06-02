@@ -1,13 +1,20 @@
 ---
-title: "Apple-level design tips"
-type: essay
-created: 2025-11-03
-updated: 2025-11-03
-source: chatgpt-export
 conversation_id: 69090c4e-8610-8328-88e9-a28b539f6533
+created: 2025-11-03
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Apple-level design tips
+type: essay
+updated: 2025-11-03
 ---
+
 # Apple-level design tips
 
 > Conversation ID: 69090c4e-8610-8328-88e9-a28b539f6533

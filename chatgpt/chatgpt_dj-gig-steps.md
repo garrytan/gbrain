@@ -1,13 +1,18 @@
 ---
-title: "DJ Gig Steps"
-type: note
-created: 2024-02-28
-updated: 2024-02-28
-source: chatgpt-export
 conversation_id: 7cee2ce3-7bb0-4270-9240-009188c706b9
+created: 2024-02-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJ Gig Steps
+type: note
+updated: 2024-02-28
 ---
+
 # DJ Gig Steps
 
 > Conversation ID: 7cee2ce3-7bb0-4270-9240-009188c706b9

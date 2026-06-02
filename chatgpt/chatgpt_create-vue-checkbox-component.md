@@ -1,13 +1,19 @@
 ---
-title: "Create Vue Checkbox Component"
-type: note
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: f3c5fcf7-aa0c-4821-bea4-11a6b527146d
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Create Vue Checkbox Component
+type: note
+updated: 2022-12-23
 ---
+
 # Create Vue Checkbox Component
 
 > Conversation ID: f3c5fcf7-aa0c-4821-bea4-11a6b527146d

@@ -1,13 +1,18 @@
 ---
-title: "Tailwind UI overview"
-type: note
-created: 2025-08-20
-updated: 2025-08-20
-source: chatgpt-export
 conversation_id: 68a641f3-53c8-8323-ace8-f8f2b39bfe7a
+created: 2025-08-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tailwind UI overview
+type: note
+updated: 2025-08-20
 ---
+
 # Tailwind UI overview
 
 > Conversation ID: 68a641f3-53c8-8323-ace8-f8f2b39bfe7a

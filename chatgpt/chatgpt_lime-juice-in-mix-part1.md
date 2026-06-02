@@ -1,13 +1,19 @@
 ---
-title: "Lime Juice in Mix"
-type: essay
-created: 2024-06-28
-updated: 2024-06-28
-source: chatgpt-export
 conversation_id: df966262-700e-47c8-a3fb-a3ff64405fda
+created: 2024-06-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 106
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Lime Juice in Mix
+type: essay
+updated: 2024-06-28
 ---
+
 # Lime Juice in Mix
 
 > Conversation ID: df966262-700e-47c8-a3fb-a3ff64405fda

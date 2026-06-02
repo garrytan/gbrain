@@ -1,13 +1,19 @@
 ---
-title: "CSS Conversion: PX-8"
-type: note
-created: 2023-04-20
-updated: 2023-04-20
-source: chatgpt-export
 conversation_id: 61fd1294-8d58-43fb-a1c9-7756aa85a730
+created: 2023-04-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'CSS Conversion: PX-8'
+type: note
+updated: 2023-04-20
 ---
+
 # CSS Conversion: PX-8
 
 > Conversation ID: 61fd1294-8d58-43fb-a1c9-7756aa85a730

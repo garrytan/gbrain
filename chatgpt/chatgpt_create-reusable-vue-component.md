@@ -1,13 +1,19 @@
 ---
-title: "Create Reusable Vue Component"
-type: guide
-created: 2023-05-07
-updated: 2023-05-07
-source: chatgpt-export
 conversation_id: 9ff21d5b-feed-4625-8a85-0ed3d2b71436
+created: 2023-05-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Create Reusable Vue Component
+type: guide
+updated: 2023-05-07
 ---
+
 # Create Reusable Vue Component
 
 > Conversation ID: 9ff21d5b-feed-4625-8a85-0ed3d2b71436

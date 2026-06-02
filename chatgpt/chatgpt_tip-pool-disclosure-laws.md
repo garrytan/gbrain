@@ -1,13 +1,18 @@
 ---
-title: "Tip pool disclosure laws"
-type: note
-created: 2025-10-28
-updated: 2025-10-28
-source: chatgpt-export
 conversation_id: 69004966-be18-8329-b4e5-6371f27eb22f
+created: 2025-10-28
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tip pool disclosure laws
+type: note
+updated: 2025-10-28
 ---
+
 # Tip pool disclosure laws
 
 > Conversation ID: 69004966-be18-8329-b4e5-6371f27eb22f

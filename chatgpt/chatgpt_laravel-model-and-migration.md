@@ -1,13 +1,20 @@
 ---
-title: "Laravel Model and Migration"
-type: essay
-created: 2023-01-04
-updated: 2023-01-04
-source: chatgpt-export
 conversation_id: b4346c49-f890-483a-a2e9-099c57e98cda
+created: 2023-01-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 38
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Laravel Model and Migration
+type: essay
+updated: 2023-01-04
 ---
+
 # Laravel Model and Migration
 
 > Conversation ID: b4346c49-f890-483a-a2e9-099c57e98cda

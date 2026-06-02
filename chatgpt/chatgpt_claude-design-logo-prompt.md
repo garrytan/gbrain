@@ -1,13 +1,20 @@
 ---
-title: "Claude Design Logo Prompt"
-type: guide
-created: 2026-04-23
-updated: 2026-04-23
-source: chatgpt-export
 conversation_id: 69eaa8b7-431c-83e8-9ad7-8e3f850d540a
+created: 2026-04-23
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 5
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Claude Design Logo Prompt
+type: guide
+updated: 2026-04-23
 ---
+
 # Claude Design Logo Prompt
 
 > Conversation ID: 69eaa8b7-431c-83e8-9ad7-8e3f850d540a

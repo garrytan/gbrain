@@ -1,13 +1,20 @@
 ---
-title: "Claude Code Cost Comparison"
-type: essay
-created: 2026-05-12
-updated: 2026-05-13
-source: chatgpt-export
 conversation_id: 6a03a567-3bc0-83e8-b780-0cb7b86d4b36
+created: 2026-05-12
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 36
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Claude Code Cost Comparison
+type: essay
+updated: 2026-05-13
 ---
+
 # Claude Code Cost Comparison
 
 > Conversation ID: 6a03a567-3bc0-83e8-b780-0cb7b86d4b36

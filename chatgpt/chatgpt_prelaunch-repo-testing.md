@@ -1,13 +1,20 @@
 ---
-title: "Prelaunch Repo Testing"
-type: guide
-created: 2026-04-15
-updated: 2026-04-15
-source: chatgpt-export
 conversation_id: 69def555-e490-83e8-acbb-0d1a92cd1826
+created: 2026-04-15
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 5
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Prelaunch Repo Testing
+type: guide
+updated: 2026-04-15
 ---
+
 # Prelaunch Repo Testing
 
 > Conversation ID: 69def555-e490-83e8-acbb-0d1a92cd1826

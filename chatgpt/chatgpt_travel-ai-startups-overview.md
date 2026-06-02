@@ -1,13 +1,19 @@
 ---
-title: "Travel AI Startups Overview"
-type: essay
-created: 2025-07-16
-updated: 2025-07-16
-source: chatgpt-export
 conversation_id: 68772869-a6a4-8007-ad29-02191aba6515
+created: 2025-07-16
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Travel AI Startups Overview
+type: essay
+updated: 2025-07-16
 ---
+
 # Travel AI Startups Overview
 
 > Conversation ID: 68772869-a6a4-8007-ad29-02191aba6515

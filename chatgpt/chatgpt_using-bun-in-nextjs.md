@@ -1,13 +1,20 @@
 ---
-title: "Using Bun in Next.js"
-type: guide
-created: 2025-12-05
-updated: 2025-12-05
-source: chatgpt-export
 conversation_id: 69328c56-fb38-8329-80f2-08e079c3b062
+created: 2025-12-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Using Bun in Next.js
+type: guide
+updated: 2025-12-05
 ---
+
 # Using Bun in Next.js
 
 > Conversation ID: 69328c56-fb38-8329-80f2-08e079c3b062

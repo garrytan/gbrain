@@ -1,13 +1,20 @@
 ---
-title: "Opus vs GPT Git Access"
-type: guide
-created: 2025-12-09
-updated: 2025-12-09
-source: chatgpt-export
 conversation_id: 6937ba91-2d7c-832d-8a75-bcdb860c3c31
+created: 2025-12-09
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Opus vs GPT Git Access
+type: guide
+updated: 2025-12-09
 ---
+
 # Opus vs GPT Git Access
 
 > Conversation ID: 6937ba91-2d7c-832d-8a75-bcdb860c3c31

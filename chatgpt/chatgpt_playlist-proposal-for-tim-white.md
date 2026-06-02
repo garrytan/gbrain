@@ -1,13 +1,19 @@
 ---
-title: "Playlist Proposal for Tim White"
-type: note
-created: 2024-05-07
-updated: 2024-05-11
-source: chatgpt-export
 conversation_id: 355fed44-7c0e-4e7c-b3b7-686e636baa69
+created: 2024-05-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Playlist Proposal for Tim White
+type: note
+updated: 2024-05-11
 ---
+
 # Playlist Proposal for Tim White
 
 > Conversation ID: 355fed44-7c0e-4e7c-b3b7-686e636baa69

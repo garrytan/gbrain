@@ -1,13 +1,18 @@
 ---
-title: "ZIPDJ Overview"
-type: note
-created: 2025-06-13
-updated: 2025-06-13
-source: chatgpt-export
 conversation_id: 684b8c33-1418-8007-a73f-b659f9ccf477
+created: 2025-06-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: ZIPDJ Overview
+type: note
+updated: 2025-06-13
 ---
+
 # ZIPDJ Overview
 
 > Conversation ID: 684b8c33-1418-8007-a73f-b659f9ccf477

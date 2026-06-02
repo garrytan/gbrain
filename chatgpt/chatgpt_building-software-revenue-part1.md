@@ -1,13 +1,19 @@
 ---
-title: "Building software revenue"
-type: essay
-created: 2025-11-08
-updated: 2025-11-08
-source: chatgpt-export
 conversation_id: 690eb62c-9bac-8330-8116-21799fc27694
+created: 2025-11-08
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 42
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Building software revenue
+type: essay
+updated: 2025-11-08
 ---
+
 # Building software revenue
 
 > Conversation ID: 690eb62c-9bac-8330-8116-21799fc27694

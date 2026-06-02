@@ -1,13 +1,18 @@
 ---
-title: "Neon Pricing Summary"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6973fa50-2984-8330-b10b-76af6cb0b29f
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Neon Pricing Summary
+type: note
+updated: 2026-01-23
 ---
+
 # Neon Pricing Summary
 
 > Conversation ID: 6973fa50-2984-8330-b10b-76af6cb0b29f

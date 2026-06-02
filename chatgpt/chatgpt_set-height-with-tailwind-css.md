@@ -1,13 +1,19 @@
 ---
-title: "Set height with Tailwind CSS"
-type: note
-created: 2023-05-06
-updated: 2023-05-06
-source: chatgpt-export
 conversation_id: 60157fc8-2c8e-40c1-92fa-ffed73b02a71
+created: 2023-05-06
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Set height with Tailwind CSS
+type: note
+updated: 2023-05-06
 ---
+
 # Set height with Tailwind CSS
 
 > Conversation ID: 60157fc8-2c8e-40c1-92fa-ffed73b02a71

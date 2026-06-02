@@ -1,13 +1,18 @@
 ---
-title: "Portrait Grid Design"
-type: note
-created: 2026-05-18
-updated: 2026-05-18
-source: chatgpt-export
 conversation_id: 6a0b7989-4454-83e8-8cd2-06ae0431adff
+created: 2026-05-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Portrait Grid Design
+type: note
+updated: 2026-05-18
 ---
+
 # Portrait Grid Design
 
 > Conversation ID: 6a0b7989-4454-83e8-8cd2-06ae0431adff

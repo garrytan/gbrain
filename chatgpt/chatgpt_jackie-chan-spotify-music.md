@@ -1,13 +1,18 @@
 ---
-title: "Jackie Chan Spotify Music"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679d881b-8478-8007-8bda-4c10967a5975
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Jackie Chan Spotify Music
+type: note
+updated: 2025-02-01
 ---
+
 # Jackie Chan Spotify Music
 
 > Conversation ID: 679d881b-8478-8007-8bda-4c10967a5975

@@ -1,13 +1,20 @@
 ---
-title: "Create Vue Chart Component"
-type: guide
-created: 2023-12-05
-updated: 2023-12-05
-source: chatgpt-export
 conversation_id: aa8d5d0c-bfe7-4615-afdb-13a194292374
+created: 2023-12-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Create Vue Chart Component
+type: guide
+updated: 2023-12-05
 ---
+
 # Create Vue Chart Component
 
 > Conversation ID: aa8d5d0c-bfe7-4615-afdb-13a194292374

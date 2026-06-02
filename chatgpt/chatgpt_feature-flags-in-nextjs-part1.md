@@ -1,13 +1,19 @@
 ---
-title: "Feature Flags in Next.js"
-type: essay
-created: 2025-06-21
-updated: 2025-06-21
-source: chatgpt-export
 conversation_id: 6856317b-56f4-8007-8a3a-0248271b46d1
+created: 2025-06-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 52
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Feature Flags in Next.js
+type: essay
+updated: 2025-06-21
 ---
+
 # Feature Flags in Next.js
 
 > Conversation ID: 6856317b-56f4-8007-8a3a-0248271b46d1

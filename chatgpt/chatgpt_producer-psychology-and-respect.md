@@ -1,13 +1,18 @@
 ---
-title: "Producer Psychology and Respect"
-type: note
-created: 2026-05-31
-updated: 2026-05-31
-source: chatgpt-export
 conversation_id: 6a1ca729-8dcc-83e8-b0d1-34f872dd34b5
+created: 2026-05-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Producer Psychology and Respect
+type: note
+updated: 2026-05-31
 ---
+
 # Producer Psychology and Respect
 
 > Conversation ID: 6a1ca729-8dcc-83e8-b0d1-34f872dd34b5

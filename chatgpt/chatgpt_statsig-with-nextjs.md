@@ -1,13 +1,19 @@
 ---
-title: "Statsig with Next.js"
-type: note
-created: 2026-02-01
-updated: 2026-02-01
-source: chatgpt-export
 conversation_id: 697ea22e-3338-8331-8ac1-75e4e0d2df20
+created: 2026-02-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Statsig with Next.js
+type: note
+updated: 2026-02-01
 ---
+
 # Statsig with Next.js
 
 > Conversation ID: 697ea22e-3338-8331-8ac1-75e4e0d2df20

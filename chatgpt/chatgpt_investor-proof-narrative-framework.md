@@ -1,13 +1,18 @@
 ---
-title: "Investor-proof narrative framework"
-type: note
-created: 2025-12-10
-updated: 2025-12-10
-source: chatgpt-export
 conversation_id: 6938efc8-7154-8327-a8ff-e0dd4a2d946d
+created: 2025-12-10
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Investor-proof narrative framework
+type: note
+updated: 2025-12-10
 ---
+
 # Investor-proof narrative framework
 
 > Conversation ID: 6938efc8-7154-8327-a8ff-e0dd4a2d946d

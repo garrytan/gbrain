@@ -1,13 +1,20 @@
 ---
-title: "Slack webhook GitHub Actions"
-type: guide
-created: 2025-12-16
-updated: 2025-12-16
-source: chatgpt-export
 conversation_id: 6941c0ea-32a4-832b-831a-28c496de7a0e
+created: 2025-12-16
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Slack webhook GitHub Actions
+type: guide
+updated: 2025-12-16
 ---
+
 # Slack webhook GitHub Actions
 
 > Conversation ID: 6941c0ea-32a4-832b-831a-28c496de7a0e

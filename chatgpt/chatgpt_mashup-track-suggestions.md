@@ -1,13 +1,19 @@
 ---
-title: "Mashup Track Suggestions"
-type: note
-created: 2025-02-24
-updated: 2025-02-24
-source: chatgpt-export
 conversation_id: 67bbeccb-27b0-8007-8805-114ef5ce347f
+created: 2025-02-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Mashup Track Suggestions
+type: note
+updated: 2025-02-24
 ---
+
 # Mashup Track Suggestions
 
 > Conversation ID: 67bbeccb-27b0-8007-8805-114ef5ce347f

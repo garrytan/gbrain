@@ -1,13 +1,18 @@
 ---
-title: "Activate T-Mobile service"
-type: note
-created: 2025-12-02
-updated: 2025-12-02
-source: chatgpt-export
 conversation_id: 692e2de5-5e44-832b-b89a-41971c881e50
+created: 2025-12-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Activate T-Mobile service
+type: note
+updated: 2025-12-02
 ---
+
 # Activate T-Mobile service
 
 > Conversation ID: 692e2de5-5e44-832b-b89a-41971c881e50

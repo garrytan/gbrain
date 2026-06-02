@@ -1,13 +1,19 @@
 ---
-title: "Next.js Cold Starts Vercel"
-type: note
-created: 2026-01-28
-updated: 2026-01-28
-source: chatgpt-export
 conversation_id: 697a62ac-b67c-832c-a15b-bc1919c98518
+created: 2026-01-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Next.js Cold Starts Vercel
+type: note
+updated: 2026-01-28
 ---
+
 # Next.js Cold Starts Vercel
 
 > Conversation ID: 697a62ac-b67c-832c-a15b-bc1919c98518

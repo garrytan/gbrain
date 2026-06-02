@@ -1,13 +1,20 @@
 ---
-title: "Admin workflow design"
-type: essay
-created: 2025-08-31
-updated: 2025-08-31
-source: chatgpt-export
 conversation_id: 68b49c6a-64a4-832f-a4ef-6bcf5f2501f9
+created: 2025-08-31
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Admin workflow design
+type: essay
+updated: 2025-08-31
 ---
+
 # Admin workflow design
 
 > Conversation ID: 68b49c6a-64a4-832f-a4ef-6bcf5f2501f9

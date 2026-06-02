@@ -1,13 +1,18 @@
 ---
-title: "Playlist Tracking Table Summary"
-type: note
-created: 2024-06-04
-updated: 2024-06-04
-source: chatgpt-export
 conversation_id: b2f2b165-1046-405a-a2fb-951d65db9d30
+created: 2024-06-04
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Playlist Tracking Table Summary
+type: note
+updated: 2024-06-04
 ---
+
 # Playlist Tracking Table Summary
 
 > Conversation ID: b2f2b165-1046-405a-a2fb-951d65db9d30

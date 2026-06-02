@@ -1,13 +1,19 @@
 ---
-title: "Music Marketing Innovation 2024"
-type: note
-created: 2026-01-08
-updated: 2026-01-08
-source: chatgpt-export
 conversation_id: 695f2669-edf8-8330-accc-9e22d0d1e94d
+created: 2026-01-08
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Music Marketing Innovation 2024
+type: note
+updated: 2026-01-08
 ---
+
 # Music Marketing Innovation 2024
 
 > Conversation ID: 695f2669-edf8-8330-accc-9e22d0d1e94d

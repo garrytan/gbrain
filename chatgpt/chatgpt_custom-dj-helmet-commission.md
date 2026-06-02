@@ -1,13 +1,18 @@
 ---
-title: "Custom DJ Helmet Commission"
-type: note
-created: 2025-05-11
-updated: 2025-05-11
-source: chatgpt-export
 conversation_id: 6821003a-5454-8007-ab5f-a90e5db821ff
+created: 2025-05-11
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Custom DJ Helmet Commission
+type: note
+updated: 2025-05-11
 ---
+
 # Custom DJ Helmet Commission
 
 > Conversation ID: 6821003a-5454-8007-ab5f-a90e5db821ff

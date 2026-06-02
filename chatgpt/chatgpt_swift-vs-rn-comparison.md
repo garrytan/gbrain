@@ -1,13 +1,18 @@
 ---
-title: "Swift vs RN Comparison"
-type: note
-created: 2025-06-18
-updated: 2025-06-18
-source: chatgpt-export
 conversation_id: 685324fa-2fa4-8007-a148-9c3b20611d24
+created: 2025-06-18
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Swift vs RN Comparison
+type: note
+updated: 2025-06-18
 ---
+
 # Swift vs RN Comparison
 
 > Conversation ID: 685324fa-2fa4-8007-a148-9c3b20611d24

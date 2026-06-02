@@ -1,13 +1,19 @@
 ---
-title: "EDM Muffin Helmet Design"
-type: note
-created: 2025-05-25
-updated: 2025-05-30
-source: chatgpt-export
 conversation_id: 6832cf2d-63e0-8007-873f-3bbfe7baae01
+created: 2025-05-25
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: EDM Muffin Helmet Design
+type: note
+updated: 2025-05-30
 ---
+
 # EDM Muffin Helmet Design
 
 > Conversation ID: 6832cf2d-63e0-8007-873f-3bbfe7baae01

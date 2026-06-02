@@ -1,13 +1,18 @@
 ---
-title: "Capture iOS paywall glitch"
-type: note
-created: 2025-08-16
-updated: 2025-08-16
-source: chatgpt-export
 conversation_id: 689fd61a-7b7c-8330-bfee-4a3203a0c6d9
+created: 2025-08-16
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Capture iOS paywall glitch
+type: note
+updated: 2025-08-16
 ---
+
 # Capture iOS paywall glitch
 
 > Conversation ID: 689fd61a-7b7c-8330-bfee-4a3203a0c6d9

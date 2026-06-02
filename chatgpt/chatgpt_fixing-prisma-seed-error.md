@@ -1,13 +1,20 @@
 ---
-title: "Fixing Prisma Seed Error"
-type: guide
-created: 2025-06-01
-updated: 2025-06-01
-source: chatgpt-export
 conversation_id: 683b988e-33b0-8007-962e-64b68e5a618a
+created: 2025-06-01
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 20
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Fixing Prisma Seed Error
+type: guide
+updated: 2025-06-01
 ---
+
 # Fixing Prisma Seed Error
 
 > Conversation ID: 683b988e-33b0-8007-962e-64b68e5a618a

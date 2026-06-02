@@ -1,13 +1,20 @@
 ---
-title: "Music Album JSON Update"
-type: essay
-created: 2024-06-11
-updated: 2024-06-11
-source: chatgpt-export
 conversation_id: d943a4d1-6210-46c0-9ddb-2ee03342643d
+created: 2024-06-11
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 38
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Music Album JSON Update
+type: essay
+updated: 2024-06-11
 ---
+
 # Music Album JSON Update
 
 > Conversation ID: d943a4d1-6210-46c0-9ddb-2ee03342643d

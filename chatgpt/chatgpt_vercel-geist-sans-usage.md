@@ -1,13 +1,18 @@
 ---
-title: "Vercel Geist Sans Usage"
-type: note
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695edfc5-ab68-832b-a974-07dc715ba594
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel Geist Sans Usage
+type: note
+updated: 2026-01-07
 ---
+
 # Vercel Geist Sans Usage
 
 > Conversation ID: 695edfc5-ab68-832b-a974-07dc715ba594

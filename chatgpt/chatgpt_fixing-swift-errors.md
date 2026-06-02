@@ -1,13 +1,19 @@
 ---
-title: "Fixing Swift Errors"
-type: note
-created: 2025-11-23
-updated: 2025-11-23
-source: chatgpt-export
 conversation_id: 69233efb-c790-8332-aaa8-b98e712fd0f9
+created: 2025-11-23
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Fixing Swift Errors
+type: note
+updated: 2025-11-23
 ---
+
 # Fixing Swift Errors
 
 > Conversation ID: 69233efb-c790-8332-aaa8-b98e712fd0f9

@@ -1,13 +1,19 @@
 ---
-title: "Billie Eilish artistic process"
-type: note
-created: 2025-10-28
-updated: 2025-10-28
-source: chatgpt-export
 conversation_id: 69003af8-c380-8327-a1e6-2ad773964406
+created: 2025-10-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 14
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Billie Eilish artistic process
+type: note
+updated: 2025-10-28
 ---
+
 # Billie Eilish artistic process
 
 > Conversation ID: 69003af8-c380-8327-a1e6-2ad773964406

@@ -1,13 +1,20 @@
 ---
-title: "Force working iOS builds"
-type: guide
-created: 2025-11-27
-updated: 2025-11-27
-source: chatgpt-export
 conversation_id: 692891eb-30ec-832a-883d-cd4c82ce2041
+created: 2025-11-27
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Force working iOS builds
+type: guide
+updated: 2025-11-27
 ---
+
 # Force working iOS builds
 
 > Conversation ID: 692891eb-30ec-832a-883d-cd4c82ce2041

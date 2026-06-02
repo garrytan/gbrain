@@ -1,13 +1,18 @@
 ---
-title: "Lean UX Design Approach"
-type: note
-created: 2025-06-20
-updated: 2025-06-20
-source: chatgpt-export
 conversation_id: 6854bd7c-7a48-8007-b2d9-54356490c965
+created: 2025-06-20
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Lean UX Design Approach
+type: note
+updated: 2025-06-20
 ---
+
 # Lean UX Design Approach
 
 > Conversation ID: 6854bd7c-7a48-8007-b2d9-54356490c965

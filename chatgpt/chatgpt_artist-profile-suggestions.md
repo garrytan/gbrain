@@ -1,13 +1,19 @@
 ---
-title: "Artist profile suggestions"
-type: note
-created: 2025-08-03
-updated: 2025-08-03
-source: chatgpt-export
 conversation_id: 688fcd4b-314c-8328-9eb4-123188b50e81
+created: 2025-08-03
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 19
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Artist profile suggestions
+type: note
+updated: 2025-08-03
 ---
+
 # Artist profile suggestions
 
 > Conversation ID: 688fcd4b-314c-8328-9eb4-123188b50e81

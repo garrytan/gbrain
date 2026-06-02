@@ -1,13 +1,18 @@
 ---
-title: "DJ Gig Strategy Plan"
-type: note
-created: 2025-02-22
-updated: 2025-02-22
-source: chatgpt-export
 conversation_id: 67b92d3a-c038-8007-8375-58569359dec9
+created: 2025-02-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJ Gig Strategy Plan
+type: note
+updated: 2025-02-22
 ---
+
 # DJ Gig Strategy Plan
 
 > Conversation ID: 67b92d3a-c038-8007-8375-58569359dec9

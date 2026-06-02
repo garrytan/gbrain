@@ -1,13 +1,20 @@
 ---
-title: "Sidebar Design Issues"
-type: essay
-created: 2026-05-29
-updated: 2026-05-29
-source: chatgpt-export
 conversation_id: 6a18dfbb-0234-83e8-9b9f-e298dd3ce7d5
+created: 2026-05-29
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Sidebar Design Issues
+type: essay
+updated: 2026-05-29
 ---
+
 # Sidebar Design Issues
 
 > Conversation ID: 6a18dfbb-0234-83e8-9b9f-e298dd3ce7d5

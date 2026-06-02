@@ -1,13 +1,18 @@
 ---
-title: "Claude task management overview"
-type: note
-created: 2026-01-30
-updated: 2026-01-30
-source: chatgpt-export
 conversation_id: 697c1587-2890-8328-bd1a-6e39e3ecb9c4
+created: 2026-01-30
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude task management overview
+type: note
+updated: 2026-01-30
 ---
+
 # Claude task management overview
 
 > Conversation ID: 697c1587-2890-8328-bd1a-6e39e3ecb9c4

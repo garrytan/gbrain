@@ -1,13 +1,19 @@
 ---
-title: "Vue: Add Second Layout"
-type: guide
-created: 2023-02-26
-updated: 2023-02-26
-source: chatgpt-export
 conversation_id: 54fe999e-18b7-4815-8f3a-0b7dc01b4b85
+created: 2023-02-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Vue: Add Second Layout'
+type: guide
+updated: 2023-02-26
 ---
+
 # Vue: Add Second Layout
 
 > Conversation ID: 54fe999e-18b7-4815-8f3a-0b7dc01b4b85

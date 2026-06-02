@@ -1,13 +1,20 @@
 ---
-title: "Helmet Design Aesthetics MUFFINTOP"
-type: essay
-created: 2025-05-25
-updated: 2025-05-27
-source: chatgpt-export
 conversation_id: 6832a7a3-aa3c-8007-a0bb-7c0400596b5f
+created: 2025-05-25
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 13
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Helmet Design Aesthetics MUFFINTOP
+type: essay
+updated: 2025-05-27
 ---
+
 # Helmet Design Aesthetics MUFFINTOP
 
 > Conversation ID: 6832a7a3-aa3c-8007-a0bb-7c0400596b5f

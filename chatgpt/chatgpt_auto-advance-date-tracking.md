@@ -1,13 +1,20 @@
 ---
-title: "Auto-Advance Date Tracking"
-type: guide
-created: 2023-11-23
-updated: 2023-11-23
-source: chatgpt-export
 conversation_id: 018da94d-d581-4e7c-8d43-ade8cf6e9cdf
+created: 2023-11-23
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Auto-Advance Date Tracking
+type: guide
+updated: 2023-11-23
 ---
+
 # Auto-Advance Date Tracking
 
 > Conversation ID: 018da94d-d581-4e7c-8d43-ade8cf6e9cdf

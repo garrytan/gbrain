@@ -1,13 +1,19 @@
 ---
-title: "Create Vue component"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: caf28025-f6c3-4e89-b0d9-6429c3186fec
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Create Vue component
+type: note
+updated: 2022-12-21
 ---
+
 # Create Vue component
 
 > Conversation ID: caf28025-f6c3-4e89-b0d9-6429c3186fec

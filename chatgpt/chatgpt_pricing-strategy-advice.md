@@ -1,13 +1,19 @@
 ---
-title: "Pricing strategy advice"
-type: note
-created: 2025-11-09
-updated: 2025-11-09
-source: chatgpt-export
 conversation_id: 6910f4b0-7f10-8331-b158-ee53e1a092e8
+created: 2025-11-09
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Pricing strategy advice
+type: note
+updated: 2025-11-09
 ---
+
 # Pricing strategy advice
 
 > Conversation ID: 6910f4b0-7f10-8331-b158-ee53e1a092e8

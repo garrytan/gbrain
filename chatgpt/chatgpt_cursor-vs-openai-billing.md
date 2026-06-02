@@ -1,13 +1,18 @@
 ---
-title: "Cursor vs OpenAI billing"
-type: note
-created: 2025-12-18
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 69436a83-b258-832e-9988-3f26ae57c108
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cursor vs OpenAI billing
+type: note
+updated: 2025-12-18
 ---
+
 # Cursor vs OpenAI billing
 
 > Conversation ID: 69436a83-b258-832e-9988-3f26ae57c108

@@ -1,13 +1,19 @@
 ---
-title: "iOS App Development Tips"
-type: note
-created: 2026-02-22
-updated: 2026-02-22
-source: chatgpt-export
 conversation_id: 699aa1bb-2784-8326-a536-aa0024def426
+created: 2026-02-22
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: iOS App Development Tips
+type: note
+updated: 2026-02-22
 ---
+
 # iOS App Development Tips
 
 > Conversation ID: 699aa1bb-2784-8326-a536-aa0024def426

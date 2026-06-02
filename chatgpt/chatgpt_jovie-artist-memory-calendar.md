@@ -1,13 +1,20 @@
 ---
-title: "Jovie Artist Memory Calendar"
-type: essay
-created: 2026-05-25
-updated: 2026-05-25
-source: chatgpt-export
 conversation_id: 6a139bb4-7b8c-83e8-98d8-bf2eb4cabe63
+created: 2026-05-25
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie Artist Memory Calendar
+type: essay
+updated: 2026-05-25
 ---
+
 # Jovie Artist Memory Calendar
 
 > Conversation ID: 6a139bb4-7b8c-83e8-98d8-bf2eb4cabe63

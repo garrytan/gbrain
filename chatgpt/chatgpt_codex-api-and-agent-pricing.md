@@ -1,13 +1,19 @@
 ---
-title: "Codex API and agent pricing"
-type: note
-created: 2025-12-15
-updated: 2025-12-15
-source: chatgpt-export
 conversation_id: 694091fd-fe54-832b-a954-27696cca2637
+created: 2025-12-15
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Codex API and agent pricing
+type: note
+updated: 2025-12-15
 ---
+
 # Codex API and agent pricing
 
 > Conversation ID: 694091fd-fe54-832b-a954-27696cca2637

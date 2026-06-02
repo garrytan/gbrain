@@ -1,13 +1,20 @@
 ---
-title: "Timeline slider design"
-type: guide
-created: 2025-11-08
-updated: 2025-11-08
-source: chatgpt-export
 conversation_id: 690ec69d-c424-8329-9664-0a5e147f8353
+created: 2025-11-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Timeline slider design
+type: guide
+updated: 2025-11-08
 ---
+
 # Timeline slider design
 
 > Conversation ID: 690ec69d-c424-8329-9664-0a5e147f8353

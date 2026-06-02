@@ -1,13 +1,18 @@
 ---
-title: "Pitch Deck Enhancement"
-type: note
-created: 2026-05-23
-updated: 2026-05-24
-source: chatgpt-export
 conversation_id: 6a123d47-2dbc-83e8-850e-d840ead734eb
+created: 2026-05-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pitch Deck Enhancement
+type: note
+updated: 2026-05-24
 ---
+
 # Pitch Deck Enhancement
 
 > Conversation ID: 6a123d47-2dbc-83e8-850e-d840ead734eb

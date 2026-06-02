@@ -1,13 +1,18 @@
 ---
-title: "Adjusting Flutter App Loading"
-type: note
-created: 2024-01-19
-updated: 2024-01-19
-source: chatgpt-export
 conversation_id: b16af703-743d-4260-ba4e-ef42fe4c2734
+created: 2024-01-19
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Adjusting Flutter App Loading
+type: note
+updated: 2024-01-19
 ---
+
 # Adjusting Flutter App Loading
 
 > Conversation ID: b16af703-743d-4260-ba4e-ef42fe4c2734

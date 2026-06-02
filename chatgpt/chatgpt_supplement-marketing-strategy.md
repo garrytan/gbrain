@@ -1,13 +1,19 @@
 ---
-title: "Supplement Marketing Strategy."
-type: note
-created: 2023-04-10
-updated: 2023-04-10
-source: chatgpt-export
 conversation_id: c2c8ab2f-739c-4679-8d70-461aa2fe3e29
+created: 2023-04-10
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Supplement Marketing Strategy.
+type: note
+updated: 2023-04-10
 ---
+
 # Supplement Marketing Strategy.
 
 > Conversation ID: c2c8ab2f-739c-4679-8d70-461aa2fe3e29

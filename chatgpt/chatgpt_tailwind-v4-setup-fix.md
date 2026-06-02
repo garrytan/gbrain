@@ -1,13 +1,19 @@
 ---
-title: "Tailwind v4 setup fix"
-type: guide
-created: 2025-09-14
-updated: 2025-09-14
-source: chatgpt-export
 conversation_id: 68c7275c-a848-8324-8e0f-beabb5cd9d83
+created: 2025-09-14
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind v4 setup fix
+type: guide
+updated: 2025-09-14
 ---
+
 # Tailwind v4 setup fix
 
 > Conversation ID: 68c7275c-a848-8324-8e0f-beabb5cd9d83

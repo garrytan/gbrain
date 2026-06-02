@@ -1,13 +1,19 @@
 ---
-title: "Vue Email Validation Component"
-type: guide
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: 8d293304-3899-41c2-97a4-0442b8c48c9c
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue Email Validation Component
+type: guide
+updated: 2022-12-22
 ---
+
 # Vue Email Validation Component
 
 > Conversation ID: 8d293304-3899-41c2-97a4-0442b8c48c9c

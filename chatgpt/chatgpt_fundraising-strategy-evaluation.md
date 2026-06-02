@@ -1,13 +1,18 @@
 ---
-title: "Fundraising Strategy Evaluation"
-type: note
-created: 2026-05-11
-updated: 2026-05-11
-source: chatgpt-export
 conversation_id: 6a022697-4c94-83e8-8a81-b6fbd05cad5f
+created: 2026-05-11
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fundraising Strategy Evaluation
+type: note
+updated: 2026-05-11
 ---
+
 # Fundraising Strategy Evaluation
 
 > Conversation ID: 6a022697-4c94-83e8-8a81-b6fbd05cad5f

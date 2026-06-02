@@ -1,13 +1,18 @@
 ---
-title: "Competitive Analysis Jovie vs Seated"
-type: note
-created: 2026-04-15
-updated: 2026-04-15
-source: chatgpt-export
 conversation_id: 69e01555-7c38-83e8-9e2f-c91286839b51
+created: 2026-04-15
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Competitive Analysis Jovie vs Seated
+type: note
+updated: 2026-04-15
 ---
+
 # Competitive Analysis Jovie vs Seated
 
 > Conversation ID: 69e01555-7c38-83e8-9e2f-c91286839b51

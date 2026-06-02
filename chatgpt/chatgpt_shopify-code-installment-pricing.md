@@ -1,13 +1,19 @@
 ---
-title: "Shopify code installment pricing"
-type: note
-created: 2023-05-03
-updated: 2023-05-03
-source: chatgpt-export
 conversation_id: 50bd77b0-b6ff-4bab-8d8d-5cfb694684d7
+created: 2023-05-03
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Shopify code installment pricing
+type: note
+updated: 2023-05-03
 ---
+
 # Shopify code installment pricing
 
 > Conversation ID: 50bd77b0-b6ff-4bab-8d8d-5cfb694684d7

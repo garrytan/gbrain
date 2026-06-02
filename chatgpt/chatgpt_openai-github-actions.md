@@ -1,13 +1,18 @@
 ---
-title: "OpenAI GitHub Actions"
-type: note
-created: 2026-01-05
-updated: 2026-01-05
-source: chatgpt-export
 conversation_id: 695b29ba-7314-8326-8a54-041662a18268
+created: 2026-01-05
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: OpenAI GitHub Actions
+type: note
+updated: 2026-01-05
 ---
+
 # OpenAI GitHub Actions
 
 > Conversation ID: 695b29ba-7314-8326-8a54-041662a18268

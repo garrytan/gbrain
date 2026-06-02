@@ -1,13 +1,18 @@
 ---
-title: "Slamtastic Brand Release"
-type: note
-created: 2025-07-11
-updated: 2025-07-11
-source: chatgpt-export
 conversation_id: 687195eb-2168-8007-b46c-3f181736444b
+created: 2025-07-11
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Slamtastic Brand Release
+type: note
+updated: 2025-07-11
 ---
+
 # Slamtastic Brand Release
 
 > Conversation ID: 687195eb-2168-8007-b46c-3f181736444b

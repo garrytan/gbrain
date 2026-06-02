@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Radio Group Template"
-type: guide
-created: 2022-12-28
-updated: 2022-12-28
-source: chatgpt-export
 conversation_id: ae0cb606-8f76-4daa-8f09-0523212fd11d
+created: 2022-12-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Radio Group Template
+type: guide
+updated: 2022-12-28
 ---
+
 # Vue.js Radio Group Template
 
 > Conversation ID: ae0cb606-8f76-4daa-8f09-0523212fd11d

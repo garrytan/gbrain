@@ -1,13 +1,18 @@
 ---
-title: "AI Design Review Tools"
-type: note
-created: 2026-01-30
-updated: 2026-01-30
-source: chatgpt-export
 conversation_id: 697c02ad-7268-832f-902a-7c3f2bc02e62
+created: 2026-01-30
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AI Design Review Tools
+type: note
+updated: 2026-01-30
 ---
+
 # AI Design Review Tools
 
 > Conversation ID: 697c02ad-7268-832f-902a-7c3f2bc02e62

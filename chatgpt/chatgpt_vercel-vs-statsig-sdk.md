@@ -1,13 +1,18 @@
 ---
-title: "Vercel vs Statsig SDK"
-type: note
-created: 2026-01-29
-updated: 2026-01-29
-source: chatgpt-export
 conversation_id: 697b048a-47dc-832e-ae41-b61a407cc1b0
+created: 2026-01-29
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel vs Statsig SDK
+type: note
+updated: 2026-01-29
 ---
+
 # Vercel vs Statsig SDK
 
 > Conversation ID: 697b048a-47dc-832e-ae41-b61a407cc1b0

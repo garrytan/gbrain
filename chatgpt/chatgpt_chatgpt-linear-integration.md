@@ -1,13 +1,20 @@
 ---
-title: "ChatGPT Linear Integration"
-type: guide
-created: 2025-06-16
-updated: 2025-06-16
-source: chatgpt-export
 conversation_id: 68506460-8eb0-8007-becc-c58ee11f27d7
+created: 2025-06-16
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: ChatGPT Linear Integration
+type: guide
+updated: 2025-06-16
 ---
+
 # ChatGPT Linear Integration
 
 > Conversation ID: 68506460-8eb0-8007-becc-c58ee11f27d7

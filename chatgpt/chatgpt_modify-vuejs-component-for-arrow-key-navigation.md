@@ -1,13 +1,19 @@
 ---
-title: "Modify Vue.js component for arrow key navigation"
-type: note
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: 9a2ada77-addc-4466-8129-8eb60387efd9
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Modify Vue.js component for arrow key navigation
+type: note
+updated: 2022-12-23
 ---
+
 # Modify Vue.js component for arrow key navigation
 
 > Conversation ID: 9a2ada77-addc-4466-8129-8eb60387efd9

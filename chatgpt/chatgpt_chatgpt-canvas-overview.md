@@ -1,13 +1,18 @@
 ---
-title: "ChatGPT Canvas overview"
-type: note
-created: 2025-12-14
-updated: 2025-12-14
-source: chatgpt-export
 conversation_id: 693e50ea-4408-832e-84f9-89de764f79e4
+created: 2025-12-14
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: ChatGPT Canvas overview
+type: note
+updated: 2025-12-14
 ---
+
 # ChatGPT Canvas overview
 
 > Conversation ID: 693e50ea-4408-832e-84f9-89de764f79e4

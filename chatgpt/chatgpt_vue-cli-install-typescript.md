@@ -1,13 +1,19 @@
 ---
-title: "Vue CLI Install & TypeScript"
-type: note
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: bcc5799b-7053-46c8-9d47-6e13cded7af0
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue CLI Install & TypeScript
+type: note
+updated: 2023-02-05
 ---
+
 # Vue CLI Install & TypeScript
 
 > Conversation ID: bcc5799b-7053-46c8-9d47-6e13cded7af0

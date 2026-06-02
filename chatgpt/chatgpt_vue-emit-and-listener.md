@@ -1,13 +1,19 @@
 ---
-title: "Vue Emit and Listener"
-type: note
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: 962818ec-6f7f-4100-88be-fb763af5bf5a
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue Emit and Listener
+type: note
+updated: 2022-12-23
 ---
+
 # Vue Emit and Listener
 
 > Conversation ID: 962818ec-6f7f-4100-88be-fb763af5bf5a

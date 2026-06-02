@@ -1,13 +1,19 @@
 ---
-title: "Vue.js component template."
-type: note
-created: 2023-05-04
-updated: 2023-05-04
-source: chatgpt-export
 conversation_id: 4f3e51f1-0d81-4cb5-b969-a55ac7829aaf
+created: 2023-05-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js component template.
+type: note
+updated: 2023-05-04
 ---
+
 # Vue.js component template.
 
 > Conversation ID: 4f3e51f1-0d81-4cb5-b969-a55ac7829aaf

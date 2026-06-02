@@ -1,13 +1,20 @@
 ---
-title: "Health Data Tracker App"
-type: guide
-created: 2024-01-07
-updated: 2024-01-07
-source: chatgpt-export
 conversation_id: 0eb9d000-8492-470c-b509-91425a339d63
+created: 2024-01-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Health Data Tracker App
+type: guide
+updated: 2024-01-07
 ---
+
 # Health Data Tracker App
 
 > Conversation ID: 0eb9d000-8492-470c-b509-91425a339d63

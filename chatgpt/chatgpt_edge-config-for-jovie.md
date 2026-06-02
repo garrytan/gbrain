@@ -1,13 +1,20 @@
 ---
-title: "Edge config for Jovie"
-type: guide
-created: 2025-08-07
-updated: 2025-08-07
-source: chatgpt-export
 conversation_id: 68951965-33d8-8320-829f-04b8fd2e8c76
+created: 2025-08-07
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Edge config for Jovie
+type: guide
+updated: 2025-08-07
 ---
+
 # Edge config for Jovie
 
 > Conversation ID: 68951965-33d8-8320-829f-04b8fd2e8c76

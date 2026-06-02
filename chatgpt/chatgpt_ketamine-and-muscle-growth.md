@@ -1,13 +1,19 @@
 ---
-title: "Ketamine and muscle growth"
-type: essay
-created: 2025-08-26
-updated: 2025-08-26
-source: chatgpt-export
 conversation_id: 68acf91d-2fb4-8329-940d-09b4c24a4ab4
+created: 2025-08-26
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 20
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Ketamine and muscle growth
+type: essay
+updated: 2025-08-26
 ---
+
 # Ketamine and muscle growth
 
 > Conversation ID: 68acf91d-2fb4-8329-940d-09b4c24a4ab4

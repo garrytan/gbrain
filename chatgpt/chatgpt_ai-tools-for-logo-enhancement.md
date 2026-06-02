@@ -1,13 +1,20 @@
 ---
-title: "AI tools for logo enhancement"
-type: guide
-created: 2025-08-29
-updated: 2025-08-29
-source: chatgpt-export
 conversation_id: 68b21b4c-9efc-832b-a44c-60286fe72bfa
+created: 2025-08-29
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: AI tools for logo enhancement
+type: guide
+updated: 2025-08-29
 ---
+
 # AI tools for logo enhancement
 
 > Conversation ID: 68b21b4c-9efc-832b-a44c-60286fe72bfa

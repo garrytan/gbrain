@@ -1,13 +1,19 @@
 ---
-title: "iOS apps for network monitoring"
-type: note
-created: 2025-10-17
-updated: 2025-10-17
-source: chatgpt-export
 conversation_id: 68f2b717-5198-832f-8b64-ccec399aff48
+created: 2025-10-17
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: iOS apps for network monitoring
+type: note
+updated: 2025-10-17
 ---
+
 # iOS apps for network monitoring
 
 > Conversation ID: 68f2b717-5198-832f-8b64-ccec399aff48

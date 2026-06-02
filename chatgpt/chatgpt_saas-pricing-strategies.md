@@ -1,13 +1,18 @@
 ---
-title: "SaaS Pricing Strategies"
-type: note
-created: 2023-03-03
-updated: 2023-03-03
-source: chatgpt-export
 conversation_id: 8a7795ef-4d06-4b71-ba69-4d1b11d7ebd3
+created: 2023-03-03
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: SaaS Pricing Strategies
+type: note
+updated: 2023-03-03
 ---
+
 # SaaS Pricing Strategies
 
 > Conversation ID: 8a7795ef-4d06-4b71-ba69-4d1b11d7ebd3

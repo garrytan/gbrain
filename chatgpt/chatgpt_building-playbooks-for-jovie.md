@@ -1,13 +1,19 @@
 ---
-title: "Building Playbooks for Jovie"
-type: guide
-created: 2025-08-10
-updated: 2025-08-10
-source: chatgpt-export
 conversation_id: 6897ece6-ca4c-8327-a8a6-d1a2f7f308b3
+created: 2025-08-10
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Building Playbooks for Jovie
+type: guide
+updated: 2025-08-10
 ---
+
 # Building Playbooks for Jovie
 
 > Conversation ID: 6897ece6-ca4c-8327-a8a6-d1a2f7f308b3

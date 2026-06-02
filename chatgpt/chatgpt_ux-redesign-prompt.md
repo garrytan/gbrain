@@ -1,13 +1,18 @@
 ---
-title: "UX redesign prompt"
-type: note
-created: 2025-08-21
-updated: 2025-08-21
-source: chatgpt-export
 conversation_id: 68a6db06-e1d8-832e-af3d-2afd683af143
+created: 2025-08-21
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: UX redesign prompt
+type: note
+updated: 2025-08-21
 ---
+
 # UX redesign prompt
 
 > Conversation ID: 68a6db06-e1d8-832e-af3d-2afd683af143

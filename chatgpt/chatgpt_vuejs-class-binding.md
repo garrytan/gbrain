@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Class Binding."
-type: guide
-created: 2023-05-05
-updated: 2023-05-05
-source: chatgpt-export
 conversation_id: 6878b463-1caa-47ba-b98a-f561ab410ea9
+created: 2023-05-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Class Binding.
+type: guide
+updated: 2023-05-05
 ---
+
 # Vue.js Class Binding.
 
 > Conversation ID: 6878b463-1caa-47ba-b98a-f561ab410ea9

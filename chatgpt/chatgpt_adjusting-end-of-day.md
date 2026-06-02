@@ -1,13 +1,18 @@
 ---
-title: "Adjusting End of Day"
-type: note
-created: 2024-07-31
-updated: 2024-07-31
-source: chatgpt-export
 conversation_id: 20cad3e9-d556-4422-a8d8-58d9b8d7aa24
+created: 2024-07-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Adjusting End of Day
+type: note
+updated: 2024-07-31
 ---
+
 # Adjusting End of Day
 
 > Conversation ID: 20cad3e9-d556-4422-a8d8-58d9b8d7aa24

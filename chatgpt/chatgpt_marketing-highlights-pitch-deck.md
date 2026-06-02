@@ -1,13 +1,18 @@
 ---
-title: "Marketing Highlights Pitch Deck"
-type: note
-created: 2024-06-21
-updated: 2024-06-21
-source: chatgpt-export
 conversation_id: 9a8ac80f-3878-432b-8764-764542b4d118
+created: 2024-06-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Marketing Highlights Pitch Deck
+type: note
+updated: 2024-06-21
 ---
+
 # Marketing Highlights Pitch Deck
 
 > Conversation ID: 9a8ac80f-3878-432b-8764-764542b4d118

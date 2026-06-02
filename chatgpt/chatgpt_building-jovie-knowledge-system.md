@@ -1,13 +1,20 @@
 ---
-title: "Building Jovie Knowledge System"
-type: guide
-created: 2026-04-28
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69f0e5f4-2484-83e8-a167-d4ff6ddfd6e8
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Building Jovie Knowledge System
+type: guide
+updated: 2026-04-28
 ---
+
 # Building Jovie Knowledge System
 
 > Conversation ID: 69f0e5f4-2484-83e8-a167-d4ff6ddfd6e8

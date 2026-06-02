@@ -1,13 +1,19 @@
 ---
-title: "Vue JS Toggle Password"
-type: note
-created: 2022-12-28
-updated: 2022-12-28
-source: chatgpt-export
 conversation_id: 183d2ed0-2a08-45f7-90f8-fab12270865a
+created: 2022-12-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue JS Toggle Password
+type: note
+updated: 2022-12-28
 ---
+
 # Vue JS Toggle Password
 
 > Conversation ID: 183d2ed0-2a08-45f7-90f8-fab12270865a

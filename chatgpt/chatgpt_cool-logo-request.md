@@ -1,13 +1,18 @@
 ---
-title: "Cool Logo Request"
-type: note
-created: 2024-07-02
-updated: 2024-07-02
-source: chatgpt-export
 conversation_id: de2c574e-3322-4022-b243-2dd177feb9cb
+created: 2024-07-02
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cool Logo Request
+type: note
+updated: 2024-07-02
 ---
+
 # Cool Logo Request
 
 > Conversation ID: de2c574e-3322-4022-b243-2dd177feb9cb

@@ -1,13 +1,18 @@
 ---
-title: "Fast mode in Claude"
-type: note
-created: 2026-02-17
-updated: 2026-02-17
-source: chatgpt-export
 conversation_id: 6993e1e4-58fc-832d-b9f4-7d875fc7d9e1
+created: 2026-02-17
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fast mode in Claude
+type: note
+updated: 2026-02-17
 ---
+
 # Fast mode in Claude
 
 > Conversation ID: 6993e1e4-58fc-832d-b9f4-7d875fc7d9e1

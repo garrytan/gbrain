@@ -1,13 +1,19 @@
 ---
-title: "Spotify API limitations"
-type: note
-created: 2025-12-01
-updated: 2025-12-02
-source: chatgpt-export
 conversation_id: 692dee71-7284-832c-9a74-590c6e487581
+created: 2025-12-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Spotify API limitations
+type: note
+updated: 2025-12-02
 ---
+
 # Spotify API limitations
 
 > Conversation ID: 692dee71-7284-832c-9a74-590c6e487581

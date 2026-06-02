@@ -1,13 +1,19 @@
 ---
-title: "Add prop to Vue.js component"
-type: guide
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: 2b748e0e-202b-4a3f-a752-e6e420fa83cb
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Add prop to Vue.js component
+type: guide
+updated: 2022-12-21
 ---
+
 # Add prop to Vue.js component
 
 > Conversation ID: 2b748e0e-202b-4a3f-a752-e6e420fa83cb

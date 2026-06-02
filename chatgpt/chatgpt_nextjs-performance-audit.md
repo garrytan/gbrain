@@ -1,13 +1,18 @@
 ---
-title: "Next.js Performance Audit"
-type: note
-created: 2026-01-29
-updated: 2026-01-29
-source: chatgpt-export
 conversation_id: 697adb0e-38f8-832c-a2cd-28df0fb04cec
+created: 2026-01-29
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Next.js Performance Audit
+type: note
+updated: 2026-01-29
 ---
+
 # Next.js Performance Audit
 
 > Conversation ID: 697adb0e-38f8-832c-a2cd-28df0fb04cec

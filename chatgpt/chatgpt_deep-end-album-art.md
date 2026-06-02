@@ -1,13 +1,18 @@
 ---
-title: "Deep End Album Art"
-type: note
-created: 2025-02-24
-updated: 2025-02-24
-source: chatgpt-export
 conversation_id: 67bc641d-f088-8007-9b18-5c2f5b1d8a90
+created: 2025-02-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Deep End Album Art
+type: note
+updated: 2025-02-24
 ---
+
 # Deep End Album Art
 
 > Conversation ID: 67bc641d-f088-8007-9b18-5c2f5b1d8a90

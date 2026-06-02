@@ -1,13 +1,18 @@
 ---
-title: "Vercel queues overview"
-type: note
-created: 2025-11-30
-updated: 2025-11-30
-source: chatgpt-export
 conversation_id: 692c8fca-3158-8326-965f-39d79692a79b
+created: 2025-11-30
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel queues overview
+type: note
+updated: 2025-11-30
 ---
+
 # Vercel queues overview
 
 > Conversation ID: 692c8fca-3158-8326-965f-39d79692a79b

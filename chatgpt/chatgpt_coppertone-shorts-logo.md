@@ -1,13 +1,18 @@
 ---
-title: "Coppertone Shorts Logo"
-type: note
-created: 2025-04-18
-updated: 2025-04-18
-source: chatgpt-export
 conversation_id: 6801999f-8424-8007-810a-eb22d285fd14
+created: 2025-04-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Coppertone Shorts Logo
+type: note
+updated: 2025-04-18
 ---
+
 # Coppertone Shorts Logo
 
 > Conversation ID: 6801999f-8424-8007-810a-eb22d285fd14

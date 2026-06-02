@@ -1,13 +1,19 @@
 ---
-title: "HTML section summary."
-type: guide
-created: 2023-04-02
-updated: 2023-04-02
-source: chatgpt-export
 conversation_id: 5f7a254f-fb91-4cb2-bfe9-3b21ceb2db0d
+created: 2023-04-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: HTML section summary.
+type: guide
+updated: 2023-04-02
 ---
+
 # HTML section summary.
 
 > Conversation ID: 5f7a254f-fb91-4cb2-bfe9-3b21ceb2db0d

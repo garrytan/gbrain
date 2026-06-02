@@ -1,13 +1,20 @@
 ---
-title: "Overnight Claude Session Plan"
-type: essay
-created: 2026-05-08
-updated: 2026-05-08
-source: chatgpt-export
 conversation_id: 69fd7b92-0aac-83e8-8ff7-9ca026116f1c
+created: 2026-05-08
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Overnight Claude Session Plan
+type: essay
+updated: 2026-05-08
 ---
+
 # Overnight Claude Session Plan
 
 > Conversation ID: 69fd7b92-0aac-83e8-8ff7-9ca026116f1c

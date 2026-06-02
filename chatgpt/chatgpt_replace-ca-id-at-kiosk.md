@@ -1,13 +1,19 @@
 ---
-title: "Replace CA ID at Kiosk"
-type: note
-created: 2025-06-27
-updated: 2025-06-27
-source: chatgpt-export
 conversation_id: 685e2cc3-990c-8007-9920-53762603e89e
+created: 2025-06-27
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Replace CA ID at Kiosk
+type: note
+updated: 2025-06-27
 ---
+
 # Replace CA ID at Kiosk
 
 > Conversation ID: 685e2cc3-990c-8007-9920-53762603e89e

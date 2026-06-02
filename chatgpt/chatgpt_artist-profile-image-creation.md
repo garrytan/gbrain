@@ -1,13 +1,18 @@
 ---
-title: "Artist profile image creation"
-type: note
-created: 2025-12-17
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 69433415-fd54-8331-a3da-04473fee6022
+created: 2025-12-17
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 15
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Artist profile image creation
+type: note
+updated: 2025-12-18
 ---
+
 # Artist profile image creation
 
 > Conversation ID: 69433415-fd54-8331-a3da-04473fee6022

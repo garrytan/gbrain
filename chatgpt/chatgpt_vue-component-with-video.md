@@ -1,13 +1,18 @@
 ---
-title: "Vue component with video."
-type: note
-created: 2023-02-25
-updated: 2023-02-25
-source: chatgpt-export
 conversation_id: f529bcfe-63d2-4d60-9068-85b3d7e58460
+created: 2023-02-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue component with video.
+type: note
+updated: 2023-02-25
 ---
+
 # Vue component with video.
 
 > Conversation ID: f529bcfe-63d2-4d60-9068-85b3d7e58460

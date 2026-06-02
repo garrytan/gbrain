@@ -1,13 +1,18 @@
 ---
-title: "Pitch for Tim White"
-type: note
-created: 2024-06-03
-updated: 2024-06-03
-source: chatgpt-export
 conversation_id: 2f602919-209e-4c43-80f4-d62b5224f526
+created: 2024-06-03
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pitch for Tim White
+type: note
+updated: 2024-06-03
 ---
+
 # Pitch for Tim White
 
 > Conversation ID: 2f602919-209e-4c43-80f4-d62b5224f526

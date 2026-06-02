@@ -1,13 +1,18 @@
 ---
-title: "Vue.js Component Definition"
-type: note
-created: 2023-02-04
-updated: 2023-02-04
-source: chatgpt-export
 conversation_id: c899a217-aa99-4991-994c-baf5840d28ac
+created: 2023-02-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js Component Definition
+type: note
+updated: 2023-02-04
 ---
+
 # Vue.js Component Definition
 
 > Conversation ID: c899a217-aa99-4991-994c-baf5840d28ac

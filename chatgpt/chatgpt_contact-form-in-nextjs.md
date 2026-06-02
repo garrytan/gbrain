@@ -1,13 +1,19 @@
 ---
-title: "Contact form in Next.js"
-type: note
-created: 2025-09-23
-updated: 2025-09-23
-source: chatgpt-export
 conversation_id: 68d2c058-6aa0-8323-b140-6e3bf8b65349
+created: 2025-09-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Contact form in Next.js
+type: note
+updated: 2025-09-23
 ---
+
 # Contact form in Next.js
 
 > Conversation ID: 68d2c058-6aa0-8323-b140-6e3bf8b65349

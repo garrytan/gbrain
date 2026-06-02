@@ -1,13 +1,19 @@
 ---
-title: "React PWA Setup"
-type: note
-created: 2025-06-08
-updated: 2025-06-08
-source: chatgpt-export
 conversation_id: 6846129f-6964-8007-adca-438b73c82705
+created: 2025-06-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: React PWA Setup
+type: note
+updated: 2025-06-08
 ---
+
 # React PWA Setup
 
 > Conversation ID: 6846129f-6964-8007-adca-438b73c82705

@@ -1,13 +1,18 @@
 ---
-title: "Android TV Network Issues"
-type: note
-created: 2024-04-25
-updated: 2024-04-25
-source: chatgpt-export
 conversation_id: 82e7e02f-e7e4-49ad-b66e-4b1cd981db60
+created: 2024-04-25
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Android TV Network Issues
+type: note
+updated: 2024-04-25
 ---
+
 # Android TV Network Issues
 
 > Conversation ID: 82e7e02f-e7e4-49ad-b66e-4b1cd981db60

@@ -1,13 +1,18 @@
 ---
-title: "City-Centric Spotify Promotion"
-type: note
-created: 2024-03-12
-updated: 2024-03-12
-source: chatgpt-export
 conversation_id: 609b4059-2028-4836-bc58-ec59da520fee
+created: 2024-03-12
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: City-Centric Spotify Promotion
+type: note
+updated: 2024-03-12
 ---
+
 # City-Centric Spotify Promotion
 
 > Conversation ID: 609b4059-2028-4836-bc58-ec59da520fee

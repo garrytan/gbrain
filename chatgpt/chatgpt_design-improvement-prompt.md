@@ -1,13 +1,18 @@
 ---
-title: "Design Improvement Prompt"
-type: note
-created: 2026-04-24
-updated: 2026-04-24
-source: chatgpt-export
 conversation_id: 69ebbf02-9928-83e8-8a5a-b4d643f8d97a
+created: 2026-04-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Design Improvement Prompt
+type: note
+updated: 2026-04-24
 ---
+
 # Design Improvement Prompt
 
 > Conversation ID: 69ebbf02-9928-83e8-8a5a-b4d643f8d97a

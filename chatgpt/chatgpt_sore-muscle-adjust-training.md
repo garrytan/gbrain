@@ -1,13 +1,18 @@
 ---
-title: "Sore Muscle? Adjust Training"
-type: note
-created: 2023-12-20
-updated: 2023-12-20
-source: chatgpt-export
 conversation_id: 584dfbfc-e053-4ee1-811e-4ce8829d7a1c
+created: 2023-12-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sore Muscle? Adjust Training
+type: note
+updated: 2023-12-20
 ---
+
 # Sore Muscle? Adjust Training
 
 > Conversation ID: 584dfbfc-e053-4ee1-811e-4ce8829d7a1c

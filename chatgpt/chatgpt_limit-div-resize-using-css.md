@@ -1,13 +1,20 @@
 ---
-title: "Limit div resize using CSS"
-type: guide
-created: 2022-12-20
-updated: 2022-12-20
-source: chatgpt-export
 conversation_id: de3c218a-308b-458f-8c6d-c180198b2dc7
+created: 2022-12-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 9
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Limit div resize using CSS
+type: guide
+updated: 2022-12-20
 ---
+
 # Limit div resize using CSS
 
 > Conversation ID: de3c218a-308b-458f-8c6d-c180198b2dc7

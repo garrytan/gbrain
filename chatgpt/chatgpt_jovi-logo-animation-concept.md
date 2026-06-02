@@ -1,13 +1,20 @@
 ---
-title: "Jovi Logo Animation Concept"
-type: guide
-created: 2026-05-31
-updated: 2026-05-31
-source: chatgpt-export
 conversation_id: 6a1bdcda-99fc-83e8-8632-ce4927aaa8ca
+created: 2026-05-31
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovi Logo Animation Concept
+type: guide
+updated: 2026-05-31
 ---
+
 # Jovi Logo Animation Concept
 
 > Conversation ID: 6a1bdcda-99fc-83e8-8632-ce4927aaa8ca

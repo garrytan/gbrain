@@ -1,13 +1,20 @@
 ---
-title: "Refactor Vue.js Code"
-type: guide
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: c5fdb820-8fce-43d0-ad77-573352da0c58
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 13
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Refactor Vue.js Code
+type: guide
+updated: 2022-12-23
 ---
+
 # Refactor Vue.js Code
 
 > Conversation ID: c5fdb820-8fce-43d0-ad77-573352da0c58

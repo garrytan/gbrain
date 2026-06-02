@@ -1,13 +1,18 @@
 ---
-title: "Beats iOS UX"
-type: note
-created: 2025-06-13
-updated: 2025-06-13
-source: chatgpt-export
 conversation_id: 684c87b0-9310-8007-8948-18f2f7aaa591
+created: 2025-06-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Beats iOS UX
+type: note
+updated: 2025-06-13
 ---
+
 # Beats iOS UX
 
 > Conversation ID: 684c87b0-9310-8007-8948-18f2f7aaa591

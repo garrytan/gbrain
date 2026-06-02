@@ -1,13 +1,18 @@
 ---
-title: "12inchSkinz vs DJSkins Pricing"
-type: note
-created: 2025-01-31
-updated: 2025-01-31
-source: chatgpt-export
 conversation_id: 679c4a76-9ab8-8007-a63b-9616a38206da
+created: 2025-01-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 12inchSkinz vs DJSkins Pricing
+type: note
+updated: 2025-01-31
 ---
+
 # 12inchSkinz vs DJSkins Pricing
 
 > Conversation ID: 679c4a76-9ab8-8007-a63b-9616a38206da

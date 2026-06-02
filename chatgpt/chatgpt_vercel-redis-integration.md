@@ -1,13 +1,20 @@
 ---
-title: "Vercel Redis Integration"
-type: guide
-created: 2025-12-29
-updated: 2025-12-29
-source: chatgpt-export
 conversation_id: 6952acf7-228c-8333-9d6d-396f9e601c59
+created: 2025-12-29
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vercel Redis Integration
+type: guide
+updated: 2025-12-29
 ---
+
 # Vercel Redis Integration
 
 > Conversation ID: 6952acf7-228c-8333-9d6d-396f9e601c59

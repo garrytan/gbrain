@@ -1,13 +1,20 @@
 ---
-title: "Build Laravel-Vue App: Predict Metrics"
-type: essay
-created: 2023-11-23
-updated: 2023-11-23
-source: chatgpt-export
 conversation_id: 1c875a9d-03af-45d8-9316-17e8a49e34f4
+created: 2023-11-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 28
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: 'Build Laravel-Vue App: Predict Metrics'
+type: essay
+updated: 2023-11-23
 ---
+
 # Build Laravel-Vue App: Predict Metrics
 
 > Conversation ID: 1c875a9d-03af-45d8-9316-17e8a49e34f4

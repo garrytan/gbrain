@@ -1,13 +1,19 @@
 ---
-title: "Extract design system repo"
-type: guide
-created: 2025-08-22
-updated: 2025-08-22
-source: chatgpt-export
 conversation_id: 68a8e1be-abd0-8332-ac59-3f28fd6ba52d
+created: 2025-08-22
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Extract design system repo
+type: guide
+updated: 2025-08-22
 ---
+
 # Extract design system repo
 
 > Conversation ID: 68a8e1be-abd0-8332-ac59-3f28fd6ba52d

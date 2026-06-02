@@ -1,13 +1,19 @@
 ---
-title: "16x16 Grid Tailwind"
-type: note
-created: 2026-01-10
-updated: 2026-01-10
-source: chatgpt-export
 conversation_id: 6961d3f9-334c-832a-a94c-ca5f773f5487
+created: 2026-01-10
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 16x16 Grid Tailwind
+type: note
+updated: 2026-01-10
 ---
+
 # 16x16 Grid Tailwind
 
 > Conversation ID: 6961d3f9-334c-832a-a94c-ca5f773f5487

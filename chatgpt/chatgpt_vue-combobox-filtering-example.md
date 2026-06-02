@@ -1,13 +1,19 @@
 ---
-title: "Vue Combobox Filtering Example"
-type: guide
-created: 2023-01-17
-updated: 2023-01-17
-source: chatgpt-export
 conversation_id: 5ffb0b0b-9153-415b-8c9f-6bf62a673313
+created: 2023-01-17
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue Combobox Filtering Example
+type: guide
+updated: 2023-01-17
 ---
+
 # Vue Combobox Filtering Example
 
 > Conversation ID: 5ffb0b0b-9153-415b-8c9f-6bf62a673313

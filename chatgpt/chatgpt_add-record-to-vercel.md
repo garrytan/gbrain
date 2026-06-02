@@ -1,13 +1,18 @@
 ---
-title: "Add record to Vercel"
-type: note
-created: 2026-01-14
-updated: 2026-01-14
-source: chatgpt-export
 conversation_id: 696815dc-9c40-8325-97e5-bdf9a42e1ad9
+created: 2026-01-14
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 7
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Add record to Vercel
+type: note
+updated: 2026-01-14
 ---
+
 # Add record to Vercel
 
 > Conversation ID: 696815dc-9c40-8325-97e5-bdf9a42e1ad9

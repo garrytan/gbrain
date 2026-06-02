@@ -1,13 +1,18 @@
 ---
-title: "XDJ-1000 Series Overview"
-type: note
-created: 2025-01-16
-updated: 2025-01-16
-source: chatgpt-export
 conversation_id: 6789059d-d730-8007-9bb5-21de0a558c30
+created: 2025-01-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: XDJ-1000 Series Overview
+type: note
+updated: 2025-01-16
 ---
+
 # XDJ-1000 Series Overview
 
 > Conversation ID: 6789059d-d730-8007-9bb5-21de0a558c30

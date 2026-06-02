@@ -1,13 +1,18 @@
 ---
-title: "Mixed In Key Live"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679d76b4-e238-8007-b8d3-f06c26704a04
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Mixed In Key Live
+type: note
+updated: 2025-02-01
 ---
+
 # Mixed In Key Live
 
 > Conversation ID: 679d76b4-e238-8007-b8d3-f06c26704a04

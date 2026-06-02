@@ -1,13 +1,18 @@
 ---
-title: "Website to Figma Mockup"
-type: note
-created: 2026-02-22
-updated: 2026-02-22
-source: chatgpt-export
 conversation_id: 699a55ca-62a0-832c-a96d-ee342d5cbc60
+created: 2026-02-22
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Website to Figma Mockup
+type: note
+updated: 2026-02-22
 ---
+
 # Website to Figma Mockup
 
 > Conversation ID: 699a55ca-62a0-832c-a96d-ee342d5cbc60

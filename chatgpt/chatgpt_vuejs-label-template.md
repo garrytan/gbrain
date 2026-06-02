@@ -1,13 +1,19 @@
 ---
-title: "Vue.js label template."
-type: guide
-created: 2023-05-05
-updated: 2023-05-05
-source: chatgpt-export
 conversation_id: 79893865-53a1-40cb-b37d-eed58224addb
+created: 2023-05-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js label template.
+type: guide
+updated: 2023-05-05
 ---
+
 # Vue.js label template.
 
 > Conversation ID: 79893865-53a1-40cb-b37d-eed58224addb

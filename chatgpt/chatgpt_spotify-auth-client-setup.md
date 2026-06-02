@@ -1,13 +1,18 @@
 ---
-title: "Spotify auth client setup"
-type: note
-created: 2025-08-03
-updated: 2025-08-03
-source: chatgpt-export
 conversation_id: 688efba4-ae7c-832c-b418-dca7c01c738c
+created: 2025-08-03
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spotify auth client setup
+type: note
+updated: 2025-08-03
 ---
+
 # Spotify auth client setup
 
 > Conversation ID: 688efba4-ae7c-832c-b418-dca7c01c738c

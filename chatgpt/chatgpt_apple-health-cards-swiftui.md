@@ -1,13 +1,20 @@
 ---
-title: "Apple Health cards SwiftUI"
-type: guide
-created: 2025-11-14
-updated: 2025-11-14
-source: chatgpt-export
 conversation_id: 69167190-90c8-832e-9685-3a7eff3d63a3
+created: 2025-11-14
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Apple Health cards SwiftUI
+type: guide
+updated: 2025-11-14
 ---
+
 # Apple Health cards SwiftUI
 
 > Conversation ID: 69167190-90c8-832e-9685-3a7eff3d63a3

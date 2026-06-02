@@ -1,13 +1,19 @@
 ---
-title: "GeniusShot brand changes"
-type: note
-created: 2025-12-20
-updated: 2025-12-20
-source: chatgpt-export
 conversation_id: 69461fde-2ebc-8332-8254-46d875bd6641
+created: 2025-12-20
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: GeniusShot brand changes
+type: note
+updated: 2025-12-20
 ---
+
 # GeniusShot brand changes
 
 > Conversation ID: 69461fde-2ebc-8332-8254-46d875bd6641

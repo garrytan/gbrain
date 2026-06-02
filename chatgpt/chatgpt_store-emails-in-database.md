@@ -1,13 +1,19 @@
 ---
-title: "Store emails in database"
-type: note
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: fd752576-d26e-48f7-b252-11d415ad0bf1
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Store emails in database
+type: note
+updated: 2022-12-22
 ---
+
 # Store emails in database
 
 > Conversation ID: fd752576-d26e-48f7-b252-11d415ad0bf1

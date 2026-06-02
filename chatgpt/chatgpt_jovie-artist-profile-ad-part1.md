@@ -1,13 +1,20 @@
 ---
-title: "Jovie Artist Profile Ad"
-type: essay
-created: 2026-04-27
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69eff238-a9bc-83e8-a80f-91ad5d248eb5
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 18
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie Artist Profile Ad
+type: essay
+updated: 2026-04-28
 ---
+
 # Jovie Artist Profile Ad
 
 > Conversation ID: 69eff238-a9bc-83e8-a80f-91ad5d248eb5

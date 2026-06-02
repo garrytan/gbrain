@@ -1,13 +1,18 @@
 ---
-title: "Muffin Head Logo Design"
-type: note
-created: 2025-05-24
-updated: 2025-05-24
-source: chatgpt-export
 conversation_id: 683178c2-6d14-8007-a8d9-aabb2b75ae63
+created: 2025-05-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Muffin Head Logo Design
+type: note
+updated: 2025-05-24
 ---
+
 # Muffin Head Logo Design
 
 > Conversation ID: 683178c2-6d14-8007-a8d9-aabb2b75ae63

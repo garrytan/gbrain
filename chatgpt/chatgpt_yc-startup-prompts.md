@@ -1,13 +1,18 @@
 ---
-title: "YC startup prompts"
-type: note
-created: 2025-11-30
-updated: 2025-11-30
-source: chatgpt-export
 conversation_id: 692ca73a-e2f0-832c-b146-1f8cf32150a9
+created: 2025-11-30
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: YC startup prompts
+type: note
+updated: 2025-11-30
 ---
+
 # YC startup prompts
 
 > Conversation ID: 692ca73a-e2f0-832c-b146-1f8cf32150a9

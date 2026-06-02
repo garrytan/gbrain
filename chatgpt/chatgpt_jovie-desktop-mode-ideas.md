@@ -1,13 +1,18 @@
 ---
-title: "Jovie Desktop Mode Ideas"
-type: note
-created: 2026-04-28
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f11f52-41cc-83e8-8e6e-a3ed78590cf9
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 5
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Jovie Desktop Mode Ideas
+type: note
+updated: 2026-04-29
 ---
+
 # Jovie Desktop Mode Ideas
 
 > Conversation ID: 69f11f52-41cc-83e8-8e6e-a3ed78590cf9

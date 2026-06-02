@@ -1,13 +1,18 @@
 ---
-title: "Vue.js Constructor Error Resolve"
-type: note
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: ea572200-82e9-4ffd-9320-9186cb3d020c
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js Constructor Error Resolve
+type: note
+updated: 2023-02-05
 ---
+
 # Vue.js Constructor Error Resolve
 
 > Conversation ID: ea572200-82e9-4ffd-9320-9186cb3d020c

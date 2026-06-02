@@ -1,13 +1,18 @@
 ---
-title: "Help with Spotify Canvas"
-type: note
-created: 2024-06-19
-updated: 2024-06-19
-source: chatgpt-export
 conversation_id: 52fbf9f5-954e-473b-9858-bd8923c2c587
+created: 2024-06-19
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Help with Spotify Canvas
+type: note
+updated: 2024-06-19
 ---
+
 # Help with Spotify Canvas
 
 > Conversation ID: 52fbf9f5-954e-473b-9858-bd8923c2c587

@@ -1,13 +1,18 @@
 ---
-title: "Pioneer DJM-850 Overview"
-type: note
-created: 2025-01-17
-updated: 2025-01-17
-source: chatgpt-export
 conversation_id: 678a0cbd-0c9c-8007-a6d1-22fbbc7bece0
+created: 2025-01-17
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pioneer DJM-850 Overview
+type: note
+updated: 2025-01-17
 ---
+
 # Pioneer DJM-850 Overview
 
 > Conversation ID: 678a0cbd-0c9c-8007-a6d1-22fbbc7bece0

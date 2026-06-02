@@ -1,13 +1,20 @@
 ---
-title: "Font and Tailwind classes"
-type: essay
-created: 2025-12-18
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 694370b5-511c-832f-be3f-f013b1912428
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 48
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Font and Tailwind classes
+type: essay
+updated: 2025-12-18
 ---
+
 # Font and Tailwind classes
 
 > Conversation ID: 694370b5-511c-832f-be3f-f013b1912428

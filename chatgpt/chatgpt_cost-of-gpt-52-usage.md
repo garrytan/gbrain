@@ -1,13 +1,18 @@
 ---
-title: "Cost of GPT-5.2 usage"
-type: note
-created: 2025-12-18
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 69435552-6118-832d-ba9a-7d30dc844e3a
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cost of GPT-5.2 usage
+type: note
+updated: 2025-12-18
 ---
+
 # Cost of GPT-5.2 usage
 
 > Conversation ID: 69435552-6118-832d-ba9a-7d30dc844e3a

@@ -1,13 +1,18 @@
 ---
-title: "Supplement Label Design Variations"
-type: note
-created: 2023-03-22
-updated: 2023-03-22
-source: chatgpt-export
 conversation_id: 08c306cf-793c-4dfa-a417-d150bb6184f6
+created: 2023-03-22
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Supplement Label Design Variations
+type: note
+updated: 2023-03-22
 ---
+
 # Supplement Label Design Variations
 
 > Conversation ID: 08c306cf-793c-4dfa-a417-d150bb6184f6

@@ -1,13 +1,18 @@
 ---
-title: "Neon Lyric Video Design"
-type: note
-created: 2024-06-20
-updated: 2024-06-20
-source: chatgpt-export
 conversation_id: 4ec6dcee-38cb-4b49-b750-85ffbe00c76d
+created: 2024-06-20
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Neon Lyric Video Design
+type: note
+updated: 2024-06-20
 ---
+
 # Neon Lyric Video Design
 
 > Conversation ID: 4ec6dcee-38cb-4b49-b750-85ffbe00c76d

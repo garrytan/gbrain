@@ -1,13 +1,18 @@
 ---
-title: "Mailgun Features and Pricing"
-type: note
-created: 2025-06-14
-updated: 2025-06-14
-source: chatgpt-export
 conversation_id: 684ddc4b-05bc-8007-8541-d7043da20a8f
+created: 2025-06-14
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Mailgun Features and Pricing
+type: note
+updated: 2025-06-14
 ---
+
 # Mailgun Features and Pricing
 
 > Conversation ID: 684ddc4b-05bc-8007-8541-d7043da20a8f

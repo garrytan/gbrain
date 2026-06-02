@@ -1,13 +1,19 @@
 ---
-title: "Sales analysis summary"
-type: note
-created: 2025-10-13
-updated: 2025-10-15
-source: chatgpt-export
 conversation_id: 68ed5d5a-2920-8328-9dcb-b3524cd1f4da
+created: 2025-10-13
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 14
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Sales analysis summary
+type: note
+updated: 2025-10-15
 ---
+
 # Sales analysis summary
 
 > Conversation ID: 68ed5d5a-2920-8328-9dcb-b3524cd1f4da

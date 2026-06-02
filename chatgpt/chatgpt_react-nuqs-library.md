@@ -1,13 +1,19 @@
 ---
-title: "React Nuqs Library"
-type: note
-created: 2026-01-13
-updated: 2026-01-14
-source: chatgpt-export
 conversation_id: 6966bd41-d198-832f-852c-5fd5493bb8cc
+created: 2026-01-13
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: React Nuqs Library
+type: note
+updated: 2026-01-14
 ---
+
 # React Nuqs Library
 
 > Conversation ID: 6966bd41-d198-832f-852c-5fd5493bb8cc

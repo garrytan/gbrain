@@ -1,13 +1,19 @@
 ---
-title: "Refactor Vue template"
-type: guide
-created: 2023-01-07
-updated: 2023-01-07
-source: chatgpt-export
 conversation_id: 67e23655-d056-4b11-ab71-95a0459f02b9
+created: 2023-01-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Refactor Vue template
+type: guide
+updated: 2023-01-07
 ---
+
 # Refactor Vue template
 
 > Conversation ID: 67e23655-d056-4b11-ab71-95a0459f02b9

@@ -1,13 +1,18 @@
 ---
-title: "Neon Startup Program"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6973fa6c-becc-8327-8b7a-6a5f27910b87
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Neon Startup Program
+type: note
+updated: 2026-01-23
 ---
+
 # Neon Startup Program
 
 > Conversation ID: 6973fa6c-becc-8327-8b7a-6a5f27910b87

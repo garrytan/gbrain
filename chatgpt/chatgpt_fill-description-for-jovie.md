@@ -1,13 +1,18 @@
 ---
-title: "Fill description for jov.ie"
-type: note
-created: 2025-12-07
-updated: 2025-12-07
-source: chatgpt-export
 conversation_id: 6934d506-7dec-8326-b902-4dd3e75c756a
+created: 2025-12-07
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fill description for jov.ie
+type: note
+updated: 2025-12-07
 ---
+
 # Fill description for jov.ie
 
 > Conversation ID: 6934d506-7dec-8326-b902-4dd3e75c756a

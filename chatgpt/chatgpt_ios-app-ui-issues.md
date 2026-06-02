@@ -1,13 +1,20 @@
 ---
-title: "iOS App UI Issues"
-type: guide
-created: 2025-06-10
-updated: 2025-06-10
-source: chatgpt-export
 conversation_id: 684784f5-17ac-8007-b9ed-51ce8839a1a2
+created: 2025-06-10
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 14
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS App UI Issues
+type: guide
+updated: 2025-06-10
 ---
+
 # iOS App UI Issues
 
 > Conversation ID: 684784f5-17ac-8007-b9ed-51ce8839a1a2

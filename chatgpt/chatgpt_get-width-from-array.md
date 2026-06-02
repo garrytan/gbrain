@@ -1,13 +1,19 @@
 ---
-title: "Get width from array"
-type: note
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: f2c42efd-3488-4e35-9d5c-8f45901163f7
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Get width from array
+type: note
+updated: 2022-12-23
 ---
+
 # Get width from array
 
 > Conversation ID: f2c42efd-3488-4e35-9d5c-8f45901163f7

@@ -1,13 +1,20 @@
 ---
-title: "Vue.js Pricing Component"
-type: guide
-created: 2023-03-03
-updated: 2023-03-03
-source: chatgpt-export
 conversation_id: 0e44aa20-ea38-4acf-a5c6-7b6f726c95b6
+created: 2023-03-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js Pricing Component
+type: guide
+updated: 2023-03-03
 ---
+
 # Vue.js Pricing Component
 
 > Conversation ID: 0e44aa20-ea38-4acf-a5c6-7b6f726c95b6

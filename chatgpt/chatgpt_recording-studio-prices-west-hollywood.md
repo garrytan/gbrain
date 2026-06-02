@@ -1,13 +1,18 @@
 ---
-title: "Recording Studio Prices: West Hollywood"
-type: note
-created: 2023-10-31
-updated: 2023-10-31
-source: chatgpt-export
 conversation_id: 11ba9ca5-317a-4750-9779-2c34a9679f71
+created: 2023-10-31
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Recording Studio Prices: West Hollywood'
+type: note
+updated: 2023-10-31
 ---
+
 # Recording Studio Prices: West Hollywood
 
 > Conversation ID: 11ba9ca5-317a-4750-9779-2c34a9679f71

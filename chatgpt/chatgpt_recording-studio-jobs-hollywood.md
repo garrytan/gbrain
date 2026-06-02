@@ -1,13 +1,18 @@
 ---
-title: "Recording studio jobs Hollywood"
-type: note
-created: 2025-12-05
-updated: 2025-12-05
-source: chatgpt-export
 conversation_id: 69324e77-3174-832d-867c-5fa0bca7a895
+created: 2025-12-05
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Recording studio jobs Hollywood
+type: note
+updated: 2025-12-05
 ---
+
 # Recording studio jobs Hollywood
 
 > Conversation ID: 69324e77-3174-832d-867c-5fa0bca7a895

@@ -1,13 +1,19 @@
 ---
-title: "Style sky button Tailwind"
-type: note
-created: 2024-06-21
-updated: 2024-06-21
-source: chatgpt-export
 conversation_id: 038bc7aa-56de-4ee9-ae7b-5c5d2e0b72b4
+created: 2024-06-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Style sky button Tailwind
+type: note
+updated: 2024-06-21
 ---
+
 # Style sky button Tailwind
 
 > Conversation ID: 038bc7aa-56de-4ee9-ae7b-5c5d2e0b72b4

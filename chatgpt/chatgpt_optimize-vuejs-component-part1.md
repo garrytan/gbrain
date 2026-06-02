@@ -1,13 +1,20 @@
 ---
-title: "Optimize Vue.js Component"
-type: essay
-created: 2024-06-25
-updated: 2024-06-25
-source: chatgpt-export
 conversation_id: db581c88-d768-43c7-aa7c-cc777a15e136
+created: 2024-06-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 54
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Optimize Vue.js Component
+type: essay
+updated: 2024-06-25
 ---
+
 # Optimize Vue.js Component
 
 > Conversation ID: db581c88-d768-43c7-aa7c-cc777a15e136

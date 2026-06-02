@@ -1,13 +1,18 @@
 ---
-title: "Bubblegum Factory Logo"
-type: note
-created: 2024-05-15
-updated: 2024-05-15
-source: chatgpt-export
 conversation_id: 784ff0bc-5734-40f3-bbe7-f48394a13eb3
+created: 2024-05-15
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Bubblegum Factory Logo
+type: note
+updated: 2024-05-15
 ---
+
 # Bubblegum Factory Logo
 
 > Conversation ID: 784ff0bc-5734-40f3-bbe7-f48394a13eb3

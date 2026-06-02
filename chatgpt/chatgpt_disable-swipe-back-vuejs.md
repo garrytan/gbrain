@@ -1,13 +1,19 @@
 ---
-title: "Disable Swipe Back Vue.js"
-type: guide
-created: 2023-02-07
-updated: 2023-02-07
-source: chatgpt-export
 conversation_id: b6ad6800-d461-4009-a42b-847a6b997070
+created: 2023-02-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 12
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Disable Swipe Back Vue.js
+type: guide
+updated: 2023-02-07
 ---
+
 # Disable Swipe Back Vue.js
 
 > Conversation ID: b6ad6800-d461-4009-a42b-847a6b997070

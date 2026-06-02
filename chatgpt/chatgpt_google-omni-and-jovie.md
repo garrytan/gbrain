@@ -1,13 +1,20 @@
 ---
-title: "Google Omni and Jovie"
-type: essay
-created: 2026-05-20
-updated: 2026-05-21
-source: chatgpt-export
 conversation_id: 6a0d0c9e-ce14-83e8-b07f-5e411628366c
+created: 2026-05-20
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 19
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Google Omni and Jovie
+type: essay
+updated: 2026-05-21
 ---
+
 # Google Omni and Jovie
 
 > Conversation ID: 6a0d0c9e-ce14-83e8-b07f-5e411628366c

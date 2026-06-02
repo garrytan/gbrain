@@ -1,13 +1,19 @@
 ---
-title: "Right Rail Design Improvement"
-type: guide
-created: 2026-05-18
-updated: 2026-05-18
-source: chatgpt-export
 conversation_id: 6a0a9d62-107c-83e8-acda-04e2e6e37128
+created: 2026-05-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Right Rail Design Improvement
+type: guide
+updated: 2026-05-18
 ---
+
 # Right Rail Design Improvement
 
 > Conversation ID: 6a0a9d62-107c-83e8-acda-04e2e6e37128

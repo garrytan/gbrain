@@ -1,13 +1,19 @@
 ---
-title: "Vue Input Field Summary"
-type: note
-created: 2023-01-29
-updated: 2023-01-29
-source: chatgpt-export
 conversation_id: ff638e12-2478-4165-8753-002a7529db8d
+created: 2023-01-29
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue Input Field Summary
+type: note
+updated: 2023-01-29
 ---
+
 # Vue Input Field Summary
 
 > Conversation ID: ff638e12-2478-4165-8753-002a7529db8d

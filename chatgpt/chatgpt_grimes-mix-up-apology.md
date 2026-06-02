@@ -1,13 +1,18 @@
 ---
-title: "Grimes Mix-up Apology"
-type: note
-created: 2024-05-16
-updated: 2024-05-17
-source: chatgpt-export
 conversation_id: 420023b0-e1fc-42d9-b32b-c77d892d0dba
+created: 2024-05-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Grimes Mix-up Apology
+type: note
+updated: 2024-05-17
 ---
+
 # Grimes Mix-up Apology
 
 > Conversation ID: 420023b0-e1fc-42d9-b32b-c77d892d0dba

@@ -1,13 +1,18 @@
 ---
-title: "YC Optimized Location Pitch"
-type: note
-created: 2026-02-12
-updated: 2026-02-12
-source: chatgpt-export
 conversation_id: 698d403c-9810-8331-8c7d-6db2c6c9b97f
+created: 2026-02-12
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: YC Optimized Location Pitch
+type: note
+updated: 2026-02-12
 ---
+
 # YC Optimized Location Pitch
 
 > Conversation ID: 698d403c-9810-8331-8c7d-6db2c6c9b97f

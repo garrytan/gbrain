@@ -1,13 +1,19 @@
 ---
-title: "Album Art in Streaming Era"
-type: note
-created: 2025-05-31
-updated: 2025-05-31
-source: chatgpt-export
 conversation_id: 683a81bd-ca94-8007-920a-91128fa4ffd5
+created: 2025-05-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Album Art in Streaming Era
+type: note
+updated: 2025-05-31
 ---
+
 # Album Art in Streaming Era
 
 > Conversation ID: 683a81bd-ca94-8007-920a-91128fa4ffd5

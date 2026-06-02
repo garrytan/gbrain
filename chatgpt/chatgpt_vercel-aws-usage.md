@@ -1,13 +1,18 @@
 ---
-title: "Vercel AWS usage"
-type: note
-created: 2025-12-10
-updated: 2025-12-10
-source: chatgpt-export
 conversation_id: 6939bad1-d644-8326-8680-157d01342f81
+created: 2025-12-10
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel AWS usage
+type: note
+updated: 2025-12-10
 ---
+
 # Vercel AWS usage
 
 > Conversation ID: 6939bad1-d644-8326-8680-157d01342f81

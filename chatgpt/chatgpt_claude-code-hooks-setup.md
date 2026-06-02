@@ -1,13 +1,19 @@
 ---
-title: "Claude Code Hooks Setup"
-type: note
-created: 2026-02-15
-updated: 2026-02-15
-source: chatgpt-export
 conversation_id: 69924ace-a49c-8326-a2c3-3741f9572b53
+created: 2026-02-15
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude Code Hooks Setup
+type: note
+updated: 2026-02-15
 ---
+
 # Claude Code Hooks Setup
 
 > Conversation ID: 69924ace-a49c-8326-a2c3-3741f9572b53

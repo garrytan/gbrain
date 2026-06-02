@@ -1,13 +1,20 @@
 ---
-title: "Fastlane match cloning error"
-type: guide
-created: 2025-07-23
-updated: 2025-07-23
-source: chatgpt-export
 conversation_id: 68811a9c-3b7c-8331-915c-31cb335c681b
+created: 2025-07-23
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 23
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Fastlane match cloning error
+type: guide
+updated: 2025-07-23
 ---
+
 # Fastlane match cloning error
 
 > Conversation ID: 68811a9c-3b7c-8331-915c-31cb335c681b

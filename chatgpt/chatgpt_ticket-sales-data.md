@@ -1,13 +1,19 @@
 ---
-title: "Ticket sales data"
-type: note
-created: 2025-09-25
-updated: 2025-09-25
-source: chatgpt-export
 conversation_id: 68d5be05-99e4-8320-91dd-13af492f0716
+created: 2025-09-25
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Ticket sales data
+type: note
+updated: 2025-09-25
 ---
+
 # Ticket sales data
 
 > Conversation ID: 68d5be05-99e4-8320-91dd-13af492f0716

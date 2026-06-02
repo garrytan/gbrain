@@ -1,13 +1,19 @@
 ---
-title: "Iconic DJ Mask Design"
-type: note
-created: 2025-05-11
-updated: 2025-05-11
-source: chatgpt-export
 conversation_id: 682108ec-f4cc-8007-afd9-4f7f8a57bbbb
+created: 2025-05-11
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Iconic DJ Mask Design
+type: note
+updated: 2025-05-11
 ---
+
 # Iconic DJ Mask Design
 
 > Conversation ID: 682108ec-f4cc-8007-afd9-4f7f8a57bbbb

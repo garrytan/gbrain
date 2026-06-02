@@ -1,13 +1,19 @@
 ---
-title: "Reset supabase db"
-type: guide
-created: 2025-08-18
-updated: 2025-08-18
-source: chatgpt-export
 conversation_id: 68a3a908-914c-8321-9c32-3ae23412d92f
+created: 2025-08-18
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Reset supabase db
+type: guide
+updated: 2025-08-18
 ---
+
 # Reset supabase db
 
 > Conversation ID: 68a3a908-914c-8321-9c32-3ae23412d92f

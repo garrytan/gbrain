@@ -1,13 +1,18 @@
 ---
-title: "UX audit preview.jov.ie"
-type: note
-created: 2025-11-30
-updated: 2025-11-30
-source: chatgpt-export
 conversation_id: 692cc5bf-c6a8-832a-a4cd-5fbdb0f86be1
+created: 2025-11-30
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: UX audit preview.jov.ie
+type: note
+updated: 2025-11-30
 ---
+
 # UX audit preview.jov.ie
 
 > Conversation ID: 692cc5bf-c6a8-832a-a4cd-5fbdb0f86be1

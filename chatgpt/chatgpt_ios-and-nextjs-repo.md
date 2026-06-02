@@ -1,13 +1,19 @@
 ---
-title: "iOS and Next.js repo"
-type: note
-created: 2025-06-22
-updated: 2025-06-22
-source: chatgpt-export
 conversation_id: 685849d7-e5a0-8007-a99e-e361000ab88b
+created: 2025-06-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: iOS and Next.js repo
+type: note
+updated: 2025-06-22
 ---
+
 # iOS and Next.js repo
 
 > Conversation ID: 685849d7-e5a0-8007-a99e-e361000ab88b

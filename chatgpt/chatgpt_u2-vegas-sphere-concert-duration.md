@@ -1,13 +1,18 @@
 ---
-title: "U2 Vegas Sphere Concert Duration"
-type: note
-created: 2023-12-13
-updated: 2023-12-14
-source: chatgpt-export
 conversation_id: 38b5253f-5ff7-4381-a398-091fd8444f0f
+created: 2023-12-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 16
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: U2 Vegas Sphere Concert Duration
+type: note
+updated: 2023-12-14
 ---
+
 # U2 Vegas Sphere Concert Duration
 
 > Conversation ID: 38b5253f-5ff7-4381-a398-091fd8444f0f

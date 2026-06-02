@@ -1,13 +1,18 @@
 ---
-title: "Love Album Art Request"
-type: note
-created: 2024-05-14
-updated: 2024-05-14
-source: chatgpt-export
 conversation_id: 191bc051-2e13-4a13-aee7-68f7674da869
+created: 2024-05-14
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Love Album Art Request
+type: note
+updated: 2024-05-14
 ---
+
 # Love Album Art Request
 
 > Conversation ID: 191bc051-2e13-4a13-aee7-68f7674da869

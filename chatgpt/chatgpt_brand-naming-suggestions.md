@@ -1,13 +1,19 @@
 ---
-title: "Brand Naming Suggestions."
-type: note
-created: 2023-02-21
-updated: 2023-02-21
-source: chatgpt-export
 conversation_id: e270eaeb-f8df-4904-85c8-7d1b23e6735a
+created: 2023-02-21
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 24
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Brand Naming Suggestions.
+type: note
+updated: 2023-02-21
 ---
+
 # Brand Naming Suggestions.
 
 > Conversation ID: e270eaeb-f8df-4904-85c8-7d1b23e6735a

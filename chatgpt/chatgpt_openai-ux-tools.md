@@ -1,13 +1,19 @@
 ---
-title: "OpenAI UX tools"
-type: note
-created: 2025-09-09
-updated: 2025-09-09
-source: chatgpt-export
 conversation_id: 68c075c4-81bc-832b-bf50-1f1cf2be99f7
+created: 2025-09-09
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: OpenAI UX tools
+type: note
+updated: 2025-09-09
 ---
+
 # OpenAI UX tools
 
 > Conversation ID: 68c075c4-81bc-832b-bf50-1f1cf2be99f7

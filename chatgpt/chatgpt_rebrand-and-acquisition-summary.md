@@ -1,13 +1,18 @@
 ---
-title: "Rebrand and acquisition summary"
-type: note
-created: 2025-11-23
-updated: 2025-11-23
-source: chatgpt-export
 conversation_id: 692359b0-c4dc-8326-a8e1-3ed348222832
+created: 2025-11-23
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Rebrand and acquisition summary
+type: note
+updated: 2025-11-23
 ---
+
 # Rebrand and acquisition summary
 
 > Conversation ID: 692359b0-c4dc-8326-a8e1-3ed348222832

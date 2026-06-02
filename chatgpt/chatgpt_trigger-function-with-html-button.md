@@ -1,13 +1,19 @@
 ---
-title: "Trigger Function with HTML Button"
-type: note
-created: 2023-01-31
-updated: 2023-01-31
-source: chatgpt-export
 conversation_id: 60ed6535-9485-4a15-ab1a-cee29c287942
+created: 2023-01-31
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Trigger Function with HTML Button
+type: note
+updated: 2023-01-31
 ---
+
 # Trigger Function with HTML Button
 
 > Conversation ID: 60ed6535-9485-4a15-ab1a-cee29c287942

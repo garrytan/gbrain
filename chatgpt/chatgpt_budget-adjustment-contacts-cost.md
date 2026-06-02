@@ -1,13 +1,18 @@
 ---
-title: "Budget Adjustment Contacts Cost"
-type: note
-created: 2025-05-15
-updated: 2025-05-15
-source: chatgpt-export
 conversation_id: 68263370-30b4-8007-a01e-1daef005d0b4
+created: 2025-05-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Budget Adjustment Contacts Cost
+type: note
+updated: 2025-05-15
 ---
+
 # Budget Adjustment Contacts Cost
 
 > Conversation ID: 68263370-30b4-8007-a01e-1daef005d0b4

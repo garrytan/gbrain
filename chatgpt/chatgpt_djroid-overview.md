@@ -1,13 +1,18 @@
 ---
-title: "DJROID Overview"
-type: note
-created: 2025-02-26
-updated: 2025-02-26
-source: chatgpt-export
 conversation_id: 67be7e08-b358-8007-9274-ff5b8b560466
+created: 2025-02-26
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJROID Overview
+type: note
+updated: 2025-02-26
 ---
+
 # DJROID Overview
 
 > Conversation ID: 67be7e08-b358-8007-9274-ff5b8b560466

@@ -1,13 +1,19 @@
 ---
-title: "Vercel Cron Job Costs"
-type: note
-created: 2026-02-15
-updated: 2026-02-15
-source: chatgpt-export
 conversation_id: 69924ba7-449c-8329-8e17-3c95695f161e
+created: 2026-02-15
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Vercel Cron Job Costs
+type: note
+updated: 2026-02-15
 ---
+
 # Vercel Cron Job Costs
 
 > Conversation ID: 69924ba7-449c-8329-8e17-3c95695f161e

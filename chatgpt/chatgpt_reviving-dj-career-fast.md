@@ -1,13 +1,19 @@
 ---
-title: "Reviving DJ Career Fast"
-type: essay
-created: 2025-02-25
-updated: 2025-02-26
-source: chatgpt-export
 conversation_id: 67bd662d-9204-8007-8f7a-c12d7423419f
+created: 2025-02-25
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 11
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Reviving DJ Career Fast
+type: essay
+updated: 2025-02-26
 ---
+
 # Reviving DJ Career Fast
 
 > Conversation ID: 67bd662d-9204-8007-8f7a-c12d7423419f

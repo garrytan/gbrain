@@ -1,13 +1,19 @@
 ---
-title: "Clarify Claude reference"
-type: note
-created: 2025-09-11
-updated: 2025-09-11
-source: chatgpt-export
 conversation_id: 68c266fd-bbe4-8327-96ff-872875bc2aca
+created: 2025-09-11
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Clarify Claude reference
+type: note
+updated: 2025-09-11
 ---
+
 # Clarify Claude reference
 
 > Conversation ID: 68c266fd-bbe4-8327-96ff-872875bc2aca

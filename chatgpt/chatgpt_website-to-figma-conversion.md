@@ -1,13 +1,20 @@
 ---
-title: "Website to Figma Conversion"
-type: guide
-created: 2026-02-17
-updated: 2026-02-17
-source: chatgpt-export
 conversation_id: 6993bc40-47d0-8330-9ecc-a8486f3972b5
+created: 2026-02-17
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Website to Figma Conversion
+type: guide
+updated: 2026-02-17
 ---
+
 # Website to Figma Conversion
 
 > Conversation ID: 6993bc40-47d0-8330-9ecc-a8486f3972b5

@@ -1,13 +1,20 @@
 ---
-title: "GBrain for Jovie Integration"
-type: essay
-created: 2026-05-27
-updated: 2026-05-27
-source: chatgpt-export
 conversation_id: 6a165a0c-757c-83e8-9420-719327319ff1
+created: 2026-05-27
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 15
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: GBrain for Jovie Integration
+type: essay
+updated: 2026-05-27
 ---
+
 # GBrain for Jovie Integration
 
 > Conversation ID: 6a165a0c-757c-83e8-9420-719327319ff1

@@ -1,13 +1,18 @@
 ---
-title: "Next.js Developer Skills"
-type: note
-created: 2026-01-31
-updated: 2026-01-31
-source: chatgpt-export
 conversation_id: 697e7ba0-c124-832a-83cb-05d0fcdf9e28
+created: 2026-01-31
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Next.js Developer Skills
+type: note
+updated: 2026-01-31
 ---
+
 # Next.js Developer Skills
 
 > Conversation ID: 697e7ba0-c124-832a-83cb-05d0fcdf9e28

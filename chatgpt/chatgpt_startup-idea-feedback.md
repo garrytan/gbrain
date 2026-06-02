@@ -1,13 +1,19 @@
 ---
-title: "Startup Idea Feedback"
-type: note
-created: 2026-01-05
-updated: 2026-01-05
-source: chatgpt-export
 conversation_id: 695b0d1b-39e4-832f-a8ac-72bf728a89b9
+created: 2026-01-05
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Startup Idea Feedback
+type: note
+updated: 2026-01-05
 ---
+
 # Startup Idea Feedback
 
 > Conversation ID: 695b0d1b-39e4-832f-a8ac-72bf728a89b9

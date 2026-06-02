@@ -1,13 +1,18 @@
 ---
-title: "Experiential producer jobs LA"
-type: note
-created: 2025-10-26
-updated: 2025-10-26
-source: chatgpt-export
 conversation_id: 68fe920b-2640-832b-8c9d-811f640f9e8d
+created: 2025-10-26
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Experiential producer jobs LA
+type: note
+updated: 2025-10-26
 ---
+
 # Experiential producer jobs LA
 
 > Conversation ID: 68fe920b-2640-832b-8c9d-811f640f9e8d

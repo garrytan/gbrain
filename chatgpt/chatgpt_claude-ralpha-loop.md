@@ -1,13 +1,18 @@
 ---
-title: "Claude Ralpha Loop"
-type: note
-created: 2026-02-03
-updated: 2026-02-04
-source: chatgpt-export
 conversation_id: 698152ba-6ca4-8328-8ee8-ec03383e6d2d
+created: 2026-02-03
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude Ralpha Loop
+type: note
+updated: 2026-02-04
 ---
+
 # Claude Ralpha Loop
 
 > Conversation ID: 698152ba-6ca4-8328-8ee8-ec03383e6d2d

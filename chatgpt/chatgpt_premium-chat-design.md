@@ -1,13 +1,20 @@
 ---
-title: "Premium Chat Design"
-type: guide
-created: 2026-05-17
-updated: 2026-05-20
-source: chatgpt-export
 conversation_id: 6a09474c-23bc-83e8-a191-a7d352deb01a
+created: 2026-05-17
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Premium Chat Design
+type: guide
+updated: 2026-05-20
 ---
+
 # Premium Chat Design
 
 > Conversation ID: 6a09474c-23bc-83e8-a191-a7d352deb01a

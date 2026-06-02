@@ -1,13 +1,18 @@
 ---
-title: "The 1975 Spotify discography"
-type: note
-created: 2025-08-30
-updated: 2025-08-30
-source: chatgpt-export
 conversation_id: 68b32efa-a7f8-8329-9d73-72bfe13101a2
+created: 2025-08-30
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: The 1975 Spotify discography
+type: note
+updated: 2025-08-30
 ---
+
 # The 1975 Spotify discography
 
 > Conversation ID: 68b32efa-a7f8-8329-9d73-72bfe13101a2

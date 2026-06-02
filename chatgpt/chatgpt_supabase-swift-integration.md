@@ -1,13 +1,19 @@
 ---
-title: "Supabase Swift Integration"
-type: note
-created: 2025-07-02
-updated: 2025-07-02
-source: chatgpt-export
 conversation_id: 6864d0d8-e8a4-8007-9dd6-60ae5e2be2d8
+created: 2025-07-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Supabase Swift Integration
+type: note
+updated: 2025-07-02
 ---
+
 # Supabase Swift Integration
 
 > Conversation ID: 6864d0d8-e8a4-8007-9dd6-60ae5e2be2d8

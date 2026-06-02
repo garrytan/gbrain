@@ -1,13 +1,18 @@
 ---
-title: "iPhone XR eSIM Support"
-type: note
-created: 2025-07-02
-updated: 2025-07-02
-source: chatgpt-export
 conversation_id: 6865af55-07a4-8007-a83b-82c505e59bcb
+created: 2025-07-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iPhone XR eSIM Support
+type: note
+updated: 2025-07-02
 ---
+
 # iPhone XR eSIM Support
 
 > Conversation ID: 6865af55-07a4-8007-a83b-82c505e59bcb

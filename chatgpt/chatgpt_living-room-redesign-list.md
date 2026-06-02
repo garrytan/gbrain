@@ -1,13 +1,18 @@
 ---
-title: "Living Room Redesign List"
-type: note
-created: 2025-03-15
-updated: 2025-03-15
-source: chatgpt-export
 conversation_id: 67d5d078-b5bc-8007-a695-0128653d8763
+created: 2025-03-15
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Living Room Redesign List
+type: note
+updated: 2025-03-15
 ---
+
 # Living Room Redesign List
 
 > Conversation ID: 67d5d078-b5bc-8007-a695-0128653d8763

@@ -1,13 +1,19 @@
 ---
-title: "Vercel Toolbar Download"
-type: note
-created: 2026-02-17
-updated: 2026-02-17
-source: chatgpt-export
 conversation_id: 6993cd99-fb1c-8328-a469-270c1b36c3a8
+created: 2026-02-17
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vercel Toolbar Download
+type: note
+updated: 2026-02-17
 ---
+
 # Vercel Toolbar Download
 
 > Conversation ID: 6993cd99-fb1c-8328-a469-270c1b36c3a8

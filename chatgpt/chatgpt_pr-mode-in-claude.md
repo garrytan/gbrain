@@ -1,13 +1,19 @@
 ---
-title: "PR Mode in Claude"
-type: guide
-created: 2026-01-30
-updated: 2026-01-30
-source: chatgpt-export
 conversation_id: 697d1fe3-dfb0-832b-b3aa-d81c5a504c03
+created: 2026-01-30
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 5
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: PR Mode in Claude
+type: guide
+updated: 2026-01-30
 ---
+
 # PR Mode in Claude
 
 > Conversation ID: 697d1fe3-dfb0-832b-b3aa-d81c5a504c03

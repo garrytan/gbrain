@@ -1,13 +1,18 @@
 ---
-title: "Beatles Trivia Answers"
-type: note
-created: 2024-01-26
-updated: 2024-01-26
-source: chatgpt-export
 conversation_id: 3477878d-1c91-4b56-aa6c-fac4d7b0638c
+created: 2024-01-26
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Beatles Trivia Answers
+type: note
+updated: 2024-01-26
 ---
+
 # Beatles Trivia Answers
 
 > Conversation ID: 3477878d-1c91-4b56-aa6c-fac4d7b0638c

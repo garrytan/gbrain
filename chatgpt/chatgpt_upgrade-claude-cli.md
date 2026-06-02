@@ -1,13 +1,19 @@
 ---
-title: "Upgrade Claude CLI"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6972cc61-ca28-8328-b86a-ab085b412ece
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Upgrade Claude CLI
+type: note
+updated: 2026-01-23
 ---
+
 # Upgrade Claude CLI
 
 > Conversation ID: 6972cc61-ca28-8328-b86a-ab085b412ece

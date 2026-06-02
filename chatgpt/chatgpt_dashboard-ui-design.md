@@ -1,13 +1,19 @@
 ---
-title: "Dashboard UI design"
-type: note
-created: 2025-11-13
-updated: 2025-11-13
-source: chatgpt-export
 conversation_id: 691579c9-0a38-832e-bf71-af5eea139c81
+created: 2025-11-13
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Dashboard UI design
+type: note
+updated: 2025-11-13
 ---
+
 # Dashboard UI design
 
 > Conversation ID: 691579c9-0a38-832e-bf71-af5eea139c81

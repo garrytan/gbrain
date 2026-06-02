@@ -1,13 +1,19 @@
 ---
-title: "Target Scandinavia for Spotify."
-type: note
-created: 2024-05-17
-updated: 2024-05-17
-source: chatgpt-export
 conversation_id: 0fd1fee1-dea2-4b8c-8c72-2378294b80b9
+created: 2024-05-17
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Target Scandinavia for Spotify.
+type: note
+updated: 2024-05-17
 ---
+
 # Target Scandinavia for Spotify.
 
 > Conversation ID: 0fd1fee1-dea2-4b8c-8c72-2378294b80b9

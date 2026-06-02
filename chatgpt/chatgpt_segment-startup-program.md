@@ -1,13 +1,18 @@
 ---
-title: "Segment startup program"
-type: note
-created: 2025-08-05
-updated: 2025-08-05
-source: chatgpt-export
 conversation_id: 68928574-57ec-8323-9bd9-4e03b155368f
+created: 2025-08-05
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Segment startup program
+type: note
+updated: 2025-08-05
 ---
+
 # Segment startup program
 
 > Conversation ID: 68928574-57ec-8323-9bd9-4e03b155368f

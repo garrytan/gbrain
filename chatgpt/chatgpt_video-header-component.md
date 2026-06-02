@@ -1,13 +1,19 @@
 ---
-title: "Video Header Component."
-type: guide
-created: 2023-02-27
-updated: 2023-02-27
-source: chatgpt-export
 conversation_id: 26ba187c-737c-4700-8bde-71ebc1756e95
+created: 2023-02-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Video Header Component.
+type: guide
+updated: 2023-02-27
 ---
+
 # Video Header Component.
 
 > Conversation ID: 26ba187c-737c-4700-8bde-71ebc1756e95

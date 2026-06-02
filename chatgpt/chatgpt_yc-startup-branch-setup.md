@@ -1,13 +1,18 @@
 ---
-title: "YC Startup Branch Setup"
-type: note
-created: 2025-12-23
-updated: 2025-12-23
-source: chatgpt-export
 conversation_id: 6949f6dc-e6bc-832e-9f66-9dfee795b4f4
+created: 2025-12-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: YC Startup Branch Setup
+type: note
+updated: 2025-12-23
 ---
+
 # YC Startup Branch Setup
 
 > Conversation ID: 6949f6dc-e6bc-832e-9f66-9dfee795b4f4

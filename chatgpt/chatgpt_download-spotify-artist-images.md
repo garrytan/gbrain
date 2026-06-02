@@ -1,13 +1,18 @@
 ---
-title: "Download Spotify artist images"
-type: note
-created: 2025-08-30
-updated: 2025-08-30
-source: chatgpt-export
 conversation_id: 68b32ef1-3f80-832e-b355-63a719a0e232
+created: 2025-08-30
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Download Spotify artist images
+type: note
+updated: 2025-08-30
 ---
+
 # Download Spotify artist images
 
 > Conversation ID: 68b32ef1-3f80-832e-b355-63a719a0e232

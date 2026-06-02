@@ -1,13 +1,19 @@
 ---
-title: "HTML Meta Tags Summary"
-type: guide
-created: 2023-03-02
-updated: 2023-03-02
-source: chatgpt-export
 conversation_id: 155e5390-0021-4240-8b74-4edfeb1f7092
+created: 2023-03-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: HTML Meta Tags Summary
+type: guide
+updated: 2023-03-02
 ---
+
 # HTML Meta Tags Summary
 
 > Conversation ID: 155e5390-0021-4240-8b74-4edfeb1f7092

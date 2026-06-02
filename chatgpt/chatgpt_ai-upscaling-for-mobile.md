@@ -1,13 +1,18 @@
 ---
-title: "AI Upscaling for Mobile"
-type: note
-created: 2026-04-21
-updated: 2026-04-21
-source: chatgpt-export
 conversation_id: 69e7eb3b-6998-83e8-9625-03557f1bdf14
+created: 2026-04-21
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AI Upscaling for Mobile
+type: note
+updated: 2026-04-21
 ---
+
 # AI Upscaling for Mobile
 
 > Conversation ID: 69e7eb3b-6998-83e8-9625-03557f1bdf14

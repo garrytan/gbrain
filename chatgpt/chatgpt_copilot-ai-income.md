@@ -1,13 +1,18 @@
 ---
-title: "Copilot AI Income"
-type: note
-created: 2025-04-28
-updated: 2025-04-28
-source: chatgpt-export
 conversation_id: 680f0f73-aba4-8007-9440-889875274ca3
+created: 2025-04-28
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Copilot AI Income
+type: note
+updated: 2025-04-28
 ---
+
 # Copilot AI Income
 
 > Conversation ID: 680f0f73-aba4-8007-9440-889875274ca3

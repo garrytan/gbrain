@@ -1,13 +1,18 @@
 ---
-title: "Artist Secrets Revealed"
-type: note
-created: 2025-06-23
-updated: 2025-06-23
-source: chatgpt-export
 conversation_id: 6858cfae-eda0-8007-9630-165e9eefdf25
+created: 2025-06-23
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Artist Secrets Revealed
+type: note
+updated: 2025-06-23
 ---
+
 # Artist Secrets Revealed
 
 > Conversation ID: 6858cfae-eda0-8007-9630-165e9eefdf25

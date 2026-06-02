@@ -1,13 +1,18 @@
 ---
-title: "Spotify profile ownership API"
-type: note
-created: 2025-12-15
-updated: 2025-12-15
-source: chatgpt-export
 conversation_id: 69405272-2264-8330-9fa5-df29296b745a
+created: 2025-12-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spotify profile ownership API
+type: note
+updated: 2025-12-15
 ---
+
 # Spotify profile ownership API
 
 > Conversation ID: 69405272-2264-8330-9fa5-df29296b745a

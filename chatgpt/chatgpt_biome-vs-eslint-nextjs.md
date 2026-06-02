@@ -1,13 +1,19 @@
 ---
-title: "Biome vs ESLint Next.js"
-type: note
-created: 2025-12-22
-updated: 2025-12-22
-source: chatgpt-export
 conversation_id: 6948dbf0-39e8-8331-ba30-6d938697b973
+created: 2025-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Biome vs ESLint Next.js
+type: note
+updated: 2025-12-22
 ---
+
 # Biome vs ESLint Next.js
 
 > Conversation ID: 6948dbf0-39e8-8331-ba30-6d938697b973

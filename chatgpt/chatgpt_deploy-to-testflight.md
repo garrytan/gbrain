@@ -1,13 +1,18 @@
 ---
-title: "Deploy to TestFlight"
-type: note
-created: 2025-11-22
-updated: 2025-11-22
-source: chatgpt-export
 conversation_id: 692243b6-f910-832a-a21c-e8bec1ac51f5
+created: 2025-11-22
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Deploy to TestFlight
+type: note
+updated: 2025-11-22
 ---
+
 # Deploy to TestFlight
 
 > Conversation ID: 692243b6-f910-832a-a21c-e8bec1ac51f5

@@ -1,13 +1,19 @@
 ---
-title: "Vue If Condition Troubleshooting"
-type: note
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: 3e26535c-1a61-4578-84c2-ffbdc5704575
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue If Condition Troubleshooting
+type: note
+updated: 2022-12-22
 ---
+
 # Vue If Condition Troubleshooting
 
 > Conversation ID: 3e26535c-1a61-4578-84c2-ffbdc5704575

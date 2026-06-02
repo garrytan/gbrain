@@ -1,13 +1,19 @@
 ---
-title: "Funding revenue founders"
-type: note
-created: 2025-11-24
-updated: 2025-11-24
-source: chatgpt-export
 conversation_id: 6924e388-dd30-8331-84f0-00ccf9ecdbcd
+created: 2025-11-24
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Funding revenue founders
+type: note
+updated: 2025-11-24
 ---
+
 # Funding revenue founders
 
 > Conversation ID: 6924e388-dd30-8331-84f0-00ccf9ecdbcd

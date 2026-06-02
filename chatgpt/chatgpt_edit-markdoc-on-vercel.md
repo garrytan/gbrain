@@ -1,13 +1,20 @@
 ---
-title: "Edit Markdoc on Vercel"
-type: guide
-created: 2025-08-07
-updated: 2025-08-07
-source: chatgpt-export
 conversation_id: 68942e29-6224-8324-a7ff-e556abfdafb5
+created: 2025-08-07
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 22
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Edit Markdoc on Vercel
+type: guide
+updated: 2025-08-07
 ---
+
 # Edit Markdoc on Vercel
 
 > Conversation ID: 68942e29-6224-8324-a7ff-e556abfdafb5

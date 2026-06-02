@@ -1,13 +1,20 @@
 ---
-title: "Vue Component Refactoring Tips"
-type: essay
-created: 2023-12-06
-updated: 2023-12-06
-source: chatgpt-export
 conversation_id: 4d574aad-9e57-4a8d-90b8-2931b8e6c38f
+created: 2023-12-06
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 12
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue Component Refactoring Tips
+type: essay
+updated: 2023-12-06
 ---
+
 # Vue Component Refactoring Tips
 
 > Conversation ID: 4d574aad-9e57-4a8d-90b8-2931b8e6c38f

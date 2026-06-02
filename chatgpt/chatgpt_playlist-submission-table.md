@@ -1,13 +1,18 @@
 ---
-title: "Playlist Submission Table"
-type: note
-created: 2024-06-04
-updated: 2024-06-04
-source: chatgpt-export
 conversation_id: dcc70b23-71af-44aa-a00e-3d1773a69d72
+created: 2024-06-04
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 7
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Playlist Submission Table
+type: note
+updated: 2024-06-04
 ---
+
 # Playlist Submission Table
 
 > Conversation ID: dcc70b23-71af-44aa-a00e-3d1773a69d72

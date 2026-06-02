@@ -1,13 +1,18 @@
 ---
-title: "Design comparison tips"
-type: note
-created: 2025-11-13
-updated: 2025-11-13
-source: chatgpt-export
 conversation_id: 69162ee8-5100-8326-ac87-ffb1abf6a447
+created: 2025-11-13
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Design comparison tips
+type: note
+updated: 2025-11-13
 ---
+
 # Design comparison tips
 
 > Conversation ID: 69162ee8-5100-8326-ac87-ffb1abf6a447

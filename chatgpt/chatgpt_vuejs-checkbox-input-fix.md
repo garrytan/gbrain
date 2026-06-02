@@ -1,13 +1,18 @@
 ---
-title: "Vue.js Checkbox Input Fix"
-type: note
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: 0feb64a3-cee9-47ae-b12a-061a21f7bf49
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js Checkbox Input Fix
+type: note
+updated: 2022-12-23
 ---
+
 # Vue.js Checkbox Input Fix
 
 > Conversation ID: 0feb64a3-cee9-47ae-b12a-061a21f7bf49

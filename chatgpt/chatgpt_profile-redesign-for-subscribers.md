@@ -1,13 +1,18 @@
 ---
-title: "Profile Redesign for Subscribers"
-type: note
-created: 2026-04-24
-updated: 2026-04-24
-source: chatgpt-export
 conversation_id: 69eab676-c594-83e8-8d44-d3e4e4bce182
+created: 2026-04-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 9
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Profile Redesign for Subscribers
+type: note
+updated: 2026-04-24
 ---
+
 # Profile Redesign for Subscribers
 
 > Conversation ID: 69eab676-c594-83e8-8d44-d3e4e4bce182

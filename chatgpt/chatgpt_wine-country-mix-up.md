@@ -1,13 +1,18 @@
 ---
-title: "Wine country mix-up"
-type: note
-created: 2025-12-09
-updated: 2025-12-09
-source: chatgpt-export
 conversation_id: 6938ab58-2d70-832a-8a0d-56020309fe3e
+created: 2025-12-09
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Wine country mix-up
+type: note
+updated: 2025-12-09
 ---
+
 # Wine country mix-up
 
 > Conversation ID: 6938ab58-2d70-832a-8a0d-56020309fe3e

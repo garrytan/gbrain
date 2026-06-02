@@ -1,13 +1,19 @@
 ---
-title: "Barback Tip Distribution"
-type: note
-created: 2024-08-13
-updated: 2024-08-13
-source: chatgpt-export
 conversation_id: b1e3352d-5856-4dcb-b51e-c76e13eda208
+created: 2024-08-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Barback Tip Distribution
+type: note
+updated: 2024-08-13
 ---
+
 # Barback Tip Distribution
 
 > Conversation ID: b1e3352d-5856-4dcb-b51e-c76e13eda208

@@ -1,13 +1,18 @@
 ---
-title: "Serato DJ Software Overview"
-type: note
-created: 2025-01-16
-updated: 2025-01-16
-source: chatgpt-export
 conversation_id: 6789056f-fe9c-8007-9f61-688982c85af7
+created: 2025-01-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Serato DJ Software Overview
+type: note
+updated: 2025-01-16
 ---
+
 # Serato DJ Software Overview
 
 > Conversation ID: 6789056f-fe9c-8007-9f61-688982c85af7

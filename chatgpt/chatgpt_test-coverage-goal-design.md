@@ -1,13 +1,20 @@
 ---
-title: "Test Coverage Goal Design"
-type: guide
-created: 2026-05-24
-updated: 2026-05-24
-source: chatgpt-export
 conversation_id: 6a126605-1270-83e8-9401-b26d7d751839
+created: 2026-05-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Test Coverage Goal Design
+type: guide
+updated: 2026-05-24
 ---
+
 # Test Coverage Goal Design
 
 > Conversation ID: 6a126605-1270-83e8-9401-b26d7d751839

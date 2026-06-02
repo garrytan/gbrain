@@ -1,13 +1,18 @@
 ---
-title: "FUGA distribution overview"
-type: note
-created: 2026-01-25
-updated: 2026-01-25
-source: chatgpt-export
 conversation_id: 69767510-e9f0-832f-ab3c-5e99212ca3f3
+created: 2026-01-25
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: FUGA distribution overview
+type: note
+updated: 2026-01-25
 ---
+
 # FUGA distribution overview
 
 > Conversation ID: 69767510-e9f0-832f-ab3c-5e99212ca3f3

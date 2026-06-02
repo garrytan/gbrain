@@ -1,13 +1,19 @@
 ---
-title: "Fix VueJS computed property"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: b096f190-d779-4296-920b-85062e589318
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Fix VueJS computed property
+type: note
+updated: 2022-12-21
 ---
+
 # Fix VueJS computed property
 
 > Conversation ID: b096f190-d779-4296-920b-85062e589318

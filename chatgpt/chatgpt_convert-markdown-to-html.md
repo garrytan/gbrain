@@ -1,13 +1,19 @@
 ---
-title: "Convert Markdown to HTML"
-type: note
-created: 2023-01-03
-updated: 2023-01-03
-source: chatgpt-export
 conversation_id: f5b9764a-b4bf-4655-aad2-e3211f5c3709
+created: 2023-01-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Convert Markdown to HTML
+type: note
+updated: 2023-01-03
 ---
+
 # Convert Markdown to HTML
 
 > Conversation ID: f5b9764a-b4bf-4655-aad2-e3211f5c3709

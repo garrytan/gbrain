@@ -1,13 +1,18 @@
 ---
-title: "Organizing DJ Library 2025"
-type: note
-created: 2025-01-15
-updated: 2025-01-15
-source: chatgpt-export
 conversation_id: 6787690a-69e4-8007-bef6-3d20e6798b15
+created: 2025-01-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Organizing DJ Library 2025
+type: note
+updated: 2025-01-15
 ---
+
 # Organizing DJ Library 2025
 
 > Conversation ID: 6787690a-69e4-8007-bef6-3d20e6798b15

@@ -1,13 +1,19 @@
 ---
-title: "Supabase Statsig issues"
-type: guide
-created: 2025-08-08
-updated: 2025-08-08
-source: chatgpt-export
 conversation_id: 6895728c-9a34-8333-82c0-d792a2ddb1be
+created: 2025-08-08
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Supabase Statsig issues
+type: guide
+updated: 2025-08-08
 ---
+
 # Supabase Statsig issues
 
 > Conversation ID: 6895728c-9a34-8333-82c0-d792a2ddb1be

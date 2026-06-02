@@ -1,13 +1,18 @@
 ---
-title: "Pitch Deck Idea"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a087b8d-7000-83e8-8ada-410ed1a54f60
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pitch Deck Idea
+type: note
+updated: 2026-05-16
 ---
+
 # Pitch Deck Idea
 
 > Conversation ID: 6a087b8d-7000-83e8-8ada-410ed1a54f60

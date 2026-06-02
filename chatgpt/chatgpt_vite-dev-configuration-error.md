@@ -1,13 +1,19 @@
 ---
-title: "Vite Dev Configuration Error"
-type: note
-created: 2023-05-12
-updated: 2023-05-12
-source: chatgpt-export
 conversation_id: 475369c9-9e6a-4a14-90f1-d00b6b5e4822
+created: 2023-05-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vite Dev Configuration Error
+type: note
+updated: 2023-05-12
 ---
+
 # Vite Dev Configuration Error
 
 > Conversation ID: 475369c9-9e6a-4a14-90f1-d00b6b5e4822

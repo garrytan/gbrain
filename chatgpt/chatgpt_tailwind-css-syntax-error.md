@@ -1,14 +1,18 @@
 ---
-title: "Tailwind CSS Syntax Error
-"
-type: note
-created: 2023-01-22
-updated: 2023-01-22
-source: chatgpt-export
 conversation_id: e6914f49-cd47-47b3-986a-47c7f3dc6b55
+created: 2023-01-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Tailwind CSS Syntax Error '
+type: note
+updated: 2023-01-22
 ---
+
 # Tailwind CSS Syntax Error
 
 

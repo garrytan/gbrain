@@ -1,13 +1,18 @@
 ---
-title: "Sam Altman's OpenAI Stock"
-type: note
-created: 2023-05-19
-updated: 2023-05-19
-source: chatgpt-export
 conversation_id: aa2aef83-11ba-4417-97ce-68b8219605ec
+created: 2023-05-19
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sam Altman's OpenAI Stock
+type: note
+updated: 2023-05-19
 ---
+
 # Sam Altman's OpenAI Stock
 
 > Conversation ID: aa2aef83-11ba-4417-97ce-68b8219605ec

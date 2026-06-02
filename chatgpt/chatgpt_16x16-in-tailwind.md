@@ -1,13 +1,19 @@
 ---
-title: "16x16 in Tailwind"
-type: note
-created: 2026-01-28
-updated: 2026-01-28
-source: chatgpt-export
 conversation_id: 697986b0-7084-8332-951c-b5a74bc782f9
+created: 2026-01-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 16x16 in Tailwind
+type: note
+updated: 2026-01-28
 ---
+
 # 16x16 in Tailwind
 
 > Conversation ID: 697986b0-7084-8332-951c-b5a74bc782f9

@@ -1,13 +1,18 @@
 ---
-title: "Improve design for conversion"
-type: note
-created: 2025-12-18
-updated: 2025-12-21
-source: chatgpt-export
 conversation_id: 6944735c-54cc-832d-9988-1e3ca56c793c
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Improve design for conversion
+type: note
+updated: 2025-12-21
 ---
+
 # Improve design for conversion
 
 > Conversation ID: 6944735c-54cc-832d-9988-1e3ca56c793c

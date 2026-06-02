@@ -1,13 +1,18 @@
 ---
-title: "ChatGPT Pro API Access"
-type: note
-created: 2026-01-18
-updated: 2026-01-18
-source: chatgpt-export
 conversation_id: 696d2f12-c3c8-8332-82d5-6293c1162a78
+created: 2026-01-18
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: ChatGPT Pro API Access
+type: note
+updated: 2026-01-18
 ---
+
 # ChatGPT Pro API Access
 
 > Conversation ID: 696d2f12-c3c8-8332-82d5-6293c1162a78

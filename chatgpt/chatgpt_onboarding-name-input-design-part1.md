@@ -1,13 +1,20 @@
 ---
-title: "Onboarding name input design"
-type: essay
-created: 2025-12-08
-updated: 2025-12-09
-source: chatgpt-export
 conversation_id: 693752b0-85d0-8326-85c8-742484bbcb45
+created: 2025-12-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 48
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Onboarding name input design
+type: essay
+updated: 2025-12-09
 ---
+
 # Onboarding name input design
 
 > Conversation ID: 693752b0-85d0-8326-85c8-742484bbcb45

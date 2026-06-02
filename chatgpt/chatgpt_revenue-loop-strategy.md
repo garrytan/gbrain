@@ -1,13 +1,19 @@
 ---
-title: "Revenue Loop Strategy"
-type: essay
-created: 2026-03-07
-updated: 2026-03-07
-source: chatgpt-export
 conversation_id: 69ac88d9-83b0-8326-b66e-0bdc6160a8e0
+created: 2026-03-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Revenue Loop Strategy
+type: essay
+updated: 2026-03-07
 ---
+
 # Revenue Loop Strategy
 
 > Conversation ID: 69ac88d9-83b0-8326-b66e-0bdc6160a8e0

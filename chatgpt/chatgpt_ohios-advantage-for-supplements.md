@@ -1,13 +1,18 @@
 ---
-title: "Ohio's Advantage for Supplements"
-type: note
-created: 2023-03-21
-updated: 2023-03-21
-source: chatgpt-export
 conversation_id: 9b2223d2-3766-4e64-8785-a7baa6169095
+created: 2023-03-21
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Ohio's Advantage for Supplements
+type: note
+updated: 2023-03-21
 ---
+
 # Ohio's Advantage for Supplements
 
 > Conversation ID: 9b2223d2-3766-4e64-8785-a7baa6169095

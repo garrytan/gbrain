@@ -1,13 +1,18 @@
 ---
-title: "Linear UX Redesign"
-type: note
-created: 2026-01-10
-updated: 2026-01-10
-source: chatgpt-export
 conversation_id: 6961b3d2-4628-8325-ad19-29b24b640bbe
+created: 2026-01-10
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Linear UX Redesign
+type: note
+updated: 2026-01-10
 ---
+
 # Linear UX Redesign
 
 > Conversation ID: 6961b3d2-4628-8325-ad19-29b24b640bbe

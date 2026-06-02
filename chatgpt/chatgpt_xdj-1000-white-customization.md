@@ -1,13 +1,18 @@
 ---
-title: "XDJ-1000 White Customization"
-type: note
-created: 2025-01-31
-updated: 2025-01-31
-source: chatgpt-export
 conversation_id: 679c4a50-30ec-8007-bbbb-8b4e70c2f066
+created: 2025-01-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: XDJ-1000 White Customization
+type: note
+updated: 2025-01-31
 ---
+
 # XDJ-1000 White Customization
 
 > Conversation ID: 679c4a50-30ec-8007-bbbb-8b4e70c2f066

@@ -1,13 +1,19 @@
 ---
-title: "Jovie version request"
-type: guide
-created: 2026-04-28
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69f00f53-20e0-83e8-b087-9dc8acbdbb7c
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 5
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Jovie version request
+type: guide
+updated: 2026-04-28
 ---
+
 # Jovie version request
 
 > Conversation ID: 69f00f53-20e0-83e8-b087-9dc8acbdbb7c

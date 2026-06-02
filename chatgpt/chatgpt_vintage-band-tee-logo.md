@@ -1,13 +1,18 @@
 ---
-title: "Vintage Band Tee Logo"
-type: note
-created: 2024-05-16
-updated: 2024-05-16
-source: chatgpt-export
 conversation_id: 3cea84ef-65e2-4169-b724-4bb4399863e9
+created: 2024-05-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vintage Band Tee Logo
+type: note
+updated: 2024-05-16
 ---
+
 # Vintage Band Tee Logo
 
 > Conversation ID: 3cea84ef-65e2-4169-b724-4bb4399863e9

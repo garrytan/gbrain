@@ -1,13 +1,18 @@
 ---
-title: "Plex Server on AWS"
-type: note
-created: 2025-07-06
-updated: 2025-07-06
-source: chatgpt-export
 conversation_id: 686ad906-7c54-8007-b311-b9ae26ae3346
+created: 2025-07-06
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Plex Server on AWS
+type: note
+updated: 2025-07-06
 ---
+
 # Plex Server on AWS
 
 > Conversation ID: 686ad906-7c54-8007-b311-b9ae26ae3346

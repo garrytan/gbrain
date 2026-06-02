@@ -1,13 +1,18 @@
 ---
-title: "T-Mobile modem issue"
-type: note
-created: 2025-07-22
-updated: 2025-07-22
-source: chatgpt-export
 conversation_id: 687f0935-ec64-832e-bf55-964a10b6426d
+created: 2025-07-22
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: T-Mobile modem issue
+type: note
+updated: 2025-07-22
 ---
+
 # T-Mobile modem issue
 
 > Conversation ID: 687f0935-ec64-832e-bf55-964a10b6426d

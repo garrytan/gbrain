@@ -1,13 +1,20 @@
 ---
-title: "AI Driven Artist Profiles"
-type: guide
-created: 2026-04-29
-updated: 2026-04-30
-source: chatgpt-export
 conversation_id: 69f292a3-184c-83e8-9bc4-183565148e80
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: AI Driven Artist Profiles
+type: guide
+updated: 2026-04-30
 ---
+
 # AI Driven Artist Profiles
 
 > Conversation ID: 69f292a3-184c-83e8-9bc4-183565148e80

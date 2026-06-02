@@ -1,13 +1,18 @@
 ---
-title: "Sales Report Table"
-type: note
-created: 2024-08-23
-updated: 2024-08-23
-source: chatgpt-export
 conversation_id: 4908190b-5c45-4d71-b1ab-d138c4f82d7f
+created: 2024-08-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sales Report Table
+type: note
+updated: 2024-08-23
 ---
+
 # Sales Report Table
 
 > Conversation ID: 4908190b-5c45-4d71-b1ab-d138c4f82d7f

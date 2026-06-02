@@ -1,13 +1,20 @@
 ---
-title: "Vue Component for SVGs"
-type: essay
-created: 2023-12-06
-updated: 2023-12-06
-source: chatgpt-export
 conversation_id: e75ffd90-a26e-4643-a1a5-182f10fc8c4a
+created: 2023-12-06
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 20
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue Component for SVGs
+type: essay
+updated: 2023-12-06
 ---
+
 # Vue Component for SVGs
 
 > Conversation ID: e75ffd90-a26e-4643-a1a5-182f10fc8c4a

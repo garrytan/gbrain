@@ -1,13 +1,18 @@
 ---
-title: "YC Application and Claude"
-type: note
-created: 2026-03-09
-updated: 2026-03-09
-source: chatgpt-export
 conversation_id: 69af0cd8-465c-8328-bda0-9ddfc48c8356
+created: 2026-03-09
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: YC Application and Claude
+type: note
+updated: 2026-03-09
 ---
+
 # YC Application and Claude
 
 > Conversation ID: 69af0cd8-465c-8328-bda0-9ddfc48c8356

@@ -1,13 +1,19 @@
 ---
-title: "RevenueCat iOS Web Setup"
-type: note
-created: 2025-06-09
-updated: 2025-06-09
-source: chatgpt-export
 conversation_id: 68471614-d658-8007-886b-7367b0f20014
+created: 2025-06-09
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: RevenueCat iOS Web Setup
+type: note
+updated: 2025-06-09
 ---
+
 # RevenueCat iOS Web Setup
 
 > Conversation ID: 68471614-d658-8007-886b-7367b0f20014

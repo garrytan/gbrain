@@ -1,13 +1,20 @@
 ---
-title: "Vue Improvements & Best Practices"
-type: guide
-created: 2024-03-12
-updated: 2024-03-12
-source: chatgpt-export
 conversation_id: fa23957d-94af-4fba-bfc2-db3837a2a73d
+created: 2024-03-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue Improvements & Best Practices
+type: guide
+updated: 2024-03-12
 ---
+
 # Vue Improvements & Best Practices
 
 > Conversation ID: fa23957d-94af-4fba-bfc2-db3837a2a73d

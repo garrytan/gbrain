@@ -1,13 +1,19 @@
 ---
-title: "Vue JS Email Validation"
-type: note
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: 3511b5cf-7b09-4014-9fcf-6aa78462efea
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue JS Email Validation
+type: note
+updated: 2022-12-22
 ---
+
 # Vue JS Email Validation
 
 > Conversation ID: 3511b5cf-7b09-4014-9fcf-6aa78462efea

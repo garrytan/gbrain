@@ -1,13 +1,18 @@
 ---
-title: "Tailwind v4 best practices"
-type: note
-created: 2025-09-02
-updated: 2025-09-02
-source: chatgpt-export
 conversation_id: 68b767c4-9978-832e-8017-a29424ee993d
+created: 2025-09-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tailwind v4 best practices
+type: note
+updated: 2025-09-02
 ---
+
 # Tailwind v4 best practices
 
 > Conversation ID: 68b767c4-9978-832e-8017-a29424ee993d

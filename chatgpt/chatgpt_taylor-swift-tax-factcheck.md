@@ -1,13 +1,18 @@
 ---
-title: "Taylor Swift Tax Factcheck"
-type: note
-created: 2025-07-14
-updated: 2025-07-14
-source: chatgpt-export
 conversation_id: 68745cc4-b72c-8007-89b0-a5d148e27dd1
+created: 2025-07-14
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Taylor Swift Tax Factcheck
+type: note
+updated: 2025-07-14
 ---
+
 # Taylor Swift Tax Factcheck
 
 > Conversation ID: 68745cc4-b72c-8007-89b0-a5d148e27dd1

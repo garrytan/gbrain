@@ -1,13 +1,19 @@
 ---
-title: "Link in bio design"
-type: guide
-created: 2025-12-18
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 69435dbc-adb0-832e-ac88-78941745741c
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 5
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Link in bio design
+type: guide
+updated: 2025-12-18
 ---
+
 # Link in bio design
 
 > Conversation ID: 69435dbc-adb0-832e-ac88-78941745741c

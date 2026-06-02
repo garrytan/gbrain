@@ -1,13 +1,19 @@
 ---
-title: "Vertical AI for Artists"
-type: note
-created: 2026-04-22
-updated: 2026-04-22
-source: chatgpt-export
 conversation_id: 69e8f3a7-e260-83e8-8f83-fcecf096afb7
+created: 2026-04-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 11
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Vertical AI for Artists
+type: note
+updated: 2026-04-22
 ---
+
 # Vertical AI for Artists
 
 > Conversation ID: 69e8f3a7-e260-83e8-8f83-fcecf096afb7

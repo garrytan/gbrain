@@ -1,13 +1,18 @@
 ---
-title: "Geist design system overview"
-type: note
-created: 2025-12-14
-updated: 2025-12-14
-source: chatgpt-export
 conversation_id: 693efbdd-980c-8327-86dd-5ab3b994a194
+created: 2025-12-14
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Geist design system overview
+type: note
+updated: 2025-12-14
 ---
+
 # Geist design system overview
 
 > Conversation ID: 693efbdd-980c-8327-86dd-5ab3b994a194

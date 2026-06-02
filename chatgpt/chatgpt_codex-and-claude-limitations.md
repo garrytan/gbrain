@@ -1,13 +1,18 @@
 ---
-title: "Codex and Claude Limitations"
-type: note
-created: 2026-04-01
-updated: 2026-04-01
-source: chatgpt-export
 conversation_id: 69ccc04a-07ac-83e8-b47f-9c76521a64d7
+created: 2026-04-01
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Codex and Claude Limitations
+type: note
+updated: 2026-04-01
 ---
+
 # Codex and Claude Limitations
 
 > Conversation ID: 69ccc04a-07ac-83e8-b47f-9c76521a64d7

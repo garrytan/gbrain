@@ -1,13 +1,19 @@
 ---
-title: "CSS Class Explanation"
-type: note
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: 596815b4-6f24-4031-a947-05265e614174
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: CSS Class Explanation
+type: note
+updated: 2023-02-05
 ---
+
 # CSS Class Explanation
 
 > Conversation ID: 596815b4-6f24-4031-a947-05265e614174

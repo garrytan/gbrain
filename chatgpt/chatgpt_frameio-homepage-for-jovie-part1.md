@@ -1,13 +1,20 @@
 ---
-title: "Frame.io Homepage for Jovie"
-type: essay
-created: 2026-04-27
-updated: 2026-04-27
-source: chatgpt-export
 conversation_id: 69eefc57-af58-83e8-86ec-f5e9a0744879
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 30
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Frame.io Homepage for Jovie
+type: essay
+updated: 2026-04-27
 ---
+
 # Frame.io Homepage for Jovie
 
 > Conversation ID: 69eefc57-af58-83e8-86ec-f5e9a0744879

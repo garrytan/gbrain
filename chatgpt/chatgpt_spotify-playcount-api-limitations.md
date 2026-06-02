@@ -1,13 +1,18 @@
 ---
-title: "Spotify playcount API limitations"
-type: note
-created: 2026-01-26
-updated: 2026-01-26
-source: chatgpt-export
 conversation_id: 6977bfb5-fd2c-8327-8323-a2a555515375
+created: 2026-01-26
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spotify playcount API limitations
+type: note
+updated: 2026-01-26
 ---
+
 # Spotify playcount API limitations
 
 > Conversation ID: 6977bfb5-fd2c-8327-8323-a2a555515375

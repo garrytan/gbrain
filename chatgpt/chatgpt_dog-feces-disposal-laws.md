@@ -1,13 +1,18 @@
 ---
-title: "Dog Feces Disposal Laws"
-type: note
-created: 2026-01-15
-updated: 2026-01-15
-source: chatgpt-export
 conversation_id: 696916ae-8d5c-832b-8a11-b98988af7035
+created: 2026-01-15
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Dog Feces Disposal Laws
+type: note
+updated: 2026-01-15
 ---
+
 # Dog Feces Disposal Laws
 
 > Conversation ID: 696916ae-8d5c-832b-8a11-b98988af7035

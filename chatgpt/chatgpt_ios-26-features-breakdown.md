@@ -1,13 +1,19 @@
 ---
-title: "iOS 26 Features Breakdown"
-type: note
-created: 2025-07-10
-updated: 2025-07-10
-source: chatgpt-export
 conversation_id: 686f0411-41f4-8007-bc47-63dc79d1ef03
+created: 2025-07-10
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 28
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: iOS 26 Features Breakdown
+type: note
+updated: 2025-07-10
 ---
+
 # iOS 26 Features Breakdown
 
 > Conversation ID: 686f0411-41f4-8007-bc47-63dc79d1ef03

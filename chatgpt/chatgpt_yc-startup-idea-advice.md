@@ -1,13 +1,19 @@
 ---
-title: "YC Startup Idea Advice"
-type: essay
-created: 2026-05-15
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a07957e-1384-83e8-9a26-47a0be316c2a
+created: 2026-05-15
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: YC Startup Idea Advice
+type: essay
+updated: 2026-05-16
 ---
+
 # YC Startup Idea Advice
 
 > Conversation ID: 6a07957e-1384-83e8-9a26-47a0be316c2a

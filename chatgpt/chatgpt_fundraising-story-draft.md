@@ -1,13 +1,18 @@
 ---
-title: "Fundraising story draft"
-type: note
-created: 2025-12-07
-updated: 2025-12-07
-source: chatgpt-export
 conversation_id: 6935da66-54ac-8333-8937-2de347d3531e
+created: 2025-12-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fundraising story draft
+type: note
+updated: 2025-12-07
 ---
+
 # Fundraising story draft
 
 > Conversation ID: 6935da66-54ac-8333-8937-2de347d3531e

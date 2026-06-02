@@ -1,13 +1,19 @@
 ---
-title: "Compare Jovie and Linear"
-type: guide
-created: 2025-12-18
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 69436d66-f4c0-8327-9ae6-b87543e4781c
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Compare Jovie and Linear
+type: guide
+updated: 2025-12-18
 ---
+
 # Compare Jovie and Linear
 
 > Conversation ID: 69436d66-f4c0-8327-9ae6-b87543e4781c

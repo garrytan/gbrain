@@ -1,13 +1,18 @@
 ---
-title: "AWS Org ID Request"
-type: note
-created: 2026-01-21
-updated: 2026-01-21
-source: chatgpt-export
 conversation_id: 69716685-8970-8329-85a9-e8c98fea6b17
+created: 2026-01-21
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AWS Org ID Request
+type: note
+updated: 2026-01-21
 ---
+
 # AWS Org ID Request
 
 > Conversation ID: 69716685-8970-8329-85a9-e8c98fea6b17

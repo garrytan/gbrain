@@ -1,13 +1,20 @@
 ---
-title: "SVG design for logo"
-type: guide
-created: 2025-11-17
-updated: 2025-11-17
-source: chatgpt-export
 conversation_id: 691b5232-f180-8328-9ae1-8d60312c2a31
+created: 2025-11-17
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: SVG design for logo
+type: guide
+updated: 2025-11-17
 ---
+
 # SVG design for logo
 
 > Conversation ID: 691b5232-f180-8328-9ae1-8d60312c2a31

@@ -1,13 +1,18 @@
 ---
-title: "Vue Radio Group Component"
-type: note
-created: 2022-12-28
-updated: 2022-12-28
-source: chatgpt-export
 conversation_id: d498da90-7f7f-4ea7-8b6e-955c9ca828c1
+created: 2022-12-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue Radio Group Component
+type: note
+updated: 2022-12-28
 ---
+
 # Vue Radio Group Component
 
 > Conversation ID: d498da90-7f7f-4ea7-8b6e-955c9ca828c1

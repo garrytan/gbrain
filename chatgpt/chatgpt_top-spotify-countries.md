@@ -1,13 +1,18 @@
 ---
-title: "Top Spotify Countries."
-type: note
-created: 2024-06-03
-updated: 2024-06-03
-source: chatgpt-export
 conversation_id: d28a2909-0d78-402d-8fe6-91677ae95a35
+created: 2024-06-03
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 16
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Top Spotify Countries.
+type: note
+updated: 2024-06-03
 ---
+
 # Top Spotify Countries.
 
 > Conversation ID: d28a2909-0d78-402d-8fe6-91677ae95a35

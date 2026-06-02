@@ -1,13 +1,19 @@
 ---
-title: "Model Casting Grid Design"
-type: note
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f17247-7d3c-83e8-847c-2a2e56f163b7
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Model Casting Grid Design
+type: note
+updated: 2026-04-29
 ---
+
 # Model Casting Grid Design
 
 > Conversation ID: 69f17247-7d3c-83e8-847c-2a2e56f163b7

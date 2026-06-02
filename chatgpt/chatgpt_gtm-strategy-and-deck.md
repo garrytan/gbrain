@@ -1,13 +1,18 @@
 ---
-title: "GTM Strategy and Deck"
-type: note
-created: 2026-05-26
-updated: 2026-05-26
-source: chatgpt-export
 conversation_id: 6a1539b0-c460-83e8-a827-d17447cf046e
+created: 2026-05-26
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: GTM Strategy and Deck
+type: note
+updated: 2026-05-26
 ---
+
 # GTM Strategy and Deck
 
 > Conversation ID: 6a1539b0-c460-83e8-a827-d17447cf046e

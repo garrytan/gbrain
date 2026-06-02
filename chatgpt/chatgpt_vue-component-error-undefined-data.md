@@ -1,13 +1,19 @@
 ---
-title: "Vue Component Error: Undefined Data"
-type: guide
-created: 2023-11-30
-updated: 2023-11-30
-source: chatgpt-export
 conversation_id: d0716b00-885b-43ca-8761-bffceb18c2e7
+created: 2023-11-30
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Vue Component Error: Undefined Data'
+type: guide
+updated: 2023-11-30
 ---
+
 # Vue Component Error: Undefined Data
 
 > Conversation ID: d0716b00-885b-43ca-8761-bffceb18c2e7

@@ -1,13 +1,18 @@
 ---
-title: "Docker Desktop Overview"
-type: note
-created: 2025-03-24
-updated: 2025-03-24
-source: chatgpt-export
 conversation_id: 67e0d5a3-76b8-8007-81c2-dff8927fed03
+created: 2025-03-24
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Docker Desktop Overview
+type: note
+updated: 2025-03-24
 ---
+
 # Docker Desktop Overview
 
 > Conversation ID: 67e0d5a3-76b8-8007-81c2-dff8927fed03

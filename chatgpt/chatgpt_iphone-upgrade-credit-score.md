@@ -1,13 +1,19 @@
 ---
-title: "iPhone upgrade credit score"
-type: note
-created: 2025-10-06
-updated: 2025-10-06
-source: chatgpt-export
 conversation_id: 68e3f7b8-f478-832a-9262-37caa9bc7d51
+created: 2025-10-06
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: iPhone upgrade credit score
+type: note
+updated: 2025-10-06
 ---
+
 # iPhone upgrade credit score
 
 > Conversation ID: 68e3f7b8-f478-832a-9262-37caa9bc7d51

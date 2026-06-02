@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Video Player Template"
-type: note
-created: 2023-02-26
-updated: 2023-02-26
-source: chatgpt-export
 conversation_id: 88096905-80f0-4abe-b261-e92aff70c754
+created: 2023-02-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Video Player Template
+type: note
+updated: 2023-02-26
 ---
+
 # Vue.js Video Player Template
 
 > Conversation ID: 88096905-80f0-4abe-b261-e92aff70c754

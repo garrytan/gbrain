@@ -1,13 +1,18 @@
 ---
-title: "Gmail iOS Error Resolution"
-type: note
-created: 2023-11-09
-updated: 2023-11-09
-source: chatgpt-export
 conversation_id: 080d3846-e84c-4e59-a9e5-a4b7b6027880
+created: 2023-11-09
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Gmail iOS Error Resolution
+type: note
+updated: 2023-11-09
 ---
+
 # Gmail iOS Error Resolution
 
 > Conversation ID: 080d3846-e84c-4e59-a9e5-a4b7b6027880

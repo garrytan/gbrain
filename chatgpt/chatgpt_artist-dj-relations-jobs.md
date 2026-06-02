@@ -1,13 +1,19 @@
 ---
-title: "Artist DJ Relations Jobs"
-type: note
-created: 2025-03-04
-updated: 2025-03-04
-source: chatgpt-export
 conversation_id: 67c68679-2178-8007-9951-f82da3a15963
+created: 2025-03-04
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Artist DJ Relations Jobs
+type: note
+updated: 2025-03-04
 ---
+
 # Artist DJ Relations Jobs
 
 > Conversation ID: 67c68679-2178-8007-9951-f82da3a15963

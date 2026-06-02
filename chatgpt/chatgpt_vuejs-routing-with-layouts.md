@@ -1,13 +1,19 @@
 ---
-title: "Vue.js routing with layouts."
-type: guide
-created: 2023-02-26
-updated: 2023-02-26
-source: chatgpt-export
 conversation_id: e96026d0-be43-4eea-b2e7-dc443bf062bf
+created: 2023-02-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js routing with layouts.
+type: guide
+updated: 2023-02-26
 ---
+
 # Vue.js routing with layouts.
 
 > Conversation ID: e96026d0-be43-4eea-b2e7-dc443bf062bf

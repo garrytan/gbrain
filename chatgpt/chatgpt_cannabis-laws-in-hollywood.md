@@ -1,13 +1,18 @@
 ---
-title: "Cannabis Laws in Hollywood"
-type: note
-created: 2026-03-02
-updated: 2026-03-02
-source: chatgpt-export
 conversation_id: 69a5dae4-ee6c-832c-be0a-02f653cdf8e0
+created: 2026-03-02
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cannabis Laws in Hollywood
+type: note
+updated: 2026-03-02
 ---
+
 # Cannabis Laws in Hollywood
 
 > Conversation ID: 69a5dae4-ee6c-832c-be0a-02f653cdf8e0

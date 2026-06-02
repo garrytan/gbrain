@@ -1,13 +1,19 @@
 ---
-title: "Vue.js video component."
-type: note
-created: 2023-02-26
-updated: 2023-02-26
-source: chatgpt-export
 conversation_id: 6d6a823b-1bbc-448d-b5c7-db38e3c0b5d4
+created: 2023-02-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js video component.
+type: note
+updated: 2023-02-26
 ---
+
 # Vue.js video component.
 
 > Conversation ID: 6d6a823b-1bbc-448d-b5c7-db38e3c0b5d4

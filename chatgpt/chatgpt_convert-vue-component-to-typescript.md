@@ -1,13 +1,19 @@
 ---
-title: "Convert Vue Component to TypeScript"
-type: guide
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: 0dcd2bb1-66f2-42bd-a060-0fff5bedfac3
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Convert Vue Component to TypeScript
+type: guide
+updated: 2022-12-22
 ---
+
 # Convert Vue Component to TypeScript
 
 > Conversation ID: 0dcd2bb1-66f2-42bd-a060-0fff5bedfac3

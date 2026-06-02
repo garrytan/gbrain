@@ -1,13 +1,18 @@
 ---
-title: "Create Shared Album iOS"
-type: note
-created: 2025-05-24
-updated: 2025-05-24
-source: chatgpt-export
 conversation_id: 683171c9-c94c-8007-9c9b-04517816737b
+created: 2025-05-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Create Shared Album iOS
+type: note
+updated: 2025-05-24
 ---
+
 # Create Shared Album iOS
 
 > Conversation ID: 683171c9-c94c-8007-9c9b-04517816737b

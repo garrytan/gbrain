@@ -1,13 +1,18 @@
 ---
-title: "Columbia Square Studios Status"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a08cddf-dc20-83e8-a60d-232cc24b4b5b
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Columbia Square Studios Status
+type: note
+updated: 2026-05-16
 ---
+
 # Columbia Square Studios Status
 
 > Conversation ID: 6a08cddf-dc20-83e8-a60d-232cc24b4b5b

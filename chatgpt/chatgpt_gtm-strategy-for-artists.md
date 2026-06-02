@@ -1,13 +1,19 @@
 ---
-title: "GTM Strategy for Artists"
-type: note
-created: 2026-02-12
-updated: 2026-02-12
-source: chatgpt-export
 conversation_id: 698d376c-9418-8328-9475-0a5a8967546f
+created: 2026-02-12
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: GTM Strategy for Artists
+type: note
+updated: 2026-02-12
 ---
+
 # GTM Strategy for Artists
 
 > Conversation ID: 698d376c-9418-8328-9475-0a5a8967546f

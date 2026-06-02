@@ -1,13 +1,19 @@
 ---
-title: "React to iOS App"
-type: note
-created: 2025-06-08
-updated: 2025-06-08
-source: chatgpt-export
 conversation_id: 68461303-e55c-8007-a16d-0c2d0933a16b
+created: 2025-06-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: React to iOS App
+type: note
+updated: 2025-06-08
 ---
+
 # React to iOS App
 
 > Conversation ID: 68461303-e55c-8007-a16d-0c2d0933a16b

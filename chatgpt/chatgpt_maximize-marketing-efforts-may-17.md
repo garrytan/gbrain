@@ -1,13 +1,18 @@
 ---
-title: "Maximize Marketing Efforts: May 17"
-type: note
-created: 2024-03-07
-updated: 2024-03-07
-source: chatgpt-export
 conversation_id: f8b7d85e-c2b7-4c06-8c4c-b3ad8aa5b172
+created: 2024-03-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 11
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Maximize Marketing Efforts: May 17'
+type: note
+updated: 2024-03-07
 ---
+
 # Maximize Marketing Efforts: May 17
 
 > Conversation ID: f8b7d85e-c2b7-4c06-8c4c-b3ad8aa5b172

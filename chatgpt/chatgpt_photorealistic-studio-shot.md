@@ -1,13 +1,18 @@
 ---
-title: "Photorealistic Studio Shot"
-type: note
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f1a1fa-80d4-83e8-8740-d16095b7793f
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Photorealistic Studio Shot
+type: note
+updated: 2026-04-29
 ---
+
 # Photorealistic Studio Shot
 
 > Conversation ID: 69f1a1fa-80d4-83e8-8740-d16095b7793f

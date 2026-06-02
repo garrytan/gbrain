@@ -1,13 +1,18 @@
 ---
-title: "Sea Turtles Adventure"
-type: note
-created: 2024-07-09
-updated: 2024-07-09
-source: chatgpt-export
 conversation_id: 83b37d85-3fe2-4c7d-b04f-0a739fa50503
+created: 2024-07-09
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sea Turtles Adventure
+type: note
+updated: 2024-07-09
 ---
+
 # Sea Turtles Adventure
 
 > Conversation ID: 83b37d85-3fe2-4c7d-b04f-0a739fa50503

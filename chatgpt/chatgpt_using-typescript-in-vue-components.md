@@ -1,13 +1,19 @@
 ---
-title: "Using TypeScript in Vue Components"
-type: guide
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: 5d954741-d280-436f-87d7-ec4a6b36ee2c
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Using TypeScript in Vue Components
+type: guide
+updated: 2022-12-21
 ---
+
 # Using TypeScript in Vue Components
 
 > Conversation ID: 5d954741-d280-436f-87d7-ec4a6b36ee2c

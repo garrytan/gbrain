@@ -1,14 +1,19 @@
 ---
-title: "CSS import syntax error
-"
-type: note
-created: 2023-01-21
-updated: 2023-01-21
-source: chatgpt-export
 conversation_id: cece6501-0a1d-40c8-be38-48d7014f8e70
+created: 2023-01-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: 'CSS import syntax error '
+type: note
+updated: 2023-01-21
 ---
+
 # CSS import syntax error
 
 

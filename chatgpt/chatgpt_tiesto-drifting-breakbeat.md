@@ -1,13 +1,18 @@
 ---
-title: "Tiesto Drifting Breakbeat"
-type: note
-created: 2024-03-27
-updated: 2024-03-27
-source: chatgpt-export
 conversation_id: c3374a48-d660-4de6-8d32-fcf211a6738f
+created: 2024-03-27
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tiesto Drifting Breakbeat
+type: note
+updated: 2024-03-27
 ---
+
 # Tiesto Drifting Breakbeat
 
 > Conversation ID: c3374a48-d660-4de6-8d32-fcf211a6738f

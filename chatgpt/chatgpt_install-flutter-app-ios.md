@@ -1,13 +1,18 @@
 ---
-title: "Install Flutter App iOS"
-type: note
-created: 2024-01-10
-updated: 2024-01-10
-source: chatgpt-export
 conversation_id: e320ccd0-f9d4-4c47-a7eb-e9f5a2c8f49b
+created: 2024-01-10
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Install Flutter App iOS
+type: note
+updated: 2024-01-10
 ---
+
 # Install Flutter App iOS
 
 > Conversation ID: e320ccd0-f9d4-4c47-a7eb-e9f5a2c8f49b

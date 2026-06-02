@@ -1,13 +1,20 @@
 ---
-title: "HTML UI Request."
-type: guide
-created: 2023-05-04
-updated: 2023-05-04
-source: chatgpt-export
 conversation_id: c87a23f5-092a-4255-b2ee-c198de98f051
+created: 2023-05-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 12
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: HTML UI Request.
+type: guide
+updated: 2023-05-04
 ---
+
 # HTML UI Request.
 
 > Conversation ID: c87a23f5-092a-4255-b2ee-c198de98f051

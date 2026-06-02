@@ -1,13 +1,18 @@
 ---
-title: "Aflac Mix-Up Sketch"
-type: note
-created: 2024-07-19
-updated: 2024-07-19
-source: chatgpt-export
 conversation_id: bf263bd2-19ae-45d7-a3e6-39a201c36cae
+created: 2024-07-19
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Aflac Mix-Up Sketch
+type: note
+updated: 2024-07-19
 ---
+
 # Aflac Mix-Up Sketch
 
 > Conversation ID: bf263bd2-19ae-45d7-a3e6-39a201c36cae

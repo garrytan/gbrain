@@ -1,13 +1,19 @@
 ---
-title: "iOS performance and Gmail"
-type: guide
-created: 2026-05-25
-updated: 2026-05-25
-source: chatgpt-export
 conversation_id: 6a13ae33-59c4-83e8-be9e-b6e5ec8ac17e
+created: 2026-05-25
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: iOS performance and Gmail
+type: guide
+updated: 2026-05-25
 ---
+
 # iOS performance and Gmail
 
 > Conversation ID: 6a13ae33-59c4-83e8-be9e-b6e5ec8ac17e

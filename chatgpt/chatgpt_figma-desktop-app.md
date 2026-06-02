@@ -1,13 +1,18 @@
 ---
-title: "Figma Desktop App"
-type: note
-created: 2026-02-20
-updated: 2026-02-20
-source: chatgpt-export
 conversation_id: 6998ca7e-b7c4-832a-b019-afaa5e7f7a81
+created: 2026-02-20
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Figma Desktop App
+type: note
+updated: 2026-02-20
 ---
+
 # Figma Desktop App
 
 > Conversation ID: 6998ca7e-b7c4-832a-b019-afaa5e7f7a81

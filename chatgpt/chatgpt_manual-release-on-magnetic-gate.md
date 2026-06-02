@@ -1,13 +1,19 @@
 ---
-title: "Manual release on magnetic gate"
-type: note
-created: 2025-11-26
-updated: 2025-11-26
-source: chatgpt-export
 conversation_id: 69275e54-c710-8328-92d2-63f074019bd2
+created: 2025-11-26
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Manual release on magnetic gate
+type: note
+updated: 2025-11-26
 ---
+
 # Manual release on magnetic gate
 
 > Conversation ID: 69275e54-c710-8328-92d2-63f074019bd2

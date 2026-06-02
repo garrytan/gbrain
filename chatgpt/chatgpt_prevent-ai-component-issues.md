@@ -1,13 +1,19 @@
 ---
-title: "Prevent AI component issues"
-type: guide
-created: 2025-09-01
-updated: 2025-09-01
-source: chatgpt-export
 conversation_id: 68b610ab-e860-8331-9523-86fec709f845
+created: 2025-09-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Prevent AI component issues
+type: guide
+updated: 2025-09-01
 ---
+
 # Prevent AI component issues
 
 > Conversation ID: 68b610ab-e860-8331-9523-86fec709f845

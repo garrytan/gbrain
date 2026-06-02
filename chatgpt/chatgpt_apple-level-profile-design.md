@@ -1,13 +1,19 @@
 ---
-title: "Apple Level Profile Design"
-type: note
-created: 2026-04-24
-updated: 2026-04-25
-source: chatgpt-export
 conversation_id: 69eae9cb-3470-83e8-bd7e-195284870d86
+created: 2026-04-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 22
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Apple Level Profile Design
+type: note
+updated: 2026-04-25
 ---
+
 # Apple Level Profile Design
 
 > Conversation ID: 69eae9cb-3470-83e8-bd7e-195284870d86

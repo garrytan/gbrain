@@ -1,13 +1,19 @@
 ---
-title: "Vue JS API Function"
-type: note
-created: 2023-01-07
-updated: 2023-01-07
-source: chatgpt-export
 conversation_id: d0d1ad62-ceeb-4c44-b30e-13c0cefa5ecc
+created: 2023-01-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue JS API Function
+type: note
+updated: 2023-01-07
 ---
+
 # Vue JS API Function
 
 > Conversation ID: d0d1ad62-ceeb-4c44-b30e-13c0cefa5ecc

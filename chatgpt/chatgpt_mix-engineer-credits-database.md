@@ -1,13 +1,18 @@
 ---
-title: "Mix Engineer Credits Database"
-type: note
-created: 2024-02-29
-updated: 2024-02-29
-source: chatgpt-export
 conversation_id: 41014a37-bafc-42d3-b937-50331faf09a5
+created: 2024-02-29
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Mix Engineer Credits Database
+type: note
+updated: 2024-02-29
 ---
+
 # Mix Engineer Credits Database
 
 > Conversation ID: 41014a37-bafc-42d3-b937-50331faf09a5

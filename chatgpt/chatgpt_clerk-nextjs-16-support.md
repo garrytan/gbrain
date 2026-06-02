@@ -1,13 +1,19 @@
 ---
-title: "Clerk Next.js 16 Support"
-type: note
-created: 2026-01-04
-updated: 2026-01-04
-source: chatgpt-export
 conversation_id: 6959da22-248c-8328-b79f-8b02839d2b28
+created: 2026-01-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Clerk Next.js 16 Support
+type: note
+updated: 2026-01-04
 ---
+
 # Clerk Next.js 16 Support
 
 > Conversation ID: 6959da22-248c-8328-b79f-8b02839d2b28

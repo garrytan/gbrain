@@ -1,13 +1,20 @@
 ---
-title: "Merge discography with component"
-type: guide
-created: 2024-06-08
-updated: 2024-06-08
-source: chatgpt-export
 conversation_id: 803c1b3f-5b15-43c9-a441-c02d0c0b8f1f
+created: 2024-06-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Merge discography with component
+type: guide
+updated: 2024-06-08
 ---
+
 # Merge discography with component
 
 > Conversation ID: 803c1b3f-5b15-43c9-a441-c02d0c0b8f1f

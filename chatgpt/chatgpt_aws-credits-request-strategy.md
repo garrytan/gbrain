@@ -1,13 +1,18 @@
 ---
-title: "AWS Credits Request Strategy"
-type: note
-created: 2026-05-17
-updated: 2026-05-17
-source: chatgpt-export
 conversation_id: 6a0a0176-23d4-83e8-880b-4a2721dde819
+created: 2026-05-17
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AWS Credits Request Strategy
+type: note
+updated: 2026-05-17
 ---
+
 # AWS Credits Request Strategy
 
 > Conversation ID: 6a0a0176-23d4-83e8-880b-4a2721dde819

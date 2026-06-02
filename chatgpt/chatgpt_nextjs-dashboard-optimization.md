@@ -1,13 +1,20 @@
 ---
-title: "Next.js dashboard optimization"
-type: essay
-created: 2025-12-12
-updated: 2025-12-12
-source: chatgpt-export
 conversation_id: 693bd39c-3844-832b-b648-04acb53984be
+created: 2025-12-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Next.js dashboard optimization
+type: essay
+updated: 2025-12-12
 ---
+
 # Next.js dashboard optimization
 
 > Conversation ID: 693bd39c-3844-832b-b648-04acb53984be

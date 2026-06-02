@@ -1,13 +1,18 @@
 ---
-title: "Fashion Show of Beats 🎵"
-type: note
-created: 2024-04-01
-updated: 2024-04-01
-source: chatgpt-export
 conversation_id: 8c90b47f-4715-4aca-ad22-c2c55a0de3fb
+created: 2024-04-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fashion Show of Beats 🎵
+type: note
+updated: 2024-04-01
 ---
+
 # Fashion Show of Beats 🎵
 
 > Conversation ID: 8c90b47f-4715-4aca-ad22-c2c55a0de3fb

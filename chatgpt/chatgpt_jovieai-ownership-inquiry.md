@@ -1,13 +1,18 @@
 ---
-title: "Jovie.ai Ownership Inquiry"
-type: note
-created: 2026-02-23
-updated: 2026-02-23
-source: chatgpt-export
 conversation_id: 699ccafc-cfb0-8328-8be9-ca36348d0226
+created: 2026-02-23
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Jovie.ai Ownership Inquiry
+type: note
+updated: 2026-02-23
 ---
+
 # Jovie.ai Ownership Inquiry
 
 > Conversation ID: 699ccafc-cfb0-8328-8be9-ca36348d0226

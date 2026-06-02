@@ -1,13 +1,19 @@
 ---
-title: "Vue.js HTML Page Template"
-type: guide
-created: 2023-01-09
-updated: 2023-01-09
-source: chatgpt-export
 conversation_id: f5b69df6-ab91-414e-a550-b95a263f3acc
+created: 2023-01-09
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js HTML Page Template
+type: guide
+updated: 2023-01-09
 ---
+
 # Vue.js HTML Page Template
 
 > Conversation ID: f5b69df6-ab91-414e-a550-b95a263f3acc

@@ -1,13 +1,18 @@
 ---
-title: "Collaboration pitch message"
-type: note
-created: 2025-09-12
-updated: 2025-09-12
-source: chatgpt-export
 conversation_id: 68c46dc7-4eac-8331-ae98-c37616873361
+created: 2025-09-12
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Collaboration pitch message
+type: note
+updated: 2025-09-12
 ---
+
 # Collaboration pitch message
 
 > Conversation ID: 68c46dc7-4eac-8331-ae98-c37616873361

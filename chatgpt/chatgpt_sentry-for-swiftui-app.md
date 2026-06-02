@@ -1,13 +1,18 @@
 ---
-title: "Sentry for SwiftUI app"
-type: note
-created: 2025-11-25
-updated: 2025-11-25
-source: chatgpt-export
 conversation_id: 692640d0-e244-8327-bcfe-b6ef21354785
+created: 2025-11-25
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sentry for SwiftUI app
+type: note
+updated: 2025-11-25
 ---
+
 # Sentry for SwiftUI app
 
 > Conversation ID: 692640d0-e244-8327-bcfe-b6ef21354785

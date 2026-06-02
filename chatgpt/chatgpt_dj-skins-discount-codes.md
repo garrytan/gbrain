@@ -1,13 +1,18 @@
 ---
-title: "DJ Skins Discount Codes"
-type: note
-created: 2025-01-31
-updated: 2025-01-31
-source: chatgpt-export
 conversation_id: 679c4dcd-cb6c-8007-b84d-a0e196969b9c
+created: 2025-01-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJ Skins Discount Codes
+type: note
+updated: 2025-01-31
 ---
+
 # DJ Skins Discount Codes
 
 > Conversation ID: 679c4dcd-cb6c-8007-b84d-a0e196969b9c

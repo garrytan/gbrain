@@ -1,13 +1,20 @@
 ---
-title: "GBrain Embedding Explanation"
-type: guide
-created: 2026-05-27
-updated: 2026-05-27
-source: chatgpt-export
 conversation_id: 6a16866e-4d84-83e8-aba2-b497d467ddfd
+created: 2026-05-27
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 9
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: GBrain Embedding Explanation
+type: guide
+updated: 2026-05-27
 ---
+
 # GBrain Embedding Explanation
 
 > Conversation ID: 6a16866e-4d84-83e8-aba2-b497d467ddfd

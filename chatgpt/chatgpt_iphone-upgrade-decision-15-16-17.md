@@ -1,13 +1,18 @@
 ---
-title: "iPhone Upgrade Decision 15 16 17"
-type: note
-created: 2025-05-11
-updated: 2025-05-11
-source: chatgpt-export
 conversation_id: 6820d4a8-6d90-8007-8aeb-6374cda6577d
+created: 2025-05-11
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iPhone Upgrade Decision 15 16 17
+type: note
+updated: 2025-05-11
 ---
+
 # iPhone Upgrade Decision 15 16 17
 
 > Conversation ID: 6820d4a8-6d90-8007-8aeb-6374cda6577d

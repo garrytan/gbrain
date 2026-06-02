@@ -1,13 +1,19 @@
 ---
-title: "Compelling single release unveiled."
-type: note
-created: 2024-05-28
-updated: 2024-05-28
-source: chatgpt-export
 conversation_id: ae2fcee9-77d6-4738-8788-a083837ddb8b
+created: 2024-05-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Compelling single release unveiled.
+type: note
+updated: 2024-05-28
 ---
+
 # Compelling single release unveiled.
 
 > Conversation ID: ae2fcee9-77d6-4738-8788-a083837ddb8b

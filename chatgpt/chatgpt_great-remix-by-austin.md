@@ -1,13 +1,19 @@
 ---
-title: "Great Remix by Austin."
-type: guide
-created: 2024-03-24
-updated: 2024-03-24
-source: chatgpt-export
 conversation_id: 3f99fdf3-91aa-47f3-afa1-683c714affed
+created: 2024-03-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Great Remix by Austin.
+type: guide
+updated: 2024-03-24
 ---
+
 # Great Remix by Austin.
 
 > Conversation ID: 3f99fdf3-91aa-47f3-afa1-683c714affed

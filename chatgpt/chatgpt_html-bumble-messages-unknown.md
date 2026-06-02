@@ -1,14 +1,18 @@
 ---
-title: "Html Bumble Messages Unknown.
-"
-type: note
-created: 2023-01-27
-updated: 2023-01-27
-source: chatgpt-export
 conversation_id: 85cf8a2a-f4d3-4649-8b89-23633666c6f6
+created: 2023-01-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Html Bumble Messages Unknown. '
+type: note
+updated: 2023-01-27
 ---
+
 # Html Bumble Messages Unknown.
 
 

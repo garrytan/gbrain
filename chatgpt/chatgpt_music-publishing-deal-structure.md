@@ -1,13 +1,19 @@
 ---
-title: "Music Publishing Deal Structure"
-type: note
-created: 2023-10-31
-updated: 2023-10-31
-source: chatgpt-export
 conversation_id: 54c40df9-675e-4ad8-9816-959e4f88419e
+created: 2023-10-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 24
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Music Publishing Deal Structure
+type: note
+updated: 2023-10-31
 ---
+
 # Music Publishing Deal Structure
 
 > Conversation ID: 54c40df9-675e-4ad8-9816-959e4f88419e

@@ -1,13 +1,19 @@
 ---
-title: "Marketing Tips for Artists"
-type: essay
-created: 2024-06-20
-updated: 2024-06-20
-source: chatgpt-export
 conversation_id: 18504a82-1e31-4274-b73d-a58bf9717918
+created: 2024-06-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 36
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Marketing Tips for Artists
+type: essay
+updated: 2024-06-20
 ---
+
 # Marketing Tips for Artists
 
 > Conversation ID: 18504a82-1e31-4274-b73d-a58bf9717918

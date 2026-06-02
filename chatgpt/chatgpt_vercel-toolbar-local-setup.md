@@ -1,13 +1,20 @@
 ---
-title: "Vercel toolbar local setup"
-type: guide
-created: 2025-08-07
-updated: 2025-08-07
-source: chatgpt-export
 conversation_id: 68950b6e-1978-8329-8517-914ccad56573
+created: 2025-08-07
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 12
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vercel toolbar local setup
+type: guide
+updated: 2025-08-07
 ---
+
 # Vercel toolbar local setup
 
 > Conversation ID: 68950b6e-1978-8329-8517-914ccad56573

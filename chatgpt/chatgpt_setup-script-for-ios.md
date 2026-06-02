@@ -1,13 +1,19 @@
 ---
-title: "Setup script for iOS"
-type: note
-created: 2025-07-09
-updated: 2025-07-09
-source: chatgpt-export
 conversation_id: 686ed3a2-1418-8007-a0d8-b8dde71d6f23
+created: 2025-07-09
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Setup script for iOS
+type: note
+updated: 2025-07-09
 ---
+
 # Setup script for iOS
 
 > Conversation ID: 686ed3a2-1418-8007-a0d8-b8dde71d6f23

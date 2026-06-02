@@ -1,13 +1,18 @@
 ---
-title: "Geist Basement Studios Query"
-type: note
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695ee5ef-7230-832c-b8f1-eafb845d6ca6
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Geist Basement Studios Query
+type: note
+updated: 2026-01-07
 ---
+
 # Geist Basement Studios Query
 
 > Conversation ID: 695ee5ef-7230-832c-b8f1-eafb845d6ca6

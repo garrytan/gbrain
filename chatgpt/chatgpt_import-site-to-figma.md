@@ -1,13 +1,18 @@
 ---
-title: "Import site to Figma"
-type: note
-created: 2026-02-21
-updated: 2026-02-21
-source: chatgpt-export
 conversation_id: 6999064f-cff8-8331-ab57-fd12d4d34f27
+created: 2026-02-21
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Import site to Figma
+type: note
+updated: 2026-02-21
 ---
+
 # Import site to Figma
 
 > Conversation ID: 6999064f-cff8-8331-ab57-fd12d4d34f27

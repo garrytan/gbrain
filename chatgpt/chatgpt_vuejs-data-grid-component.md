@@ -1,13 +1,19 @@
 ---
-title: "VueJS Data Grid Component"
-type: note
-created: 2023-01-11
-updated: 2023-01-11
-source: chatgpt-export
 conversation_id: e4585739-5c2a-44b6-bdef-e75928060e5c
+created: 2023-01-11
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: VueJS Data Grid Component
+type: note
+updated: 2023-01-11
 ---
+
 # VueJS Data Grid Component
 
 > Conversation ID: e4585739-5c2a-44b6-bdef-e75928060e5c

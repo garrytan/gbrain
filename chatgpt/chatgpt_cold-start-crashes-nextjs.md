@@ -1,13 +1,20 @@
 ---
-title: "Cold Start Crashes Next.js"
-type: essay
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6973e795-c5e4-832b-b141-fe499d31b4c2
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 20
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Cold Start Crashes Next.js
+type: essay
+updated: 2026-01-23
 ---
+
 # Cold Start Crashes Next.js
 
 > Conversation ID: 6973e795-c5e4-832b-b141-fe499d31b4c2

@@ -1,13 +1,18 @@
 ---
-title: "Nudity in Backyard Laws"
-type: note
-created: 2025-07-27
-updated: 2025-07-27
-source: chatgpt-export
 conversation_id: 6886b2f4-7ab0-8324-b411-9443fbb14e20
+created: 2025-07-27
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Nudity in Backyard Laws
+type: note
+updated: 2025-07-27
 ---
+
 # Nudity in Backyard Laws
 
 > Conversation ID: 6886b2f4-7ab0-8324-b411-9443fbb14e20

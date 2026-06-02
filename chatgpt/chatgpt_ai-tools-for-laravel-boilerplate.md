@@ -1,13 +1,18 @@
 ---
-title: "AI Tools for Laravel Boilerplate"
-type: note
-created: 2023-11-14
-updated: 2023-11-15
-source: chatgpt-export
 conversation_id: da255014-fb04-4723-814a-576dc041f7ae
+created: 2023-11-14
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AI Tools for Laravel Boilerplate
+type: note
+updated: 2023-11-15
 ---
+
 # AI Tools for Laravel Boilerplate
 
 > Conversation ID: da255014-fb04-4723-814a-576dc041f7ae

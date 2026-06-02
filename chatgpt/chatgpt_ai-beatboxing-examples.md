@@ -1,13 +1,18 @@
 ---
-title: "AI Beatboxing Examples"
-type: note
-created: 2023-01-24
-updated: 2023-01-24
-source: chatgpt-export
 conversation_id: f140d1dc-8e9d-484e-833b-3bc0598a8739
+created: 2023-01-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AI Beatboxing Examples
+type: note
+updated: 2023-01-24
 ---
+
 # AI Beatboxing Examples
 
 > Conversation ID: f140d1dc-8e9d-484e-833b-3bc0598a8739

@@ -1,13 +1,18 @@
 ---
-title: "Video Grid Component Template."
-type: note
-created: 2023-02-25
-updated: 2023-02-25
-source: chatgpt-export
 conversation_id: 232eb780-e193-4d41-8151-7d6a0cec2b07
+created: 2023-02-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Video Grid Component Template.
+type: note
+updated: 2023-02-25
 ---
+
 # Video Grid Component Template.
 
 > Conversation ID: 232eb780-e193-4d41-8151-7d6a0cec2b07

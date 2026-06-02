@@ -1,13 +1,19 @@
 ---
-title: "SQL Database Wipe Options"
-type: note
-created: 2026-01-22
-updated: 2026-01-22
-source: chatgpt-export
 conversation_id: 697178db-2184-832c-acb1-e8c47e0fce38
+created: 2026-01-22
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: SQL Database Wipe Options
+type: note
+updated: 2026-01-22
 ---
+
 # SQL Database Wipe Options
 
 > Conversation ID: 697178db-2184-832c-acb1-e8c47e0fce38

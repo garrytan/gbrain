@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Input Component"
-type: note
-created: 2023-02-04
-updated: 2023-02-04
-source: chatgpt-export
 conversation_id: dec39015-a012-437b-b1bb-a080823aa326
+created: 2023-02-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Input Component
+type: note
+updated: 2023-02-04
 ---
+
 # Vue.js Input Component
 
 > Conversation ID: dec39015-a012-437b-b1bb-a080823aa326

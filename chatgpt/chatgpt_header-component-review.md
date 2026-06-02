@@ -1,13 +1,19 @@
 ---
-title: "Header component review"
-type: guide
-created: 2025-12-05
-updated: 2025-12-05
-source: chatgpt-export
 conversation_id: 69334678-479c-832f-b688-53114c6cd9ce
+created: 2025-12-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Header component review
+type: guide
+updated: 2025-12-05
 ---
+
 # Header component review
 
 > Conversation ID: 69334678-479c-832f-b688-53114c6cd9ce

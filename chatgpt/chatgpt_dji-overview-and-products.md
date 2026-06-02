@@ -1,13 +1,18 @@
 ---
-title: "DJI Overview and Products"
-type: note
-created: 2025-12-24
-updated: 2025-12-24
-source: chatgpt-export
 conversation_id: 694b8197-e298-8330-b698-3171d911557c
+created: 2025-12-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJI Overview and Products
+type: note
+updated: 2025-12-24
 ---
+
 # DJI Overview and Products
 
 > Conversation ID: 694b8197-e298-8330-b698-3171d911557c

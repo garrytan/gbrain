@@ -1,13 +1,19 @@
 ---
-title: "Increase Bar Sales Tips"
-type: note
-created: 2024-08-01
-updated: 2024-08-01
-source: chatgpt-export
 conversation_id: 48fb6765-19ff-4b62-9770-3614e11eb5ae
+created: 2024-08-01
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Increase Bar Sales Tips
+type: note
+updated: 2024-08-01
 ---
+
 # Increase Bar Sales Tips
 
 > Conversation ID: 48fb6765-19ff-4b62-9770-3614e11eb5ae

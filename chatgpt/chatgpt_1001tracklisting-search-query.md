@@ -1,13 +1,18 @@
 ---
-title: "1001tracklisting search query"
-type: note
-created: 2025-01-16
-updated: 2025-01-16
-source: chatgpt-export
 conversation_id: 6788ba19-0b98-8007-bd60-3023b38aa283
+created: 2025-01-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 1001tracklisting search query
+type: note
+updated: 2025-01-16
 ---
+
 # 1001tracklisting search query
 
 > Conversation ID: 6788ba19-0b98-8007-bd60-3023b38aa283

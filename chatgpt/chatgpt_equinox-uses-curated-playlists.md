@@ -1,13 +1,18 @@
 ---
-title: "Equinox Uses Curated Playlists"
-type: note
-created: 2024-06-27
-updated: 2024-06-27
-source: chatgpt-export
 conversation_id: 209ae60b-02dd-4335-9466-c40345572fb9
+created: 2024-06-27
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Equinox Uses Curated Playlists
+type: note
+updated: 2024-06-27
 ---
+
 # Equinox Uses Curated Playlists
 
 > Conversation ID: 209ae60b-02dd-4335-9466-c40345572fb9

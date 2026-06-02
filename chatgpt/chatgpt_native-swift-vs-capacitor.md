@@ -1,13 +1,19 @@
 ---
-title: "Native Swift vs Capacitor"
-type: essay
-created: 2025-06-22
-updated: 2025-06-22
-source: chatgpt-export
 conversation_id: 68585130-bd7c-8007-bb60-c8f571bdfbf9
+created: 2025-06-22
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 14
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Native Swift vs Capacitor
+type: essay
+updated: 2025-06-22
 ---
+
 # Native Swift vs Capacitor
 
 > Conversation ID: 68585130-bd7c-8007-bb60-c8f571bdfbf9

@@ -1,13 +1,18 @@
 ---
-title: "iOS Racing Game Hacks"
-type: note
-created: 2025-06-05
-updated: 2025-06-05
-source: chatgpt-export
 conversation_id: 68415ad1-f2c8-8007-9cb1-bfd4674e3119
+created: 2025-06-05
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iOS Racing Game Hacks
+type: note
+updated: 2025-06-05
 ---
+
 # iOS Racing Game Hacks
 
 > Conversation ID: 68415ad1-f2c8-8007-9cb1-bfd4674e3119

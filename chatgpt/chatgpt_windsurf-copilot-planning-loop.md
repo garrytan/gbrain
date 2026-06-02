@@ -1,13 +1,20 @@
 ---
-title: "Windsurf Copilot planning loop"
-type: guide
-created: 2025-08-09
-updated: 2025-08-09
-source: chatgpt-export
 conversation_id: 6897b1f5-640c-8321-a18e-5a3589025614
+created: 2025-08-09
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Windsurf Copilot planning loop
+type: guide
+updated: 2025-08-09
 ---
+
 # Windsurf Copilot planning loop
 
 > Conversation ID: 6897b1f5-640c-8321-a18e-5a3589025614

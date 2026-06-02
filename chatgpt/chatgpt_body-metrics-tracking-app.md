@@ -1,13 +1,20 @@
 ---
-title: "Body Metrics Tracking App"
-type: essay
-created: 2025-05-31
-updated: 2025-05-31
-source: chatgpt-export
 conversation_id: 683b67cb-8dfc-8007-b6ca-a10fd47e7714
+created: 2025-05-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 7
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Body Metrics Tracking App
+type: essay
+updated: 2025-05-31
 ---
+
 # Body Metrics Tracking App
 
 > Conversation ID: 683b67cb-8dfc-8007-b6ca-a10fd47e7714

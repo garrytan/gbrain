@@ -1,13 +1,19 @@
 ---
-title: "Streaming Revenue Attribution Challenges"
-type: note
-created: 2024-08-16
-updated: 2024-08-16
-source: chatgpt-export
 conversation_id: fcabc9bf-dd6a-48f4-a04d-ba89cdf536fd
+created: 2024-08-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Streaming Revenue Attribution Challenges
+type: note
+updated: 2024-08-16
 ---
+
 # Streaming Revenue Attribution Challenges
 
 > Conversation ID: fcabc9bf-dd6a-48f4-a04d-ba89cdf536fd

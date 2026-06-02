@@ -1,13 +1,19 @@
 ---
-title: "AI model comparison for Next.js"
-type: note
-created: 2025-12-11
-updated: 2025-12-12
-source: chatgpt-export
 conversation_id: 693b4eec-ffa4-8333-babd-cbd35d758757
+created: 2025-12-11
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 16
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: AI model comparison for Next.js
+type: note
+updated: 2025-12-12
 ---
+
 # AI model comparison for Next.js
 
 > Conversation ID: 693b4eec-ffa4-8333-babd-cbd35d758757

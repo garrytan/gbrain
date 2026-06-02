@@ -1,13 +1,19 @@
 ---
-title: "Maroon 5 album credits"
-type: note
-created: 2025-08-25
-updated: 2025-08-25
-source: chatgpt-export
 conversation_id: 68acd377-d924-8327-8762-75aeda46bbc5
+created: 2025-08-25
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 22
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Maroon 5 album credits
+type: note
+updated: 2025-08-25
 ---
+
 # Maroon 5 album credits
 
 > Conversation ID: 68acd377-d924-8327-8762-75aeda46bbc5

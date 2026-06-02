@@ -1,13 +1,20 @@
 ---
-title: "iOS 26 Liquid Glass Integration"
-type: guide
-created: 2025-07-10
-updated: 2025-07-10
-source: chatgpt-export
 conversation_id: 686f23ab-5830-8007-ac3e-c9a93fd4def2
+created: 2025-07-10
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS 26 Liquid Glass Integration
+type: guide
+updated: 2025-07-10
 ---
+
 # iOS 26 Liquid Glass Integration
 
 > Conversation ID: 686f23ab-5830-8007-ac3e-c9a93fd4def2

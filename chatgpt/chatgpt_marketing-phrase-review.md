@@ -1,13 +1,19 @@
 ---
-title: "Marketing phrase review"
-type: note
-created: 2025-11-16
-updated: 2025-11-19
-source: chatgpt-export
 conversation_id: 691a5cd7-aee8-8329-9f62-84b06d22513b
+created: 2025-11-16
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Marketing phrase review
+type: note
+updated: 2025-11-19
 ---
+
 # Marketing phrase review
 
 > Conversation ID: 691a5cd7-aee8-8329-9f62-84b06d22513b

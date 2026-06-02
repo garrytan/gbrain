@@ -1,13 +1,19 @@
 ---
-title: "iOS app icon design"
-type: note
-created: 2025-11-17
-updated: 2025-11-17
-source: chatgpt-export
 conversation_id: 691b4a00-f2b4-8333-ac90-764318758ac6
+created: 2025-11-17
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: iOS app icon design
+type: note
+updated: 2025-11-17
 ---
+
 # iOS app icon design
 
 > Conversation ID: 691b4a00-f2b4-8333-ac90-764318758ac6

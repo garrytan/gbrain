@@ -1,13 +1,19 @@
 ---
-title: "Setting Env Variables iOS"
-type: note
-created: 2025-06-10
-updated: 2025-06-10
-source: chatgpt-export
 conversation_id: 68477efe-1708-8007-b0a9-8b970886d5ae
+created: 2025-06-10
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Setting Env Variables iOS
+type: note
+updated: 2025-06-10
 ---
+
 # Setting Env Variables iOS
 
 > Conversation ID: 68477efe-1708-8007-b0a9-8b970886d5ae

@@ -1,13 +1,18 @@
 ---
-title: "GitHub Actions setup"
-type: note
-created: 2025-08-27
-updated: 2025-08-27
-source: chatgpt-export
 conversation_id: 68ae6350-2d6c-8330-8d72-f5ec5d2a4065
+created: 2025-08-27
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: GitHub Actions setup
+type: note
+updated: 2025-08-27
 ---
+
 # GitHub Actions setup
 
 > Conversation ID: 68ae6350-2d6c-8330-8d72-f5ec5d2a4065

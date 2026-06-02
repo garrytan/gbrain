@@ -1,13 +1,19 @@
 ---
-title: "Claude Code slash commands"
-type: note
-created: 2025-11-12
-updated: 2025-11-12
-source: chatgpt-export
 conversation_id: 6914df43-e0b0-8320-9844-744db64f6bca
+created: 2025-11-12
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude Code slash commands
+type: note
+updated: 2025-11-12
 ---
+
 # Claude Code slash commands
 
 > Conversation ID: 6914df43-e0b0-8320-9844-744db64f6bca

@@ -1,13 +1,18 @@
 ---
-title: "3D Muffin Head Design"
-type: note
-created: 2025-05-24
-updated: 2025-05-24
-source: chatgpt-export
 conversation_id: 6831f41e-4fa4-8007-9c7d-ed14a58b8956
+created: 2025-05-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 3D Muffin Head Design
+type: note
+updated: 2025-05-24
 ---
+
 # 3D Muffin Head Design
 
 > Conversation ID: 6831f41e-4fa4-8007-9c7d-ed14a58b8956

@@ -1,13 +1,19 @@
 ---
-title: "Claude Code command"
-type: note
-created: 2025-08-25
-updated: 2025-08-25
-source: chatgpt-export
 conversation_id: 68ac879a-155c-8327-91c2-1bc49b993357
+created: 2025-08-25
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude Code command
+type: note
+updated: 2025-08-25
 ---
+
 # Claude Code command
 
 > Conversation ID: 68ac879a-155c-8327-91c2-1bc49b993357

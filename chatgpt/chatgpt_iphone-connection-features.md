@@ -1,13 +1,18 @@
 ---
-title: "iPhone Connection Features"
-type: note
-created: 2025-04-19
-updated: 2025-04-19
-source: chatgpt-export
 conversation_id: 680420d9-412c-8007-8344-d0598384b686
+created: 2025-04-19
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iPhone Connection Features
+type: note
+updated: 2025-04-19
 ---
+
 # iPhone Connection Features
 
 > Conversation ID: 680420d9-412c-8007-8344-d0598384b686

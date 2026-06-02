@@ -1,13 +1,20 @@
 ---
-title: "Customize Nuxt App.vue File"
-type: essay
-created: 2024-06-26
-updated: 2024-06-26
-source: chatgpt-export
 conversation_id: 1cbf99fc-6ced-4086-8d85-6b80e7d2382d
+created: 2024-06-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 32
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Customize Nuxt App.vue File
+type: essay
+updated: 2024-06-26
 ---
+
 # Customize Nuxt App.vue File
 
 > Conversation ID: 1cbf99fc-6ced-4086-8d85-6b80e7d2382d

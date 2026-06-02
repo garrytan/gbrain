@@ -1,13 +1,20 @@
 ---
-title: "Using Braintrust for Jovie"
-type: guide
-created: 2026-05-20
-updated: 2026-05-20
-source: chatgpt-export
 conversation_id: 6a0d0365-1664-83e8-b41f-f9cb56f5eae4
+created: 2026-05-20
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Using Braintrust for Jovie
+type: guide
+updated: 2026-05-20
 ---
+
 # Using Braintrust for Jovie
 
 > Conversation ID: 6a0d0365-1664-83e8-b41f-f9cb56f5eae4

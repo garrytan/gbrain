@@ -1,13 +1,19 @@
 ---
-title: "Spotify artist detection methods"
-type: note
-created: 2025-12-15
-updated: 2025-12-15
-source: chatgpt-export
 conversation_id: 694081b0-5be0-8325-9578-1534bcc117be
+created: 2025-12-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Spotify artist detection methods
+type: note
+updated: 2025-12-15
 ---
+
 # Spotify artist detection methods
 
 > Conversation ID: 694081b0-5be0-8325-9578-1534bcc117be

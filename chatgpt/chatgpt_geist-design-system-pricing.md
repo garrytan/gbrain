@@ -1,13 +1,18 @@
 ---
-title: "Geist design system pricing"
-type: note
-created: 2025-12-14
-updated: 2025-12-14
-source: chatgpt-export
 conversation_id: 693f4597-d38c-832d-87b7-24fec533ddb6
+created: 2025-12-14
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Geist design system pricing
+type: note
+updated: 2025-12-14
 ---
+
 # Geist design system pricing
 
 > Conversation ID: 693f4597-d38c-832d-87b7-24fec533ddb6

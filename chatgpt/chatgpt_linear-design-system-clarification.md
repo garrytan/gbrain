@@ -1,13 +1,18 @@
 ---
-title: "Linear Design System Clarification"
-type: note
-created: 2026-02-06
-updated: 2026-02-06
-source: chatgpt-export
 conversation_id: 6985454e-3ed8-832b-b8be-b7d1c5c97774
+created: 2026-02-06
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Linear Design System Clarification
+type: note
+updated: 2026-02-06
 ---
+
 # Linear Design System Clarification
 
 > Conversation ID: 6985454e-3ed8-832b-b8be-b7d1c5c97774

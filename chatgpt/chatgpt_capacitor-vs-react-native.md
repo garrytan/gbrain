@@ -1,13 +1,18 @@
 ---
-title: "Capacitor vs React Native"
-type: note
-created: 2025-06-09
-updated: 2025-06-09
-source: chatgpt-export
 conversation_id: 6846fab7-4cfc-8007-b19e-6cb4a14084b6
+created: 2025-06-09
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Capacitor vs React Native
+type: note
+updated: 2025-06-09
 ---
+
 # Capacitor vs React Native
 
 > Conversation ID: 6846fab7-4cfc-8007-b19e-6cb4a14084b6

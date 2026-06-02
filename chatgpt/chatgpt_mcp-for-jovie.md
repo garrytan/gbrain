@@ -1,13 +1,20 @@
 ---
-title: "MCP for Jovie"
-type: essay
-created: 2026-05-20
-updated: 2026-05-20
-source: chatgpt-export
 conversation_id: 6a0d430b-0618-83e8-bd8d-302eda147067
+created: 2026-05-20
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: MCP for Jovie
+type: essay
+updated: 2026-05-20
 ---
+
 # MCP for Jovie
 
 > Conversation ID: 6a0d430b-0618-83e8-bd8d-302eda147067

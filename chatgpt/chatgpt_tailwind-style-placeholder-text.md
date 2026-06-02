@@ -1,13 +1,19 @@
 ---
-title: "Tailwind: Style Placeholder Text"
-type: note
-created: 2023-05-05
-updated: 2023-05-05
-source: chatgpt-export
 conversation_id: 457f2f90-bafa-477f-941e-c61b44aaffea
+created: 2023-05-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Tailwind: Style Placeholder Text'
+type: note
+updated: 2023-05-05
 ---
+
 # Tailwind: Style Placeholder Text
 
 > Conversation ID: 457f2f90-bafa-477f-941e-c61b44aaffea

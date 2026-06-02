@@ -1,13 +1,18 @@
 ---
-title: "Pitch Perfect 2 Character"
-type: note
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695de357-6a58-832b-adfa-5888d1d54d4d
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pitch Perfect 2 Character
+type: note
+updated: 2026-01-07
 ---
+
 # Pitch Perfect 2 Character
 
 > Conversation ID: 695de357-6a58-832b-adfa-5888d1d54d4d

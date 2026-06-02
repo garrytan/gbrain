@@ -1,13 +1,19 @@
 ---
-title: "Vue component for Vimeo videos"
-type: guide
-created: 2023-02-26
-updated: 2023-02-26
-source: chatgpt-export
 conversation_id: e26d95b3-37bb-4c1e-a7fb-cfe7c18070b4
+created: 2023-02-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue component for Vimeo videos
+type: guide
+updated: 2023-02-26
 ---
+
 # Vue component for Vimeo videos
 
 > Conversation ID: e26d95b3-37bb-4c1e-a7fb-cfe7c18070b4

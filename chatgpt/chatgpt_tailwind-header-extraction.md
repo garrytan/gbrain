@@ -1,13 +1,20 @@
 ---
-title: "Tailwind header extraction"
-type: guide
-created: 2025-12-21
-updated: 2025-12-21
-source: chatgpt-export
 conversation_id: 69474a5d-df9c-8332-9459-d13acebeb8cd
+created: 2025-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Tailwind header extraction
+type: guide
+updated: 2025-12-21
 ---
+
 # Tailwind header extraction
 
 > Conversation ID: 69474a5d-df9c-8332-9459-d13acebeb8cd

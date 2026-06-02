@@ -1,13 +1,18 @@
 ---
-title: "Adjust vocal volume rides."
-type: note
-created: 2024-04-13
-updated: 2024-04-13
-source: chatgpt-export
 conversation_id: ad881d04-ed8d-4597-8b7f-6d47d4ff618a
+created: 2024-04-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Adjust vocal volume rides.
+type: note
+updated: 2024-04-13
 ---
+
 # Adjust vocal volume rides.
 
 > Conversation ID: ad881d04-ed8d-4597-8b7f-6d47d4ff618a

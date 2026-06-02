@@ -1,13 +1,18 @@
 ---
-title: "Fitness Tracker Options"
-type: note
-created: 2024-07-31
-updated: 2024-07-31
-source: chatgpt-export
 conversation_id: 9a710858-5937-4abb-868e-db3035fa96ba
+created: 2024-07-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fitness Tracker Options
+type: note
+updated: 2024-07-31
 ---
+
 # Fitness Tracker Options
 
 > Conversation ID: 9a710858-5937-4abb-868e-db3035fa96ba

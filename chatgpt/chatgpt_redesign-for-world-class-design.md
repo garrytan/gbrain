@@ -1,13 +1,18 @@
 ---
-title: "Redesign for world-class design"
-type: note
-created: 2025-10-24
-updated: 2025-10-24
-source: chatgpt-export
 conversation_id: 68fbeba5-3734-8323-a341-daff5e487e43
+created: 2025-10-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Redesign for world-class design
+type: note
+updated: 2025-10-24
 ---
+
 # Redesign for world-class design
 
 > Conversation ID: 68fbeba5-3734-8323-a341-daff5e487e43

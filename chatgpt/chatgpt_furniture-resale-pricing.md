@@ -1,13 +1,18 @@
 ---
-title: "Furniture resale pricing"
-type: note
-created: 2025-09-03
-updated: 2025-09-03
-source: chatgpt-export
 conversation_id: 68b7d629-8b84-8321-887d-f4d57efa27ed
+created: 2025-09-03
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Furniture resale pricing
+type: note
+updated: 2025-09-03
 ---
+
 # Furniture resale pricing
 
 > Conversation ID: 68b7d629-8b84-8321-887d-f4d57efa27ed

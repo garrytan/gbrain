@@ -1,13 +1,18 @@
 ---
-title: "Get URL for Unreleased Song"
-type: note
-created: 2024-05-31
-updated: 2024-05-31
-source: chatgpt-export
 conversation_id: 11dc188b-21ae-405b-b730-d4c0e0a227c4
+created: 2024-05-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Get URL for Unreleased Song
+type: note
+updated: 2024-05-31
 ---
+
 # Get URL for Unreleased Song
 
 > Conversation ID: 11dc188b-21ae-405b-b730-d4c0e0a227c4

@@ -1,13 +1,18 @@
 ---
-title: "DJ Linkinbio Interface Design"
-type: note
-created: 2026-01-18
-updated: 2026-01-18
-source: chatgpt-export
 conversation_id: 696d1da7-0ce4-832c-9a09-3dddbc23ce71
+created: 2026-01-18
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJ Linkinbio Interface Design
+type: note
+updated: 2026-01-18
 ---
+
 # DJ Linkinbio Interface Design
 
 > Conversation ID: 696d1da7-0ce4-832c-9a09-3dddbc23ce71

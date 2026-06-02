@@ -1,13 +1,19 @@
 ---
-title: "Vite, Vue, Vercel Routing"
-type: note
-created: 2024-02-27
-updated: 2024-02-27
-source: chatgpt-export
 conversation_id: 6a174f53-1435-4cb8-9f03-f459a1008e66
+created: 2024-02-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vite, Vue, Vercel Routing
+type: note
+updated: 2024-02-27
 ---
+
 # Vite, Vue, Vercel Routing
 
 > Conversation ID: 6a174f53-1435-4cb8-9f03-f459a1008e66

@@ -1,13 +1,19 @@
 ---
-title: "Spotify OAuth Overview"
-type: note
-created: 2025-12-28
-updated: 2025-12-28
-source: chatgpt-export
 conversation_id: 69517571-863c-832c-862b-0c387f9241e8
+created: 2025-12-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Spotify OAuth Overview
+type: note
+updated: 2025-12-28
 ---
+
 # Spotify OAuth Overview
 
 > Conversation ID: 69517571-863c-832c-862b-0c387f9241e8

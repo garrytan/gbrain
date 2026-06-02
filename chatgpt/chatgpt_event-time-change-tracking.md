@@ -1,13 +1,18 @@
 ---
-title: "Event time change tracking"
-type: note
-created: 2025-10-12
-updated: 2025-10-12
-source: chatgpt-export
 conversation_id: 68eb4af0-ed68-8325-9e2c-064ce8da28c2
+created: 2025-10-12
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Event time change tracking
+type: note
+updated: 2025-10-12
 ---
+
 # Event time change tracking
 
 > Conversation ID: 68eb4af0-ed68-8325-9e2c-064ce8da28c2

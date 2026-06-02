@@ -1,13 +1,18 @@
 ---
-title: "Refactor dashboard components"
-type: note
-created: 2025-11-21
-updated: 2025-11-21
-source: chatgpt-export
 conversation_id: 691fd6e5-e738-832d-a4d3-da2320a34e51
+created: 2025-11-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Refactor dashboard components
+type: note
+updated: 2025-11-21
 ---
+
 # Refactor dashboard components
 
 > Conversation ID: 691fd6e5-e738-832d-a4d3-da2320a34e51

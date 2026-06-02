@@ -1,13 +1,18 @@
 ---
-title: "Startup survival summary"
-type: note
-created: 2025-12-19
-updated: 2025-12-19
-source: chatgpt-export
 conversation_id: 6945a181-c098-8330-893d-e569535492b9
+created: 2025-12-19
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Startup survival summary
+type: note
+updated: 2025-12-19
 ---
+
 # Startup survival summary
 
 > Conversation ID: 6945a181-c098-8330-893d-e569535492b9

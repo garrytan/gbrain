@@ -1,13 +1,19 @@
 ---
-title: "Genius Shot Relaunch"
-type: note
-created: 2026-01-18
-updated: 2026-01-18
-source: chatgpt-export
 conversation_id: 696d2c9b-bfe0-8329-b165-1a557d1f1436
+created: 2026-01-18
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Genius Shot Relaunch
+type: note
+updated: 2026-01-18
 ---
+
 # Genius Shot Relaunch
 
 > Conversation ID: 696d2c9b-bfe0-8329-b165-1a557d1f1436

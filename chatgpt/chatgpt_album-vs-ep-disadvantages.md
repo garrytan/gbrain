@@ -1,13 +1,18 @@
 ---
-title: "Album vs EP Disadvantages"
-type: note
-created: 2024-05-14
-updated: 2024-05-14
-source: chatgpt-export
 conversation_id: 5300854b-0363-470b-84ee-54b157f0b35c
+created: 2024-05-14
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Album vs EP Disadvantages
+type: note
+updated: 2024-05-14
 ---
+
 # Album vs EP Disadvantages
 
 > Conversation ID: 5300854b-0363-470b-84ee-54b157f0b35c

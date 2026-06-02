@@ -1,13 +1,19 @@
 ---
-title: "Next.js 16 upgrade"
-type: note
-created: 2025-12-15
-updated: 2025-12-15
-source: chatgpt-export
 conversation_id: 693f6fd3-5710-8328-bb8d-5dbaecd8a960
+created: 2025-12-15
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Next.js 16 upgrade
+type: note
+updated: 2025-12-15
 ---
+
 # Next.js 16 upgrade
 
 > Conversation ID: 693f6fd3-5710-8328-bb8d-5dbaecd8a960

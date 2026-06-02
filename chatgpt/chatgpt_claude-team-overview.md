@@ -1,13 +1,18 @@
 ---
-title: "Claude Team Overview"
-type: note
-created: 2026-01-15
-updated: 2026-01-15
-source: chatgpt-export
 conversation_id: 69687027-722c-8331-b0d9-6ff6779e0214
+created: 2026-01-15
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude Team Overview
+type: note
+updated: 2026-01-15
 ---
+
 # Claude Team Overview
 
 > Conversation ID: 69687027-722c-8331-b0d9-6ff6779e0214

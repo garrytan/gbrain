@@ -1,13 +1,19 @@
 ---
-title: "Improve UI design"
-type: note
-created: 2025-11-15
-updated: 2025-11-15
-source: chatgpt-export
 conversation_id: 69181b28-59ac-8326-aeb5-81608b81a30c
+created: 2025-11-15
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Improve UI design
+type: note
+updated: 2025-11-15
 ---
+
 # Improve UI design
 
 > Conversation ID: 69181b28-59ac-8326-aeb5-81608b81a30c

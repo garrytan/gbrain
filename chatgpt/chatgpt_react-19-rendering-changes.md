@@ -1,13 +1,18 @@
 ---
-title: "React 19 Rendering Changes"
-type: note
-created: 2026-01-28
-updated: 2026-01-28
-source: chatgpt-export
 conversation_id: 69796174-6d04-8329-b2e0-8b32940695f1
+created: 2026-01-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: React 19 Rendering Changes
+type: note
+updated: 2026-01-28
 ---
+
 # React 19 Rendering Changes
 
 > Conversation ID: 69796174-6d04-8329-b2e0-8b32940695f1

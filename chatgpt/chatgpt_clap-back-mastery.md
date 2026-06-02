@@ -1,13 +1,18 @@
 ---
-title: "Clap Back Mastery"
-type: note
-created: 2025-07-07
-updated: 2025-07-07
-source: chatgpt-export
 conversation_id: 686b5ba5-dac4-8007-ad96-f713bcc5b740
+created: 2025-07-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Clap Back Mastery
+type: note
+updated: 2025-07-07
 ---
+
 # Clap Back Mastery
 
 > Conversation ID: 686b5ba5-dac4-8007-ad96-f713bcc5b740

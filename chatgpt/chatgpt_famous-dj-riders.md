@@ -1,13 +1,18 @@
 ---
-title: "Famous DJ Riders"
-type: note
-created: 2025-01-31
-updated: 2025-01-31
-source: chatgpt-export
 conversation_id: 679c45f5-3bf0-8007-bea5-bebed101f512
+created: 2025-01-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Famous DJ Riders
+type: note
+updated: 2025-01-31
 ---
+
 # Famous DJ Riders
 
 > Conversation ID: 679c45f5-3bf0-8007-bea5-bebed101f512

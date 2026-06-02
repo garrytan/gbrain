@@ -1,13 +1,20 @@
 ---
-title: "Logo Iteration Automation"
-type: essay
-created: 2026-05-08
-updated: 2026-05-08
-source: chatgpt-export
 conversation_id: 69fd535e-55e4-83e8-9539-afe9f2e4fcbf
+created: 2026-05-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 9
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Logo Iteration Automation
+type: essay
+updated: 2026-05-08
 ---
+
 # Logo Iteration Automation
 
 > Conversation ID: 69fd535e-55e4-83e8-9539-afe9f2e4fcbf

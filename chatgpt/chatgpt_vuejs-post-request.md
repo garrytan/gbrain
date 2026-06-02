@@ -1,13 +1,19 @@
 ---
-title: "Vue.js POST Request"
-type: note
-created: 2023-05-07
-updated: 2023-05-07
-source: chatgpt-export
 conversation_id: 9962fb34-4565-4cbf-97f7-7d67ae570091
+created: 2023-05-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js POST Request
+type: note
+updated: 2023-05-07
 ---
+
 # Vue.js POST Request
 
 > Conversation ID: 9962fb34-4565-4cbf-97f7-7d67ae570091

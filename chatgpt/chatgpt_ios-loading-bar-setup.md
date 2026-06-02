@@ -1,13 +1,19 @@
 ---
-title: "iOS Loading Bar Setup"
-type: guide
-created: 2025-07-02
-updated: 2025-07-02
-source: chatgpt-export
 conversation_id: 6864bfb9-3ec8-8007-84ed-d92642af3c0c
+created: 2025-07-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: iOS Loading Bar Setup
+type: guide
+updated: 2025-07-02
 ---
+
 # iOS Loading Bar Setup
 
 > Conversation ID: 6864bfb9-3ec8-8007-84ed-d92642af3c0c

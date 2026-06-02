@@ -1,13 +1,18 @@
 ---
-title: "Improving Music Growth"
-type: note
-created: 2026-03-06
-updated: 2026-03-06
-source: chatgpt-export
 conversation_id: 69aa61ce-6e90-8331-b85d-600a9c5e43a5
+created: 2026-03-06
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Improving Music Growth
+type: note
+updated: 2026-03-06
 ---
+
 # Improving Music Growth
 
 > Conversation ID: 69aa61ce-6e90-8331-b85d-600a9c5e43a5

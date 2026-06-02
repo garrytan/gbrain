@@ -1,13 +1,20 @@
 ---
-title: "Flutter Health Data Integration"
-type: guide
-created: 2024-01-07
-updated: 2024-01-07
-source: chatgpt-export
 conversation_id: 1cb47807-2ccf-4fb7-bf32-7b81c17962e3
+created: 2024-01-07
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Flutter Health Data Integration
+type: guide
+updated: 2024-01-07
 ---
+
 # Flutter Health Data Integration
 
 > Conversation ID: 1cb47807-2ccf-4fb7-bf32-7b81c17962e3

@@ -1,13 +1,19 @@
 ---
-title: "Pre-launch Checklist for Linkin.Bio"
-type: note
-created: 2025-12-27
-updated: 2025-12-27
-source: chatgpt-export
 conversation_id: 695021e8-b598-8333-8023-878848aff6d0
+created: 2025-12-27
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Pre-launch Checklist for Linkin.Bio
+type: note
+updated: 2025-12-27
 ---
+
 # Pre-launch Checklist for Linkin.Bio
 
 > Conversation ID: 695021e8-b598-8333-8023-878848aff6d0

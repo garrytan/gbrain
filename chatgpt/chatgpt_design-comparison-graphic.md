@@ -1,13 +1,19 @@
 ---
-title: "Design Comparison Graphic"
-type: note
-created: 2026-04-27
-updated: 2026-04-27
-source: chatgpt-export
 conversation_id: 69efcf2f-293c-83e8-a8cb-7e655e7d1bd3
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Design Comparison Graphic
+type: note
+updated: 2026-04-27
 ---
+
 # Design Comparison Graphic
 
 > Conversation ID: 69efcf2f-293c-83e8-a8cb-7e655e7d1bd3

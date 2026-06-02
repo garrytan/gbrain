@@ -1,13 +1,18 @@
 ---
-title: "Muscle Gain Visualization"
-type: note
-created: 2024-04-02
-updated: 2024-04-02
-source: chatgpt-export
 conversation_id: 356e553c-f498-49a8-af44-8440572c8cfc
+created: 2024-04-02
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Muscle Gain Visualization
+type: note
+updated: 2024-04-02
 ---
+
 # Muscle Gain Visualization
 
 > Conversation ID: 356e553c-f498-49a8-af44-8440572c8cfc

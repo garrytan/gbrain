@@ -1,13 +1,20 @@
 ---
-title: "Versioning in Next.js"
-type: essay
-created: 2026-01-31
-updated: 2026-01-31
-source: chatgpt-export
 conversation_id: 697e6915-3dac-8325-8982-85a6022ab04c
+created: 2026-01-31
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Versioning in Next.js
+type: essay
+updated: 2026-01-31
 ---
+
 # Versioning in Next.js
 
 > Conversation ID: 697e6915-3dac-8325-8982-85a6022ab04c

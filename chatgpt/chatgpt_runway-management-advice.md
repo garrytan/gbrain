@@ -1,13 +1,19 @@
 ---
-title: "Runway management advice"
-type: essay
-created: 2025-11-24
-updated: 2025-11-24
-source: chatgpt-export
 conversation_id: 6924b5d6-54f4-8329-856a-2e78cd259eb1
+created: 2025-11-24
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Runway management advice
+type: essay
+updated: 2025-11-24
 ---
+
 # Runway management advice
 
 > Conversation ID: 6924b5d6-54f4-8329-856a-2e78cd259eb1

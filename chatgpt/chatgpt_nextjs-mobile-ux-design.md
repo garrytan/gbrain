@@ -1,13 +1,18 @@
 ---
-title: "Next.js Mobile UX Design"
-type: note
-created: 2026-04-24
-updated: 2026-04-24
-source: chatgpt-export
 conversation_id: 69ebeaa4-f8cc-83e8-83d5-8c8e85aa8a50
+created: 2026-04-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Next.js Mobile UX Design
+type: note
+updated: 2026-04-24
 ---
+
 # Next.js Mobile UX Design
 
 > Conversation ID: 69ebeaa4-f8cc-83e8-83d5-8c8e85aa8a50

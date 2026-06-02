@@ -1,13 +1,18 @@
 ---
-title: "Tim White: Artistic Symphony"
-type: note
-created: 2024-02-07
-updated: 2024-02-07
-source: chatgpt-export
 conversation_id: d93c8f0e-cc75-4ebb-b600-cbc74ac96fac
+created: 2024-02-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Tim White: Artistic Symphony'
+type: note
+updated: 2024-02-07
 ---
+
 # Tim White: Artistic Symphony
 
 > Conversation ID: d93c8f0e-cc75-4ebb-b600-cbc74ac96fac

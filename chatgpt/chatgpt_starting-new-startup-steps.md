@@ -1,13 +1,18 @@
 ---
-title: "Starting new startup steps"
-type: note
-created: 2025-08-08
-updated: 2025-08-08
-source: chatgpt-export
 conversation_id: 6896744f-16a8-8332-b776-4ff4decc91d7
+created: 2025-08-08
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Starting new startup steps
+type: note
+updated: 2025-08-08
 ---
+
 # Starting new startup steps
 
 > Conversation ID: 6896744f-16a8-8332-b776-4ff4decc91d7

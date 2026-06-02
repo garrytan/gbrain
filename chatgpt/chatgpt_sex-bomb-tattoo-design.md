@@ -1,13 +1,18 @@
 ---
-title: "Sex Bomb Tattoo Design"
-type: note
-created: 2025-04-11
-updated: 2025-04-11
-source: chatgpt-export
 conversation_id: 67f89710-a834-8007-9f66-be5000bcbddb
+created: 2025-04-11
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sex Bomb Tattoo Design
+type: note
+updated: 2025-04-11
 ---
+
 # Sex Bomb Tattoo Design
 
 > Conversation ID: 67f89710-a834-8007-9f66-be5000bcbddb

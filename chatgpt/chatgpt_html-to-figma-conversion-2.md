@@ -1,13 +1,18 @@
 ---
-title: "HTML to Figma Conversion"
-type: note
-created: 2026-02-24
-updated: 2026-02-24
-source: chatgpt-export
 conversation_id: 699d498a-fb10-832b-a9fb-0eb192d56f0a
+created: 2026-02-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: HTML to Figma Conversion
+type: note
+updated: 2026-02-24
 ---
+
 # HTML to Figma Conversion
 
 > Conversation ID: 699d498a-fb10-832b-a9fb-0eb192d56f0a

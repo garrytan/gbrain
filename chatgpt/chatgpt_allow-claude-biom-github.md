@@ -1,13 +1,19 @@
 ---
-title: "Allow Claude Biom GitHub"
-type: guide
-created: 2026-01-09
-updated: 2026-01-09
-source: chatgpt-export
 conversation_id: 69608de2-525c-8326-82b7-63f88a412bbd
+created: 2026-01-09
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Allow Claude Biom GitHub
+type: guide
+updated: 2026-01-09
 ---
+
 # Allow Claude Biom GitHub
 
 > Conversation ID: 69608de2-525c-8326-82b7-63f88a412bbd

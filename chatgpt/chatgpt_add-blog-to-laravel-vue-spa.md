@@ -1,13 +1,18 @@
 ---
-title: "Add Blog to Laravel Vue SPA"
-type: note
-created: 2023-01-04
-updated: 2023-01-04
-source: chatgpt-export
 conversation_id: e5f968aa-d50c-4918-b137-e2e519632510
+created: 2023-01-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Add Blog to Laravel Vue SPA
+type: note
+updated: 2023-01-04
 ---
+
 # Add Blog to Laravel Vue SPA
 
 > Conversation ID: e5f968aa-d50c-4918-b137-e2e519632510

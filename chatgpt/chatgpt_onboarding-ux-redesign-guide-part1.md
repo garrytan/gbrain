@@ -1,13 +1,20 @@
 ---
-title: "Onboarding UX Redesign Guide"
-type: essay
-created: 2025-06-13
-updated: 2025-06-13
-source: chatgpt-export
 conversation_id: 684b7c1c-129c-8007-94fb-5a2a6d839927
+created: 2025-06-13
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 58
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Onboarding UX Redesign Guide
+type: essay
+updated: 2025-06-13
 ---
+
 # Onboarding UX Redesign Guide
 
 > Conversation ID: 684b7c1c-129c-8007-94fb-5a2a6d839927

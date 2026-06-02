@@ -1,13 +1,19 @@
 ---
-title: "Laravel Mix Configuration."
-type: guide
-created: 2023-05-11
-updated: 2023-05-11
-source: chatgpt-export
 conversation_id: d2a51a17-af8d-44a8-921a-244ebbbe3073
+created: 2023-05-11
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Laravel Mix Configuration.
+type: guide
+updated: 2023-05-11
 ---
+
 # Laravel Mix Configuration.
 
 > Conversation ID: d2a51a17-af8d-44a8-921a-244ebbbe3073

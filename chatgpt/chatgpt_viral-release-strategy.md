@@ -1,13 +1,19 @@
 ---
-title: "Viral Release Strategy"
-type: essay
-created: 2026-05-30
-updated: 2026-05-30
-source: chatgpt-export
 conversation_id: 6a1a3571-9ae8-83e8-915b-ca4b8040484f
+created: 2026-05-30
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 12
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Viral Release Strategy
+type: essay
+updated: 2026-05-30
 ---
+
 # Viral Release Strategy
 
 > Conversation ID: 6a1a3571-9ae8-83e8-915b-ca4b8040484f

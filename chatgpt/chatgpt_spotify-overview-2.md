@@ -1,13 +1,18 @@
 ---
-title: "Spotify Overview"
-type: note
-created: 2026-03-02
-updated: 2026-03-02
-source: chatgpt-export
 conversation_id: 69a5e58a-9420-832a-9169-865e92b12c56
+created: 2026-03-02
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spotify Overview
+type: note
+updated: 2026-03-02
 ---
+
 # Spotify Overview
 
 > Conversation ID: 69a5e58a-9420-832a-9169-865e92b12c56

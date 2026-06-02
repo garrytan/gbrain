@@ -1,13 +1,20 @@
 ---
-title: "Keyboard Shortcuts in DJ Software"
-type: essay
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a089fa4-40bc-83e8-88fd-9fe4207f8e0d
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Keyboard Shortcuts in DJ Software
+type: essay
+updated: 2026-05-16
 ---
+
 # Keyboard Shortcuts in DJ Software
 
 > Conversation ID: 6a089fa4-40bc-83e8-88fd-9fe4207f8e0d

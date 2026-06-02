@@ -1,13 +1,18 @@
 ---
-title: "Arlo brand explanation"
-type: note
-created: 2025-10-07
-updated: 2025-10-07
-source: chatgpt-export
 conversation_id: 68e47774-9264-8326-8637-69db8cfff783
+created: 2025-10-07
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Arlo brand explanation
+type: note
+updated: 2025-10-07
 ---
+
 # Arlo brand explanation
 
 > Conversation ID: 68e47774-9264-8326-8637-69db8cfff783

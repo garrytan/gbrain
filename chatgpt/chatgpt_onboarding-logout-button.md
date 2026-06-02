@@ -1,13 +1,18 @@
 ---
-title: "Onboarding logout button"
-type: note
-created: 2025-12-18
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 69443dd8-85e8-832f-902d-3f8e969ae0fa
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Onboarding logout button
+type: note
+updated: 2025-12-18
 ---
+
 # Onboarding logout button
 
 > Conversation ID: 69443dd8-85e8-832f-902d-3f8e969ae0fa

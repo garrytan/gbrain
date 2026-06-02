@@ -1,13 +1,20 @@
 ---
-title: "Vue Warning: Slot Issue"
-type: guide
-created: 2024-03-13
-updated: 2024-03-13
-source: chatgpt-export
 conversation_id: 3ea811b5-e738-4278-91be-9b445b179dc5
+created: 2024-03-13
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: 'Vue Warning: Slot Issue'
+type: guide
+updated: 2024-03-13
 ---
+
 # Vue Warning: Slot Issue
 
 > Conversation ID: 3ea811b5-e738-4278-91be-9b445b179dc5

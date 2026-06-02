@@ -1,13 +1,20 @@
 ---
-title: "Auto-Claude troubleshooting steps"
-type: essay
-created: 2025-12-22
-updated: 2025-12-22
-source: chatgpt-export
 conversation_id: 69498048-00d4-8328-9b09-4cec76d63f4b
+created: 2025-12-22
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 47
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Auto-Claude troubleshooting steps
+type: essay
+updated: 2025-12-22
 ---
+
 # Auto-Claude troubleshooting steps
 
 > Conversation ID: 69498048-00d4-8328-9b09-4cec76d63f4b

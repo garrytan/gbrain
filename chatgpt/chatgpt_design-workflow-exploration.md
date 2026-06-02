@@ -1,13 +1,20 @@
 ---
-title: "Design Workflow Exploration"
-type: guide
-created: 2026-04-24
-updated: 2026-04-24
-source: chatgpt-export
 conversation_id: 69eba59c-22b4-83e8-9521-ee6afce686f9
+created: 2026-04-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Design Workflow Exploration
+type: guide
+updated: 2026-04-24
 ---
+
 # Design Workflow Exploration
 
 > Conversation ID: 69eba59c-22b4-83e8-9521-ee6afce686f9

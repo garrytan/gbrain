@@ -1,13 +1,18 @@
 ---
-title: "Pitch Perfect 3 Summary"
-type: note
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695df82e-15cc-8332-aace-1f17cb73c96b
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pitch Perfect 3 Summary
+type: note
+updated: 2026-01-07
 ---
+
 # Pitch Perfect 3 Summary
 
 > Conversation ID: 695df82e-15cc-8332-aace-1f17cb73c96b

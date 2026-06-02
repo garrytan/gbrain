@@ -1,13 +1,18 @@
 ---
-title: "Flirty studio musician vibes"
-type: note
-created: 2023-12-26
-updated: 2023-12-26
-source: chatgpt-export
 conversation_id: 266872d0-5129-41cc-b0bb-8228f4471353
+created: 2023-12-26
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Flirty studio musician vibes
+type: note
+updated: 2023-12-26
 ---
+
 # Flirty studio musician vibes
 
 > Conversation ID: 266872d0-5129-41cc-b0bb-8228f4471353

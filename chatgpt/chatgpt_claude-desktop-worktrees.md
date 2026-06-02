@@ -1,13 +1,18 @@
 ---
-title: "Claude desktop worktrees"
-type: note
-created: 2025-12-22
-updated: 2025-12-22
-source: chatgpt-export
 conversation_id: 69499b71-a274-8325-8747-91fdb99ec993
+created: 2025-12-22
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude desktop worktrees
+type: note
+updated: 2025-12-22
 ---
+
 # Claude desktop worktrees
 
 > Conversation ID: 69499b71-a274-8325-8747-91fdb99ec993

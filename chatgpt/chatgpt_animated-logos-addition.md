@@ -1,13 +1,20 @@
 ---
-title: "Animated logos addition"
-type: guide
-created: 2025-08-03
-updated: 2025-08-03
-source: chatgpt-export
 conversation_id: 688ef1a3-2558-8326-b0f6-0530c3a5d64d
+created: 2025-08-03
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 7
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Animated logos addition
+type: guide
+updated: 2025-08-03
 ---
+
 # Animated logos addition
 
 > Conversation ID: 688ef1a3-2558-8326-b0f6-0530c3a5d64d

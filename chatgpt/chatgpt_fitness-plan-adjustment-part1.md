@@ -1,13 +1,19 @@
 ---
-title: "Fitness plan adjustment"
-type: essay
-created: 2025-07-24
-updated: 2025-07-24
-source: chatgpt-export
 conversation_id: 6882935a-5824-832d-aeff-3502ddc66674
+created: 2025-07-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 110
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Fitness plan adjustment
+type: essay
+updated: 2025-07-24
 ---
+
 # Fitness plan adjustment
 
 > Conversation ID: 6882935a-5824-832d-aeff-3502ddc66674

@@ -1,13 +1,18 @@
 ---
-title: "Basement Studio Overview"
-type: note
-created: 2026-01-30
-updated: 2026-01-30
-source: chatgpt-export
 conversation_id: 697c1e0b-b3e4-832a-bdfa-c7f2afb8dff0
+created: 2026-01-30
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Basement Studio Overview
+type: note
+updated: 2026-01-30
 ---
+
 # Basement Studio Overview
 
 > Conversation ID: 697c1e0b-b3e4-832a-bdfa-c7f2afb8dff0

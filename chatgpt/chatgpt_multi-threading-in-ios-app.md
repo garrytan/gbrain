@@ -1,13 +1,20 @@
 ---
-title: "Multi-threading in iOS App"
-type: guide
-created: 2025-07-07
-updated: 2025-07-07
-source: chatgpt-export
 conversation_id: 686b4981-a564-8007-a509-24f58b94e551
+created: 2025-07-07
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Multi-threading in iOS App
+type: guide
+updated: 2025-07-07
 ---
+
 # Multi-threading in iOS App
 
 > Conversation ID: 686b4981-a564-8007-a509-24f58b94e551

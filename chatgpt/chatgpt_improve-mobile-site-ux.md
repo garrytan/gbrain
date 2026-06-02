@@ -1,13 +1,18 @@
 ---
-title: "Improve mobile site UX"
-type: note
-created: 2025-12-04
-updated: 2025-12-04
-source: chatgpt-export
 conversation_id: 693130b0-f8d8-8325-bcb3-8bf89cce9073
+created: 2025-12-04
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Improve mobile site UX
+type: note
+updated: 2025-12-04
 ---
+
 # Improve mobile site UX
 
 > Conversation ID: 693130b0-f8d8-8325-bcb3-8bf89cce9073

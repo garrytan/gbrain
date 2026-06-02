@@ -1,13 +1,18 @@
 ---
-title: "Vercel cold starts explained"
-type: note
-created: 2026-01-28
-updated: 2026-01-28
-source: chatgpt-export
 conversation_id: 697a577d-c11c-8333-b544-5be5a7427896
+created: 2026-01-28
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel cold starts explained
+type: note
+updated: 2026-01-28
 ---
+
 # Vercel cold starts explained
 
 > Conversation ID: 697a577d-c11c-8333-b544-5be5a7427896

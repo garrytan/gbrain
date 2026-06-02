@@ -1,13 +1,19 @@
 ---
-title: "Jovie Landing Page Spec"
-type: essay
-created: 2026-04-27
-updated: 2026-04-27
-source: chatgpt-export
 conversation_id: 69eed5d5-909c-83e8-a1c8-a8dba28b79b0
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Jovie Landing Page Spec
+type: essay
+updated: 2026-04-27
 ---
+
 # Jovie Landing Page Spec
 
 > Conversation ID: 69eed5d5-909c-83e8-a1c8-a8dba28b79b0

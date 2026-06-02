@@ -1,13 +1,18 @@
 ---
-title: "Fast Solo Bouncing Tracks"
-type: note
-created: 2024-04-04
-updated: 2024-04-04
-source: chatgpt-export
 conversation_id: 526896e2-d3e7-4938-9d83-f1afe50a19d3
+created: 2024-04-04
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fast Solo Bouncing Tracks
+type: note
+updated: 2024-04-04
 ---
+
 # Fast Solo Bouncing Tracks
 
 > Conversation ID: 526896e2-d3e7-4938-9d83-f1afe50a19d3

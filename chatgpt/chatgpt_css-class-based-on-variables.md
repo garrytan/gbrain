@@ -1,13 +1,18 @@
 ---
-title: "CSS class based on variables."
-type: note
-created: 2023-05-05
-updated: 2023-05-05
-source: chatgpt-export
 conversation_id: 80b8de29-807d-4e96-9311-b7b6120a96ac
+created: 2023-05-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 5
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: CSS class based on variables.
+type: note
+updated: 2023-05-05
 ---
+
 # CSS class based on variables.
 
 > Conversation ID: 80b8de29-807d-4e96-9311-b7b6120a96ac

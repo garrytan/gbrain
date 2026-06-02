@@ -1,13 +1,18 @@
 ---
-title: "Supabase for Jovie"
-type: note
-created: 2026-06-01
-updated: 2026-06-01
-source: chatgpt-export
 conversation_id: 6a1cea39-4540-83e8-85c0-3e7e40b80585
+created: 2026-06-01
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Supabase for Jovie
+type: note
+updated: 2026-06-01
 ---
+
 # Supabase for Jovie
 
 > Conversation ID: 6a1cea39-4540-83e8-85c0-3e7e40b80585

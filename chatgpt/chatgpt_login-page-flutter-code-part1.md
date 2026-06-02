@@ -1,13 +1,20 @@
 ---
-title: "Login Page Flutter Code"
-type: essay
-created: 2024-01-20
-updated: 2024-01-20
-source: chatgpt-export
 conversation_id: 3e587d44-1e07-48f4-ba05-f2065d188eba
+created: 2024-01-20
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 40
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Login Page Flutter Code
+type: essay
+updated: 2024-01-20
 ---
+
 # Login Page Flutter Code
 
 > Conversation ID: 3e587d44-1e07-48f4-ba05-f2065d188eba

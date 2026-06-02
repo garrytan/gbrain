@@ -1,13 +1,18 @@
 ---
-title: "iPhone Offline Status"
-type: note
-created: 2025-06-27
-updated: 2025-06-27
-source: chatgpt-export
 conversation_id: 685ec378-06dc-8007-91c1-7ff3f03141e0
+created: 2025-06-27
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iPhone Offline Status
+type: note
+updated: 2025-06-27
 ---
+
 # iPhone Offline Status
 
 > Conversation ID: 685ec378-06dc-8007-91c1-7ff3f03141e0

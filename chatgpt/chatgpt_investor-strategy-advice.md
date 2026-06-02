@@ -1,13 +1,19 @@
 ---
-title: "Investor Strategy Advice"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a08ebf3-b76c-83e8-b82f-6a326d27274c
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 3
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Investor Strategy Advice
+type: note
+updated: 2026-05-16
 ---
+
 # Investor Strategy Advice
 
 > Conversation ID: 6a08ebf3-b76c-83e8-b82f-6a326d27274c

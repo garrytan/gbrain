@@ -1,13 +1,18 @@
 ---
-title: "Max Martin's Taylor Swift Collaboration"
-type: note
-created: 2023-11-30
-updated: 2023-11-30
-source: chatgpt-export
 conversation_id: 585c94bd-9318-4c6a-80a8-9cd655934ef4
+created: 2023-11-30
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Max Martin's Taylor Swift Collaboration
+type: note
+updated: 2023-11-30
 ---
+
 # Max Martin's Taylor Swift Collaboration
 
 > Conversation ID: 585c94bd-9318-4c6a-80a8-9cd655934ef4

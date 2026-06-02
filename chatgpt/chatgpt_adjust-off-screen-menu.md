@@ -1,13 +1,19 @@
 ---
-title: "Adjust Off-Screen Menu"
-type: guide
-created: 2023-06-09
-updated: 2023-06-09
-source: chatgpt-export
 conversation_id: b0b2fd6e-6a4c-41eb-bb4a-7efb4ffb3ce1
+created: 2023-06-09
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Adjust Off-Screen Menu
+type: guide
+updated: 2023-06-09
 ---
+
 # Adjust Off-Screen Menu
 
 > Conversation ID: b0b2fd6e-6a4c-41eb-bb4a-7efb4ffb3ce1

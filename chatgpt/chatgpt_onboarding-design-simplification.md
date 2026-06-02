@@ -1,13 +1,19 @@
 ---
-title: "Onboarding design simplification"
-type: note
-created: 2025-11-25
-updated: 2025-11-25
-source: chatgpt-export
 conversation_id: 69251c6d-dc1c-8331-9ba4-5f30e3744e3a
+created: 2025-11-25
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Onboarding design simplification
+type: note
+updated: 2025-11-25
 ---
+
 # Onboarding design simplification
 
 > Conversation ID: 69251c6d-dc1c-8331-9ba4-5f30e3744e3a

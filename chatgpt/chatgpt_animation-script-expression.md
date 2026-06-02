@@ -1,13 +1,19 @@
 ---
-title: "Animation script expression."
-type: note
-created: 2023-03-16
-updated: 2023-03-16
-source: chatgpt-export
 conversation_id: 5adc5fc2-db35-4d0c-aa14-2edfd29affae
+created: 2023-03-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Animation script expression.
+type: note
+updated: 2023-03-16
 ---
+
 # Animation script expression.
 
 > Conversation ID: 5adc5fc2-db35-4d0c-aa14-2edfd29affae

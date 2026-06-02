@@ -1,13 +1,19 @@
 ---
-title: "Vue Container Component"
-type: guide
-created: 2023-06-01
-updated: 2023-06-01
-source: chatgpt-export
 conversation_id: 22766caf-5da6-4843-9066-934e52add172
+created: 2023-06-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue Container Component
+type: guide
+updated: 2023-06-01
 ---
+
 # Vue Container Component
 
 > Conversation ID: 22766caf-5da6-4843-9066-934e52add172

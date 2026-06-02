@@ -1,13 +1,18 @@
 ---
-title: "Linear Redesign Explained"
-type: note
-created: 2025-12-23
-updated: 2025-12-23
-source: chatgpt-export
 conversation_id: 694a1e22-5e18-832d-b791-b89be8f4688b
+created: 2025-12-23
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Linear Redesign Explained
+type: note
+updated: 2025-12-23
 ---
+
 # Linear Redesign Explained
 
 > Conversation ID: 694a1e22-5e18-832d-b791-b89be8f4688b

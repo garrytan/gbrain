@@ -1,13 +1,18 @@
 ---
-title: "Design Diet Plan"
-type: note
-created: 2024-06-24
-updated: 2024-06-24
-source: chatgpt-export
 conversation_id: b6381aa6-8a62-4c22-a688-85a449421b4b
+created: 2024-06-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Design Diet Plan
+type: note
+updated: 2024-06-24
 ---
+
 # Design Diet Plan
 
 > Conversation ID: b6381aa6-8a62-4c22-a688-85a449421b4b

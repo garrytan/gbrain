@@ -1,13 +1,18 @@
 ---
-title: "Startup Pitching Tips"
-type: note
-created: 2026-04-24
-updated: 2026-04-24
-source: chatgpt-export
 conversation_id: 69ebcfec-b1b8-83e8-bfc0-d8d2990bdcdb
+created: 2026-04-24
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Startup Pitching Tips
+type: note
+updated: 2026-04-24
 ---
+
 # Startup Pitching Tips
 
 > Conversation ID: 69ebcfec-b1b8-83e8-bfc0-d8d2990bdcdb

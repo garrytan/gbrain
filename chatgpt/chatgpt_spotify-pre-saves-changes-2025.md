@@ -1,13 +1,19 @@
 ---
-title: "Spotify pre-saves changes 2025"
-type: note
-created: 2025-12-19
-updated: 2025-12-19
-source: chatgpt-export
 conversation_id: 6945a38b-abc0-8333-af67-970ccae2ef51
+created: 2025-12-19
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Spotify pre-saves changes 2025
+type: note
+updated: 2025-12-19
 ---
+
 # Spotify pre-saves changes 2025
 
 > Conversation ID: 6945a38b-abc0-8333-af67-970ccae2ef51

@@ -1,13 +1,19 @@
 ---
-title: "Vue v-for key error"
-type: note
-created: 2022-12-20
-updated: 2022-12-20
-source: chatgpt-export
 conversation_id: 5be5f609-d408-40c2-a42d-103d1d8df44f
+created: 2022-12-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue v-for key error
+type: note
+updated: 2022-12-20
 ---
+
 # Vue v-for key error
 
 > Conversation ID: 5be5f609-d408-40c2-a42d-103d1d8df44f

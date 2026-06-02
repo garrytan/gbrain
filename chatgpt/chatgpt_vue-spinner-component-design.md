@@ -1,13 +1,19 @@
 ---
-title: "Vue Spinner Component Design"
-type: guide
-created: 2023-01-22
-updated: 2023-01-22
-source: chatgpt-export
 conversation_id: 999f0831-e09f-4481-a93c-477234bb4a64
+created: 2023-01-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue Spinner Component Design
+type: guide
+updated: 2023-01-22
 ---
+
 # Vue Spinner Component Design
 
 > Conversation ID: 999f0831-e09f-4481-a93c-477234bb4a64

@@ -1,13 +1,19 @@
 ---
-title: "Builder.io Supabase Integration"
-type: guide
-created: 2025-06-08
-updated: 2025-06-08
-source: chatgpt-export
 conversation_id: 6845ef66-8ea8-8007-bfad-5feeae275f02
+created: 2025-06-08
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Builder.io Supabase Integration
+type: guide
+updated: 2025-06-08
 ---
+
 # Builder.io Supabase Integration
 
 > Conversation ID: 6845ef66-8ea8-8007-bfad-5feeae275f02

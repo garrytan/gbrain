@@ -1,13 +1,18 @@
 ---
-title: "Stripe Identity pricing"
-type: note
-created: 2025-12-14
-updated: 2025-12-14
-source: chatgpt-export
 conversation_id: 693e1bc3-0354-832d-b12e-8ecb4deea92c
+created: 2025-12-14
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Stripe Identity pricing
+type: note
+updated: 2025-12-14
 ---
+
 # Stripe Identity pricing
 
 > Conversation ID: 693e1bc3-0354-832d-b12e-8ecb4deea92c

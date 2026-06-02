@@ -1,13 +1,19 @@
 ---
-title: "Offline Sync with Supabase"
-type: note
-created: 2025-07-05
-updated: 2025-07-05
-source: chatgpt-export
 conversation_id: 686957dd-439c-8007-bce0-bc770122860b
+created: 2025-07-05
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 20
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Offline Sync with Supabase
+type: note
+updated: 2025-07-05
 ---
+
 # Offline Sync with Supabase
 
 > Conversation ID: 686957dd-439c-8007-bce0-bc770122860b

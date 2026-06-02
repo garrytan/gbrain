@@ -1,13 +1,20 @@
 ---
-title: "Profile design improvements"
-type: essay
-created: 2025-08-10
-updated: 2025-08-17
-source: chatgpt-export
 conversation_id: 6898e0a2-bf80-832b-bf24-45ac076a6b1c
+created: 2025-08-10
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 39
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Profile design improvements
+type: essay
+updated: 2025-08-17
 ---
+
 # Profile design improvements
 
 > Conversation ID: 6898e0a2-bf80-832b-bf24-45ac076a6b1c

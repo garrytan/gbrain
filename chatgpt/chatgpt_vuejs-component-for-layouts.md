@@ -1,13 +1,19 @@
 ---
-title: "Vue.js component for layouts"
-type: guide
-created: 2023-01-04
-updated: 2023-01-04
-source: chatgpt-export
 conversation_id: eaf3316d-1ec0-4928-9538-ef3788355993
+created: 2023-01-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js component for layouts
+type: guide
+updated: 2023-01-04
 ---
+
 # Vue.js component for layouts
 
 > Conversation ID: eaf3316d-1ec0-4928-9538-ef3788355993

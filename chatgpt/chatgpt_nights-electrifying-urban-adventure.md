@@ -1,13 +1,18 @@
 ---
-title: "Night's Electrifying Urban Adventure"
-type: note
-created: 2024-03-20
-updated: 2024-03-20
-source: chatgpt-export
 conversation_id: b9d1b264-e224-41ef-be45-59e09d5dbee7
+created: 2024-03-20
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Night's Electrifying Urban Adventure
+type: note
+updated: 2024-03-20
 ---
+
 # Night's Electrifying Urban Adventure
 
 > Conversation ID: b9d1b264-e224-41ef-be45-59e09d5dbee7

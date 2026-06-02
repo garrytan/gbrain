@@ -1,13 +1,18 @@
 ---
-title: "Allow preview.jov.ie setup"
-type: note
-created: 2025-12-07
-updated: 2025-12-07
-source: chatgpt-export
 conversation_id: 6935b23d-2fb0-832c-9928-3d6929a7324d
+created: 2025-12-07
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Allow preview.jov.ie setup
+type: note
+updated: 2025-12-07
 ---
+
 # Allow preview.jov.ie setup
 
 > Conversation ID: 6935b23d-2fb0-832c-9928-3d6929a7324d

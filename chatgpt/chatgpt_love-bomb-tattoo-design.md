@@ -1,13 +1,18 @@
 ---
-title: "Love Bomb Tattoo Design"
-type: note
-created: 2025-04-12
-updated: 2025-04-12
-source: chatgpt-export
 conversation_id: 67fad1ea-8228-8007-ab14-508813ea1f91
+created: 2025-04-12
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Love Bomb Tattoo Design
+type: note
+updated: 2025-04-12
 ---
+
 # Love Bomb Tattoo Design
 
 > Conversation ID: 67fad1ea-8228-8007-ab14-508813ea1f91

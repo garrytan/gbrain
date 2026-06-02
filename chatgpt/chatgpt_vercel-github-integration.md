@@ -1,13 +1,18 @@
 ---
-title: "Vercel GitHub integration"
-type: note
-created: 2025-12-11
-updated: 2025-12-11
-source: chatgpt-export
 conversation_id: 693a6b63-1380-8330-9d13-8ebd4069fb68
+created: 2025-12-11
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel GitHub integration
+type: note
+updated: 2025-12-11
 ---
+
 # Vercel GitHub integration
 
 > Conversation ID: 693a6b63-1380-8330-9d13-8ebd4069fb68

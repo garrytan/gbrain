@@ -1,13 +1,19 @@
 ---
-title: "NuxtPicture Automatic Size Adjustment"
-type: guide
-created: 2024-06-06
-updated: 2024-06-06
-source: chatgpt-export
 conversation_id: bf3f067d-2d79-4146-9c49-b227aff3a157
+created: 2024-06-06
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: NuxtPicture Automatic Size Adjustment
+type: guide
+updated: 2024-06-06
 ---
+
 # NuxtPicture Automatic Size Adjustment
 
 > Conversation ID: bf3f067d-2d79-4146-9c49-b227aff3a157

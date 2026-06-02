@@ -1,13 +1,19 @@
 ---
-title: "Next.js white screen fix"
-type: guide
-created: 2025-09-07
-updated: 2025-09-07
-source: chatgpt-export
 conversation_id: 68bdb7bb-438c-8326-ac65-823685eda542
+created: 2025-09-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Next.js white screen fix
+type: guide
+updated: 2025-09-07
 ---
+
 # Next.js white screen fix
 
 > Conversation ID: 68bdb7bb-438c-8326-ac65-823685eda542

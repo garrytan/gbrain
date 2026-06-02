@@ -1,13 +1,18 @@
 ---
-title: "DJ Logo Design Request"
-type: note
-created: 2025-05-18
-updated: 2025-05-18
-source: chatgpt-export
 conversation_id: 682a23df-5020-8007-8937-e62a613f84fc
+created: 2025-05-18
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJ Logo Design Request
+type: note
+updated: 2025-05-18
 ---
+
 # DJ Logo Design Request
 
 > Conversation ID: 682a23df-5020-8007-8937-e62a613f84fc

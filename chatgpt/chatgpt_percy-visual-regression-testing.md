@@ -1,13 +1,18 @@
 ---
-title: "Percy Visual Regression Testing"
-type: note
-created: 2025-12-30
-updated: 2025-12-30
-source: chatgpt-export
 conversation_id: 69543afd-89ec-832a-94ea-b76097583047
+created: 2025-12-30
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Percy Visual Regression Testing
+type: note
+updated: 2025-12-30
 ---
+
 # Percy Visual Regression Testing
 
 > Conversation ID: 69543afd-89ec-832a-94ea-b76097583047

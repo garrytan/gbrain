@@ -1,13 +1,18 @@
 ---
-title: "Sunset Bronson Studios"
-type: note
-created: 2025-12-15
-updated: 2025-12-15
-source: chatgpt-export
 conversation_id: 69407145-7eb8-8332-8918-7c38953b1544
+created: 2025-12-15
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sunset Bronson Studios
+type: note
+updated: 2025-12-15
 ---
+
 # Sunset Bronson Studios
 
 > Conversation ID: 69407145-7eb8-8332-8918-7c38953b1544

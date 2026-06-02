@@ -1,13 +1,19 @@
 ---
-title: "Fastlane overview"
-type: note
-created: 2025-07-16
-updated: 2025-07-16
-source: chatgpt-export
 conversation_id: 68772148-d584-8007-8a62-2a676e66f6a7
+created: 2025-07-16
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Fastlane overview
+type: note
+updated: 2025-07-16
 ---
+
 # Fastlane overview
 
 > Conversation ID: 68772148-d584-8007-8a62-2a676e66f6a7

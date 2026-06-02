@@ -1,13 +1,19 @@
 ---
-title: "Simplified Vue Profile Pic"
-type: guide
-created: 2023-05-20
-updated: 2023-05-20
-source: chatgpt-export
 conversation_id: a27cdcaf-bdb1-4d45-91c4-4172665d24ef
+created: 2023-05-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Simplified Vue Profile Pic
+type: guide
+updated: 2023-05-20
 ---
+
 # Simplified Vue Profile Pic
 
 > Conversation ID: a27cdcaf-bdb1-4d45-91c4-4172665d24ef

@@ -1,13 +1,19 @@
 ---
-title: "OpenClaw vs Claude"
-type: note
-created: 2026-02-25
-updated: 2026-02-25
-source: chatgpt-export
 conversation_id: 699f5ebe-1ffc-832f-9b4f-a71693cd4cf4
+created: 2026-02-25
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: OpenClaw vs Claude
+type: note
+updated: 2026-02-25
 ---
+
 # OpenClaw vs Claude
 
 > Conversation ID: 699f5ebe-1ffc-832f-9b4f-a71693cd4cf4

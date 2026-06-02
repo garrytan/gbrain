@@ -1,13 +1,19 @@
 ---
-title: "Tailwind CSS button div."
-type: guide
-created: 2023-05-04
-updated: 2023-05-04
-source: chatgpt-export
 conversation_id: d98cd19b-11be-4aae-a0ef-5bb376d10894
+created: 2023-05-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind CSS button div.
+type: guide
+updated: 2023-05-04
 ---
+
 # Tailwind CSS button div.
 
 > Conversation ID: d98cd19b-11be-4aae-a0ef-5bb376d10894

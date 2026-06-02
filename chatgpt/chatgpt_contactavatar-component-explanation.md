@@ -1,13 +1,19 @@
 ---
-title: "ContactAvatar Component Explanation"
-type: note
-created: 2023-05-17
-updated: 2023-05-17
-source: chatgpt-export
 conversation_id: d2c62dc7-0cb4-4c64-acd6-2e9e33a78bd4
+created: 2023-05-17
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: ContactAvatar Component Explanation
+type: note
+updated: 2023-05-17
 ---
+
 # ContactAvatar Component Explanation
 
 > Conversation ID: d2c62dc7-0cb4-4c64-acd6-2e9e33a78bd4

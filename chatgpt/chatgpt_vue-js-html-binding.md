@@ -1,13 +1,19 @@
 ---
-title: "Vue JS HTML Binding"
-type: note
-created: 2023-01-25
-updated: 2023-01-25
-source: chatgpt-export
 conversation_id: 5ddac541-392b-4261-8157-effdea6efeef
+created: 2023-01-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue JS HTML Binding
+type: note
+updated: 2023-01-25
 ---
+
 # Vue JS HTML Binding
 
 > Conversation ID: 5ddac541-392b-4261-8157-effdea6efeef

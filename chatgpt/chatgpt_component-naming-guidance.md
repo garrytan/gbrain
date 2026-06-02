@@ -1,13 +1,19 @@
 ---
-title: "Component naming guidance"
-type: guide
-created: 2025-09-02
-updated: 2025-09-03
-source: chatgpt-export
 conversation_id: 68b77f65-d16c-8330-b335-26c4456f2ebe
+created: 2025-09-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Component naming guidance
+type: guide
+updated: 2025-09-03
 ---
+
 # Component naming guidance
 
 > Conversation ID: 68b77f65-d16c-8330-b335-26c4456f2ebe

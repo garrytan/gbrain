@@ -1,13 +1,19 @@
 ---
-title: "Tailwind max-width 680px"
-type: note
-created: 2025-12-09
-updated: 2025-12-10
-source: chatgpt-export
 conversation_id: 6938a606-337c-8328-9af0-6c45089a83ee
+created: 2025-12-09
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind max-width 680px
+type: note
+updated: 2025-12-10
 ---
+
 # Tailwind max-width 680px
 
 > Conversation ID: 6938a606-337c-8328-9af0-6c45089a83ee

@@ -1,13 +1,18 @@
 ---
-title: "Flutter for Web: Considerations"
-type: note
-created: 2024-01-22
-updated: 2024-01-22
-source: chatgpt-export
 conversation_id: 60a24e8d-d218-4bc9-96a9-4b682b1c764e
+created: 2024-01-22
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Flutter for Web: Considerations'
+type: note
+updated: 2024-01-22
 ---
+
 # Flutter for Web: Considerations
 
 > Conversation ID: 60a24e8d-d218-4bc9-96a9-4b682b1c764e

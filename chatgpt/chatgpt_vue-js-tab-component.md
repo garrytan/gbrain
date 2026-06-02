@@ -1,13 +1,19 @@
 ---
-title: "Vue JS Tab Component"
-type: guide
-created: 2023-01-03
-updated: 2023-01-03
-source: chatgpt-export
 conversation_id: 543693de-f047-43f7-8c1f-0c3607cc2eb1
+created: 2023-01-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue JS Tab Component
+type: guide
+updated: 2023-01-03
 ---
+
 # Vue JS Tab Component
 
 > Conversation ID: 543693de-f047-43f7-8c1f-0c3607cc2eb1

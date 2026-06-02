@@ -1,13 +1,18 @@
 ---
-title: "Raising Pre-seed in 2026"
-type: note
-created: 2026-05-13
-updated: 2026-05-13
-source: chatgpt-export
 conversation_id: 6a04db10-848c-83e8-919e-72a8b8ac605b
+created: 2026-05-13
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Raising Pre-seed in 2026
+type: note
+updated: 2026-05-13
 ---
+
 # Raising Pre-seed in 2026
 
 > Conversation ID: 6a04db10-848c-83e8-919e-72a8b8ac605b

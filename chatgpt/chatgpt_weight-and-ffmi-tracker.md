@@ -1,13 +1,19 @@
 ---
-title: "Weight and FFMI Tracker"
-type: note
-created: 2023-11-07
-updated: 2023-11-07
-source: chatgpt-export
 conversation_id: 42a7ee3f-52ec-4a5e-ba81-5d1ea567477b
+created: 2023-11-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 7
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Weight and FFMI Tracker
+type: note
+updated: 2023-11-07
 ---
+
 # Weight and FFMI Tracker
 
 > Conversation ID: 42a7ee3f-52ec-4a5e-ba81-5d1ea567477b

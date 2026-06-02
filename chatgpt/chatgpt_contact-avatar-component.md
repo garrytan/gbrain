@@ -1,13 +1,18 @@
 ---
-title: "Contact Avatar Component"
-type: note
-created: 2023-05-17
-updated: 2023-05-17
-source: chatgpt-export
 conversation_id: 7a6b6ee2-c587-417b-be93-4f2c74080b19
+created: 2023-05-17
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Contact Avatar Component
+type: note
+updated: 2023-05-17
 ---
+
 # Contact Avatar Component
 
 > Conversation ID: 7a6b6ee2-c587-417b-be93-4f2c74080b19

@@ -1,13 +1,18 @@
 ---
-title: "ChatGPT tech stack"
-type: note
-created: 2025-09-14
-updated: 2025-09-14
-source: chatgpt-export
 conversation_id: 68c6fb86-f908-832b-87e9-89f2ad54f3dc
+created: 2025-09-14
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: ChatGPT tech stack
+type: note
+updated: 2025-09-14
 ---
+
 # ChatGPT tech stack
 
 > Conversation ID: 68c6fb86-f908-832b-87e9-89f2ad54f3dc

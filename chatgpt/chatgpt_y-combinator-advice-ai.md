@@ -1,13 +1,19 @@
 ---
-title: "Y Combinator advice AI"
-type: essay
-created: 2025-11-22
-updated: 2025-11-22
-source: chatgpt-export
 conversation_id: 6922368a-c1d0-8328-bd2e-e15e749a6fae
+created: 2025-11-22
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 22
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Y Combinator advice AI
+type: essay
+updated: 2025-11-22
 ---
+
 # Y Combinator advice AI
 
 > Conversation ID: 6922368a-c1d0-8328-bd2e-e15e749a6fae

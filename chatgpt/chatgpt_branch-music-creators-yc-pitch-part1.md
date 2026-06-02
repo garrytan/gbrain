@@ -1,13 +1,20 @@
 ---
-title: "Branch · Music Creators YC Pitch"
-type: essay
-created: 2026-04-27
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69efda6b-e650-83e8-855d-eb8c83e4c8b0
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 19
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Branch · Music Creators YC Pitch
+type: essay
+updated: 2026-04-28
 ---
+
 # Branch · Music Creators YC Pitch
 
 > Conversation ID: 69efda6b-e650-83e8-855d-eb8c83e4c8b0

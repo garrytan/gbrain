@@ -1,13 +1,19 @@
 ---
-title: "Conditional CSS Class Assignment."
-type: guide
-created: 2023-06-08
-updated: 2023-06-08
-source: chatgpt-export
 conversation_id: c0ff24f1-0a5c-459e-b069-23957ddc5998
+created: 2023-06-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Conditional CSS Class Assignment.
+type: guide
+updated: 2023-06-08
 ---
+
 # Conditional CSS Class Assignment.
 
 > Conversation ID: c0ff24f1-0a5c-459e-b069-23957ddc5998

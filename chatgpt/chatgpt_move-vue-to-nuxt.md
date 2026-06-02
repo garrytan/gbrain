@@ -1,13 +1,20 @@
 ---
-title: "Move Vue to Nuxt"
-type: guide
-created: 2024-06-06
-updated: 2024-06-06
-source: chatgpt-export
 conversation_id: c398aa53-52f8-4b10-b006-8974f0a1d5cc
+created: 2024-06-06
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Move Vue to Nuxt
+type: guide
+updated: 2024-06-06
 ---
+
 # Move Vue to Nuxt
 
 > Conversation ID: c398aa53-52f8-4b10-b006-8974f0a1d5cc

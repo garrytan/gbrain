@@ -1,13 +1,19 @@
 ---
-title: "Atomic design structure"
-type: note
-created: 2025-07-26
-updated: 2025-07-26
-source: chatgpt-export
 conversation_id: 688461ae-e404-832d-a94c-9eada41ee297
+created: 2025-07-26
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Atomic design structure
+type: note
+updated: 2025-07-26
 ---
+
 # Atomic design structure
 
 > Conversation ID: 688461ae-e404-832d-a94c-9eada41ee297

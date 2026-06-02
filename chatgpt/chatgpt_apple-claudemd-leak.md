@@ -1,13 +1,20 @@
 ---
-title: "Apple Claude.md Leak"
-type: guide
-created: 2026-05-05
-updated: 2026-05-05
-source: chatgpt-export
 conversation_id: 69f9cd8e-03cc-83e8-8825-bb32d4dcf2ef
+created: 2026-05-05
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Apple Claude.md Leak
+type: guide
+updated: 2026-05-05
 ---
+
 # Apple Claude.md Leak
 
 > Conversation ID: 69f9cd8e-03cc-83e8-8825-bb32d4dcf2ef

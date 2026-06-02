@@ -1,13 +1,18 @@
 ---
-title: "Black Friday iPhone deals"
-type: note
-created: 2025-11-29
-updated: 2025-11-30
-source: chatgpt-export
 conversation_id: 692a6476-726c-8333-8e28-8e42f0848a64
+created: 2025-11-29
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Black Friday iPhone deals
+type: note
+updated: 2025-11-30
 ---
+
 # Black Friday iPhone deals
 
 > Conversation ID: 692a6476-726c-8333-8e28-8e42f0848a64

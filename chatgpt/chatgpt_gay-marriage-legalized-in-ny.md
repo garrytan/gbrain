@@ -1,13 +1,18 @@
 ---
-title: "Gay Marriage Legalized in NY"
-type: note
-created: 2024-06-21
-updated: 2024-06-21
-source: chatgpt-export
 conversation_id: 2a8b455d-f36b-4750-b441-5202a64621ce
+created: 2024-06-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Gay Marriage Legalized in NY
+type: note
+updated: 2024-06-21
 ---
+
 # Gay Marriage Legalized in NY
 
 > Conversation ID: 2a8b455d-f36b-4750-b441-5202a64621ce

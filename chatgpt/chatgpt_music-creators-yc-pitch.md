@@ -1,13 +1,18 @@
 ---
-title: "Music Creators YC Pitch"
-type: note
-created: 2026-04-27
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69eefd26-9a68-83e8-9876-b7c82a8de135
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Music Creators YC Pitch
+type: note
+updated: 2026-04-28
 ---
+
 # Music Creators YC Pitch
 
 > Conversation ID: 69eefd26-9a68-83e8-9876-b7c82a8de135

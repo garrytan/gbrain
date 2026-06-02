@@ -1,13 +1,18 @@
 ---
-title: "DNS setup on Vercel"
-type: note
-created: 2025-12-02
-updated: 2025-12-02
-source: chatgpt-export
 conversation_id: 692e6257-e2ec-8333-bffb-38d0996f0d74
+created: 2025-12-02
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DNS setup on Vercel
+type: note
+updated: 2025-12-02
 ---
+
 # DNS setup on Vercel
 
 > Conversation ID: 692e6257-e2ec-8333-bffb-38d0996f0d74

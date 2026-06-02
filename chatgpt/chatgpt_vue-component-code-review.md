@@ -1,13 +1,18 @@
 ---
-title: "Vue component code review"
-type: note
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: 06c610d0-d411-4780-96db-2abcf57bf7f3
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue component code review
+type: note
+updated: 2022-12-22
 ---
+
 # Vue component code review
 
 > Conversation ID: 06c610d0-d411-4780-96db-2abcf57bf7f3

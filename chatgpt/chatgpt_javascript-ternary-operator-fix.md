@@ -1,13 +1,18 @@
 ---
-title: "JavaScript Ternary Operator Fix"
-type: note
-created: 2022-12-24
-updated: 2022-12-24
-source: chatgpt-export
 conversation_id: b079624c-0496-4d99-9027-2d6f16c01adb
+created: 2022-12-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: JavaScript Ternary Operator Fix
+type: note
+updated: 2022-12-24
 ---
+
 # JavaScript Ternary Operator Fix
 
 > Conversation ID: b079624c-0496-4d99-9027-2d6f16c01adb

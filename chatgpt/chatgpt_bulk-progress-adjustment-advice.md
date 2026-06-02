@@ -1,13 +1,18 @@
 ---
-title: "Bulk Progress Adjustment Advice"
-type: note
-created: 2024-04-29
-updated: 2024-04-29
-source: chatgpt-export
 conversation_id: 953b561e-212d-4d41-a8df-d412772ef7ad
+created: 2024-04-29
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Bulk Progress Adjustment Advice
+type: note
+updated: 2024-04-29
 ---
+
 # Bulk Progress Adjustment Advice
 
 > Conversation ID: 953b561e-212d-4d41-a8df-d412772ef7ad

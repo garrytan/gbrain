@@ -1,13 +1,18 @@
 ---
-title: "Vue.js Video Player Modal"
-type: note
-created: 2023-02-27
-updated: 2023-02-27
-source: chatgpt-export
 conversation_id: 3eeb53ea-9e59-43e0-a72d-b0c7359fcfba
+created: 2023-02-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js Video Player Modal
+type: note
+updated: 2023-02-27
 ---
+
 # Vue.js Video Player Modal
 
 > Conversation ID: 3eeb53ea-9e59-43e0-a72d-b0c7359fcfba

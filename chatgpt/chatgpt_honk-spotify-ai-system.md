@@ -1,13 +1,18 @@
 ---
-title: "Honk Spotify AI System"
-type: note
-created: 2026-02-14
-updated: 2026-02-14
-source: chatgpt-export
 conversation_id: 6990d114-495c-832f-a1f8-7a3cc2138bbf
+created: 2026-02-14
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Honk Spotify AI System
+type: note
+updated: 2026-02-14
 ---
+
 # Honk Spotify AI System
 
 > Conversation ID: 6990d114-495c-832f-a1f8-7a3cc2138bbf

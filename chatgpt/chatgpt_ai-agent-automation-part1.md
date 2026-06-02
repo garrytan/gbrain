@@ -1,13 +1,20 @@
 ---
-title: "AI Agent Automation"
-type: essay
-created: 2026-04-18
-updated: 2026-04-18
-source: chatgpt-export
 conversation_id: 69e3bf6d-a260-83e8-80b4-2372f8b53c97
+created: 2026-04-18
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: AI Agent Automation
+type: essay
+updated: 2026-04-18
 ---
+
 # AI Agent Automation
 
 > Conversation ID: 69e3bf6d-a260-83e8-80b4-2372f8b53c97

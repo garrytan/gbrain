@@ -1,13 +1,18 @@
 ---
-title: "Best email provider for Next.js"
-type: note
-created: 2025-12-03
-updated: 2025-12-03
-source: chatgpt-export
 conversation_id: 692f8460-64e4-832d-851b-1b998f5278f8
+created: 2025-12-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Best email provider for Next.js
+type: note
+updated: 2025-12-03
 ---
+
 # Best email provider for Next.js
 
 > Conversation ID: 692f8460-64e4-832d-851b-1b998f5278f8

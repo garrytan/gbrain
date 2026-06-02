@@ -1,13 +1,20 @@
 ---
-title: "LegalGlass iOS Integration"
-type: guide
-created: 2025-07-10
-updated: 2025-07-10
-source: chatgpt-export
 conversation_id: 686f0809-8c70-8007-b50b-90d9fd7e500f
+created: 2025-07-10
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 14
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: LegalGlass iOS Integration
+type: guide
+updated: 2025-07-10
 ---
+
 # LegalGlass iOS Integration
 
 > Conversation ID: 686f0809-8c70-8007-b50b-90d9fd7e500f

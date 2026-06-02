@@ -1,13 +1,18 @@
 ---
-title: "Tracking Steps While Bartending"
-type: note
-created: 2024-07-22
-updated: 2024-07-22
-source: chatgpt-export
 conversation_id: 81d7f749-8f16-4354-87de-a541236aea65
+created: 2024-07-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tracking Steps While Bartending
+type: note
+updated: 2024-07-22
 ---
+
 # Tracking Steps While Bartending
 
 > Conversation ID: 81d7f749-8f16-4354-87de-a541236aea65

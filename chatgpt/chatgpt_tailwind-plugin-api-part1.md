@@ -1,13 +1,20 @@
 ---
-title: "Tailwind Plugin API"
-type: essay
-created: 2026-02-01
-updated: 2026-02-01
-source: chatgpt-export
 conversation_id: 697fc46a-9894-8331-924a-ab6830f4380a
+created: 2026-02-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Tailwind Plugin API
+type: essay
+updated: 2026-02-01
 ---
+
 # Tailwind Plugin API
 
 > Conversation ID: 697fc46a-9894-8331-924a-ab6830f4380a

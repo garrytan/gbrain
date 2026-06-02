@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Form Input Template"
-type: guide
-created: 2022-12-28
-updated: 2022-12-28
-source: chatgpt-export
 conversation_id: 86a21520-becf-422c-aab5-1bfbba70a97f
+created: 2022-12-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Form Input Template
+type: guide
+updated: 2022-12-28
 ---
+
 # Vue.js Form Input Template
 
 > Conversation ID: 86a21520-becf-422c-aab5-1bfbba70a97f

@@ -1,13 +1,19 @@
 ---
-title: "JavaScript switch arrow keys"
-type: guide
-created: 2022-12-24
-updated: 2022-12-24
-source: chatgpt-export
 conversation_id: c95f2fd1-dd84-417f-87a7-b3f326624efc
+created: 2022-12-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: JavaScript switch arrow keys
+type: guide
+updated: 2022-12-24
 ---
+
 # JavaScript switch arrow keys
 
 > Conversation ID: c95f2fd1-dd84-417f-87a7-b3f326624efc

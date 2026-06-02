@@ -1,13 +1,19 @@
 ---
-title: "Handle Missing Backend Data"
-type: guide
-created: 2023-12-02
-updated: 2023-12-02
-source: chatgpt-export
 conversation_id: fd75d8af-e6ce-4932-8858-31c7702dca0c
+created: 2023-12-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Handle Missing Backend Data
+type: guide
+updated: 2023-12-02
 ---
+
 # Handle Missing Backend Data
 
 > Conversation ID: fd75d8af-e6ce-4932-8858-31c7702dca0c

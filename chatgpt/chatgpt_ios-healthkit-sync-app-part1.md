@@ -1,13 +1,20 @@
 ---
-title: "iOS HealthKit Sync App"
-type: essay
-created: 2024-01-06
-updated: 2024-01-06
-source: chatgpt-export
 conversation_id: dc4aa7fa-f743-4505-a18d-973d4da8d5c2
+created: 2024-01-06
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 70
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS HealthKit Sync App
+type: essay
+updated: 2024-01-06
 ---
+
 # iOS HealthKit Sync App
 
 > Conversation ID: dc4aa7fa-f743-4505-a18d-973d4da8d5c2

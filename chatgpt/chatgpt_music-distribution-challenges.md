@@ -1,13 +1,18 @@
 ---
-title: "Music Distribution Challenges"
-type: note
-created: 2026-01-03
-updated: 2026-01-03
-source: chatgpt-export
 conversation_id: 6959594b-ada8-8327-8c80-93ebbe38c404
+created: 2026-01-03
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Music Distribution Challenges
+type: note
+updated: 2026-01-03
 ---
+
 # Music Distribution Challenges
 
 > Conversation ID: 6959594b-ada8-8327-8c80-93ebbe38c404

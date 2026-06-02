@@ -1,13 +1,19 @@
 ---
-title: "Next.js vs Nuxt Comparison"
-type: guide
-created: 2025-05-18
-updated: 2025-05-18
-source: chatgpt-export
 conversation_id: 682a09ff-aae0-8007-9b53-6162f18d8021
+created: 2025-05-18
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Next.js vs Nuxt Comparison
+type: guide
+updated: 2025-05-18
 ---
+
 # Next.js vs Nuxt Comparison
 
 > Conversation ID: 682a09ff-aae0-8007-9b53-6162f18d8021

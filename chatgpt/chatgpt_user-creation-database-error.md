@@ -1,13 +1,19 @@
 ---
-title: "User creation database error"
-type: note
-created: 2025-06-14
-updated: 2025-06-14
-source: chatgpt-export
 conversation_id: 684de496-a4cc-8007-aa07-9bc36ca819f0
+created: 2025-06-14
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: User creation database error
+type: note
+updated: 2025-06-14
 ---
+
 # User creation database error
 
 > Conversation ID: 684de496-a4cc-8007-aa07-9bc36ca819f0

@@ -1,13 +1,18 @@
 ---
-title: "Fundraising Investor Research"
-type: note
-created: 2026-04-21
-updated: 2026-04-21
-source: chatgpt-export
 conversation_id: 69e7f2a5-7eac-83e8-a55f-ffd0c8259919
+created: 2026-04-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fundraising Investor Research
+type: note
+updated: 2026-04-21
 ---
+
 # Fundraising Investor Research
 
 > Conversation ID: 69e7f2a5-7eac-83e8-a55f-ffd0c8259919

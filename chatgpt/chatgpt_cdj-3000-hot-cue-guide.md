@@ -1,13 +1,18 @@
 ---
-title: "CDJ-3000 Hot Cue Guide"
-type: note
-created: 2025-01-20
-updated: 2025-01-20
-source: chatgpt-export
 conversation_id: 678ed6b4-52fc-8007-933c-a850e6d0c05e
+created: 2025-01-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: CDJ-3000 Hot Cue Guide
+type: note
+updated: 2025-01-20
 ---
+
 # CDJ-3000 Hot Cue Guide
 
 > Conversation ID: 678ed6b4-52fc-8007-933c-a850e6d0c05e

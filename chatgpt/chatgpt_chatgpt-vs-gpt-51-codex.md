@@ -1,13 +1,19 @@
 ---
-title: "ChatGPT vs GPT-5.1 Codex"
-type: note
-created: 2025-11-15
-updated: 2025-11-15
-source: chatgpt-export
 conversation_id: 6918f712-b6d8-832b-aef5-0817ea4c1966
+created: 2025-11-15
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: ChatGPT vs GPT-5.1 Codex
+type: note
+updated: 2025-11-15
 ---
+
 # ChatGPT vs GPT-5.1 Codex
 
 > Conversation ID: 6918f712-b6d8-832b-aef5-0817ea4c1966

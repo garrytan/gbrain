@@ -1,13 +1,18 @@
 ---
-title: "Better alternatives to fastlane"
-type: note
-created: 2025-07-25
-updated: 2025-07-25
-source: chatgpt-export
 conversation_id: 6882f9b2-b79c-832a-80ba-7427c13df5a9
+created: 2025-07-25
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Better alternatives to fastlane
+type: note
+updated: 2025-07-25
 ---
+
 # Better alternatives to fastlane
 
 > Conversation ID: 6882f9b2-b79c-832a-80ba-7427c13df5a9

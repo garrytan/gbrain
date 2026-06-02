@@ -1,13 +1,18 @@
 ---
-title: "Laylo Revenue Estimate"
-type: note
-created: 2026-01-15
-updated: 2026-01-15
-source: chatgpt-export
 conversation_id: 696930fe-20d4-832f-a57a-dd88ba05a837
+created: 2026-01-15
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Laylo Revenue Estimate
+type: note
+updated: 2026-01-15
 ---
+
 # Laylo Revenue Estimate
 
 > Conversation ID: 696930fe-20d4-832f-a57a-dd88ba05a837

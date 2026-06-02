@@ -1,13 +1,18 @@
 ---
-title: "Android vs iPhone Dispute"
-type: note
-created: 2025-05-27
-updated: 2025-05-27
-source: chatgpt-export
 conversation_id: 68353b2b-5a74-8007-a92c-8484224ad36a
+created: 2025-05-27
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Android vs iPhone Dispute
+type: note
+updated: 2025-05-27
 ---
+
 # Android vs iPhone Dispute
 
 > Conversation ID: 68353b2b-5a74-8007-a92c-8484224ad36a

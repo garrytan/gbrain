@@ -1,13 +1,18 @@
 ---
-title: "Server Updates and Drink Adjustments"
-type: note
-created: 2024-07-20
-updated: 2024-07-20
-source: chatgpt-export
 conversation_id: d8a579bf-2e6e-451f-9af8-c98deed588f8
+created: 2024-07-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Server Updates and Drink Adjustments
+type: note
+updated: 2024-07-20
 ---
+
 # Server Updates and Drink Adjustments
 
 > Conversation ID: d8a579bf-2e6e-451f-9af8-c98deed588f8

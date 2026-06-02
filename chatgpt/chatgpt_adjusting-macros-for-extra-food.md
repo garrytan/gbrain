@@ -1,13 +1,18 @@
 ---
-title: "Adjusting Macros for Extra Food"
-type: note
-created: 2024-01-13
-updated: 2024-01-13
-source: chatgpt-export
 conversation_id: 6d676afd-0e63-4816-8e58-1a284a3b9817
+created: 2024-01-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Adjusting Macros for Extra Food
+type: note
+updated: 2024-01-13
 ---
+
 # Adjusting Macros for Extra Food
 
 > Conversation ID: 6d676afd-0e63-4816-8e58-1a284a3b9817

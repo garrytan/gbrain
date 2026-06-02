@@ -1,13 +1,18 @@
 ---
-title: "AI Tools for UX Design"
-type: note
-created: 2025-06-08
-updated: 2025-06-08
-source: chatgpt-export
 conversation_id: 6845cdd2-59b8-8007-8b42-8994f4c05ff8
+created: 2025-06-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AI Tools for UX Design
+type: note
+updated: 2025-06-08
 ---
+
 # AI Tools for UX Design
 
 > Conversation ID: 6845cdd2-59b8-8007-8b42-8994f4c05ff8

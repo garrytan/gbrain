@@ -1,13 +1,20 @@
 ---
-title: "Refactor Jovie Dashboard"
-type: guide
-created: 2025-09-10
-updated: 2025-09-11
-source: chatgpt-export
 conversation_id: 68c19963-efcc-8329-8b35-e9d0843a5f23
+created: 2025-09-10
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Refactor Jovie Dashboard
+type: guide
+updated: 2025-09-11
 ---
+
 # Refactor Jovie Dashboard
 
 > Conversation ID: 68c19963-efcc-8329-8b35-e9d0843a5f23

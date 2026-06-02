@@ -1,13 +1,18 @@
 ---
-title: "Camera Tracking in NBA"
-type: note
-created: 2025-04-29
-updated: 2025-04-29
-source: chatgpt-export
 conversation_id: 68106c51-eb94-8007-afe7-7bc146351ae1
+created: 2025-04-29
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Camera Tracking in NBA
+type: note
+updated: 2025-04-29
 ---
+
 # Camera Tracking in NBA
 
 > Conversation ID: 68106c51-eb94-8007-afe7-7bc146351ae1

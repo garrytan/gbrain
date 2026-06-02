@@ -1,13 +1,19 @@
 ---
-title: "Vue.js iframe creation."
-type: note
-created: 2023-03-01
-updated: 2023-03-01
-source: chatgpt-export
 conversation_id: 9c6f1ca3-b249-42de-8be4-625c417d005b
+created: 2023-03-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js iframe creation.
+type: note
+updated: 2023-03-01
 ---
+
 # Vue.js iframe creation.
 
 > Conversation ID: 9c6f1ca3-b249-42de-8be4-625c417d005b

@@ -1,13 +1,18 @@
 ---
-title: "Pokémon Theme Song Artist"
-type: note
-created: 2025-03-02
-updated: 2025-03-02
-source: chatgpt-export
 conversation_id: 67c4ce88-bbfc-8007-a5c6-eb0c95a6f963
+created: 2025-03-02
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pokémon Theme Song Artist
+type: note
+updated: 2025-03-02
 ---
+
 # Pokémon Theme Song Artist
 
 > Conversation ID: 67c4ce88-bbfc-8007-a5c6-eb0c95a6f963

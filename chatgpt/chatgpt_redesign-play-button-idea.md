@@ -1,13 +1,18 @@
 ---
-title: "Redesign Play Button Idea"
-type: note
-created: 2026-03-02
-updated: 2026-03-02
-source: chatgpt-export
 conversation_id: 69a619ee-44a4-8327-9732-924f1908f1bd
+created: 2026-03-02
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Redesign Play Button Idea
+type: note
+updated: 2026-03-02
 ---
+
 # Redesign Play Button Idea
 
 > Conversation ID: 69a619ee-44a4-8327-9732-924f1908f1bd

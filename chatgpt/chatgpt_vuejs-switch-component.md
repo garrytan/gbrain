@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Switch Component"
-type: guide
-created: 2023-06-02
-updated: 2023-06-02
-source: chatgpt-export
 conversation_id: 2e0f7f84-dcca-44b1-8db1-7b0e5831abb1
+created: 2023-06-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Switch Component
+type: guide
+updated: 2023-06-02
 ---
+
 # Vue.js Switch Component
 
 > Conversation ID: 2e0f7f84-dcca-44b1-8db1-7b0e5831abb1

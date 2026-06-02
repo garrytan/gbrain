@@ -1,13 +1,18 @@
 ---
-title: "Savings Growth Calculation 2000"
-type: note
-created: 2024-06-03
-updated: 2024-06-03
-source: chatgpt-export
 conversation_id: be736301-6e21-4ac7-89d4-acfc1072f7b7
+created: 2024-06-03
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Savings Growth Calculation 2000
+type: note
+updated: 2024-06-03
 ---
+
 # Savings Growth Calculation 2000
 
 > Conversation ID: be736301-6e21-4ac7-89d4-acfc1072f7b7

@@ -1,13 +1,18 @@
 ---
-title: "Startup ideas for musicians"
-type: note
-created: 2025-08-21
-updated: 2025-08-21
-source: chatgpt-export
 conversation_id: 68a77d1e-ecd0-8326-9d36-622f1d4f84b3
+created: 2025-08-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Startup ideas for musicians
+type: note
+updated: 2025-08-21
 ---
+
 # Startup ideas for musicians
 
 > Conversation ID: 68a77d1e-ecd0-8326-9d36-622f1d4f84b3

@@ -1,13 +1,19 @@
 ---
-title: "Spotify music upload stats"
-type: essay
-created: 2025-08-08
-updated: 2025-08-08
-source: chatgpt-export
 conversation_id: 68964e8b-11fc-832a-b532-0533cd92cd06
+created: 2025-08-08
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 53
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Spotify music upload stats
+type: essay
+updated: 2025-08-08
 ---
+
 # Spotify music upload stats
 
 > Conversation ID: 68964e8b-11fc-832a-b532-0533cd92cd06

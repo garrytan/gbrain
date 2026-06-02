@@ -1,13 +1,19 @@
 ---
-title: "Tailwind CSS Conversion"
-type: note
-created: 2023-06-01
-updated: 2023-06-01
-source: chatgpt-export
 conversation_id: aaaca802-f96c-42bc-945a-712bf75b9f90
+created: 2023-06-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind CSS Conversion
+type: note
+updated: 2023-06-01
 ---
+
 # Tailwind CSS Conversion
 
 > Conversation ID: aaaca802-f96c-42bc-945a-712bf75b9f90

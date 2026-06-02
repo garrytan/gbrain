@@ -1,13 +1,18 @@
 ---
-title: "BF Tracking Methods Summary"
-type: note
-created: 2024-02-07
-updated: 2024-02-07
-source: chatgpt-export
 conversation_id: 5e78953d-54a0-413f-b789-6496507b384b
+created: 2024-02-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: BF Tracking Methods Summary
+type: note
+updated: 2024-02-07
 ---
+
 # BF Tracking Methods Summary
 
 > Conversation ID: 5e78953d-54a0-413f-b789-6496507b384b

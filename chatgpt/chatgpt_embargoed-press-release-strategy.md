@@ -1,13 +1,19 @@
 ---
-title: "Embargoed Press Release Strategy"
-type: note
-created: 2024-06-04
-updated: 2024-06-04
-source: chatgpt-export
 conversation_id: 4a51a7e0-c94b-46c0-ac20-2746259e5d0d
+created: 2024-06-04
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Embargoed Press Release Strategy
+type: note
+updated: 2024-06-04
 ---
+
 # Embargoed Press Release Strategy
 
 > Conversation ID: 4a51a7e0-c94b-46c0-ac20-2746259e5d0d

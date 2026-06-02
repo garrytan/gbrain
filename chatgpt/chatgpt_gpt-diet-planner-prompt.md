@@ -1,13 +1,18 @@
 ---
-title: "GPT Diet Planner Prompt"
-type: note
-created: 2023-11-10
-updated: 2023-11-10
-source: chatgpt-export
 conversation_id: b1c9a742-426b-43cb-a786-bec48563c3a3
+created: 2023-11-10
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: GPT Diet Planner Prompt
+type: note
+updated: 2023-11-10
 ---
+
 # GPT Diet Planner Prompt
 
 > Conversation ID: b1c9a742-426b-43cb-a786-bec48563c3a3

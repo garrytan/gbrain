@@ -1,13 +1,18 @@
 ---
-title: "Streaming revenue 2024"
-type: note
-created: 2025-04-04
-updated: 2025-04-04
-source: chatgpt-export
 conversation_id: 67f0512f-1d04-8007-b225-5087193a3ea4
+created: 2025-04-04
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Streaming revenue 2024
+type: note
+updated: 2025-04-04
 ---
+
 # Streaming revenue 2024
 
 > Conversation ID: 67f0512f-1d04-8007-b225-5087193a3ea4

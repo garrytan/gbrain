@@ -1,13 +1,18 @@
 ---
-title: "Beatgrid Editing in Lexicon"
-type: note
-created: 2025-01-20
-updated: 2025-01-20
-source: chatgpt-export
 conversation_id: 678eddaa-08dc-8007-b28b-b2ea43c63618
+created: 2025-01-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Beatgrid Editing in Lexicon
+type: note
+updated: 2025-01-20
 ---
+
 # Beatgrid Editing in Lexicon
 
 > Conversation ID: 678eddaa-08dc-8007-b28b-b2ea43c63618

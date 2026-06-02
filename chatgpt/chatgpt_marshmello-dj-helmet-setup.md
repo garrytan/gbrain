@@ -1,13 +1,19 @@
 ---
-title: "Marshmello DJ Helmet Setup"
-type: essay
-created: 2025-05-13
-updated: 2025-05-13
-source: chatgpt-export
 conversation_id: 6822f2c7-9664-8007-87f9-2f63ea707093
+created: 2025-05-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Marshmello DJ Helmet Setup
+type: essay
+updated: 2025-05-13
 ---
+
 # Marshmello DJ Helmet Setup
 
 > Conversation ID: 6822f2c7-9664-8007-87f9-2f63ea707093

@@ -1,13 +1,18 @@
 ---
-title: "Check Drink Sales Clover"
-type: note
-created: 2024-08-02
-updated: 2024-08-02
-source: chatgpt-export
 conversation_id: c25c3680-4323-40c9-98fd-2d3683fc0625
+created: 2024-08-02
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Check Drink Sales Clover
+type: note
+updated: 2024-08-02
 ---
+
 # Check Drink Sales Clover
 
 > Conversation ID: c25c3680-4323-40c9-98fd-2d3683fc0625

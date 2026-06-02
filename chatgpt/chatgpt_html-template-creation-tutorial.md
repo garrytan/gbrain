@@ -1,13 +1,19 @@
 ---
-title: "Html Template Creation Tutorial"
-type: note
-created: 2024-05-28
-updated: 2024-05-28
-source: chatgpt-export
 conversation_id: f8b6de4b-41c8-4b5e-9cb0-bedea9a5499c
+created: 2024-05-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Html Template Creation Tutorial
+type: note
+updated: 2024-05-28
 ---
+
 # Html Template Creation Tutorial
 
 > Conversation ID: f8b6de4b-41c8-4b5e-9cb0-bedea9a5499c

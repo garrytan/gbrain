@@ -1,13 +1,18 @@
 ---
-title: "Steve Ballmer's NBA Team"
-type: note
-created: 2023-11-20
-updated: 2023-11-21
-source: chatgpt-export
 conversation_id: f7d26b77-14ce-472a-961b-ea55b991762d
+created: 2023-11-20
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Steve Ballmer's NBA Team
+type: note
+updated: 2023-11-21
 ---
+
 # Steve Ballmer's NBA Team
 
 > Conversation ID: f7d26b77-14ce-472a-961b-ea55b991762d

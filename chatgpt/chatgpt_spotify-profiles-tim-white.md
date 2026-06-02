@@ -1,13 +1,18 @@
 ---
-title: "Spotify profiles Tim White"
-type: note
-created: 2025-12-18
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 69447689-a4bc-832a-b635-817a1d95cd4a
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spotify profiles Tim White
+type: note
+updated: 2025-12-18
 ---
+
 # Spotify profiles Tim White
 
 > Conversation ID: 69447689-a4bc-832a-b635-817a1d95cd4a

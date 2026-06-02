@@ -1,13 +1,19 @@
 ---
-title: "Slide-In Elements Animation"
-type: guide
-created: 2023-06-01
-updated: 2023-06-01
-source: chatgpt-export
 conversation_id: 0c28ee71-fd56-402c-bf7f-f8d1a53229aa
+created: 2023-06-01
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Slide-In Elements Animation
+type: guide
+updated: 2023-06-01
 ---
+
 # Slide-In Elements Animation
 
 > Conversation ID: 0c28ee71-fd56-402c-bf7f-f8d1a53229aa

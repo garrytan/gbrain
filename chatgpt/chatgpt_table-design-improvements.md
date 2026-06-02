@@ -1,13 +1,18 @@
 ---
-title: "Table Design Improvements"
-type: note
-created: 2026-01-20
-updated: 2026-01-20
-source: chatgpt-export
 conversation_id: 696fe48c-dd50-8329-b8cf-ab9bd40f022c
+created: 2026-01-20
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Table Design Improvements
+type: note
+updated: 2026-01-20
 ---
+
 # Table Design Improvements
 
 > Conversation ID: 696fe48c-dd50-8329-b8cf-ab9bd40f022c

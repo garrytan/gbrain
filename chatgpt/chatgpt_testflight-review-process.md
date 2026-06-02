@@ -1,13 +1,18 @@
 ---
-title: "TestFlight review process"
-type: note
-created: 2025-11-24
-updated: 2025-11-24
-source: chatgpt-export
 conversation_id: 6923aae4-b830-832d-8235-d7a257409240
+created: 2025-11-24
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: TestFlight review process
+type: note
+updated: 2025-11-24
 ---
+
 # TestFlight review process
 
 > Conversation ID: 6923aae4-b830-832d-8235-d7a257409240

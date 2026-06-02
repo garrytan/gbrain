@@ -1,13 +1,18 @@
 ---
-title: "Pioneer DJ Equipment"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679ea2de-5898-8007-9524-975fd1bec763
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pioneer DJ Equipment
+type: note
+updated: 2025-02-01
 ---
+
 # Pioneer DJ Equipment
 
 > Conversation ID: 679ea2de-5898-8007-9524-975fd1bec763

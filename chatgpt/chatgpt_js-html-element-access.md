@@ -1,13 +1,19 @@
 ---
-title: "JS HTML Element Access"
-type: guide
-created: 2023-02-12
-updated: 2023-02-12
-source: chatgpt-export
 conversation_id: 37da3859-3a9f-4fbe-b41e-f486acb9e6f1
+created: 2023-02-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: JS HTML Element Access
+type: guide
+updated: 2023-02-12
 ---
+
 # JS HTML Element Access
 
 > Conversation ID: 37da3859-3a9f-4fbe-b41e-f486acb9e6f1

@@ -1,13 +1,18 @@
 ---
-title: "Fastly vs Vercel"
-type: note
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695da6bd-12e0-832d-aff7-876461a27183
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fastly vs Vercel
+type: note
+updated: 2026-01-07
 ---
+
 # Fastly vs Vercel
 
 > Conversation ID: 695da6bd-12e0-832d-aff7-876461a27183

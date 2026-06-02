@@ -1,13 +1,18 @@
 ---
-title: "HTML Div Element Creation"
-type: note
-created: 2023-02-13
-updated: 2023-02-13
-source: chatgpt-export
 conversation_id: c801f7af-b121-4637-b6ba-e62d6eb84492
+created: 2023-02-13
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: HTML Div Element Creation
+type: note
+updated: 2023-02-13
 ---
+
 # HTML Div Element Creation
 
 > Conversation ID: c801f7af-b121-4637-b6ba-e62d6eb84492

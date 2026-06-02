@@ -1,13 +1,18 @@
 ---
-title: "Tequila Lawsuit Credibility Check"
-type: note
-created: 2025-05-11
-updated: 2025-05-11
-source: chatgpt-export
 conversation_id: 6820e70c-325c-8007-af86-0abce5e2df52
+created: 2025-05-11
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tequila Lawsuit Credibility Check
+type: note
+updated: 2025-05-11
 ---
+
 # Tequila Lawsuit Credibility Check
 
 > Conversation ID: 6820e70c-325c-8007-af86-0abce5e2df52

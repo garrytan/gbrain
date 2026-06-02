@@ -1,13 +1,20 @@
 ---
-title: "Ingest claim system design"
-type: essay
-created: 2025-12-06
-updated: 2025-12-10
-source: chatgpt-export
 conversation_id: 69346c35-9638-8329-9274-e4b7b3cbaf50
+created: 2025-12-06
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 86
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Ingest claim system design
+type: essay
+updated: 2025-12-10
 ---
+
 # Ingest claim system design
 
 > Conversation ID: 69346c35-9638-8329-9274-e4b7b3cbaf50

@@ -1,13 +1,18 @@
 ---
-title: "AirPods release history"
-type: note
-created: 2026-01-15
-updated: 2026-01-15
-source: chatgpt-export
 conversation_id: 6969526c-83e8-832b-8a1b-7c0122a0e61d
+created: 2026-01-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AirPods release history
+type: note
+updated: 2026-01-15
 ---
+
 # AirPods release history
 
 > Conversation ID: 6969526c-83e8-832b-8a1b-7c0122a0e61d

@@ -1,13 +1,19 @@
 ---
-title: "Vue component for blog posts"
-type: guide
-created: 2023-01-05
-updated: 2023-01-05
-source: chatgpt-export
 conversation_id: 485c17da-738a-48a5-807a-e163b3d11469
+created: 2023-01-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue component for blog posts
+type: guide
+updated: 2023-01-05
 ---
+
 # Vue component for blog posts
 
 > Conversation ID: 485c17da-738a-48a5-807a-e163b3d11469

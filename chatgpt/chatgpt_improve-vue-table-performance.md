@@ -1,13 +1,19 @@
 ---
-title: "Improve Vue table performance"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: 1738b73f-4486-4acf-8051-f7d2ffb06927
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Improve Vue table performance
+type: note
+updated: 2022-12-21
 ---
+
 # Improve Vue table performance
 
 > Conversation ID: 1738b73f-4486-4acf-8051-f7d2ffb06927

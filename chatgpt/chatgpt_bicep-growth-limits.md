@@ -1,13 +1,18 @@
 ---
-title: "Bicep Growth Limits"
-type: note
-created: 2025-12-30
-updated: 2025-12-30
-source: chatgpt-export
 conversation_id: 695352a6-4730-8330-9367-4b35ec55b879
+created: 2025-12-30
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Bicep Growth Limits
+type: note
+updated: 2025-12-30
 ---
+
 # Bicep Growth Limits
 
 > Conversation ID: 695352a6-4730-8330-9367-4b35ec55b879

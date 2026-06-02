@@ -1,13 +1,18 @@
 ---
-title: "T-Mobile Budget Update"
-type: note
-created: 2025-05-11
-updated: 2025-05-11
-source: chatgpt-export
 conversation_id: 6820d6e1-1644-8007-b9c2-01c4514afea7
+created: 2025-05-11
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: T-Mobile Budget Update
+type: note
+updated: 2025-05-11
 ---
+
 # T-Mobile Budget Update
 
 > Conversation ID: 6820d6e1-1644-8007-b9c2-01c4514afea7

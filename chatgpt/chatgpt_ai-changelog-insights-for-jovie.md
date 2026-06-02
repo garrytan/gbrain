@@ -1,13 +1,18 @@
 ---
-title: "AI Changelog Insights for Jovie"
-type: note
-created: 2026-05-01
-updated: 2026-05-01
-source: chatgpt-export
 conversation_id: 69f41bc8-6950-83e8-93d8-27dd2e0b4250
+created: 2026-05-01
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AI Changelog Insights for Jovie
+type: note
+updated: 2026-05-01
 ---
+
 # AI Changelog Insights for Jovie
 
 > Conversation ID: 69f41bc8-6950-83e8-93d8-27dd2e0b4250

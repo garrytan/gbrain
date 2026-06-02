@@ -1,13 +1,19 @@
 ---
-title: "GitHub Actions CI Pricing"
-type: guide
-created: 2026-01-18
-updated: 2026-01-18
-source: chatgpt-export
 conversation_id: 696c412b-6174-832a-87b6-9bede3a864be
+created: 2026-01-18
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: GitHub Actions CI Pricing
+type: guide
+updated: 2026-01-18
 ---
+
 # GitHub Actions CI Pricing
 
 > Conversation ID: 696c412b-6174-832a-87b6-9bede3a864be

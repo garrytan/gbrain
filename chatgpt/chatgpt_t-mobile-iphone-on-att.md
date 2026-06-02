@@ -1,13 +1,19 @@
 ---
-title: "T-Mobile iPhone on AT&T"
-type: note
-created: 2025-12-08
-updated: 2025-12-08
-source: chatgpt-export
 conversation_id: 693702f6-0ca8-8325-878a-2ba61f80c9f7
+created: 2025-12-08
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: T-Mobile iPhone on AT&T
+type: note
+updated: 2025-12-08
 ---
+
 # T-Mobile iPhone on AT&T
 
 > Conversation ID: 693702f6-0ca8-8325-878a-2ba61f80c9f7

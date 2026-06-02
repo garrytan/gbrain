@@ -1,13 +1,18 @@
 ---
-title: "Rekordbox DJing 2025"
-type: note
-created: 2025-01-15
-updated: 2025-01-15
-source: chatgpt-export
 conversation_id: 67876f5b-d9f4-8007-a04e-ca4418fd4f77
+created: 2025-01-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Rekordbox DJing 2025
+type: note
+updated: 2025-01-15
 ---
+
 # Rekordbox DJing 2025
 
 > Conversation ID: 67876f5b-d9f4-8007-a04e-ca4418fd4f77

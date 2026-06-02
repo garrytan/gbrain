@@ -1,13 +1,18 @@
 ---
-title: "Amex Lawsuit Assistance"
-type: note
-created: 2023-06-06
-updated: 2023-06-06
-source: chatgpt-export
 conversation_id: e04e5a77-ae46-42c6-8426-24854f132d4a
+created: 2023-06-06
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Amex Lawsuit Assistance
+type: note
+updated: 2023-06-06
 ---
+
 # Amex Lawsuit Assistance
 
 > Conversation ID: e04e5a77-ae46-42c6-8426-24854f132d4a

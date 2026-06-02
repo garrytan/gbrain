@@ -1,13 +1,18 @@
 ---
-title: "Redistribution (p) Line Format"
-type: note
-created: 2024-03-21
-updated: 2024-03-21
-source: chatgpt-export
 conversation_id: cf5f4529-3dd5-41cb-a3d7-eee5c0962195
+created: 2024-03-21
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Redistribution (p) Line Format
+type: note
+updated: 2024-03-21
 ---
+
 # Redistribution (p) Line Format
 
 > Conversation ID: cf5f4529-3dd5-41cb-a3d7-eee5c0962195

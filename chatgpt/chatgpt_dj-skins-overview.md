@@ -1,13 +1,18 @@
 ---
-title: "DJ Skins Overview"
-type: note
-created: 2025-01-31
-updated: 2025-01-31
-source: chatgpt-export
 conversation_id: 679c49bc-88b4-8007-b97d-2a93af624d1b
+created: 2025-01-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJ Skins Overview
+type: note
+updated: 2025-01-31
 ---
+
 # DJ Skins Overview
 
 > Conversation ID: 679c49bc-88b4-8007-b97d-2a93af624d1b

@@ -1,13 +1,19 @@
 ---
-title: "Food distribution system"
-type: note
-created: 2025-10-25
-updated: 2025-10-25
-source: chatgpt-export
 conversation_id: 68fd5150-278c-8327-b1a6-c5bb11d9c21d
+created: 2025-10-25
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Food distribution system
+type: note
+updated: 2025-10-25
 ---
+
 # Food distribution system
 
 > Conversation ID: 68fd5150-278c-8327-b1a6-c5bb11d9c21d

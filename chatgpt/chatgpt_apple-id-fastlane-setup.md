@@ -1,13 +1,19 @@
 ---
-title: "Apple ID fastlane setup"
-type: note
-created: 2025-11-21
-updated: 2025-11-21
-source: chatgpt-export
 conversation_id: 6920bd55-0c4c-832a-8cce-53718daeb252
+created: 2025-11-21
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Apple ID fastlane setup
+type: note
+updated: 2025-11-21
 ---
+
 # Apple ID fastlane setup
 
 > Conversation ID: 6920bd55-0c4c-832a-8cce-53718daeb252

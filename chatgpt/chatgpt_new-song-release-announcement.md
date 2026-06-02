@@ -1,13 +1,20 @@
 ---
-title: "New Song Release Announcement"
-type: guide
-created: 2024-05-25
-updated: 2024-05-28
-source: chatgpt-export
 conversation_id: d79c819b-058c-4dfa-9a69-1c7389404573
+created: 2024-05-25
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 18
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: New Song Release Announcement
+type: guide
+updated: 2024-05-28
 ---
+
 # New Song Release Announcement
 
 > Conversation ID: d79c819b-058c-4dfa-9a69-1c7389404573

@@ -1,13 +1,19 @@
 ---
-title: "Max Martin LA Studios"
-type: note
-created: 2026-01-05
-updated: 2026-01-06
-source: chatgpt-export
 conversation_id: 695c43f5-6ec4-832a-bbb6-975811676213
+created: 2026-01-05
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Max Martin LA Studios
+type: note
+updated: 2026-01-06
 ---
+
 # Max Martin LA Studios
 
 > Conversation ID: 695c43f5-6ec4-832a-bbb6-975811676213

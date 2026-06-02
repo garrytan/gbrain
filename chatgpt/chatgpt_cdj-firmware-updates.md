@@ -1,13 +1,19 @@
 ---
-title: "CDJ Firmware Updates"
-type: note
-created: 2025-03-22
-updated: 2026-01-01
-source: chatgpt-export
 conversation_id: 67df1cb7-ef50-8007-95ec-d0c9bb1c0de6
+created: 2025-03-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 11
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: CDJ Firmware Updates
+type: note
+updated: 2026-01-01
 ---
+
 # CDJ Firmware Updates
 
 > Conversation ID: 67df1cb7-ef50-8007-95ec-d0c9bb1c0de6

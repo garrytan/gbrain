@@ -1,13 +1,19 @@
 ---
-title: "Top 5 Spotify artists"
-type: note
-created: 2025-08-02
-updated: 2025-08-02
-source: chatgpt-export
 conversation_id: 688e9933-bbdc-8320-8089-168f8c2443e2
+created: 2025-08-02
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 14
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Top 5 Spotify artists
+type: note
+updated: 2025-08-02
 ---
+
 # Top 5 Spotify artists
 
 > Conversation ID: 688e9933-bbdc-8320-8089-168f8c2443e2

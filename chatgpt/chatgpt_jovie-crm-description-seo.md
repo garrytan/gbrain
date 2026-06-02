@@ -1,13 +1,18 @@
 ---
-title: "Jovie CRM Description SEO"
-type: note
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: 52240cee-aa9e-4b65-a331-cdb9b2c50a1b
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Jovie CRM Description SEO
+type: note
+updated: 2022-12-22
 ---
+
 # Jovie CRM Description SEO
 
 > Conversation ID: 52240cee-aa9e-4b65-a331-cdb9b2c50a1b

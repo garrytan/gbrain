@@ -1,13 +1,18 @@
 ---
-title: "Headless UI Modal Deployment."
-type: note
-created: 2023-03-26
-updated: 2023-03-26
-source: chatgpt-export
 conversation_id: 45683b93-9ae2-48a4-8da8-efea3affc9c0
+created: 2023-03-26
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Headless UI Modal Deployment.
+type: note
+updated: 2023-03-26
 ---
+
 # Headless UI Modal Deployment.
 
 > Conversation ID: 45683b93-9ae2-48a4-8da8-efea3affc9c0

@@ -1,13 +1,20 @@
 ---
-title: "Tailwind H1 Class Breakdown"
-type: guide
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695ec1b5-79b4-8332-950c-03c3d055ef5f
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Tailwind H1 Class Breakdown
+type: guide
+updated: 2026-01-07
 ---
+
 # Tailwind H1 Class Breakdown
 
 > Conversation ID: 695ec1b5-79b4-8332-950c-03c3d055ef5f

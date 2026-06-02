@@ -1,13 +1,18 @@
 ---
-title: "YC Requests for Startups"
-type: note
-created: 2026-01-28
-updated: 2026-01-28
-source: chatgpt-export
 conversation_id: 6979b5e8-1898-8330-9d03-7e34a40d59f0
+created: 2026-01-28
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: YC Requests for Startups
+type: note
+updated: 2026-01-28
 ---
+
 # YC Requests for Startups
 
 > Conversation ID: 6979b5e8-1898-8330-9d03-7e34a40d59f0

@@ -1,13 +1,20 @@
 ---
-title: "Deep Research for Jovie"
-type: guide
-created: 2026-04-27
-updated: 2026-04-27
-source: chatgpt-export
 conversation_id: 69eecec8-a09c-83e8-8559-a795e65a04f9
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 5
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Deep Research for Jovie
+type: guide
+updated: 2026-04-27
 ---
+
 # Deep Research for Jovie
 
 > Conversation ID: 69eecec8-a09c-83e8-8559-a795e65a04f9

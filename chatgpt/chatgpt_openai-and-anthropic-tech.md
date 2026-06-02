@@ -1,13 +1,19 @@
 ---
-title: "OpenAI and Anthropic Tech"
-type: note
-created: 2026-03-03
-updated: 2026-03-03
-source: chatgpt-export
 conversation_id: 69a738f1-e18c-8330-95bc-f5916ab428c6
+created: 2026-03-03
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 9
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: OpenAI and Anthropic Tech
+type: note
+updated: 2026-03-03
 ---
+
 # OpenAI and Anthropic Tech
 
 > Conversation ID: 69a738f1-e18c-8330-95bc-f5916ab428c6

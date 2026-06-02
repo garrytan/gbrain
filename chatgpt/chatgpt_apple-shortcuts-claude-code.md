@@ -1,13 +1,18 @@
 ---
-title: "Apple Shortcuts Claude Code"
-type: note
-created: 2026-02-15
-updated: 2026-02-15
-source: chatgpt-export
 conversation_id: 69920e3f-7aa0-832b-acf0-e0989fd7dc73
+created: 2026-02-15
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Apple Shortcuts Claude Code
+type: note
+updated: 2026-02-15
 ---
+
 # Apple Shortcuts Claude Code
 
 > Conversation ID: 69920e3f-7aa0-832b-acf0-e0989fd7dc73

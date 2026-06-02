@@ -1,13 +1,19 @@
 ---
-title: "Vue Tabbed Interface Explanation"
-type: note
-created: 2023-01-03
-updated: 2023-01-03
-source: chatgpt-export
 conversation_id: cb1a7977-2cb6-4128-ada6-17b164b0d715
+created: 2023-01-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 3
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Vue Tabbed Interface Explanation
+type: note
+updated: 2023-01-03
 ---
+
 # Vue Tabbed Interface Explanation
 
 > Conversation ID: cb1a7977-2cb6-4128-ada6-17b164b0d715

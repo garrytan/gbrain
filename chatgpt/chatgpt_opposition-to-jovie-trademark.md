@@ -1,13 +1,19 @@
 ---
-title: "Opposition to Jovie Trademark"
-type: note
-created: 2023-05-17
-updated: 2023-05-17
-source: chatgpt-export
 conversation_id: 09673217-defb-441d-8240-a046438b0a2f
+created: 2023-05-17
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Opposition to Jovie Trademark
+type: note
+updated: 2023-05-17
 ---
+
 # Opposition to Jovie Trademark
 
 > Conversation ID: 09673217-defb-441d-8240-a046438b0a2f

@@ -1,13 +1,19 @@
 ---
-title: "Promptfoo LLM Evaluation"
-type: note
-created: 2026-05-14
-updated: 2026-05-14
-source: chatgpt-export
 conversation_id: 6a06169d-3a60-83e8-9d58-ee5d214145c5
+created: 2026-05-14
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Promptfoo LLM Evaluation
+type: note
+updated: 2026-05-14
 ---
+
 # Promptfoo LLM Evaluation
 
 > Conversation ID: 6a06169d-3a60-83e8-9d58-ee5d214145c5

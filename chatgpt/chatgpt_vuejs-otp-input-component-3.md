@@ -1,13 +1,20 @@
 ---
-title: "Vue.js OTP Input Component"
-type: guide
-created: 2023-01-03
-updated: 2023-01-03
-source: chatgpt-export
 conversation_id: f8c7b5ac-e971-4d6d-a5cb-c5db13da421c
+created: 2023-01-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 16
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js OTP Input Component
+type: guide
+updated: 2023-01-03
 ---
+
 # Vue.js OTP Input Component
 
 > Conversation ID: f8c7b5ac-e971-4d6d-a5cb-c5db13da421c

@@ -1,13 +1,20 @@
 ---
-title: "Flutter Code Errors & Fixes"
-type: guide
-created: 2024-01-07
-updated: 2024-01-07
-source: chatgpt-export
 conversation_id: 398d8406-181c-43e4-a911-d208b1ba1683
+created: 2024-01-07
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Flutter Code Errors & Fixes
+type: guide
+updated: 2024-01-07
 ---
+
 # Flutter Code Errors & Fixes
 
 > Conversation ID: 398d8406-181c-43e4-a911-d208b1ba1683

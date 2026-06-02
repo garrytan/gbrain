@@ -1,13 +1,19 @@
 ---
-title: "Open auto-claude CLI"
-type: note
-created: 2025-12-22
-updated: 2025-12-22
-source: chatgpt-export
 conversation_id: 69499235-ed54-832f-8301-338da9b51e8f
+created: 2025-12-22
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Open auto-claude CLI
+type: note
+updated: 2025-12-22
 ---
+
 # Open auto-claude CLI
 
 > Conversation ID: 69499235-ed54-832f-8301-338da9b51e8f

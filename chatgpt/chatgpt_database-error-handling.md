@@ -1,13 +1,20 @@
 ---
-title: "Database error handling"
-type: guide
-created: 2025-06-14
-updated: 2025-06-15
-source: chatgpt-export
 conversation_id: 684d059f-d938-8007-acef-2840d340d2e2
+created: 2025-06-14
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 22
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Database error handling
+type: guide
+updated: 2025-06-15
 ---
+
 # Database error handling
 
 > Conversation ID: 684d059f-d938-8007-acef-2840d340d2e2

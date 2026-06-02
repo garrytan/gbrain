@@ -1,13 +1,20 @@
 ---
-title: "Vue.js CRM Right-Click Menu"
-type: guide
-created: 2023-06-09
-updated: 2023-06-09
-source: chatgpt-export
 conversation_id: 66e79f50-447d-480a-b2ea-b92cb09f9554
+created: 2023-06-09
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js CRM Right-Click Menu
+type: guide
+updated: 2023-06-09
 ---
+
 # Vue.js CRM Right-Click Menu
 
 > Conversation ID: 66e79f50-447d-480a-b2ea-b92cb09f9554

@@ -1,13 +1,18 @@
 ---
-title: "Surreal Recording Studio 🎶✨"
-type: note
-created: 2023-12-01
-updated: 2023-12-01
-source: chatgpt-export
 conversation_id: c1c14ada-ca71-4614-b096-81310c516a09
+created: 2023-12-01
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Surreal Recording Studio 🎶✨
+type: note
+updated: 2023-12-01
 ---
+
 # Surreal Recording Studio 🎶✨
 
 > Conversation ID: c1c14ada-ca71-4614-b096-81310c516a09

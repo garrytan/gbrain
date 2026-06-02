@@ -1,13 +1,18 @@
 ---
-title: "Vue.js Component Explanation"
-type: note
-created: 2022-12-28
-updated: 2022-12-28
-source: chatgpt-export
 conversation_id: 90bf80ca-299b-473b-b846-cd7a0ef4be6b
+created: 2022-12-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js Component Explanation
+type: note
+updated: 2022-12-28
 ---
+
 # Vue.js Component Explanation
 
 > Conversation ID: 90bf80ca-299b-473b-b846-cd7a0ef4be6b

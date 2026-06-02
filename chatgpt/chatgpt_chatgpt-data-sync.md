@@ -1,13 +1,19 @@
 ---
-title: "ChatGPT Data Sync"
-type: guide
-created: 2026-06-01
-updated: 2026-06-01
-source: chatgpt-export
 conversation_id: 6a1d0dc4-5b10-83e8-bfb7-8fbea7e9637f
+created: 2026-06-01
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 3
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: ChatGPT Data Sync
+type: guide
+updated: 2026-06-01
 ---
+
 # ChatGPT Data Sync
 
 > Conversation ID: 6a1d0dc4-5b10-83e8-bfb7-8fbea7e9637f

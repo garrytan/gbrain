@@ -1,13 +1,18 @@
 ---
-title: "OpenAI and Vercel usage"
-type: note
-created: 2025-09-13
-updated: 2025-09-13
-source: chatgpt-export
 conversation_id: 68c5f028-7af4-8323-a4b2-7443c7427059
+created: 2025-09-13
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: OpenAI and Vercel usage
+type: note
+updated: 2025-09-13
 ---
+
 # OpenAI and Vercel usage
 
 > Conversation ID: 68c5f028-7af4-8323-a4b2-7443c7427059

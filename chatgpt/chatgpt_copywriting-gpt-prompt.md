@@ -1,13 +1,19 @@
 ---
-title: "Copywriting GPT prompt"
-type: guide
-created: 2025-11-19
-updated: 2025-11-19
-source: chatgpt-export
 conversation_id: 691e16b0-4534-8333-b183-84610e3de5bf
+created: 2025-11-19
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Copywriting GPT prompt
+type: guide
+updated: 2025-11-19
 ---
+
 # Copywriting GPT prompt
 
 > Conversation ID: 691e16b0-4534-8333-b183-84610e3de5bf

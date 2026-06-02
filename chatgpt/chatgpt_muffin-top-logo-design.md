@@ -1,13 +1,18 @@
 ---
-title: "Muffin-top logo design"
-type: note
-created: 2025-05-11
-updated: 2025-05-11
-source: chatgpt-export
 conversation_id: 68210ace-e36c-8007-81c5-00f046f7e4a3
+created: 2025-05-11
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Muffin-top logo design
+type: note
+updated: 2025-05-11
 ---
+
 # Muffin-top logo design
 
 > Conversation ID: 68210ace-e36c-8007-81c5-00f046f7e4a3

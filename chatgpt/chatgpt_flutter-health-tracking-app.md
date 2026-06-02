@@ -1,13 +1,20 @@
 ---
-title: "Flutter Health Tracking App"
-type: guide
-created: 2024-01-07
-updated: 2024-01-07
-source: chatgpt-export
 conversation_id: c7c04e92-0b59-487b-8414-c5e06e5c1553
+created: 2024-01-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 12
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Flutter Health Tracking App
+type: guide
+updated: 2024-01-07
 ---
+
 # Flutter Health Tracking App
 
 > Conversation ID: c7c04e92-0b59-487b-8414-c5e06e5c1553

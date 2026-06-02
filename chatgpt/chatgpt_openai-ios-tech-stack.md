@@ -1,13 +1,18 @@
 ---
-title: "OpenAI iOS tech stack"
-type: note
-created: 2025-11-13
-updated: 2025-11-13
-source: chatgpt-export
 conversation_id: 69163e20-bb10-8325-94d2-02df274bea1f
+created: 2025-11-13
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: OpenAI iOS tech stack
+type: note
+updated: 2025-11-13
 ---
+
 # OpenAI iOS tech stack
 
 > Conversation ID: 69163e20-bb10-8325-94d2-02df274bea1f

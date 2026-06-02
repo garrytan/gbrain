@@ -1,13 +1,18 @@
 ---
-title: "Sonarr Read-Only Props"
-type: note
-created: 2026-01-31
-updated: 2026-02-01
-source: chatgpt-export
 conversation_id: 697e96ce-833c-8333-9cde-abac09fadcbc
+created: 2026-01-31
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sonarr Read-Only Props
+type: note
+updated: 2026-02-01
 ---
+
 # Sonarr Read-Only Props
 
 > Conversation ID: 697e96ce-833c-8333-9cde-abac09fadcbc

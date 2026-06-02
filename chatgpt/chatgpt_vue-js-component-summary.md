@@ -1,13 +1,19 @@
 ---
-title: "Vue JS component summary"
-type: guide
-created: 2023-01-05
-updated: 2023-01-05
-source: chatgpt-export
 conversation_id: babed818-9a03-4a22-a583-a106202b349d
+created: 2023-01-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue JS component summary
+type: guide
+updated: 2023-01-05
 ---
+
 # Vue JS component summary
 
 > Conversation ID: babed818-9a03-4a22-a583-a106202b349d

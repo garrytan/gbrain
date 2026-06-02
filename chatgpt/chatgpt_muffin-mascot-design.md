@@ -1,13 +1,18 @@
 ---
-title: "Muffin Mascot Design"
-type: note
-created: 2025-05-18
-updated: 2025-05-18
-source: chatgpt-export
 conversation_id: 68296472-b6a0-8007-85d5-4bd6787de0c5
+created: 2025-05-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 26
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Muffin Mascot Design
+type: note
+updated: 2025-05-18
 ---
+
 # Muffin Mascot Design
 
 > Conversation ID: 68296472-b6a0-8007-85d5-4bd6787de0c5

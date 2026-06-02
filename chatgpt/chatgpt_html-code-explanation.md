@@ -1,13 +1,18 @@
 ---
-title: "HTML code explanation"
-type: note
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: 35a13d15-6bbe-4b72-bfbb-5053c75deb4b
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: HTML code explanation
+type: note
+updated: 2022-12-22
 ---
+
 # HTML code explanation
 
 > Conversation ID: 35a13d15-6bbe-4b72-bfbb-5053c75deb4b

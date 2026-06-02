@@ -1,13 +1,20 @@
 ---
-title: "SwiftUI build issues"
-type: guide
-created: 2025-11-14
-updated: 2025-11-14
-source: chatgpt-export
 conversation_id: 69178bd9-07f0-8332-aa7c-dc7cb072db61
+created: 2025-11-14
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: SwiftUI build issues
+type: guide
+updated: 2025-11-14
 ---
+
 # SwiftUI build issues
 
 > Conversation ID: 69178bd9-07f0-8332-aa7c-dc7cb072db61

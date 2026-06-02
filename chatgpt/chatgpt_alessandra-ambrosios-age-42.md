@@ -1,13 +1,18 @@
 ---
-title: "Alessandra Ambrosio's age: 42."
-type: note
-created: 2023-12-13
-updated: 2023-12-13
-source: chatgpt-export
 conversation_id: bb3c6a83-dc7e-41e8-b376-d2d1d9cb02bd
+created: 2023-12-13
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 12
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Alessandra Ambrosio''s age: 42.'
+type: note
+updated: 2023-12-13
 ---
+
 # Alessandra Ambrosio's age: 42.
 
 > Conversation ID: bb3c6a83-dc7e-41e8-b376-d2d1d9cb02bd

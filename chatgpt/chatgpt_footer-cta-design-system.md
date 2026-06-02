@@ -1,13 +1,20 @@
 ---
-title: "Footer CTA Design System"
-type: guide
-created: 2026-04-27
-updated: 2026-04-27
-source: chatgpt-export
 conversation_id: 69efde7b-d190-83e8-b438-e9a67187bac8
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 7
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Footer CTA Design System
+type: guide
+updated: 2026-04-27
 ---
+
 # Footer CTA Design System
 
 > Conversation ID: 69efde7b-d190-83e8-b438-e9a67187bac8

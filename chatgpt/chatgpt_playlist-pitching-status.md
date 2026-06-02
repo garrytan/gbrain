@@ -1,13 +1,19 @@
 ---
-title: "Playlist Pitching Status"
-type: note
-created: 2024-06-26
-updated: 2024-06-26
-source: chatgpt-export
 conversation_id: 90c8cb8c-f450-46a8-ac1a-5e162c4af07d
+created: 2024-06-26
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 18
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Playlist Pitching Status
+type: note
+updated: 2024-06-26
 ---
+
 # Playlist Pitching Status
 
 > Conversation ID: 90c8cb8c-f450-46a8-ac1a-5e162c4af07d

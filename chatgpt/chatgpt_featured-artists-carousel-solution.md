@@ -1,13 +1,19 @@
 ---
-title: "Featured artists carousel solution"
-type: guide
-created: 2025-09-11
-updated: 2025-09-11
-source: chatgpt-export
 conversation_id: 68c3616b-a840-832e-ae7b-c2fc19369185
+created: 2025-09-11
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Featured artists carousel solution
+type: guide
+updated: 2025-09-11
 ---
+
 # Featured artists carousel solution
 
 > Conversation ID: 68c3616b-a840-832e-ae7b-c2fc19369185

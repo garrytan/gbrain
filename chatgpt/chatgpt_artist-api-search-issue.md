@@ -1,13 +1,19 @@
 ---
-title: "Artist API search issue"
-type: guide
-created: 2025-12-15
-updated: 2025-12-15
-source: chatgpt-export
 conversation_id: 694051cb-8a74-8329-a360-95e7755df36e
+created: 2025-12-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Artist API search issue
+type: guide
+updated: 2025-12-15
 ---
+
 # Artist API search issue
 
 > Conversation ID: 694051cb-8a74-8329-a360-95e7755df36e

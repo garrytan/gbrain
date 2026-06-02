@@ -1,13 +1,18 @@
 ---
-title: "Stripe setup in Next.js"
-type: note
-created: 2025-11-28
-updated: 2025-11-28
-source: chatgpt-export
 conversation_id: 692a0976-2494-832d-b2e2-90c5ce17560f
+created: 2025-11-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Stripe setup in Next.js
+type: note
+updated: 2025-11-28
 ---
+
 # Stripe setup in Next.js
 
 > Conversation ID: 692a0976-2494-832d-b2e2-90c5ce17560f

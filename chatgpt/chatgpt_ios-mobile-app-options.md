@@ -1,13 +1,20 @@
 ---
-title: "iOS Mobile App Options"
-type: guide
-created: 2023-12-19
-updated: 2023-12-19
-source: chatgpt-export
 conversation_id: fd64a845-298c-436a-a151-74e4ab1cfa3c
+created: 2023-12-19
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS Mobile App Options
+type: guide
+updated: 2023-12-19
 ---
+
 # iOS Mobile App Options
 
 > Conversation ID: fd64a845-298c-436a-a151-74e4ab1cfa3c

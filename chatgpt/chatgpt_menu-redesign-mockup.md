@@ -1,13 +1,18 @@
 ---
-title: "Menu Redesign Mockup"
-type: note
-created: 2026-05-20
-updated: 2026-05-20
-source: chatgpt-export
 conversation_id: 6a0d001a-d15c-83e8-aafe-bce98a3a891b
+created: 2026-05-20
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Menu Redesign Mockup
+type: note
+updated: 2026-05-20
 ---
+
 # Menu Redesign Mockup
 
 > Conversation ID: 6a0d001a-d15c-83e8-aafe-bce98a3a891b

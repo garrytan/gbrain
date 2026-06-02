@@ -1,13 +1,19 @@
 ---
-title: "Improve VueJS Code Snippet"
-type: note
-created: 2023-02-07
-updated: 2023-02-07
-source: chatgpt-export
 conversation_id: 7f1e346d-c4ae-4b84-8eac-015f02c9d36b
+created: 2023-02-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Improve VueJS Code Snippet
+type: note
+updated: 2023-02-07
 ---
+
 # Improve VueJS Code Snippet
 
 > Conversation ID: 7f1e346d-c4ae-4b84-8eac-015f02c9d36b

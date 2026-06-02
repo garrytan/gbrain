@@ -1,13 +1,18 @@
 ---
-title: "Vite Manifest Not Found"
-type: note
-created: 2023-11-23
-updated: 2023-11-23
-source: chatgpt-export
 conversation_id: fc354ece-a6a4-4148-a040-faf696a9d605
+created: 2023-11-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vite Manifest Not Found
+type: note
+updated: 2023-11-23
 ---
+
 # Vite Manifest Not Found
 
 > Conversation ID: fc354ece-a6a4-4148-a040-faf696a9d605

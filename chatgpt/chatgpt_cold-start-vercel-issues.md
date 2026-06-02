@@ -1,13 +1,20 @@
 ---
-title: "Cold start Vercel issues"
-type: essay
-created: 2026-01-31
-updated: 2026-01-31
-source: chatgpt-export
 conversation_id: 697e8cad-cecc-8328-a07c-f804fd5ddee5
+created: 2026-01-31
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Cold start Vercel issues
+type: essay
+updated: 2026-01-31
 ---
+
 # Cold start Vercel issues
 
 > Conversation ID: 697e8cad-cecc-8328-a07c-f804fd5ddee5

@@ -1,13 +1,19 @@
 ---
-title: "Passing Index Numbers to Components"
-type: note
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: cdc1b308-9d8d-4f89-a1c5-22ca1f1d3de0
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Passing Index Numbers to Components
+type: note
+updated: 2022-12-22
 ---
+
 # Passing Index Numbers to Components
 
 > Conversation ID: cdc1b308-9d8d-4f89-a1c5-22ca1f1d3de0

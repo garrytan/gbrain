@@ -1,13 +1,18 @@
 ---
-title: "Vercel Geist Design System"
-type: note
-created: 2026-02-17
-updated: 2026-02-17
-source: chatgpt-export
 conversation_id: 6993d28f-7860-8327-bf24-a4535b0bfc92
+created: 2026-02-17
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel Geist Design System
+type: note
+updated: 2026-02-17
 ---
+
 # Vercel Geist Design System
 
 > Conversation ID: 6993d28f-7860-8327-bf24-a4535b0bfc92

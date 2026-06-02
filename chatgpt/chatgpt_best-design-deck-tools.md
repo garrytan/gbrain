@@ -1,13 +1,18 @@
 ---
-title: "Best Design Deck Tools"
-type: note
-created: 2026-05-28
-updated: 2026-05-28
-source: chatgpt-export
 conversation_id: 6a17926c-4ff0-83e8-ad61-033d6d109452
+created: 2026-05-28
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Best Design Deck Tools
+type: note
+updated: 2026-05-28
 ---
+
 # Best Design Deck Tools
 
 > Conversation ID: 6a17926c-4ff0-83e8-ad61-033d6d109452

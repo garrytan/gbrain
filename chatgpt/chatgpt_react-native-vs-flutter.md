@@ -1,13 +1,18 @@
 ---
-title: "React Native vs. Flutter"
-type: note
-created: 2024-01-29
-updated: 2024-01-29
-source: chatgpt-export
 conversation_id: e89f6dfc-31e3-4cc4-8d6a-597130b5c85d
+created: 2024-01-29
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 12
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: React Native vs. Flutter
+type: note
+updated: 2024-01-29
 ---
+
 # React Native vs. Flutter
 
 > Conversation ID: e89f6dfc-31e3-4cc4-8d6a-597130b5c85d

@@ -1,13 +1,19 @@
 ---
-title: "Deadmau5 CDJ Transition"
-type: note
-created: 2025-03-06
-updated: 2025-03-06
-source: chatgpt-export
 conversation_id: 67c92c42-532c-8007-a536-34a8e8a48fa7
+created: 2025-03-06
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Deadmau5 CDJ Transition
+type: note
+updated: 2025-03-06
 ---
+
 # Deadmau5 CDJ Transition
 
 > Conversation ID: 67c92c42-532c-8007-a536-34a8e8a48fa7

@@ -1,13 +1,18 @@
 ---
-title: "Pricing page draft"
-type: note
-created: 2025-08-30
-updated: 2025-08-30
-source: chatgpt-export
 conversation_id: 68b33f27-08b4-8322-93f9-dcf2694ff755
+created: 2025-08-30
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pricing page draft
+type: note
+updated: 2025-08-30
 ---
+
 # Pricing page draft
 
 > Conversation ID: 68b33f27-08b4-8322-93f9-dcf2694ff755

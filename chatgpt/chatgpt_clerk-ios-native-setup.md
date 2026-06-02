@@ -1,13 +1,19 @@
 ---
-title: "Clerk iOS Native Setup"
-type: note
-created: 2026-05-28
-updated: 2026-05-28
-source: chatgpt-export
 conversation_id: 6a1882f5-7cdc-83e8-b5c3-8f2085902d69
+created: 2026-05-28
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 3
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Clerk iOS Native Setup
+type: note
+updated: 2026-05-28
 ---
+
 # Clerk iOS Native Setup
 
 > Conversation ID: 6a1882f5-7cdc-83e8-b5c3-8f2085902d69

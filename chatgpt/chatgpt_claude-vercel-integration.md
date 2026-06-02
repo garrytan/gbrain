@@ -1,13 +1,19 @@
 ---
-title: "Claude Vercel integration"
-type: note
-created: 2025-11-29
-updated: 2025-11-29
-source: chatgpt-export
 conversation_id: 692a3991-7f84-8329-a6d0-ea502e04aa58
+created: 2025-11-29
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude Vercel integration
+type: note
+updated: 2025-11-29
 ---
+
 # Claude Vercel integration
 
 > Conversation ID: 692a3991-7f84-8329-a6d0-ea502e04aa58

@@ -1,13 +1,18 @@
 ---
-title: "DJI devices C2C transfer"
-type: note
-created: 2025-09-12
-updated: 2025-09-12
-source: chatgpt-export
 conversation_id: 68c47e4f-2428-8321-9056-2d7f892dc8a2
+created: 2025-09-12
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: DJI devices C2C transfer
+type: note
+updated: 2025-09-12
 ---
+
 # DJI devices C2C transfer
 
 > Conversation ID: 68c47e4f-2428-8321-9056-2d7f892dc8a2

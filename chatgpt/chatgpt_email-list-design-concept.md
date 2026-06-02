@@ -1,13 +1,18 @@
 ---
-title: "Email List Design Concept"
-type: note
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f19408-8f60-83e8-81f0-e1b31140a62b
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Email List Design Concept
+type: note
+updated: 2026-04-29
 ---
+
 # Email List Design Concept
 
 > Conversation ID: 69f19408-8f60-83e8-81f0-e1b31140a62b

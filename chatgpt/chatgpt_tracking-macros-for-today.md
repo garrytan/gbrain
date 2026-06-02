@@ -1,13 +1,18 @@
 ---
-title: "Tracking Macros for Today"
-type: note
-created: 2023-11-30
-updated: 2023-11-30
-source: chatgpt-export
 conversation_id: f17d4fb0-c563-43e7-bdee-60a4b2c41f91
+created: 2023-11-30
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tracking Macros for Today
+type: note
+updated: 2023-11-30
 ---
+
 # Tracking Macros for Today
 
 > Conversation ID: f17d4fb0-c563-43e7-bdee-60a4b2c41f91

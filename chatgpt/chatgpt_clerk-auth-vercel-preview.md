@@ -1,13 +1,19 @@
 ---
-title: "Clerk Auth Vercel Preview"
-type: guide
-created: 2025-12-26
-updated: 2025-12-26
-source: chatgpt-export
 conversation_id: 694ef8c4-a0d8-832d-902f-b602fe57ab87
+created: 2025-12-26
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Clerk Auth Vercel Preview
+type: guide
+updated: 2025-12-26
 ---
+
 # Clerk Auth Vercel Preview
 
 > Conversation ID: 694ef8c4-a0d8-832d-902f-b602fe57ab87

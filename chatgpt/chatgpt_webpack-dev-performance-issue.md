@@ -1,13 +1,18 @@
 ---
-title: "Webpack Dev Performance Issue"
-type: note
-created: 2026-03-10
-updated: 2026-03-10
-source: chatgpt-export
 conversation_id: 69b0a677-8f50-8329-a638-471e4aa24566
+created: 2026-03-10
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Webpack Dev Performance Issue
+type: note
+updated: 2026-03-10
 ---
+
 # Webpack Dev Performance Issue
 
 > Conversation ID: 69b0a677-8f50-8329-a638-471e4aa24566

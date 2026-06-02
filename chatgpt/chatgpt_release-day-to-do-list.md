@@ -1,13 +1,19 @@
 ---
-title: "Release Day To-Do List"
-type: note
-created: 2024-06-06
-updated: 2024-06-06
-source: chatgpt-export
 conversation_id: 12daedbb-9cdb-462b-b068-19c1ad824a0b
+created: 2024-06-06
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Release Day To-Do List
+type: note
+updated: 2024-06-06
 ---
+
 # Release Day To-Do List
 
 > Conversation ID: 12daedbb-9cdb-462b-b068-19c1ad824a0b

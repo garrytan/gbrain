@@ -1,13 +1,18 @@
 ---
-title: "Spotify Stream Count"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a07cd28-6b70-83e8-a6c6-51216ae01644
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spotify Stream Count
+type: note
+updated: 2026-05-16
 ---
+
 # Spotify Stream Count
 
 > Conversation ID: 6a07cd28-6b70-83e8-a6c6-51216ae01644

@@ -1,13 +1,18 @@
 ---
-title: "Revenue Operations Overview"
-type: note
-created: 2026-01-12
-updated: 2026-01-12
-source: chatgpt-export
 conversation_id: 696559eb-1188-8331-a675-604cc8f4bd06
+created: 2026-01-12
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Revenue Operations Overview
+type: note
+updated: 2026-01-12
 ---
+
 # Revenue Operations Overview
 
 > Conversation ID: 696559eb-1188-8331-a675-604cc8f4bd06

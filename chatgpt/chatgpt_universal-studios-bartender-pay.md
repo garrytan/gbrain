@@ -1,13 +1,18 @@
 ---
-title: "Universal Studios Bartender Pay"
-type: note
-created: 2024-05-23
-updated: 2024-05-23
-source: chatgpt-export
 conversation_id: c4cb4b88-4579-40fb-a13d-eeaffff49e0f
+created: 2024-05-23
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Universal Studios Bartender Pay
+type: note
+updated: 2024-05-23
 ---
+
 # Universal Studios Bartender Pay
 
 > Conversation ID: c4cb4b88-4579-40fb-a13d-eeaffff49e0f

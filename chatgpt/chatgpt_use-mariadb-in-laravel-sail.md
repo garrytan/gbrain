@@ -1,13 +1,19 @@
 ---
-title: "Use MariaDB in Laravel Sail"
-type: guide
-created: 2023-05-25
-updated: 2023-05-25
-source: chatgpt-export
 conversation_id: 1d85b844-d6ad-4df3-95db-c5064f462ecb
+created: 2023-05-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Use MariaDB in Laravel Sail
+type: guide
+updated: 2023-05-25
 ---
+
 # Use MariaDB in Laravel Sail
 
 > Conversation ID: 1d85b844-d6ad-4df3-95db-c5064f462ecb

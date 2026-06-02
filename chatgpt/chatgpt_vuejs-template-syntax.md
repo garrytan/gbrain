@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Template Syntax"
-type: note
-created: 2023-01-03
-updated: 2023-01-03
-source: chatgpt-export
 conversation_id: 374e17b6-72e8-4ce0-8963-89197a3fa8b1
+created: 2023-01-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Template Syntax
+type: note
+updated: 2023-01-03
 ---
+
 # Vue.js Template Syntax
 
 > Conversation ID: 374e17b6-72e8-4ce0-8963-89197a3fa8b1

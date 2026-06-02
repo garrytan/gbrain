@@ -1,13 +1,18 @@
 ---
-title: "Wireframe torso image"
-type: note
-created: 2025-11-08
-updated: 2025-11-08
-source: chatgpt-export
 conversation_id: 690f9ca4-0d88-8328-ac69-70a3e19de8d2
+created: 2025-11-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 7
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Wireframe torso image
+type: note
+updated: 2025-11-08
 ---
+
 # Wireframe torso image
 
 > Conversation ID: 690f9ca4-0d88-8328-ac69-70a3e19de8d2

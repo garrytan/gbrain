@@ -1,13 +1,18 @@
 ---
-title: "World Class Calendar Design"
-type: note
-created: 2026-04-27
-updated: 2026-04-27
-source: chatgpt-export
 conversation_id: 69eed7e6-e0ec-83e8-b620-70501fa54361
+created: 2026-04-27
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: World Class Calendar Design
+type: note
+updated: 2026-04-27
 ---
+
 # World Class Calendar Design
 
 > Conversation ID: 69eed7e6-e0ec-83e8-b620-70501fa54361

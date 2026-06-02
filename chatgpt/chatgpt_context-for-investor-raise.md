@@ -1,13 +1,18 @@
 ---
-title: "Context for Investor Raise"
-type: note
-created: 2026-05-19
-updated: 2026-05-19
-source: chatgpt-export
 conversation_id: 6a0caaf5-ee24-83e8-8dd8-02840f66cf34
+created: 2026-05-19
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Context for Investor Raise
+type: note
+updated: 2026-05-19
 ---
+
 # Context for Investor Raise
 
 > Conversation ID: 6a0caaf5-ee24-83e8-8dd8-02840f66cf34

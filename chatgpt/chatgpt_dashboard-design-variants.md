@@ -1,13 +1,18 @@
 ---
-title: "Dashboard Design Variants"
-type: note
-created: 2026-04-26
-updated: 2026-04-26
-source: chatgpt-export
 conversation_id: 69ed7e1d-ba0c-83e8-98d2-fbe155962c55
+created: 2026-04-26
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Dashboard Design Variants
+type: note
+updated: 2026-04-26
 ---
+
 # Dashboard Design Variants
 
 > Conversation ID: 69ed7e1d-ba0c-83e8-98d2-fbe155962c55

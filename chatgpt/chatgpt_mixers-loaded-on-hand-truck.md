@@ -1,13 +1,18 @@
 ---
-title: "Mixers Loaded on Hand Truck"
-type: note
-created: 2024-07-10
-updated: 2024-07-10
-source: chatgpt-export
 conversation_id: 3370b0f9-fe78-4cac-b0cd-44e24b3459e5
+created: 2024-07-10
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Mixers Loaded on Hand Truck
+type: note
+updated: 2024-07-10
 ---
+
 # Mixers Loaded on Hand Truck
 
 > Conversation ID: 3370b0f9-fe78-4cac-b0cd-44e24b3459e5

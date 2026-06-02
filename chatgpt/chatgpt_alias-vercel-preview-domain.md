@@ -1,13 +1,19 @@
 ---
-title: "Alias Vercel preview domain"
-type: note
-created: 2025-08-17
-updated: 2025-08-17
-source: chatgpt-export
 conversation_id: 68a12e87-922c-8331-9800-3ce388dbaaef
+created: 2025-08-17
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Alias Vercel preview domain
+type: note
+updated: 2025-08-17
 ---
+
 # Alias Vercel preview domain
 
 > Conversation ID: 68a12e87-922c-8331-9800-3ce388dbaaef

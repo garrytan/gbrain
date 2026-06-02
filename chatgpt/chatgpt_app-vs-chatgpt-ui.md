@@ -1,13 +1,18 @@
 ---
-title: "App vs ChatGPT UI"
-type: note
-created: 2026-02-01
-updated: 2026-02-01
-source: chatgpt-export
 conversation_id: 697fa578-b09c-832f-9923-f2b08191b6e6
+created: 2026-02-01
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: App vs ChatGPT UI
+type: note
+updated: 2026-02-01
 ---
+
 # App vs ChatGPT UI
 
 > Conversation ID: 697fa578-b09c-832f-9923-f2b08191b6e6

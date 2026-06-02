@@ -1,13 +1,18 @@
 ---
-title: "Apartment Pricing Estimates"
-type: note
-created: 2026-03-21
-updated: 2026-03-21
-source: chatgpt-export
 conversation_id: 69bee3bf-8068-83e8-8893-981a63693f76
+created: 2026-03-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Apartment Pricing Estimates
+type: note
+updated: 2026-03-21
 ---
+
 # Apartment Pricing Estimates
 
 > Conversation ID: 69bee3bf-8068-83e8-8893-981a63693f76

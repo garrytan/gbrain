@@ -1,13 +1,20 @@
 ---
-title: "Bug Fix Prompts Jovie App"
-type: guide
-created: 2025-12-27
-updated: 2025-12-27
-source: chatgpt-export
 conversation_id: 694f63b5-f92c-8328-bb4c-20aa426099a9
+created: 2025-12-27
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Bug Fix Prompts Jovie App
+type: guide
+updated: 2025-12-27
 ---
+
 # Bug Fix Prompts Jovie App
 
 > Conversation ID: 694f63b5-f92c-8328-bb4c-20aa426099a9

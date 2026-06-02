@@ -1,13 +1,18 @@
 ---
-title: "Vue Spinner Animation Component"
-type: note
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: 109f03bf-26b3-41e4-ad72-6c479aad1e21
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 9
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue Spinner Animation Component
+type: note
+updated: 2023-02-05
 ---
+
 # Vue Spinner Animation Component
 
 > Conversation ID: 109f03bf-26b3-41e4-ad72-6c479aad1e21

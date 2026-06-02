@@ -1,13 +1,20 @@
 ---
-title: "Jovie Profile on Wallet"
-type: essay
-created: 2026-05-24
-updated: 2026-05-24
-source: chatgpt-export
 conversation_id: 6a12a209-f62c-83e8-b076-e22329945744
+created: 2026-05-24
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie Profile on Wallet
+type: essay
+updated: 2026-05-24
 ---
+
 # Jovie Profile on Wallet
 
 > Conversation ID: 6a12a209-f62c-83e8-b076-e22329945744

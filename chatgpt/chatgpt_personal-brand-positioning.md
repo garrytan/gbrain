@@ -1,13 +1,19 @@
 ---
-title: "Personal Brand Positioning"
-type: essay
-created: 2026-03-04
-updated: 2026-03-04
-source: chatgpt-export
 conversation_id: 69a7a8d8-0788-832b-becd-7ff04c4cca5b
+created: 2026-03-04
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Personal Brand Positioning
+type: essay
+updated: 2026-03-04
 ---
+
 # Personal Brand Positioning
 
 > Conversation ID: 69a7a8d8-0788-832b-becd-7ff04c4cca5b

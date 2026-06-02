@@ -1,13 +1,18 @@
 ---
-title: "iPhone upgrade plan carrier"
-type: note
-created: 2025-10-06
-updated: 2025-10-06
-source: chatgpt-export
 conversation_id: 68e3f6f1-6a88-8325-9f49-49376d33c224
+created: 2025-10-06
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: iPhone upgrade plan carrier
+type: note
+updated: 2025-10-06
 ---
+
 # iPhone upgrade plan carrier
 
 > Conversation ID: 68e3f6f1-6a88-8325-9f49-49376d33c224

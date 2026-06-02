@@ -1,13 +1,19 @@
 ---
-title: "CI Migration Deployment Gating"
-type: guide
-created: 2025-12-29
-updated: 2025-12-29
-source: chatgpt-export
 conversation_id: 6952c897-e00c-832c-a4d1-e85175dc08a2
+created: 2025-12-29
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: CI Migration Deployment Gating
+type: guide
+updated: 2025-12-29
 ---
+
 # CI Migration Deployment Gating
 
 > Conversation ID: 6952c897-e00c-832c-a4d1-e85175dc08a2

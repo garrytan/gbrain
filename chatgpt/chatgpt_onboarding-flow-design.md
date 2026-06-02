@@ -1,13 +1,20 @@
 ---
-title: "Onboarding Flow Design"
-type: guide
-created: 2026-05-15
-updated: 2026-05-15
-source: chatgpt-export
 conversation_id: 6a06990d-6dc8-83e8-a919-66a35cceca85
+created: 2026-05-15
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Onboarding Flow Design
+type: guide
+updated: 2026-05-15
 ---
+
 # Onboarding Flow Design
 
 > Conversation ID: 6a06990d-6dc8-83e8-a919-66a35cceca85

@@ -1,13 +1,19 @@
 ---
-title: "Button success animation"
-type: note
-created: 2025-12-08
-updated: 2025-12-08
-source: chatgpt-export
 conversation_id: 69371e4b-6650-8333-ba4f-b4df82d657b6
+created: 2025-12-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Button success animation
+type: note
+updated: 2025-12-08
 ---
+
 # Button success animation
 
 > Conversation ID: 69371e4b-6650-8333-ba4f-b4df82d657b6

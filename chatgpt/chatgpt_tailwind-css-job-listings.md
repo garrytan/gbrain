@@ -1,13 +1,18 @@
 ---
-title: "Tailwind CSS Job Listings"
-type: note
-created: 2025-03-05
-updated: 2025-03-05
-source: chatgpt-export
 conversation_id: 67c7cb54-bfbc-8007-9c79-0c10cafc36f6
+created: 2025-03-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tailwind CSS Job Listings
+type: note
+updated: 2025-03-05
 ---
+
 # Tailwind CSS Job Listings
 
 > Conversation ID: 67c7cb54-bfbc-8007-9c79-0c10cafc36f6

@@ -1,13 +1,18 @@
 ---
-title: "Improve Vue.js code"
-type: note
-created: 2022-12-24
-updated: 2022-12-24
-source: chatgpt-export
 conversation_id: 9b9664de-5187-43dc-b3e6-aa93cdfab43e
+created: 2022-12-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Improve Vue.js code
+type: note
+updated: 2022-12-24
 ---
+
 # Improve Vue.js code
 
 > Conversation ID: 9b9664de-5187-43dc-b3e6-aa93cdfab43e

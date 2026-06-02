@@ -1,13 +1,19 @@
 ---
-title: "Tipping and Demographics Science"
-type: essay
-created: 2026-04-18
-updated: 2026-04-18
-source: chatgpt-export
 conversation_id: 69e3e968-3990-83e8-b6a3-b9f9e13595d7
+created: 2026-04-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Tipping and Demographics Science
+type: essay
+updated: 2026-04-18
 ---
+
 # Tipping and Demographics Science
 
 > Conversation ID: 69e3e968-3990-83e8-b6a3-b9f9e13595d7

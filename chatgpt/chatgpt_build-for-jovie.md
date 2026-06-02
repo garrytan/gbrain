@@ -1,13 +1,19 @@
 ---
-title: "Build for Jovie"
-type: note
-created: 2026-04-28
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f146e7-de8c-83e8-8497-bf1b32c1d297
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Build for Jovie
+type: note
+updated: 2026-04-29
 ---
+
 # Build for Jovie
 
 > Conversation ID: 69f146e7-de8c-83e8-8497-bf1b32c1d297

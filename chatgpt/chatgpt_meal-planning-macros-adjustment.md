@@ -1,13 +1,18 @@
 ---
-title: "Meal Planning Macros Adjustment"
-type: note
-created: 2024-07-31
-updated: 2024-07-31
-source: chatgpt-export
 conversation_id: c9a1c6bf-ad92-4f64-9075-78b508156479
+created: 2024-07-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Meal Planning Macros Adjustment
+type: note
+updated: 2024-07-31
 ---
+
 # Meal Planning Macros Adjustment
 
 > Conversation ID: c9a1c6bf-ad92-4f64-9075-78b508156479

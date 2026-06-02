@@ -1,13 +1,18 @@
 ---
-title: "Cocktail sales distribution"
-type: note
-created: 2025-09-22
-updated: 2025-09-22
-source: chatgpt-export
 conversation_id: 68d0918b-0cdc-832b-9b43-0350d56f9316
+created: 2025-09-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cocktail sales distribution
+type: note
+updated: 2025-09-22
 ---
+
 # Cocktail sales distribution
 
 > Conversation ID: 68d0918b-0cdc-832b-9b43-0350d56f9316

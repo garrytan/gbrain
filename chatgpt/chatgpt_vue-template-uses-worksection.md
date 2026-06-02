@@ -1,13 +1,19 @@
 ---
-title: "Vue template uses WorkSection."
-type: guide
-created: 2023-02-25
-updated: 2023-02-25
-source: chatgpt-export
 conversation_id: c9b1789e-fb55-40aa-bf47-4e377e2dd018
+created: 2023-02-25
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue template uses WorkSection.
+type: guide
+updated: 2023-02-25
 ---
+
 # Vue template uses WorkSection.
 
 > Conversation ID: c9b1789e-fb55-40aa-bf47-4e377e2dd018

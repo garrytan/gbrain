@@ -1,13 +1,20 @@
 ---
-title: "Biggest Failures in Next.js AI"
-type: guide
-created: 2026-05-19
-updated: 2026-05-19
-source: chatgpt-export
 conversation_id: 6a0ce7b1-6678-83e8-b900-57aefb7e41f0
+created: 2026-05-19
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Biggest Failures in Next.js AI
+type: guide
+updated: 2026-05-19
 ---
+
 # Biggest Failures in Next.js AI
 
 > Conversation ID: 6a0ce7b1-6678-83e8-b900-57aefb7e41f0

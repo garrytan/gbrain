@@ -1,13 +1,18 @@
 ---
-title: "Webpack Configuration Troubleshooting"
-type: note
-created: 2023-03-27
-updated: 2023-03-27
-source: chatgpt-export
 conversation_id: 51b80b98-c0a9-4634-af4d-292b27213c56
+created: 2023-03-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Webpack Configuration Troubleshooting
+type: note
+updated: 2023-03-27
 ---
+
 # Webpack Configuration Troubleshooting
 
 > Conversation ID: 51b80b98-c0a9-4634-af4d-292b27213c56

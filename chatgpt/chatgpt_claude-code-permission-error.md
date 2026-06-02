@@ -1,13 +1,19 @@
 ---
-title: "Claude code permission error"
-type: guide
-created: 2025-08-24
-updated: 2025-08-24
-source: chatgpt-export
 conversation_id: 68ab8d53-5124-8332-a73f-5754fd012c4d
+created: 2025-08-24
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude code permission error
+type: guide
+updated: 2025-08-24
 ---
+
 # Claude code permission error
 
 > Conversation ID: 68ab8d53-5124-8332-a73f-5754fd012c4d

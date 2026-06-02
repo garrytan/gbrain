@@ -1,13 +1,18 @@
 ---
-title: "Vue.js component for image/video list"
-type: note
-created: 2023-02-26
-updated: 2023-02-26
-source: chatgpt-export
 conversation_id: 33d7621b-4082-4808-97ba-bb2d498085b0
+created: 2023-02-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js component for image/video list
+type: note
+updated: 2023-02-26
 ---
+
 # Vue.js component for image/video list
 
 > Conversation ID: 33d7621b-4082-4808-97ba-bb2d498085b0

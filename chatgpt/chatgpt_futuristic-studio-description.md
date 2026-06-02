@@ -1,13 +1,18 @@
 ---
-title: "Futuristic studio description"
-type: note
-created: 2025-08-02
-updated: 2025-08-02
-source: chatgpt-export
 conversation_id: 688e594f-9604-8332-a5cc-c9ec102312d0
+created: 2025-08-02
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Futuristic studio description
+type: note
+updated: 2025-08-02
 ---
+
 # Futuristic studio description
 
 > Conversation ID: 688e594f-9604-8332-a5cc-c9ec102312d0

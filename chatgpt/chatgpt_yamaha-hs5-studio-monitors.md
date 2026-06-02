@@ -1,13 +1,18 @@
 ---
-title: "Yamaha HS5 Studio Monitors"
-type: note
-created: 2025-02-01
-updated: 2025-02-01
-source: chatgpt-export
 conversation_id: 679e9a7d-fe64-8007-bead-7a65a64d6860
+created: 2025-02-01
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Yamaha HS5 Studio Monitors
+type: note
+updated: 2025-02-01
 ---
+
 # Yamaha HS5 Studio Monitors
 
 > Conversation ID: 679e9a7d-fe64-8007-bead-7a65a64d6860

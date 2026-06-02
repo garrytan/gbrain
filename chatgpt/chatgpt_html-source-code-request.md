@@ -1,13 +1,19 @@
 ---
-title: "HTML Source Code Request"
-type: guide
-created: 2023-02-12
-updated: 2023-02-12
-source: chatgpt-export
 conversation_id: 12ed7c8c-0fe0-44be-84d3-c85a2255b0d2
+created: 2023-02-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: HTML Source Code Request
+type: guide
+updated: 2023-02-12
 ---
+
 # HTML Source Code Request
 
 > Conversation ID: 12ed7c8c-0fe0-44be-84d3-c85a2255b0d2

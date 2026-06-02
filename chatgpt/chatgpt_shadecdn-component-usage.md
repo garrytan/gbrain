@@ -1,13 +1,20 @@
 ---
-title: "Shadecdn component usage"
-type: essay
-created: 2025-09-09
-updated: 2025-09-09
-source: chatgpt-export
 conversation_id: 68c0739a-959c-8321-8e4c-788f1b845e36
+created: 2025-09-09
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 20
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Shadecdn component usage
+type: essay
+updated: 2025-09-09
 ---
+
 # Shadecdn component usage
 
 > Conversation ID: 68c0739a-959c-8321-8e4c-788f1b845e36

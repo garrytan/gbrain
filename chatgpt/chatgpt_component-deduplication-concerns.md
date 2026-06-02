@@ -1,13 +1,19 @@
 ---
-title: "Component deduplication concerns"
-type: note
-created: 2025-07-27
-updated: 2025-07-27
-source: chatgpt-export
 conversation_id: 68858584-4060-8329-b936-182706b87741
+created: 2025-07-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Component deduplication concerns
+type: note
+updated: 2025-07-27
 ---
+
 # Component deduplication concerns
 
 > Conversation ID: 68858584-4060-8329-b936-182706b87741

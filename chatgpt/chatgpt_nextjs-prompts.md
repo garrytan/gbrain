@@ -1,13 +1,19 @@
 ---
-title: "Next.js prompts"
-type: guide
-created: 2025-12-03
-updated: 2025-12-03
-source: chatgpt-export
 conversation_id: 6930b62c-1b44-832e-bd1d-ae0f7346fd9f
+created: 2025-12-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Next.js prompts
+type: guide
+updated: 2025-12-03
 ---
+
 # Next.js prompts
 
 > Conversation ID: 6930b62c-1b44-832e-bd1d-ae0f7346fd9f

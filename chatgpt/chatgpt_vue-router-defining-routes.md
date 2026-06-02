@@ -1,13 +1,20 @@
 ---
-title: "Vue Router: Defining Routes"
-type: guide
-created: 2023-05-07
-updated: 2023-05-07
-source: chatgpt-export
 conversation_id: 256ecf2b-f1fd-4d91-a991-35d1a8751b0c
+created: 2023-05-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: 'Vue Router: Defining Routes'
+type: guide
+updated: 2023-05-07
 ---
+
 # Vue Router: Defining Routes
 
 > Conversation ID: 256ecf2b-f1fd-4d91-a991-35d1a8751b0c

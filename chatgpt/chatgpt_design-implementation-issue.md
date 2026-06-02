@@ -1,13 +1,18 @@
 ---
-title: "Design Implementation Issue"
-type: note
-created: 2026-05-13
-updated: 2026-05-13
-source: chatgpt-export
 conversation_id: 6a04b254-139c-83e8-8320-3899a1b9015d
+created: 2026-05-13
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Design Implementation Issue
+type: note
+updated: 2026-05-13
 ---
+
 # Design Implementation Issue
 
 > Conversation ID: 6a04b254-139c-83e8-8320-3899a1b9015d

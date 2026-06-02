@@ -1,13 +1,20 @@
 ---
-title: "Cloud Tasks in Claude"
-type: guide
-created: 2026-01-17
-updated: 2026-01-17
-source: chatgpt-export
 conversation_id: 696bf00a-ecf8-8331-915c-d2153b2621b8
+created: 2026-01-17
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Cloud Tasks in Claude
+type: guide
+updated: 2026-01-17
 ---
+
 # Cloud Tasks in Claude
 
 > Conversation ID: 696bf00a-ecf8-8331-915c-d2153b2621b8

@@ -1,13 +1,19 @@
 ---
-title: "Branch · Jovie for Music Creators"
-type: note
-created: 2026-04-25
-updated: 2026-04-25
-source: chatgpt-export
 conversation_id: 69ec3436-26f0-83e8-b719-6a735e4248a4
+created: 2026-04-25
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Branch · Jovie for Music Creators
+type: note
+updated: 2026-04-25
 ---
+
 # Branch · Jovie for Music Creators
 
 > Conversation ID: 69ec3436-26f0-83e8-b719-6a735e4248a4

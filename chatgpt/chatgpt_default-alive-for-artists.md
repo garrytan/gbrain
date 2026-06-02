@@ -1,13 +1,18 @@
 ---
-title: "Default Alive for Artists"
-type: note
-created: 2026-05-18
-updated: 2026-05-19
-source: chatgpt-export
 conversation_id: 6a0b74cd-1f5c-83e8-a142-4cc6e67c13d0
+created: 2026-05-18
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Default Alive for Artists
+type: note
+updated: 2026-05-19
 ---
+
 # Default Alive for Artists
 
 > Conversation ID: 6a0b74cd-1f5c-83e8-a142-4cc6e67c13d0

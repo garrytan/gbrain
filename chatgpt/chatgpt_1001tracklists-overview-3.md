@@ -1,13 +1,18 @@
 ---
-title: "1001Tracklists Overview"
-type: note
-created: 2025-01-17
-updated: 2025-01-17
-source: chatgpt-export
 conversation_id: 678a0b5b-8060-8007-8880-cb908742fbf6
+created: 2025-01-17
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 1001Tracklists Overview
+type: note
+updated: 2025-01-17
 ---
+
 # 1001Tracklists Overview
 
 > Conversation ID: 678a0b5b-8060-8007-8880-cb908742fbf6

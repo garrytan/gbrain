@@ -1,13 +1,19 @@
 ---
-title: "Fix pricing table error"
-type: note
-created: 2025-08-18
-updated: 2025-08-18
-source: chatgpt-export
 conversation_id: 68a28ecb-361c-832e-8949-982ce9e30933
+created: 2025-08-18
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Fix pricing table error
+type: note
+updated: 2025-08-18
 ---
+
 # Fix pricing table error
 
 > Conversation ID: 68a28ecb-361c-832e-8949-982ce9e30933

@@ -1,13 +1,19 @@
 ---
-title: "Coderabbit Claude Plugin"
-type: note
-created: 2026-02-03
-updated: 2026-02-03
-source: chatgpt-export
 conversation_id: 69814bed-31dc-8330-8d45-e13c05aad3fd
+created: 2026-02-03
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Coderabbit Claude Plugin
+type: note
+updated: 2026-02-03
 ---
+
 # Coderabbit Claude Plugin
 
 > Conversation ID: 69814bed-31dc-8330-8d45-e13c05aad3fd

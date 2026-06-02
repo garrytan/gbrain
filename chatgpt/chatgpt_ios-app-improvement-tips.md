@@ -1,13 +1,19 @@
 ---
-title: "iOS app improvement tips"
-type: note
-created: 2025-11-19
-updated: 2025-11-19
-source: chatgpt-export
 conversation_id: 691d3253-5ec0-8327-b3b7-cce0687fe4c6
+created: 2025-11-19
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: iOS app improvement tips
+type: note
+updated: 2025-11-19
 ---
+
 # iOS app improvement tips
 
 > Conversation ID: 691d3253-5ec0-8327-b3b7-cce0687fe4c6

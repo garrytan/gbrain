@@ -1,13 +1,18 @@
 ---
-title: "Wireframe Human Torso"
-type: note
-created: 2025-06-17
-updated: 2025-06-17
-source: chatgpt-export
 conversation_id: 6851b94a-22f0-8007-ac4e-f407888890ab
+created: 2025-06-17
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 12
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Wireframe Human Torso
+type: note
+updated: 2025-06-17
 ---
+
 # Wireframe Human Torso
 
 > Conversation ID: 6851b94a-22f0-8007-ac4e-f407888890ab

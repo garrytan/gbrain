@@ -1,13 +1,18 @@
 ---
-title: "Album Art Request."
-type: note
-created: 2024-05-14
-updated: 2024-05-14
-source: chatgpt-export
 conversation_id: ed2c2b9e-78bd-495e-b6ad-22ccbda38cf9
+created: 2024-05-14
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Album Art Request.
+type: note
+updated: 2024-05-14
 ---
+
 # Album Art Request.
 
 > Conversation ID: ed2c2b9e-78bd-495e-b6ad-22ccbda38cf9

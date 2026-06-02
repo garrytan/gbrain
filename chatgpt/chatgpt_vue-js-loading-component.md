@@ -1,14 +1,19 @@
 ---
-title: "Vue JS Loading Component 
-"
-type: note
-created: 2023-01-28
-updated: 2023-01-28
-source: chatgpt-export
 conversation_id: 17ab8f11-570b-43ef-b61f-c2b95f359ba2
+created: 2023-01-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Vue JS Loading Component '
+type: note
+updated: 2023-01-28
 ---
+
 # Vue JS Loading Component 
 
 

@@ -1,13 +1,19 @@
 ---
-title: "Jovie Logo Design"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a08e719-214c-83e8-a634-00055aef4b28
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Jovie Logo Design
+type: note
+updated: 2026-05-16
 ---
+
 # Jovie Logo Design
 
 > Conversation ID: 6a08e719-214c-83e8-a634-00055aef4b28

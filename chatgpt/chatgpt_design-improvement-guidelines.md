@@ -1,13 +1,20 @@
 ---
-title: "Design Improvement Guidelines"
-type: essay
-created: 2026-04-02
-updated: 2026-04-02
-source: chatgpt-export
 conversation_id: 69cdb6c3-26d4-83e8-8257-17605756a5cf
+created: 2026-04-02
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 9
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Design Improvement Guidelines
+type: essay
+updated: 2026-04-02
 ---
+
 # Design Improvement Guidelines
 
 > Conversation ID: 69cdb6c3-26d4-83e8-8257-17605756a5cf

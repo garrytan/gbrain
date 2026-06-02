@@ -1,13 +1,18 @@
 ---
-title: "Charlie Jordan DJ Debate"
-type: note
-created: 2025-04-26
-updated: 2025-04-26
-source: chatgpt-export
 conversation_id: 680c4e46-7c18-8007-9bd5-fedf8b825043
+created: 2025-04-26
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Charlie Jordan DJ Debate
+type: note
+updated: 2025-04-26
 ---
+
 # Charlie Jordan DJ Debate
 
 > Conversation ID: 680c4e46-7c18-8007-9bd5-fedf8b825043

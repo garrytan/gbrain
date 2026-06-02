@@ -1,13 +1,19 @@
 ---
-title: "Vite development server usage."
-type: note
-created: 2023-02-23
-updated: 2023-02-23
-source: chatgpt-export
 conversation_id: 701dc625-5f22-4a1e-985d-a8e9cbc8c2c5
+created: 2023-02-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vite development server usage.
+type: note
+updated: 2023-02-23
 ---
+
 # Vite development server usage.
 
 > Conversation ID: 701dc625-5f22-4a1e-985d-a8e9cbc8c2c5

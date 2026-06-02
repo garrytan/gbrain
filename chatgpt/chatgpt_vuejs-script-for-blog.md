@@ -1,13 +1,19 @@
 ---
-title: "Vue.js script for blog"
-type: note
-created: 2023-01-08
-updated: 2023-01-08
-source: chatgpt-export
 conversation_id: 8946ee29-7d02-4d08-8669-3e1ddd2ba151
+created: 2023-01-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js script for blog
+type: note
+updated: 2023-01-08
 ---
+
 # Vue.js script for blog
 
 > Conversation ID: 8946ee29-7d02-4d08-8669-3e1ddd2ba151

@@ -1,13 +1,20 @@
 ---
-title: "Tim White Single Release"
-type: essay
-created: 2024-05-28
-updated: 2024-05-28
-source: chatgpt-export
 conversation_id: a38f0d3c-c192-45dc-960a-6ec8bd033e18
+created: 2024-05-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 24
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Tim White Single Release
+type: essay
+updated: 2024-05-28
 ---
+
 # Tim White Single Release
 
 > Conversation ID: a38f0d3c-c192-45dc-960a-6ec8bd033e18

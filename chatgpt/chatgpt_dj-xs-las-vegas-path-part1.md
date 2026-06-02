@@ -1,13 +1,19 @@
 ---
-title: "DJ XS Las Vegas Path"
-type: essay
-created: 2025-02-23
-updated: 2025-02-23
-source: chatgpt-export
 conversation_id: 67bab92d-dd08-8007-a675-3a199900987d
+created: 2025-02-23
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: DJ XS Las Vegas Path
+type: essay
+updated: 2025-02-23
 ---
+
 # DJ XS Las Vegas Path
 
 > Conversation ID: 67bab92d-dd08-8007-a675-3a199900987d

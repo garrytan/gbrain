@@ -1,13 +1,19 @@
 ---
-title: "Luicide React"
-type: note
-created: 2026-01-11
-updated: 2026-01-11
-source: chatgpt-export
 conversation_id: 6964024a-36dc-832c-bbf9-f9282957985c
+created: 2026-01-11
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Luicide React
+type: note
+updated: 2026-01-11
 ---
+
 # Luicide React
 
 > Conversation ID: 6964024a-36dc-832c-bbf9-f9282957985c

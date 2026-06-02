@@ -1,13 +1,18 @@
 ---
-title: "David Guetta Spotify"
-type: note
-created: 2026-02-20
-updated: 2026-02-20
-source: chatgpt-export
 conversation_id: 69982cb5-bc60-832e-89f5-a7348d089b95
+created: 2026-02-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: David Guetta Spotify
+type: note
+updated: 2026-02-20
 ---
+
 # David Guetta Spotify
 
 > Conversation ID: 69982cb5-bc60-832e-89f5-a7348d089b95

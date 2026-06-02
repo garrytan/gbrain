@@ -1,13 +1,20 @@
 ---
-title: "Vue.js component overview"
-type: guide
-created: 2022-12-28
-updated: 2022-12-28
-source: chatgpt-export
 conversation_id: e0cefe4d-6296-407c-8361-e985e97d197e
+created: 2022-12-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js component overview
+type: guide
+updated: 2022-12-28
 ---
+
 # Vue.js component overview
 
 > Conversation ID: e0cefe4d-6296-407c-8361-e985e97d197e

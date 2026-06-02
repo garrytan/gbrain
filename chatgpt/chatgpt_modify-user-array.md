@@ -1,13 +1,19 @@
 ---
-title: "Modify User Array."
-type: note
-created: 2023-03-01
-updated: 2023-03-01
-source: chatgpt-export
 conversation_id: b62d1755-cdf8-445c-aa72-13dd1e396afa
+created: 2023-03-01
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Modify User Array.
+type: note
+updated: 2023-03-01
 ---
+
 # Modify User Array.
 
 > Conversation ID: b62d1755-cdf8-445c-aa72-13dd1e396afa

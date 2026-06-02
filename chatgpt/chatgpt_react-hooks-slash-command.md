@@ -1,13 +1,19 @@
 ---
-title: "React Hooks Slash Command"
-type: guide
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6973cb69-29e0-8326-8305-cee2d9e953f5
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: React Hooks Slash Command
+type: guide
+updated: 2026-01-23
 ---
+
 # React Hooks Slash Command
 
 > Conversation ID: 6973cb69-29e0-8326-8305-cee2d9e953f5

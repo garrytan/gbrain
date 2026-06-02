@@ -1,13 +1,18 @@
 ---
-title: "Tip Artist CTA Advice"
-type: note
-created: 2026-04-07
-updated: 2026-04-07
-source: chatgpt-export
 conversation_id: 69d56551-bdc4-83e8-a879-740d2a0e575e
+created: 2026-04-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tip Artist CTA Advice
+type: note
+updated: 2026-04-07
 ---
+
 # Tip Artist CTA Advice
 
 > Conversation ID: 69d56551-bdc4-83e8-a879-740d2a0e575e

@@ -1,13 +1,18 @@
 ---
-title: "Landing Page Design Options"
-type: note
-created: 2026-01-16
-updated: 2026-01-16
-source: chatgpt-export
 conversation_id: 696aabea-64f8-8329-a1bf-a509780f6f70
+created: 2026-01-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Landing Page Design Options
+type: note
+updated: 2026-01-16
 ---
+
 # Landing Page Design Options
 
 > Conversation ID: 696aabea-64f8-8329-a1bf-a509780f6f70

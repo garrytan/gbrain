@@ -1,13 +1,20 @@
 ---
-title: "Steps Graph in Flutter"
-type: essay
-created: 2024-01-22
-updated: 2024-01-22
-source: chatgpt-export
 conversation_id: 1865d3b9-d75d-42ec-84ce-827183eae8c5
+created: 2024-01-22
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Steps Graph in Flutter
+type: essay
+updated: 2024-01-22
 ---
+
 # Steps Graph in Flutter
 
 > Conversation ID: 1865d3b9-d75d-42ec-84ce-827183eae8c5

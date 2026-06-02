@@ -1,13 +1,19 @@
 ---
-title: "Refactor Vue.js Component"
-type: guide
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: 7df2317c-cd88-4595-a090-6bb43ea27c33
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 7
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Refactor Vue.js Component
+type: guide
+updated: 2022-12-21
 ---
+
 # Refactor Vue.js Component
 
 > Conversation ID: 7df2317c-cd88-4595-a090-6bb43ea27c33

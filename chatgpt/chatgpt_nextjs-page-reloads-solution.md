@@ -1,13 +1,19 @@
 ---
-title: "Next.js page reloads solution"
-type: note
-created: 2025-12-11
-updated: 2025-12-11
-source: chatgpt-export
 conversation_id: 693a3bb3-becc-8332-acc5-6b58a23cb949
+created: 2025-12-11
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Next.js page reloads solution
+type: note
+updated: 2025-12-11
 ---
+
 # Next.js page reloads solution
 
 > Conversation ID: 693a3bb3-becc-8332-acc5-6b58a23cb949

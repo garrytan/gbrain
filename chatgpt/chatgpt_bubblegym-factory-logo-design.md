@@ -1,13 +1,18 @@
 ---
-title: "Bubblegym Factory Logo Design"
-type: note
-created: 2024-05-25
-updated: 2024-05-25
-source: chatgpt-export
 conversation_id: 515256dc-af85-45cd-93a5-d3ee9b7e8610
+created: 2024-05-25
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Bubblegym Factory Logo Design
+type: note
+updated: 2024-05-25
 ---
+
 # Bubblegym Factory Logo Design
 
 > Conversation ID: 515256dc-af85-45cd-93a5-d3ee9b7e8610

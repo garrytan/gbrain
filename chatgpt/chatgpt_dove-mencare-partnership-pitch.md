@@ -1,13 +1,18 @@
 ---
-title: "Dove Men+Care Partnership Pitch"
-type: note
-created: 2023-12-07
-updated: 2023-12-07
-source: chatgpt-export
 conversation_id: 34293df0-0321-44ae-a2a3-a9d590f70872
+created: 2023-12-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Dove Men+Care Partnership Pitch
+type: note
+updated: 2023-12-07
 ---
+
 # Dove Men+Care Partnership Pitch
 
 > Conversation ID: 34293df0-0321-44ae-a2a3-a9d590f70872

@@ -1,13 +1,18 @@
 ---
-title: "OpenAI Cookbook Resources"
-type: note
-created: 2026-01-29
-updated: 2026-01-29
-source: chatgpt-export
 conversation_id: 697af8ec-79f8-8326-ac12-86c50a070145
+created: 2026-01-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: OpenAI Cookbook Resources
+type: note
+updated: 2026-01-29
 ---
+
 # OpenAI Cookbook Resources
 
 > Conversation ID: 697af8ec-79f8-8326-ac12-86c50a070145

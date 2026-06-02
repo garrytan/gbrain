@@ -1,13 +1,18 @@
 ---
-title: "Logo and Font Balance"
-type: note
-created: 2026-05-17
-updated: 2026-05-17
-source: chatgpt-export
 conversation_id: 6a092131-51b4-83e8-a5c5-8c408ad76ada
+created: 2026-05-17
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Logo and Font Balance
+type: note
+updated: 2026-05-17
 ---
+
 # Logo and Font Balance
 
 > Conversation ID: 6a092131-51b4-83e8-a5c5-8c408ad76ada

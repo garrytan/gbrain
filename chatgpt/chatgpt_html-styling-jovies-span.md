@@ -1,13 +1,18 @@
 ---
-title: "HTML Styling: Jovie's Span"
-type: note
-created: 2023-06-01
-updated: 2023-06-01
-source: chatgpt-export
 conversation_id: 52b087a0-d8cb-4bce-b8f9-7a6fe74a04c8
+created: 2023-06-01
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'HTML Styling: Jovie''s Span'
+type: note
+updated: 2023-06-01
 ---
+
 # HTML Styling: Jovie's Span
 
 > Conversation ID: 52b087a0-d8cb-4bce-b8f9-7a6fe74a04c8

@@ -1,13 +1,18 @@
 ---
-title: "Github MCP Docker requirement"
-type: note
-created: 2025-09-03
-updated: 2025-09-03
-source: chatgpt-export
 conversation_id: 68b89605-12b0-8321-b2e2-b5045bdd2852
+created: 2025-09-03
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Github MCP Docker requirement
+type: note
+updated: 2025-09-03
 ---
+
 # Github MCP Docker requirement
 
 > Conversation ID: 68b89605-12b0-8321-b2e2-b5045bdd2852

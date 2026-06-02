@@ -1,13 +1,19 @@
 ---
-title: "Vercel Zone File"
-type: guide
-created: 2025-12-25
-updated: 2025-12-25
-source: chatgpt-export
 conversation_id: 694d9276-da4c-832c-86ae-0a40ed259724
+created: 2025-12-25
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vercel Zone File
+type: guide
+updated: 2025-12-25
 ---
+
 # Vercel Zone File
 
 > Conversation ID: 694d9276-da4c-832c-86ae-0a40ed259724

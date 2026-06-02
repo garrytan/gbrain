@@ -1,13 +1,19 @@
 ---
-title: "iOS App Widgets Ideas"
-type: note
-created: 2025-07-09
-updated: 2025-07-09
-source: chatgpt-export
 conversation_id: 686efd4b-6168-8007-934f-d8995a97c455
+created: 2025-07-09
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: iOS App Widgets Ideas
+type: note
+updated: 2025-07-09
 ---
+
 # iOS App Widgets Ideas
 
 > Conversation ID: 686efd4b-6168-8007-934f-d8995a97c455

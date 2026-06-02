@@ -1,13 +1,18 @@
 ---
-title: "Claude Code Changelog"
-type: note
-created: 2026-01-21
-updated: 2026-01-21
-source: chatgpt-export
 conversation_id: 69704dcc-3538-832a-9980-a773158415eb
+created: 2026-01-21
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude Code Changelog
+type: note
+updated: 2026-01-21
 ---
+
 # Claude Code Changelog
 
 > Conversation ID: 69704dcc-3538-832a-9980-a773158415eb

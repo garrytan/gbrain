@@ -1,13 +1,19 @@
 ---
-title: "Convert component to Composition API"
-type: guide
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: 89c53d6f-5649-480a-a39b-a096cd91dd31
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Convert component to Composition API
+type: guide
+updated: 2022-12-22
 ---
+
 # Convert component to Composition API
 
 > Conversation ID: 89c53d6f-5649-480a-a39b-a096cd91dd31

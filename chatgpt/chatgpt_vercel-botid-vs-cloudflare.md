@@ -1,13 +1,18 @@
 ---
-title: "Vercel BotID vs Cloudflare"
-type: note
-created: 2025-12-24
-updated: 2025-12-24
-source: chatgpt-export
 conversation_id: 694b6ea8-b760-832a-8443-4da35841afb8
+created: 2025-12-24
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel BotID vs Cloudflare
+type: note
+updated: 2025-12-24
 ---
+
 # Vercel BotID vs Cloudflare
 
 > Conversation ID: 694b6ea8-b760-832a-8443-4da35841afb8

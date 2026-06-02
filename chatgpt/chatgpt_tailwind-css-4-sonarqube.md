@@ -1,13 +1,18 @@
 ---
-title: "Tailwind CSS 4 SonarQube"
-type: note
-created: 2026-01-14
-updated: 2026-01-14
-source: chatgpt-export
 conversation_id: 6967e345-ea64-832a-addd-026d6d43031a
+created: 2026-01-14
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tailwind CSS 4 SonarQube
+type: note
+updated: 2026-01-14
 ---
+
 # Tailwind CSS 4 SonarQube
 
 > Conversation ID: 6967e345-ea64-832a-addd-026d6d43031a

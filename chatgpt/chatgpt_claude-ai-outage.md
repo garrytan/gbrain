@@ -1,13 +1,18 @@
 ---
-title: "Claude AI Outage"
-type: note
-created: 2026-03-03
-updated: 2026-03-03
-source: chatgpt-export
 conversation_id: 69a68296-dd80-8331-9557-65f377323048
+created: 2026-03-03
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude AI Outage
+type: note
+updated: 2026-03-03
 ---
+
 # Claude AI Outage
 
 > Conversation ID: 69a68296-dd80-8331-9557-65f377323048

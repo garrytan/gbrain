@@ -1,13 +1,20 @@
 ---
-title: "Fix 500 Supabase Error"
-type: essay
-created: 2025-03-09
-updated: 2025-03-10
-source: chatgpt-export
 conversation_id: 67ce25f4-948c-8007-a457-5d7c044e21d0
+created: 2025-03-09
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 35
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Fix 500 Supabase Error
+type: essay
+updated: 2025-03-10
 ---
+
 # Fix 500 Supabase Error
 
 > Conversation ID: 67ce25f4-948c-8007-a457-5d7c044e21d0

@@ -1,13 +1,18 @@
 ---
-title: "Cinematic Studio Description"
-type: note
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f1725e-5530-83e8-a06a-96c2f7b92d9b
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cinematic Studio Description
+type: note
+updated: 2026-04-29
 ---
+
 # Cinematic Studio Description
 
 > Conversation ID: 69f1725e-5530-83e8-a06a-96c2f7b92d9b

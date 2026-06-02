@@ -1,13 +1,19 @@
 ---
-title: "RC Deck Design Principles"
-type: essay
-created: 2026-05-15
-updated: 2026-05-15
-source: chatgpt-export
 conversation_id: 6a078308-d2d4-83e8-bf2f-ce44951411a6
+created: 2026-05-15
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: RC Deck Design Principles
+type: essay
+updated: 2026-05-15
 ---
+
 # RC Deck Design Principles
 
 > Conversation ID: 6a078308-d2d4-83e8-bf2f-ce44951411a6

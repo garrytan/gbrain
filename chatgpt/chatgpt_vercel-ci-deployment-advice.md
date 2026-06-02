@@ -1,13 +1,20 @@
 ---
-title: "Vercel CI deployment advice"
-type: essay
-created: 2025-08-04
-updated: 2025-08-04
-source: chatgpt-export
 conversation_id: 6891195c-9cf0-8322-943a-f1a879f00d60
+created: 2025-08-04
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 14
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vercel CI deployment advice
+type: essay
+updated: 2025-08-04
 ---
+
 # Vercel CI deployment advice
 
 > Conversation ID: 6891195c-9cf0-8322-943a-f1a879f00d60

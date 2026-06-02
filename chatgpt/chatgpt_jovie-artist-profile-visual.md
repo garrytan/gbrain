@@ -1,13 +1,18 @@
 ---
-title: "Jovie Artist Profile Visual"
-type: note
-created: 2026-05-08
-updated: 2026-05-08
-source: chatgpt-export
 conversation_id: 69fe5244-f324-83e8-99a3-1608e649892a
+created: 2026-05-08
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Jovie Artist Profile Visual
+type: note
+updated: 2026-05-08
 ---
+
 # Jovie Artist Profile Visual
 
 > Conversation ID: 69fe5244-f324-83e8-99a3-1608e649892a

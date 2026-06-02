@@ -1,13 +1,18 @@
 ---
-title: "Snarky DJ Bio Rewrite"
-type: note
-created: 2025-02-23
-updated: 2025-02-23
-source: chatgpt-export
 conversation_id: 67bab198-f250-8007-8e80-ab2acd567a14
+created: 2025-02-23
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Snarky DJ Bio Rewrite
+type: note
+updated: 2025-02-23
 ---
+
 # Snarky DJ Bio Rewrite
 
 > Conversation ID: 67bab198-f250-8007-8e80-ab2acd567a14

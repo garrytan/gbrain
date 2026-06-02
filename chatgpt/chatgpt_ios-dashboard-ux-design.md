@@ -1,13 +1,20 @@
 ---
-title: "iOS Dashboard UX Design"
-type: essay
-created: 2025-07-07
-updated: 2025-07-09
-source: chatgpt-export
 conversation_id: 686b5f43-874c-8007-b47f-1bd6e3f3281f
+created: 2025-07-07
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 16
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS Dashboard UX Design
+type: essay
+updated: 2025-07-09
 ---
+
 # iOS Dashboard UX Design
 
 > Conversation ID: 686b5f43-874c-8007-b47f-1bd6e3f3281f

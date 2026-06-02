@@ -1,13 +1,19 @@
 ---
-title: "UI design for filters"
-type: guide
-created: 2025-11-08
-updated: 2025-11-08
-source: chatgpt-export
 conversation_id: 690fc369-5a0c-8325-be01-480db243d7b7
+created: 2025-11-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: UI design for filters
+type: guide
+updated: 2025-11-08
 ---
+
 # UI design for filters
 
 > Conversation ID: 690fc369-5a0c-8325-be01-480db243d7b7

@@ -1,13 +1,20 @@
 ---
-title: "Code review system design"
-type: essay
-created: 2025-09-06
-updated: 2025-09-07
-source: chatgpt-export
 conversation_id: 68bc8d12-ccd8-832d-baf4-71f252c79356
+created: 2025-09-06
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 16
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Code review system design
+type: essay
+updated: 2025-09-07
 ---
+
 # Code review system design
 
 > Conversation ID: 68bc8d12-ccd8-832d-baf4-71f252c79356

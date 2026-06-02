@@ -1,13 +1,18 @@
 ---
-title: "Vinyl wrap cost inquiry"
-type: note
-created: 2025-07-20
-updated: 2025-07-20
-source: chatgpt-export
 conversation_id: 687d2930-ed14-8320-9dc4-774790aaaab0
+created: 2025-07-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vinyl wrap cost inquiry
+type: note
+updated: 2025-07-20
 ---
+
 # Vinyl wrap cost inquiry
 
 > Conversation ID: 687d2930-ed14-8320-9dc4-774790aaaab0

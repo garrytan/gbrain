@@ -1,13 +1,20 @@
 ---
-title: "Entitlement Management in Next.js"
-type: guide
-created: 2026-02-16
-updated: 2026-02-16
-source: chatgpt-export
 conversation_id: 699370e7-5720-8333-ac4b-10cd12caa8ad
+created: 2026-02-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Entitlement Management in Next.js
+type: guide
+updated: 2026-02-16
 ---
+
 # Entitlement Management in Next.js
 
 > Conversation ID: 699370e7-5720-8333-ac4b-10cd12caa8ad

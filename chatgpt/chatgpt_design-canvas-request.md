@@ -1,13 +1,19 @@
 ---
-title: "Design Canvas Request"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a07f534-92fc-83e8-a1cd-bfaa85c30dce
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Design Canvas Request
+type: note
+updated: 2026-05-16
 ---
+
 # Design Canvas Request
 
 > Conversation ID: 6a07f534-92fc-83e8-a1cd-bfaa85c30dce

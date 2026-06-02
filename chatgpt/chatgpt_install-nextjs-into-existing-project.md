@@ -1,13 +1,19 @@
 ---
-title: "Install Next.js into existing project"
-type: note
-created: 2024-06-06
-updated: 2024-06-06
-source: chatgpt-export
 conversation_id: dd6e3ad1-47cd-435d-9c26-55752015f3ff
+created: 2024-06-06
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Install Next.js into existing project
+type: note
+updated: 2024-06-06
 ---
+
 # Install Next.js into existing project
 
 > Conversation ID: dd6e3ad1-47cd-435d-9c26-55752015f3ff

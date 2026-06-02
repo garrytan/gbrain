@@ -1,13 +1,19 @@
 ---
-title: "DJ Fandom Growth Strategy"
-type: note
-created: 2025-05-03
-updated: 2025-05-03
-source: chatgpt-export
 conversation_id: 68167249-e8d4-8007-a478-fe956e678628
+created: 2025-05-03
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: DJ Fandom Growth Strategy
+type: note
+updated: 2025-05-03
 ---
+
 # DJ Fandom Growth Strategy
 
 > Conversation ID: 68167249-e8d4-8007-a478-fe956e678628

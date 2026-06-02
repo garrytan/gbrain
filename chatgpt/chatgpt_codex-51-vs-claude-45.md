@@ -1,13 +1,18 @@
 ---
-title: "Codex 5.1 vs Claude 4.5"
-type: note
-created: 2025-11-14
-updated: 2025-11-14
-source: chatgpt-export
 conversation_id: 69177537-83e0-832d-89d6-c69796b1557f
+created: 2025-11-14
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Codex 5.1 vs Claude 4.5
+type: note
+updated: 2025-11-14
 ---
+
 # Codex 5.1 vs Claude 4.5
 
 > Conversation ID: 69177537-83e0-832d-89d6-c69796b1557f

@@ -1,13 +1,18 @@
 ---
-title: "SEO Playlist Directory Tips"
-type: note
-created: 2026-04-07
-updated: 2026-04-07
-source: chatgpt-export
 conversation_id: 69d483aa-555c-83e8-8a06-00f72886c44e
+created: 2026-04-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: SEO Playlist Directory Tips
+type: note
+updated: 2026-04-07
 ---
+
 # SEO Playlist Directory Tips
 
 > Conversation ID: 69d483aa-555c-83e8-8a06-00f72886c44e

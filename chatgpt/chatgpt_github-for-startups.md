@@ -1,13 +1,18 @@
 ---
-title: "GitHub for Startups"
-type: note
-created: 2026-02-23
-updated: 2026-02-23
-source: chatgpt-export
 conversation_id: 699cd8b7-ac10-8333-9454-0d5a367193aa
+created: 2026-02-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: GitHub for Startups
+type: note
+updated: 2026-02-23
 ---
+
 # GitHub for Startups
 
 > Conversation ID: 699cd8b7-ac10-8333-9454-0d5a367193aa

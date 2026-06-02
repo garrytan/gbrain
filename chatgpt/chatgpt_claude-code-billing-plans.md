@@ -1,13 +1,19 @@
 ---
-title: "Claude code billing plans"
-type: note
-created: 2025-12-21
-updated: 2025-12-21
-source: chatgpt-export
 conversation_id: 6947593c-7004-8325-bf84-d65b1b938aaf
+created: 2025-12-21
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Claude code billing plans
+type: note
+updated: 2025-12-21
 ---
+
 # Claude code billing plans
 
 > Conversation ID: 6947593c-7004-8325-bf84-d65b1b938aaf

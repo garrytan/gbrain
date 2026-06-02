@@ -1,13 +1,18 @@
 ---
-title: "Suno jobs listings"
-type: note
-created: 2025-11-21
-updated: 2025-11-21
-source: chatgpt-export
 conversation_id: 6920da93-0fdc-8325-ad97-4d3cf627d5f4
+created: 2025-11-21
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Suno jobs listings
+type: note
+updated: 2025-11-21
 ---
+
 # Suno jobs listings
 
 > Conversation ID: 6920da93-0fdc-8325-ad97-4d3cf627d5f4

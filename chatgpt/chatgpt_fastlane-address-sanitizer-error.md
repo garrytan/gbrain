@@ -1,13 +1,20 @@
 ---
-title: "Fastlane Address Sanitizer Error"
-type: guide
-created: 2025-07-25
-updated: 2025-07-25
-source: chatgpt-export
 conversation_id: 6883f5aa-80b8-8325-8248-61727d4a7b86
+created: 2025-07-25
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Fastlane Address Sanitizer Error
+type: guide
+updated: 2025-07-25
 ---
+
 # Fastlane Address Sanitizer Error
 
 > Conversation ID: 6883f5aa-80b8-8325-8248-61727d4a7b86

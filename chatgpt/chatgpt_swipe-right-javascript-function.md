@@ -1,13 +1,19 @@
 ---
-title: "Swipe Right JavaScript Function"
-type: note
-created: 2023-02-12
-updated: 2023-02-12
-source: chatgpt-export
 conversation_id: 6535e1b2-41d9-4d31-ab83-f2ffe5c81269
+created: 2023-02-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Swipe Right JavaScript Function
+type: note
+updated: 2023-02-12
 ---
+
 # Swipe Right JavaScript Function
 
 > Conversation ID: 6535e1b2-41d9-4d31-ab83-f2ffe5c81269

@@ -1,13 +1,19 @@
 ---
-title: "Vercel vs Supabase functions"
-type: note
-created: 2025-08-26
-updated: 2025-08-26
-source: chatgpt-export
 conversation_id: 68ae1c98-769c-832e-a467-c89315dab171
+created: 2025-08-26
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Vercel vs Supabase functions
+type: note
+updated: 2025-08-26
 ---
+
 # Vercel vs Supabase functions
 
 > Conversation ID: 68ae1c98-769c-832e-a467-c89315dab171

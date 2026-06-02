@@ -1,13 +1,19 @@
 ---
-title: "Harry's razor cartridge deals"
-type: essay
-created: 2025-08-17
-updated: 2025-08-18
-source: chatgpt-export
 conversation_id: 68a265e5-4468-8326-ac3b-57a3d84e67fe
+created: 2025-08-17
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 27
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Harry's razor cartridge deals
+type: essay
+updated: 2025-08-18
 ---
+
 # Harry's razor cartridge deals
 
 > Conversation ID: 68a265e5-4468-8326-ac3b-57a3d84e67fe

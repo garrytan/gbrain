@@ -1,13 +1,19 @@
 ---
-title: "Guitar Tracking with Brent"
-type: essay
-created: 2024-03-14
-updated: 2024-03-14
-source: chatgpt-export
 conversation_id: 95f93a3c-e6a0-46df-91c3-b25453db4876
+created: 2024-03-14
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Guitar Tracking with Brent
+type: essay
+updated: 2024-03-14
 ---
+
 # Guitar Tracking with Brent
 
 > Conversation ID: 95f93a3c-e6a0-46df-91c3-b25453db4876

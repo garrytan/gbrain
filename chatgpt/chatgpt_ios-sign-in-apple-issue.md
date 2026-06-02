@@ -1,13 +1,20 @@
 ---
-title: "iOS Sign In Apple Issue"
-type: guide
-created: 2025-07-09
-updated: 2025-07-10
-source: chatgpt-export
 conversation_id: 686f0040-c240-8007-bb92-7d2c3e0310bc
+created: 2025-07-09
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: iOS Sign In Apple Issue
+type: guide
+updated: 2025-07-10
 ---
+
 # iOS Sign In Apple Issue
 
 > Conversation ID: 686f0040-c240-8007-bb92-7d2c3e0310bc

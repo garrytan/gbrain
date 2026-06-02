@@ -1,13 +1,18 @@
 ---
-title: "1Password with ChatGPT Atlas"
-type: note
-created: 2025-10-28
-updated: 2025-10-28
-source: chatgpt-export
 conversation_id: 69002321-05f4-8327-be15-93360ea1c6c8
+created: 2025-10-28
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 1Password with ChatGPT Atlas
+type: note
+updated: 2025-10-28
 ---
+
 # 1Password with ChatGPT Atlas
 
 > Conversation ID: 69002321-05f4-8327-be15-93360ea1c6c8

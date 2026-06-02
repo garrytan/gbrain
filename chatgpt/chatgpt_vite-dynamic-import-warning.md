@@ -1,13 +1,20 @@
 ---
-title: "Vite dynamic import warning."
-type: guide
-created: 2023-05-16
-updated: 2023-05-16
-source: chatgpt-export
 conversation_id: df466da2-da96-4d3f-a965-f03c88b3c260
+created: 2023-05-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vite dynamic import warning.
+type: guide
+updated: 2023-05-16
 ---
+
 # Vite dynamic import warning.
 
 > Conversation ID: df466da2-da96-4d3f-a965-f03c88b3c260

@@ -1,13 +1,18 @@
 ---
-title: "Clean up Laravel UI."
-type: note
-created: 2023-04-18
-updated: 2023-04-18
-source: chatgpt-export
 conversation_id: b9697b6c-4aae-4df7-b2d1-550304c2644c
+created: 2023-04-18
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Clean up Laravel UI.
+type: note
+updated: 2023-04-18
 ---
+
 # Clean up Laravel UI.
 
 > Conversation ID: b9697b6c-4aae-4df7-b2d1-550304c2644c

@@ -1,13 +1,18 @@
 ---
-title: "HTML tabindex Attribute"
-type: note
-created: 2023-05-04
-updated: 2023-05-04
-source: chatgpt-export
 conversation_id: 3e5008e1-131b-412c-849d-fcd2df38099e
+created: 2023-05-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: HTML tabindex Attribute
+type: note
+updated: 2023-05-04
 ---
+
 # HTML tabindex Attribute
 
 > Conversation ID: 3e5008e1-131b-412c-849d-fcd2df38099e

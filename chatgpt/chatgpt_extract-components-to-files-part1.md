@@ -1,13 +1,20 @@
 ---
-title: "Extract Components to Files"
-type: essay
-created: 2024-01-21
-updated: 2024-01-22
-source: chatgpt-export
 conversation_id: 00f4f7ef-d682-4d3c-935d-10496e194087
+created: 2024-01-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 80
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Extract Components to Files
+type: essay
+updated: 2024-01-22
 ---
+
 # Extract Components to Files
 
 > Conversation ID: 00f4f7ef-d682-4d3c-935d-10496e194087

@@ -1,13 +1,18 @@
 ---
-title: "Answer for Jovie"
-type: note
-created: 2026-05-14
-updated: 2026-05-14
-source: chatgpt-export
 conversation_id: 6a063e59-af0c-83e8-9826-f4ba496c3e5b
+created: 2026-05-14
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Answer for Jovie
+type: note
+updated: 2026-05-14
 ---
+
 # Answer for Jovie
 
 > Conversation ID: 6a063e59-af0c-83e8-9826-f4ba496c3e5b

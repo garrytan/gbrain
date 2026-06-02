@@ -1,13 +1,19 @@
 ---
-title: "Chaos Testing Next.js"
-type: guide
-created: 2026-01-27
-updated: 2026-01-27
-source: chatgpt-export
 conversation_id: 69787b8d-2110-8330-a1b0-316ba95f5d04
+created: 2026-01-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Chaos Testing Next.js
+type: guide
+updated: 2026-01-27
 ---
+
 # Chaos Testing Next.js
 
 > Conversation ID: 69787b8d-2110-8330-a1b0-316ba95f5d04

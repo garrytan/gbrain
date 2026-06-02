@@ -1,13 +1,18 @@
 ---
-title: "Midas M32 audio outs"
-type: note
-created: 2025-09-21
-updated: 2025-09-21
-source: chatgpt-export
 conversation_id: 68d04d0c-738c-8332-9050-19d120f69620
+created: 2025-09-21
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Midas M32 audio outs
+type: note
+updated: 2025-09-21
 ---
+
 # Midas M32 audio outs
 
 > Conversation ID: 68d04d0c-738c-8332-9050-19d120f69620

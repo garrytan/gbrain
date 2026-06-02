@@ -1,13 +1,20 @@
 ---
-title: "Vue JS Unit Testing"
-type: guide
-created: 2022-12-20
-updated: 2022-12-20
-source: chatgpt-export
 conversation_id: 37ce5e57-7c31-4e04-86d4-9bd067d76569
+created: 2022-12-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue JS Unit Testing
+type: guide
+updated: 2022-12-20
 ---
+
 # Vue JS Unit Testing
 
 > Conversation ID: 37ce5e57-7c31-4e04-86d4-9bd067d76569

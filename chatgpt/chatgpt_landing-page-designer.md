@@ -1,13 +1,18 @@
 ---
-title: "Landing Page Designer"
-type: note
-created: 2026-02-23
-updated: 2026-02-24
-source: chatgpt-export
 conversation_id: 699cc4ec-87f8-832c-bd5c-742afa67da5a
+created: 2026-02-23
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Landing Page Designer
+type: note
+updated: 2026-02-24
 ---
+
 # Landing Page Designer
 
 > Conversation ID: 699cc4ec-87f8-832c-bd5c-742afa67da5a

@@ -1,13 +1,20 @@
 ---
-title: "Vercel env setup tips"
-type: essay
-created: 2025-08-16
-updated: 2025-08-17
-source: chatgpt-export
 conversation_id: 68a0c112-0920-8322-9c66-80141906104a
+created: 2025-08-16
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 48
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vercel env setup tips
+type: essay
+updated: 2025-08-17
 ---
+
 # Vercel env setup tips
 
 > Conversation ID: 68a0c112-0920-8322-9c66-80141906104a

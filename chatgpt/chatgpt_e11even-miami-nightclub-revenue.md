@@ -1,13 +1,18 @@
 ---
-title: "E11EVEN Miami Nightclub Revenue"
-type: note
-created: 2023-11-12
-updated: 2023-11-12
-source: chatgpt-export
 conversation_id: ad81b25f-92e4-4a62-aa4a-13f5874e15eb
+created: 2023-11-12
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: E11EVEN Miami Nightclub Revenue
+type: note
+updated: 2023-11-12
 ---
+
 # E11EVEN Miami Nightclub Revenue
 
 > Conversation ID: ad81b25f-92e4-4a62-aa4a-13f5874e15eb

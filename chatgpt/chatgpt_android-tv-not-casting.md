@@ -1,13 +1,18 @@
 ---
-title: "Android TV not casting."
-type: note
-created: 2024-05-25
-updated: 2024-05-25
-source: chatgpt-export
 conversation_id: 471917af-548d-4e49-84b0-8610cbaffa79
+created: 2024-05-25
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Android TV not casting.
+type: note
+updated: 2024-05-25
 ---
+
 # Android TV not casting.
 
 > Conversation ID: 471917af-548d-4e49-84b0-8610cbaffa79

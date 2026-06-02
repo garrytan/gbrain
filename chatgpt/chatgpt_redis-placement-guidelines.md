@@ -1,13 +1,20 @@
 ---
-title: "Redis placement guidelines"
-type: essay
-created: 2025-08-27
-updated: 2025-08-27
-source: chatgpt-export
 conversation_id: 68ae9d90-f4d0-832c-8693-042899b47b8e
+created: 2025-08-27
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 36
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Redis placement guidelines
+type: essay
+updated: 2025-08-27
 ---
+
 # Redis placement guidelines
 
 > Conversation ID: 68ae9d90-f4d0-832c-8693-042899b47b8e

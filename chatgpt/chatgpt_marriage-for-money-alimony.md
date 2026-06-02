@@ -1,13 +1,18 @@
 ---
-title: "Marriage for money alimony."
-type: note
-created: 2024-05-30
-updated: 2024-05-30
-source: chatgpt-export
 conversation_id: 4f0bd1e1-caf2-4989-bb11-b6641a2faf38
+created: 2024-05-30
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Marriage for money alimony.
+type: note
+updated: 2024-05-30
 ---
+
 # Marriage for money alimony.
 
 > Conversation ID: 4f0bd1e1-caf2-4989-bb11-b6641a2faf38

@@ -1,13 +1,19 @@
 ---
-title: "Hollywood Studios Economic Reality"
-type: essay
-created: 2025-03-02
-updated: 2025-03-04
-source: chatgpt-export
 conversation_id: 67c3d57a-71f8-8007-abe8-131fa5133c26
+created: 2025-03-02
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 11
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Hollywood Studios Economic Reality
+type: essay
+updated: 2025-03-04
 ---
+
 # Hollywood Studios Economic Reality
 
 > Conversation ID: 67c3d57a-71f8-8007-abe8-131fa5133c26

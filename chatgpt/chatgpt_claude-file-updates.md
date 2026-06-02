@@ -1,13 +1,20 @@
 ---
-title: "Claude file updates"
-type: essay
-created: 2025-08-26
-updated: 2025-08-26
-source: chatgpt-export
 conversation_id: 68ae21eb-4874-832f-af5c-a08f107e3e3f
+created: 2025-08-26
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 17
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Claude file updates
+type: essay
+updated: 2025-08-26
 ---
+
 # Claude file updates
 
 > Conversation ID: 68ae21eb-4874-832f-af5c-a08f107e3e3f

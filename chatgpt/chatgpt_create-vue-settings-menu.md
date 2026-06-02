@@ -1,13 +1,19 @@
 ---
-title: "Create Vue Settings Menu"
-type: note
-created: 2023-05-07
-updated: 2023-05-07
-source: chatgpt-export
 conversation_id: b51b7716-9c7d-47c0-90ef-8d74e7dad8ca
+created: 2023-05-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Create Vue Settings Menu
+type: note
+updated: 2023-05-07
 ---
+
 # Create Vue Settings Menu
 
 > Conversation ID: b51b7716-9c7d-47c0-90ef-8d74e7dad8ca

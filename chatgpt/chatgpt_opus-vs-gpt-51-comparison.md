@@ -1,13 +1,18 @@
 ---
-title: "Opus vs GPT-5.1 comparison"
-type: note
-created: 2025-11-26
-updated: 2025-11-26
-source: chatgpt-export
 conversation_id: 69268366-8104-8325-802d-c5589aba055f
+created: 2025-11-26
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Opus vs GPT-5.1 comparison
+type: note
+updated: 2025-11-26
 ---
+
 # Opus vs GPT-5.1 comparison
 
 > Conversation ID: 69268366-8104-8325-802d-c5589aba055f

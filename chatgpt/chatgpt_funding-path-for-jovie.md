@@ -1,13 +1,18 @@
 ---
-title: "Funding path for Jovie"
-type: note
-created: 2025-09-01
-updated: 2025-09-01
-source: chatgpt-export
 conversation_id: 68b5c88a-a79c-8329-b09e-5f8d99088a68
+created: 2025-09-01
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Funding path for Jovie
+type: note
+updated: 2025-09-01
 ---
+
 # Funding path for Jovie
 
 > Conversation ID: 68b5c88a-a79c-8329-b09e-5f8d99088a68

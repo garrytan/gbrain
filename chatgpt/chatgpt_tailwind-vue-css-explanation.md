@@ -1,13 +1,18 @@
 ---
-title: "Tailwind-Vue CSS Explanation"
-type: note
-created: 2023-05-20
-updated: 2023-05-20
-source: chatgpt-export
 conversation_id: 012bc9dd-aff7-40ff-8ef6-4889ff4de701
+created: 2023-05-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tailwind-Vue CSS Explanation
+type: note
+updated: 2023-05-20
 ---
+
 # Tailwind-Vue CSS Explanation
 
 > Conversation ID: 012bc9dd-aff7-40ff-8ef6-4889ff4de701

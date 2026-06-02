@@ -1,13 +1,19 @@
 ---
-title: "Artist Profile Design Ideas"
-type: note
-created: 2026-04-28
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f03be4-2e50-83e8-bc35-725576612566
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 20
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Artist Profile Design Ideas
+type: note
+updated: 2026-04-29
 ---
+
 # Artist Profile Design Ideas
 
 > Conversation ID: 69f03be4-2e50-83e8-bc35-725576612566

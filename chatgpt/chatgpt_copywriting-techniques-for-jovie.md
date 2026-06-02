@@ -1,13 +1,18 @@
 ---
-title: "Copywriting Techniques for Jovie"
-type: note
-created: 2026-05-05
-updated: 2026-05-06
-source: chatgpt-export
 conversation_id: 69fa809d-4f10-83e8-835d-ab636e083620
+created: 2026-05-05
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Copywriting Techniques for Jovie
+type: note
+updated: 2026-05-06
 ---
+
 # Copywriting Techniques for Jovie
 
 > Conversation ID: 69fa809d-4f10-83e8-835d-ab636e083620

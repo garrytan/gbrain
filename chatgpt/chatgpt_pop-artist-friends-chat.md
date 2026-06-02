@@ -1,13 +1,18 @@
 ---
-title: "Pop Artist Friends Chat"
-type: note
-created: 2023-11-20
-updated: 2023-11-20
-source: chatgpt-export
 conversation_id: e216af7a-02c9-4d9a-81e5-c699228f4e6b
+created: 2023-11-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Pop Artist Friends Chat
+type: note
+updated: 2023-11-20
 ---
+
 # Pop Artist Friends Chat
 
 > Conversation ID: e216af7a-02c9-4d9a-81e5-c699228f4e6b

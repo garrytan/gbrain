@@ -1,13 +1,19 @@
 ---
-title: "Vue.js to Tailwind conversion"
-type: note
-created: 2023-05-03
-updated: 2023-05-03
-source: chatgpt-export
 conversation_id: 6bed9894-9095-4a96-a5a3-5555bcfd854c
+created: 2023-05-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js to Tailwind conversion
+type: note
+updated: 2023-05-03
 ---
+
 # Vue.js to Tailwind conversion
 
 > Conversation ID: 6bed9894-9095-4a96-a5a3-5555bcfd854c

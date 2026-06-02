@@ -1,13 +1,20 @@
 ---
-title: "Designing World-Class Landing Page"
-type: guide
-created: 2026-05-10
-updated: 2026-05-10
-source: chatgpt-export
 conversation_id: 69ffd7ba-4960-83e8-95f3-b8e3829107e0
+created: 2026-05-10
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Designing World-Class Landing Page
+type: guide
+updated: 2026-05-10
 ---
+
 # Designing World-Class Landing Page
 
 > Conversation ID: 69ffd7ba-4960-83e8-95f3-b8e3829107e0

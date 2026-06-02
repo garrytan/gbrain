@@ -1,13 +1,18 @@
 ---
-title: "Zenith Brands Overview"
-type: note
-created: 2025-07-04
-updated: 2025-07-04
-source: chatgpt-export
 conversation_id: 686832c6-49bc-8007-b58a-60bc968c4fd3
+created: 2025-07-04
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Zenith Brands Overview
+type: note
+updated: 2025-07-04
 ---
+
 # Zenith Brands Overview
 
 > Conversation ID: 686832c6-49bc-8007-b58a-60bc968c4fd3

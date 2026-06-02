@@ -1,13 +1,19 @@
 ---
-title: "Beta launch strategy"
-type: note
-created: 2025-11-23
-updated: 2025-11-23
-source: chatgpt-export
 conversation_id: 69237264-5550-832a-9073-1fa06721a106
+created: 2025-11-23
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Beta launch strategy
+type: note
+updated: 2025-11-23
 ---
+
 # Beta launch strategy
 
 > Conversation ID: 69237264-5550-832a-9073-1fa06721a106

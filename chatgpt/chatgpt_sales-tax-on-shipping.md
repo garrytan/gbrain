@@ -1,13 +1,18 @@
 ---
-title: "Sales Tax on Shipping"
-type: note
-created: 2026-01-15
-updated: 2026-01-15
-source: chatgpt-export
 conversation_id: 69697211-668c-8330-b0eb-e07049ec50d5
+created: 2026-01-15
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sales Tax on Shipping
+type: note
+updated: 2026-01-15
 ---
+
 # Sales Tax on Shipping
 
 > Conversation ID: 69697211-668c-8330-b0eb-e07049ec50d5

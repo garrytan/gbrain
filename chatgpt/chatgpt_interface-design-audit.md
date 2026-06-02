@@ -1,13 +1,20 @@
 ---
-title: "Interface design audit"
-type: guide
-created: 2026-05-09
-updated: 2026-05-09
-source: chatgpt-export
 conversation_id: 69fea145-8198-83e8-aaa6-6bcbe59af236
+created: 2026-05-09
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Interface design audit
+type: guide
+updated: 2026-05-09
 ---
+
 # Interface design audit
 
 > Conversation ID: 69fea145-8198-83e8-aaa6-6bcbe59af236

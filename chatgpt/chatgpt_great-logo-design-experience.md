@@ -1,13 +1,19 @@
 ---
-title: "Great Logo Design Experience"
-type: guide
-created: 2024-05-31
-updated: 2024-05-31
-source: chatgpt-export
 conversation_id: b5c0ab36-0974-4090-bf96-d6f0fbeebbc0
+created: 2024-05-31
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Great Logo Design Experience
+type: guide
+updated: 2024-05-31
 ---
+
 # Great Logo Design Experience
 
 > Conversation ID: b5c0ab36-0974-4090-bf96-d6f0fbeebbc0

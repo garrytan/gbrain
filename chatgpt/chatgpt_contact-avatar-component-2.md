@@ -1,13 +1,20 @@
 ---
-title: "Contact Avatar Component"
-type: guide
-created: 2023-05-16
-updated: 2023-05-17
-source: chatgpt-export
 conversation_id: 93478dde-b456-4237-88b7-6901f3e77336
+created: 2023-05-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Contact Avatar Component
+type: guide
+updated: 2023-05-17
 ---
+
 # Contact Avatar Component
 
 > Conversation ID: 93478dde-b456-4237-88b7-6901f3e77336

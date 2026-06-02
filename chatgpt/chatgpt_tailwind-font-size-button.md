@@ -1,13 +1,19 @@
 ---
-title: "Tailwind font size button"
-type: note
-created: 2025-12-16
-updated: 2025-12-16
-source: chatgpt-export
 conversation_id: 6940a694-8a2c-8333-9af9-4605e65be7f0
+created: 2025-12-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind font size button
+type: note
+updated: 2025-12-16
 ---
+
 # Tailwind font size button
 
 > Conversation ID: 6940a694-8a2c-8333-9af9-4605e65be7f0

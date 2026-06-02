@@ -1,13 +1,20 @@
 ---
-title: "Body fat tracking method"
-type: essay
-created: 2025-11-15
-updated: 2025-11-17
-source: chatgpt-export
 conversation_id: 6918ef1d-eebc-832d-8a52-35beef252768
+created: 2025-11-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 22
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Body fat tracking method
+type: essay
+updated: 2025-11-17
 ---
+
 # Body fat tracking method
 
 > Conversation ID: 6918ef1d-eebc-832d-8a52-35beef252768

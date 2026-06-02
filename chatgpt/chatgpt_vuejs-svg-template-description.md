@@ -1,13 +1,19 @@
 ---
-title: "Vue.js SVG Template Description"
-type: guide
-created: 2023-01-08
-updated: 2023-01-08
-source: chatgpt-export
 conversation_id: 1da46c87-dad7-4cc2-b060-dc0910698b5f
+created: 2023-01-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js SVG Template Description
+type: guide
+updated: 2023-01-08
 ---
+
 # Vue.js SVG Template Description
 
 > Conversation ID: 1da46c87-dad7-4cc2-b060-dc0910698b5f

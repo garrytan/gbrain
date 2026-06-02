@@ -1,13 +1,19 @@
 ---
-title: "Next.js image upload Vercel"
-type: note
-created: 2025-09-27
-updated: 2025-09-27
-source: chatgpt-export
 conversation_id: 68d7422b-561c-8320-91d7-36e6aad7fbf5
+created: 2025-09-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Next.js image upload Vercel
+type: note
+updated: 2025-09-27
 ---
+
 # Next.js image upload Vercel
 
 > Conversation ID: 68d7422b-561c-8320-91d7-36e6aad7fbf5

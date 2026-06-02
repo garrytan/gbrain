@@ -1,13 +1,18 @@
 ---
-title: "Recipe adjustment guide"
-type: note
-created: 2025-10-19
-updated: 2025-10-19
-source: chatgpt-export
 conversation_id: 68f47eb3-88e4-8327-b518-f425ff86a2d6
+created: 2025-10-19
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Recipe adjustment guide
+type: note
+updated: 2025-10-19
 ---
+
 # Recipe adjustment guide
 
 > Conversation ID: 68f47eb3-88e4-8327-b518-f425ff86a2d6

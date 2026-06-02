@@ -1,13 +1,18 @@
 ---
-title: "Reddit Influencer Marketing POV"
-type: note
-created: 2025-03-05
-updated: 2025-03-05
-source: chatgpt-export
 conversation_id: 67c8db5f-d790-8007-8865-9b29e4894b18
+created: 2025-03-05
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Reddit Influencer Marketing POV
+type: note
+updated: 2025-03-05
 ---
+
 # Reddit Influencer Marketing POV
 
 > Conversation ID: 67c8db5f-d790-8007-8865-9b29e4894b18

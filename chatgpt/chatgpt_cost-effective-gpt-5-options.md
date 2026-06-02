@@ -1,13 +1,18 @@
 ---
-title: "Cost effective GPT-5 options"
-type: note
-created: 2025-08-08
-updated: 2025-08-08
-source: chatgpt-export
 conversation_id: 68955044-9bf0-8322-943d-1553c9affa2e
+created: 2025-08-08
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Cost effective GPT-5 options
+type: note
+updated: 2025-08-08
 ---
+
 # Cost effective GPT-5 options
 
 > Conversation ID: 68955044-9bf0-8322-943d-1553c9affa2e

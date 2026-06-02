@@ -1,13 +1,19 @@
 ---
-title: "Arm Size and Muscle Growth"
-type: note
-created: 2026-03-16
-updated: 2026-03-16
-source: chatgpt-export
 conversation_id: 69b76693-caf8-8321-af61-341416d6dc87
+created: 2026-03-16
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Arm Size and Muscle Growth
+type: note
+updated: 2026-03-16
 ---
+
 # Arm Size and Muscle Growth
 
 > Conversation ID: 69b76693-caf8-8321-af61-341416d6dc87

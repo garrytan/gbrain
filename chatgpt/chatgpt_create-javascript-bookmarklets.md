@@ -1,13 +1,20 @@
 ---
-title: "Create JavaScript Bookmarklets."
-type: guide
-created: 2024-05-24
-updated: 2024-05-25
-source: chatgpt-export
 conversation_id: fc3cd833-9f49-4ddc-a496-e3e30b9f3678
+created: 2024-05-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Create JavaScript Bookmarklets.
+type: guide
+updated: 2024-05-25
 ---
+
 # Create JavaScript Bookmarklets.
 
 > Conversation ID: fc3cd833-9f49-4ddc-a496-e3e30b9f3678

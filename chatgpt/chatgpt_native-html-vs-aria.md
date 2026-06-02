@@ -1,13 +1,19 @@
 ---
-title: "Native HTML vs ARIA"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6973ab8c-44cc-832c-b3b2-294e35df7eb0
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Native HTML vs ARIA
+type: note
+updated: 2026-01-23
 ---
+
 # Native HTML vs ARIA
 
 > Conversation ID: 6973ab8c-44cc-832c-b3b2-294e35df7eb0

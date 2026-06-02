@@ -1,13 +1,18 @@
 ---
-title: "Adjusting Recipe Proportions"
-type: note
-created: 2024-08-02
-updated: 2024-08-02
-source: chatgpt-export
 conversation_id: 3d21d09d-9282-41f7-a1ec-ba53d2aa61e4
+created: 2024-08-02
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Adjusting Recipe Proportions
+type: note
+updated: 2024-08-02
 ---
+
 # Adjusting Recipe Proportions
 
 > Conversation ID: 3d21d09d-9282-41f7-a1ec-ba53d2aa61e4

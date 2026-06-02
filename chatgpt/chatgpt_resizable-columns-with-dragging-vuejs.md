@@ -1,13 +1,19 @@
 ---
-title: "Resizable Columns with Dragging (Vue.js)"
-type: note
-created: 2023-05-01
-updated: 2023-05-01
-source: chatgpt-export
 conversation_id: 41c8ea7b-543c-422f-90d5-b5c5a7d764f3
+created: 2023-05-01
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Resizable Columns with Dragging (Vue.js)
+type: note
+updated: 2023-05-01
 ---
+
 # Resizable Columns with Dragging (Vue.js)
 
 > Conversation ID: 41c8ea7b-543c-422f-90d5-b5c5a7d764f3

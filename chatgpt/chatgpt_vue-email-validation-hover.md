@@ -1,13 +1,19 @@
 ---
-title: "Vue email validation hover"
-type: guide
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: cfbc3c6d-eac3-4de3-9184-778ea3fa77d2
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue email validation hover
+type: guide
+updated: 2022-12-22
 ---
+
 # Vue email validation hover
 
 > Conversation ID: cfbc3c6d-eac3-4de3-9184-778ea3fa77d2

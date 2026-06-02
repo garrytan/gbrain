@@ -1,13 +1,20 @@
 ---
-title: "Chrome Extension Webpack Config"
-type: guide
-created: 2023-02-12
-updated: 2023-02-12
-source: chatgpt-export
 conversation_id: 329d0337-c739-416e-928d-e73acec3d819
+created: 2023-02-12
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Chrome Extension Webpack Config
+type: guide
+updated: 2023-02-12
 ---
+
 # Chrome Extension Webpack Config
 
 > Conversation ID: 329d0337-c739-416e-928d-e73acec3d819

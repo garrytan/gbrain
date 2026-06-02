@@ -1,13 +1,18 @@
 ---
-title: "Optimal Release: July 7"
-type: note
-created: 2024-04-11
-updated: 2024-04-11
-source: chatgpt-export
 conversation_id: e65f4b50-eecb-4854-98a6-6999be9ab218
+created: 2024-04-11
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Optimal Release: July 7'
+type: note
+updated: 2024-04-11
 ---
+
 # Optimal Release: July 7
 
 > Conversation ID: e65f4b50-eecb-4854-98a6-6999be9ab218

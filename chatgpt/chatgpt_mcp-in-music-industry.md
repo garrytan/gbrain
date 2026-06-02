@@ -1,13 +1,19 @@
 ---
-title: "MCP in Music Industry"
-type: note
-created: 2026-02-09
-updated: 2026-02-09
-source: chatgpt-export
 conversation_id: 698a4b2b-d9ec-832b-b35b-c1aed0056738
+created: 2026-02-09
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: MCP in Music Industry
+type: note
+updated: 2026-02-09
 ---
+
 # MCP in Music Industry
 
 > Conversation ID: 698a4b2b-d9ec-832b-b35b-c1aed0056738

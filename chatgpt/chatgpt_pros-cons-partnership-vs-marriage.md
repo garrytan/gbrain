@@ -1,13 +1,18 @@
 ---
-title: "Pros & Cons: Partnership vs Marriage"
-type: note
-created: 2024-07-08
-updated: 2024-07-08
-source: chatgpt-export
 conversation_id: 24840fd8-b626-47e4-8c87-73695915b192
+created: 2024-07-08
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Pros & Cons: Partnership vs Marriage'
+type: note
+updated: 2024-07-08
 ---
+
 # Pros & Cons: Partnership vs Marriage
 
 > Conversation ID: 24840fd8-b626-47e4-8c87-73695915b192

@@ -1,13 +1,19 @@
 ---
-title: "Jovie Pivot Advice"
-type: essay
-created: 2026-05-23
-updated: 2026-05-23
-source: chatgpt-export
 conversation_id: 6a11ded2-80f8-83e8-ac4f-9b6818badb5e
+created: 2026-05-23
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Jovie Pivot Advice
+type: essay
+updated: 2026-05-23
 ---
+
 # Jovie Pivot Advice
 
 > Conversation ID: 6a11ded2-80f8-83e8-ac4f-9b6818badb5e

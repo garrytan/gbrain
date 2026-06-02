@@ -1,13 +1,18 @@
 ---
-title: "Vue.js button template."
-type: note
-created: 2023-05-04
-updated: 2023-05-04
-source: chatgpt-export
 conversation_id: 92c9d23a-bb2c-4933-8f14-6a4cf25f05f7
+created: 2023-05-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js button template.
+type: note
+updated: 2023-05-04
 ---
+
 # Vue.js button template.
 
 > Conversation ID: 92c9d23a-bb2c-4933-8f14-6a4cf25f05f7

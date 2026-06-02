@@ -1,13 +1,18 @@
 ---
-title: "Claude Code Desktop overview"
-type: note
-created: 2025-12-21
-updated: 2025-12-21
-source: chatgpt-export
 conversation_id: 69477457-1584-8326-8688-288e49d3374e
+created: 2025-12-21
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Claude Code Desktop overview
+type: note
+updated: 2025-12-21
 ---
+
 # Claude Code Desktop overview
 
 > Conversation ID: 69477457-1584-8326-8688-288e49d3374e

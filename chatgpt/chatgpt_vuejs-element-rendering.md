@@ -1,13 +1,19 @@
 ---
-title: "Vue.js element rendering."
-type: note
-created: 2023-02-26
-updated: 2023-02-26
-source: chatgpt-export
 conversation_id: 4cbdc0a5-3461-4ac4-89cc-5f5a4dfdc788
+created: 2023-02-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js element rendering.
+type: note
+updated: 2023-02-26
 ---
+
 # Vue.js element rendering.
 
 > Conversation ID: 4cbdc0a5-3461-4ac4-89cc-5f5a4dfdc788

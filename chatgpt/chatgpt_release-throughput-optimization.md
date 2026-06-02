@@ -1,13 +1,20 @@
 ---
-title: "Release throughput optimization"
-type: essay
-created: 2026-04-26
-updated: 2026-04-26
-source: chatgpt-export
 conversation_id: 69ee4da7-fb24-83e8-bbf0-d6f74accc6df
+created: 2026-04-26
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Release throughput optimization
+type: essay
+updated: 2026-04-26
 ---
+
 # Release throughput optimization
 
 > Conversation ID: 69ee4da7-fb24-83e8-bbf0-d6f74accc6df

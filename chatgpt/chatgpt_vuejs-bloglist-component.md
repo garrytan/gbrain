@@ -1,13 +1,20 @@
 ---
-title: "Vue.js BlogList Component"
-type: essay
-created: 2023-01-05
-updated: 2023-01-05
-source: chatgpt-export
 conversation_id: eb55c6b7-2e8d-4194-9b22-50bf1ab9b5a0
+created: 2023-01-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 30
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js BlogList Component
+type: essay
+updated: 2023-01-05
 ---
+
 # Vue.js BlogList Component
 
 > Conversation ID: eb55c6b7-2e8d-4194-9b22-50bf1ab9b5a0

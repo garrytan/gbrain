@@ -1,13 +1,18 @@
 ---
-title: "Design Cleanup Suggestions"
-type: note
-created: 2026-02-07
-updated: 2026-02-07
-source: chatgpt-export
 conversation_id: 6986c15c-51cc-832c-8584-f9b7e4894007
+created: 2026-02-07
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Design Cleanup Suggestions
+type: note
+updated: 2026-02-07
 ---
+
 # Design Cleanup Suggestions
 
 > Conversation ID: 6986c15c-51cc-832c-8584-f9b7e4894007

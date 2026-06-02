@@ -1,13 +1,18 @@
 ---
-title: "Improving Artist Page"
-type: note
-created: 2026-02-17
-updated: 2026-02-17
-source: chatgpt-export
 conversation_id: 6994d4fa-374c-832b-a923-2ce129406481
+created: 2026-02-17
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Improving Artist Page
+type: note
+updated: 2026-02-17
 ---
+
 # Improving Artist Page
 
 > Conversation ID: 6994d4fa-374c-832b-a923-2ce129406481

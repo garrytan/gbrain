@@ -1,13 +1,18 @@
 ---
-title: "Fight Club 4K Release"
-type: note
-created: 2026-03-04
-updated: 2026-03-04
-source: chatgpt-export
 conversation_id: 69a7dc5b-0314-832c-bf20-540d539cff27
+created: 2026-03-04
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fight Club 4K Release
+type: note
+updated: 2026-03-04
 ---
+
 # Fight Club 4K Release
 
 > Conversation ID: 69a7dc5b-0314-832c-bf20-540d539cff27

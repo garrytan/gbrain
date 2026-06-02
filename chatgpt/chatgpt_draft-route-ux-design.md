@@ -1,13 +1,18 @@
 ---
-title: "Draft Route UX Design"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a08f15d-a490-83e8-a19b-92877bf11974
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Draft Route UX Design
+type: note
+updated: 2026-05-16
 ---
+
 # Draft Route UX Design
 
 > Conversation ID: 6a08f15d-a490-83e8-a19b-92877bf11974

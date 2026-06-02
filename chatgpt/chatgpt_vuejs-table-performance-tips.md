@@ -1,13 +1,18 @@
 ---
-title: "Vue.js Table Performance Tips"
-type: note
-created: 2022-12-20
-updated: 2022-12-20
-source: chatgpt-export
 conversation_id: 22666beb-ccbb-4d2b-b562-9edbf00d9081
+created: 2022-12-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js Table Performance Tips
+type: note
+updated: 2022-12-20
 ---
+
 # Vue.js Table Performance Tips
 
 > Conversation ID: 22666beb-ccbb-4d2b-b562-9edbf00d9081

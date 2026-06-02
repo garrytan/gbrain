@@ -1,13 +1,19 @@
 ---
-title: "Pop Culture Audio Mashups"
-type: note
-created: 2024-06-29
-updated: 2024-07-02
-source: chatgpt-export
 conversation_id: 62ade2d5-1001-4ba8-92fd-318d303c4035
+created: 2024-06-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 18
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Pop Culture Audio Mashups
+type: note
+updated: 2024-07-02
 ---
+
 # Pop Culture Audio Mashups
 
 > Conversation ID: 62ade2d5-1001-4ba8-92fd-318d303c4035

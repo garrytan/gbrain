@@ -1,13 +1,20 @@
 ---
-title: "Merge Vue Templates"
-type: guide
-created: 2024-03-08
-updated: 2024-03-08
-source: chatgpt-export
 conversation_id: 9f1a3058-0b0c-40ed-b38a-d87845725e55
+created: 2024-03-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Merge Vue Templates
+type: guide
+updated: 2024-03-08
 ---
+
 # Merge Vue Templates
 
 > Conversation ID: 9f1a3058-0b0c-40ed-b38a-d87845725e55

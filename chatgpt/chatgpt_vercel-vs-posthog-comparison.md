@@ -1,13 +1,18 @@
 ---
-title: "Vercel vs PostHog comparison"
-type: note
-created: 2025-12-21
-updated: 2025-12-21
-source: chatgpt-export
 conversation_id: 694849f3-89b4-8331-a9d0-584c6b12c3bc
+created: 2025-12-21
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel vs PostHog comparison
+type: note
+updated: 2025-12-21
 ---
+
 # Vercel vs PostHog comparison
 
 > Conversation ID: 694849f3-89b4-8331-a9d0-584c6b12c3bc

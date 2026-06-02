@@ -1,13 +1,18 @@
 ---
-title: "ChatGPT Enhances Communication"
-type: note
-created: 2023-06-29
-updated: 2023-06-29
-source: chatgpt-export
 conversation_id: a10f1833-e613-4e43-afae-8e4a310e55fc
+created: 2023-06-29
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: ChatGPT Enhances Communication
+type: note
+updated: 2023-06-29
 ---
+
 # ChatGPT Enhances Communication
 
 > Conversation ID: a10f1833-e613-4e43-afae-8e4a310e55fc

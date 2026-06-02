@@ -1,13 +1,19 @@
 ---
-title: "Vue.js Menu Component"
-type: guide
-created: 2023-05-07
-updated: 2023-05-07
-source: chatgpt-export
 conversation_id: 6c18200f-7d7c-4342-a036-5b0a7719caae
+created: 2023-05-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js Menu Component
+type: guide
+updated: 2023-05-07
 ---
+
 # Vue.js Menu Component
 
 > Conversation ID: 6c18200f-7d7c-4342-a036-5b0a7719caae

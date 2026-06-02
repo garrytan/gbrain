@@ -1,13 +1,20 @@
 ---
-title: "Vue.js Body Tracking Component"
-type: essay
-created: 2023-12-05
-updated: 2023-12-05
-source: chatgpt-export
 conversation_id: 1e1b848b-2115-48d9-b046-404b8f075fa9
+created: 2023-12-05
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 22
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue.js Body Tracking Component
+type: essay
+updated: 2023-12-05
 ---
+
 # Vue.js Body Tracking Component
 
 > Conversation ID: 1e1b848b-2115-48d9-b046-404b8f075fa9

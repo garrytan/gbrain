@@ -1,13 +1,18 @@
 ---
-title: "Designing Database Before Coding"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: cb37a375-954c-4197-b44e-23d946a63e02
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Designing Database Before Coding
+type: note
+updated: 2022-12-21
 ---
+
 # Designing Database Before Coding
 
 > Conversation ID: cb37a375-954c-4197-b44e-23d946a63e02

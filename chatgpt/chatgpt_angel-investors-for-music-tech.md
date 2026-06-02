@@ -1,13 +1,18 @@
 ---
-title: "Angel Investors for Music Tech"
-type: note
-created: 2026-02-21
-updated: 2026-02-24
-source: chatgpt-export
 conversation_id: 69994102-3604-8329-9e25-045fb87192b4
+created: 2026-02-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Angel Investors for Music Tech
+type: note
+updated: 2026-02-24
 ---
+
 # Angel Investors for Music Tech
 
 > Conversation ID: 69994102-3604-8329-9e25-045fb87192b4

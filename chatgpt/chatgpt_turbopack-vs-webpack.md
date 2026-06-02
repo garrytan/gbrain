@@ -1,13 +1,19 @@
 ---
-title: "Turbopack vs Webpack"
-type: guide
-created: 2025-08-03
-updated: 2025-08-03
-source: chatgpt-export
 conversation_id: 688fa988-5ee0-832d-8fe1-daf3cfe217c1
+created: 2025-08-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 9
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Turbopack vs Webpack
+type: guide
+updated: 2025-08-03
 ---
+
 # Turbopack vs Webpack
 
 > Conversation ID: 688fa988-5ee0-832d-8fe1-daf3cfe217c1

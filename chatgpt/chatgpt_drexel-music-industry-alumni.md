@@ -1,13 +1,18 @@
 ---
-title: "Drexel Music Industry Alumni"
-type: note
-created: 2026-02-24
-updated: 2026-02-24
-source: chatgpt-export
 conversation_id: 699d5d28-a790-8325-bc68-ba3537e996ed
+created: 2026-02-24
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Drexel Music Industry Alumni
+type: note
+updated: 2026-02-24
 ---
+
 # Drexel Music Industry Alumni
 
 > Conversation ID: 699d5d28-a790-8325-bc68-ba3537e996ed

@@ -1,13 +1,19 @@
 ---
-title: "Design System Audit Plan"
-type: note
-created: 2026-04-10
-updated: 2026-04-11
-source: chatgpt-export
 conversation_id: 69d86d12-30b8-83e8-bc6c-b061cb542871
+created: 2026-04-10
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Design System Audit Plan
+type: note
+updated: 2026-04-11
 ---
+
 # Design System Audit Plan
 
 > Conversation ID: 69d86d12-30b8-83e8-bc6c-b061cb542871

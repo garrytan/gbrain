@@ -1,13 +1,19 @@
 ---
-title: "Jovie for Music Creators"
-type: note
-created: 2026-04-25
-updated: 2026-04-25
-source: chatgpt-export
 conversation_id: 69ec1797-c2d8-83e8-8b4c-18f666ce821a
+created: 2026-04-25
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Jovie for Music Creators
+type: note
+updated: 2026-04-25
 ---
+
 # Jovie for Music Creators
 
 > Conversation ID: 69ec1797-c2d8-83e8-8b4c-18f666ce821a

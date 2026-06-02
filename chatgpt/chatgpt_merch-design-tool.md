@@ -1,13 +1,20 @@
 ---
-title: "Merch Design Tool"
-type: guide
-created: 2026-05-22
-updated: 2026-05-22
-source: chatgpt-export
 conversation_id: 6a1097ab-f6c0-83e8-a28f-2c2f7fed882b
+created: 2026-05-22
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 5
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Merch Design Tool
+type: guide
+updated: 2026-05-22
 ---
+
 # Merch Design Tool
 
 > Conversation ID: 6a1097ab-f6c0-83e8-a28f-2c2f7fed882b

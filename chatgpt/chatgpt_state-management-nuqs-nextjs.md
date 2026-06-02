@@ -1,13 +1,19 @@
 ---
-title: "State Management Nuqs Next.js"
-type: guide
-created: 2026-01-13
-updated: 2026-01-13
-source: chatgpt-export
 conversation_id: 69668155-1540-832a-8eda-058bff7b2fb4
+created: 2026-01-13
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: State Management Nuqs Next.js
+type: guide
+updated: 2026-01-13
 ---
+
 # State Management Nuqs Next.js
 
 > Conversation ID: 69668155-1540-832a-8eda-058bff7b2fb4

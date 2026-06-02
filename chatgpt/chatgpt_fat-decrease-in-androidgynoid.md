@@ -1,13 +1,18 @@
 ---
-title: "Fat Decrease in Android/Gynoid"
-type: note
-created: 2024-04-05
-updated: 2024-04-05
-source: chatgpt-export
 conversation_id: 65739cdc-d360-4750-b0ba-26f5add078b7
+created: 2024-04-05
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 20
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Fat Decrease in Android/Gynoid
+type: note
+updated: 2024-04-05
 ---
+
 # Fat Decrease in Android/Gynoid
 
 > Conversation ID: 65739cdc-d360-4750-b0ba-26f5add078b7

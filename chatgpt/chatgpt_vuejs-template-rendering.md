@@ -1,13 +1,18 @@
 ---
-title: "Vue.js template rendering"
-type: note
-created: 2022-12-24
-updated: 2022-12-24
-source: chatgpt-export
 conversation_id: 6b395a60-4cd3-475d-bc73-3080ee885eda
+created: 2022-12-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js template rendering
+type: note
+updated: 2022-12-24
 ---
+
 # Vue.js template rendering
 
 > Conversation ID: 6b395a60-4cd3-475d-bc73-3080ee885eda

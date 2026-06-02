@@ -1,13 +1,20 @@
 ---
-title: "Vue OTP component summary"
-type: guide
-created: 2023-01-03
-updated: 2023-01-03
-source: chatgpt-export
 conversation_id: 481525ef-6ba9-453c-a347-e564430cf70c
+created: 2023-01-03
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 10
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Vue OTP component summary
+type: guide
+updated: 2023-01-03
 ---
+
 # Vue OTP component summary
 
 > Conversation ID: 481525ef-6ba9-453c-a347-e564430cf70c

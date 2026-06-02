@@ -1,13 +1,19 @@
 ---
-title: "Navigate Cells in Vue Table"
-type: guide
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: bc61fe12-bb13-4a24-8042-09955da5fe5d
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Navigate Cells in Vue Table
+type: guide
+updated: 2022-12-22
 ---
+
 # Navigate Cells in Vue Table
 
 > Conversation ID: bc61fe12-bb13-4a24-8042-09955da5fe5d

@@ -1,13 +1,19 @@
 ---
-title: "Vue JS Form Template"
-type: note
-created: 2022-12-28
-updated: 2022-12-28
-source: chatgpt-export
 conversation_id: 8fd580b8-aa12-4440-afc5-686beb15a807
+created: 2022-12-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue JS Form Template
+type: note
+updated: 2022-12-28
 ---
+
 # Vue JS Form Template
 
 > Conversation ID: 8fd580b8-aa12-4440-afc5-686beb15a807

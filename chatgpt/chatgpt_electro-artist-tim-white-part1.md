@@ -1,13 +1,20 @@
 ---
-title: "Electro Artist Tim White"
-type: essay
-created: 2024-05-29
-updated: 2024-05-29
-source: chatgpt-export
 conversation_id: 9ab7c58c-8c00-4444-afa2-aafc18da0313
+created: 2024-05-29
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 47
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Electro Artist Tim White
+type: essay
+updated: 2024-05-29
 ---
+
 # Electro Artist Tim White
 
 > Conversation ID: 9ab7c58c-8c00-4444-afa2-aafc18da0313

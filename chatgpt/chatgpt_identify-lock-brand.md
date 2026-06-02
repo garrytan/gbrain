@@ -1,13 +1,18 @@
 ---
-title: "Identify Lock Brand"
-type: note
-created: 2023-06-28
-updated: 2023-06-28
-source: chatgpt-export
 conversation_id: 53740edf-1ff3-4ffb-a040-5cd142805176
+created: 2023-06-28
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Identify Lock Brand
+type: note
+updated: 2023-06-28
 ---
+
 # Identify Lock Brand
 
 > Conversation ID: 53740edf-1ff3-4ffb-a040-5cd142805176

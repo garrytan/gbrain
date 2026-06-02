@@ -1,13 +1,19 @@
 ---
-title: "MCP Button Animations"
-type: guide
-created: 2026-04-16
-updated: 2026-04-16
-source: chatgpt-export
 conversation_id: 69e08b49-e9c4-83e8-942f-7c4053ec0c59
+created: 2026-04-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: MCP Button Animations
+type: guide
+updated: 2026-04-16
 ---
+
 # MCP Button Animations
 
 > Conversation ID: 69e08b49-e9c4-83e8-942f-7c4053ec0c59

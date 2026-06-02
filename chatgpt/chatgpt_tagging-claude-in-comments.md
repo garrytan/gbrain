@@ -1,13 +1,18 @@
 ---
-title: "Tagging Claude in Comments"
-type: note
-created: 2026-01-09
-updated: 2026-01-09
-source: chatgpt-export
 conversation_id: 69616252-01e8-832a-a80e-eb4e2b3e4699
+created: 2026-01-09
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tagging Claude in Comments
+type: note
+updated: 2026-01-09
 ---
+
 # Tagging Claude in Comments
 
 > Conversation ID: 69616252-01e8-832a-a80e-eb4e2b3e4699

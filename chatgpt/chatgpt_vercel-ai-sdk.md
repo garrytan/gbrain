@@ -1,13 +1,19 @@
 ---
-title: "Vercel AI SDK"
-type: note
-created: 2026-01-24
-updated: 2026-01-24
-source: chatgpt-export
 conversation_id: 69742bda-f414-832e-8dc2-f02059eb1a53
+created: 2026-01-24
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vercel AI SDK
+type: note
+updated: 2026-01-24
 ---
+
 # Vercel AI SDK
 
 > Conversation ID: 69742bda-f414-832e-8dc2-f02059eb1a53

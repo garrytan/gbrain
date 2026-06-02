@@ -1,13 +1,20 @@
 ---
-title: "Jovie Homepage Redesign Prompt"
-type: guide
-created: 2026-04-03
-updated: 2026-04-03
-source: chatgpt-export
 conversation_id: 69d01e80-9c7c-83e8-9cbf-12c8907e9381
+created: 2026-04-03
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie Homepage Redesign Prompt
+type: guide
+updated: 2026-04-03
 ---
+
 # Jovie Homepage Redesign Prompt
 
 > Conversation ID: 69d01e80-9c7c-83e8-9cbf-12c8907e9381

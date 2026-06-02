@@ -1,13 +1,18 @@
 ---
-title: "eCommerce Marketing Suggestions."
-type: note
-created: 2023-04-02
-updated: 2023-04-02
-source: chatgpt-export
 conversation_id: 442ee186-d11d-4842-ba5d-5d966a407959
+created: 2023-04-02
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: eCommerce Marketing Suggestions.
+type: note
+updated: 2023-04-02
 ---
+
 # eCommerce Marketing Suggestions.
 
 > Conversation ID: 442ee186-d11d-4842-ba5d-5d966a407959

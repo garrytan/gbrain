@@ -1,13 +1,18 @@
 ---
-title: "Superhero Mode Logo Design"
-type: note
-created: 2024-01-09
-updated: 2024-01-09
-source: chatgpt-export
 conversation_id: 8dddab63-e28c-48aa-8d76-cfeada8dce23
+created: 2024-01-09
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Superhero Mode Logo Design
+type: note
+updated: 2024-01-09
 ---
+
 # Superhero Mode Logo Design
 
 > Conversation ID: 8dddab63-e28c-48aa-8d76-cfeada8dce23

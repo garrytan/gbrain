@@ -1,13 +1,18 @@
 ---
-title: "Codex Pricing Differences"
-type: note
-created: 2026-03-07
-updated: 2026-03-07
-source: chatgpt-export
 conversation_id: 69ab77b3-91ac-832f-a9d8-0ddecd72c435
+created: 2026-03-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Codex Pricing Differences
+type: note
+updated: 2026-03-07
 ---
+
 # Codex Pricing Differences
 
 > Conversation ID: 69ab77b3-91ac-832f-a9d8-0ddecd72c435

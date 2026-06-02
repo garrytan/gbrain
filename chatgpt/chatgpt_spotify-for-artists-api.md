@@ -1,13 +1,18 @@
 ---
-title: "Spotify for Artists API"
-type: note
-created: 2025-12-15
-updated: 2025-12-15
-source: chatgpt-export
 conversation_id: 694081f8-5764-8330-85a8-39294651c7e5
+created: 2025-12-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Spotify for Artists API
+type: note
+updated: 2025-12-15
 ---
+
 # Spotify for Artists API
 
 > Conversation ID: 694081f8-5764-8330-85a8-39294651c7e5

@@ -1,13 +1,19 @@
 ---
-title: "Figma Claude Code Integration"
-type: note
-created: 2026-02-20
-updated: 2026-02-20
-source: chatgpt-export
 conversation_id: 6998c94e-d7b0-8330-96ba-ce6fe3800d9f
+created: 2026-02-20
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Figma Claude Code Integration
+type: note
+updated: 2026-02-20
 ---
+
 # Figma Claude Code Integration
 
 > Conversation ID: 6998c94e-d7b0-8330-96ba-ce6fe3800d9f

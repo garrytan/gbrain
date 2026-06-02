@@ -1,13 +1,18 @@
 ---
-title: "CDJ-2000NXS Overview"
-type: note
-created: 2025-01-30
-updated: 2025-01-30
-source: chatgpt-export
 conversation_id: 679ae1c8-2288-8007-b48f-2911cd9b16f8
+created: 2025-01-30
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: CDJ-2000NXS Overview
+type: note
+updated: 2025-01-30
 ---
+
 # CDJ-2000NXS Overview
 
 > Conversation ID: 679ae1c8-2288-8007-b48f-2911cd9b16f8

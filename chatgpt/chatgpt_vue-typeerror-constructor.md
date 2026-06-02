@@ -1,13 +1,18 @@
 ---
-title: "Vue TypeError Constructor"
-type: note
-created: 2023-02-05
-updated: 2023-02-05
-source: chatgpt-export
 conversation_id: 3dd07b6a-10f4-42f1-bc00-d25e05632202
+created: 2023-02-05
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue TypeError Constructor
+type: note
+updated: 2023-02-05
 ---
+
 # Vue TypeError Constructor
 
 > Conversation ID: 3dd07b6a-10f4-42f1-bc00-d25e05632202

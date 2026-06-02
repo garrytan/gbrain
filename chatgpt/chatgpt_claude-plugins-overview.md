@@ -1,13 +1,19 @@
 ---
-title: "Claude Plugins Overview"
-type: note
-created: 2026-02-03
-updated: 2026-02-03
-source: chatgpt-export
 conversation_id: 6981503b-1d7c-832d-9a4b-4de8d9d459bf
+created: 2026-02-03
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude Plugins Overview
+type: note
+updated: 2026-02-03
 ---
+
 # Claude Plugins Overview
 
 > Conversation ID: 6981503b-1d7c-832d-9a4b-4de8d9d459bf

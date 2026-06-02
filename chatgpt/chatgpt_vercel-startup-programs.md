@@ -1,13 +1,18 @@
 ---
-title: "Vercel Startup Programs"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6973fab2-878c-8333-8cd4-6e037a0edc22
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel Startup Programs
+type: note
+updated: 2026-01-23
 ---
+
 # Vercel Startup Programs
 
 > Conversation ID: 6973fab2-878c-8333-8cd4-6e037a0edc22

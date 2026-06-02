@@ -1,13 +1,19 @@
 ---
-title: "Tailwind 4 custom theme"
-type: note
-created: 2025-08-28
-updated: 2025-08-28
-source: chatgpt-export
 conversation_id: 68b0e03a-5fb0-832f-a372-724374bb0cce
+created: 2025-08-28
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind 4 custom theme
+type: note
+updated: 2025-08-28
 ---
+
 # Tailwind 4 custom theme
 
 > Conversation ID: 68b0e03a-5fb0-832f-a372-724374bb0cce

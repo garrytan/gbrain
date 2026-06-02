@@ -1,13 +1,19 @@
 ---
-title: "Amazon Music Remix Pitch"
-type: note
-created: 2024-03-27
-updated: 2024-03-27
-source: chatgpt-export
 conversation_id: 813ce63d-dc9a-4023-b807-971bd3f6250f
+created: 2024-03-27
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 14
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Amazon Music Remix Pitch
+type: note
+updated: 2024-03-27
 ---
+
 # Amazon Music Remix Pitch
 
 > Conversation ID: 813ce63d-dc9a-4023-b807-971bd3f6250f

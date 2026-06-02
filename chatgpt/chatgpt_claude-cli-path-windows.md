@@ -1,13 +1,19 @@
 ---
-title: "Claude CLI Path Windows"
-type: note
-created: 2026-01-08
-updated: 2026-01-08
-source: chatgpt-export
 conversation_id: 69603465-1f38-8326-a280-69fd0e7c82b5
+created: 2026-01-08
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude CLI Path Windows
+type: note
+updated: 2026-01-08
 ---
+
 # Claude CLI Path Windows
 
 > Conversation ID: 69603465-1f38-8326-a280-69fd0e7c82b5

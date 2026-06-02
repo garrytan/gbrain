@@ -1,13 +1,19 @@
 ---
-title: "AI in Music Marketing"
-type: essay
-created: 2026-02-03
-updated: 2026-02-03
-source: chatgpt-export
 conversation_id: 6981418e-b1e0-832e-82ba-8e76df2e398f
+created: 2026-02-03
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: AI in Music Marketing
+type: essay
+updated: 2026-02-03
 ---
+
 # AI in Music Marketing
 
 > Conversation ID: 6981418e-b1e0-832e-82ba-8e76df2e398f

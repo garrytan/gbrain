@@ -1,13 +1,19 @@
 ---
-title: "Extract Input Element to Component"
-type: note
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: 8f8f2b36-0749-4e11-a02d-9178266f2b62
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Extract Input Element to Component
+type: note
+updated: 2022-12-23
 ---
+
 # Extract Input Element to Component
 
 > Conversation ID: 8f8f2b36-0749-4e11-a02d-9178266f2b62

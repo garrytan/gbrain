@@ -1,13 +1,18 @@
 ---
-title: "IMDb Pitch Pitch Perfect 2"
-type: note
-created: 2026-01-07
-updated: 2026-01-07
-source: chatgpt-export
 conversation_id: 695de82b-59ac-832e-921f-c0fe4500af69
+created: 2026-01-07
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: IMDb Pitch Pitch Perfect 2
+type: note
+updated: 2026-01-07
 ---
+
 # IMDb Pitch Pitch Perfect 2
 
 > Conversation ID: 695de82b-59ac-832e-921f-c0fe4500af69

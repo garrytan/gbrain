@@ -1,13 +1,20 @@
 ---
-title: "Spotify Development Seminar"
-type: guide
-created: 2026-05-30
-updated: 2026-05-30
-source: chatgpt-export
 conversation_id: 6a1a3a9d-b884-83e8-ba7c-84e7eaded5ac
+created: 2026-05-30
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Spotify Development Seminar
+type: guide
+updated: 2026-05-30
 ---
+
 # Spotify Development Seminar
 
 > Conversation ID: 6a1a3a9d-b884-83e8-ba7c-84e7eaded5ac

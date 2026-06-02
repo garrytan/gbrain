@@ -1,13 +1,19 @@
 ---
-title: "Eloquent Relationship with Vue"
-type: note
-created: 2023-01-08
-updated: 2023-01-08
-source: chatgpt-export
 conversation_id: 09edf9ff-25d5-4cb8-818a-3eac9ae3a1fe
+created: 2023-01-08
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Eloquent Relationship with Vue
+type: note
+updated: 2023-01-08
 ---
+
 # Eloquent Relationship with Vue
 
 > Conversation ID: 09edf9ff-25d5-4cb8-818a-3eac9ae3a1fe

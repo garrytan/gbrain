@@ -1,13 +1,20 @@
 ---
-title: "Clerk Supabase User Profile"
-type: essay
-created: 2025-03-10
-updated: 2025-03-10
-source: chatgpt-export
 conversation_id: 67ce6047-1704-8007-aca3-49eb903adedd
+created: 2025-03-10
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 70
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Clerk Supabase User Profile
+type: essay
+updated: 2025-03-10
 ---
+
 # Clerk Supabase User Profile
 
 > Conversation ID: 67ce6047-1704-8007-aca3-49eb903adedd

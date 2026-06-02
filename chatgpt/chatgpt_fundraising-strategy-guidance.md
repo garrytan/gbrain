@@ -1,13 +1,19 @@
 ---
-title: "Fundraising Strategy Guidance"
-type: note
-created: 2026-04-22
-updated: 2026-04-22
-source: chatgpt-export
 conversation_id: 69e82fcc-dc18-83e8-8975-03c649efbd5e
+created: 2026-04-22
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Fundraising Strategy Guidance
+type: note
+updated: 2026-04-22
 ---
+
 # Fundraising Strategy Guidance
 
 > Conversation ID: 69e82fcc-dc18-83e8-8975-03c649efbd5e

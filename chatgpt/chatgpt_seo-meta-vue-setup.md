@@ -1,13 +1,20 @@
 ---
-title: "SEO Meta Vue Setup"
-type: guide
-created: 2024-06-06
-updated: 2024-06-06
-source: chatgpt-export
 conversation_id: 8fd0c11d-a4d4-4abb-80ca-9798f5d8fe72
+created: 2024-06-06
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 8
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: SEO Meta Vue Setup
+type: guide
+updated: 2024-06-06
 ---
+
 # SEO Meta Vue Setup
 
 > Conversation ID: 8fd0c11d-a4d4-4abb-80ca-9798f5d8fe72

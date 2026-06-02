@@ -1,13 +1,18 @@
 ---
-title: "Geometric Superhero Mode Logo"
-type: note
-created: 2023-11-24
-updated: 2023-11-24
-source: chatgpt-export
 conversation_id: 4b66df96-11b0-40e9-b458-388339f92255
+created: 2023-11-24
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Geometric Superhero Mode Logo
+type: note
+updated: 2023-11-24
 ---
+
 # Geometric Superhero Mode Logo
 
 > Conversation ID: 4b66df96-11b0-40e9-b458-388339f92255

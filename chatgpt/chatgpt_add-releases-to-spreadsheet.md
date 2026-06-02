@@ -1,13 +1,18 @@
 ---
-title: "Add Releases to Spreadsheet"
-type: note
-created: 2024-05-20
-updated: 2024-05-20
-source: chatgpt-export
 conversation_id: fa5547bc-11ec-46ba-934e-b0b1cf64ca9f
+created: 2024-05-20
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Add Releases to Spreadsheet
+type: note
+updated: 2024-05-20
 ---
+
 # Add Releases to Spreadsheet
 
 > Conversation ID: fa5547bc-11ec-46ba-934e-b0b1cf64ca9f

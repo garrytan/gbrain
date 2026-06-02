@@ -1,13 +1,18 @@
 ---
-title: "Nuxt vs Laravel for MVP"
-type: note
-created: 2025-03-10
-updated: 2025-03-10
-source: chatgpt-export
 conversation_id: 67ce78b6-c3b8-8007-b24e-9f900c3ce988
+created: 2025-03-10
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Nuxt vs Laravel for MVP
+type: note
+updated: 2025-03-10
 ---
+
 # Nuxt vs Laravel for MVP
 
 > Conversation ID: 67ce78b6-c3b8-8007-b24e-9f900c3ce988

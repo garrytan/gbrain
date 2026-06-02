@@ -1,13 +1,19 @@
 ---
-title: "LogYourBody Swift App"
-type: guide
-created: 2025-06-22
-updated: 2025-06-22
-source: chatgpt-export
 conversation_id: 68584fb8-96fc-8007-a44d-98431a2e4b6f
+created: 2025-06-22
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: LogYourBody Swift App
+type: guide
+updated: 2025-06-22
 ---
+
 # LogYourBody Swift App
 
 > Conversation ID: 68584fb8-96fc-8007-a44d-98431a2e4b6f

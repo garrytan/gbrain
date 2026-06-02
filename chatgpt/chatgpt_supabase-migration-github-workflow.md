@@ -1,13 +1,19 @@
 ---
-title: "Supabase migration GitHub workflow"
-type: note
-created: 2025-08-03
-updated: 2025-08-03
-source: chatgpt-export
 conversation_id: 688fc830-f324-832d-a6c6-6938aa0c481e
+created: 2025-08-03
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Supabase migration GitHub workflow
+type: note
+updated: 2025-08-03
 ---
+
 # Supabase migration GitHub workflow
 
 > Conversation ID: 688fc830-f324-832d-a6c6-6938aa0c481e

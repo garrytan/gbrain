@@ -1,13 +1,18 @@
 ---
-title: "Supplement Brands List."
-type: note
-created: 2023-04-16
-updated: 2023-04-16
-source: chatgpt-export
 conversation_id: 576306dc-037d-40c7-879a-8945fb89ecb7
+created: 2023-04-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 8
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Supplement Brands List.
+type: note
+updated: 2023-04-16
 ---
+
 # Supplement Brands List.
 
 > Conversation ID: 576306dc-037d-40c7-879a-8945fb89ecb7

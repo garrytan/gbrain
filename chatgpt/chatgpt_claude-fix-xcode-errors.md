@@ -1,13 +1,19 @@
 ---
-title: "Claude fix Xcode errors"
-type: note
-created: 2025-11-23
-updated: 2025-11-23
-source: chatgpt-export
 conversation_id: 6923588f-93a4-8329-a70d-08363551da40
+created: 2025-11-23
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Claude fix Xcode errors
+type: note
+updated: 2025-11-23
 ---
+
 # Claude fix Xcode errors
 
 > Conversation ID: 6923588f-93a4-8329-a70d-08363551da40

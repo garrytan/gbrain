@@ -1,13 +1,19 @@
 ---
-title: "Towing Laws and Fees"
-type: note
-created: 2026-04-11
-updated: 2026-04-11
-source: chatgpt-export
 conversation_id: 69daa138-97b0-83e8-b633-1b7fb5ef65eb
+created: 2026-04-11
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 7
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Towing Laws and Fees
+type: note
+updated: 2026-04-11
 ---
+
 # Towing Laws and Fees
 
 > Conversation ID: 69daa138-97b0-83e8-b633-1b7fb5ef65eb

@@ -1,13 +1,19 @@
 ---
-title: "Request for Instrumental Tracks"
-type: note
-created: 2023-10-31
-updated: 2023-10-31
-source: chatgpt-export
 conversation_id: 2fafe441-2e98-4a84-8d8e-d36148ac7909
+created: 2023-10-31
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Request for Instrumental Tracks
+type: note
+updated: 2023-10-31
 ---
+
 # Request for Instrumental Tracks
 
 > Conversation ID: 2fafe441-2e98-4a84-8d8e-d36148ac7909

@@ -1,13 +1,18 @@
 ---
-title: "Vercel Overview"
-type: note
-created: 2026-02-02
-updated: 2026-02-02
-source: chatgpt-export
 conversation_id: 6980f8d1-baa0-832b-9944-30783332697b
+created: 2026-02-02
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel Overview
+type: note
+updated: 2026-02-02
 ---
+
 # Vercel Overview
 
 > Conversation ID: 6980f8d1-baa0-832b-9944-30783332697b

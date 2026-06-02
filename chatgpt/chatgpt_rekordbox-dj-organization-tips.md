@@ -1,13 +1,19 @@
 ---
-title: "Rekordbox DJ Organization Tips"
-type: note
-created: 2025-02-22
-updated: 2025-02-22
-source: chatgpt-export
 conversation_id: 67b9199c-4b9c-8007-8f05-81cb46e9373b
+created: 2025-02-22
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 5
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Rekordbox DJ Organization Tips
+type: note
+updated: 2025-02-22
 ---
+
 # Rekordbox DJ Organization Tips
 
 > Conversation ID: 67b9199c-4b9c-8007-8f05-81cb46e9373b

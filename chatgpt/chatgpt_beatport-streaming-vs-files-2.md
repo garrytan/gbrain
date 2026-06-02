@@ -1,13 +1,18 @@
 ---
-title: "Beatport Streaming vs Files"
-type: note
-created: 2025-01-16
-updated: 2025-01-16
-source: chatgpt-export
 conversation_id: 6788b961-45e8-8007-9c37-f8c09c9423aa
+created: 2025-01-16
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Beatport Streaming vs Files
+type: note
+updated: 2025-01-16
 ---
+
 # Beatport Streaming vs Files
 
 > Conversation ID: 6788b961-45e8-8007-9c37-f8c09c9423aa

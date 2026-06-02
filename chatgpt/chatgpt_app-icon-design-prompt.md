@@ -1,13 +1,19 @@
 ---
-title: "App Icon Design Prompt"
-type: note
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a07df90-a11c-83e8-b5f1-a6b9a735c6cd
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 3
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: App Icon Design Prompt
+type: note
+updated: 2026-05-16
 ---
+
 # App Icon Design Prompt
 
 > Conversation ID: 6a07df90-a11c-83e8-b5f1-a6b9a735c6cd

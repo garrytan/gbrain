@@ -1,13 +1,18 @@
 ---
-title: "Research for Jovie"
-type: note
-created: 2026-05-07
-updated: 2026-05-07
-source: chatgpt-export
 conversation_id: 69fc08e5-b304-83e8-9a84-71e68f2a12e1
+created: 2026-05-07
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Research for Jovie
+type: note
+updated: 2026-05-07
 ---
+
 # Research for Jovie
 
 > Conversation ID: 69fc08e5-b304-83e8-9a84-71e68f2a12e1

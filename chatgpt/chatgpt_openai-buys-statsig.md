@@ -1,13 +1,18 @@
 ---
-title: "OpenAI buys Statsig"
-type: note
-created: 2025-11-22
-updated: 2025-11-22
-source: chatgpt-export
 conversation_id: 69210f06-9900-8327-add9-675780a5214a
+created: 2025-11-22
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: OpenAI buys Statsig
+type: note
+updated: 2025-11-22
 ---
+
 # OpenAI buys Statsig
 
 > Conversation ID: 69210f06-9900-8327-add9-675780a5214a

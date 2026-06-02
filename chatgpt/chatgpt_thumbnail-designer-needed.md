@@ -1,13 +1,18 @@
 ---
-title: "Thumbnail Designer Needed."
-type: note
-created: 2023-04-30
-updated: 2023-04-30
-source: chatgpt-export
 conversation_id: ffa537e2-f5f7-4294-8b8a-f03690d25cfb
+created: 2023-04-30
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Thumbnail Designer Needed.
+type: note
+updated: 2023-04-30
 ---
+
 # Thumbnail Designer Needed.
 
 > Conversation ID: ffa537e2-f5f7-4294-8b8a-f03690d25cfb

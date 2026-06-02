@@ -1,13 +1,18 @@
 ---
-title: "Jovie project optimization"
-type: note
-created: 2025-12-27
-updated: 2025-12-27
-source: chatgpt-export
 conversation_id: 69502480-2ec4-8330-9eee-e6dd660d9fea
+created: 2025-12-27
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Jovie project optimization
+type: note
+updated: 2025-12-27
 ---
+
 # Jovie project optimization
 
 > Conversation ID: 69502480-2ec4-8330-9eee-e6dd660d9fea

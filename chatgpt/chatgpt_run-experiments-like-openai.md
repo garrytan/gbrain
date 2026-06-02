@@ -1,13 +1,19 @@
 ---
-title: "Run experiments like OpenAI"
-type: essay
-created: 2025-11-30
-updated: 2025-11-30
-source: chatgpt-export
 conversation_id: 692b89fc-a1e4-832d-bc82-f27602e74010
+created: 2025-11-30
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Run experiments like OpenAI
+type: essay
+updated: 2025-11-30
 ---
+
 # Run experiments like OpenAI
 
 > Conversation ID: 692b89fc-a1e4-832d-bc82-f27602e74010

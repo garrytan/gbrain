@@ -1,13 +1,18 @@
 ---
-title: "App Disappears on iPhone"
-type: note
-created: 2024-01-16
-updated: 2024-01-16
-source: chatgpt-export
 conversation_id: 6b720b05-b740-4db7-aef1-3cc96b9dccff
+created: 2024-01-16
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: App Disappears on iPhone
+type: note
+updated: 2024-01-16
 ---
+
 # App Disappears on iPhone
 
 > Conversation ID: 6b720b05-b740-4db7-aef1-3cc96b9dccff

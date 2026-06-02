@@ -1,13 +1,19 @@
 ---
-title: "Tailwind config in 4.1"
-type: guide
-created: 2025-09-16
-updated: 2025-09-16
-source: chatgpt-export
 conversation_id: 68c97f68-a50c-8332-8f80-befa3f420a91
+created: 2025-09-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind config in 4.1
+type: guide
+updated: 2025-09-16
 ---
+
 # Tailwind config in 4.1
 
 > Conversation ID: 68c97f68-a50c-8332-8f80-befa3f420a91

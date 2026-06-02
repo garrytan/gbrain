@@ -1,13 +1,18 @@
 ---
-title: "Page design improvement tips"
-type: note
-created: 2025-12-10
-updated: 2025-12-10
-source: chatgpt-export
 conversation_id: 6939ed6b-4e68-832f-8946-f9b7e43551f8
+created: 2025-12-10
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Page design improvement tips
+type: note
+updated: 2025-12-10
 ---
+
 # Page design improvement tips
 
 > Conversation ID: 6939ed6b-4e68-832f-8946-f9b7e43551f8

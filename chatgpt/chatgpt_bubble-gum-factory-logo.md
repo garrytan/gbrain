@@ -1,13 +1,18 @@
 ---
-title: "Bubble Gum Factory Logo"
-type: note
-created: 2023-10-28
-updated: 2023-10-28
-source: chatgpt-export
 conversation_id: b947caaa-c1fe-48db-b0e4-c3ab292ba7af
+created: 2023-10-28
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 16
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Bubble Gum Factory Logo
+type: note
+updated: 2023-10-28
 ---
+
 # Bubble Gum Factory Logo
 
 > Conversation ID: b947caaa-c1fe-48db-b0e4-c3ab292ba7af

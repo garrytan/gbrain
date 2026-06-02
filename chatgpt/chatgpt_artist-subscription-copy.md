@@ -1,13 +1,18 @@
 ---
-title: "Artist Subscription Copy"
-type: note
-created: 2026-01-09
-updated: 2026-01-09
-source: chatgpt-export
 conversation_id: 696080ed-d918-8327-ae4c-ab856793faa3
+created: 2026-01-09
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Artist Subscription Copy
+type: note
+updated: 2026-01-09
 ---
+
 # Artist Subscription Copy
 
 > Conversation ID: 696080ed-d918-8327-ae4c-ab856793faa3

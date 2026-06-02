@@ -1,13 +1,19 @@
 ---
-title: "Biome React Hooks Linter"
-type: note
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6973cb16-b8a0-8332-b80f-76ce98351571
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Biome React Hooks Linter
+type: note
+updated: 2026-01-23
 ---
+
 # Biome React Hooks Linter
 
 > Conversation ID: 6973cb16-b8a0-8332-b80f-76ce98351571

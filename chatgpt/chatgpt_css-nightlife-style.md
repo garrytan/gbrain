@@ -1,13 +1,18 @@
 ---
-title: "CSS Nightlife Style"
-type: note
-created: 2026-04-23
-updated: 2026-04-23
-source: chatgpt-export
 conversation_id: 69e99865-e104-83e8-a9fa-b064c55a050b
+created: 2026-04-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 1
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: CSS Nightlife Style
+type: note
+updated: 2026-04-23
 ---
+
 # CSS Nightlife Style
 
 > Conversation ID: 69e99865-e104-83e8-a9fa-b064c55a050b

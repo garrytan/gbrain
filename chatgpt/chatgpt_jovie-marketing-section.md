@@ -1,13 +1,18 @@
 ---
-title: "Jovie Marketing Section"
-type: note
-created: 2026-04-29
-updated: 2026-04-29
-source: chatgpt-export
 conversation_id: 69f19f4d-0fd8-83e8-b4f2-2dd0d55c6e1f
+created: 2026-04-29
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Jovie Marketing Section
+type: note
+updated: 2026-04-29
 ---
+
 # Jovie Marketing Section
 
 > Conversation ID: 69f19f4d-0fd8-83e8-b4f2-2dd0d55c6e1f

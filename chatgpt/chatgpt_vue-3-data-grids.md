@@ -1,13 +1,18 @@
 ---
-title: "Vue 3 Data Grids"
-type: note
-created: 2022-12-20
-updated: 2022-12-20
-source: chatgpt-export
 conversation_id: 5d3a98bf-7ad7-44f7-83d4-848bfcd71d73
+created: 2022-12-20
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue 3 Data Grids
+type: note
+updated: 2022-12-20
 ---
+
 # Vue 3 Data Grids
 
 > Conversation ID: 5d3a98bf-7ad7-44f7-83d4-848bfcd71d73

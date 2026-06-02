@@ -1,13 +1,19 @@
 ---
-title: "YC startup job roles"
-type: note
-created: 2025-10-28
-updated: 2025-10-28
-source: chatgpt-export
 conversation_id: 69003386-7828-832c-88ea-88e6f8012571
+created: 2025-10-28
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 8
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: YC startup job roles
+type: note
+updated: 2025-10-28
 ---
+
 # YC startup job roles
 
 > Conversation ID: 69003386-7828-832c-88ea-88e6f8012571

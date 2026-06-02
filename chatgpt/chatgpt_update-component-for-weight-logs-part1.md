@@ -1,13 +1,20 @@
 ---
-title: "Update Component for Weight Logs"
-type: essay
-created: 2023-11-24
-updated: 2023-11-24
-source: chatgpt-export
 conversation_id: 95c8e323-6cf3-4ce1-9d03-dfc460d6567b
+created: 2023-11-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 68
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Update Component for Weight Logs
+type: essay
+updated: 2023-11-24
 ---
+
 # Update Component for Weight Logs
 
 > Conversation ID: 95c8e323-6cf3-4ce1-9d03-dfc460d6567b

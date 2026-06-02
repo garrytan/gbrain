@@ -1,13 +1,19 @@
 ---
-title: "288px in Tailwind"
-type: note
-created: 2025-12-15
-updated: 2025-12-15
-source: chatgpt-export
 conversation_id: 6940826d-7a30-8326-9090-7e661eedd7a3
+created: 2025-12-15
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 288px in Tailwind
+type: note
+updated: 2025-12-15
 ---
+
 # 288px in Tailwind
 
 > Conversation ID: 6940826d-7a30-8326-9090-7e661eedd7a3

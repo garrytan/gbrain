@@ -1,13 +1,18 @@
 ---
-title: "Victorious soundtrack studios"
-type: note
-created: 2025-07-05
-updated: 2025-07-05
-source: chatgpt-export
 conversation_id: 6868b1c0-3a98-8007-88c6-eea1ce0950df
+created: 2025-07-05
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Victorious soundtrack studios
+type: note
+updated: 2025-07-05
 ---
+
 # Victorious soundtrack studios
 
 > Conversation ID: 6868b1c0-3a98-8007-88c6-eea1ce0950df

@@ -1,13 +1,19 @@
 ---
-title: "Stealing Tailwind CSS"
-type: note
-created: 2025-12-18
-updated: 2025-12-18
-source: chatgpt-export
 conversation_id: 6943705a-0b08-832a-945e-252f07a150a1
+created: 2025-12-18
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Stealing Tailwind CSS
+type: note
+updated: 2025-12-18
 ---
+
 # Stealing Tailwind CSS
 
 > Conversation ID: 6943705a-0b08-832a-945e-252f07a150a1

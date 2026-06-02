@@ -1,13 +1,19 @@
 ---
-title: "UI design refinement guide"
-type: note
-created: 2025-11-08
-updated: 2025-11-08
-source: chatgpt-export
 conversation_id: 690fa18c-a794-8330-8222-a8f59b55f724
+created: 2025-11-08
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 6
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: UI design refinement guide
+type: note
+updated: 2025-11-08
 ---
+
 # UI design refinement guide
 
 > Conversation ID: 690fa18c-a794-8330-8222-a8f59b55f724

@@ -1,13 +1,20 @@
 ---
-title: "Release Dates Extraction"
-type: essay
-created: 2024-06-11
-updated: 2024-06-11
-source: chatgpt-export
 conversation_id: 1d7e4ffe-00b3-480a-88e5-83a054546dbb
+created: 2024-06-11
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Release Dates Extraction
+type: essay
+updated: 2024-06-11
 ---
+
 # Release Dates Extraction
 
 > Conversation ID: 1d7e4ffe-00b3-480a-88e5-83a054546dbb

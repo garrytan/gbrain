@@ -1,13 +1,19 @@
 ---
-title: "Async Method in Vue 3"
-type: note
-created: 2023-05-24
-updated: 2023-05-24
-source: chatgpt-export
 conversation_id: 6cd30669-083a-42ce-93a4-e014c8045e42
+created: 2023-05-24
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Async Method in Vue 3
+type: note
+updated: 2023-05-24
 ---
+
 # Async Method in Vue 3
 
 > Conversation ID: 6cd30669-083a-42ce-93a4-e014c8045e42

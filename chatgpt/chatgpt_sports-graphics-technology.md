@@ -1,13 +1,18 @@
 ---
-title: "Sports graphics technology"
-type: note
-created: 2025-10-28
-updated: 2025-10-28
-source: chatgpt-export
 conversation_id: 690033e0-879c-8328-b71a-4678753d3fe2
+created: 2025-10-28
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sports graphics technology
+type: note
+updated: 2025-10-28
 ---
+
 # Sports graphics technology
 
 > Conversation ID: 690033e0-879c-8328-b71a-4678753d3fe2

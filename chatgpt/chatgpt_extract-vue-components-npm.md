@@ -1,13 +1,19 @@
 ---
-title: "Extract Vue Components NPM"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: 998dd6c6-26b1-474d-a729-a146c52a1f27
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Extract Vue Components NPM
+type: note
+updated: 2022-12-21
 ---
+
 # Extract Vue Components NPM
 
 > Conversation ID: 998dd6c6-26b1-474d-a729-a146c52a1f27

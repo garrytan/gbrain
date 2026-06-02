@@ -1,13 +1,20 @@
 ---
-title: "UX Design Principles"
-type: essay
-created: 2025-07-09
-updated: 2025-07-09
-source: chatgpt-export
 conversation_id: 686db5ec-978c-8007-a78e-1f447532e4f1
+created: 2025-07-09
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 38
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: UX Design Principles
+type: essay
+updated: 2025-07-09
 ---
+
 # UX Design Principles
 
 > Conversation ID: 686db5ec-978c-8007-a78e-1f447532e4f1
@@ -426,16 +433,21 @@ What about 3 months free but they only get if a user pays
 That could work—making the 3-month credit contingent on the referred user actually converting protects you from free-riders—but there are a few trade-offs to weigh:
 
 1. **Unit economics**  
-   - If your subscription is \$10/mo, a 3-month credit is \$30 in give-aways.    - You only pay out once the friend becomes a paying customer, so your effective CAC is capped at \$30 per paid referral.   - As long as your average LTV ≫ \$30 (say \$150+), you’ll still hit a healthy LTV:CAC.
+   - If your subscription is \$10/mo, a 3-month credit is \$30 in give-aways. 
+   - You only pay out once the friend becomes a paying customer, so your effective CAC is capped at \$30 per paid referral.
+   - As long as your average LTV ≫ \$30 (say \$150+), you’ll still hit a healthy LTV:CAC.
 
 2. **Conversion vs. incentive strength**  
-   - A big “3 months free” promise is eye-catching, but if friends know they have to pay first, that may blunt its pull.    - You could sweeten it by giving them an initial 7-day trial immediately, then unlocking the full 3-month credit once they hit month 1.
+   - A big “3 months free” promise is eye-catching, but if friends know they have to pay first, that may blunt its pull. 
+   - You could sweeten it by giving them an initial 7-day trial immediately, then unlocking the full 3-month credit once they hit month 1.
 
 3. **Referral quality**  
-   - By paying out only on actual revenue, you discourage spammy or “just grabbing credits” referrals.    - It also aligns the referrer’s interests with sending high-intent friends who actually stick around.
+   - By paying out only on actual revenue, you discourage spammy or “just grabbing credits” referrals. 
+   - It also aligns the referrer’s interests with sending high-intent friends who actually stick around.
 
 4. **Caps & tiers**  
-   - Limit it to the first 1–3 successful referrals per user to keep total giveaway spend in check.    - Consider a tiered approach:  
+   - Limit it to the first 1–3 successful referrals per user to keep total giveaway spend in check. 
+   - Consider a tiered approach:  
      - 1st paid referral → 3 months free  
      - 2nd & 3rd → 1 month free each
 

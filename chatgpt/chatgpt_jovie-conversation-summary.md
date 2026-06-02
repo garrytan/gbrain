@@ -1,13 +1,20 @@
 ---
-title: "Jovie Conversation Summary"
-type: guide
-created: 2026-05-16
-updated: 2026-05-16
-source: chatgpt-export
 conversation_id: 6a08d7d8-0374-83e8-a7bb-26fa1640dcf8
+created: 2026-05-16
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 3
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Jovie Conversation Summary
+type: guide
+updated: 2026-05-16
 ---
+
 # Jovie Conversation Summary
 
 > Conversation ID: 6a08d7d8-0374-83e8-a7bb-26fa1640dcf8

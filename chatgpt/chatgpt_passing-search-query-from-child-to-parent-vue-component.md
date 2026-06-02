@@ -1,13 +1,19 @@
 ---
-title: "Passing Search Query from Child to Parent Vue Component"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: c9ce3b56-4abb-4ab9-ac0d-c1b71520a12e
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Passing Search Query from Child to Parent Vue Component
+type: note
+updated: 2022-12-21
 ---
+
 # Passing Search Query from Child to Parent Vue Component
 
 > Conversation ID: c9ce3b56-4abb-4ab9-ac0d-c1b71520a12e

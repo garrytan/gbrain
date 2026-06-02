@@ -1,13 +1,18 @@
 ---
-title: "Katzenberg's Quibi Streaming Failure"
-type: note
-created: 2025-01-15
-updated: 2025-01-15
-source: chatgpt-export
 conversation_id: 678781a0-e268-8007-9c71-08947cfc453d
+created: 2025-01-15
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Katzenberg's Quibi Streaming Failure
+type: note
+updated: 2025-01-15
 ---
+
 # Katzenberg's Quibi Streaming Failure
 
 > Conversation ID: 678781a0-e268-8007-9c71-08947cfc453d

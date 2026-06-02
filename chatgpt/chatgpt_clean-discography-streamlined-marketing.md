@@ -1,13 +1,18 @@
 ---
-title: "Clean Discography, Streamlined Marketing"
-type: note
-created: 2024-05-13
-updated: 2024-05-13
-source: chatgpt-export
 conversation_id: e4cf6ec2-1cdb-4018-95a7-99a553cb5518
+created: 2024-05-13
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Clean Discography, Streamlined Marketing
+type: note
+updated: 2024-05-13
 ---
+
 # Clean Discography, Streamlined Marketing
 
 > Conversation ID: e4cf6ec2-1cdb-4018-95a7-99a553cb5518

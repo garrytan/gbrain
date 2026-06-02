@@ -1,13 +1,20 @@
 ---
-title: "AI homepage redesign prompt"
-type: essay
-created: 2025-12-07
-updated: 2025-12-07
-source: chatgpt-export
 conversation_id: 6934cd2f-2e0c-8328-9031-adb468476003
+created: 2025-12-07
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 18
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: AI homepage redesign prompt
+type: essay
+updated: 2025-12-07
 ---
+
 # AI homepage redesign prompt
 
 > Conversation ID: 6934cd2f-2e0c-8328-9031-adb468476003

@@ -1,13 +1,18 @@
 ---
-title: "XDJ-1000MK2s for Sale"
-type: note
-created: 2025-07-04
-updated: 2025-07-04
-source: chatgpt-export
 conversation_id: 68683e83-f148-8007-881c-ea70e5325ae2
+created: 2025-07-04
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: XDJ-1000MK2s for Sale
+type: note
+updated: 2025-07-04
 ---
+
 # XDJ-1000MK2s for Sale
 
 > Conversation ID: 68683e83-f148-8007-881c-ea70e5325ae2

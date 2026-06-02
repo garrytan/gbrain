@@ -1,13 +1,18 @@
 ---
-title: "Suno founders details"
-type: note
-created: 2025-11-28
-updated: 2025-11-28
-source: chatgpt-export
 conversation_id: 692a12c8-2b60-8326-a8d7-1054e2e9b900
+created: 2025-11-28
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Suno founders details
+type: note
+updated: 2025-11-28
 ---
+
 # Suno founders details
 
 > Conversation ID: 692a12c8-2b60-8326-a8d7-1054e2e9b900

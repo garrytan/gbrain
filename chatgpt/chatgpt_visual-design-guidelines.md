@@ -1,13 +1,19 @@
 ---
-title: "Visual design guidelines"
-type: note
-created: 2025-11-21
-updated: 2025-11-21
-source: chatgpt-export
 conversation_id: 69200626-bcc8-8328-aee8-2798d48c39bb
+created: 2025-11-21
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 10
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Visual design guidelines
+type: note
+updated: 2025-11-21
 ---
+
 # Visual design guidelines
 
 > Conversation ID: 69200626-bcc8-8328-aee8-2798d48c39bb

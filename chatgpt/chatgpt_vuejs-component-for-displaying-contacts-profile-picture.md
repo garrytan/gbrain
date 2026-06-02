@@ -1,13 +1,19 @@
 ---
-title: "Vue.js component for displaying contact's profile picture"
-type: guide
-created: 2023-04-29
-updated: 2023-04-29
-source: chatgpt-export
 conversation_id: fa7a31fb-3593-4f67-98bf-47c619da55dc
+created: 2023-04-29
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue.js component for displaying contact's profile picture
+type: guide
+updated: 2023-04-29
 ---
+
 # Vue.js component for displaying contact's profile picture
 
 > Conversation ID: fa7a31fb-3593-4f67-98bf-47c619da55dc

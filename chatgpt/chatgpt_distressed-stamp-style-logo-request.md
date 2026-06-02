@@ -1,13 +1,18 @@
 ---
-title: "Distressed stamp-style logo request."
-type: note
-created: 2023-11-18
-updated: 2023-11-18
-source: chatgpt-export
 conversation_id: b009b53d-e08e-440d-b033-c6f628817f7b
+created: 2023-11-18
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 21
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Distressed stamp-style logo request.
+type: note
+updated: 2023-11-18
 ---
+
 # Distressed stamp-style logo request.
 
 > Conversation ID: b009b53d-e08e-440d-b033-c6f628817f7b

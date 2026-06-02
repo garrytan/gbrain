@@ -1,13 +1,18 @@
 ---
-title: "Laravel Vapor Overview"
-type: note
-created: 2025-06-16
-updated: 2025-06-16
-source: chatgpt-export
 conversation_id: 68504f79-39e4-8007-879f-e4b99355d801
+created: 2025-06-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Laravel Vapor Overview
+type: note
+updated: 2025-06-16
 ---
+
 # Laravel Vapor Overview
 
 > Conversation ID: 68504f79-39e4-8007-879f-e4b99355d801

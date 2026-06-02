@@ -1,13 +1,18 @@
 ---
-title: "What is Jovie"
-type: note
-created: 2026-05-17
-updated: 2026-05-17
-source: chatgpt-export
 conversation_id: 6a09f55d-08e8-83e8-b917-b93b40e2c5c8
+created: 2026-05-17
+links:
+- '[[chatgpt-clusters/jovie_product_strategy]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: What is Jovie
+type: note
+updated: 2026-05-17
 ---
+
 # What is Jovie
 
 > Conversation ID: 6a09f55d-08e8-83e8-b917-b93b40e2c5c8

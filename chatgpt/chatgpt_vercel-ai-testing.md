@@ -1,13 +1,18 @@
 ---
-title: "Vercel AI Testing"
-type: note
-created: 2026-02-21
-updated: 2026-02-21
-source: chatgpt-export
 conversation_id: 69992549-1e9c-8327-8e13-34cce067f663
+created: 2026-02-21
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vercel AI Testing
+type: note
+updated: 2026-02-21
 ---
+
 # Vercel AI Testing
 
 > Conversation ID: 69992549-1e9c-8327-8e13-34cce067f663

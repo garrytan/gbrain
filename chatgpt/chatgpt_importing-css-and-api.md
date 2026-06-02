@@ -1,14 +1,18 @@
 ---
-title: "Importing CSS and API
-"
-type: note
-created: 2023-01-22
-updated: 2023-01-22
-source: chatgpt-export
 conversation_id: 2728c18d-e2e5-44c5-a33a-f4c2027a58f6
+created: 2023-01-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: 'Importing CSS and API '
+type: note
+updated: 2023-01-22
 ---
+
 # Importing CSS and API
 
 

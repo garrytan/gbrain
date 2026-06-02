@@ -1,13 +1,18 @@
 ---
-title: "Vue.js WorkSection Component"
-type: note
-created: 2023-02-26
-updated: 2023-02-26
-source: chatgpt-export
 conversation_id: 1c48097a-2f3c-404a-96d7-04980767bdb5
+created: 2023-02-26
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Vue.js WorkSection Component
+type: note
+updated: 2023-02-26
 ---
+
 # Vue.js WorkSection Component
 
 > Conversation ID: 1c48097a-2f3c-404a-96d7-04980767bdb5

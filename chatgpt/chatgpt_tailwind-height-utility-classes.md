@@ -1,13 +1,19 @@
 ---
-title: "Tailwind height utility classes."
-type: note
-created: 2023-05-04
-updated: 2023-05-04
-source: chatgpt-export
 conversation_id: 15df1ac1-3a53-4dca-8ab5-fe8f2b9a0566
+created: 2023-05-04
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Tailwind height utility classes.
+type: note
+updated: 2023-05-04
 ---
+
 # Tailwind height utility classes.
 
 > Conversation ID: 15df1ac1-3a53-4dca-8ab5-fe8f2b9a0566

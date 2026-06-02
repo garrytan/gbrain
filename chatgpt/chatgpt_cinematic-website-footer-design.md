@@ -1,13 +1,20 @@
 ---
-title: "Cinematic Website Footer Design"
-type: guide
-created: 2026-04-28
-updated: 2026-04-28
-source: chatgpt-export
 conversation_id: 69effc87-db58-83e8-945d-3fa41f93606f
+created: 2026-04-28
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 7
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Cinematic Website Footer Design
+type: guide
+updated: 2026-04-28
 ---
+
 # Cinematic Website Footer Design
 
 > Conversation ID: 69effc87-db58-83e8-945d-3fa41f93606f

@@ -1,13 +1,18 @@
 ---
-title: "Figma Seat Confusion"
-type: note
-created: 2026-05-12
-updated: 2026-05-12
-source: chatgpt-export
 conversation_id: 6a036f6d-3afc-83e8-936f-243b945ceebc
+created: 2026-05-12
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 5
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Figma Seat Confusion
+type: note
+updated: 2026-05-12
 ---
+
 # Figma Seat Confusion
 
 > Conversation ID: 6a036f6d-3afc-83e8-936f-243b945ceebc

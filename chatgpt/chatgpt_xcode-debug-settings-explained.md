@@ -1,13 +1,20 @@
 ---
-title: "Xcode Debug Settings Explained"
-type: essay
-created: 2025-07-15
-updated: 2025-07-15
-source: chatgpt-export
 conversation_id: 6875d943-a318-8007-ae85-a6847ab09ab0
+created: 2025-07-15
+links:
+- '[[chatgpt-clusters/coding_mobile]]'
 message_count: 16
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Xcode Debug Settings Explained
+type: essay
+updated: 2025-07-15
 ---
+
 # Xcode Debug Settings Explained
 
 > Conversation ID: 6875d943-a318-8007-ae85-a6847ab09ab0

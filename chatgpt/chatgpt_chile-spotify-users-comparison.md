@@ -1,13 +1,18 @@
 ---
-title: "Chile Spotify Users Comparison"
-type: note
-created: 2024-03-25
-updated: 2024-03-25
-source: chatgpt-export
 conversation_id: 1e13f5d0-3acd-43c4-906b-86fbbb2e8e55
+created: 2024-03-25
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Chile Spotify Users Comparison
+type: note
+updated: 2024-03-25
 ---
+
 # Chile Spotify Users Comparison
 
 > Conversation ID: 1e13f5d0-3acd-43c4-906b-86fbbb2e8e55

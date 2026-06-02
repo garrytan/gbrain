@@ -1,13 +1,20 @@
 ---
-title: "Next.js Supabase vs Laravel"
-type: essay
-created: 2025-06-16
-updated: 2025-06-16
-source: chatgpt-export
 conversation_id: 68503810-c2bc-8007-b8d1-f39a6ac3c5a3
+created: 2025-06-16
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 16
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Next.js Supabase vs Laravel
+type: essay
+updated: 2025-06-16
 ---
+
 # Next.js Supabase vs Laravel
 
 > Conversation ID: 68503810-c2bc-8007-b8d1-f39a6ac3c5a3

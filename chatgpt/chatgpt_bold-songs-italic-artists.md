@@ -1,13 +1,19 @@
 ---
-title: "Bold Songs, Italic Artists"
-type: guide
-created: 2024-02-27
-updated: 2024-02-27
-source: chatgpt-export
 conversation_id: 2a49a683-517c-464b-858e-225fed13ccdd
+created: 2024-02-27
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Bold Songs, Italic Artists
+type: guide
+updated: 2024-02-27
 ---
+
 # Bold Songs, Italic Artists
 
 > Conversation ID: 2a49a683-517c-464b-858e-225fed13ccdd

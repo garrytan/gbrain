@@ -1,13 +1,20 @@
 ---
-title: "Nikita Bier Growth Hacks"
-type: essay
-created: 2025-07-04
-updated: 2025-07-06
-source: chatgpt-export
 conversation_id: 68684365-24ac-8007-aea8-112ac78b1e80
+created: 2025-07-04
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 19
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Nikita Bier Growth Hacks
+type: essay
+updated: 2025-07-06
 ---
+
 # Nikita Bier Growth Hacks
 
 > Conversation ID: 68684365-24ac-8007-aea8-112ac78b1e80

@@ -1,13 +1,19 @@
 ---
-title: "Marketing Pixels Plan"
-type: guide
-created: 2026-01-16
-updated: 2026-01-16
-source: chatgpt-export
 conversation_id: 696a9235-3d70-832d-b04f-b9527140dbb8
+created: 2026-01-16
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Marketing Pixels Plan
+type: guide
+updated: 2026-01-16
 ---
+
 # Marketing Pixels Plan
 
 > Conversation ID: 696a9235-3d70-832d-b04f-b9527140dbb8

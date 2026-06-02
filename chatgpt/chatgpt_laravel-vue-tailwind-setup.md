@@ -1,13 +1,18 @@
 ---
-title: "Laravel Vue Tailwind Setup"
-type: note
-created: 2023-11-14
-updated: 2023-11-14
-source: chatgpt-export
 conversation_id: 41a99f81-3887-4305-9453-b3096ba03bb2
+created: 2023-11-14
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Laravel Vue Tailwind Setup
+type: note
+updated: 2023-11-14
 ---
+
 # Laravel Vue Tailwind Setup
 
 > Conversation ID: 41a99f81-3887-4305-9453-b3096ba03bb2

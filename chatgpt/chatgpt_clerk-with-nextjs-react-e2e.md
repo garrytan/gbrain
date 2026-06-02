@@ -1,13 +1,19 @@
 ---
-title: "Clerk with Next.js React E2E"
-type: guide
-created: 2026-02-02
-updated: 2026-02-02
-source: chatgpt-export
 conversation_id: 69804530-f84c-8332-a460-8fae5d95ce68
+created: 2026-02-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Clerk with Next.js React E2E
+type: guide
+updated: 2026-02-02
 ---
+
 # Clerk with Next.js React E2E
 
 > Conversation ID: 69804530-f84c-8332-a460-8fae5d95ce68

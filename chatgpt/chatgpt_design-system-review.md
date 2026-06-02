@@ -1,13 +1,20 @@
 ---
-title: "Design system review"
-type: essay
-created: 2026-05-09
-updated: 2026-05-10
-source: chatgpt-export
 conversation_id: 69ff6d04-3e90-83e8-a1e7-d04cebf99e8f
+created: 2026-05-09
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 11
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Design system review
+type: essay
+updated: 2026-05-10
 ---
+
 # Design system review
 
 > Conversation ID: 69ff6d04-3e90-83e8-a1e7-d04cebf99e8f

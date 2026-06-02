@@ -1,13 +1,19 @@
 ---
-title: "Extracting DataGridCell component"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: 1edc390e-f211-470f-a4b7-177271f0456d
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Extracting DataGridCell component
+type: note
+updated: 2022-12-21
 ---
+
 # Extracting DataGridCell component
 
 > Conversation ID: 1edc390e-f211-470f-a4b7-177271f0456d

@@ -1,13 +1,18 @@
 ---
-title: "Tattoo design modification"
-type: note
-created: 2025-10-21
-updated: 2025-10-21
-source: chatgpt-export
 conversation_id: 68f719fd-51c8-832a-adcf-f88c9ee102e6
+created: 2025-10-21
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Tattoo design modification
+type: note
+updated: 2025-10-21
 ---
+
 # Tattoo design modification
 
 > Conversation ID: 68f719fd-51c8-832a-adcf-f88c9ee102e6

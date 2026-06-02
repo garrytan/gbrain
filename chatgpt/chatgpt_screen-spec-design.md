@@ -1,13 +1,19 @@
 ---
-title: "Screen spec design"
-type: note
-created: 2025-11-19
-updated: 2025-11-19
-source: chatgpt-export
 conversation_id: 691d3a32-6a0c-832b-a01e-c9fa2625f0f7
+created: 2025-11-19
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 2
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Screen spec design
+type: note
+updated: 2025-11-19
 ---
+
 # Screen spec design
 
 > Conversation ID: 691d3a32-6a0c-832b-a01e-c9fa2625f0f7

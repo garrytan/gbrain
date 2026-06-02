@@ -1,13 +1,18 @@
 ---
-title: "AI prompt for Claude"
-type: note
-created: 2025-08-23
-updated: 2025-08-23
-source: chatgpt-export
 conversation_id: 68aa2144-4524-832f-80d0-368d6332c8c9
+created: 2025-08-23
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: AI prompt for Claude
+type: note
+updated: 2025-08-23
 ---
+
 # AI prompt for Claude
 
 > Conversation ID: 68aa2144-4524-832f-80d0-368d6332c8c9

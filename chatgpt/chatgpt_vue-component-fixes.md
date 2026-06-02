@@ -1,13 +1,19 @@
 ---
-title: "Vue component fixes"
-type: note
-created: 2022-12-22
-updated: 2022-12-22
-source: chatgpt-export
 conversation_id: 28f7dca0-8e67-4d5e-b272-a315fb726214
+created: 2022-12-22
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Vue component fixes
+type: note
+updated: 2022-12-22
 ---
+
 # Vue component fixes
 
 > Conversation ID: 28f7dca0-8e67-4d5e-b272-a315fb726214

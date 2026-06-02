@@ -1,13 +1,18 @@
 ---
-title: "E11EVEN Miami Annual Revenue"
-type: note
-created: 2023-11-12
-updated: 2023-11-12
-source: chatgpt-export
 conversation_id: 67284f60-8d9b-41c4-b659-cbb8a0d84d53
+created: 2023-11-12
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: E11EVEN Miami Annual Revenue
+type: note
+updated: 2023-11-12
 ---
+
 # E11EVEN Miami Annual Revenue
 
 > Conversation ID: 67284f60-8d9b-41c4-b659-cbb8a0d84d53

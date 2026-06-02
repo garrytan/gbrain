@@ -1,13 +1,18 @@
 ---
-title: "JavaScript Error in File"
-type: note
-created: 2023-03-27
-updated: 2023-03-27
-source: chatgpt-export
 conversation_id: 6ab73ab9-daf1-4388-ab2f-84204af9e053
+created: 2023-03-27
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: JavaScript Error in File
+type: note
+updated: 2023-03-27
 ---
+
 # JavaScript Error in File
 
 > Conversation ID: 6ab73ab9-daf1-4388-ab2f-84204af9e053

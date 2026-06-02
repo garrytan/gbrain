@@ -1,13 +1,18 @@
 ---
-title: "Marketing Genius Challenges Corporate"
-type: note
-created: 2024-06-21
-updated: 2024-06-21
-source: chatgpt-export
 conversation_id: 094f9d19-36bb-4c43-a6e3-262cc8aeeb84
+created: 2024-06-21
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Marketing Genius Challenges Corporate
+type: note
+updated: 2024-06-21
 ---
+
 # Marketing Genius Challenges Corporate
 
 > Conversation ID: 094f9d19-36bb-4c43-a6e3-262cc8aeeb84

@@ -1,13 +1,18 @@
 ---
-title: "Taylor Swift Album Announcement"
-type: note
-created: 2024-05-29
-updated: 2024-05-29
-source: chatgpt-export
 conversation_id: 4cf6ef01-b94f-49f1-b496-d97590220a2f
+created: 2024-05-29
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Taylor Swift Album Announcement
+type: note
+updated: 2024-05-29
 ---
+
 # Taylor Swift Album Announcement
 
 > Conversation ID: 4cf6ef01-b94f-49f1-b496-d97590220a2f

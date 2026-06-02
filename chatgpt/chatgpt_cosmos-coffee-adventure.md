@@ -1,13 +1,19 @@
 ---
-title: "Cosmo's Coffee Adventure"
-type: essay
-created: 2024-04-01
-updated: 2024-04-01
-source: chatgpt-export
 conversation_id: 60d35213-df18-4f18-b70e-eefe8b3e27a4
+created: 2024-04-01
+links:
+- '[[chatgpt-clusters/business_startup]]'
 message_count: 16
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: Cosmo's Coffee Adventure
+type: essay
+updated: 2024-04-01
 ---
+
 # Cosmo's Coffee Adventure
 
 > Conversation ID: 60d35213-df18-4f18-b70e-eefe8b3e27a4

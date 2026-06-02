@@ -1,13 +1,19 @@
 ---
-title: "HTML Class for Image."
-type: note
-created: 2023-04-02
-updated: 2023-04-02
-source: chatgpt-export
 conversation_id: f40d66af-55ce-43aa-9933-8c8481f21f2d
+created: 2023-04-02
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: HTML Class for Image.
+type: note
+updated: 2023-04-02
 ---
+
 # HTML Class for Image.
 
 > Conversation ID: f40d66af-55ce-43aa-9933-8c8481f21f2d

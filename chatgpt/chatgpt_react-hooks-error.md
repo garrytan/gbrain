@@ -1,13 +1,20 @@
 ---
-title: "React Hooks Error"
-type: guide
-created: 2026-01-23
-updated: 2026-01-23
-source: chatgpt-export
 conversation_id: 6972f74d-fc18-832a-b80e-cd7b1ab34153
+created: 2026-01-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: React Hooks Error
+type: guide
+updated: 2026-01-23
 ---
+
 # React Hooks Error
 
 > Conversation ID: 6972f74d-fc18-832a-b80e-cd7b1ab34153

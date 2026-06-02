@@ -1,13 +1,18 @@
 ---
-title: "Dynamic Remix Collaboration"
-type: note
-created: 2024-03-25
-updated: 2024-03-25
-source: chatgpt-export
 conversation_id: 175ae519-6dbd-4276-ba61-013c3e532470
+created: 2024-03-25
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 6
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Dynamic Remix Collaboration
+type: note
+updated: 2024-03-25
 ---
+
 # Dynamic Remix Collaboration
 
 > Conversation ID: 175ae519-6dbd-4276-ba61-013c3e532470

@@ -1,13 +1,19 @@
 ---
-title: "HTML Table Tags Explained"
-type: note
-created: 2022-12-21
-updated: 2022-12-21
-source: chatgpt-export
 conversation_id: ab347b2f-e650-4712-8244-585d44efe62d
+created: 2022-12-21
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: HTML Table Tags Explained
+type: note
+updated: 2022-12-21
 ---
+
 # HTML Table Tags Explained
 
 > Conversation ID: ab347b2f-e650-4712-8244-585d44efe62d

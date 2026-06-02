@@ -1,13 +1,18 @@
 ---
-title: "Altman OpenAI Salary Fact-check"
-type: note
-created: 2025-07-14
-updated: 2025-07-14
-source: chatgpt-export
 conversation_id: 6874583e-18ac-8007-be11-c5a8caa03673
+created: 2025-07-14
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 4
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Altman OpenAI Salary Fact-check
+type: note
+updated: 2025-07-14
 ---
+
 # Altman OpenAI Salary Fact-check
 
 > Conversation ID: 6874583e-18ac-8007-be11-c5a8caa03673

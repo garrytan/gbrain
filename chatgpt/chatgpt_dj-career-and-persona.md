@@ -1,13 +1,19 @@
 ---
-title: "DJ Career and Persona"
-type: essay
-created: 2025-05-05
-updated: 2025-05-05
-source: chatgpt-export
 conversation_id: 681817a1-b4dc-8007-85fb-8a84cf4920d8
+created: 2025-05-05
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 4
-tags: [chatgpt, import, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- long-form
+title: DJ Career and Persona
+type: essay
+updated: 2025-05-05
 ---
+
 # DJ Career and Persona
 
 > Conversation ID: 681817a1-b4dc-8007-85fb-8a84cf4920d8

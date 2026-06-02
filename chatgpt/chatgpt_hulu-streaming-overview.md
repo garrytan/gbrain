@@ -1,13 +1,18 @@
 ---
-title: "Hulu Streaming Overview"
-type: note
-created: 2026-01-12
-updated: 2026-01-12
-source: chatgpt-export
 conversation_id: 6965752f-1cec-8327-8adc-50767196bba0
+created: 2026-01-12
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 10
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Hulu Streaming Overview
+type: note
+updated: 2026-01-12
 ---
+
 # Hulu Streaming Overview
 
 > Conversation ID: 6965752f-1cec-8327-8adc-50767196bba0

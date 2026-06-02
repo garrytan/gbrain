@@ -1,13 +1,19 @@
 ---
-title: "Slow Turbopack GitHub Actions"
-type: guide
-created: 2026-03-03
-updated: 2026-03-03
-source: chatgpt-export
 conversation_id: 69a732d5-0aa0-832a-bb64-8e3d53d3c35b
+created: 2026-03-03
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 4
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Slow Turbopack GitHub Actions
+type: guide
+updated: 2026-03-03
 ---
+
 # Slow Turbopack GitHub Actions
 
 > Conversation ID: 69a732d5-0aa0-832a-bb64-8e3d53d3c35b

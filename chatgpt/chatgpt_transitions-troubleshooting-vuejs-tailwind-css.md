@@ -1,13 +1,19 @@
 ---
-title: "Transitions Troubleshooting: Vue.js & Tailwind CSS"
-type: note
-created: 2023-05-07
-updated: 2023-05-07
-source: chatgpt-export
 conversation_id: aa8890a9-41f6-4808-9480-10807e6107c5
+created: 2023-05-07
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: 'Transitions Troubleshooting: Vue.js & Tailwind CSS'
+type: note
+updated: 2023-05-07
 ---
+
 # Transitions Troubleshooting: Vue.js & Tailwind CSS
 
 > Conversation ID: aa8890a9-41f6-4808-9480-10807e6107c5

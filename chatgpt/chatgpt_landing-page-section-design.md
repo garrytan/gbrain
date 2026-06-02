@@ -1,13 +1,20 @@
 ---
-title: "Landing Page Section Design"
-type: guide
-created: 2025-07-11
-updated: 2025-07-11
-source: chatgpt-export
 conversation_id: 6870ac1c-2498-8007-81bc-d03d73de5027
+created: 2025-07-11
+links:
+- '[[chatgpt-clusters/design_ux]]'
 message_count: 12
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Landing Page Section Design
+type: guide
+updated: 2025-07-11
 ---
+
 # Landing Page Section Design
 
 > Conversation ID: 6870ac1c-2498-8007-81bc-d03d73de5027

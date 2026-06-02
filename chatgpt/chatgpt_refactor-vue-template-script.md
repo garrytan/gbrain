@@ -1,13 +1,19 @@
 ---
-title: "Refactor Vue template script"
-type: note
-created: 2022-12-23
-updated: 2022-12-23
-source: chatgpt-export
 conversation_id: c74f1e1b-6529-481e-8219-e2fa7d2556e3
+created: 2022-12-23
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 2
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Refactor Vue template script
+type: note
+updated: 2022-12-23
 ---
+
 # Refactor Vue template script
 
 > Conversation ID: c74f1e1b-6529-481e-8219-e2fa7d2556e3

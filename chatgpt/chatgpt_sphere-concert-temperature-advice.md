@@ -1,13 +1,18 @@
 ---
-title: "Sphere Concert Temperature Advice"
-type: note
-created: 2023-12-13
-updated: 2023-12-13
-source: chatgpt-export
 conversation_id: 625d9e0a-0264-4dee-9c48-307471501e9a
+created: 2023-12-13
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Sphere Concert Temperature Advice
+type: note
+updated: 2023-12-13
 ---
+
 # Sphere Concert Temperature Advice
 
 > Conversation ID: 625d9e0a-0264-4dee-9c48-307471501e9a

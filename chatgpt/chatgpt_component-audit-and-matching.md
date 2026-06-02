@@ -1,13 +1,20 @@
 ---
-title: "Component Audit and Matching"
-type: guide
-created: 2026-03-06
-updated: 2026-03-06
-source: chatgpt-export
 conversation_id: 69ab4129-1f9c-832a-bda4-664646f37e88
+created: 2026-03-06
+links:
+- '[[chatgpt-clusters/coding_web_dev]]'
 message_count: 6
-tags: [chatgpt, import, code, long-form]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+- long-form
+title: Component Audit and Matching
+type: guide
+updated: 2026-03-06
 ---
+
 # Component Audit and Matching
 
 > Conversation ID: 69ab4129-1f9c-832a-bda4-664646f37e88

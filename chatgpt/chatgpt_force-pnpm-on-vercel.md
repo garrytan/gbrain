@@ -1,13 +1,19 @@
 ---
-title: "Force pnpm on Vercel"
-type: note
-created: 2025-03-10
-updated: 2025-03-10
-source: chatgpt-export
 conversation_id: 67ce755e-f6f8-8007-af14-7b93281051d6
+created: 2025-03-10
+links:
+- '[[chatgpt-clusters/coding_devops]]'
 message_count: 10
-tags: [chatgpt, import, code]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+- code
+title: Force pnpm on Vercel
+type: note
+updated: 2025-03-10
 ---
+
 # Force pnpm on Vercel
 
 > Conversation ID: 67ce755e-f6f8-8007-af14-7b93281051d6

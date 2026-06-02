@@ -1,13 +1,18 @@
 ---
-title: "Xone 92 Master Fader Issue"
-type: note
-created: 2025-06-07
-updated: 2025-06-07
-source: chatgpt-export
 conversation_id: 6843bf37-673c-8007-a3b1-9027a06f88fa
+created: 2025-06-07
+links:
+- '[[chatgpt-clusters/jovie_music_industry]]'
 message_count: 2
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Xone 92 Master Fader Issue
+type: note
+updated: 2025-06-07
 ---
+
 # Xone 92 Master Fader Issue
 
 > Conversation ID: 6843bf37-673c-8007-a3b1-9027a06f88fa

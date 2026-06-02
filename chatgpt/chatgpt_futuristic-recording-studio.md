@@ -1,13 +1,18 @@
 ---
-title: "Futuristic Recording Studio"
-type: note
-created: 2023-11-10
-updated: 2023-11-10
-source: chatgpt-export
 conversation_id: 3678f23a-f0e2-40c7-9a46-8587026fe900
+created: 2023-11-10
+links:
+- '[[chatgpt-clusters/coding_ai_ml]]'
 message_count: 3
-tags: [chatgpt, import]
+source: chatgpt-export
+tags:
+- chatgpt
+- import
+title: Futuristic Recording Studio
+type: note
+updated: 2023-11-10
 ---
+
 # Futuristic Recording Studio
 
 > Conversation ID: 3678f23a-f0e2-40c7-9a46-8587026fe900
