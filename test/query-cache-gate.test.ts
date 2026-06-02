@@ -26,18 +26,34 @@ import {
 } from '../src/core/search/query-cache-gate.ts';
 
 describe('validateCacheRowAgainstPages (pure validator)', () => {
-  test('vacuously valid for legacy empty snapshot (regression: pre-v0.40.3.0 rows must serve)', () => {
+  test('v0.41.19.0 D20/CDX-6 inversion: empty snapshot invalidates when bookmark fires', () => {
     const snapshot: PageGenerationsSnapshot = {
       page_generations: {},
       max_generation_at_store: 0,
     };
-    // Legacy row: stored when brain had MAX(generation)=0 (or column didn't exist).
-    // Current brain has been heavily written. Bookmark says stale, snapshot is empty.
+    // Pre-v0.41.19.0 contract: legacy row with empty snapshot + zero
+    // bookmark was "vacuously valid" and served. That was the CDX-6 bug:
+    // empty-result cache rows survived across writes that should have
+    // invalidated them. Post-v0.41.19.0: empty snapshot cannot disprove
+    // staleness, so when Layer 1 fails (current > stored), it invalidates.
     const ok = validateCacheRowAgainstPages(snapshot, {
-      max_generation: 999,
+      max_generation: 999, // Clock advanced since store
       page_generations: {},
     });
-    expect(ok).toBe(true); // IRON-RULE: legacy rows serve.
+    expect(ok).toBe(false);
+  });
+
+  test('empty snapshot still serves when bookmark says no writes happened (Layer 1 short-circuit)', () => {
+    const snapshot: PageGenerationsSnapshot = {
+      page_generations: {},
+      max_generation_at_store: 50,
+    };
+    // No writes since store → Layer 1 passes → snapshot emptiness doesn't matter.
+    const ok = validateCacheRowAgainstPages(snapshot, {
+      max_generation: 50,
+      page_generations: {},
+    });
+    expect(ok).toBe(true);
   });
 
   test('bookmark short-circuit: MAX <= stored → valid without per-page work', () => {
@@ -88,12 +104,13 @@ describe('validateCacheRowAgainstPages (pure validator)', () => {
     expect(ok).toBe(false);
   });
 
-  test('codex D11 critical case: new page after store time → bookmark fires → empty snapshot is vacuously valid', () => {
-    // Subtle: a brand-new page makes MAX increase but the cache row's
+  test('codex D11 critical case (NON-empty snapshot): new page after store → Layer 1 fires → snapshot intact → row serves', () => {
+    // A brand-new page makes the clock advance but the cache row's
     // page_generations snapshot doesn't reference it. The bookmark
-    // detects the corpus changed. Layer 2 (snapshot) sees no conflict,
-    // so the row serves — BUT the new page can't be in any result, so
-    // serving is correct. Closes codex #4 INSERT coverage gap.
+    // detects the corpus changed. Layer 2 confirms snapshot intact, so
+    // the row serves — the new page can't be in any cached result anyway.
+    // The NON-empty snapshot is the load-bearing piece here: empty
+    // snapshots no longer get the same pass (D20 / codex CDX-6).
     const snapshot: PageGenerationsSnapshot = {
       page_generations: { '1': 5, '2': 7 },
       max_generation_at_store: 7,
@@ -102,10 +119,24 @@ describe('validateCacheRowAgainstPages (pure validator)', () => {
       max_generation: 8, // Page 3 was created
       page_generations: { '1': 5, '2': 7 }, // Pages in snapshot unchanged
     });
-    // Per the design: bookmark fires; Layer 2 confirms snapshot intact;
-    // row serves. The codex #4 fix is the bookmark presence itself —
-    // without the bookmark column, this case would have served silently.
     expect(ok).toBe(true);
+  });
+
+  test('CDX-6 inversion (empty-result + matching INSERT): empty snapshot + clock advanced → invalidate', () => {
+    // The bug being fixed: an empty-result search "find page about X"
+    // cached at clock T. Subsequently INSERT a matching page → clock T+1.
+    // Pre-v0.41.19.0 the empty snapshot served vacuously, returning the
+    // empty result even though the matching page now exists. Post-fix:
+    // invalidates so the next lookup re-queries.
+    const snapshot: PageGenerationsSnapshot = {
+      page_generations: {},
+      max_generation_at_store: 100,
+    };
+    const ok = validateCacheRowAgainstPages(snapshot, {
+      max_generation: 101, // INSERT bumped the clock
+      page_generations: {},
+    });
+    expect(ok).toBe(false);
   });
 });
 
@@ -221,9 +252,13 @@ describe('buildPageGenerationsSnapshot (PGLite-backed)', () => {
 });
 
 describe('CACHE_GATE_WHERE_CLAUSE (SQL shape regression)', () => {
-  test('contains Layer 1 bookmark check (MAX(generation) <= qc.max_generation_at_store)', () => {
-    expect(CACHE_GATE_WHERE_CLAUSE).toContain('MAX(generation)');
+  test('v0.41.19.0: Layer 1 reads page_generation_clock (not MAX(generation))', () => {
+    expect(CACHE_GATE_WHERE_CLAUSE).toContain('page_generation_clock');
     expect(CACHE_GATE_WHERE_CLAUSE).toContain('qc.max_generation_at_store');
+    // Negative regression guard: the old MAX(generation) read shape MUST
+    // be gone (codex CDX-1/CDX-2: it silently served stale on
+    // UPDATE-to-non-max and DELETE).
+    expect(CACHE_GATE_WHERE_CLAUSE).not.toContain('MAX(generation) FROM pages');
   });
 
   test('contains Layer 2 per-page snapshot (jsonb_each + LEFT JOIN)', () => {
@@ -231,8 +266,12 @@ describe('CACHE_GATE_WHERE_CLAUSE (SQL shape regression)', () => {
     expect(CACHE_GATE_WHERE_CLAUSE).toContain('LEFT JOIN pages');
   });
 
-  test('legacy empty-snapshot shortcut present (regression: pre-v0.40.3.0 rows must serve)', () => {
-    expect(CACHE_GATE_WHERE_CLAUSE).toContain(`qc.page_generations = '{}'::jsonb`);
+  test('v0.41.19.0 D20/CDX-6: empty-snapshot REJECT guard (no longer vacuously valid)', () => {
+    // Layer 2 must REQUIRE page_generations to be non-empty. Pre-fix
+    // shape was `qc.page_generations = '{}'::jsonb OR NOT EXISTS(...)`
+    // which let empty snapshots survive any clock bump.
+    expect(CACHE_GATE_WHERE_CLAUSE).toContain(`qc.page_generations <> '{}'::jsonb`);
+    expect(CACHE_GATE_WHERE_CLAUSE).not.toMatch(/qc\.page_generations = '\{\}'::jsonb\s*OR/);
   });
 
   test('per-page mismatch path checks both deletion (NULL) and bump (!=)', () => {

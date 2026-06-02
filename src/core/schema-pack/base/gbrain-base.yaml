@@ -284,6 +284,20 @@ page_types:
     extractable: false
     expert_routing: false
 
+  # Receipt page written by the v0.41.23 extract framework after every
+  # extractor run. Demoted in search via the 0.3x source-boost on the
+  # `extracts/` prefix (see src/core/search/source-boost.ts). Always
+  # carries `dream_generated: true` + `type: extract_receipt` in
+  # frontmatter so the eligibility predicate's anti-loop guard can
+  # reject it via either check (belt + suspenders per D-EXTRACT-19).
+  - name: extract_receipt
+    primitive: annotation
+    path_prefixes:
+      - extracts/
+    aliases: []
+    extractable: false
+    expert_routing: false
+
 # Link verbs — ordered to match inferLinkType priority in link-extraction.ts.
 # Each entry carries the regex pattern that triggers the verb. Inferences
 # without a pattern (e.g. type-bound: meeting → attended) are encoded via

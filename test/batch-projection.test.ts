@@ -132,6 +132,38 @@ describe('projectBatch', () => {
     });
     expect(p.raise_cap_hint).toBeUndefined();
   });
+
+  describe('v0.41.20.0 — slash-prefix model id routing (THE FIX)', () => {
+    test('slash-form anthropic/claude-sonnet-4-6 strips to bare name + pricing hits', () => {
+      // Pre-fix: inline bareModel(model) only handled `:`; slash-form fell
+      // through to the unknown_model branch silently. Post-fix: parseModelId
+      // handles both forms; pricing lookup succeeds; cold-start path produces
+      // a non-null cost estimate.
+      const p = projectBatch({
+        job_count: 100,
+        model: 'anthropic/claude-sonnet-4-6',
+        stats: { sample_size: 0, effective_concurrency: 4 },
+        current_lease_cap: 32,
+      });
+      expect(p.unknown_model).toBeUndefined();
+      expect(p.total_cost_usd).not.toBeNull();
+      expect(p.total_cost_usd).toBeGreaterThan(0);
+    });
+
+    test('double-separator openrouter:anthropic/X → unknown_model branch fires', () => {
+      // Per D2: colon wins; tail is `anthropic/claude-sonnet-4-6` which
+      // doesn't match ANTHROPIC_PRICING keys. Confirms the deliberate
+      // OpenRouter-out-of-scope posture is observable downstream.
+      const p = projectBatch({
+        job_count: 100,
+        model: 'openrouter:anthropic/claude-sonnet-4-6',
+        stats: { sample_size: 0, effective_concurrency: 4 },
+        current_lease_cap: 32,
+      });
+      expect(p.unknown_model).toBe('anthropic/claude-sonnet-4-6');
+      expect(p.total_cost_usd).toBeNull();
+    });
+  });
 });
 
 describe('formatProjection', () => {

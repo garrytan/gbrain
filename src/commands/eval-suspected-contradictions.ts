@@ -1,4 +1,15 @@
 /**
+ * v0.41.13.0 T17 retrofit note: eval-suspected-contradictions has a
+ * sampling+judge shape (sample top-K query pairs, judge via LLM, persist
+ * to cache + runs tables). The `src/core/progressive-batch/` primitive's
+ * trial→ramp→full stage model fits the run loop but the sampling probe
+ * lives at a different layer (before the loop, deciding which pairs to
+ * judge). Routing through the primitive requires a sampling-stage-aware
+ * design pass that didn't fit this PR. The existing `maybePromptForCostBeforeProbe`
+ * helper (cost-prompt.ts, D23-deprecated) covers the pre-flight cost
+ * confirmation; primitive's stage-report subsumes it in v0.41.14.0+.
+ * Filed in TODOS.md.
+ *
  * `gbrain eval suspected-contradictions` — v0.32.6 contradiction probe CLI.
  *
  * Three sub-subcommands:

@@ -37,6 +37,12 @@ export const DEFAULT_SOURCE_BOOSTS: Record<string, number> = {
   'media/x/': 0.7,
   // Chat transcripts — massive, noisy, swamp keyword queries
   'openclaw/chat/': 0.5,
+  // v0.42 extract_receipt pages — surface when relevant (extraction
+  // questions, audit trail) but never dominate user content. Per plan
+  // D-EXTRACT-42. Receipts stamp `type: extract_receipt` AND
+  // `dream_generated: true` in their frontmatter; demote here keeps them
+  // findable but ranked below all curated user content.
+  'extracts/': 0.3,
 };
 
 /**

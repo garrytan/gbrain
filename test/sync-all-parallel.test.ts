@@ -135,7 +135,7 @@ describe('buildSyncStatusReport', () => {
   // `page_id` shape. The IRON RULE regression case lives in
   // test/e2e/sync-status-pglite.test.ts and exercises real SQL.
   function makeEngine(scripts: {
-    sourceRows?: Array<{ id: string; last_commit: string | null; last_sync_at: string | null }>;
+    sourceRows?: Array<{ id: string; last_commit: string | null; last_sync_at: string | null; newest_content_at?: string | null }>;
     countRows?: Array<{ source_id: string; pages: number; chunks_total: number; chunks_unembedded: number }>;
   }): BrainEngine {
     return {
@@ -190,6 +190,48 @@ describe('buildSyncStatusReport', () => {
     expect(byId.get('severe')!.staleness_class).toBe('severe');
     expect(byId.get('never')!.staleness_class).toBe('unknown');
     expect(byId.get('never')!.staleness_hours).toBeNull();
+  });
+
+  // v0.41.32.0 (supersedes #1623): buildSyncStatusReport backs the REMOTE
+  // get_status_snapshot MCP op, so staleness reads the stored newest_content_at
+  // column (NO git subprocess on a DB-supplied local_path). The makeEngine stub
+  // never runs git — if buildSyncStatusReport shelled out it would hit the real
+  // filesystem; these cases prove it reads the column instead.
+  test('content-relative staleness reads newest_content_at column (remote path)', async () => {
+    const now = Date.now();
+    const syncIso = new Date(now - 100 * 60 * 60 * 1000).toISOString(); // synced 100h ago
+    const sources = [
+      { id: 'quiet', name: 'quiet', local_path: '/tmp/quiet', config: { syncEnabled: true } },
+      { id: 'behind', name: 'behind', local_path: '/tmp/behind', config: { syncEnabled: true } },
+      { id: 'nocol', name: 'nocol', local_path: '/tmp/nocol', config: { syncEnabled: true } },
+    ];
+    const engine = makeEngine({
+      sourceRows: [
+        // Newest commit 200h ago, synced 100h ago → caught up → lag 0 → fresh.
+        { id: 'quiet', last_commit: 'a'.repeat(40), last_sync_at: syncIso,
+          newest_content_at: new Date(now - 200 * 60 * 60 * 1000).toISOString() },
+        // Newest commit 10h ago, synced 100h ago → behind → wall-clock → severe.
+        { id: 'behind', last_commit: 'b'.repeat(40), last_sync_at: syncIso,
+          newest_content_at: new Date(now - 10 * 60 * 60 * 1000).toISOString() },
+        // NULL column → wall-clock fallback → 100h → severe.
+        { id: 'nocol', last_commit: 'c'.repeat(40), last_sync_at: syncIso, newest_content_at: null },
+      ],
+      countRows: [
+        { source_id: 'quiet', pages: 10, chunks_total: 20, chunks_unembedded: 0 },
+        { source_id: 'behind', pages: 10, chunks_total: 20, chunks_unembedded: 0 },
+        { source_id: 'nocol', pages: 10, chunks_total: 20, chunks_unembedded: 0 },
+      ],
+    });
+
+    const report = await buildSyncStatusReport(engine, sources);
+    const byId = new Map(report.sources.map((s) => [s.source_id, s]));
+    // Legacy wall-clock would have called 'quiet' severe (100h). Content-relative
+    // correctly reports caught-up.
+    expect(byId.get('quiet')!.staleness_hours).toBe(0);
+    expect(byId.get('quiet')!.staleness_class).toBe('fresh');
+    expect(byId.get('behind')!.staleness_class).toBe('severe');
+    expect(byId.get('nocol')!.staleness_hours).toBeGreaterThan(72);
+    expect(byId.get('nocol')!.staleness_class).toBe('severe');
   });
 
   test('embedding_coverage_pct computed from chunks_total vs chunks_unembedded', async () => {

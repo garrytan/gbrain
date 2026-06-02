@@ -217,11 +217,12 @@ voice, OCR) against the versioned `IngestionSource` contract at
 
 Most personal-knowledge tools force one fixed layout: their idea of "notes" + "people" + "tags." Drop a Notion export or your own years-old Obsidian vault on top, and the agent doesn't know what a `Projects/` folder means or whether `Reading/` is people or sources.
 
-**gbrain doesn't have a fixed layout.** It ships with two bundled schema packs and lets you author your own when neither fits:
+**gbrain doesn't have a fixed layout.** It ships with bundled schema packs and lets you author your own when none fit:
 
-- **`gbrain-base`** (default) — the layout my production brain uses: `people/`, `companies/`, `concepts/`, `meetings/`, `deal/`, `daily/`, `originals/`, `writing/`, etc. Zero config. Drop a brain that fits this shape and everything works.
+- **`gbrain-base-v2`** (default as of v0.41.22) — 15-type DRY/MECE canonical taxonomy (14 canonical + `note` catch-all): `person`, `company`, `media`, `tweet`, `social-digest`, `analysis`, `atom`, `concept`, `source`, `deal`, `email`, `slack`, `writing`, `project`, `note`. Subtypes/format/origin pushed to frontmatter. The taxonomy that responds to issue #1479.
+- **`gbrain-base`** (legacy, v0.41 and earlier brains) — the original 24-type layout. Stays bundled for back-compat; brains on it can upgrade via `gbrain onboard --check --explain` → `gbrain jobs submit unify-types --allow-protected --params '{"target_pack":"gbrain-base-v2"}'`.
 - **`gbrain-recommended`** — extends `gbrain-base` with the 13 additional directories from `docs/GBRAIN_RECOMMENDED_SCHEMA.md` (source, place, trip, conversation, personal, civic, project, etc.). Activate with `gbrain schema use gbrain-recommended`.
-- **Your own pack** — `gbrain schema detect` clusters your actual filesystem into proposed types, `gbrain schema suggest` runs an LLM pass over them, and `gbrain schema review-candidates --apply` promotes the ones you like. Three commands and the brain knows your shape.
+- **Your own pack** — `gbrain schema detect` clusters your actual filesystem into proposed types, `gbrain schema suggest` runs an LLM pass over them, and `gbrain schema review-candidates --apply` promotes the ones you like. Three commands and the brain knows your shape. Authoring a successor pack (declares `migration_from:` so existing brains can opt in): see [`docs/architecture/pack-upgrade-mechanism.md`](docs/architecture/pack-upgrade-mechanism.md).
 
 ```bash
 gbrain schema active                # which pack is running, which tier set it
@@ -242,6 +243,7 @@ Step-by-step walkthroughs for getting the most out of GBrain. Each one takes you
 
 - [**Set up your personal AI agent + brain from zero**](docs/tutorials/personal-brain.md) — the canonical full-stack install. Two GitHub repos, a Telegram bot, AlphaClaw on Render, OpenClaw + GBrain + Supabase. End-to-end in about 2 hours.
 - [**Set up GBrain as your company brain**](docs/tutorials/company-brain.md) — federated, multi-user, OAuth-scoped institutional memory for a 10-50 person team. About 90 minutes end-to-end.
+- [**Auto-improve a skill with `gbrain skillopt`**](docs/tutorials/improving-skills-with-skillopt.md) — treat a `SKILL.md` as a trainable parameter. Generate a starter benchmark straight from the skill with `--bootstrap-from-skill` (or write your own), strengthen the judges, then watch the optimizer propose edits and keep only the ones that measurably score higher. ~20 minutes, ~$1 in API calls. Flag + cost + safety reference: [`docs/guides/skillopt.md`](docs/guides/skillopt.md).
 
 More walkthroughs in progress: connecting an existing agent (Claude Code, Cursor, OpenClaw, Hermes) to a GBrain memory layer; setting up GBrain for VC dealflow with founder scorecards and meeting prep; migrating an existing Notion or Obsidian vault; indexing a codebase as a queryable code brain. Full tutorial index: [`docs/tutorials/`](docs/tutorials/).
 
@@ -264,7 +266,7 @@ The whole loop is described in [`docs/architecture/topologies.md`](docs/architec
 
 ## Capabilities
 
-**Hybrid search.** Vector (HNSW on pgvector) + BM25 keyword + reciprocal-rank fusion + source-tier boost + intent-aware query rewriting. Three named search modes (`conservative`, `balanced`, `tokenmax`) bundle the cost/quality knobs into a single config key. Live cost/recall comparisons in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). Default: `balanced` with ZeroEntropy reranker on. Per-query graph signals notice when a top result is a hub for THAT query (adjacency boost), is corroborated across team brains (cross-source boost), or is being crowded out by weak chunks from a chatty session (session demote). Run `gbrain search "<query>" --explain` to see per-stage attribution: base score, every boost that fired, what it multiplied. `gbrain doctor` ships a `graph_signals_coverage` check; `gbrain search stats` shows fire counts and failure breakdowns.
+**Hybrid search.** Vector (HNSW on pgvector) + BM25 keyword + reciprocal-rank fusion + source-tier boost + intent-aware query rewriting. Three named search modes (`conservative`, `balanced`, `tokenmax`) bundle the cost/quality knobs into a single config key. Live cost/recall comparisons in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). Default: `balanced` with ZeroEntropy reranker on. Per-query graph signals notice when a top result is a hub for THAT query (adjacency boost), is corroborated across team brains (cross-source boost), or is being crowded out by weak chunks from a chatty session (session demote). Run `gbrain search "<query>" --explain` to see per-stage attribution: base score, every boost that fired, what it multiplied. `gbrain doctor` ships a `graph_signals_coverage` check; `gbrain search stats` shows fire counts and failure breakdowns. Vector retrieval pools the best chunk per page, so a page surfaces on its strongest evidence instead of losing to a neighbor on one weak chunk. Queries that match a page's title phrase or a declared free-text alias (`gbrain reindex --aliases` backfills existing pages) get boosted to the page they name. Every result carries an `evidence` tag (why it matched) and a `create_safety` hint (`exists` / `probable` / `unknown`) so an agent decides whether a page already exists instead of guessing from a raw score. `gbrain search diagnose "<query>" --target <slug>` traces which retrieval layer surfaces (or misses) a page.
 
 **Self-wiring knowledge graph.** Every `put_page` extracts entity refs from markdown/wikilinks/typed-link syntax and writes edges with zero LLM calls. Typed edges (`attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, …). Multi-hop traversal via `gbrain graph-query`. The graph is what produces the +31.4 P@5 lift over vector-only RAG.
 
@@ -272,7 +274,7 @@ The whole loop is described in [`docs/architecture/topologies.md`](docs/architec
 
 **43 curated skills.** Routing lives in [`skills/RESOLVER.md`](skills/RESOLVER.md). Covers signal capture, ingest (idea / media / meeting), enrichment, querying, brain ops, citation fixing, daily task management, cron scheduling, reports, voice, soul audit, skill creation, eval framework, and migrations. Skills are markdown files (tool-agnostic), packaged as a single skillpack the installer drops into your agent workspace.
 
-**Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. Full methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
+**Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. Full methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
 
 **Brain consistency.** `gbrain eval suspected-contradictions` samples retrieval pairs, layered date pre-filter, query-conditioned LLM judge, persistent cache. Surfaces conflicts between takes + facts the agent has written. Wired into the daily dream cycle.
 
@@ -302,6 +304,124 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 ## Troubleshooting
 
 **`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain retrieval-upgrade` command to repair the mismatch. You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys in your environment: set `OPENAI_API_KEY` (or `ZEROENTROPY_API_KEY` / `VOYAGE_API_KEY`) before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker. In non-TTY contexts (CI, Docker) with no keys, init exits 1 with a paste-ready setup hint; pass `--no-embedding` to defer setup until runtime. See [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](docs/operations/headless-install.md) for Docker/CI sequencing.
+
+**Hourly cron sync keeps timing out on a federated brain?** v0.41.13.0 ships
+two flags + a recommended pattern. Switch your cron to a per-source loop
+with shell `timeout(1)` doing the OS-level kill and gbrain self-terminating
+gracefully half-a-minute earlier:
+
+```bash
+gbrain sync --break-lock --all --max-age 1800
+for src in $(gbrain sources list --json | jq -r '.[].id'); do
+  timeout 600 gbrain sync --source "$src" --timeout 540 || true
+done
+```
+
+When `--timeout` fires mid-import, `gbrain sync` exits 0 with status
+`partial` and `last_commit` UNCHANGED — the next run re-walks the same
+diff and `content_hash` short-circuits already-imported files. The
+`--max-age 1800` first command self-heals any wedged-but-alive locks
+left by a hung previous run, using the v98 `last_refreshed_at` semantic
+(NOT `acquired_at`) so healthy long-running holders are safe by
+construction. See the v0.41.13.0 entry in [`CHANGELOG.md`](CHANGELOG.md)
+for the honest scope notes (extract + embed phases run to completion;
+30-min rollout window for `--max-age` post-migration v98; full-sync
+triggers deferred to v0.42+).
+
+**Dream cycle silently losing wiki links on Supabase?** v0.41.19.0 fixes
+the bug class structurally. The engine now self-retries every bulk batch
+write (`addLinksBatch` / `addTimelineEntriesBatch` / `upsertChunks`) on
+Supavisor pooler blips, with a 12s worst-case wait that covers the full
+5-10s circuit-breaker recovery window. `gbrain doctor` surfaces incidents
+via the new `batch_retry_health` check (reads the last 24h of
+`~/.gbrain/audit/batch-retry-YYYY-Www.jsonl`). To tune for an unusually
+slow pooler:
+
+```bash
+# Defaults: 3 retries, base 1s, max 10s, decorrelated jitter.
+# Override per operator without a release:
+export GBRAIN_BULK_MAX_RETRIES=5       # int >= 0; 0 disables retries
+export GBRAIN_BULK_RETRY_BASE_MS=2000  # int > 0
+export GBRAIN_BULK_RETRY_MAX_MS=15000  # int >= base
+```
+
+Bad values surface at `gbrain doctor` startup with a paste-ready fix
+(not at first-retry mid-cycle). PGLite-only installs pay zero cost — the
+retry wrap is engine-level, but PGLite has no pooler so retries never
+fire in practice.
+
+**Dream cycle losing ~150 link rows per run with `'No database
+connection: connect() has not been called'` errors in the log?** v0.41.27.0
+makes the retry layer self-heal on a nulled-out database singleton. A
+new `reconnect` callback on `withRetry` rebuilds the connection between
+attempts; `PostgresEngine.batchRetry` injects `() => this.reconnect()`
+so engine-level batch writes survive a mid-cycle disconnect by something
+else in the same process. Same release: `gbrain capture` no longer trails
+a `'No database connection'` stderr line from a background facts:absorb
+worker firing after CLI exit — the op-dispatch finally block awaits
+`getFactsQueue().drainPending({timeout: 1000})` before
+`engine.disconnect()`. To find which code path is still calling
+disconnect mid-process, run `gbrain doctor --json | jq '.checks[] |
+select(.id=="batch_retry_health")'`; the extended check now surfaces
+24h disconnect-call count and the most-recent caller frame from a new
+`~/.gbrain/audit/db-disconnect-YYYY-Www.jsonl` audit. (Closes #1570.)
+
+**`gbrain brainstorm` returning `judge_failed: true` with 0 scored
+ideas?** v0.41.21.0 closes the two bugs that caused it. The judge
+hard-coded a 4K-token output cap; for any run past ~40 ideas the call
+truncated mid-JSON and the parser threw. Same release closes a slash-
+form pricing miss: `gbrain brainstorm --judge-model
+anthropic/claude-sonnet-4-6 --max-cost 5` failed with
+`BudgetExhausted reason=no_pricing` because every pricing site only
+matched the colon form. Both shapes work now. No config change, no
+schema migration — `gbrain upgrade` is the whole fix.
+
+**`gbrain reindex --markdown` wiped your auto/dream/signal-detector
+tags?** v0.41.37.0 makes tag reconciliation add-only. Re-import and
+`reindex --markdown` now ADD current frontmatter tags and never delete,
+so enrichment tags written to the DB (auto-tag, dream synthesize,
+signal-detector) survive a re-chunk. The reindex DB-only fallback also
+reconstructs the full markdown (frontmatter + body + timeline) before
+re-chunking, so a page with no on-disk source keeps its frontmatter,
+title, and timeline instead of getting overwritten with empty
+frontmatter. Trade-off: removing a tag from a page's frontmatter no
+longer removes it from the DB on the next sync (frontmatter-tag removal
+needs a provenance column, deferred). (Closes #1621.)
+
+**`gbrain sync` wedges on a large brain (no progress, high CPU)?**
+v0.41.37.0 ships three things. First, name the stalling file:
+
+```bash
+GBRAIN_SYNC_TRACE=1 gbrain sync --no-pull --no-embed --yes
+```
+
+The last `[sync] begin import: <path>` line with no following completion
+is the file being processed when the hang hit. Second, if you suspect a
+schema-pack `inference.regex` with catastrophic backtracking, complete
+the sync with the pack disabled and re-run extraction later:
+
+```bash
+gbrain sync --no-schema-pack --no-pull --no-embed --yes
+```
+
+`gbrain schema lint` now warns on the classic nested-quantifier ReDoS
+shapes (`(a+)+`, `(a*)*`, …) in pack regexes, and the runtime caps
+inference-regex input length (override via `GBRAIN_MAX_REGEX_INPUT_CHARS`).
+Third, on a PGLite brain, stop `gbrain serve` before a large sync —
+PGLite is single-writer and a live MCP server contends for the write
+lock. See [`docs/architecture/serve-sync-concurrency.md`](docs/architecture/serve-sync-concurrency.md)
+for the full triage. (Closes #1569.)
+
+**`gbrain init --migrate-only` / a schema migration fails on Windows
+with `getaddrinfo ENOTFOUND`?** v0.41.37.0 runs the 9 schema-bring-up
+phases in-process instead of spawning a child `gbrain init
+--migrate-only` per phase. The spawned child died on
+Windows + bun + Supabase pooler with a DNS-resolution failure even
+though the parent connected fine; running in-process removes the spawn
+entirely. The v0.13.1 grandfather migration that hung 70+ minutes on an
+82K-page PGLite brain is also fixed — it now runs as a chunked bulk SQL
+pass (keyed on the page PK, soft-delete-filtered, source-safe) that
+completes in ~1-2 seconds. (Closes #1605, #1581.)
 
 ## Docs
 

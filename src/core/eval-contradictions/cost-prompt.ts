@@ -14,6 +14,14 @@
  * Independent of the runner's `--budget-usd` hard cap: this prompt informs;
  * the cap enforces. Both layers compose — operator sees the estimate, then
  * the runner halts mid-run if the live cost exceeds the cap.
+ *
+ * @deprecated v0.41.13.0 T16: this module is slated for delete in
+ *   v0.41.14.0+ once `gbrain eval suspected-contradictions` is fully
+ *   retrofitted onto `src/core/progressive-batch/` (the primitive's
+ *   stage-report subsumes this prompt's UX). v0.41.13.0 leaves the
+ *   module + its 1 caller unchanged for behavior parity; the retrofit
+ *   needs a sampling-stage-aware design pass that didn't fit this PR.
+ *   See TODOS.md: "v0.41.14.0: 9-site progressive-batch retrofit".
  */
 
 import type { BrainEngine } from '../engine.ts';

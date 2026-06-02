@@ -511,7 +511,23 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           }),
           hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || await engine.getConfig('anthropic_api_key')),
         };
-        const plan = computeRecommendations(health, ctx).filter((r) => r.status === 'remediable');
+        // v0.41.18.0 (A5 + A19 + A22, T15): consult onboard recommendations
+        // ALONGSIDE doctor's brain-score recommendations. Onboard's 4 new
+        // checks (embed_staleness, link_coverage, timeline_coverage,
+        // takes_count) supply extraRemediations into computeRecommendations.
+        // Per A19 fail-open: any throw in the onboard path falls through
+        // to legacy doctor-only plan (no crash).
+        let extraRemediations: ReturnType<typeof computeRecommendations> = [];
+        try {
+          const { runAllOnboardChecks } = await import('../core/onboard/checks.ts');
+          const onboardResults = await runAllOnboardChecks(engine);
+          extraRemediations = onboardResults.flatMap((r) => r.remediations);
+        } catch (err) {
+          process.stderr.write(
+            `[autopilot] onboard checks failed (fail-open per A19): ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
+        const plan = computeRecommendations(health, ctx, extraRemediations).filter((r) => r.status === 'remediable');
         const estTotal = plan.reduce((s, r) => s + r.est_seconds, 0);
 
         // Track time since last full cycle for the 60-min floor.

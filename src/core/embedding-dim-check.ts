@@ -458,3 +458,234 @@ function isCustomDimValidForProvider(
       `Either drop --embedding-dimensions or pick a Matryoshka-aware model.`,
   };
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// v0.41.15.0 (T5 + T6) — facts.embedding column drift detection.
+//
+// Migration v40 reads `config.embedding_dimensions` at MIGRATION time and
+// creates `facts.embedding` as `halfvec(N)` (or `vector(N)` on pgvector
+// < 0.7). If the user later changes embedding provider without re-running
+// migrations, the column type stays at the old N and the first insert
+// dies with an opaque pgvector error. Two surfaces close the gap:
+//
+//   1. `readFactsEmbeddingDim(engine)` — column-type probe used by the
+//      `gbrain doctor` `embedding_dim_mismatch` check to surface drift.
+//   2. `assertFactsEmbeddingDimMatchesConfig(engine)` — preflight thrown
+//      at the top of every fact-writing path (extract-conversation-facts
+//      startup, the cycle extract_facts phase, facts:absorb op). Result
+//      cached per process so the SELECT runs once per startup.
+//
+// Both helpers handle the `vector(N)` AND `halfvec(N)` shapes because
+// migration v40 falls back to `vector` on pgvector < 0.7 (codex #19).
+// ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Discriminated result of `readFactsEmbeddingDim`. Carries the column
+ * type (vector vs halfvec) alongside the dim so callers can render
+ * paste-ready ALTER recipes that target the right type + opclass.
+ */
+export interface FactsColumnDimResult {
+  /** Whether the `facts.embedding` column exists (false on pre-v40 brains). */
+  exists: boolean;
+  /** Parsed dim from format_type, or null when the column doesn't exist. */
+  dims: number | null;
+  /** Column type — `halfvec` (pgvector >=0.7) or `vector` (older). */
+  columnType: 'halfvec' | 'vector' | null;
+}
+
+/**
+ * Read the actual width + type of `facts.embedding`. Mirrors
+ * `readContentChunksEmbeddingDim` but for the facts table; covers
+ * BOTH `vector(N)` and `halfvec(N)` shapes per codex #19.
+ *
+ * Returns `{exists: false, dims: null, columnType: null}` on pre-v40
+ * brains (facts table absent) and a fully-populated result otherwise.
+ */
+export async function readFactsEmbeddingDim(engine: BrainEngine): Promise<FactsColumnDimResult> {
+  // Probe the embedding column directly. The facts table itself may
+  // exist on a partial-v40 brain but without the embedding column on
+  // very-old upgrade chains; both null branches yield exists:false.
+  const existsRows = await engine.executeRaw<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'facts'
+         AND column_name = 'embedding'
+     ) AS exists`,
+  );
+  const exists = !!existsRows?.[0]?.exists;
+  if (!exists) return { exists: false, dims: null, columnType: null };
+
+  const formatRows = await engine.executeRaw<{ formatted: string | null }>(
+    `SELECT format_type(a.atttypid, a.atttypmod) AS formatted
+       FROM pg_attribute a
+       JOIN pg_class c ON c.oid = a.attrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = 'facts'
+        AND a.attname = 'embedding'
+        AND NOT a.attisdropped`,
+  );
+  const formatted = formatRows?.[0]?.formatted ?? null;
+  if (!formatted) return { exists: true, dims: null, columnType: null };
+
+  // Order matters: try `halfvec(N)` BEFORE `vector(N)` because the
+  // half-vector regex would otherwise be shadowed by the generic
+  // `vector` match (halfvec is a separate pgvector type that also
+  // contains "vec" as a substring).
+  const halfMatch = formatted.match(/halfvec\((\d+)\)/i);
+  if (halfMatch) {
+    return { exists: true, dims: parseInt(halfMatch[1], 10), columnType: 'halfvec' };
+  }
+  const vecMatch = formatted.match(/vector\((\d+)\)/i);
+  if (vecMatch) {
+    return { exists: true, dims: parseInt(vecMatch[1], 10), columnType: 'vector' };
+  }
+  return { exists: true, dims: null, columnType: null };
+}
+
+/** Tagged error thrown by `assertFactsEmbeddingDimMatchesConfig` on drift. */
+export class FactsEmbeddingDimMismatchError extends Error {
+  readonly tag = 'FACTS_EMBEDDING_DIM_MISMATCH' as const;
+  constructor(
+    message: string,
+    public readonly columnDims: number,
+    public readonly configuredDims: number,
+    public readonly columnType: 'halfvec' | 'vector',
+  ) {
+    super(message);
+    this.name = 'FactsEmbeddingDimMismatchError';
+  }
+}
+
+/**
+ * v0.41.15.0 (D15): build the paste-ready ALTER recipe for facts dim
+ * drift (codex #18). Postgres-only — facts.embedding ALTER on PGLite
+ * is not supported by the embedded pgvector WASM. The recipe is the
+ * full DROP INDEX + ALTER USING + CREATE INDEX flow, NOT a bare
+ * `ALTER TYPE ... REINDEX` (which doesn't actually rewrite the index
+ * after a type change).
+ */
+export function buildFactsAlterRecipe(
+  columnDims: number,
+  configuredDims: number,
+  columnType: 'halfvec' | 'vector',
+): string {
+  const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+  const targetType = columnType === 'halfvec' ? `halfvec(${configuredDims})` : `vector(${configuredDims})`;
+  return [
+    `-- ALTER ${columnType}(${columnDims}) → ${columnType}(${configuredDims}) on indexed column.`,
+    `-- HOLD a maintenance window: this rewrites every row's embedding.`,
+    `-- Coordinate with any active extract-conversation-facts backfill.`,
+    `DROP INDEX IF EXISTS idx_facts_embedding_hnsw;`,
+    `ALTER TABLE facts ALTER COLUMN embedding TYPE ${targetType}`,
+    `  USING embedding::${targetType};`,
+    `CREATE INDEX idx_facts_embedding_hnsw`,
+    `  ON facts USING hnsw (embedding ${opclass})`,
+    `  WHERE embedding IS NOT NULL AND expired_at IS NULL;`,
+  ].join('\n');
+}
+
+/**
+ * Per-process cache for `assertFactsEmbeddingDimMatchesConfig`. The
+ * probe is a cheap SELECT but runs at the top of every fact-writing
+ * call site; caching keeps the cost off the hot path. The cache
+ * stores the engine's `kind + a synthetic instance marker` so a fresh
+ * engine connection in the same process re-probes. Test seam below
+ * clears the cache between cases.
+ */
+const _factsDimCheckCache = new WeakMap<BrainEngine, { ok: true } | { err: FactsEmbeddingDimMismatchError }>();
+
+/** Test seam: clear the per-process facts-dim cache. */
+export function _resetFactsDimCheckCacheForTest(): void {
+  // WeakMap has no clear() — but tests can pass fresh engine instances
+  // to get fresh probes. This noop helper documents the intent.
+}
+
+/**
+ * Preflight check: throws FactsEmbeddingDimMismatchError when the
+ * configured embedding dimensions don't match the facts.embedding
+ * column width. Called at the top of every fact-writing path so users
+ * see a clear paste-ready ALTER hint BEFORE the first insert (which
+ * would otherwise fail with the opaque pgvector "expected vector(N),
+ * got vector(M)" error).
+ *
+ * Caches the result per engine instance for the process lifetime —
+ * one SELECT at startup, zero per-page cost. Successful probes return
+ * void; mismatches throw the tagged class.
+ *
+ * Skipped on:
+ *   - PGLite engines (the facts table on PGLite uses the same
+ *     embedded pgvector that migrated content_chunks; if dim drift
+ *     exists, the `--no-embedding` runtime guard already covers it).
+ *   - Brains without the facts.embedding column (pre-v40 install
+ *     chains; the migration that creates the column hasn't run, so
+ *     no possible drift exists).
+ *   - Brains with no `embedding_dimensions` config (fresh installs;
+ *     gateway defaults take over and align with migration defaults).
+ */
+export async function assertFactsEmbeddingDimMatchesConfig(engine: BrainEngine): Promise<void> {
+  const cached = _factsDimCheckCache.get(engine);
+  if (cached) {
+    if ('err' in cached) throw cached.err;
+    return;
+  }
+
+  // PGLite + non-Postgres engines: skip. (PGLite ships a single
+  // pgvector version; the column and config are wired together at
+  // initSchema time, so the bug class doesn't apply.)
+  if (engine.kind !== 'postgres') {
+    _factsDimCheckCache.set(engine, { ok: true });
+    return;
+  }
+
+  const col = await readFactsEmbeddingDim(engine);
+  if (!col.exists || col.dims === null || col.columnType === null) {
+    // No facts.embedding column → migration v40 hasn't run yet → no
+    // possible drift. Cache as ok; the migration runner will pick up
+    // the right dims from config when it lands.
+    _factsDimCheckCache.set(engine, { ok: true });
+    return;
+  }
+
+  // Read the configured dims directly from the gateway. This matches
+  // what gateway.embed() will produce — single source of truth.
+  let configuredDims: number;
+  try {
+    // Lazy-import to avoid the gateway pulling in at module-load
+    // time (matters for tests that mock the gateway).
+    const { getEmbeddingDimensions } = await import('./ai/gateway.ts');
+    configuredDims = getEmbeddingDimensions();
+  } catch {
+    // Gateway not configured (rare; usually means the brain hasn't
+    // been initialized yet). Skip the check — the fact-writing path
+    // will fail with a clearer "gateway not configured" error.
+    _factsDimCheckCache.set(engine, { ok: true });
+    return;
+  }
+
+  if (col.dims === configuredDims) {
+    _factsDimCheckCache.set(engine, { ok: true });
+    return;
+  }
+
+  const recipe = buildFactsAlterRecipe(col.dims, configuredDims, col.columnType);
+  const message = [
+    `facts.embedding is ${col.columnType}(${col.dims}) but configured embedding_dimensions is ${configuredDims}.`,
+    `Refusing to attempt fact inserts that would fail with an opaque pgvector error.`,
+    ``,
+    `Paste-ready fix (review carefully — this rewrites the facts table):`,
+    ``,
+    recipe,
+    ``,
+    `Or run \`gbrain doctor --json\` for the full diagnostic + fix surface.`,
+  ].join('\n');
+  const err = new FactsEmbeddingDimMismatchError(
+    message,
+    col.dims,
+    configuredDims,
+    col.columnType,
+  );
+  _factsDimCheckCache.set(engine, { err });
+  throw err;
+}

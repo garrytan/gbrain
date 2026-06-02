@@ -23,6 +23,7 @@ import { createHash } from 'crypto';
 
 import { gbrainPath, loadConfig } from '../core/config.ts';
 import { configureGateway, isAvailable } from '../core/ai/gateway.ts';
+import { runWithLimit } from '../core/worker-pool.ts';
 import {
   DEFAULT_DIMENSIONS,
   DEFAULT_SLOTS,
@@ -236,42 +237,13 @@ function parseFloatStrict(s: string): number {
   return n;
 }
 
-/**
- * v0.40.1.0 Track D / T4 (per D6) — semaphore-bounded fan-out helper.
- * Runs `fn(item)` over `items` with at most `limit` in-flight at any moment.
- * Per-item errors are captured in the result (NOT thrown) so a single
- * failure does not abort the whole batch.
- *
- * Pinned by test/eval-cross-modal-batch.test.ts: never exceeds limit,
- * surfaces per-item errors, preserves input order in the result array.
- */
-export async function runWithLimit<TIn, TOut>(
-  items: readonly TIn[],
-  limit: number,
-  fn: (item: TIn, index: number) => Promise<TOut>,
-): Promise<Array<{ ok: true; value: TOut } | { ok: false; error: Error }>> {
-  if (limit < 1) throw new Error(`runWithLimit: limit must be >= 1 (got ${limit})`);
-  const results: Array<{ ok: true; value: TOut } | { ok: false; error: Error } | undefined> = new Array(items.length);
-  let nextIndex = 0;
-  const workers: Promise<void>[] = [];
-  const workerCount = Math.min(limit, items.length);
-  for (let w = 0; w < workerCount; w++) {
-    workers.push((async () => {
-      while (true) {
-        const idx = nextIndex++;
-        if (idx >= items.length) return;
-        try {
-          const value = await fn(items[idx]!, idx);
-          results[idx] = { ok: true, value };
-        } catch (err) {
-          results[idx] = { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
-        }
-      }
-    })());
-  }
-  await Promise.all(workers);
-  return results as Array<{ ok: true; value: TOut } | { ok: false; error: Error }>;
-}
+// v0.41.15.0 (T4) — `runWithLimit` migrated to the shared worker-pool
+// helper at src/core/worker-pool.ts. Re-exported here so callers that
+// import from eval-cross-modal.ts keep working without a shim. The
+// helper's API is opts-object shape — callers that built against the
+// pre-v0.41.15 positional signature must update at the call site
+// (no back-compat overload; codex #15).
+export { runWithLimit };
 
 function inferSlugFromOutputPath(path: string): string | undefined {
   // skills/<slug>/SKILL.md or .../skills/<slug>/...
@@ -713,18 +685,22 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
   const runEvalFn = opts.runEval ?? runEval;
 
   try {
-    const results = await runWithLimit(rows, concurrent, async (row, idx) => {
-      process.stderr.write(`[eval cross-modal batch] ${idx + 1}/${rows.length} ${row.question_id} starting...\n`);
-      return await runEvalFn({
-        task: row.question,
-        output: row.hypothesis,
-        slug: row.question_id,
-        dimensions,
-        slots,
-        cycles,
-        receiptDir: batchTempDir,
-        maxTokens,
-      });
+    const results = await runWithLimit({
+      items: rows,
+      limit: concurrent,
+      fn: async (row, idx) => {
+        process.stderr.write(`[eval cross-modal batch] ${idx + 1}/${rows.length} ${row.question_id} starting...\n`);
+        return await runEvalFn({
+          task: row.question,
+          output: row.hypothesis,
+          slug: row.question_id,
+          dimensions,
+          slots,
+          cycles,
+          receiptDir: batchTempDir,
+          maxTokens,
+        });
+      },
     });
 
     // Aggregate verdicts.
@@ -735,7 +711,10 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
       const qid = rows[i]!.question_id;
       if (!r.ok) {
         errored++;
-        perQuestionResults.push({ question_id: qid, verdict: 'error', error: r.error.message });
+        // Helper's error field is `unknown` (was `Error` pre-v0.41.15);
+        // narrow at the use site.
+        const errMsg = r.error instanceof Error ? r.error.message : String(r.error);
+        perQuestionResults.push({ question_id: qid, verdict: 'error', error: errMsg });
         continue;
       }
       const v = r.value.finalAggregate.verdict;

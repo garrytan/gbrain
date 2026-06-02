@@ -240,6 +240,29 @@ export interface GBrainConfig {
    * operator escape hatch.
    */
   schema_pack?: string;
+
+  /**
+   * PR1 — MCP skill-catalog publishing. Lets a thin MCP client (Codex desktop,
+   * Claude Code, Perplexity) discover and follow this agent repo's skills over
+   * `gbrain serve`. See `src/core/skill-catalog.ts` for the trust-boundary memo.
+   */
+  mcp?: {
+    /**
+     * Gate for `list_skills` / `get_skill` over a REMOTE transport. Runtime
+     * default is OFF (absent key → OFF) so an upgrade never silently grants
+     * existing read tokens host-skill read. `gbrain init` writes `true` for new
+     * installs; the upgrade migration prompts existing owners to enable it.
+     * Local CLI callers (`ctx.remote === false`) bypass the gate entirely.
+     */
+    publish_skills?: boolean;
+    /**
+     * Explicit skills-dir override. Wins over autodetect — makes which skills
+     * get published deterministic across laptop / daemon / container launches.
+     * When unset, the ops autodetect (remote callers exclude the install-path
+     * tier so a hosted gbrain never serves its own bundled dev skills).
+     */
+    skills_dir?: string;
+  };
 }
 
 /**
@@ -670,6 +693,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'content_sanity.bytes_block',
   'content_sanity.junk_patterns_enabled',
   'content_sanity.disabled',
+  // MCP skill-catalog publishing (PR1)
+  'mcp.publish_skills',
+  'mcp.publish_skills_prompted',
+  'mcp.skills_dir',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
@@ -688,6 +715,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
   'content_sanity.',    // v0.41 content-sanity tunables
+  'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
 ];
 
 export function saveConfig(config: GBrainConfig): void {

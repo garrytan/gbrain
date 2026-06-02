@@ -25,6 +25,8 @@ mock.module('../../src/core/embedding.ts', () => ({
     // Deterministic fake vector for each chunk.
     return texts.map(() => new Float32Array(1536));
   },
+  // v0.41.31: embed phase reads the current signature to stamp provenance.
+  currentEmbeddingSignature: () => 'test:model:1536',
 }));
 
 const { runCycle } = await import('../../src/core/cycle.ts');

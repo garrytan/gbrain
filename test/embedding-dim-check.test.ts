@@ -19,6 +19,7 @@ import {
   resolveSchemaMultimodalDim,
   PGVECTOR_COLUMN_MAX_DIMS,
 } from '../src/core/embedding-dim-check.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 // Canonical pattern: single engine per file, init once, disconnect once.
 // The two tests below diverge in whether they want a migrated brain or a
@@ -27,6 +28,21 @@ import {
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // Hermeticity guard (cross-file gateway-state leak class — see CLAUDE.md
+  // "Test-isolation lint and helpers"). initSchema builds the
+  // content_chunks vector column at the gateway's configured dim. The
+  // bunfig preload pins OpenAI/1536, but its beforeEach only re-applies
+  // legacy when the gateway was RESET (throws) — it does NOT correct a
+  // sibling that configured a different LIVE dim (e.g. ZE/1280) and never
+  // reset. Under weight-based shard bin-packing, such a sibling can run
+  // first, so pin 1536 explicitly here BEFORE initSchema (this is exactly
+  // the "call configureGateway() in your own beforeAll" escape hatch the
+  // preload documents). Reset in afterAll so we don't leak 1536 onward.
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -34,6 +50,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 describe('readContentChunksEmbeddingDim', () => {

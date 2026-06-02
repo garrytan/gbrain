@@ -93,7 +93,7 @@ export class SchemaPackMutationError extends Error {
   }
 }
 
-export const BUNDLED_PACK_NAMES = new Set(['gbrain-base', 'gbrain-recommended']);
+export const BUNDLED_PACK_NAMES = new Set(['gbrain-base', 'gbrain-recommended', 'gbrain-base-v2']);
 
 export interface MutateResult {
   /** Pack name that was mutated. */
