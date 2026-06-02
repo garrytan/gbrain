@@ -94,7 +94,7 @@ describe('buildAutopilotHealth', () => {
       execSync: makeExec({
         'crontab -l 2>/dev/null || true': "*/5 * * * * '/tmp/.gbrain/autopilot-run.sh' >> ~/.gbrain/autopilot.log 2>&1\n",
       }),
-      kill: (() => {}) as typeof process.kill,
+      kill: ((_pid: number, _signal?: number | string) => true) as typeof process.kill,
     });
     expect(health.install_target).toBe('linux-cron');
     expect(health.installed).toBe(true);

@@ -108,8 +108,7 @@ function commandOutput(
   timeout = 3000,
 ): string | null {
   try {
-    const out = run(command, { encoding: 'utf-8', stdio: 'pipe', timeout });
-    return typeof out === 'string' ? out : out.toString('utf-8');
+    return run(command, { encoding: 'utf-8', stdio: 'pipe', timeout });
   } catch {
     return null;
   }
