@@ -1784,13 +1784,15 @@ async function dispatchReadOnlyCommand(engine: BrainEngine, command: string, arg
 // reads (LLAMA_SERVER, OLLAMA, LMSTUDIO, LITELLM, OPENROUTER).
 export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // v0.32 (#121 reworked): when ~/.gbrain/config.json declares
-  // openai_api_key / anthropic_api_key, fold them into the gateway env so
-  // recipes that read OPENAI_API_KEY / ANTHROPIC_API_KEY find them. Process
+  // openai_api_key / anthropic_api_key / openrouter_api_key, fold them into
+  // the gateway env so recipes that read the standard provider env vars find
+  // them. Process
   // env still wins (it's loaded last) — this is a fallback for daemons /
   // launchd-spawned subprocesses that don't propagate ~/.zshrc-sourced keys.
   const envFromConfig: Record<string, string> = {};
   if (c.openai_api_key) envFromConfig.OPENAI_API_KEY = c.openai_api_key;
   if (c.anthropic_api_key) envFromConfig.ANTHROPIC_API_KEY = c.anthropic_api_key;
+  if (c.openrouter_api_key) envFromConfig.OPENROUTER_API_KEY = c.openrouter_api_key;
   // v0.37 fix wave (CDX2-5+6): ZE became the default provider in v0.36 but
   // the env-mapping at this seam never picked it up. `gbrain config set
   // zeroentropy_api_key X` wrote DB plane (ignored by gateway). The file-

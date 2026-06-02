@@ -23,6 +23,7 @@ describe('INHERIT_NAME_RE', () => {
     'database_url',
     'anthropic_api_key',
     'openai_api_key',
+    'openrouter_api_key',
     'voyage_api_key',
     'groq_api_key',
     'zeroentropy_api_key',
@@ -60,6 +61,9 @@ describe('deriveEnvKey', () => {
   });
   test('openai_api_key → OPENAI_API_KEY', () => {
     expect(deriveEnvKey('openai_api_key')).toBe('OPENAI_API_KEY');
+  });
+  test('openrouter_api_key → OPENROUTER_API_KEY', () => {
+    expect(deriveEnvKey('openrouter_api_key')).toBe('OPENROUTER_API_KEY');
   });
   test('voyage_api_key → VOYAGE_API_KEY', () => {
     expect(deriveEnvKey('voyage_api_key')).toBe('VOYAGE_API_KEY');
@@ -108,11 +112,13 @@ describe('integration: deriveEnvKey + resolveInheritValue work together', () => 
     database_url: 'postgresql://x',
     anthropic_api_key: 'sk-ant-x',
     openai_api_key: 'sk-x',
+    openrouter_api_key: 'sk-or-x',
   };
   test.each([
     ['database_url', 'GBRAIN_DATABASE_URL', 'postgresql://x'],
     ['anthropic_api_key', 'ANTHROPIC_API_KEY', 'sk-ant-x'],
     ['openai_api_key', 'OPENAI_API_KEY', 'sk-x'],
+    ['openrouter_api_key', 'OPENROUTER_API_KEY', 'sk-or-x'],
   ])('name %s resolves to envKey %s with value %s', (name, expectedEnvKey, expectedValue) => {
     expect(deriveEnvKey(name)).toBe(expectedEnvKey);
     expect(resolveInheritValue(cfg, name)).toBe(expectedValue);

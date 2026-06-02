@@ -141,6 +141,7 @@ describe('v0.37 Lane B — init paths', () => {
     process.env.GBRAIN_EMBEDDING_MODEL = 'voyage:voyage-3-large';
     process.env.GBRAIN_EMBEDDING_DIMENSIONS = '2048';
     process.env.OPENAI_API_KEY = 'sk-from-env';
+    process.env.OPENROUTER_API_KEY = 'sk-or-from-env';
 
     // Force re-import to pick up env state (the module-level resolver in
     // config.ts reads process.env at call time, so this is safe).
@@ -152,16 +153,19 @@ describe('v0.37 Lane B — init paths', () => {
     expect(fileOnly?.embedding_dimensions).toBe(1536);
     // CDX-5 regression: env keys must NOT leak into file-only loader.
     expect(fileOnly?.openai_api_key).toBeUndefined();
+    expect(fileOnly?.openrouter_api_key).toBeUndefined();
 
     // Control: loadConfig() DOES merge env.
     const merged = loadConfig();
     expect(merged?.embedding_model).toBe('voyage:voyage-3-large');
     expect(merged?.embedding_dimensions).toBe(2048);
     expect(merged?.openai_api_key).toBe('sk-from-env');
+    expect(merged?.openrouter_api_key).toBe('sk-or-from-env');
 
     delete process.env.GBRAIN_EMBEDDING_MODEL;
     delete process.env.GBRAIN_EMBEDDING_DIMENSIONS;
     delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
   });
 
   test('B.4 / CDX-5: loadConfigFileOnly does NOT infer engine from DATABASE_URL', async () => {
@@ -203,9 +207,11 @@ describe('v0.37 Lane C.3 — ZE key reaches buildGatewayConfig', () => {
     const savedZe = process.env.ZEROENTROPY_API_KEY;
     const savedOai = process.env.OPENAI_API_KEY;
     const savedAnth = process.env.ANTHROPIC_API_KEY;
+    const savedOr = process.env.OPENROUTER_API_KEY;
     delete process.env.ZEROENTROPY_API_KEY;
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     try {
       const { buildGatewayConfig } = await import('../src/cli.ts');
       const cfg = {
@@ -213,16 +219,19 @@ describe('v0.37 Lane C.3 — ZE key reaches buildGatewayConfig', () => {
         zeroentropy_api_key: 'test-ze-key',
         openai_api_key: 'test-oai',
         anthropic_api_key: 'test-anth',
+        openrouter_api_key: 'test-or',
       };
       const gwCfg = buildGatewayConfig(cfg as any);
       expect(gwCfg.env?.ZEROENTROPY_API_KEY).toBe('test-ze-key');
       // Regression on the existing two keys.
       expect(gwCfg.env?.OPENAI_API_KEY).toBe('test-oai');
       expect(gwCfg.env?.ANTHROPIC_API_KEY).toBe('test-anth');
+      expect(gwCfg.env?.OPENROUTER_API_KEY).toBe('test-or');
     } finally {
       if (savedZe !== undefined) process.env.ZEROENTROPY_API_KEY = savedZe;
       if (savedOai !== undefined) process.env.OPENAI_API_KEY = savedOai;
       if (savedAnth !== undefined) process.env.ANTHROPIC_API_KEY = savedAnth;
+      if (savedOr !== undefined) process.env.OPENROUTER_API_KEY = savedOr;
     }
   });
 
@@ -241,6 +250,13 @@ describe('v0.37 Lane C.3 — ZE key reaches buildGatewayConfig', () => {
   });
 
   test('GBrainConfig type includes zeroentropy_api_key field (TS compile guard)', async () => {
+    const { type } = await import('../src/core/config.ts').then(m => ({ type: undefined }));
+    // The type-level assertion happens at compile time. If this file
+    // compiles, the field exists. Body of the test is a runtime no-op.
+    expect(true).toBe(true);
+  });
+
+  test('GBrainConfig type includes openrouter_api_key field (TS compile guard)', async () => {
     const { type } = await import('../src/core/config.ts').then(m => ({ type: undefined }));
     // The type-level assertion happens at compile time. If this file
     // compiles, the field exists. Body of the test is a runtime no-op.
