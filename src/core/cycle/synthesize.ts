@@ -778,6 +778,10 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
       const result: ChatResult = await gatewayChat({
         model: modelStr,
         system,
+        // The synthesize system prompt is identical across the turns of one
+        // transcript's tool loop — let Anthropic prompt-cache it (ignored by
+        // providers without cache support).
+        cacheSystem: true,
         messages,
         maxTokens: params.max_tokens,
       });

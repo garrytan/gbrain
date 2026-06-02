@@ -426,6 +426,10 @@ export async function runPhaseExtractAtoms(
     try {
       const result = await chat({
         system: EXTRACT_PROMPT,
+        // EXTRACT_PROMPT is a constant — identical across every call in a
+        // cycle — so let Anthropic prompt-cache it (cache reads bill at 10%
+        // of base input price; ignored by providers without cache support).
+        cacheSystem: true,
         messages: [
           {
             role: 'user',
