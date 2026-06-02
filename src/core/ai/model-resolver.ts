@@ -124,13 +124,19 @@ export function assertTouchpoint(
   }
   const supportedModels = tp.models ?? [];
   if (supportedModels.length > 0 && !supportedModels.includes(modelId)) {
-    // Non-fatal: providers like ollama/litellm accept arbitrary model ids. We only warn for native providers.
-    if (recipe.tier === 'native') {
-      // v0.31.12 recipe-models merge: if the user opted into this model via
+    const enforceModelAllowlist =
+      recipe.tier === 'native' ||
+      recipe.tier === 'codex-responses' ||
+      recipe.implementation === 'codex-responses' ||
+      recipe.enforce_model_allowlist === true;
+
+    // Non-fatal: providers like ollama/litellm accept arbitrary model ids. We only warn for native/strict providers.
+    if (enforceModelAllowlist) {
+      // v0.31.12 recipe-models merge: if the user opted into a native model via
       // config (cfg.chat_model, models.default, models.tier.*), skip the
-      // throw. The model goes to the provider; provider 404s surface as
-      // `model_not_found` via `gbrain models doctor`.
-      if (extendedModels && extendedModels.has(modelId)) {
+      // throw. Strict allowlist recipes (e.g. codex-responses) do not accept
+      // config-extension because their transport supports only enumerated models.
+      if (recipe.tier === 'native' && recipe.enforce_model_allowlist !== true && extendedModels && extendedModels.has(modelId)) {
         return;
       }
       throw new AIConfigError(

@@ -12,7 +12,8 @@ import { loadConfig } from '../core/config.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
 import type { Recipe } from '../core/ai/types.ts';
 
-const SCHEMA_VERSION = 1;
+// v2: `tier` widened to include `codex-responses` for metadata-only Codex recipes.
+const SCHEMA_VERSION = 2;
 
 type TouchpointFilter = 'embedding' | 'expansion' | 'chat';
 
@@ -26,7 +27,7 @@ interface ProviderOption {
   cost_per_1m_output_usd?: number;
   price_last_verified?: string;
   env_ready: boolean;
-  tier: 'native' | 'openai-compat';
+  tier: Recipe['tier'];
   pros: string[];
   cons: string[];
 }
@@ -44,7 +45,15 @@ function configureFromEnv(): void {
   });
 }
 
+function isCodexAuthPending(recipe: Recipe): boolean {
+  return recipe.tier === 'codex-responses' || recipe.implementation === 'codex-responses';
+}
+
 export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): boolean {
+  // Commit 1 registers Codex metadata only. Do not mark it ready from empty
+  // auth_env.required or from public OPENAI_API_KEY; the real Codex auth seam
+  // lands in a later commit.
+  if (isCodexAuthPending(recipe)) return false;
   const required = recipe.auth_env?.required ?? [];
   if (required.length === 0) return true; // e.g. local Ollama
   return required.every(k => !!env[k]);
@@ -75,7 +84,11 @@ export function formatRecipeTable(recipes: Recipe[], env: NodeJS.ProcessEnv = pr
     const hasExpand = !!r.touchpoints.expansion;
     const hasChat = !!r.touchpoints.chat && r.touchpoints.chat.models.length > 0;
     const ready = envReady(r, env);
-    const status = ready ? '✓ ready' : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
+    const status = ready
+      ? '✓ ready'
+      : isCodexAuthPending(r)
+        ? '✗ pending Codex auth/transport seam'
+        : `✗ missing ${r.auth_env?.required?.[0] ?? 'setup'}`;
     rows.push(
       r.id.padEnd(idCol) +
       r.tier.padEnd(18) +
@@ -197,7 +210,14 @@ async function runTest(args: string[]): Promise<void> {
   }
 
   if (!gwIsAvailable(tpArg)) {
-    console.error(`${tpArg[0]?.toUpperCase()}${tpArg.slice(1)} provider not configured or not ready. Run \`gbrain providers list\` to see status.`);
+    const overrideProvider = modelArg?.split(':')[0];
+    const overrideRecipe = overrideProvider ? getRecipe(overrideProvider) : undefined;
+    const label = `${tpArg[0]?.toUpperCase()}${tpArg.slice(1)}`;
+    if (overrideRecipe && isCodexAuthPending(overrideRecipe)) {
+      console.error(`${label} provider unavailable: pending Codex auth/transport seam.`);
+    } else {
+      console.error(`${label} provider not configured or not ready. Run \`gbrain providers list\` to see status.`);
+    }
     process.exit(1);
   }
 
@@ -402,6 +422,7 @@ function prosFor(r: Recipe, touchpoint: TouchpointFilter): string[] {
     else if (r.id === 'deepseek') out.push('25-40x cheaper than Anthropic', 'Strong reasoning');
     else if (r.id === 'groq') out.push('500 tok/s inference', 'Cheap fallback');
     else if (r.id === 'together') out.push('Open-weights house', 'Llama / Qwen / Mixtral');
+    else if (r.id === 'openai-codex') out.push('ChatGPT/Codex plan billed', 'No public OpenAI API spend');
     return out;
   }
   if (r.id === 'openai') out.push('Default', 'High quality', 'Wide compatibility');
@@ -416,6 +437,7 @@ function prosFor(r: Recipe, touchpoint: TouchpointFilter): string[] {
 function consFor(r: Recipe): string[] {
   const out: string[] = [];
   if (r.tier === 'native' && r.id !== 'ollama') out.push('Paid');
+  if (r.id === 'openai-codex') out.push('Codex auth/transport pending in this feature');
   if (r.id === 'ollama') out.push('Requires Ollama daemon running');
   if (r.id === 'litellm') out.push('Requires LiteLLM proxy + config');
   return out;

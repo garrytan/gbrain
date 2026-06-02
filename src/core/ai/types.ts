@@ -22,7 +22,10 @@ export type Implementation =
   | 'native-openai'
   | 'native-google'
   | 'native-anthropic'
-  | 'openai-compatible';
+  | 'openai-compatible'
+  | 'codex-responses';
+
+export type RecipeTier = 'native' | 'openai-compat' | 'codex-responses';
 
 export interface EmbeddingTouchpoint {
   models: string[];
@@ -202,6 +205,12 @@ export interface RerankerTouchpoint {
   default_timeout_ms?: number;
 }
 
+export interface BillingMetadata {
+  mode: 'api-metered' | 'plan-billed';
+  display: string;
+  quota_hint?: string;
+}
+
 export interface ChatTouchpoint {
   models: string[];
   /** Provider returns native function/tool calling. */
@@ -217,6 +226,7 @@ export interface ChatTouchpoint {
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;
   price_last_verified?: string;
+  billing?: BillingMetadata;
 }
 
 export interface Recipe {
@@ -225,7 +235,7 @@ export interface Recipe {
   /** Human-readable name for display. */
   name: string;
   /** Distinguishes native-package providers from openai-compatible endpoints. */
-  tier: 'native' | 'openai-compat';
+  tier: RecipeTier;
   /** Maps to the gateway's implementation switch. */
   implementation: Implementation;
   /** For openai-compatible tier: default base URL. May be overridden by env or wizard. */
@@ -242,6 +252,8 @@ export interface Recipe {
     chat?: ChatTouchpoint;
     reranker?: RerankerTouchpoint;
   };
+  /** When true, non-native recipes still enforce touchpoint model allow-lists. */
+  enforce_model_allowlist?: true;
   /**
    * Optional alias map for friendlier `provider:model` strings.
    * Resolved at parse time. For pre-4.6 models, undated forms alias to dated

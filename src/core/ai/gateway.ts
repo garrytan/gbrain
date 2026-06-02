@@ -94,6 +94,20 @@ const _modelCache = new Map<string, any>();
  */
 const _extendedModels: Map<string, Set<string>> = new Map();
 
+const CODEX_PENDING_DETAIL =
+  'OpenAI Codex provider is metadata-only in this commit; pending Codex auth/transport seam.';
+
+function isCodexResponsesRecipe(recipe: Recipe): boolean {
+  return recipe.tier === 'codex-responses' || recipe.implementation === 'codex-responses';
+}
+
+function codexPendingError(recipe: Recipe): AIConfigError {
+  return new AIConfigError(
+    `${recipe.name} chat is unavailable: pending Codex auth/transport seam.`,
+    recipe.setup_hint,
+  );
+}
+
 /**
  * v0.31.12 — register a model id under its provider so `assertTouchpoint`
  * (called via the gateway's chat/embed/expand entry points) permits it
@@ -749,6 +763,10 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
     // embedding from an anthropic-configured brain is unavailable regardless of auth.
     const touchpointConfig = recipe.touchpoints[touchpoint as 'expansion' | 'chat' | 'reranker'];
     if (!touchpointConfig) return false;
+
+    // Commit 1 registers Codex recipe metadata only. Empty auth_env.required
+    // must not make it chat-ready until the Codex auth/transport seam exists.
+    if (touchpoint === 'chat' && isCodexResponsesRecipe(recipe)) return false;
 
     // For openai-compatible without auth requirements (Ollama local), treat as always-available.
     const required = recipe.auth_env?.required ?? [];
@@ -2274,6 +2292,14 @@ export type ChatModelProbe =
 export function probeChatModel(modelStr: string): ChatModelProbe {
   const v = validateModelId(modelStr);
   if (!v.ok) return { ok: false, reason: v.reason, detail: v.detail, fix: v.fix };
+  if (isCodexResponsesRecipe(v.recipe)) {
+    return {
+      ok: false,
+      reason: 'unavailable',
+      detail: CODEX_PENDING_DETAIL,
+      fix: v.recipe.setup_hint,
+    };
+  }
   if (v.parsed.providerId === 'anthropic' && !hasAnthropicKey()) {
     return {
       ok: false,
@@ -2327,6 +2353,8 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
         ...auth,
       }).languageModel(modelId);
     }
+    case 'codex-responses':
+      throw codexPendingError(recipe);
     default:
       throw new AIConfigError(`Unknown implementation: ${(recipe as any).implementation}`);
   }

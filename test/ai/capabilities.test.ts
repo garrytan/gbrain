@@ -29,6 +29,14 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.supportsToolCalling).toBe(true);
   });
 
+  it('returns no tool-loop capabilities for OpenAI Codex plan chat', () => {
+    const caps = getProviderCapabilities('openai-codex:gpt-5.5');
+    expect(caps.supportsToolCalling).toBe(false);
+    expect(caps.supportsPromptCaching).toBe(false);
+    expect(caps.supportsParallelTools).toBe(false);
+    expect(caps.supportsThinking).toBe(false);
+  });
+
   it('throws for unknown provider', () => {
     expect(() => getProviderCapabilities('madeup-provider:foo')).toThrow();
   });
@@ -56,6 +64,10 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
 
   it('returns degraded:no_caching for Google Gemini', () => {
     expect(classifyCapabilities('google:gemini-1.5-pro')).toBe('degraded:no_caching');
+  });
+
+  it('returns unusable:no_tools for OpenAI Codex plan chat', () => {
+    expect(classifyCapabilities('openai-codex:gpt-5.5')).toBe('unusable:no_tools');
   });
 
   it('returns unknown for unrecognized providers', () => {
