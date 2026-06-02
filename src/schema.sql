@@ -394,7 +394,7 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
 --   link_source       — 'markdown' | 'frontmatter' | 'manual' | 'wikilink-resolved' | NULL
 --                       'wikilink-resolved' is the opt-in
 --                       (link_resolution.global_basename) basename-match
---                       provenance — see issue #972 / migration v93.
+--                       provenance — see issue #972 / migration v112.
 --                       (NULL = legacy row written before v0.13; unknown source)
 --   origin_page_id    — for link_source='frontmatter', the page whose YAML
 --                       frontmatter created this edge; scopes reconciliation
