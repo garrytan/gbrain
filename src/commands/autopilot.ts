@@ -24,6 +24,17 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
 import { loadConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
+import {
+  buildAutopilotHealth,
+  detectAutopilotInstallTarget,
+  autopilotEphemeralStartScriptPath as ephemeralStartScriptPath,
+  autopilotPlistPath as plistPath,
+  autopilotSystemdUnitPath as systemdUnitPath,
+  type AutopilotInstallTarget,
+} from '../core/autopilot-health.ts';
+
+export { detectAutopilotInstallTarget as detectInstallTarget };
+export type { AutopilotInstallTarget as InstallTarget };
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -721,55 +732,6 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
 
 // --- Install/Uninstall ---
 
-function plistPath(): string {
-  return join(process.env.HOME || '', 'Library', 'LaunchAgents', 'com.gbrain.autopilot.plist');
-}
-
-function systemdUnitPath(): string {
-  return join(process.env.HOME || '', '.config', 'systemd', 'user', 'gbrain-autopilot.service');
-}
-
-function ephemeralStartScriptPath(): string {
-  return join(process.env.HOME || '', '.gbrain', 'start-autopilot.sh');
-}
-
-export type InstallTarget = 'macos' | 'linux-systemd' | 'ephemeral-container' | 'linux-cron';
-
-/**
- * Detect the right supervisor for this host.
- *
- *   - macos   → launchd (always, when platform === 'darwin').
- *   - ephemeral-container → Render / Railway / Fly / Docker. Crontab is
- *                           unreliable here (wiped on deploy); we hand
- *                           the user a start script instead.
- *   - linux-systemd → systemd user scope actually works (is-system-running
- *                     probe succeeds). Codex hardened from the naive
- *                     /run/systemd/system check.
- *   - linux-cron  → fallback.
- */
-export function detectInstallTarget(): InstallTarget {
-  if (process.platform === 'darwin') return 'macos';
-
-  const ephemeral = !!(
-    process.env.RENDER
-    || process.env.RAILWAY_ENVIRONMENT
-    || process.env.FLY_APP_NAME
-    || existsSync('/.dockerenv')
-  );
-  if (ephemeral) return 'ephemeral-container';
-
-  if (existsSync('/run/systemd/system')) {
-    try {
-      execSync('systemctl --user is-system-running', { stdio: 'pipe', timeout: 3000 });
-      return 'linux-systemd';
-    } catch {
-      // user bus not available → fall through to cron.
-    }
-  }
-
-  return 'linux-cron';
-}
-
 function detectOpenClaw(): { detected: boolean; bootstrapCandidates: string[] } {
   const home = process.env.HOME || '';
   const candidates = [
@@ -818,8 +780,8 @@ async function installDaemon(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
 
-  const forcedTarget = parseArg(args, '--target') as InstallTarget | undefined;
-  const target: InstallTarget = forcedTarget ?? detectInstallTarget();
+  const forcedTarget = parseArg(args, '--target') as AutopilotInstallTarget | undefined;
+  const target: AutopilotInstallTarget = forcedTarget ?? detectAutopilotInstallTarget();
 
   const injectBootstrap = args.includes('--inject-bootstrap');
   const noInject = args.includes('--no-inject');
@@ -1132,29 +1094,30 @@ function uninstallDaemon() {
 }
 
 function showStatus(json: boolean) {
-  const logFile = join(process.env.HOME || '', '.gbrain', 'autopilot.log');
-  let lastLine = '';
-  try {
-    const content = readFileSync(logFile, 'utf-8');
-    const lines = content.trim().split('\n');
-    lastLine = lines[lines.length - 1] || '';
-  } catch { /* no log */ }
-
-  let installed = false;
-  if (process.platform === 'darwin') {
-    installed = existsSync(plistPath());
-  } else {
-    try {
-      const crontab = execSync('crontab -l 2>/dev/null || true', { encoding: 'utf-8' });
-      installed = crontab.includes('gbrain autopilot');
-    } catch { /* no crontab */ }
-  }
+  const health = buildAutopilotHealth();
 
   if (json) {
-    console.log(JSON.stringify({ installed, last_log: lastLine }));
+    console.log(JSON.stringify(health));
   } else {
-    console.log(`Autopilot: ${installed ? 'installed' : 'not installed'}`);
-    if (lastLine) console.log(`Last log: ${lastLine}`);
+    console.log(`Autopilot target: ${health.install_target}`);
+    console.log(`Installed: ${health.installed ? 'yes' : 'no'}`);
+    if (health.artifact_present !== null) {
+      console.log(`Install artifact: ${health.artifact_present ? 'present' : 'missing'}`);
+    }
+    if (health.manager_registered !== null) {
+      console.log(`Manager registered: ${health.manager_registered ? 'yes' : 'no'}`);
+    }
+    if (health.manager_loaded !== null) {
+      console.log(`Manager loaded: ${health.manager_loaded ? 'yes' : 'no'}`);
+    }
+    if (health.running) {
+      console.log(`Runtime: running (PID ${health.pid})`);
+    } else if (health.lockfile_present) {
+      console.log(`Runtime: stale lockfile (PID ${health.pid ?? '?'})`);
+    } else {
+      console.log('Runtime: not running');
+    }
+    if (health.last_log) console.log(`Last log: ${health.last_log}`);
   }
 }
 

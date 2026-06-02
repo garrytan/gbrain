@@ -82,6 +82,11 @@ describe('gbrain status E2E (PGLite)', () => {
     expect(parsed).toHaveProperty('workers');
     expect(parsed).toHaveProperty('queue');
     expect(parsed).toHaveProperty('autopilot');
+    expect(parsed.autopilot).toHaveProperty('install_target');
+    expect(parsed.autopilot).toHaveProperty('artifact_present');
+    expect(parsed.autopilot).toHaveProperty('manager_registered');
+    expect(parsed.autopilot).toHaveProperty('manager_loaded');
+    expect(parsed.autopilot).toHaveProperty('last_log');
   });
 
   test('dual cycle rows: last_full + last_targeted surface independently', async () => {

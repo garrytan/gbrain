@@ -36,9 +36,12 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { existsSync, readFileSync } from 'node:fs';
-import { gbrainPath, loadConfig, isThinClient } from '../core/config.ts';
+import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import {
+  buildAutopilotHealth,
+  type AutopilotHealth,
+} from '../core/autopilot-health.ts';
 import {
   buildSyncStatusReport,
   type SyncStatusReport,
@@ -95,12 +98,7 @@ export interface WorkerSummary {
   last_event_ts: string | null;
 }
 
-export interface AutopilotStatus {
-  installed: boolean;
-  lockfile_present: boolean;
-  pid: number | null;
-  running: boolean;
-}
+export type AutopilotStatus = AutopilotHealth;
 
 export interface StatusReport {
   schema_version: typeof SCHEMA_VERSION;
@@ -265,40 +263,6 @@ function buildWorkerSummary(): WorkerSummary {
   return { crashes_24h, clean_exits_24h, by_cause, last_event_ts };
 }
 
-function buildAutopilotStatus(): AutopilotStatus {
-  const lockPath = gbrainPath('autopilot.lock');
-  const lockfile_present = existsSync(lockPath);
-  let pid: number | null = null;
-  let running = false;
-  if (lockfile_present) {
-    try {
-      const raw = readFileSync(lockPath, 'utf-8').trim();
-      const parsed = parseInt(raw, 10);
-      if (Number.isFinite(parsed) && parsed > 0) {
-        pid = parsed;
-        try {
-          // kill -0 probes liveness without sending a real signal. Throws ESRCH
-          // if the PID is gone, EPERM if alive but owned by another user (which
-          // still tells us "something with that PID exists").
-          process.kill(parsed, 0);
-          running = true;
-        } catch (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          running = code === 'EPERM';
-        }
-      }
-    } catch {
-      /* unreadable lockfile, leave pid=null/running=false */
-    }
-  }
-  return {
-    installed: lockfile_present, // installed-or-running proxy; daemons writing the lock are installed
-    lockfile_present,
-    pid,
-    running,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
@@ -352,7 +316,7 @@ async function buildLocalReport(
     report.queue = await buildQueueCounts(engine);
   }
   if (want('autopilot')) {
-    report.autopilot = buildAutopilotStatus();
+    report.autopilot = buildAutopilotHealth();
   }
   if (warnings.length > 0) report.warnings = warnings;
   return report;
@@ -496,13 +460,23 @@ function renderHuman(report: StatusReport): string {
       lines.push('  local-only — N/A on remote brain');
     } else {
       const a = report.autopilot;
+      const boolOrUnknown = (value: boolean | null) => value === null ? 'n/a' : (value ? 'yes' : 'no');
+      lines.push(
+        `  target=${a.install_target}  installed=${a.installed ? 'yes' : 'no'}  running=${a.running ? 'yes' : 'no'}`,
+      );
+      lines.push(
+        `  artifact=${boolOrUnknown(a.artifact_present)}  registered=${boolOrUnknown(a.manager_registered)}  loaded=${boolOrUnknown(a.manager_loaded)}`,
+      );
       if (a.running) {
         lines.push(`  running (PID ${a.pid})`);
       } else if (a.lockfile_present) {
         lines.push(`  stale lockfile (PID ${a.pid ?? '?'} not alive). Run \`gbrain autopilot --install\` to restart.`);
+      } else if (a.installed && a.manager_loaded === false) {
+        lines.push('  install artifact exists, but the service manager has not loaded autopilot.');
       } else {
         lines.push('  not running. Install with `gbrain autopilot --install`.');
       }
+      if (a.last_log) lines.push(`  last log: ${a.last_log}`);
     }
     lines.push('');
   }
