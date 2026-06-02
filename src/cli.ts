@@ -10,7 +10,7 @@ import { installSignalHandlers as installCleanupSignalHandlers } from './core/pr
 installCleanupSignalHandlers();
 
 import { readFileSync } from 'fs';
-import { loadConfig, loadConfigWithEngine, toEngineConfig, isThinClient } from './core/config.ts';
+import { loadConfig, loadConfigWithEngine, toEngineConfig, isThinClient, noBrainConfiguredMessage } from './core/config.ts';
 import type { GBrainConfig } from './core/config.ts';
 import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
@@ -1856,7 +1856,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
 async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
-    console.error('No brain configured. Run: gbrain init');
+    console.error(noBrainConfiguredMessage());
     process.exit(1);
   }
 

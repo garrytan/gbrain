@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'fs';
-import { isAbsolute, join } from 'path';
+import { dirname, isAbsolute, join, parse } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
 
@@ -831,8 +831,10 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
 
 export function configDir(): string {
   // Allow override for tests, Docker, and multi-tenant deployments.
-  // GBRAIN_HOME is a parent dir; we always append '.gbrain' ourselves so
-  // setting GBRAIN_HOME=/tmp/x yields configDir() === '/tmp/x/.gbrain'.
+  // GBRAIN_HOME is usually a parent dir; append '.gbrain' so setting
+  // GBRAIN_HOME=/tmp/x yields configDir() === '/tmp/x/.gbrain'. If the
+  // override itself is already named '.gbrain', accept it as the config dir so
+  // common wrapper/env mistakes do not strand an otherwise valid brain.
   // Validates the override: must be absolute, no '..' segments.
   const override = process.env.GBRAIN_HOME;
   if (override && override.trim()) {
@@ -843,13 +845,65 @@ export function configDir(): string {
     if (trimmed.split(/[\\/]/).includes('..')) {
       throw new Error(`GBRAIN_HOME must not contain '..' segments; got: ${trimmed}`);
     }
-    return join(trimmed, '.gbrain');
+    const normalized = stripTrailingPathSeparators(trimmed);
+    if (normalized.split(/[\\/]/).at(-1) === '.gbrain') return normalized;
+    return join(normalized, '.gbrain');
   }
-  return join(homedir(), '.gbrain');
+  const home = homedir();
+  const hermesOperatorHome = hermesProfileOperatorHome(home);
+  if (hermesOperatorHome) {
+    const profileConfigPath = join(home, '.gbrain', 'config.json');
+    const operatorConfigDir = join(hermesOperatorHome, '.gbrain');
+    if (!existsSync(profileConfigPath) && existsSync(join(operatorConfigDir, 'config.json'))) {
+      return operatorConfigDir;
+    }
+  }
+  return join(home, '.gbrain');
 }
 
 export function configPath(): string {
   return join(configDir(), 'config.json');
+}
+
+export function noBrainConfiguredMessage(): string {
+  const lines = [
+    `No brain configured. Expected config: ${configPath()}`,
+    'Run: gbrain init',
+  ];
+  const hint = noBrainConfiguredHint();
+  if (hint) lines.push(`Hint: ${hint}`);
+  return lines.join('\n');
+}
+
+function noBrainConfiguredHint(): string {
+  const override = process.env.GBRAIN_HOME?.trim();
+  if (override) {
+    const normalized = stripTrailingPathSeparators(override);
+    if (normalized.split(/[\\/]/).at(-1) === '.gbrain') {
+      const parent = dirname(normalized);
+      return `GBRAIN_HOME points directly at a .gbrain directory; this is accepted. The parent-directory form is GBRAIN_HOME=${parent}.`;
+    }
+    return 'GBRAIN_HOME is treated as a parent directory; GBrain appends .gbrain/config.json under it unless the override itself is named .gbrain.';
+  }
+
+  const home = process.env.HOME?.trim() || homedir();
+  const operatorHome = hermesProfileOperatorHome(home);
+  if (operatorHome) {
+    return `Hermes profile HOME detected; set HOME=${operatorHome} or GBRAIN_HOME=${operatorHome}. GBRAIN_HOME=${join(operatorHome, '.gbrain')} is also accepted, but the parent-directory form is preferred.`;
+  }
+
+  return 'Set HOME to the operator home, or set GBRAIN_HOME to the parent directory that contains .gbrain or to the .gbrain directory itself.';
+}
+
+function hermesProfileOperatorHome(home: string): string | null {
+  return home.match(/^(.*)[\\/]\.hermes[\\/]profiles[\\/][^\\/]+[\\/]home$/)?.[1] ?? null;
+}
+
+function stripTrailingPathSeparators(pathValue: string): string {
+  const root = parse(pathValue).root;
+  const stripped = pathValue.replace(/[\\/]+$/, '');
+  if (root && stripped.length < root.length) return root;
+  return stripped || pathValue;
 }
 
 /**
