@@ -13,7 +13,12 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { splitProviderModelId } from '../src/core/model-id.ts';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { splitProviderModelId, normalizeModelId } from '../src/core/model-id.ts';
+
+const REPO_ROOT = join(import.meta.dir, '..');
+const readSrc = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf8');
 
 describe('splitProviderModelId', () => {
   describe('happy paths', () => {
@@ -136,5 +141,81 @@ describe('splitProviderModelId', () => {
         model: 'claude-foo',
       });
     });
+  });
+});
+
+describe('normalizeModelId (#1698)', () => {
+  test('slash form → colon — THE REPORTED BUG', () => {
+    // Pre-fix: the colon-only inline check left this as the malformed
+    // `anthropic:anthropic/claude-sonnet-4-6` and silently degraded to no-LLM.
+    expect(normalizeModelId('anthropic/claude-sonnet-4-6')).toBe('anthropic:claude-sonnet-4-6');
+  });
+
+  test('bare → anthropic: default', () => {
+    expect(normalizeModelId('claude-sonnet-4-6')).toBe('anthropic:claude-sonnet-4-6');
+  });
+
+  test('colon identity (already provider:model)', () => {
+    expect(normalizeModelId('anthropic:claude-sonnet-4-6')).toBe('anthropic:claude-sonnet-4-6');
+  });
+
+  test('openrouter nested form preserved (inner slash kept)', () => {
+    expect(normalizeModelId('openrouter:anthropic/claude-sonnet-4.6')).toBe('openrouter:anthropic/claude-sonnet-4.6');
+  });
+
+  test('non-anthropic bare with custom default provider', () => {
+    expect(normalizeModelId('gpt-5', 'openai')).toBe('openai:gpt-5');
+  });
+
+  test('empty / whitespace returns input as-is (downstream throws loudly)', () => {
+    expect(normalizeModelId('')).toBe('');
+    expect(normalizeModelId('   ')).toBe('   ');
+  });
+
+  // #1698 (codex #2): a malformed leading separator yields an EMPTY-STRING provider from
+  // splitProviderModelId. It must be returned unchanged (so resolveRecipe throws loudly),
+  // NOT silently coerced to the default provider — otherwise `:claude-sonnet-4-6` would run
+  // as `anthropic:claude-sonnet-4-6`, masking a typo as a valid Anthropic model.
+  test('leading-colon malformed id returns input as-is (NOT coerced to anthropic)', () => {
+    expect(normalizeModelId(':claude-sonnet-4-6')).toBe(':claude-sonnet-4-6');
+  });
+  test('leading-slash malformed id returns input as-is (NOT coerced to anthropic)', () => {
+    expect(normalizeModelId('/claude-sonnet-4-6')).toBe('/claude-sonnet-4-6');
+  });
+  test('leading separator is not coerced even with a custom default provider', () => {
+    expect(normalizeModelId(':gpt-5', 'openai')).toBe(':gpt-5');
+  });
+});
+
+describe('normalize-everywhere structural guards (#1698)', () => {
+  // Positive: every chat-adapter site references the shared normalizer.
+  const SITES = [
+    'src/core/think/index.ts',
+    'src/core/cycle/synthesize.ts',
+    'src/core/conversation-parser/llm-base.ts',
+    'src/core/facts/extract.ts',
+  ];
+  // The exact colon-only inline that #1698 fixed: `X.includes(':') ? X : `anthropic:`.
+  const COLON_ONLY_INLINE = /\.includes\(['"]:['"]\)\s*\?\s*[\w.]+\s*:\s*`anthropic:/;
+
+  for (const site of SITES) {
+    test(`${site} uses normalizeModelId and not the colon-only inline`, () => {
+      const src = readSrc(site);
+      expect(src).toContain('normalizeModelId');
+      expect(COLON_ONLY_INLINE.test(src)).toBe(false);
+    });
+  }
+
+  test('hasAnthropicKey is defined exactly once (the shared helper), not re-copied', () => {
+    const FORMER_COPIES = [
+      'src/core/think/index.ts',
+      'src/core/cycle/synthesize.ts',
+      'src/core/conversation-parser/llm-base.ts',
+    ];
+    for (const f of FORMER_COPIES) {
+      expect(readSrc(f)).not.toMatch(/function hasAnthropicKey\s*\(/);
+    }
+    // The one canonical definition lives here.
+    expect(readSrc('src/core/ai/anthropic-key.ts')).toMatch(/export function hasAnthropicKey\s*\(/);
   });
 });

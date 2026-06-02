@@ -414,21 +414,20 @@ describe('MinionSupervisor', () => {
     }, 15_000);
   });
 
-  describe('integration: --max-rss spawn args (v0.21)', () => {
-    it('passes --max-rss 2048 to spawned worker by default', async () => {
+  describe('integration: --max-rss spawn args (v0.21, auto-sized v0.41.39.0)', () => {
+    it('passes an explicit --max-rss through to the spawned worker', async () => {
       const outFile = join(tmpdir(), `gbrain-sup-maxrss-${process.pid}-${Date.now()}.txt`);
       try { unlinkSync(outFile); } catch { /* may not exist */ }
 
-      // Worker logs its argv to OUT_FILE so the test can assert --max-rss 2048
-      // landed there. spawnOnce in supervisor.ts builds:
-      //   ['jobs', 'work', '--concurrency', '1', '--queue', 'default', '--max-rss', '2048']
-      // exit 1 required post-D1/D2: code=0 workers respawn forever.
-      const h = makeHarness('maxrss-default', `printf '%s\\n' "$*" > "$OUT_FILE" ; exit 1`);
+      // SUP_MAX_RSS pins an explicit cap; the supervisor must pass it through
+      // verbatim. exit 1 required post-D1/D2: code=0 workers respawn forever.
+      const h = makeHarness('maxrss-explicit', `printf '%s\\n' "$*" > "$OUT_FILE" ; exit 1`);
 
       try {
         const sup = spawnSupervisor(h, {
           OUT_FILE: outFile,
           SUP_MAX_CRASHES: '1',
+          SUP_MAX_RSS: '2048',
         });
 
         await sup.exited;
@@ -436,6 +435,37 @@ describe('MinionSupervisor', () => {
         expect(existsSync(outFile)).toBe(true);
         const argv = readFileSync(outFile, 'utf8').trim();
         expect(argv).toContain('--max-rss 2048');
+      } finally {
+        try { unlinkSync(outFile); } catch { /* noop */ }
+        h.cleanup();
+      }
+    }, 15_000);
+
+    // issue #1678: with no explicit cap the supervisor auto-sizes cgroup-aware
+    // instead of the old flat 2048 footgun. Same machine → the in-test
+    // resolveDefaultMaxRssMb() equals what the spawned supervisor computes.
+    it('auto-sizes --max-rss when no explicit cap is given', async () => {
+      const outFile = join(tmpdir(), `gbrain-sup-maxrss-auto-${process.pid}-${Date.now()}.txt`);
+      try { unlinkSync(outFile); } catch { /* may not exist */ }
+
+      const { resolveDefaultMaxRssMb } = await import('../src/core/minions/rss-default.ts');
+      const expected = resolveDefaultMaxRssMb();
+
+      const h = makeHarness('maxrss-auto', `printf '%s\\n' "$*" > "$OUT_FILE" ; exit 1`);
+      try {
+        const sup = spawnSupervisor(h, {
+          OUT_FILE: outFile,
+          SUP_MAX_CRASHES: '1',
+        });
+        await sup.exited;
+
+        expect(existsSync(outFile)).toBe(true);
+        const argv = readFileSync(outFile, 'utf8').trim();
+        expect(argv).toContain(`--max-rss ${expected}`);
+        // Auto-sized value is clamped into the sane range, never the old 2048
+        // unless the box genuinely resolves there.
+        expect(expected).toBeGreaterThanOrEqual(4096);
+        expect(expected).toBeLessThanOrEqual(16384);
       } finally {
         try { unlinkSync(outFile); } catch { /* noop */ }
         h.cleanup();

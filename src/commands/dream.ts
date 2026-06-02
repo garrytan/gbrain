@@ -27,6 +27,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import {
   runCycle,
   ALL_PHASES,
+  cycleLockIdFor,
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
@@ -66,9 +67,22 @@ interface DreamArgs {
    * until a follow-up CLI cleanup picks one. Supersedes PR #1559.
    */
   source: string | null;
+  /**
+   * issue #1678: bounded single-hold backlog drain. `--drain` (currently only
+   * for `--phase extract_atoms`) holds the cycle lock once and loops bounded
+   * batches, rediscovering eligibility each batch, until the backlog empties or
+   * `--window` seconds elapse. Reports {extracted, skipped, remaining}; exits
+   * non-zero when remaining > 0 so a cron/agent loop knows to run again.
+   */
+  drain: boolean;
+  /** Drain wallclock budget in seconds. Default 300 (5 min). */
+  windowSeconds: number;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DEFAULT_DRAIN_WINDOW_SECONDS = 300;
+/** Exit code for "drain ran but the backlog isn't empty — run again". */
+const EXIT_DRAIN_INCOMPLETE = 3;
 
 /**
  * Collect every occurrence of `--<flag> <value>` in argv. Used to
@@ -179,6 +193,28 @@ function parseArgs(args: string[]): DreamArgs {
   }
   const source = uniqSource[0] ?? uniqSourceId[0] ?? null;
 
+  // issue #1678: --drain [--window <seconds>]. Only extract_atoms is drainable
+  // this wave (it has a real eligibility predicate; synthesize_concepts does
+  // not — Codex #12). --drain with no --phase defaults to extract_atoms.
+  const drain = args.includes('--drain');
+  const windowIdx = args.indexOf('--window');
+  let windowSeconds = DEFAULT_DRAIN_WINDOW_SECONDS;
+  if (windowIdx !== -1) {
+    const raw = args[windowIdx + 1];
+    if (raw === undefined || !/^\d+$/.test(raw.trim()) || parseInt(raw, 10) <= 0) {
+      console.error(`--window must be a positive integer (seconds); got "${raw}"`);
+      process.exit(2);
+    }
+    windowSeconds = parseInt(raw, 10);
+  }
+  if (drain) {
+    if (!phase) phase = 'extract_atoms';
+    else if (phase !== 'extract_atoms') {
+      console.error(`--drain currently supports only --phase extract_atoms (got "${phase}")`);
+      process.exit(2);
+    }
+  }
+
   return {
     json: args.includes('--json'),
     dryRun: args.includes('--dry-run'),
@@ -192,6 +228,8 @@ function parseArgs(args: string[]): DreamArgs {
     to,
     bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
     source,
+    drain,
+    windowSeconds,
   };
 }
 
@@ -294,6 +332,16 @@ Options:
   --from YYYY-MM-DD   Backfill range start (use with --to).
   --to   YYYY-MM-DD   Backfill range end.
 
+  --drain             Bounded backlog drain for --phase extract_atoms
+                      (the default phase when --drain is set). Holds the
+                      cycle lock once, processes batches until the backlog
+                      empties or --window elapses, reports {extracted,
+                      remaining}, and exits 3 when the backlog isn't empty
+                      so a cron/agent loop knows to run again. Use this to
+                      grind down an extract_atoms backlog on a brain whose
+                      pack doesn't run the phase in the routine cycle.
+  --window <seconds>  Drain wallclock budget. Default 300 (5 min).
+
   --unsafe-bypass-dream-guard
                       Disable the self-consumption guard. Use only when you
                       know the input file is NOT dream-cycle output but the
@@ -392,6 +440,86 @@ function isResolverUserError(e: unknown): boolean {
       || m.startsWith('Invalid GBRAIN_SOURCE value');
 }
 
+/**
+ * issue #1678 — bounded single-hold extract_atoms drain (see DreamArgs.drain).
+ * Holds the cycle lock once (same id the routine cycle uses for this source),
+ * loops bounded batches rediscovering eligibility, reports remaining, exits
+ * EXIT_DRAIN_INCOMPLETE when the backlog isn't empty so a loop knows to retry.
+ */
+async function runDrain(
+  engine: BrainEngine,
+  opts: DreamArgs,
+  resolvedSourceId: string | undefined,
+  brainDir: string | null,
+): Promise<void> {
+  const { withRefreshingLock, LockUnavailableError } = await import('../core/db-lock.ts');
+  const { runPhaseExtractAtoms, countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
+  const { runExtractAtomsDrain } = await import('../core/cycle/extract-atoms-drain.ts');
+
+  const extractionSourceId = resolvedSourceId ?? 'default';
+  // undefined → legacy 'gbrain-cycle' lock, exactly what the unscoped routine
+  // cycle holds; a real source → 'gbrain-cycle:<id>'. Either way the drain and
+  // the routine cycle for THIS source genuinely contend (Codex #9).
+  const lockId = cycleLockIdFor(resolvedSourceId);
+
+  // Dry-run: preview the backlog without holding the lock or extracting.
+  if (opts.dryRun) {
+    const remaining = await countExtractAtomsBacklog(engine, extractionSourceId);
+    if (opts.json) {
+      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, stopped: 'window' }, null, 2));
+    } else {
+      console.log(`[drain] dry-run: ${remaining ?? '?'} page(s) eligible for atom extraction (no work done)`);
+    }
+    // null = the backlog count query FAILED — treat as incomplete, never as
+    // "drained" (Codex: `remaining ?? 0` would exit 0 on a failed count and
+    // make automation believe the backlog cleared when it was never verified).
+    if (remaining === null || remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
+    return;
+  }
+
+  let result;
+  try {
+    result = await runExtractAtomsDrain(
+      {
+        withLock: (work) => withRefreshingLock(engine, lockId, work, { ttlMinutes: 5 }),
+        runBatch: async () => {
+          const r = await runPhaseExtractAtoms(engine, {
+            sourceId: extractionSourceId,
+            dryRun: false,
+            brainDir: brainDir ?? undefined,
+          });
+          const d = (r.details ?? {}) as Record<string, unknown>;
+          return { extracted: Number(d.atoms_extracted ?? 0), skipped: Number(d.duplicates_skipped ?? 0) };
+        },
+        countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),
+        now: Date.now,
+        onBatch: opts.json ? undefined : ({ batch, extracted, remaining }) => {
+          process.stderr.write(`[drain] batch ${batch}: +${extracted} atom(s), ~${remaining ?? '?'} remaining\n`);
+        },
+      },
+      { windowMs: opts.windowSeconds * 1000 },
+    );
+  } catch (e) {
+    if (e instanceof LockUnavailableError) {
+      if (opts.json) {
+        console.log(JSON.stringify({ phase: 'extract_atoms', status: 'skipped', reason: 'cycle_already_running' }, null, 2));
+      } else {
+        console.log('[drain] skipped: another cycle holds the lock (cycle_already_running) — run again shortly');
+      }
+      process.exit(EXIT_DRAIN_INCOMPLETE);
+    }
+    throw e;
+  }
+
+  if (opts.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(`[drain] extracted ${result.extracted} atom(s) across ${result.batches} batch(es); ${result.remaining ?? '?'} remaining (stopped: ${result.stopped})`);
+  }
+  // null remaining = the final count query failed; do not report success.
+  if (result.remaining === null || result.remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
+}
+
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
   const opts = parseArgs(args);
 
@@ -459,6 +587,15 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     );
     process.exit(1);
   }
+  // ─── issue #1678: bounded single-hold extract_atoms drain ──────────
+  if (opts.drain) {
+    if (engine === null) {
+      console.error('gbrain dream --drain requires a connected brain (no engine available)');
+      process.exit(1);
+    }
+    return runDrain(engine, opts, resolvedSourceId, brainDir);
+  }
+
   const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
 
   const report = await runCycle(engine, {

@@ -150,6 +150,24 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 **Range:** 0..unbounded. Warm-cache hits should be <50ms; tokenmax with expansion can exceed 200ms due to the Haiku call.
 
+## Result-Sizing Metrics
+
+### Autocut signal
+
+**Key:** `autocut.signal`
+
+**Plain English:** Which signal autocut used to size the result set. 'rerank' means it found a real score cliff in the cross-encoder rerank scores and cut there; 'none' means no trustworthy cliff (no reranker, <2 scored results, or the gap was too small) so it returned the full list.
+
+**Range:** 'rerank' | 'none'. 'none' is not a failure — it means autocut declined to cut because the signal didn't justify it.
+
+### Autocut gap ratio
+
+**Key:** `autocut.gap_ratio`
+
+**Plain English:** The size of the largest score drop autocut found, as a fraction of the top result's score. A gap of 0.40 means the score fell by 40% of the top score at the steepest point. Autocut cuts there only when this clears the sensitivity threshold (autocut_jump, default 0.20).
+
+**Range:** 0..1, higher = a sharper cliff (more confident cut). Below the autocut_jump threshold → no cut.
+
 ---
 
 ## Coverage

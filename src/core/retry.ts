@@ -85,6 +85,8 @@ export const BATCH_AUDIT_SITES = [
   'extract.links_db',
   'extract.timeline_db',
   'extract.by_mention',
+  // v0.42.7 (#1696): extract --stale incremental sweep.
+  'extract.stale',
   // operations.ts MCP put_page auto-link path.
   'mcp.put_page.autolink',
   // sync.ts/reindex.ts orchestrator labels.
@@ -93,6 +95,10 @@ export const BATCH_AUDIT_SITES = [
   'reindex.multimodal',
   // backfill-base.ts outer connection-retry layer.
   'backfill.outer',
+  // queue.ts Minion hot-path lock recovery (issue #1678): promoteDelayed
+  // self-heal on a reaped pooler socket. claim/renewLock deliberately do NOT
+  // route here (Codex #1/#2) — the poll loop and renewal-tick recover those.
+  'minion-lock',
 ] as const;
 
 export type BatchAuditSite = (typeof BATCH_AUDIT_SITES)[number];

@@ -32,6 +32,8 @@ import { isSourceUnchangedSinceSync } from '../core/git-head.ts';
 // this pure comparator (no git subprocess on the HTTP MCP doctor path).
 import { lagFromContentMs } from '../core/source-health.ts';
 import { CHUNKER_VERSION } from '../core/chunkers/code.ts';
+import { LINK_EXTRACTOR_VERSION_TS } from '../core/link-extraction.ts';
+import { isUndefinedColumnError } from '../core/utils.ts';
 
 export interface Check {
   name: string;
@@ -668,6 +670,12 @@ export async function doctorReportRemote(engine: BrainEngine): Promise<DoctorRep
 
   // v0.41.19.0 (Issue 5): sync --all consolidation nudge for multi-source brains.
   checks.push(await checkSyncConsolidation(engine));
+
+  // v0.42.7 (#1696): link-extraction lag. Strictly SQL (single indexed COUNT),
+  // safe on the thin-client/remote path — remote operators on checkout-less
+  // Postgres brains are exactly who can't otherwise see the extraction backlog.
+  // Brain-wide here (remote --source scoping is a separate TODO, like orphan_ratio).
+  checks.push(await checkLinksExtractionLag(engine));
 
   // v0.39 T7 + T9 — schema-pack health checks (3 checks per v0.38 plan):
   //   schema_pack_active        — active pack resolves cleanly
@@ -2298,23 +2306,47 @@ async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
 const checkSubagentProvider = checkSubagentCapability;
 void checkSubagentProvider;
 
-// Module-scoped flag so the NaN-fallback warning fires once per process.
-let _syncFreshnessEnvWarned = false;
+// Module-scoped set so each invalid-env-var warning fires once per process,
+// per variable name (v0.42.7 #1696: was a single bool shared across all vars).
+const _envNumberWarned = new Set<string>();
 
-function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
+/**
+ * v0.42.7 (#1696): single source of truth for the extraction-lag warn
+ * threshold (percent). Both the `links_extraction_lag` doctor check AND the
+ * end-of-sync nudge (`sync.ts:maybeExtractionNudge`) resolve through this +
+ * `_resolveEnvNumber` so "the nudge fires iff doctor would warn" can't drift.
+ */
+export const EXTRACTION_LAG_WARN_PCT_DEFAULT = 20;
+/** Min non-deleted page count below which extraction-lag is vacuous-skipped
+ *  (unless an explicit --source scope is set). Shared by doctor + the sync
+ *  nudge (D6/C4) so their skip predicates match exactly. */
+export const EXTRACTION_LAG_MIN_PAGES = 100;
+
+/**
+ * v0.42.7 (#1696, C1): generic "read a positive number from an env var, warn
+ * once + fall back on garbage." Extracted from _resolveSyncFreshnessHours so
+ * the percent-threshold doctor checks don't reuse a `...Hours`-named helper.
+ * `opts.unit` is purely cosmetic for the warning string ('h', '%', '').
+ * Exported (D3) so the sync nudge resolves the threshold the same way.
+ */
+export function _resolveEnvNumber(varName: string, fallback: number, opts?: { unit?: string }): number {
   const raw = process.env[varName];
   if (raw === undefined || raw === '') return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
-    if (!_syncFreshnessEnvWarned) {
-      _syncFreshnessEnvWarned = true;
+    if (!_envNumberWarned.has(varName)) {
+      _envNumberWarned.add(varName);
       console.warn(
-        `[gbrain doctor] Ignoring invalid ${varName}=${raw}; using default ${fallback}h.`,
+        `[gbrain doctor] Ignoring invalid ${varName}=${raw}; using default ${fallback}${opts?.unit ?? ''}.`,
       );
     }
     return fallback;
   }
   return n;
+}
+
+function _resolveSyncFreshnessHours(varName: string, fallback: number): number {
+  return _resolveEnvNumber(varName, fallback, { unit: 'h' });
 }
 
 /**
@@ -2523,6 +2555,159 @@ export async function computeConversationFactsBacklogCheck(
       status: 'warn',
       message: `backlog query failed: ${(err as Error).message}`,
     };
+  }
+}
+
+/**
+ * v0.42.7 (#1696) — links_extraction_lag doctor check.
+ *
+ * The signal that surfaces the "imported ≠ curated" root cause: pages whose
+ * link/timeline extraction is stale (never run, edited-since, or extractor
+ * bumped). Without it, a brain can run for months at 0% typed-edge coverage
+ * with nothing warning the operator.
+ *
+ * Warn-only by DEFAULT (>20% stale). Hard-fail ONLY when the operator opts in
+ * via GBRAIN_EXTRACTION_LAG_FAIL_PCT — so a just-upgraded 280K-page brain
+ * (every page NULL → 100% stale) gets a loud WARN, never a non-zero exit that
+ * would break a CI/cron pipeline gating on `gbrain doctor`.
+ *
+ * Vacuous-skip on tiny brains (<100 pages, no --source) like orphan_ratio.
+ * Pre-v112 brains (column missing) degrade to OK via isUndefinedColumnError.
+ * Strictly SQL — no filesystem/git access — so it's safe to wire into the
+ * thin-client doctorReportRemote path (CDX-5 trust boundary).
+ *
+ * `opts.sourceId` scopes both the denominator and the stale count to one
+ * source (the explicit-only `--source` parse, like orphan_ratio).
+ */
+export async function checkLinksExtractionLag(
+  engine: BrainEngine,
+  opts?: { sourceId?: string },
+): Promise<Check> {
+  const name = 'links_extraction_lag';
+  const sourceId = opts?.sourceId;
+  const fix = "Run: gbrain extract --stale";
+  try {
+    const totalRows = await engine.executeRaw<{ count: number }>(
+      sourceId
+        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND source_id = $1`
+        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL`,
+      sourceId ? [sourceId] : [],
+    );
+    const total = Number(totalRows[0]?.count ?? 0);
+    if (total === 0) {
+      return { name, status: 'ok', message: 'Extraction lag not applicable (no pages)' };
+    }
+    // Vacuous-skip tiny brains unless explicitly source-scoped. Shared floor
+    // const so the sync nudge (D6/C4) skips on the exact same predicate.
+    if (total < EXTRACTION_LAG_MIN_PAGES && !sourceId) {
+      return { name, status: 'ok', message: `Extraction lag not applicable (${total} pages — too few to assess)` };
+    }
+
+    const stale = await engine.countStalePagesForExtraction({ sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS });
+    const pct = (stale / total) * 100;
+    const pctStr = pct.toFixed(0);
+    const scope = sourceId ? ` in source '${sourceId}'` : '';
+
+    const warnPct = _resolveEnvNumber('GBRAIN_EXTRACTION_LAG_WARN_PCT', EXTRACTION_LAG_WARN_PCT_DEFAULT, { unit: '%' });
+    // Fail threshold is DISABLED unless explicitly set (warn-only default). A
+    // bare unset env var → no hard-fail; invalid value → warn-once + disabled.
+    let failPct: number | undefined;
+    const failRaw = process.env.GBRAIN_EXTRACTION_LAG_FAIL_PCT;
+    if (failRaw !== undefined && failRaw !== '') {
+      const n = Number(failRaw);
+      if (Number.isFinite(n) && n > 0) {
+        failPct = n;
+      } else if (!_envNumberWarned.has('GBRAIN_EXTRACTION_LAG_FAIL_PCT')) {
+        _envNumberWarned.add('GBRAIN_EXTRACTION_LAG_FAIL_PCT');
+        console.warn(`[gbrain doctor] Ignoring invalid GBRAIN_EXTRACTION_LAG_FAIL_PCT=${failRaw}; hard-fail stays disabled.`);
+      }
+    }
+
+    const details = { total, stale, pct: Number(pctStr), warn_pct: warnPct, fail_pct: failPct ?? null, source_id: sourceId ?? null };
+    if (failPct !== undefined && pct > failPct) {
+      return { name, status: 'fail', message: `${stale}/${total} pages (${pctStr}%)${scope} need link/timeline extraction (> ${failPct}% fail threshold). ${fix}`, details };
+    }
+    if (pct > warnPct) {
+      return { name, status: 'warn', message: `${stale}/${total} pages (${pctStr}%)${scope} have un-extracted edges. ${fix}`, details };
+    }
+    return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}`, details };
+  } catch (e) {
+    // Pre-v112 brain: links_extracted_at column doesn't exist yet. Graceful OK
+    // (migration/bootstrap adds it; nothing to assess until then).
+    if (isUndefinedColumnError(e, 'links_extracted_at')) {
+      return { name, status: 'ok', message: 'links_extracted_at not present (pre-v112 brain)' };
+    }
+    return { name, status: 'warn', message: `Could not check links_extraction_lag: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * issue #1678 — extract_atoms_backlog doctor check.
+ *
+ * Closes the "silent backlog" gap: extract_atoms is pack-gated, so on a brain
+ * whose active pack doesn't declare the phase it NEVER runs in the routine
+ * cycle and pages accumulate forever with zero signal (the cycle reports a
+ * clean `skipped`). This check counts the eligible-but-unextracted pages and,
+ * when the pack doesn't run the phase AND the backlog is real, WARNs with the
+ * exact `--drain` command.
+ *
+ * PAGE-BACKLOG-ONLY (Codex #11): extract_atoms also discovers transcript files
+ * at runtime; this counts DB pages only — labeled in details. No
+ * synthesize_concepts sibling this wave (Codex #12: that phase is a stub with
+ * no real eligibility predicate; a check would be a fake signal).
+ */
+export async function computeExtractAtomsBacklogCheck(
+  engine: BrainEngine,
+): Promise<Check> {
+  const name = 'extract_atoms_backlog';
+  const approx = 'page backlog only; transcript corpus not counted';
+  try {
+    const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
+    const backlog = await countExtractAtomsBacklog(engine); // brain-wide
+    if (backlog === null) {
+      return { name, status: 'warn', message: 'backlog query failed (could not count eligible pages)' };
+    }
+
+    const { packDeclaresPhase } = await import('../core/cycle.ts');
+    let declared = false;
+    try { declared = await packDeclaresPhase(engine, 'extract_atoms'); } catch { declared = false; }
+
+    if (backlog === 0) {
+      return {
+        name, status: 'ok',
+        message: 'no pages awaiting atom extraction',
+        details: { backlog, pack_declares_phase: declared, known_approximation: approx },
+      };
+    }
+
+    // The incident: pack does NOT run the phase but a real backlog exists →
+    // it will grow forever without a signal. WARN with the drain command.
+    if (!declared && backlog > 10) {
+      const fix = 'gbrain dream --phase extract_atoms --drain --window 120 (or declare extract_atoms in your active schema pack)';
+      return {
+        name, status: 'warn',
+        message: `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`,
+        details: { backlog, pack_declares_phase: false, fix_hint: fix, known_approximation: approx },
+      };
+    }
+
+    if (declared) {
+      // Pack runs it; the routine cycle drains in bounded batches. Informational.
+      return {
+        name, status: 'ok',
+        message: `${backlog} page(s) pending; active pack runs extract_atoms each cycle`,
+        details: { backlog, pack_declares_phase: true, known_approximation: approx },
+      };
+    }
+
+    // Not declared but below the warn threshold.
+    return {
+      name, status: 'ok',
+      message: `${backlog} page(s) eligible (below warn threshold; pack does not run extract_atoms)`,
+      details: { backlog, pack_declares_phase: false, known_approximation: approx },
+    };
+  } catch (err) {
+    return { name, status: 'warn', message: `extract_atoms_backlog check failed: ${(err as Error).message}` };
   }
 }
 
@@ -3602,6 +3787,18 @@ export async function buildChecks(
         }
       }
       checks.push(check);
+    } catch {
+      // Best-effort; backlog query failure shouldn't stop doctor.
+    }
+  }
+
+  // 3d.2b issue #1678 — extract_atoms_backlog. Surfaces the silent
+  // pack-gated-phase backlog: when the active pack doesn't run extract_atoms
+  // but eligible pages pile up, WARN with the `--drain` command. OK when the
+  // pack runs the phase (routine cycle drains it) or there's no backlog.
+  if (engine) {
+    try {
+      checks.push(await computeExtractAtomsBacklogCheck(engine));
     } catch {
       // Best-effort; backlog query failure shouldn't stop doctor.
     }
@@ -5104,6 +5301,50 @@ export async function buildChecks(
     });
   }
 
+  // v0.42 (#1699) content-quality gate: quarantined (hidden junk) +
+  // flagged (warned, still searchable) page counts. Both are simple
+  // JSONB key-existence scans (cheap; the marked subset stays small).
+  progress.heartbeat('quarantined_pages');
+  try {
+    // engine.executeRaw (NOT db.getConnection() — that's the postgres singleton,
+    // dead on the default PGLite engine). The JSONB `?` existence operator is
+    // literal SQL through executeRaw on both engines.
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter ? 'quarantine'`,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    checks.push({
+      name: 'quarantined_pages',
+      status: n > 0 ? 'warn' : 'ok',
+      message: n > 0
+        ? `${n} page(s) quarantined as junk (hidden from search). Review with 'gbrain quarantine list'; clear a false positive with 'gbrain quarantine clear <slug>'.`
+        : 'No quarantined pages',
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({ name: 'quarantined_pages', status: 'ok', message: `Skipped (${msg})` });
+  }
+
+  progress.heartbeat('flagged_pages');
+  try {
+    const rows = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter ? 'content_flag'`,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    // Flagged pages are "examine me", not "broken" — warn so they're visible
+    // but the message is non-alarming.
+    checks.push({
+      name: 'flagged_pages',
+      status: n > 0 ? 'warn' : 'ok',
+      message: n > 0
+        ? `${n} page(s) flagged (markup-heavy or oversize) — still searchable, agent warned on retrieval. Review with 'gbrain quarantine list --include-flagged'.`
+        : 'No flagged pages',
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    checks.push({ name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
+  }
+
   // 11a. Frontmatter integrity (v0.22.4, hardened in v0.38.2.0).
   // scanBrainSources walks every registered source's local_path on disk
   // (not from the DB), invoking parseMarkdown(..., {validate:true}) per
@@ -5893,6 +6134,10 @@ export async function buildChecks(
     // v0.41.19.0 (Issue 5): sync --all consolidation nudge.
     progress.heartbeat('sync_consolidation');
     checks.push(await checkSyncConsolidation(engine));
+    // v0.42.7 (#1696): link-extraction lag. --source scopes it (explicit-only
+    // parse, like orphan_ratio); bare doctor stays brain-wide. Fix: extract --stale.
+    progress.heartbeat('links_extraction_lag');
+    checks.push(await checkLinksExtractionLag(engine, { sourceId: orphanRatioSourceId }));
     // v0.38 — full-cycle freshness, sibling to sync_freshness. Reads
     // last_full_cycle_at from sources.config; mirrors what autopilot's
     // per-source dispatch gate sees.

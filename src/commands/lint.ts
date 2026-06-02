@@ -26,6 +26,7 @@ import {
 } from '../core/content-sanity.ts';
 import { loadOperatorLiterals } from '../core/content-sanity-literals.ts';
 import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
+import type { BrainEngine } from '../core/engine.ts';
 
 export interface LintIssue {
   file: string;
@@ -82,6 +83,8 @@ export interface LintContentOpts {
     bytes_block?: number;
     junk_patterns_enabled?: boolean;
     disabled?: boolean;
+    max_markup_ratio?: number;
+    prose_check_enabled?: boolean;
     operator_literals?: ReadonlyArray<OperatorLiteral>;
   };
 }
@@ -230,6 +233,9 @@ export function lintContent(content: string, filePath: string, opts: LintContent
       title: parsed.title,
       bytes_warn: cs.bytes_warn,
       bytes_block: cs.bytes_block,
+      max_markup_ratio: cs.max_markup_ratio,
+      prose_check_enabled: cs.prose_check_enabled,
+      page_kind: parsed.type,
       extra_literals: operator_literals,
     });
     // Rule: huge-page fires for both oversize_warn (over warn threshold)
@@ -254,6 +260,17 @@ export function lintContent(content: string, filePath: string, opts: LintContent
       issues.push({
         file: filePath, line: 1, rule: 'scraper-junk',
         message: `Matched junk pattern(s): ${matched}`,
+        fixable: false,
+      });
+    }
+    // Rule: markup-heavy fires when the fuzzy prose pass flags the page as
+    // boilerplate-shaped (issue #1699). At ingest this FLAGS (page stays
+    // searchable, agent warned) rather than hides — surfacing it in lint
+    // lets a brain-author notice nav/boilerplate scrapes in their source.
+    if (sanity.reasons.includes('high_markup')) {
+      issues.push({
+        file: filePath, line: 1, rule: 'markup-heavy',
+        message: `Markup ratio ${sanity.markup_ratio?.toFixed(2)} exceeds threshold (looks like nav/boilerplate; flagged, not hidden)`,
         fixable: false,
       });
     }
@@ -295,32 +312,53 @@ export function fixContent(content: string): string {
  * Also loads the operator literals file (`~/.gbrain/junk-substrings.txt`)
  * once per lint invocation so multi-file lint runs amortize the read.
  */
-async function resolveLintContentSanity(): Promise<LintContentOpts['contentSanity']> {
+async function resolveLintContentSanity(
+  sharedEngine?: BrainEngine,
+): Promise<LintContentOpts['contentSanity']> {
   const base = loadConfig();
   let cs = base?.content_sanity;
 
-  // DB-plane lift: only attempt when the file/env config suggests an
-  // engine is configured. Avoids spinning up a fresh PGLite just to
-  // read 4 config keys in a CI lint run that has no brain at all.
-  const hasEngineConfig = !!(base?.database_url || base?.database_path);
-  if (hasEngineConfig) {
+  // DB-plane lift. issue #1678: when the caller already holds a live engine
+  // (the cycle's lint phase, the Minion lint handler), REUSE it — do NOT
+  // create + disconnect our own. A self-created engine here is module-style
+  // (createEngine without poolSize wraps the db.ts singleton), so its
+  // disconnect() cascades to db.disconnect() and NULLS the shared singleton
+  // mid-cycle — which broke every subsequent cycle phase with a misleading
+  // "connect() has not been called". Reusing the live engine reads the same
+  // 4 config keys with zero connection churn.
+  if (sharedEngine) {
     try {
-      const { createEngine } = await import('../core/engine-factory.ts');
-      const engine = await createEngine({
-        engine: base!.engine,
-        database_url: base!.database_url,
-        database_path: base!.database_path,
-      });
-      try {
-        await engine.connect({});
-        const lifted = await loadConfigWithEngine(engine, base);
-        cs = lifted?.content_sanity ?? cs;
-      } finally {
-        await engine.disconnect().catch(() => { /* best-effort cleanup */ });
-      }
+      const lifted = await loadConfigWithEngine(sharedEngine, base);
+      cs = lifted?.content_sanity ?? cs;
     } catch {
-      // Engine unreachable or failed mid-probe — fall through to
-      // file/env values. Lint should never block on engine state.
+      // best-effort; fall through to file/env values.
+    }
+  } else {
+    // Standalone path (CLI `gbrain lint`, which is CLI_ONLY and shares no
+    // engine): only attempt when the file/env config suggests an engine is
+    // configured. Avoids spinning up a fresh PGLite just to read 4 config
+    // keys in a CI lint run that has no brain at all. Safe to create +
+    // disconnect here because nothing else shares this process's singleton.
+    const hasEngineConfig = !!(base?.database_url || base?.database_path);
+    if (hasEngineConfig) {
+      try {
+        const { createEngine } = await import('../core/engine-factory.ts');
+        const engine = await createEngine({
+          engine: base!.engine,
+          database_url: base!.database_url,
+          database_path: base!.database_path,
+        });
+        try {
+          await engine.connect({});
+          const lifted = await loadConfigWithEngine(engine, base);
+          cs = lifted?.content_sanity ?? cs;
+        } finally {
+          await engine.disconnect().catch(() => { /* best-effort cleanup */ });
+        }
+      } catch {
+        // Engine unreachable or failed mid-probe — fall through to
+        // file/env values. Lint should never block on engine state.
+      }
     }
   }
 
@@ -361,6 +399,12 @@ export interface LintOpts {
    *  `runLintCore` resolves via the file/env/DB chain. Tests inject
    *  this directly to bypass the FS + engine layers. */
   contentSanity?: LintContentOpts['contentSanity'];
+  /** issue #1678: a live, already-connected engine to REUSE for the
+   *  content-sanity DB-plane config lift. Callers with a shared engine (the
+   *  cycle lint phase, Minion lint handlers) MUST pass it so lint doesn't
+   *  create + disconnect a competing module-style engine that nulls the
+   *  shared db singleton mid-cycle. */
+  engine?: BrainEngine;
 }
 
 export interface LintResult {
@@ -392,7 +436,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   // Resolve content-sanity config once for this lint run (D1: lift DB
   // config when reachable). Caller can pre-pass via opts.contentSanity
   // (tests, Minion handler) to bypass the engine probe entirely.
-  const contentSanity = opts.contentSanity ?? await resolveLintContentSanity();
+  const contentSanity = opts.contentSanity ?? await resolveLintContentSanity(opts.engine);
   const lintOpts: LintContentOpts = { contentSanity };
 
   let totalIssues = 0;

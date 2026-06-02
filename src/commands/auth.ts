@@ -460,17 +460,32 @@ async function registerClient(name: string, args: string[]) {
  * direct-script path (see bottom of file) so `bun run src/commands/auth.ts`
  * still works.
  */
+/**
+ * Parse `auth create` args into `{ name, takesHolders }`.
+ *
+ * Exported + pure so the positional-vs-flag logic is unit-testable. Only
+ * excludes the --takes-holders VALUE from the positional search when the flag
+ * is present — the pre-v0.41 inline version used `rest[takesIdx + 1]` which
+ * resolved to `rest[0]` when `takesIdx === -1`, silently dropping the name on
+ * the bare `gbrain auth create <name>` form.
+ */
+export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[] } {
+  const takesIdx = rest.indexOf('--takes-holders');
+  const takesHolders = takesIdx >= 0 && rest[takesIdx + 1]
+    ? rest[takesIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
+    : undefined;
+  const takesValue = takesIdx >= 0 ? rest[takesIdx + 1] : undefined;
+  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue);
+  return { name: positional || '', takesHolders };
+}
+
 export async function runAuth(args: string[]): Promise<void> {
   const [cmd, ...rest] = args;
   switch (cmd) {
     case 'create': {
       // v0.28: optional --takes-holders world,garry,brain (default: world only)
-      const takesIdx = rest.indexOf('--takes-holders');
-      const takesHolders = takesIdx >= 0 && rest[takesIdx + 1]
-        ? rest[takesIdx + 1].split(',').map(s => s.trim()).filter(Boolean)
-        : undefined;
-      const positional = rest.find(a => !a.startsWith('--') && a !== rest[takesIdx + 1]);
-      await create(positional || '', { takesHolders });
+      const parsed = parseAuthCreateArgs(rest);
+      await create(parsed.name, { takesHolders: parsed.takesHolders });
       return;
     }
     case 'list': await list(); return;

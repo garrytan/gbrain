@@ -1,6 +1,6 @@
 import type {
   Page, PageInput, PageFilters, GetPageOpts,
-  Chunk, ChunkInput, StaleChunkRow,
+  Chunk, ChunkInput, StaleChunkRow, StalePageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -16,6 +16,7 @@ import type {
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
   AdjacencyRow,
+  EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
 
 /**
@@ -1027,6 +1028,48 @@ export interface BrainEngine {
    */
   deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void>;
 
+  // ============================================================
+  // v0.42.7 (#1696): link/timeline extraction freshness watermark.
+  // A page is stale for extraction when its links_extracted_at is NULL,
+  // older than the extractor version stamp, or older than its updated_at
+  // (edited-since-extract — the MCP put_page / sync --no-extract path).
+  // Powers `gbrain extract --stale` + the `links_extraction_lag` doctor check.
+  // ============================================================
+  /**
+   * Count pages needing (re)extraction. `versionTs` is the ISO-8601
+   * `LINK_EXTRACTOR_VERSION_TS` string (bound `::timestamptz`); when omitted,
+   * only the NULL + edited-since arms apply. Soft-deleted pages excluded.
+   */
+  countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string }): Promise<number>;
+  /**
+   * List a keyset page (ordered by `id`, `id > afterPageId`) of stale pages
+   * WITH their content so the caller extracts without an N+1 `getPage`. Same
+   * stale predicate as countStalePagesForExtraction. Caller passes a SMALL
+   * batchSize (page bodies are unbounded — 25MB transcript pages exist) and
+   * applies its own per-batch byte budget.
+   */
+  listStalePagesForExtraction(opts: {
+    batchSize: number;
+    afterPageId?: number;
+    sourceId?: string;
+    versionTs?: string;
+  }): Promise<StalePageRow[]>;
+  /**
+   * Stamp `links_extracted_at` for a batch of pages keyed on the unique
+   * `(slug, source_id)` pair (unnest idiom, mirrors addLinksBatch).
+   * Short-circuits on empty input. Called AFTER the link/timeline flush so a
+   * crash mid-batch leaves pages unstamped and they re-extract next run.
+   *
+   * Each ref may carry its own `extractedAt`; refs that omit it use the
+   * `defaultExtractedAt` arg. `gbrain extract --stale` passes the row's READ
+   * `updated_at` per ref (v0.42.7 D4 race fix) so a concurrent edit landing
+   * between the SELECT and this stamp advances `updated_at` past the stamped
+   * value → the page stays stale → re-extracted next run, never marked
+   * fresh-with-the-old-content. Sync / DB-extract sites omit per-ref values and
+   * pass `now()` (the page was just imported, so `now() >= updated_at`).
+   */
+  markPagesExtractedBatch(refs: Array<{ slug: string; source_id: string; extractedAt?: string }>, defaultExtractedAt: string): Promise<void>;
+
   // Links
   /**
    * Single-row link insert. linkSource defaults to 'markdown' for back-compat
@@ -1169,6 +1212,17 @@ export interface BrainEngine {
    * sync-topology-aware refinement.
    */
   getAdjacencyBoosts(pageIds: number[]): Promise<Map<number, AdjacencyRow>>;
+  /**
+   * v0.42 (issue #1699): for a list of page_ids, return their
+   * `frontmatter.content_flag` markers (reason + detail). Used by hybrid
+   * search to stamp `SearchResult.content_flag` post-fusion — the
+   * agent-warning channel for fuzzy markup-heavy / oversize pages that
+   * stay searchable. Single SQL query, not N+1. Pages without the marker
+   * get no entry in the map. Empty input → empty map (no query).
+   */
+  getContentFlagsByPageIds(
+    pageIds: number[],
+  ): Promise<Map<number, { reason: string; detail: string }>>;
   /**
    * v0.27.0: for a list of slugs, return their updated_at timestamps (or created_at fallback).
    * Used by hybrid search recency boost. Single SQL query, not N+1.
@@ -1975,6 +2029,20 @@ export interface BrainEngine {
    * Postgres (eng review D5 — avoids dialect drift on `interval` binding).
    */
   getRecentSalience(opts: SalienceOpts): Promise<SalienceResult[]>;
+
+  /**
+   * v0.41.39 (issue #1700) — enrich candidate selection for
+   * `gbrain enrich --thin`. ONE source-aware SQL query: thin-filter +
+   * per-page inbound-link count (source-correct via `to_page_id = p.id`,
+   * `link_source='mentions'` excluded) + optional `enriched_at` recency
+   * guard + whitelisted ORDER BY (ENRICH_ORDER_SQL) + LIMIT. Returns a
+   * lightweight projection (NO page bodies) so ranking 100K stubs doesn't
+   * pull every body into memory.
+   *
+   * Empty `opts.types` → empty result, no SQL. Source scope follows the
+   * canonical scalar/array precedence (sourceIds wins over sourceId).
+   */
+  listEnrichCandidates(opts: EnrichCandidatesOpts): Promise<EnrichCandidate[]>;
 
   /**
    * Anomaly detection: cohorts (tag, type) with unusually-high page activity

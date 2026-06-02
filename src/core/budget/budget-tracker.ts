@@ -229,6 +229,16 @@ export class BudgetTracker {
   }
 
   /**
+   * The configured cost ceiling (USD), or undefined when uncapped. Read-only.
+   * Lets callers detect a post-hoc overage when a final-call BudgetExhausted is
+   * swallowed by the gateway ("surfaced via next reserve") and there is no next
+   * reserve — `totalSpent > cap` with no throw. See enrich's runEnrichCore.
+   */
+  get cap(): number | undefined {
+    return this.opts.maxCostUsd;
+  }
+
+  /**
    * Register a synchronous callback to fire the first time the tracker
    * throws BudgetExhausted (from reserve OR record). Fires once. Useful for
    * persisting checkpoint state before the throw propagates. The callback
