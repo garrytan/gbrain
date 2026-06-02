@@ -249,4 +249,31 @@ describe('issue #972 — put_page auto-link', () => {
     const outLinks = await engine.getLinks('concepts/knowledge-graph');
     expect(outLinks.find(l => l.to_slug === 'projects/struktura')).toBeUndefined();
   });
+
+  test('stale basename edge is removed when the wikilink is deleted (codex #972)', async () => {
+    // Regression: wikilink-resolved edges must be reconcilable, else they
+    // survive after the bare wikilink is removed from the page body.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.setConfig('link_resolution.global_basename', 'true');
+
+    const { operations } = await import('../../src/core/operations.ts');
+    const putPage = operations.find(op => op.name === 'put_page')!;
+
+    // 1. Write the page WITH the wikilink → edge lands.
+    await putPage.handler({ engine, remote: false } as never, {
+      slug: 'concepts/knowledge-graph', content: PUT_PAGE_MARKDOWN_WITH_WIKILINK,
+    });
+    let outLinks = await engine.getLinks('concepts/knowledge-graph');
+    expect(outLinks.find(l => l.to_slug === 'projects/struktura')).toBeDefined();
+
+    // 2. Re-write the page WITHOUT the wikilink → edge must be reconciled away.
+    await putPage.handler({ engine, remote: false } as never, {
+      slug: 'concepts/knowledge-graph',
+      content: '---\ntitle: Knowledge Graph\ntype: concept\n---\n\nNo links here anymore.\n',
+    });
+    outLinks = await engine.getLinks('concepts/knowledge-graph');
+    expect(outLinks.find(l => l.to_slug === 'projects/struktura')).toBeUndefined();
+  });
 });

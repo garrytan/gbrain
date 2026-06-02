@@ -1027,10 +1027,17 @@ async function runAutoLink(
       l => l.link_source === 'frontmatter' && l.origin_slug === slug,
     );
 
-    // Reconcilable outgoing edges: markdown + our own frontmatter edges.
-    // Manual edges (link_source='manual') are NEVER touched by reconciliation.
+    // Reconcilable outgoing edges: markdown + our own frontmatter edges +
+    // basename-resolved wikilinks (issue #972). Manual edges
+    // (link_source='manual') are NEVER touched by reconciliation.
+    // 'wikilink-resolved' MUST be reconcilable (codex outside-voice [P1]):
+    // auto-link writes these; if it weren't here, a basename edge would
+    // survive after the wikilink is deleted from the page OR the
+    // link_resolution.global_basename flag is turned off (out no longer
+    // includes it, so the stale-removal loop below must be allowed to drop it).
     const reconcilableOut = existingOut.filter(
       l => l.link_source === 'markdown' || l.link_source == null ||
+           l.link_source === 'wikilink-resolved' ||
            (l.link_source === 'frontmatter' && l.origin_slug === slug),
     );
 
