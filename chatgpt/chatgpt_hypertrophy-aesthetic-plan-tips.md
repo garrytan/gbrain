@@ -1,0 +1,434 @@
+---
+title: "Hypertrophy Aesthetic Plan Tips"
+type: essay
+created: 2025-03-06
+updated: 2025-03-06
+source: chatgpt-export
+conversation_id: 67c9031d-f708-8007-81e2-f9dbd6ed2b20
+message_count: 9
+tags: [chatgpt, import, long-form]
+---
+# Hypertrophy Aesthetic Plan Tips
+
+> Conversation ID: 67c9031d-f708-8007-81e2-f9dbd6ed2b20
+> Created: 2025-03-06T02:06:22Z
+> Updated: 2025-03-06T02:28:23Z
+> Messages: 9
+
+---
+
+## User
+
+{'asset_pointer': 'file-service://file-Gv5eUJKm2qpzwCgCjzCwTc', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1031, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 177002, 'width': 1902}
+based on everything we know about mike isratel and rp strenfth and jared feathers recommendations on hypertrophy based on workouts, soecifically for best aestitic appearence in a male, how can we improve this plan?
+
+---
+
+## Assistant
+
+Mr. White, here’s how you might refine that split for optimal male “aesthetic” hypertrophy, in line with Dr. Mike Israetel / RP Strength principles:
+
+1. **Balance Lower Body Volume**  
+   - Add a heavier compound (e.g. barbell squat or hack squat) in place of, or in rotation with, one of the leg presses.  
+   - Include a hip‐hinge movement (e.g. Romanian deadlift, good morning) to cover hamstrings/glutes more fully than curls alone.
+
+2. **Train Shoulders Completely**  
+   - Keep some lateral raises, but add at least one true overhead press (barbell or dumbbell) for front delts and overall shoulder development.  
+   - Include a rear‐delt movement (reverse‐pec‐deck, cable face pulls, or rear‐delt fly) to round out the shoulder.
+
+3. **Fill in the Gaps (Calves & Abs)**  
+   - For aesthetics, don’t ignore calves (standing or seated calf raises).  
+   - Throw in 2–3 quick sets of ab work (e.g. cable crunches) a couple of days per week.
+
+4. **Check Volume & Frequency**  
+   - Aim for ~10–20 total sets per muscle per week, spread over 2–3 sessions. Make sure you’re not “over‐raising” your side delts while neglecting other areas.  
+   - Biceps/triceps look okay at 2x/week, but confirm total set counts meet your recovery capacity.
+
+5. **Progressive Overload & Periodization**  
+   - Progressively add weight or reps over the mesocycle, then deload to reset fatigue.  
+   - Keep rep ranges mostly in that 8–20 zone for hypertrophy and track performance weekly.
+
+With these tweaks—bigger leg compounds, an overhead press, rear‐delt work, direct calf/ab training, and balanced volume—you’ll be more in line with the RP/Isratel guidelines for a balanced, aesthetic physique.
+
+---
+
+## User
+
+were only interested in mikes recommended priotiry for aesthtetics:
+shoulders, specifically side delts are number 1 for v taper
+2 is arms, specifically biceps as theyre always visible and the vanitu muscle. triceps are second to that as they help fill out the arm and make sleeves look tight which gives a jacked look.
+next is back, but specifically mid and upper back to wider the back and create the v taper
+next is chest, specifcally upper chest for the armored plate look
+then we have forearms as they show always and make you look jacked.
+then we have traps
+and after all that we have legs as tehy are shown the least. i always wear jeans so no one sees them.
+then we might also consider some ab training (as long as their is no oblique training) if we want the abs to pop more, but we need to be careful not to widen the waist. and this is probably not that necessary given we'll be getting to 8%bf so abs should be visible anyway.
+
+
+
+
+---
+
+## Assistant
+
+Got it, you want to optimize your workout plan based on Dr. Mike Israetel's aesthetic priority hierarchy: 
+
+1. Side delts
+2. Biceps (priority), triceps (secondary)
+3. Mid/upper back
+4. Upper chest
+5. Forearms
+6. Traps
+7. Legs (lowest priority)
+8. Abs (optional, no oblique work)
+
+Before making adjustments, a few clarifications:
+- What’s your weekly frequency goal? Do you want to keep it at 5 days or are you open to 6?
+- Are you okay with adding a bit more total volume for priority muscles (side delts, biceps, mid/upper back)?
+- Do you prefer sticking to machines/cables for isolation movements, or are you open to more free weights?
+
+Once I have these details, I can refine your plan accordingly.
+
+---
+
+## User
+
+lets go up to 6
+
+---
+
+## Assistant
+
+Great, I'll optimize your program for a 6-day training split, emphasizing side delts, biceps, mid/upper back, upper chest, and forearms while keeping legs at a lower priority. I'll balance volume and frequency to ensure maximal hypertrophy for aesthetics. I'll get back to you with the updated plan shortly.
+
+---
+
+## Assistant
+
+# 6-Day Aesthetic Hypertrophy Program (Dr. Mike Israetel’s Priority-Based Split)
+
+This 6-day hypertrophy routine is designed for an aesthetic physique, emphasizing the muscle groups Dr. Mike Israetel prioritizes for the *V-taper* and overall visual impact. The split focuses heavily on **side delts, arms (especially biceps), upper back width, and upper chest**, while keeping leg work minimal for maintenance. The program balances free-weight compounds with machines/cables, uses progressive overload, and is structured to allow recovery despite high frequency on key areas.
+
+## Program Overview & Key Principles
+
+- **Prioritized Muscle Groups:**  
+  – **Side Delts (Shoulders):** Trained most frequently (multiple times per week) with highest volume to broaden the shoulders and enhance the V-taper.  
+  – **Biceps (primary) & Triceps (secondary):** High emphasis on biceps for arm size (with triceps included to fill out the arms).  
+  – **Mid/Upper Back:** Focus on lat width and upper-back thickness for a wider back.  
+  – **Upper Chest:** Emphasized for a fuller “armored plate” chest appearance.  
+  – **Forearms:** Included regularly since they are always visible and contribute to the balanced look.  
+  – **Traps:** Trained to add upper-body mass and a yoked look (but not over-prioritized at the expense of shoulder width).  
+  – **Legs:** Only minimal volume for maintenance (since legs are often covered by pants), just enough to maintain proportion and strength.  
+  – **Abs (Optional):** Can be trained for core strength and aesthetics, but **avoid oblique-heavy movements** to keep the waist tight. Ab work is kept minimal and optional.
+
+- **Weekly Split (6 Days On, 1 Day Off):** Each muscle group’s frequency reflects its priority. Higher priority muscles appear 2–3 times per week, lower priorities only 1 time. A suggested schedule (which can be shifted to any days as long as order is kept) is: 
+
+  - **Day 1:** Shoulders (Side Delts Focus) + Traps  
+  - **Day 2:** Back (Width/Upper Back Focus) + Biceps  
+  - **Day 3:** Chest (Upper Focus) + Triceps  
+  - **Day 4:** Shoulders (Side Delts) + Arms (Biceps & Triceps)  
+  - **Day 5:** Back (Thickness/Upper Back) + Forearms *(+ Optional Upper Chest)*  
+  - **Day 6:** Legs (Light) + *Optional* Abs *(+ Optional Side Delts/Biceps)*  
+  - **Day 7:** **Rest** (no weight training; recovery day)
+
+- **Exercise Selection – Free Weights & Machines:** Each day uses a mix of heavy **free-weight exercises** (barbells, dumbbells, bodyweight) and **machine/cable movements**. Free weights recruit multiple muscles and build overall size/strength, while machines/cables isolate target muscles safely and add volume without excessive joint strain. For example, you’ll do heavy presses/rows for compound stimulus and follow up with cable laterals or machine curls to thoroughly fatigue the target muscle. This balance maximizes growth and helps prevent injury or burnout.
+
+- **Recovery & Muscle Group Distribution:** The split is arranged to allow optimal recovery. High-frequency muscles (like side delts and biceps) are trained with varying intensity across the week (heavy sessions vs. lighter pump work) to avoid overtraining. Overlapping muscle use is minimized (e.g. no heavy triceps work the day after heavy chest presses) and when unavoidable, volume is adjusted. Legs are placed once per week to avoid exhausting the lower body or adding excess fatigue that could interfere with upper body sessions. Ensure you get at least one full rest day (e.g. Sunday) for recovery — this is critical given the high weekly volume on priority muscles.
+
+## Progressive Overload & Periodization
+
+To maximize hypertrophy, gradually **progress overload** over time: aim to increase the weight lifted, the number of reps, or the number of sets (within the given ranges) as you become stronger. Key guidelines:
+
+- **Reps and Intensity:** Each exercise lists a rep range. Pick a weight that challenges you in that range **with 1–2 reps left in reserve (RIR)** on the first week. As weeks progress, attempt to **add 5-10 lbs or 1-2 reps** when you can do the top of the rep range for all sets with good form. For smaller isolation moves, increases might be smaller (or add an extra rep instead of weight).
+
+- **Set Progression:** Start on the lower end of set ranges if a range is given, or at the prescribed sets. As you adapt, you can add an extra set for key exercises in later weeks **if recovery allows** (especially for side delts and biceps which can handle more volume). For example, you might do 3 sets of lateral raises in week 1 and progress to 4 sets by week 4 as long as you’re not exceeding your recovery capacity.
+
+- **Effort Level:** Train hard but avoid going to absolute failure on every set, especially early in the cycle. An effective approach is using **RPE 8-9 (about 1-2 RIR)** on most sets – this stimulates growth while managing fatigue. On your last set of an isolation exercise you could push closer to failure if it’s safe (e.g. last set of bicep curls).
+
+- **Mesocycle Structure:** Run this program for a cycle of about **4–6 weeks** while steadily increasing volume or load. By the end of the cycle, you may be near your **MRV (Maximum Recoverable Volume)** – muscles will be working at their capacity. At that point, take a **deload week (Week 5 or 7)**: reduce weight (to ~60% of normal) and cut set volume in half for that week, or take a full week of rest from lifting. This allows your body to recover and come back stronger. Then start the next cycle, perhaps with slightly higher starting weights than the previous cycle.
+
+- **Adjustments:** Pay attention to recovery and soreness. If a muscle is still excessively sore or performance is dropping, dial back volume slightly or add an extra rest day. Conversely, if you feel you’re recovering well and have energy, you can incorporate the “optional” exercises listed on some days or increase set counts modestly. Keep a training log to track your weights, reps, and how you feel – this will help you apply progressive overload systematically.
+
+With those principles in mind, here is the detailed 6-day training breakdown:
+
+## Day 1: **Shoulders & Traps (Side Delt Emphasis)**
+
+**Focus:** Build wide shoulders by emphasizing the side deltoids, and add trap work for upper-body thickness. Side delts are hit with high volume since they’re the top priority for a broader V-taper. Traps are trained last. Front delts will get some work from the overhead press, but we limit direct front-delt focus because they’re often stimulated by chest presses. Keep rest periods ~1.5–2 minutes on big lifts and ~60–90 seconds on isolation moves.
+
+- **Seated Dumbbell Overhead Press** – *3 sets of 8–10 reps.*  
+  *Compound shoulder press focusing on front and side delts.* Start the week with a multi-joint shoulder builder. Keep your torso upright and drive the dumbbells up overhead. Choose a weight you can control for 8-10 reps. (You can use a barbell OHP or machine shoulder press as an alternative.) This heavy press sets the base for shoulder size – remember it primarily hits front delts, so don’t rely on it alone for side delt growth.
+
+- **Dumbbell Lateral Raises** – *3 sets of 10–15 reps.*  
+  *Isolation for side (lateral) deltoids.* Perform with strict form: raise arms out to your sides, leading with your elbows (slight bend in elbow) until parallel to the floor. Focus on the side delts doing the work, not traps. Use a weight that allows you to feel the burn in the shoulders by ~12 reps. Higher reps (up to 15) here help get a great pump. This exercise is crucial for shoulder width – keep the tension on the side delts throughout.
+
+- **Cable Lateral Raises (Single-arm or Machine Lateral Raise)** – *3 sets of 12–15 reps.*  
+  *Side delts with constant tension.* Using a cable pulley (set at the low position) or a dedicated lateral raise machine, perform lateral raises to really isolate the medial delts. Cables/machines provide constant tension through the range of motion, extending the time under tension. Go for a controlled 12-15 reps. (If you did dumbbells in the previous exercise, using a cable or machine now also adds variety.) By the end of these, your side delts should be thoroughly fatigued. **Note:** If side delts are a major weak point, you can increase to 4 sets here, or even start your workout with lateral raises occasionally to prioritize them when fresh.
+
+- **Reverse Pec Deck Flyes (Rear Delt Fly)** – *3 sets of 12–15 reps.*  
+  *Isolation for rear deltoids and upper back.* Sit facing the pec deck machine (or use a reverse fly machine) and spread the handles apart, focusing on squeezing your rear shoulders blades together. This hits the rear delts and upper-mid back (rhomboids, traps) for a more 3D shoulder. Keeping rear delts strong will improve posture and make your shoulder appear fuller from the side. Use moderate weight – feel the rear delts contracting each rep. (If no machine, you can do bent-over dumbbell rear lateral raises or band pull-aparts.)
+
+- **Barbell or Dumbbell Shrugs** – *3 sets of 8–12 reps.*  
+  *Upper trapezius isolation.* Hold a heavy barbell or pair of dumbbells at your sides. Shrug your shoulders straight up toward your ears, pause briefly at the top, then lower under control. Use straps if grip is a limiting factor. Traps respond well to heavy weight – aim for the upper end of the rep range with as heavy a load as you can handle with good form. Building thicker traps will complement your shoulder width by adding bulk to the upper body. (Alternative: Smith-machine shrugs or machine shrug if available, to focus purely on the squeeze.)
+
+**Day 1 Summary:** Side delts have the highest volume today (two different lateral raise variations) since they recover quickly and are critical for width. The overhead press provides general shoulder mass (front delts and triceps assistance), and rear delts/traps finish off the upper back. **Keep the intensity high but stop a rep or two short of failure on the first sets** so you can hit all those shoulder sets without burning out early. Stretch your shoulders and neck after training to maintain mobility (e.g. gentle neck stretches, doorway chest stretch for front delts).
+
+## Day 2: **Back & Biceps (Width-Focused Back)**
+
+**Focus:** Develop a wide, V-taper back by prioritizing lat width and upper-back **pulling** movements. This session targets the lats (the muscles that give you “wings”) and upper back, followed by direct biceps work. Biceps are trained after back today – they’ll be warmed up from pulling but not yet exhausted if you manage back volume properly. Keep your form strict on back exercises to really engage the target muscles rather than just heaving the weight. Rest ~2 minutes on big back exercises and ~90 seconds on bicep moves.
+
+- **Wide-Grip Pull-Ups or Lat Pulldowns** – *3 sets of 8–10 reps.*  
+  *Vertical pull for lats (back width).* If you can do pull-ups: use a grip slightly wider than shoulder-width. Pull yourself up until your chin clears the bar, focusing on driving your elbows down and back to engage the lats. Lower under control. If using a lat pulldown machine: pull the bar to your upper chest. In either case, avoid using momentum; you should feel a strong contraction along your outer back. If 8 reps is easy, add weight (via a dip belt for pull-ups) – if you can’t get 8, use band assistance or do pulldowns until you build strength. This exercise will flared-out lats for that V-shape. 
+
+- **Bent-Over Barbell Row** – *3 sets of 8–12 reps.*  
+  *Horizontal pull for mid/upper back and lats.* Hinge at the hips and keep your back flat, knees slightly bent. Grip the bar about shoulder-width. Row the bar toward your lower chest/upper abs, squeezing your back muscles and keeping elbows roughly ~45–60° from your sides. Lower the bar down until arms are straight (maintain that flat back). Barbell rows work the lats, rhomboids, and lower traps together, building thickness. Use a weight that challenges you by 10 reps. If you feel your lower back straining, reduce weight or switch to chest-supported row machine to spare your lower back. Keep the movement controlled; avoid jerking with your torso so the back does the work.
+
+- **Seated Cable Row (Neutral or Wide Grip)** – *3 sets of 10–12 reps.*  
+  *Another angle for back thickness and upper-back detail.* Use a cable row with a neutral-grip handle (close grip) or a wide bar, depending on what part of your back you want to emphasize: close grip targets lower lats more, while a wider grip hits upper back and rear delts more. Sit upright, brace your core, and pull the handle into your abdomen, squeezing your shoulder blades together. Control the return until your arms are extended and your lats stretch forward. Aim for about 10-12 reps with a good squeeze on each rep. This second rowing movement complements the barbell row, ensuring no part of your back is neglected (and machine tension helps fully fatigue the muscles safely). **Form tip:** avoid shrugging your shoulders up; keep them down and retracted to really engage the back muscles.
+
+- **Barbell or EZ-Bar Biceps Curls** – *3 sets of 8–12 reps.*  
+  *Primary biceps mass builder.* Grab a barbell (or EZ-curl bar if more comfortable on wrists). With a shoulder-width grip, curl the weight up while keeping your elbows at your sides – don’t let them drift forward too much. Squeeze the biceps hard at the top, then lower slowly to full extension. Use a weight that is heavy but allows control (no excessive swinging). For hypertrophy, maintain tension: you can stop just short of completely locking out to keep continuous stress on the biceps. These curls will add overall size to the biceps’ short and long heads. If you hit 12 reps easily, go up in weight next session. Keep your torso still; only the arms move.
+
+- **Hammer Curls** – *3 sets of 10–12 reps.*  
+  *Biceps brachialis and forearms.* Hold dumbbells with a neutral grip (palms facing each other). Curl the weights up, keeping your elbows by your sides, just like a hammering motion. Bring the dumbbells toward your shoulders, then lower under control. Hammer curls work the **brachialis** (a muscle underneath the biceps that helps push them up, making your arms look thicker) and the **brachioradialis** (on the forearm, adding forearm size and strength). Use a weight that gets tough around 10 reps. These also indirectly hit the forearms, contributing to that always-visible forearm development. Focus on not swinging; if needed, do them alternating one arm at a time to concentrate on each arm’s form.
+
+**Day 2 Summary:** Your back got a two-direction attack (vertical and horizontal pulling) to widen and thicken it. Biceps, being a priority muscle, got solid direct work after back. Expect a serious pump in your lats and arms. Make sure to stretch your lats (hanging from a bar or doing doorway stretches) and maybe do some light bicep stretching afterward – it can help with recovery and maintaining flexibility. If grip was a limiting factor on back exercises, you can use lifting straps, but since forearms are a priority too, it’s good to train your grip within reason. Eat and rest well – tomorrow we hit chest and triceps.
+
+## Day 3: **Chest & Triceps (Upper Chest Focus)**
+
+**Focus:** Build the upper chest for a squared, plate-like chest, and train triceps (secondary priority) for arm thickness. The upper chest (clavicular head) is emphasized via incline presses. Triceps are worked after chest, and they’ll already be pre-fatigued from pressing, so you’ll get a great burn with slightly higher reps. We avoid direct oblique or abdominal work on this day to keep the focus on upper-body pushing muscles and to not fatigue the core for the heavy presses. Rest ~2–3 minutes on presses and ~1–2 minutes on tricep isolations.
+
+- **Incline Barbell Bench Press** – *3 sets of 6–10 reps.*  
+  *Compound press for upper chest (and front delts, triceps).* Set an incline bench at ~30° (low incline). Grip the barbell slightly wider than shoulder width. Lower the bar to the upper chest (around collarbone level), feeling your chest stretch, then press up to near lockout. Keep your shoulder blades retracted on the bench to put the load on your chest. The incline angle places more tension on the **upper pecs** than a flat bench, helping build that coveted upper-chest shelf. Use a heavy weight here – aim for the lower end of the rep range (6-8) in early sets, possibly pushing to 10 on the last set if you can. Maintain controlled tempo; no bouncing off the chest. If you hit 10 reps easily, increase the weight next time. *(If you don’t have a good incline bench setup, you can substitute with dumbbell incline presses.)*
+
+- **Flat Dumbbell Bench Press** – *3 sets of 8–12 reps.*  
+  *Secondary press for overall chest development.* Lying flat on a bench with dumbbells, perform a standard dumbbell press. Lower the dumbbells to about chest level with elbows at ~45° angle, then press them up together. Dumbbells allow a deeper stretch and a neutral arm path, which can further recruit the chest fibers (including the inner chest) and are easier on the shoulders for some people. Focus on squeezing the chest at the top. Aim for about 10 reps per set. This exercise ensures the **mid and lower pecs** aren’t neglected, adding fullness to your chest. (If you prefer to double-down on upper chest, you could do a low incline dumbbell press or incline dumbbell fly here instead – but many find some flat pressing helps complete the chest look.)
+
+- **Cable Flyes (High-to-Low or Low-to-High)** – *3 sets of 12–15 reps.* **(Optional)**  
+  *Isolation for chest (target angle depending on cable height).* This exercise is optional if you want extra chest volume, especially for the upper chest. Using a cable crossover, you can set the pulleys low and perform **low-to-high cable flyes**, bringing the handles upward and together (like an upward scooping motion) – this specifically targets the upper chest fibers and the inner chest. Or set the pulleys high and do standard cable flyes (high-to-low, bringing hands downward and together) which hit the mid chest more. In either case, use moderate weight and higher reps to really flush the muscle. Focus on a deep stretch and a strong contraction (imagine hugging a big tree, bringing your hands together). Do not overstretch to avoid shoulder strain. If you included flat and incline presses already, this fly will thoroughly fatigue the chest and pump it up. *Tip: keep a slight bend in your elbows and maintain that angle throughout to isolate the pecs.* (Skip this if pressed for time or if chest is already taxed — quality is more important than quantity.)
+
+- **Lying Triceps Extensions (Skullcrushers)** – *3 sets of 10–12 reps.*  
+  *Triceps long head builder.* Lie on a flat bench with an EZ-bar (or barbell). Start with arms extended straight up. Bending only at the elbows, lower the bar toward your forehead (be careful, go just above the head), feeling a stretch in the triceps. Then extend your arms back up to straight, flexing the triceps hard at lockout. This move targets the **long head** of the triceps (the meatier part on the back of your arm) through a deep range of motion. Use a weight that becomes challenging around 10 reps. Keep your elbows from flaring out too much – try to point them toward your knees throughout the motion. If you experience elbow discomfort, don’t go super heavy; focus on controlled reps, or substitute with a lying dumbbell triceps extension (each arm) or try doing them on a slight incline which can reduce joint strain.
+
+- **Cable Triceps Pushdowns** – *3 sets of 12–15 reps.*  
+  *Triceps lateral head and pump.* Using a cable pulley with a straight bar or rope attachment, tuck your elbows to your sides and extend your arms down to lockout, then let them back up until your forearms are about parallel to the floor. Keep your upper arms stationary. Choose a weight you can do for about 15 good reps, really focusing on the squeeze at the bottom. Pushdowns target the outer head of the triceps and are great for achieving a full-arm look and triceps separation. Using higher reps here will flush blood into the triceps after the heavier skullcrushers. If using a rope, you can spread the ends outward at the bottom for an extra contraction. Don’t lean over the bar too much; a slight forward lean is fine, but make the triceps do the work, not your body weight.
+
+**Day 3 Summary:** The chest is hit primarily at an incline to prioritize the upper chest (key for aesthetics), with a secondary press (and optional fly) to ensure complete development. Triceps get a solid 6 sets after chest – they were warmed up from pressing, so you likely felt them working hard. Expect your triceps to be a bit fatigued going into tomorrow, so we’ve balanced the schedule accordingly. After this workout, stretch your chest (doorway stretch) and triceps (overhead arm pull) to maintain flexibility. Also, note that your front delts got work from the presses; that’s why tomorrow’s shoulder session will emphasize side delts and not heavy front-delt pressing. Get ready to hit shoulders again and arms fresh tomorrow!
+
+## Day 4: **Shoulders & Arms (Side Delts + Biceps/Triceps)**
+
+**Focus:** A second shoulder day to hit the side delts again (ensuring they get the most weekly volume), plus a dedicated arms session. This day is all about *capped shoulders and bulging arms*. We avoid heavy overhead presses today (your front delts and triceps worked yesterday on chest day) and instead use lateral raises and upright rows to continue focusing on the side delts. For arms, we prioritize biceps with slightly more volume (since biceps are higher priority than triceps), but triceps get attention too. By having a standalone arms-focused block, your biceps aren’t pre-fatigued by back work and triceps aren’t pre-fatigued by chest – so you can really push them. Keep rest to ~90 sec between sets (you can use an alternating pattern: do a set of biceps, rest 60s, then a set of triceps, etc., to save time and keep blood in the arms).
+
+- **Machine Lateral Raises** – *3 sets of 12–15 reps.*  
+  *Isolation for side delts (constant tension).* Using a shoulder lateral raise machine (or cables if no machine), perform lateral raises focusing on the medial delts. Because this is your second side-delt session of the week, you might be a bit sore – machines will allow safe training with a strict motion. Select a weight that you can lift for about 15 reps with a burn in the shoulders. Pause slightly at the top to really feel the contraction. If using a machine, keep your elbows in line with your wrists as you lift. If using cables, step so that the cable is pulling from behind your body to start – this keeps tension from the very bottom of the lift. This exercise pre-fatigues the side delts and ensures they continue to get that high-frequency stimulus for growth.
+
+- **Upright Rows (EZ-Bar or Cable)** – *3 sets of 10–12 reps.*  
+  *Compound for side delts and traps.* Grab an EZ-curl bar (or use a cable attachment) with a grip slightly narrower than shoulder-width. Pull the bar up along your body, leading with elbows, until elbows reach shoulder height (hands will be below your chin). This movement hits the side delts strongly and also the upper traps. Use a moderate weight – you should feel your shoulders doing most of the work; if you only feel your traps/neck, lighten the load or stop when elbows at shoulder level (no higher, to protect shoulder joints). Aim for ~10 good reps. Upright rows serve as both a delt and trap exercise, complementing Monday’s shrugs. Maintain smooth form and avoid any shoulder pain range (if upright rows bother you, you can substitute wide-grip cable face pulls or dumbbell “Y” raises). Done correctly, upright rows will round out your shoulder work, literally, by building that cap. 
+
+- **Incline Dumbbell Curls** – *3 sets of 10–12 reps.*  
+  *Biceps (long head) isolation.* Sit on an incline bench (~45-60°) with a dumbbell in each hand, palms facing forward. Let your arms hang straight down (this stretched position hits the long head of the bicep). Curl the dumbbells up simultaneously, without swinging, squeezing the biceps at the top, then lower slowly to fully stretched position. These are challenging, so use a lighter weight than your standing curls. The incline position provides an extra stretch on the biceps and really targets the **peak**. Aim for about 10 controlled reps; if you struggle to get 8 with good form, drop the weight. This exercise will make your biceps work through a deep range of motion – great for adding size. Keep your upper arms glued in place; only the forearms move.
+
+- **EZ-Bar or Cable Preacher Curls** – *3 sets of 12–15 reps.*  
+  *Biceps (focused contraction) isolation.* Using a preacher bench (or an incline bench set as a makeshift preacher), curl an EZ-bar or use a cable with an EZ-bar attachment. The preacher bench prevents cheating and isolates the biceps. Aim for 12+ reps, really burning the muscle out. Lower the weight all the way down until your arms are almost straight (without hyperextending your elbows), then curl up and squeeze hard. The slower tempo on the eccentric (lowering phase) will increase time under tension. Preacher curls emphasize the **lower portion of the biceps** and help build that full look from elbow to muscle belly. If you don’t have a preacher bench, a concentration curl (leaning over and curling one arm at a time) is a good substitute. By the end of these 3 sets, your biceps should be pumped and near fatigue – exactly what we want on this priority muscle.
+
+- **Cable Triceps Overhead Extensions (Rope)** – *3 sets of 10–15 reps.*  
+  *Triceps long head isolation.* Attach a rope to a lower cable pulley or use a high pulley and face away, stepping forward to create an overhead extension setup. Start with the rope behind your head (elbows pointing up). Extend your arms, straightening at the elbows, to pull the rope overhead and slightly forward, then control it back behind your head. Keep your elbows close to your head (they will want to flare out; fight it). This movement stretches the triceps’ long head and is an excellent way to hit any parts of the triceps that might still be fatigued from yesterday – the stretch and high rep range will flush them with blood. Use a weight you can handle for up to 15 reps. Focus on that squeeze at full extension (but don’t slam your joints locked). This high-angle exercise balances the pressing and pushdowns you did for triceps earlier in the week, ensuring the triceps are hit from multiple angles.
+
+- **Dumbbell Kickbacks** – *2 sets of 15 reps.* **(Optional)**  
+  *Triceps finishing pump.* If you have the energy and want to absolutely finish off the triceps, you can add 2 quick sets of kickbacks. Bend over with a light dumbbell, upper arm parallel to your torso, and kick the dumbbell back by extending your elbow. This is a high-rep burnout to get a final contraction in the triceps. It’s optional because your triceps have been worked plenty, but it can add a nice finishing touch for a pump. Keep the weight very light and focus on form; this is about fatigue, not load.
+
+- **Superset Option:** *If short on time*, consider supersetting biceps and triceps exercises (e.g., do a set of incline curls, then a set of overhead extensions, then rest). This keeps intensity high and saves time, and the biceps/triceps are opposing muscles so they won’t impair each other’s performance much. You’ll also get a massive arm pump from alternating them.
+
+**Day 4 Summary:** Side delts got hit hard again today (machine laterals + upright rows) – this high-frequency approach will spur growth in those delts, giving you broader shoulders. Arms were trained with full focus: biceps with two distinct exercises (stretch-focus incline curl and a peak contraction preacher curl) and triceps with an overhead extension (and optional burnout). By now in the week, biceps have been trained multiple times (Day 2 and Day 4) and so have triceps (Day 3 and Day 4), aligning with their priority ranking. Expect your arms to feel swollen – that’s a good thing. Stretch your biceps (extend your arm and gently pull your fingers back) and triceps (overhead stretch) after. Also, given two days in a row of some shoulder involvement, be sure to do some shoulder mobility work (light rotations) to keep them healthy. Tomorrow we switch gears to back and forearms, giving shoulders and arms a bit of a break.
+
+## Day 5: **Back & Forearms (Thickness Focus, + Optional Chest)**
+
+**Focus:** A second back day, aimed more at **upper-back thickness and detail** (while still hitting lats) to continue improving that V-taper and rear torso development. We’ll use different exercises from Day 2 to target the back from new angles. After back, we’ll hit forearms directly – since forearms are a visible part of the arms, we give them some isolation work here. There’s also an option to include a little extra chest isolation for the upper chest if you want to add volume there (since chest is only directly hit once earlier in the week). This day is somewhat lighter overall (fewer big moves) to avoid excessive fatigue going into the final day. Rest ~2 minutes on heavy back exercises and ~1 minute on forearm exercises.
+
+- **Single-Arm Dumbbell Row** – *3 sets of 8–12 reps (each arm).*  
+  *Unilateral row for lats and mid-back.* Place your left knee and hand on a bench, right foot on the floor, holding a dumbbell in your right hand. Keep your back flat. Row the dumbbell up toward your hip/waist, concentrating on pulling with your back (imagine your elbow driving toward the ceiling). Squeeze your lats and mid-back at the top, then lower the weight under control until your arm is fully extended. Do all reps on one side, then switch. Single-arm rows allow a great stretch at the bottom and a strong contraction at the top, and working one side at a time can help correct any strength imbalances. Go fairly heavy – if you can do more than 12, up the weight next time. Avoid twisting your torso; keep shoulders square to the bench so the back does the work. This exercise will build thickness in the lats and upper back, complementing the barbell rows from earlier in the week.
+
+- **Close-Grip Lat Pulldown** – *3 sets of 10–12 reps.*  
+  *Vertical pull emphasizing lower lats and middle back.* Using a close neutral-grip handle (V-grip) on the lat pulldown, pull down to your chest, focusing on squeezing the lats. A close grip shifts emphasis slightly to the **lower portion of the lats** and center of the back, adding detail beneath the outer lats hit on Day 2. Control the weight back up until your arms are straight and your lats fully stretch at the top. Aim for around 10 solid reps per set. Keep your torso relatively upright or just slightly leaning back; don’t use momentum. You should feel a strong contraction in the middle of your back. If you prefer, you could substitute an alternative here such as a *T-bar row* or *machine row*, especially if you want more upper-back focus – but since Day 2 had a wide grip pull, this close pulldown evens out lat development nicely. By the end of this exercise, your back should be thoroughly worked from top to bottom.
+
+- **Face Pulls** – *2 sets of 12–15 reps.* **(Optional)**  
+  *Rear delts and mid traps (upper back detail).* Attach a rope to a cable at face height. Grasp the ends with thumbs pointing back at you. Step back and pull the rope toward your face, flaring your elbows out. At the end position, your hands should be near your ears and you should feel your rear delts and upper back contracting (think of pinching your shoulder blades together). Face pulls improve shoulder health and posture while also adding detail to the upper back/rear shoulders. Do 12-15 controlled reps. This exercise is optional if you want extra upper-back work (or shoulder rehab/prehab) – it’s light, so it won’t overly tax you. If your rear delts are still sore from earlier in the week, you can skip it. Face pulls are a great finisher to ensure the smaller upper-back muscles are not neglected.
+
+- **Incline Cable Fly (Upper Chest)** – *3 sets of 12–15 reps.* **(Optional)**  
+  *Extra upper-chest isolation.* If you feel your chest could use a bit more volume (to maximize that armored plate look), add this exercise. Set an incline bench (30-45°) between a cable crossover machine. Grab the handles low and perform flyes, bringing your hands together above your upper chest. Focus on the upper chest fibers contracting. Use a light-moderate weight for high reps (12+). This will pump the chest without heavy strain – useful at this point in the week. Since chest is a moderate priority (#4), this optional movement gives it a second stimulus, but it’s not mandatory if you’re already happy with your chest training. Keep form strict and feel the squeeze; this is about quality contractions. *(If you prefer, you could do a machine pec deck or even a couple sets of push-ups to finish off the chest instead.)* Remember, this is extra credit – skip if you’re feeling too fatigued or if chest is a strong point for you.
+
+- **Wrist Curls** – *3 sets of 15–20 reps.*  
+  *Forearm flexors (underside) isolation.* Sit on a bench and rest your forearms on your thighs or a flat surface, palms facing up, holding a barbell or dumbbells. Let the weight roll to your fingertips, then curl your hands up, contracting your forearm flexors, and flex your wrist at the top. Lower back down slowly. Use a lighter weight – forearms respond to high reps and constant tension. Aim for 15-20 reps; it should burn by the end. Developing these forearm muscles (wrist flexors) will improve grip and make your lower arms look thicker when viewed from the palm side. Don’t swing your arms; only your hands/wrists move. You can do both arms together or one at a time. This exercise might have you feeling the “forearm pump” big time.
+
+- **Reverse Curls (EZ-Bar or Dumbbell)** – *3 sets of 12–15 reps.*  
+  *Forearm extensors and brachioradialis.* Stand holding an EZ-curl bar with an overhand grip (palms facing down). Curl the bar up as if doing a biceps curl, but with palms down. You won’t be able to go as heavy as a normal curl – focus on form. This hits the top of the forearms (extensors) and the brachioradialis muscle, contributing to forearm size and that muscular look just below the elbow. Do ~12 reps per set. Keep your elbows at your sides and move only the forearms. If you don’t have an EZ-bar, you can do dumbbell reverse curls or use a cable with a straight bar attachment. By the last reps your forearms should feel a deep burn – that’s good. Strong forearms not only look impressive but also help your lifts (better grip strength). **Pro Tip:** If you did hammer curls earlier in the week, you’ve already worked the brachioradialis; reverse curls here ensure the forearm extensors also get attention for balance.
+
+**Day 5 Summary:** Today reinforced your back development with a different set of exercises – one-arm rows and close-grip pulldowns likely hit areas of your lats and upper back that you felt less on Day 2. At this point, your back has had plenty of volume this week (both width and thickness work), fulfilling the #3 priority of widening the back. Forearms got dedicated love with curls and reverse curls, which will pay off in overall arm appearance and grip strength. If you added the optional chest fly, your upper chest got an extra pump – if not, no worries, it got hit on Day 3 sufficiently. After this workout, stretch your back (hang from a bar, do lat stretches) and stretch your forearms (extend arm and pull fingers down gently to stretch flexors, and up to stretch extensors). We have one day left focusing on legs (and any optional extras). Make sure you’re well-fed and maybe get some extra sleep – even though leg day is lighter here, you want energy for it.
+
+## Day 6: **Legs (Light) & Optional Abs / Extras**
+
+**Focus:** Maintain leg size and strength with minimal volume – enough to keep your legs proportional and functional without taking away from upper-body recovery. Since legs are lower priority (#7), we hit each major part of the legs just enough. This workout will be shorter and less intense than a traditional leg day, by design. It’s also an opportunity to train abs if you choose (ensuring we avoid oblique work to keep the waist tight). Because this session is relatively light, if you have the energy and recovery capacity, you can throw in an *optional mini-set for side delts or biceps* (to further spike frequency for those top priorities). However, these extras are optional – the main goal today is to stimulate the legs and core without overdoing it. Rest ~2–3 minutes on compound leg exercises and ~1 minute on calf/ab/accessory moves.
+
+- **Squats or Leg Press** – *3 sets of 8–10 reps.*  
+  *Compound quad (and overall leg) exercise.* Choose between barbell back squats (free weight) or leg press (machine) based on your preference and any injury considerations. **Back Squat:** If squatting, use a moderate weight – since total leg volume is low, you can maintain strength with a few solid sets. Focus on form: feet shoulder-width (or whatever is comfortable), squat down to at least parallel, then drive up through your heels. 8 solid reps per set will suffice. **Leg Press:** If leg pressing, position your feet shoulder-width on the platform, lower the weight until your knees are about 90°, then press up without locking out hard. Leg press can be a good alternative to reduce lower-back stress. Either exercise targets the **quads** heavily, while also engaging glutes and hamstrings to a degree. Given our goal is maintenance, you don’t need to go to absolute failure – just get a good stimulus. If you’re feeling strong, you can push the last set near failure, but remember we’re not trying to fry our nervous system on legs. This will keep your thigh muscles in shape and even stimulate some growth, without hogging your recovery resources.
+
+- **Romanian Deadlift (RDL) or Leg Curl** – *3 sets of 8–12 reps.*  
+  *Hamstring and glute focus.* **RDL:** With a barbell or dumbbells, stand with feet hip-width. Keeping your back flat and knees slightly bent, hinge at the hips to lower the weight down your legs until you feel a stretch in your hamstrings (around mid-shin), then drive your hips forward to stand back up, contracting your glutes. RDLs strengthen the hamstrings, glutes, and lower back. Go for ~10 reps with a moderate weight – focus on the stretch and form rather than max weight, since we’re keeping leg work moderate. **Leg Curl:** If you prefer a machine, do lying or seated leg curls for 10-12 reps, really squeezing the hamstrings at the contraction. Leg curls isolate the hamstrings without involving the lower back. Pick the option that fits your needs: if you want some glute/lower back work as well, RDL is great; if your lower back is tired and you want isolation, do curls. Either way, working the hamstrings will keep the back of your legs developed (important for aesthetics in shorts or on the beach) and support knee health. Keep RDL weight moderate to avoid excessive fatigue (especially since heavy RDLs can be quite taxing). If doing leg curls, use a controlled tempo and hold the squeeze briefly.
+
+- **Standing Calf Raise** – *3 sets of 12–20 reps.*  
+  *Calves (gastrocnemius focus).* Using a standing calf raise machine or holding a dumbbell in one hand while balancing on a step, perform calf raises. Rise up on your toes as high as possible, pause for a second at the top contracting your calves, then slowly lower your heels down to get a deep stretch (below parallel if on a step). Aim for high reps (at least 12, up to 20) – calves often respond better to high-rep training. Use a weight that burns by rep 15 or so. Training calves will give your legs a more complete look (nothing worse than a well-built upper body and toothpick calves!). Also, strong calves aid ankle stability. If you have time, you can add a second calf exercise (like seated calf raises for the soleus muscle, 2 sets of 15-20) but for maintenance, 3 hard sets of one type is sufficient. Focus on full range of motion – many people rush calf exercises, but a slow deep stretch and squeeze will do more with less weight.
+
+- **Hanging Leg Raises** – *3 sets of 10–15 reps.* **(Optional Abs)**  
+  *Abdominals (with an emphasis on the six-pack area) without oblique overload.* Hang from a pull-up bar and, using your abs, raise your legs. You can keep legs straight or knees slightly bent. Raise until your feet (or knees) are roughly at hip level (or higher if you can) while posteriorly tilting your pelvis to really engage the abs, then lower under control. This targets the **rectus abdominis (six-pack)** and the lower abs area. Focus on not swinging – it helps to pause briefly at the bottom to dead hang and reset between reps if momentum builds up. If hanging is too hard, you can do **captain’s chair leg raises** or lying leg raises instead. Avoid twisting or side-bending; we’re intentionally not targeting obliques to keep the waist small. 3 sets to near-failure (within the 10-15 rep range) will carve the abs without needing a ton of volume. Remember, visible abs also depend on body fat, but training them can increase their definition.
+
+- **Cable Crunches** – *3 sets of 12–15 reps.* **(Optional Abs)**  
+  *Abdominals (upper focus) without oblique involvement.* Kneel facing a cable stack with a rope attached high. Hold the rope by your ears and crunch down, bringing your elbows toward your thighs, using your abs to pull the weight. Slowly return to the start, keeping tension on the abs. This move targets the upper abs well. Go for about 12-15 controlled reps. Keep your hips stationary – it’s a spine flexion movement, not a hip hinge. As always, avoid twisting; come straight down. Cable crunches allow you to add resistance to ab training easily – start light if you’re new to them, to avoid super sore abs the next day. This exercise pairs well with hanging leg raises (hanging leg raises hit lower abs more, cable crunch hits upper abs more). **If you prefer, you can do regular floor crunches or machine crunches** – the key is focusing on abs contraction without engaging obliques. Training abs a couple times a week (with today and perhaps one other day) is sufficient for most people to develop definition, given diet is in check.
+
+- **Optional Side Delt & Biceps Blitz:** If your legs session was quick and you feel fresh (and especially if you want to max out side delt and biceps frequency), you can add a small finisher for those muscles:  
+  - *Lateral Raises* – 2 sets of 15 (just to flush the side delts one more time this week with light weight). Use dumbbells or cables – very strict form, think of it as a pump/stretch.  
+  - *Biceps Curls* (any style) – 2 sets of 12-15 (get a final bicep pump). For example, do high-rep dumbbell alternating curls or a cable curl focusing on a good squeeze.  
+  These should be light, “cosmetic” sets – do not go heavy or to failure since the goal is simply to stimulate blood flow and a bit of extra volume. This optional finisher is for someone whose recovery is excellent and really wants to push the envelope on shoulder and arm growth. If you’re feeling pretty fatigued by this point in the week, you can skip these, knowing you’ve already hammered those muscles sufficiently.
+
+**Day 6 Summary:** Legs got their due attention without overwhelming you – a squat/press for quads, a hinge or curl for hamstrings, and calf raises for lower leg. This will keep your leg muscles engaged and prevent imbalances, but by keeping volume low, we stayed true to the aesthetic goal of prioritizing the upper body. If you did abs, you gave your midsection some focused work; remember that while direct ab work is optional, a strong core helps in all lifts and adds to the aesthetic when body fat is low (just steer clear of heavy side bends that could thicken your waist). If you threw in the optional side delt/biceps sets, you’ve now hit side delts and biceps 3 times this week – truly prioritizing those #1 and #2 muscles. Great job! **Now it’s time to rest and recover.**
+
+## Recovery and Next Steps
+
+**Rest Day (Day 7):** Take at least one full rest day per week (e.g. Sunday if you started Day 1 on Monday). Use this day to recuperate – your muscles grow when you recover, not when you train. You can do light cardio, stretching, or mobility work if desired, but no strenuous lifting. Given the high frequency for certain muscles, this rest is crucial to prevent overtraining. Ensure you’re sleeping enough (7-9 hours) and eating a nutrient-rich diet with plenty of protein to support muscle repair.
+
+**Ongoing Progression:** In the next training week (after a rest day), start again at Day 1. Try to beat your last week’s performance – even by a small margin (one more rep, or 5 more pounds, or slightly better form/tempo). These small improvements compound over time into significant gains. Because this program uses a lot of volume, you might not increase weight every single week on every exercise – that’s okay. Listen to your body: if you’re consistently struggling to recover or add reps, you might need to slightly reduce volume or take a deload. Conversely, if everything feels easy, you can challenge yourself with a bit more weight or an extra set for a priority muscle (just don’t do too much at once).
+
+**Periodization Plan:** Run this hypertrophy-focused plan for about 6 weeks, aiming to gradually overload as described. On week 7, take a **deload** or very light week. After the deload, you can repeat the cycle. You might rotate some exercise variations in the next cycle to keep things fresh (for example, swap barbell rows for T-bar rows, or try a different biceps exercise) while keeping the overall structure and priorities the same. This variety can help avoid plateaus and overuse injuries. 
+
+**Customization:** This program is a template based on Israetel’s general priority guidelines – individual recovery and response can vary. Feel free to adjust the set counts or exercise selection to suit your needs (e.g., if your triceps recover slowly, drop an isolation set; if your legs start lagging, you can add a set or two for quads/hamstrings or include a second light leg exercise mid-week). Just maintain the spirit of the program: **high frequency/volume for delts and biceps, moderate for back and chest, low for legs, and smart exercise choices**. Always keep good form – better to use slightly lighter weight with strict technique than to ego-lift and risk injury, especially given the cumulative fatigue of a 6-day plan.
+
+Finally, track your measurements and how you look in the mirror. This routine should yield wider shoulders, a bigger V-tapered back, and fuller arms and chest over the months. Adjust as needed, trust the process, and enjoy the gains in aesthetics! Good luck with your training, and stay consistent. 💪
+
+---
+
+## User
+
+chest is actually 3 and back is 4.
+
+also lets be sure to optimize this using myoreps where they would be beneficial.
+
+---
+
+## Assistant
+
+Mr. White, here’s an updated approach, factoring in the revised priority (chest at #3, back at #4) and adding Myo‐Reps where beneficial.
+
+## General Overview
+1. **Side Delts**  
+2. **Arms** (Biceps > Triceps)  
+3. **Chest** (Upper emphasis)  
+4. **Back** (mid/upper emphasis)  
+5. **Forearms**  
+6. **Traps**  
+7. **Legs**  
+8. **Abs** (optional, no obliques)
+
+**Schedule:** 6 days on, 1 off. Myo‐Reps are best used on isolation or machine exercises where you can safely rack and re‐rack quickly.
+
+### Myo‐Reps Principle (Briefly)
+1. Do an “activation set” (near‐failure, ~1–2 RIR).  
+2. Rest ~15 sec.  
+3. Perform short “mini‐sets” (3–5 reps) to near‐failure again. Repeat mini‐sets until quality reps drop or you approach failure. Typically 3–5 total mini‐sets.
+
+---
+
+## Split Overview
+- **Day 1:** Shoulders (Side Delts) + Traps  
+- **Day 2:** Chest (Upper) + Biceps  
+- **Day 3:** Legs (Low Priority) + Optional Abs  
+- **Day 4:** Shoulders (Side Delts) + Arms (Biceps/Triceps)  
+- **Day 5:** Chest (Upper) + Forearms  
+- **Day 6:** Back (Mid/Upper) + Optional Abs/Extras  
+- **Day 7:** Rest
+
+*(Note: We’re placing Chest above Back, per your updated priority. Arms still appear frequently, but biceps get top billing over triceps.)*
+
+---
+
+## Day 1: **Shoulders & Traps**
+- **Heavy Dumbbell (or Barbell) Overhead Press** – 3×8–10  
+- **Dumbbell Lateral Raises** – **Myo‐Reps**  
+  - Activation set: ~12–15 reps to near‐failure  
+  - Then do mini‐sets of 3–5 reps, resting ~15s, for ~3–5 rounds  
+- **Rear Delt Fly (Reverse Pec Deck)** – 3×12–15  
+- **Barbell or Dumbbell Shrugs** – 3×10–12
+
+**Reasoning**: Heavy press for overall delt mass, then Myo‐Reps on lateral raises for high‐rep tension on side delts. Rear delts for balance; shrugs for traps.
+
+---
+
+## Day 2: **Chest (Priority) & Biceps**
+- **Incline Barbell Press** – 3×6–10  
+  - Focus on upper pecs.  
+- **Flat Dumbbell Press** – 3×8–12  
+- **Cable Fly (Low‐to‐High)** – **Myo‐Reps**  
+  - Activation set ~12–15; short clusters of 3–4 reps with ~15s rest.  
+- **Barbell or EZ‐Bar Biceps Curls** – 3×8–10  
+- **Incline Dumbbell Curls** – **Myo‐Reps**  
+  - Activation set ~12–15; then 3–5 mini‐sets of 3–5 reps.
+
+**Reasoning**: Chest is now #3, so we give it a bit more front‐end volume. Myo‐Reps on cable fly for an intense metabolic finish. Biceps get heavier sets plus a Myo‐Reps finisher.
+
+---
+
+## Day 3: **Legs (Low Priority) + Optional Abs**
+- **Leg Press or Squat** – 3×8–10  
+- **Romanian Deadlift or Leg Curl** – 3×8–12  
+- **Calf Raises** – **Myo‐Reps**  
+  - Standing or seated, activation set ~15 reps, then short mini‐sets.  
+- **Optional Abs (No obliques):** Hanging Leg Raises or Cable Crunches 3×10–15
+
+**Reasoning**: Enough volume for maintenance. Calves can handle Myo‐Reps well.
+
+---
+
+## Day 4: **Shoulders & Arms**
+- **Machine or Cable Lateral Raise** – **Myo‐Reps**  
+  - Side delts first, high frequency.  
+- **Upright Row (EZ or Cable)** – 3×10–12  
+- **Biceps:** Preacher Curls – 3×8–12  
+- **Triceps:** Lying EZ‐Bar Extensions (Skullcrushers) – 3×10–12  
+- **Biceps:** Hammer Curls – **Myo‐Reps** (activation ~10–12; mini‐sets ~3 reps)  
+- **Triceps:** Rope Pushdowns – **Myo‐Reps** (activation ~12–15; mini‐sets ~3–5 reps)
+
+**Reasoning**: Another heavy side‐delt session + arms emphasis with Myo‐Reps. Biceps remain priority, so 2 direct hits again.
+
+---
+
+## Day 5: **Chest (Upper Focus) & Forearms**
+- **Incline Dumbbell Press** – 3×8–10  
+- **High‐to‐Low Cable Fly or Pec Deck** – 3×10–15  
+- **Push‐Up or Machine Press (Optional)** – 2×AMRAP (pump finish)  
+- **Forearm Curls (Wrist Curls)** – **Myo‐Reps**  
+  - Activation ~15–20, mini‐sets of 3–5.  
+- **Reverse Curls** – 3×12–15
+
+**Reasoning**: Second chest session. Option for push‐up finisher. Forearms get Myo‐Reps on wrist curls + standard reverse curls.
+
+---
+
+## Day 6: **Back & Optional Abs**
+- **Pull‐Ups / Lat Pulldowns (Wide)** – 3×8–10  
+- **Bent‐Over Row or Chest‐Supported Row** – 3×8–12  
+- **Seated Cable Row (V‐Grip)** – **Myo‐Reps**  
+  - Activation ~10–12, mini‐sets ~3–4.  
+- **Optional Abs** – 3×10–15 (avoid obliques)  
+- **Optional Side Delt Pump** – 2×15 (if recovered)
+
+**Reasoning**: Now we place back on Day 6 to align with the new priority (#4). Myo‐Reps on seated rows to push final volume. Optional ab or side‐delt pump if you can handle it.
+
+---
+
+## Day 7: **Rest**
+
+---
+
+### Progressive Overload & Periodization
+- **Load/Volume:** Start on lower end of sets if needed; add sets or up the weight as you adapt.  
+- **Myo‐Reps**: Keep the activation set ~1–2 RIR, then cluster. If performance drops off sharply, end it.  
+- **Deload**: Every 4–6 weeks, cut volume/weight ~50% or take a week off.
+
+This plan, prioritizing chest over back, uses Myo‐Reps effectively on isolation/machine lifts to pack in high‐quality volume without adding excessive sets. Follow progressive overload principles, recover properly, and you’ll see improved aesthetics per Israetel’s hierarchy.

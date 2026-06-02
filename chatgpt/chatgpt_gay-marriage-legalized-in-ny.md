@@ -1,0 +1,28 @@
+---
+title: "Gay Marriage Legalized in NY"
+type: note
+created: 2024-06-21
+updated: 2024-06-21
+source: chatgpt-export
+conversation_id: 2a8b455d-f36b-4750-b441-5202a64621ce
+message_count: 2
+tags: [chatgpt, import]
+---
+# Gay Marriage Legalized in NY
+
+> Conversation ID: 2a8b455d-f36b-4750-b441-5202a64621ce
+> Created: 2024-06-21T17:28:44Z
+> Updated: 2024-06-21T17:28:46Z
+> Messages: 2
+
+---
+
+## User
+
+When was gay marriage... When was gay marriage legalized in the state of New York?
+
+---
+
+## Assistant
+
+Gay marriage was legalized in the state of New York on June 24, 2011.
