@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.42.6.0] - 2026-06-01
+## [0.42.10.0] - 2026-06-02
 
 **Wikilinks like `[[struktura]]` that point at pages in another folder finally connect.** Until now, if you wrote `[[struktura]]` in `concepts/knowledge-graph.md` and the actual page lived at `projects/struktura.md`, GBrain silently dropped the link from its graph. Obsidian users saw a dense web of connections in their vault and a thin, broken graph inside GBrain. The issue reporter had 71 wikilinks across 20 pages — GBrain captured 12.
 
@@ -60,12 +60,281 @@ Closes https://github.com/garrytan/gbrain/issues/972.
 - `src/commands/extract.ts` — DB-source `extractLinksFromDB` and FS-source `extractLinksFromFile` / `extractLinksFromDir` / `extractLinksForSlugs` thread `globalBasename` (read once per extract run via `isGlobalBasenameEnabled`). FS-source adds two new exported helpers — `resolveBasenameMatchesFromSlugs(name, allSlugs): string[]` and `resolveSlugAll(fileDir, relTarget, allSlugs, opts): string[]`. `resolveSlug` stays single-match for back-compat; `resolveSlugAll` wraps it with the basename-fallback. Stable sort: shorter slug first, then lexical.
 - `src/core/operations.ts:put_page` — auto-link path now reads the flag and passes `globalBasename` through to `extractPageLinks`. Newly-written pages get basename edges when the flag is on.
 - `src/commands/doctor.ts` — new `link_resolution_opportunity` check. Full scan with a 60s budget, heartbeat-reported. Severity: skipped when flag already on; ok when no bare wikilinks; ok with explanation when bare wikilinks present but none match; **warn with paste-ready hint when ≥5 would resolve AND ≥20% of bare wikilinks have matches**. Threshold tuned to surface real opportunities without flagging brains that only have a handful of unresolvable refs. Wired into both `buildChecks` (local doctor) and `doctorReportRemote` (thin-client) for parity.
-- Migration v112 (`links_link_source_widen_for_wikilink_basename`) widens the `links_link_source_check` constraint to accept `'wikilink-resolved'` as a valid `link_source`. Idempotent — DROP IF EXISTS + ADD CONSTRAINT.
+- Migration v113 (`links_link_source_widen_for_wikilink_basename`) widens the `links_link_source_check` constraint to accept `'wikilink-resolved'` as a valid `link_source`. Idempotent — DROP IF EXISTS + ADD CONSTRAINT.
 - `src/schema.sql` + regenerated `src/core/schema-embedded.ts` + `src/core/pglite-schema.ts` carry the widened constraint for fresh installs so first-init brains start with the right shape.
 - New CHECK constraint value adds `'wikilink-resolved'` alongside `'markdown'`, `'frontmatter'`, `'manual'`.
 - `KNOWN_CONFIG_KEYS` (in `src/core/config.ts`) adds `'link_resolution'` and `'link_resolution.global_basename'` so `gbrain config set ...` accepts the new key without `--force`.
 - Tests: 38 new cases pinning the contract. `test/link-extraction.test.ts` adds 17 cases covering `WIKILINK_GENERIC_RE` shape (anchor / display / strip / escape paths), the `extractEntityRefs` pass-2c no-double-emit invariant, `resolveBasenameMatches` multi-match + index-built-once + missing-`getAllSlugs` degradation, and the `extractPageLinks` opt routing under both flag states. `test/extract-fs.test.ts` adds 11 cases for the pure-function helpers (`resolveBasenameMatchesFromSlugs`, `resolveSlugAll`) plus 3 round-trip tests of the issue's exact repro inside a PGLite brain. `test/doctor.test.ts` adds 7 cases for the new doctor check (skip / ok / warn paths + the cross-surface wiring source-grep). `test/e2e/global-basename-pglite.test.ts` adds 7 end-to-end cases against an in-memory PGLite brain covering FS-source, DB-source, and put_page auto-link paths under both flag states.
 - PR #1233 from @rayers contributed the kernel of the resolver-side approach (the generic wikilink regex + slug-tail index pattern). This PR keeps that mechanism, makes it opt-in via the new config flag, replaces the first-write-wins lookup with multi-match return, and extends the coverage to the FS-source path that the issue's repro actually hits.
+## [0.42.8.0] - 2026-06-01
+
+**Scraped junk stops landing in your brain as if it were real content, and when something looks off, your agent gets told instead of being left to guess.**
+
+Two junk pages had been landing via `gbrain sync`: a Cloudflare "checking your browser" screen ingested as if it were the article, and an 890K-char wall of mostly-boilerplate that got chunked and embedded at full cost. Both had to be hand-deleted. This release adds a content-quality gate at the one place every ingest path flows through, with a deliberately simple rule: hide only the unambiguous crap; for anything fuzzy, keep it usable and warn the agent.
+
+Three tiers, by how confident the gate is:
+
+| What it sees | What happens | Still searchable? |
+|---|---|---|
+| A known junk shape (Cloudflare / CAPTCHA / "checking your browser") | **quarantined** — lands hidden, reviewable | no (and writes zero chunks) |
+| Looks boilerplate-ish (mostly markup, little prose) | **flagged** — stays put, agent warned | yes, with a `content_flag` note |
+| Unusually large | not embedded (existing behavior), agent warned | by title via `get_page` |
+
+The flag is the important part. A page that's *probably* junk but might be a legit reference table or API doc never disappears. It stays searchable, and when your agent retrieves it, the result carries a `content_flag` ("this looks like boilerplate, examine if you expected real content"). Your agent decides. Books and long prose are unaffected (they're prose, not markup, so the boilerplate check never fires on them).
+
+**How to use it.** It's on by default. Nothing to configure. To see what got caught:
+
+```bash
+gbrain quarantine list                     # hidden junk
+gbrain quarantine list --include-flagged   # + the "examine me" pages
+gbrain quarantine scan --apply             # retroactively catch junk that predates the gate
+gbrain quarantine clear <slug>             # release a false positive
+```
+
+`gbrain doctor` gains `quarantined_pages` and `flagged_pages` checks so you see the counts at a glance.
+
+**Tuning (optional).**
+
+```bash
+gbrain config set content_sanity.junk_disposition reject    # hard-reject junk instead of quarantining
+gbrain config set content_sanity.prose_check_enabled false  # turn off the fuzzy markup flag entirely
+gbrain config set content_sanity.max_markup_ratio 0.9       # how markup-heavy before flagging (default 0.85)
+```
+
+**What's safe to know about.** Quarantine and flag are frontmatter markers, no schema migration. Quarantined pages stay reviewable via `gbrain get` and re-surface the moment you fix the source and re-sync. The markup heuristic is a flag, never a hide, so a false positive costs your agent a one-line note, not a vanished page.
+
+**What we caught before shipping.** Two independent review passes found bugs the first didn't. A remote agent with write access could have planted a `quarantine` marker on clean content to silently hide a page, or smuggled text into the agent-warning channel; both are now stripped at the trust boundary so only the gate sets those markers. And the gate's timestamp was leaking into the change-detection hash, which would have made every flagged page re-embed on every sync forever; the marker is now excluded from the hash, so a flagged page re-syncs as unchanged.
+
+### To take advantage of v0.42.6.0
+
+`gbrain upgrade` handles this automatically (no schema migration). The gate is on by default for every new sync. To sweep junk that's already in your brain from before this release:
+
+```bash
+gbrain quarantine scan            # dry-run: see what would be caught
+gbrain quarantine scan --apply    # mark it
+gbrain doctor                     # confirm quarantined_pages / flagged_pages counts
+```
+
+If a legitimate page got caught, `gbrain quarantine clear <slug>` releases it. If anything looks wrong, file an issue at https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+
+### Itemized changes
+
+#### Added
+- **Content-quality gate** (`src/core/content-sanity.ts`): three new interstitial junk patterns (`cloudflare_checking_browser`, `cf_browser_verification`, `enable_javascript_cookies`) plus a prose-vs-markup heuristic (`assessProse`) that flags boilerplate-shaped pages. The pass runs only in the warn-tier byte window, excludes code from the ratio, and exempts `page_kind: code` pages.
+- **`src/core/quarantine.ts`** (new): two frontmatter markers, `quarantine` (hides from search) and `content_flag` (warns, stays searchable), siblings of the existing `embed_skip` marker.
+- **`gbrain quarantine` CLI** (`list` / `clear` / `scan`) for reviewing, releasing, and retroactively applying the gate.
+- **Agent-warning channel**: `SearchResult.content_flag` (stamped post-fusion in `hybridSearch`, including the keyword-only `search` op path) and a top-level `content_flag` on the `get_page` op, so an agent sees the warning whether it searches or fetches a page directly.
+- **Doctor checks** `quarantined_pages` + `flagged_pages` (run on both Postgres and PGLite).
+- Config keys `content_sanity.junk_disposition` (quarantine|reject), `max_markup_ratio`, `prose_check_enabled` (file/env/DB planes; `GBRAIN_MAX_MARKUP_RATIO` env).
+
+#### Changed
+- The ingest narrow waist (`importFromContent`) now routes junk to quarantine (default) or reject, markup-heavy to flag, oversize to soft-block + flag. `buildVisibilityClause` excludes quarantined pages from all six search call sites (flagged pages stay visible).
+- `gbrain sources audit` is disposition-aware (reports would-quarantine vs would-reject, plus a would-flag bucket); `gbrain lint` gains a `markup-heavy` rule.
+- New `BrainEngine.getContentFlagsByPageIds` (both engines) backs the search-result warning stamp.
+
+#### Fixed
+- Gate-owned markers (`quarantine` / `content_flag` / `embed_skip`) are stripped from incoming frontmatter for untrusted (remote MCP) callers, so a write-scoped client can't hide a page or inject text into the agent-warning channel.
+- Gate marker timestamps are excluded from the page content hash, so flagged/quarantined pages no longer look "changed" on every re-sync (which would have forced endless re-chunk/re-embed).
+
+## [0.42.7.0] - 2026-06-01
+
+**Your brain now tells you when it has imported pages but never connected them — and gives you a one-command fix.**
+
+Importing a page and curating it are two different things. Import drops the
+text in. Extraction is the step that reads the text and builds the graph:
+the typed edges (`founded`, `works_at`, `invested_in`, `advises`) and the
+dated timeline entries that make `gbrain think`, graph traversal, and link
+search actually work. On a lot of brains that second step had quietly never
+run at scale. One real 280K-page brain had a links table that was 99.7%
+untyped `mentions` — a bag of name-drops with almost no real relationships —
+and nothing anywhere told the owner. A single manual extraction added 12,500
+typed edges that should have been there all along.
+
+The reason: plain `gbrain sync` already extracts the pages it changes, but
+there was no way to sweep the historical backlog, and no health signal when
+extraction fell behind. If you weren't running the autopilot cycle, the gap
+grew invisibly.
+
+Three things fix that:
+
+- **`gbrain extract --stale`** — a new incremental sweep. It re-extracts only
+  the pages whose links are stale (never extracted, edited since they were
+  last extracted, or extracted by an older version), in small batches, safe to
+  cron. Reads page content straight from the database, so it works on
+  checkout-less Postgres/Supabase brains too. Pass `--catch-up` to run past
+  the default 30-minute budget until the backlog is empty; `--dry-run` to just
+  see the count.
+
+  ```
+  gbrain extract --stale            # sweep the backlog incrementally
+  gbrain extract --stale --catch-up # run until 0 remain
+  gbrain extract --stale --dry-run  # how many pages are behind?
+  ```
+
+- **A `links_extraction_lag` doctor check** — `gbrain doctor` now warns when a
+  meaningful fraction of your pages have un-extracted edges, and tells you to
+  run `gbrain extract --stale`. Warn-only by default: it will never break a
+  CI/cron pipeline that gates on the doctor exit code. Set
+  `GBRAIN_EXTRACTION_LAG_FAIL_PCT` if you want a hard failure above some
+  threshold.
+
+- **An end-of-sync nudge** — after a sync that leaves a backlog, `gbrain sync`
+  prints one line on stderr pointing you at `gbrain extract --stale`. Silence
+  it with `GBRAIN_SYNC_NO_EXTRACT_NUDGE=1`.
+
+Plus `gbrain sync --no-extract` to skip inline extraction on purpose (the
+pages then show as stale until you sweep them).
+
+The mechanism behind all of this is a per-page freshness watermark
+(`pages.links_extracted_at`). It treats a page as needing extraction when it
+was never extracted, when it was edited after its last extraction (the exact
+"I wrote a page via the MCP API and it never got connected" case), or when the
+extractor logic itself changed. Existing brains correctly show their real
+backlog on the first `gbrain doctor` after upgrade — that visibility is the
+whole point.
+
+### Itemized changes
+
+- New `gbrain extract --stale [--source-id <id>] [--catch-up] [--dry-run] [--json]`:
+  DB-source incremental link + timeline sweep. Small batches with a wall-clock
+  budget; stamps every processed page (including zero-link pages) only after the
+  link/timeline writes succeed, so a crash mid-sweep leaves pages stale and they
+  re-extract idempotently on the next run.
+- New `links_extraction_lag` doctor check, wired into both local `gbrain doctor`
+  and the thin-client/remote report. Warn at >20% stale
+  (`GBRAIN_EXTRACTION_LAG_WARN_PCT`), hard-fail only when
+  `GBRAIN_EXTRACTION_LAG_FAIL_PCT` is set. Vacuous-skips brains under 100 pages;
+  `--source <id>` scopes it. Strictly a SQL count — no filesystem/git access.
+- `gbrain sync` now stamps the extraction watermark for the pages it extracts
+  inline, and prints a one-line stderr nudge after a sync that leaves a backlog.
+- New `gbrain sync --no-extract` flag to skip inline extraction.
+- A manual `gbrain extract links --source db` / `extract all --source db` now
+  also clears the watermark for the pages it processes.
+- Migration v112 adds `pages.links_extracted_at` (nullable timestamp) plus a
+  composite `(source_id, links_extracted_at)` index. No backfill — existing
+  pages start unstamped so the real backlog surfaces. Metadata-only column add;
+  instant on both Postgres and PGLite.
+
+## To take advantage of v0.42.7.0
+
+`gbrain upgrade` applies migration v112 automatically. If `gbrain doctor` warns
+about a partial migration:
+
+1. **Apply migrations manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Check your extraction backlog and sweep it:**
+   ```bash
+   gbrain doctor --json            # look for links_extraction_lag
+   gbrain extract --stale --dry-run  # how many pages are behind
+   gbrain extract --stale --catch-up # sweep them all
+   ```
+3. **Verify the graph filled in:**
+   ```bash
+   gbrain doctor                   # links_extraction_lag should now be ok
+   ```
+   Typed edges (`SELECT link_type, count(*) FROM links GROUP BY 1`) should jump.
+4. **If anything looks wrong,** file an issue at
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output.
+## [0.42.6.0] - 2026-06-01
+
+**Most of your people and company pages are one-line stubs. `gbrain enrich --thin`
+now develops them at scale using only what your brain already knows, no web
+lookups, and every claim it writes is cited back to the note it came from.**
+
+Your brain is full of scattered knowledge about a person that never made it onto
+their page: a meeting where they presented, a deal they led, another person's
+page that mentions them, a fact you captured months ago. The stub page still
+says "Stub page." `gbrain enrich --thin` finds the most-referenced stubs, pulls
+together everything the brain knows about each one (search + backlinks + facts +
+raw notes), and makes one grounded model call per page to consolidate it into a
+real, cited dossier. When the brain doesn't know enough, it skips the page
+instead of making things up.
+
+This is deliberately brain-internal. gbrain's own model tooling can only see your
+brain (search, get_page, facts, backlinks), not the web or LinkedIn, so this
+develops what you already have rather than researching new facts. Web research
+stays the job of the agent-driven `enrich` skill.
+
+How to run it:
+
+```bash
+# See what it would do + a cost estimate, no spend:
+gbrain enrich --thin --dry-run --json
+
+# Develop the top 3 most-referenced stubs, cheap model, $0.50 cap:
+gbrain enrich --thin --limit 3 --max-usd 0.50 --model anthropic:claude-haiku-4-5
+```
+
+It's resumable (`--resume`), budget-capped (`--max-usd`, best-effort under
+`--workers > 1`; pin `--workers 1` for a hard ceiling), and source-scoped
+(`--source`). Enriched pages get `enriched_at` + `enriched_by` frontmatter so a
+recency guard skips them on the next run, and the budget cap is the real money
+gate.
+
+There's also an opt-in autopilot phase (`cycle.enrich_thin.enabled`, default OFF)
+that trickles a few thin pages per source each cycle so the brain compounds over
+time, with both per-source and brain-wide cost + walltime caps.
+
+What you'd see: a stub people page that read "Stub page." comes back as a
+multi-section dossier with `[Source: meetings/2026-summit]` style citations on
+each claim, and re-running confirms it's no longer selected.
+
+Things to know: untrusted note content can't break out of the model prompt (the
+retrieved context is escaped, including the data-envelope delimiters), and
+`enrich` is refused on thin-client / HTTP MCP installs because it spends model
+budget and writes pages — run it on the host.
+
+## To take advantage of v0.42.6.0
+
+`gbrain upgrade` brings the new command in. No migration is required for the core
+feature (it reads existing pages + links + facts). To use it:
+
+1. **Preview first:**
+   ```bash
+   gbrain enrich --thin --dry-run --json
+   ```
+2. **Run a small, capped batch:**
+   ```bash
+   gbrain enrich --thin --limit 3 --max-usd 0.50 --model anthropic:claude-haiku-4-5
+   ```
+3. **(Optional) turn on the autopilot trickle:**
+   ```bash
+   gbrain config set cycle.enrich_thin.enabled true
+   gbrain dream --phase enrich_thin --dry-run
+   ```
+4. **If anything looks wrong,** file an issue with `gbrain doctor` output:
+   https://github.com/garrytan/gbrain/issues
+
+### Itemized changes
+
+- **`gbrain enrich --thin`** — batch develops thin (stub) pages via brain-internal
+  grounded synthesis. Flags: `--order inbound-links|salience|updated`,
+  `--types person,company`, `--limit`, `--workers`, `--model`, `--max-usd`,
+  `--min-context`, `--reenrich-after`, `--source`, `--dry-run`, `--resume`,
+  `--background [--follow]`, `--json`, `--yes`.
+- **New engine method `listEnrichCandidates`** (Postgres + PGLite parity) — one
+  source-aware SQL query: thin-filter + per-page source-correct inbound-link
+  count + `enriched_at` recency guard + whitelisted ORDER BY + LIMIT, returning a
+  lightweight projection (no page bodies) so ranking 100K stubs stays cheap.
+- **Opt-in `enrich_thin` autopilot phase** (default OFF) with per-source and
+  brain-wide cost + walltime caps; develops `max_pages_per_tick` (default 3) per
+  source.
+- **`--background`** fans out one Minion job per source (or one job with
+  `--source`); the per-source idempotency key carries the full run config so a
+  re-run with different flags enqueues new work instead of returning the old job.
+- **Provenance:** enriched pages stamp `enriched_at` + `enriched_by: cli:enrich`
+  (survives `put_page` write-through); the recency guard reads `enriched_at`.
+- **Prompt-injection hardening:** retrieved brain content is sanitized before it
+  enters the prompt, including neutralizing the `<context>` data-envelope
+  delimiters so an untrusted note can't close the envelope and inject
+  instructions.
+- **Budget honesty:** a final-call cost overage is now flagged on the result even
+  when the gateway swallowed the throw; the checkpoint is flushed on budget
+  exhaustion so a resume doesn't re-charge already-completed pages.
+- Refused on thin-client / HTTP MCP installs (spends model budget + writes pages).
+
 ## [0.42.5.0] - 2026-06-01
 
 **If your background worker has been dying every few minutes and the logs keep

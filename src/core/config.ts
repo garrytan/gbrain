@@ -166,6 +166,18 @@ export interface GBrainConfig {
      *  loud stderr per page but lets everything through. Default: false.
      *  Env override: `GBRAIN_NO_SANITY=1` flips to true. */
     disabled?: boolean;
+    /** Disposition for high-confidence junk (Cloudflare/CAPTCHA pattern or
+     *  operator literal). `quarantine` (default) = page lands hidden +
+     *  reviewable; `reject` = hard-block (throw → sync-failure). Issue #1699.
+     *  No env override (a destructive flip belongs in explicit config). */
+    junk_disposition?: 'quarantine' | 'reject';
+    /** Max markup:total ratio before the fuzzy markup-heavy FLAG fires
+     *  (page stays searchable, agent warned). Default: 0.85. Env override:
+     *  `GBRAIN_MAX_MARKUP_RATIO`. */
+    max_markup_ratio?: number;
+    /** Master switch for the prose/markup pass. Default: true. When false,
+     *  no markup-heavy flagging happens (patterns + oversize still apply). */
+    prose_check_enabled?: boolean;
   };
 
   /**
@@ -401,6 +413,10 @@ export function loadConfig(): GBrainConfig | null {
   if (process.env.GBRAIN_NO_SANITY === '1') {
     envContentSanity.disabled = true;
   }
+  if (process.env.GBRAIN_MAX_MARKUP_RATIO) {
+    const n = parseFloat(process.env.GBRAIN_MAX_MARKUP_RATIO);
+    if (Number.isFinite(n) && n > 0 && n <= 1) envContentSanity.max_markup_ratio = n;
+  }
   // Only attach the field when at least one env var was set, so the
   // sparse-merge semantics elsewhere in loadConfigWithEngine work
   // (env presence => "this key already has a value, don't read DB").
@@ -524,6 +540,9 @@ export async function loadConfigWithEngine(
   const dbBlockBytes = await dbInt('content_sanity.bytes_block');
   const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
   const dbSanityDisabled = await dbBool('content_sanity.disabled');
+  const dbJunkDisposition = await dbStr('content_sanity.junk_disposition');
+  const dbMaxMarkupRatioStr = await dbStr('content_sanity.max_markup_ratio');
+  const dbProseCheckEnabled = await dbBool('content_sanity.prose_check_enabled');
 
   const existingCS = merged.content_sanity ?? {};
   const mergedCS: NonNullable<GBrainConfig['content_sanity']> = { ...existingCS };
@@ -538,6 +557,19 @@ export async function loadConfigWithEngine(
   }
   if (mergedCS.disabled === undefined && dbSanityDisabled !== undefined) {
     mergedCS.disabled = dbSanityDisabled;
+  }
+  if (
+    mergedCS.junk_disposition === undefined &&
+    (dbJunkDisposition === 'quarantine' || dbJunkDisposition === 'reject')
+  ) {
+    mergedCS.junk_disposition = dbJunkDisposition;
+  }
+  if (mergedCS.max_markup_ratio === undefined && dbMaxMarkupRatioStr !== undefined) {
+    const n = parseFloat(dbMaxMarkupRatioStr);
+    if (Number.isFinite(n) && n > 0 && n <= 1) mergedCS.max_markup_ratio = n;
+  }
+  if (mergedCS.prose_check_enabled === undefined && dbProseCheckEnabled !== undefined) {
+    mergedCS.prose_check_enabled = dbProseCheckEnabled;
   }
   if (Object.keys(mergedCS).length > 0) {
     merged.content_sanity = mergedCS;
@@ -693,6 +725,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'content_sanity.bytes_block',
   'content_sanity.junk_patterns_enabled',
   'content_sanity.disabled',
+  // Content-quality gate (v0.42, issue #1699)
+  'content_sanity.junk_disposition',
+  'content_sanity.max_markup_ratio',
+  'content_sanity.prose_check_enabled',
   // MCP skill-catalog publishing (PR1)
   'mcp.publish_skills',
   'mcp.publish_skills_prompted',

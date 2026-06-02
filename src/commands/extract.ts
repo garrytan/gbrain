@@ -35,10 +35,10 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
-  extractFrontmatterLinks, isGlobalBasenameEnabled,
+  extractFrontmatterLinks, isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
   WIKILINK_BASENAME_LINK_TYPE,
   buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
-  type UnresolvedFrontmatterRef,
+  type UnresolvedFrontmatterRef, type LinkCandidate,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -68,6 +68,71 @@ import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.
 // count but safe at any future schema width and keeps per-batch error blast radius
 // small (a malformed row aborts at most 100, not thousands).
 const BATCH_SIZE = 100;
+
+// v0.42.7 (#1696): keyset batch size for `extract --stale`. SMALL by design —
+// listStalePagesForExtraction returns page CONTENT (compiled_truth + timeline),
+// which is unbounded (25MB transcript pages exist). The LIMIT is the only memory
+// bound: the per-batch byte cap CDX-5 described can't run post-fetch (the fetch
+// itself is the OOM point), so a small default count is the real safety net —
+// 25 caps the worst case at ~625MB even if every page is a 25MB transcript.
+// Normal pages are KBs; raise via GBRAIN_EXTRACT_STALE_BATCH for throughput.
+const STALE_BATCH_SIZE = Math.max(1, Number(process.env.GBRAIN_EXTRACT_STALE_BATCH) || 25);
+// v0.42.7: wall-clock budget for one `extract --stale` invocation (default
+// 30 min). `--catch-up` removes the cap (loops until 0 stale). Mirrors
+// embedAllStale's time-budget shape.
+const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXTRACT_TIME_BUDGET_MS) || 30 * 60 * 1000);
+
+/**
+ * v0.42.7 (#1696): best-effort extraction stamp for the source-correct write
+ * sites (inline sync, `extract --source db`). Wraps `markPagesExtractedBatch`
+ * and NEVER throws — a stamp failure here just means the page stays "stale" and
+ * gets swept by `extract --stale` later. Do NOT use this in the `--stale` sweep
+ * itself: there the stamp is the resume mechanism and a failure must surface
+ * (CDX-4 — see extractStaleFromDB).
+ */
+export async function stampExtracted(
+  engine: BrainEngine,
+  refs: Array<{ slug: string; source_id: string }>,
+  at: string = new Date().toISOString(),
+): Promise<void> {
+  if (refs.length === 0) return;
+  try {
+    await engine.markPagesExtractedBatch(refs, at);
+  } catch { /* best-effort: page stays stale, extract --stale re-sweeps it */ }
+}
+
+/**
+ * v0.42.7 (#1696): pure cross-source resolution for one extracted link
+ * candidate. Validates both endpoints exist (else the batch JOIN drops the row),
+ * then picks from_source_id / to_source_id: prefer the origin page's source,
+ * fall back to 'default', else skip (never push a wrong-source edge). Returns
+ * null when the candidate should be skipped. Shared by extractLinksFromDB and
+ * extractStaleFromDB so the F10 multi-source resolution can't drift.
+ */
+export function resolveCandidateSources(
+  c: LinkCandidate,
+  pageSlug: string,
+  pageSourceId: string,
+  allSlugs: Set<string>,
+  slugToSources: Map<string, string[]>,
+): { fromSlug: string; fromSourceId: string; toSourceId: string } | null {
+  const fromSlug = c.fromSlug ?? pageSlug;
+  if (!allSlugs.has(c.targetSlug)) return null;
+  if (!allSlugs.has(fromSlug)) return null;
+  const fromSources = slugToSources.get(fromSlug) ?? [];
+  const fromSourceId = fromSources.includes(pageSourceId) ? pageSourceId
+    : (fromSources.includes('default') ? 'default' : fromSources[0]);
+  const targetSources = slugToSources.get(c.targetSlug) ?? [];
+  let toSourceId: string;
+  if (targetSources.includes(fromSourceId)) {
+    toSourceId = fromSourceId;
+  } else if (targetSources.includes('default')) {
+    toSourceId = 'default';
+  } else {
+    return null;
+  }
+  return { fromSlug, fromSourceId, toSourceId };
+}
 
 // isRetryableConnError reference retained for any inline classification at
 // call sites. Engine-level retry uses the same predicate via core/retry.ts.
@@ -544,6 +609,33 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
     return runExtractExplain(engine, args);
   }
 
+  // v0.42.7 (#1696): `gbrain extract --stale` — incremental link+timeline sweep
+  // over pages whose links_extracted_at watermark is stale. Intercepts BEFORE
+  // the links|timeline|all subcommand validation so `gbrain extract --stale`
+  // works with no subcommand (and `gbrain extract all --stale` too). DB-source
+  // only — reads page content from the DB so it runs on checkout-less brains.
+  if (args.includes('--stale')) {
+    const sIdx = args.indexOf('--source');
+    const src = (sIdx >= 0 && sIdx + 1 < args.length) ? args[sIdx + 1] : 'db';
+    if (src === 'fs') {
+      console.error(
+        `extract --stale is DB-source only (reads page content from the database\n` +
+        `so it works on checkout-less brains). Drop '--source fs' or pass '--source db'.`,
+      );
+      process.exit(1);
+    }
+    const sidIdx = args.indexOf('--source-id');
+    const staleSourceId = (sidIdx >= 0 && sidIdx + 1 < args.length) ? args[sidIdx + 1] : undefined;
+    await extractStaleFromDB(engine, {
+      dryRun: args.includes('--dry-run'),
+      jsonMode: args.includes('--json'),
+      includeFrontmatter: args.includes('--include-frontmatter'),
+      sourceIdFilter: staleSourceId,
+      catchUp: args.includes('--catch-up'),
+    });
+    return;
+  }
+
   const dirIdx = args.indexOf('--dir');
   const explicitDir = dirIdx >= 0 && dirIdx + 1 < args.length;
   // When --dir is not passed, resolve from the configured brain source
@@ -625,6 +717,12 @@ Extraction (existing):
   gbrain extract <links|timeline> --by-mention --source db
   gbrain extract <links|timeline|all> --ner --source db
   gbrain extract <timeline|all> --from-meetings
+
+Incremental sweep (v0.42.7):
+  gbrain extract --stale [--source-id <id>] [--catch-up] [--dry-run] [--json]
+      Re-extract links + timeline ONLY for pages whose extraction is stale
+      (never extracted, edited since, or extractor bumped). DB-source; safe to
+      cron. --catch-up loops past the 30-min wall-clock budget until 0 remain.
 
 Inspection (v0.42):
   gbrain extract --explain <kind> [--json]
@@ -777,7 +875,9 @@ Status (v0.42):
         }
       } else {
         if (subcommand === 'links' || subcommand === 'all') {
-          const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since, { includeFrontmatter, sourceIdFilter });
+          // C3 (D6): only stamp the combined links+timeline watermark when BOTH
+          // ran ('all'); a links-only run must not mark timeline fresh.
+          const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since, { includeFrontmatter, sourceIdFilter, stampWatermark: subcommand === 'all' });
           result.links_created = r.created;
           result.pages_processed = r.pages;
         }
@@ -1154,10 +1254,15 @@ async function extractLinksFromDB(
   jsonMode: boolean,
   typeFilter: PageType | undefined,
   since: string | undefined,
-  opts?: { includeFrontmatter?: boolean; sourceIdFilter?: string },
+  opts?: { includeFrontmatter?: boolean; sourceIdFilter?: string; stampWatermark?: boolean },
 ): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const includeFrontmatter = opts?.includeFrontmatter ?? false;
   const sourceIdFilter = opts?.sourceIdFilter;
+  // C3 (D6): the links_extracted_at watermark covers links AND timeline, so a
+  // links-ONLY run must NOT stamp it (that would hide timeline staleness for
+  // `gbrain extract links --source db`). Only stamp when the caller ran BOTH
+  // (subcommand 'all'). Caller passes stampWatermark accordingly.
+  const stampWatermark = opts?.stampWatermark ?? false;
   // Batch resolver: pg_trgm + exact only, NO search fallback. Dodges the
   // N-thousand API call trap on 46K-page brains. Resolver has a per-run
   // cache so duplicate names (same person appearing on many pages) resolve
@@ -1208,6 +1313,10 @@ async function extractLinksFromDB(
     slugToSources.set(ref.slug, list);
   }
   let processed = 0, created = 0;
+  // v0.42.7 (#1696): pages whose links we extracted this run — stamped after
+  // the loop so a manual `gbrain extract links|all --source db` clears the
+  // links_extraction_lag doctor signal. Non-dry-run only.
+  const processedRefs: Array<{ slug: string; source_id: string }> = [];
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('extract.links_db', allRefs.length);
@@ -1255,35 +1364,13 @@ async function extractLinksFromDB(
     unresolved.push(...extracted.unresolved);
 
     for (const c of extracted.candidates) {
-      // Validate BOTH endpoints exist. Incoming frontmatter edges have
-      // fromSlug !== the page being processed; we need that page to exist
-      // too or the JOIN drops the row anyway.
-      const fromSlug = c.fromSlug ?? slug;
-      if (!allSlugs.has(c.targetSlug)) continue;
-      if (!allSlugs.has(fromSlug)) continue;
-
-      // v0.32.8 F10: cross-source link resolution.
-      // from_source_id = origin page's source_id (this loop's source_id, or
-      // the candidate's fromSlug source if it lives in a different source).
-      // to_source_id = priority: origin's source > 'default' > skip (don't
-      // silently push a wrong-source edge).
-      const fromSources = slugToSources.get(fromSlug) ?? [];
-      const fromSourceId = fromSources.includes(source_id) ? source_id
-        : (fromSources.includes('default') ? 'default' : fromSources[0]);
-      const targetSources = slugToSources.get(c.targetSlug) ?? [];
-      let toSourceId: string;
-      if (targetSources.includes(fromSourceId)) {
-        toSourceId = fromSourceId;
-      } else if (targetSources.includes('default')) {
-        toSourceId = 'default';
-      } else {
-        // Target exists ONLY in non-origin/non-default sources. Skip — don't
-        // silently push a wrong-source edge. Tracking this as an unresolved
-        // ref would require expanding UnresolvedFrontmatterRef; for v0.32.8
-        // a quiet skip is the conservative choice (matches existing
-        // "target missing" semantics where allSlugs.has() returns false).
-        continue;
-      }
+      // v0.32.8 F10 cross-source link resolution, extracted to the shared pure
+      // helper in v0.42.7 (#1696) so extract --stale reuses the exact same
+      // endpoint-validation + from/to source-id picking (null = skip: missing
+      // endpoint OR target only in a non-origin/non-default source).
+      const resolved = resolveCandidateSources(c, slug, source_id, allSlugs, slugToSources);
+      if (!resolved) continue;
+      const { fromSlug, fromSourceId, toSourceId } = resolved;
 
       if (dryRunSeen) {
         const key = `${fromSourceId}::${fromSlug}::${toSourceId}::${c.targetSlug}::${c.linkType}::${c.linkSource ?? 'markdown'}`;
@@ -1319,9 +1406,21 @@ async function extractLinksFromDB(
       }
     }
     processed++;
+    if (!dryRun) processedRefs.push({ slug, source_id });
     progress.tick(1);
   }
   await flush();
+  // v0.42.7 (#1696): stamp the extraction watermark for every page we
+  // processed (incl. zero-link pages — they WERE extracted). Chunked so the
+  // unnest UPDATE stays bounded on big brains. Best-effort (stampExtracted
+  // swallows): a stamp miss just leaves the page for extract --stale.
+  // C3 (D6): ONLY when both links + timeline ran (stampWatermark) — a
+  // links-only run leaves the combined watermark untouched.
+  if (!dryRun && stampWatermark) {
+    for (let i = 0; i < processedRefs.length; i += BATCH_SIZE) {
+      await stampExtracted(engine, processedRefs.slice(i, i + BATCH_SIZE));
+    }
+  }
   progress.finish();
 
   if (!jsonMode) {
@@ -1433,6 +1532,149 @@ async function extractTimelineFromDB(
     console.log(`Timeline: ${label} ${created} entries from ${processed} pages (db source)`);
   }
   return { created, pages: processed };
+}
+
+/**
+ * v0.42.7 (#1696) — `gbrain extract --stale`: incremental link + timeline
+ * extraction over pages whose `links_extracted_at` watermark is stale (NULL,
+ * older than LINK_EXTRACTOR_VERSION_TS, or older than the page's updated_at).
+ * DB-source (works on checkout-less Postgres/Supabase brains). Mirrors
+ * embedAllStale's count → keyset-list → flush → stamp shape.
+ *
+ * Crash-safety + CDX-4: per keyset batch we extract ALL links+timeline, flush
+ * them (NON-swallowing — a flush throw propagates and aborts the sweep), THEN
+ * stamp the batch's pages. A page is never stamped fresh with lost edges; a
+ * crash mid-sweep leaves the unflushed/unstamped pages stale and they
+ * re-extract next run (addLinksBatch ON CONFLICT DO NOTHING + timeline dedup
+ * make re-extraction idempotent). EVERY processed page is stamped, including
+ * zero-link pages — they WERE processed.
+ */
+async function extractStaleFromDB(
+  engine: BrainEngine,
+  opts: {
+    dryRun: boolean;
+    jsonMode: boolean;
+    includeFrontmatter: boolean;
+    sourceIdFilter?: string;
+    catchUp: boolean;
+  },
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number }> {
+  const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
+  const versionTs = LINK_EXTRACTOR_VERSION_TS;
+
+  // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
+  const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
+  if (dryRun) {
+    if (jsonMode) {
+      process.stdout.write(JSON.stringify({ action: 'extract_stale_dry_run', stale_pages: totalStale }) + '\n');
+    } else {
+      console.log(`(dry run) ${totalStale} page(s) need link/timeline extraction. Run without --dry-run to extract.`);
+    }
+    return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: totalStale };
+  }
+  if (totalStale === 0) {
+    if (!jsonMode) console.log('No stale pages — extraction is up to date.');
+    return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: 0 };
+  }
+
+  // Resolver + cross-source resolution map built ONCE before the loop (the
+  // extractLinksFromDB:1069 precedent — avoids O(pages) rebuild per batch).
+  // Batch mode = pg_trgm + exact only, NO per-name search fallback. The
+  // resolution map sees ALL sources so qualified cross-source wikilinks resolve
+  // even when --source-id scopes the stale SCAN.
+  const resolver = makeResolver(engine, { mode: 'batch' });
+  const nullResolver = { resolve: async () => null as string | null };
+  const activeResolver = includeFrontmatter ? resolver : nullResolver;
+  const allRefs = await engine.listAllPageRefs();
+  const allSlugs = new Set<string>();
+  const slugToSources = new Map<string, string[]>();
+  for (const ref of allRefs) {
+    allSlugs.add(ref.slug);
+    const list = slugToSources.get(ref.slug) ?? [];
+    list.push(ref.source_id);
+    slugToSources.set(ref.slug, list);
+  }
+
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('extract.stale', totalStale);
+
+  const startMs = Date.now();
+  let afterPageId = 0;
+  let linksCreated = 0, timelineCreated = 0, pagesProcessed = 0;
+  let budgetHit = false;
+
+  for (;;) {
+    const rows = await engine.listStalePagesForExtraction({
+      batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs,
+    });
+    if (rows.length === 0) break;
+
+    const linkRows: LinkBatchInput[] = [];
+    const timelineRows: TimelineBatchInput[] = [];
+    const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
+
+    for (const page of rows) {
+      const fullContent = page.compiled_truth + '\n' + page.timeline;
+      const extracted = await extractPageLinks(
+        page.slug, fullContent, page.frontmatter, page.type, activeResolver,
+      );
+      for (const c of extracted.candidates) {
+        const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);
+        if (!r) continue;
+        linkRows.push({
+          from_slug: r.fromSlug, to_slug: c.targetSlug, link_type: c.linkType,
+          context: c.context, link_source: c.linkSource, origin_slug: c.originSlug,
+          origin_field: c.originField, from_source_id: r.fromSourceId,
+          to_source_id: r.toSourceId, origin_source_id: page.source_id,
+        });
+      }
+      for (const entry of parseTimelineEntries(fullContent)) {
+        timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
+      }
+      // EVERY processed page is stamped (incl. zero-link pages). D4 race fix:
+      // stamp with the row's READ updated_at, NOT now() — a concurrent edit
+      // landing between this SELECT and the stamp advances updated_at past the
+      // stamped value, so the page stays stale and re-extracts next run instead
+      // of being marked fresh-with-stale-content.
+      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: page.updated_at.toISOString() });
+    }
+
+    // Flush NON-swallowing (CDX-4): a throw here propagates out of the sweep so
+    // the batch's pages stay unstamped and re-extract next run. addLinksBatch is
+    // ON CONFLICT DO NOTHING + timeline dedups, so partial-chunk writes are
+    // idempotent on re-extraction.
+    for (let i = 0; i < linkRows.length; i += BATCH_SIZE) {
+      linksCreated += await engine.addLinksBatch(linkRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' }); // gbrain-allow-direct-insert: gbrain extract --stale — canonical link reconciliation from markdown body
+    }
+    for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
+      timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
+    }
+    // Stamp LAST, directly (not the swallowing stampExtracted) so a stamp
+    // failure surfaces instead of looping forever.
+    await engine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
+
+    pagesProcessed += rows.length;
+    progress.tick(rows.length);
+    afterPageId = rows[rows.length - 1]!.id;
+
+    if (!catchUp && Date.now() - startMs > STALE_TIME_BUDGET_MS) { budgetHit = true; break; }
+  }
+
+  progress.finish();
+  const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
+
+  if (!jsonMode) {
+    console.log(`Extract --stale: ${linksCreated} link(s) + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
+    if (budgetHit && staleRemaining > 0) {
+      console.log(`Time budget reached — ${staleRemaining} page(s) still stale. Re-run 'gbrain extract --stale' (or pass --catch-up) to continue.`);
+    }
+  } else {
+    process.stdout.write(JSON.stringify({
+      action: 'extract_stale_done', links_created: linksCreated, timeline_created: timelineCreated,
+      pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
+    }) + '\n');
+  }
+  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining };
 }
 
 /**

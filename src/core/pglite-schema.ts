@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS pages (
   -- v0.37.0 (migration v79): real stale-page signal for gbrain lsd
   -- (mirrors src/schema.sql). NULL = never retrieved.
   last_retrieved_at     TIMESTAMPTZ,
+  -- v0.42.7 (migration v112): link-extraction freshness watermark
+  -- (mirrors src/schema.sql). NULL = never extracted. Powers
+  -- gbrain extract --stale + the links_extraction_lag doctor check.
+  links_extracted_at    TIMESTAMPTZ,
   -- v0.40.3.0 contextual retrieval (renumbered from v81 to v90 on master
   -- merge; mirrors src/schema.sql).
   -- contextual_retrieval_mode is the tier the page was last embedded under;
@@ -187,6 +191,12 @@ CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
 -- query (mirrors src/schema.sql). Postgres handles NULL in B-tree indexes.
 CREATE INDEX IF NOT EXISTS pages_last_retrieved_at_idx
   ON pages (last_retrieved_at);
+-- v0.42.7 (migration v112): composite B-tree backing extract --stale and the
+-- links_extraction_lag doctor check (mirrors src/schema.sql). source_id leads so
+-- source-scoped staleness scans are indexed; NOT partial-NULL (predicate has a
+-- NULL arm AND a version-timestamp arm).
+CREATE INDEX IF NOT EXISTS pages_links_extracted_at_idx
+  ON pages (source_id, links_extracted_at);
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings

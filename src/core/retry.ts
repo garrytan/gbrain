@@ -85,6 +85,8 @@ export const BATCH_AUDIT_SITES = [
   'extract.links_db',
   'extract.timeline_db',
   'extract.by_mention',
+  // v0.42.7 (#1696): extract --stale incremental sweep.
+  'extract.stale',
   // operations.ts MCP put_page auto-link path.
   'mcp.put_page.autolink',
   // sync.ts/reindex.ts orchestrator labels.

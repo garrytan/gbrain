@@ -264,10 +264,22 @@ describe('buildVisibilityClause (v0.26.5)', () => {
     // Both predicates present: page-level deleted_at IS NULL + source-level NOT archived.
     expect(clause).toContain('p.deleted_at IS NULL');
     expect(clause).toContain('NOT s.archived');
+    // v0.42 (#1699): also excludes quarantined pages (flagged pages stay visible).
+    expect(clause).toContain("? 'quarantine'");
   });
 
   test('uses the supplied aliases verbatim', () => {
-    expect(buildVisibilityClause('pp', 'src')).toBe('AND pp.deleted_at IS NULL AND NOT src.archived');
+    expect(buildVisibilityClause('pp', 'src')).toBe(
+      "AND pp.deleted_at IS NULL AND NOT src.archived AND NOT (COALESCE(pp.frontmatter, '{}'::jsonb) ? 'quarantine')",
+    );
+  });
+
+  test('drift guard: quarantine fragment comes from quarantine.ts single source of truth', async () => {
+    // buildVisibilityClause MUST consume quarantineFilterFragment so the search
+    // filter and the marker key can't drift (#1699 maintainability finding).
+    const { quarantineFilterFragment } = await import('../src/core/quarantine.ts');
+    expect(buildVisibilityClause('p', 's')).toContain(quarantineFilterFragment('p'));
+    expect(buildVisibilityClause('xx', 's')).toContain(quarantineFilterFragment('xx'));
   });
 
   test('does NOT bypass on detail level — visibility is a contract, not a temporal preference', () => {

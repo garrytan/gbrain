@@ -1,5 +1,40 @@
 # TODOS
 
+## v0.42.7.0 extract-in-default-loop follow-ups (v0.42+)
+
+Filed from the v0.42.2.0 wave (#1696 link/timeline extraction freshness
+watermark). Both surfaced by the Codex review (P1-D, P1-C) and deliberately
+scoped OUT — neither is a #1696 regression. See plan + GSTACK REVIEW REPORT at
+`~/.claude/plans/system-instruction-you-are-working-squishy-crayon.md`.
+
+- [ ] **P2 — Repo-wide: `DROP INDEX CONCURRENTLY` inside a `DO $$` block is
+  Postgres-invalid.** `CONCURRENTLY` cannot run inside a transaction, and a `DO`
+  block IS a transaction — so the invalid-index pre-drop guard throws
+  `cannot run inside a transaction block` IF the branch ever fires (only on a
+  retry after a prior failed concurrent build). Migration v112
+  (`pages_links_extracted_at`) copies this pattern verbatim from shipped
+  precedent: `idx_pages_updated_at_desc` (migrate.ts:~502),
+  `pages_deleted_at_purge_idx` (~1619), `pages_coalesce_date_idx` (~1967). It is
+  latent (the IF-EXISTS check returns false on a clean build → EXECUTE never
+  runs) and has never been hit in production. Fix repo-wide in ONE sweep: replace
+  each `DO $$ ... EXECUTE 'DROP INDEX CONCURRENTLY ...'` with a plain top-level
+  `SELECT indisvalid` probe + a bare top-level `DROP INDEX CONCURRENTLY IF EXISTS`
+  statement (the migration runner already runs these `transaction: false`). Do
+  NOT single out v112 — fixing one diverges from the precedent; sweep all of them
+  together with a shared helper. Needs its own review (touches every CONCURRENTLY
+  migration).
+- [ ] **P3 — Add-only extraction never deletes obsolete edges; the watermark now
+  asserts a currency it can't fully deliver.** All gbrain extraction is add-only
+  (`addLinksBatch` ON CONFLICT DO NOTHING, inline sync + `extractLinksFromDB` +
+  `extract --stale`). A page edit that REMOVES a link adds nothing and never
+  deletes the now-absent edge, yet `links_extracted_at` marks the page current,
+  so `gbrain doctor` reports OK while the graph carries a stale edge. Pre-existing
+  architectural property (not new in #1696), but the watermark makes it more
+  visible. Real fix needs a link-provenance column (`link_source` / extracted-by
+  marker) so a re-extract can safely DELETE extracted-but-now-absent edges for a
+  page+source without clobbering manually-added or auto-link edges — mirrors the
+  v0.41.37.0 tag-provenance deferral (#1621-followup). Defer until that column
+  lands; until then `extract --stale` is reconcile-add-only by design.
 ## v0.42.5.0 watchdog / pooler-reap / lens-backlog follow-ups (v0.42+)
 
 Deferred from the v0.42.5.0 wave (issue #1678). The shipped fixes are complete

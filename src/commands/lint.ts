@@ -83,6 +83,8 @@ export interface LintContentOpts {
     bytes_block?: number;
     junk_patterns_enabled?: boolean;
     disabled?: boolean;
+    max_markup_ratio?: number;
+    prose_check_enabled?: boolean;
     operator_literals?: ReadonlyArray<OperatorLiteral>;
   };
 }
@@ -231,6 +233,9 @@ export function lintContent(content: string, filePath: string, opts: LintContent
       title: parsed.title,
       bytes_warn: cs.bytes_warn,
       bytes_block: cs.bytes_block,
+      max_markup_ratio: cs.max_markup_ratio,
+      prose_check_enabled: cs.prose_check_enabled,
+      page_kind: parsed.type,
       extra_literals: operator_literals,
     });
     // Rule: huge-page fires for both oversize_warn (over warn threshold)
@@ -255,6 +260,17 @@ export function lintContent(content: string, filePath: string, opts: LintContent
       issues.push({
         file: filePath, line: 1, rule: 'scraper-junk',
         message: `Matched junk pattern(s): ${matched}`,
+        fixable: false,
+      });
+    }
+    // Rule: markup-heavy fires when the fuzzy prose pass flags the page as
+    // boilerplate-shaped (issue #1699). At ingest this FLAGS (page stays
+    // searchable, agent warned) rather than hides — surfacing it in lint
+    // lets a brain-author notice nav/boilerplate scrapes in their source.
+    if (sanity.reasons.includes('high_markup')) {
+      issues.push({
+        file: filePath, line: 1, rule: 'markup-heavy',
+        message: `Markup ratio ${sanity.markup_ratio?.toFixed(2)} exceeds threshold (looks like nav/boilerplate; flagged, not hidden)`,
         fixable: false,
       });
     }

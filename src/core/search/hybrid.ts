@@ -46,6 +46,32 @@ export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
 const pendingCacheWrites = new Set<Promise<unknown>>();
 
+/**
+ * v0.42 (issue #1699) agent-warning channel. Stamps `SearchResult.content_flag`
+ * for any result whose page carries a `frontmatter.content_flag` marker (fuzzy
+ * markup-heavy / oversize). One batched query over the returned set's page_ids;
+ * runs on the FINAL sliced set so the fetch is bounded by `limit`, not the full
+ * candidate pool. Fail-open: the warning is best-effort and never breaks search.
+ * Mirrors the stampEvidence post-fusion precedent (T4).
+ */
+export async function stampContentFlags(engine: BrainEngine, results: SearchResult[]): Promise<void> {
+  if (results.length === 0) return;
+  try {
+    const ids = [...new Set(
+      results.map((r) => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
+    )];
+    if (ids.length === 0) return;
+    const flags = await engine.getContentFlagsByPageIds(ids);
+    if (flags.size === 0) return;
+    for (const r of results) {
+      const f = flags.get(r.page_id);
+      if (f) r.content_flag = f;
+    }
+  } catch {
+    // best-effort: a flag-fetch failure must not break retrieval.
+  }
+}
+
 export async function awaitPendingSearchCacheWrites(): Promise<void> {
   if (pendingCacheWrites.size === 0) return;
   await Promise.allSettled([...pendingCacheWrites]);
@@ -857,6 +883,7 @@ export async function hybridSearch(
     const noEmbedSliced = noEmbedHopped.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
     const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
+    await stampContentFlags(engine, noEmbedBudgeted);
     lastResultsCount = noEmbedBudgeted.length;
     lastRank1Score = noEmbedBudgeted[0] ? (noEmbedBudgeted[0].base_score ?? noEmbedBudgeted[0].score) : undefined;
     emitMeta({
@@ -1073,6 +1100,7 @@ export async function hybridSearch(
     const kwSliced = kwHopped.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
     const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
+    await stampContentFlags(engine, kwBudgeted);
     lastResultsCount = kwBudgeted.length;
     lastRank1Score = kwBudgeted[0] ? (kwBudgeted[0].base_score ?? kwBudgeted[0].score) : undefined;
     emitMeta({
@@ -1288,6 +1316,7 @@ export async function hybridSearch(
   // hybridSearch enforces it too so eval-replay + eval-longmemeval see
   // the same budget behavior as the production query op.
   const { results: budgeted, meta: budgetMeta } = enforceTokenBudget(sliced, resolvedMode.tokenBudget);
+  await stampContentFlags(engine, budgeted);
   lastResultsCount = budgeted.length;
   lastRank1Score = budgeted[0] ? (budgeted[0].base_score ?? budgeted[0].score) : undefined;
   emitMeta({

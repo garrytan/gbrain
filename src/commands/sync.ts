@@ -61,6 +61,19 @@ import { getDefaultSourcePath } from '../core/source-resolver.ts';
 import { newestCommitMs, lagFromContentMs } from '../core/source-health.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
 
+/**
+ * v0.42.7 (#1696, D5): which terminal sync statuses warrant the end-of-sync
+ * extraction-lag nudge. Fires on every non-error completion — crucially
+ * `first_sync` (a fresh / --full import is the BIGGEST un-extracted backlog) and
+ * `up_to_date` (a no-op sync over a brain with a pre-existing backlog still
+ * warrants the nudge). Excludes `dry_run` (preview) / `blocked_by_failures` /
+ * `partial` (inconsistent state). Pure so D5's contract is unit-testable
+ * without driving the CLI.
+ */
+export function shouldNudgeAfterSync(status: SyncResult['status']): boolean {
+  return status === 'synced' || status === 'first_sync' || status === 'up_to_date';
+}
+
 export interface SyncResult {
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures' | 'partial';
   fromCommit: string | null;
@@ -1827,12 +1840,22 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
   if (!opts.noExtract && pagesAffected.length > 0) {
     try {
-      const { extractLinksForSlugs, extractTimelineForSlugs } = await import('./extract.ts');
+      const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted } = await import('./extract.ts');
       const linksCreated = await extractLinksForSlugs(engine, repoPath, pagesAffected, extractOpts);
       const timelineCreated = await extractTimelineForSlugs(engine, repoPath, pagesAffected, extractOpts);
       if (linksCreated > 0 || timelineCreated > 0) {
         slog(`  Extracted: ${linksCreated} links, ${timelineCreated} timeline entries`);
       }
+      // v0.42.7 (#1696, CDX-6): stamp the links_extracted_at watermark for the
+      // pages we just extracted, AFTER the import set their updated_at, so
+      // links_extracted_at >= updated_at (page is now fresh, not flagged stale).
+      // Source-correct via opts.sourceId. Stamp at the CALL SITE (not inside
+      // extractLinksForSlugs) so we use the per-source sourceId the sync owns.
+      // Best-effort: a stamp miss just means extract --stale re-sweeps later.
+      await stampExtracted(
+        engine,
+        pagesAffected.map((slug) => ({ slug, source_id: opts.sourceId ?? 'default' })),
+      );
     } catch { /* extraction is best-effort */ }
   }
 
@@ -2086,6 +2109,9 @@ Options:
   --no-embed           Skip the embed step. Use this when the embed
                        provider is misconfigured or you want to defer
                        embedding (run 'gbrain embed --stale' later).
+  --no-extract         Skip the link/timeline extraction step. Pages will
+                       show as stale in 'gbrain doctor'; run
+                       'gbrain extract --stale' later to catch up.
   --workers N          Run the import phase with N parallel workers
                        (alias: --concurrency). Default: 4 when the
                        diff is >100 files, else serial.
@@ -2140,6 +2166,7 @@ See also:
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');
   const noEmbed = args.includes('--no-embed');
+  const noExtract = args.includes('--no-extract'); // v0.42.7 #1696
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
   const noSchemaPack = args.includes('--no-schema-pack'); // v0.41.37.0 #1569
@@ -2570,6 +2597,7 @@ See also:
         repoPath: src.local_path!,
         dryRun, full, noPull,
         noEmbed: effectiveNoEmbed,
+        noExtract,
         skipFailed, retryFailed, noSchemaPack,
         sourceId: src.id,
         strategy: cfg.strategy,
@@ -2758,6 +2786,10 @@ See also:
       }));
     }
 
+    // v0.42.7 (#1696): brain-wide extraction-lag nudge after the --all wave.
+    // Best-effort, stderr-only; skipped on dry-run.
+    if (!dryRun) await maybeExtractionNudge(engine);
+
     if (errCount > 0) process.exit(1);
     return;
   }
@@ -2771,7 +2803,7 @@ See also:
     : undefined;
   singleSourceTimer?.unref?.();
   const opts: SyncOpts = {
-    repoPath, dryRun, full, noPull, noEmbed, skipFailed, retryFailed, noSchemaPack, sourceId,
+    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, sourceId,
     strategy: strategyArg, concurrency,
     signal: singleSourceController?.signal,
   };
@@ -2800,6 +2832,11 @@ See also:
       if (singleSourceTimer !== undefined) clearTimeout(singleSourceTimer);
     }
     printSyncResult(result);
+    // v0.42.7 (#1696, D5): extraction-lag nudge after a completed single-source
+    // sync. Fire on every non-error completion (synced | first_sync | up_to_date)
+    // — NOT just 'synced'; a fresh/--full import (`first_sync`) is the biggest
+    // un-extracted backlog. Scoped to this source; best-effort, stderr-only.
+    if (shouldNudgeAfterSync(result.status)) await maybeExtractionNudge(engine, sourceId);
     // Issue #2 + eng-review pass-2 finding #1 + Codex P1: manage .gitignore ONLY
     // on successful sync. Skip on dry-run (don't mutate disk in preview mode)
     // and blocked_by_failures (sync state is inconsistent — defer .gitignore
@@ -2933,6 +2970,8 @@ export async function syncOneSource(
     concurrency: number | undefined;
     /** v0.41.37.0 #1569: propagate --no-schema-pack into every per-source sync. */
     noSchemaPack?: boolean;
+    /** v0.42.7 #1696: propagate --no-extract into every per-source sync. */
+    noExtract?: boolean;
   },
 ): Promise<{ result: SyncResult; log: string }> {
   const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
@@ -2943,6 +2982,7 @@ export async function syncOneSource(
     full: shared.full,
     noPull: shared.noPull,
     noEmbed: shared.noEmbed,
+    noExtract: shared.noExtract,
     skipFailed: shared.skipFailed,
     retryFailed: shared.retryFailed,
     noSchemaPack: shared.noSchemaPack,
@@ -3408,6 +3448,41 @@ export function manageGitignore(
         `please add db_only directories manually:\n  ${linesToAdd.join('\n  ')}`,
     );
   }
+}
+
+/**
+ * v0.42.7 (#1696): one-line end-of-sync nudge when the brain (or a source)
+ * carries a meaningful link/timeline extraction backlog. Reuses the same warn
+ * threshold (GBRAIN_EXTRACTION_LAG_WARN_PCT, default 20%) the doctor check uses
+ * so the nudge fires iff doctor would warn — one source of truth. Always
+ * stderr (never stdout — keeps `--json` clean), suppressible via
+ * GBRAIN_SYNC_NO_EXTRACT_NUDGE, best-effort (never throws). Source-prefix-aware
+ * via serr when called inside a withSourcePrefix scope.
+ */
+async function maybeExtractionNudge(engine: BrainEngine, sourceId?: string): Promise<void> {
+  if (process.env.GBRAIN_SYNC_NO_EXTRACT_NUDGE) return;
+  try {
+    const { LINK_EXTRACTOR_VERSION_TS } = await import('../core/link-extraction.ts');
+    // D3/C4: resolve the warn threshold + vacuous-skip floor through the SAME
+    // helpers the doctor check uses (dynamic import keeps doctor.ts off sync's
+    // eager-load path) so "the nudge fires iff doctor would warn" can't drift.
+    const { _resolveEnvNumber, EXTRACTION_LAG_WARN_PCT_DEFAULT, EXTRACTION_LAG_MIN_PAGES } = await import('./doctor.ts');
+    const totalRows = await engine.executeRaw<{ count: number }>(
+      sourceId
+        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND source_id = $1`
+        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL`,
+      sourceId ? [sourceId] : [],
+    );
+    const total = Number(totalRows[0]?.count ?? 0);
+    // Match doctor's predicate EXACTLY (C4): skip tiny brains only when NOT
+    // source-scoped (a small explicit source IS assessed, like orphan_ratio).
+    if (total < EXTRACTION_LAG_MIN_PAGES && !sourceId) return;
+    const stale = await engine.countStalePagesForExtraction({ sourceId, versionTs: LINK_EXTRACTOR_VERSION_TS });
+    const warnPct = _resolveEnvNumber('GBRAIN_EXTRACTION_LAG_WARN_PCT', EXTRACTION_LAG_WARN_PCT_DEFAULT, { unit: '%' });
+    if ((stale / total) * 100 > warnPct) {
+      serr(`[sync] ${stale} page(s) have un-extracted edges — run 'gbrain extract --stale'`);
+    }
+  } catch { /* nudge is best-effort — never block sync on it */ }
 }
 
 /**

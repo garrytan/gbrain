@@ -35,7 +35,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -75,6 +75,9 @@ const CLI_ONLY_SELF_HELP = new Set([
   // describing segment splitting + checkpointing + budget caps + the
   // unified types config story. Route around the generic short-circuit.
   'extract-conversation-facts',
+  // v0.41.39 (#1700) — enrich ships its own detailed HELP (ordering, budget
+  // best-effort caveat, provenance, --reenrich-after). Route around the stub.
+  'enrich',
   // `gbrain connect --help` prints its own usage (flags + examples) from
   // runConnect; route around the generic one-line short-circuit.
   'connect',
@@ -791,7 +794,7 @@ function formatResult(opName: string, result: unknown): string {
  * `runRemoteDoctor` for thin-client installs.
  */
 const THIN_CLIENT_REFUSED_COMMANDS = new Set([
-  'sync', 'embed', 'extract', 'extract-conversation-facts', 'migrate', 'apply-migrations',
+  'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'apply-migrations',
   'repair-jsonb', 'orphans', 'integrity', 'serve',
   // v0.31.1 (CDX-2 op coverage matrix): more local-only commands
   'dream', 'transcripts', 'storage',
@@ -826,6 +829,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   embed: 'embed runs on the host as part of the autopilot cycle. `gbrain remote ping` triggers a full cycle including embed.',
   extract: 'extract runs on the host. Use `gbrain remote ping` to trigger a cycle including extract.',
   'extract-conversation-facts': 'extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.',
+  enrich: 'enrich runs on the host (requires local engine + chat gateway for grounded synthesis). Run on the host machine.',
   migrate: "migrate runs on the host's local engine. Run on the host machine.",
   'apply-migrations': 'schema migrations run on the host. SSH and run there.',
   'repair-jsonb': 'repair-jsonb operates on the local DB only.',
@@ -1275,6 +1279,16 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // v0.41.39 (#1700): same pattern for `enrich --help`. enrich is in
+  // CLI_ONLY_SELF_HELP so the generic stub stays out of the way; this
+  // pre-engine-bind branch exposes the HELP constant without a configured
+  // brain. runEnrich's --help path returns before touching the engine.
+  if (command === 'enrich' && (args.includes('--help') || args.includes('-h'))) {
+    const { runEnrich } = await import('./commands/enrich.ts');
+    await runEnrich(null as never, args);
+    return;
+  }
+
   // v0.41.6.0 D3 (per outside-voice F1): connect-time + dispatch-time wallclock
   // timeouts for read-only commands whose hang would otherwise spin at 100% CPU
   // (the production "10-day zombie gbrain search ping" bug class). The wrap
@@ -1419,6 +1433,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'extract-conversation-facts': {
         const { runExtractConversationFacts } = await import('./commands/extract-conversation-facts.ts');
         await runExtractConversationFacts(engine, args);
+        break;
+      }
+      case 'enrich': {
+        const { runEnrich } = await import('./commands/enrich.ts');
+        await runEnrich(engine, args);
         break;
       }
       case 'features': {
@@ -1676,6 +1695,12 @@ async function handleCliOnly(command: string, args: string[]) {
         // v0.26.5: page-level operator commands (purge-deleted escape hatch).
         const { runPages } = await import('./commands/pages.ts');
         await runPages(engine, args);
+        break;
+      }
+      case 'quarantine': {
+        // v0.42 (#1699): content-quality gate operator surface.
+        const { runQuarantine } = await import('./commands/quarantine.ts');
+        await runQuarantine(engine, args);
         break;
       }
       case 'storage': {

@@ -1316,3 +1316,17 @@ describe('issue #972 — link_resolution_opportunity check', () => {
     expect(source).not.toMatch(/await engine\.getPage\(ref\.slug/);
   });
 });
+
+describe('v0.42 (#1699) — quarantined_pages + flagged_pages checks', () => {
+  test('both checks are wired into buildChecks (source-grep)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain("progress.heartbeat('quarantined_pages')");
+    expect(source).toContain("progress.heartbeat('flagged_pages')");
+    // quarantine HIDES (JSONB existence scan), content_flag WARNS.
+    expect(source).toContain("p.frontmatter ? 'quarantine'");
+    expect(source).toContain("p.frontmatter ? 'content_flag'");
+    // Each emits a named check.
+    expect(source).toMatch(/name: 'quarantined_pages'/);
+    expect(source).toMatch(/name: 'flagged_pages'/);
+  });
+});
