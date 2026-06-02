@@ -76,6 +76,7 @@
 
 <div class="toolbar">
   <button class="refresh-btn" onclick="loadQueue()">↻ 重新整理</button>
+  <button class="refresh-btn" onclick="applyAllSuggested()" style="background:#1a2a1a;color:#6add9a;border-color:#2a4a2a">⚡ 套用全部建議值</button>
   <span class="count-badge" id="count-badge"></span>
 </div>
 
@@ -145,6 +146,12 @@ async function loadQueue() {
   }
   document.getElementById('subtitle').textContent = `wiki/review-queue/ 動態載入`;
   document.getElementById('count-badge').textContent = items.length ? `${items.length} 項待審` : '';
+  // Layer 2: 預設選中 suggested 值
+  items.forEach(item => {
+    if (item.suggested && !decisions[item.id]) {
+      decisions[item.id] = 'connect';
+    }
+  });
   renderCards();
 }
 
@@ -168,7 +175,8 @@ function renderCards() {
     if (item.review_type === 'link') {
       titleHtml = `<span class="slug-tag">${item.from}</span> <span style="color:#333">↔</span> <span class="slug-tag">${item.to}</span>`;
     } else if (item.review_type === 'signal') {
-      titleHtml = `<span class="slug-tag">${item.target}</span> → <span style="color:#aa6add">signal:${item.suggested}</span>`;
+      const sigColor = item.suggested >= 7 ? '#f0a040' : item.suggested >= 5 ? '#7dda9a' : '#aa6add';
+      titleHtml = `<span class="slug-tag">${item.target}</span> → <span style="color:${sigColor};font-weight:600">signal:${item.suggested}</span>`;
     } else {
       titleHtml = `<span class="slug-tag">${item.title}</span>`;
     }
@@ -234,6 +242,12 @@ function decide(id, choice, event) {
   decisions[id] = choice;
   renderCards();
   if (openCard === id) setTimeout(() => toggleCard(id), 10);
+}
+
+function applyAllSuggested() {
+  items.forEach(item => { if (item.suggested) decisions[item.id] = 'connect'; });
+  renderCards();
+  document.getElementById('exec-result').innerHTML = `<span style="color:#6add9a">✅ 已預選 ${items.filter(i=>i.suggested).length} 筆建議值，按「套用所有決定」執行</span>`;
 }
 
 async function execAll() {
