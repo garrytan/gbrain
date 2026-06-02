@@ -15,7 +15,7 @@
 > comments between `triggers:` and array items break gray-matter
 > parsing). Also caught upstream's missing trailing-newline on a new
 > baseline fixture (mechanical local patch). `docs/CLAUDE-UPSTREAM.md`
-> refreshed to v0.41.14.0 (2021 lines, 0 wintermute hits). fork-protected
+> refreshed to v0.41.14.0 (2021 lines, 0 banned-name hits). fork-protected
 > paths zero-touch. **3140 pages preserved** (exact match to §6.30
 > baseline). OAuth 4-client wire confirmed live under v0.41.3.0 CORS
 > lockdown (kos-worker token exchange + MCP tools/list → 76 tools).
