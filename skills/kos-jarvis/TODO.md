@@ -148,6 +148,31 @@ oauth_*),WAL fork patch retained for brain-db.ts。
 
 ---
 
+## P1 — Post-enrich-sweep KB refinement (added 2026-06-01)
+
+### [ ] (P1) Batch KB refinement of the email-corpus stubs — see `REFINEMENT-BACKLOG.md`
+
+The full `mailagent-emails` enrich-sweep (Tier-3-only, `--min-mentions 3`,
+~3482 stubs) surfaced 6 quality signals. Lucien's call: **one batch refinement
+after the sweep hits `ALL DONE`**, not per-signal mid-run. Full detail
+(detection SQL + counts + fixes + runbook) in
+[`skills/kos-jarvis/REFINEMENT-BACKLOG.md`](REFINEMENT-BACKLOG.md). Headlines:
+
+- **R1 (HIGH)** all ~3482 stubs landed in `source_id='mailagent-emails'`, not
+  `default` (script `export GBRAIN_SOURCE=…` + `gbrain put` no `--source`).
+- **R2 (HIGH)** ~564→~870 stubs duplicate entities already in `default`
+  (Phase C existence check saw only the read source).
+- **R3** ~16 email addresses extracted as entity names (incl. Lucien's own).
+- **R4** ≥5 near-duplicate company variants dedupe missed.
+- **R5** cosmetic `tier 2*` marker confusion under `--tier3-only`.
+- **R6** 68 thin (<300-char) shells.
+
+Also lands 4 code fixes (R1 `--target-source`, R2 all-source existence check,
+R3 email→alias, R4 dedupe normalization) so the next sweep is clean. Ties into
+the existing P2 "485 entity pages no link/timeline" graph-coverage item.
+
+---
+
 ## P0 — DONE 2026-05-04 (apply-migrations 已跑通)
 
 ### [x] 生产 Postgres schema 升到 v34 — DONE
