@@ -1,8 +1,8 @@
 /**
  * OpenAI Codex recipe contract (Commit 1).
  *
- * This file pins metadata only: the provider is registered and classified, but
- * must remain unavailable until later commits add the Codex auth/transport seam.
+ * This file pins the provider metadata, Codex-only auth readiness, and the
+ * streaming gateway branch once transport support lands.
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -15,7 +15,6 @@ import {
   probeChatModel,
   resetGateway,
 } from '../../src/core/ai/gateway.ts';
-import { AIConfigError } from '../../src/core/ai/errors.ts';
 
 const missingCodexAuth = { codexAuth: { source: 'env' as const } };
 const validCodexAuthSnapshot = {
@@ -111,24 +110,32 @@ describe('recipe: openai-codex', () => {
     }
   });
 
-  test('chat throws a clear Codex pending error instead of unknown implementation', async () => {
-    configureGateway({
-      chat_model: 'openai-codex:gpt-5.5',
-      env: {},
-      codex_auth: validCodexAuthSnapshot,
-    });
+  test('chat streams through Codex Responses instead of throwing unknown implementation', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => new Response([
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","delta":"pong"}\n\n',
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n',
+    ].join(''), { status: 200, headers: { 'content-type': 'text/event-stream' } })) as unknown as typeof fetch;
 
-    const promise = chat({
-      messages: [{ role: 'user', content: 'Reply with just: pong' }],
-      maxTokens: 16,
-    });
+    try {
+      configureGateway({
+        chat_model: 'openai-codex:gpt-5.5',
+        env: {},
+        codex_auth: validCodexAuthSnapshot,
+      });
 
-    await expect(promise).rejects.toThrow(AIConfigError);
-    await expect(
-      chat({
+      const result = await chat({
         messages: [{ role: 'user', content: 'Reply with just: pong' }],
         maxTokens: 16,
-      }),
-    ).rejects.toThrow(/Codex Responses streaming transport is pending/);
+      });
+
+      expect(result.text).toBe('pong');
+      expect(result.model).toBe('openai-codex:gpt-5.5');
+      expect(result.providerId).toBe('openai-codex');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

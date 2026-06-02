@@ -1,0 +1,11 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_basic","model":"gpt-5.5","status":"in_progress"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"O"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"K"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_basic","model":"gpt-5.5","status":"completed"}}

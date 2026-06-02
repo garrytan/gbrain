@@ -282,27 +282,45 @@ describe('resolveCodexAuthSnapshot', () => {
 });
 
 describe('gateway Codex auth snapshot', () => {
-  test('configureGateway materializes snapshot for availability, probe, and pending transport error', async () => {
+  test('configureGateway materializes snapshot for availability, probe, and streaming transport', async () => {
     const env: Record<string, string | undefined> = { [OPENAI_CODEX_ACCESS_TOKEN]: VALID_TOKEN };
-    configureGateway({
-      chat_model: 'openai-codex:gpt-5.5',
-      env,
-      codex_auth_options: {
-        homeDir: HOME,
-        now: NOW_MS,
-        readFileText: missingReader(),
-      },
-    });
+    const originalFetch = globalThis.fetch;
+    let seenAuth = '';
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seenAuth = new Headers(init?.headers).get('authorization') ?? '';
+      return new Response([
+        'event: response.output_text.delta\n',
+        'data: {"type":"response.output_text.delta","delta":"OK"}\n\n',
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n',
+      ].join(''), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    }) as unknown as typeof fetch;
 
-    delete env[OPENAI_CODEX_ACCESS_TOKEN];
+    try {
+      configureGateway({
+        chat_model: 'openai-codex:gpt-5.5',
+        env,
+        codex_auth_options: {
+          homeDir: HOME,
+          now: NOW_MS,
+          readFileText: missingReader(),
+        },
+      });
 
-    expect(isAvailable('chat', 'openai-codex:gpt-5.5')).toBe(true);
-    expect(probeChatModel('openai-codex:gpt-5.5')).toEqual({ ok: true });
+      delete env[OPENAI_CODEX_ACCESS_TOKEN];
 
-    await expect(chat({
-      messages: [{ role: 'user', content: 'ping' }],
-      maxTokens: 8,
-    })).rejects.toThrow(/Codex Responses streaming transport is pending/);
+      expect(isAvailable('chat', 'openai-codex:gpt-5.5')).toBe(true);
+      expect(probeChatModel('openai-codex:gpt-5.5')).toEqual({ ok: true });
+
+      const result = await chat({
+        messages: [{ role: 'user', content: 'ping' }],
+        maxTokens: 8,
+      });
+      expect(result.text).toBe('OK');
+      expect(seenAuth).toBe(`Bearer ${VALID_TOKEN}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test('Codex chat availability and probe are false with missing snapshot', () => {

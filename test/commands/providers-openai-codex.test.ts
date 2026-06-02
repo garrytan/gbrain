@@ -197,18 +197,32 @@ describe('openai-codex provider readiness', () => {
     });
   });
 
-  test('providers test passes auth readiness with valid env-token then reports pending transport', async () => {
+  test('providers test passes auth readiness and probes Codex streaming transport with valid env-token', async () => {
     await withProvidersEnv({ [OPENAI_CODEX_ACCESS_TOKEN]: VALID_TOKEN }, async () => {
-      const captured = await captureRun(() => runProviders(
-        'test',
-        ['--touchpoint', 'chat', '--model', 'openai-codex:gpt-5.5'],
-        codexOptions(),
-      ));
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => new Response([
+        'event: response.output_text.delta\n',
+        'data: {"type":"response.output_text.delta","delta":"pong"}\n\n',
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n',
+      ].join(''), { status: 200, headers: { 'content-type': 'text/event-stream' } })) as unknown as typeof fetch;
 
-      expect(captured.exitCode).toBe(2);
-      expect(captured.stdout).toContain('Probing chat provider...');
-      expect(captured.stderr).toContain('Codex Responses streaming transport is pending');
-      expect(captured.stderr).not.toContain(VALID_TOKEN);
+      try {
+        const captured = await captureRun(() => runProviders(
+          'test',
+          ['--touchpoint', 'chat', '--model', 'openai-codex:gpt-5.5'],
+          codexOptions(),
+        ));
+
+        expect(captured.exitCode ?? 0).toBe(0);
+        expect(captured.stdout).toContain('Probing chat provider...');
+        expect(captured.stdout).toContain('All probes green.');
+        expect(captured.stdout).toContain('model=openai-codex:gpt-5.5');
+        expect(captured.stdout).toContain('"pong"');
+        expect(captured.stderr).not.toContain(VALID_TOKEN);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });

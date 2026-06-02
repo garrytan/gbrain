@@ -58,6 +58,7 @@ import {
   resolveCodexAuthSnapshot,
   type CodexCredentialSnapshot,
 } from './codex-auth.ts';
+import { assertCodexTextOnly, runCodexResponsesChat } from './codex-responses.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 
 const MAX_CHARS = 8000;
@@ -106,6 +107,45 @@ const CODEX_PENDING_DETAIL =
 
 function isCodexResponsesRecipe(recipe: Recipe): boolean {
   return recipe.tier === 'codex-responses' || recipe.implementation === 'codex-responses';
+}
+
+function isCodexModelString(modelStr: string): boolean {
+  const lower = modelStr.toLowerCase();
+  return lower.startsWith('openai-codex:') || lower.startsWith('openai-codex/');
+}
+
+function resolveCodexChatTarget(modelStr: string): { recipe: Recipe; modelId: string } | null {
+  if (!isCodexModelString(modelStr)) return null;
+  const { parsed, recipe } = resolveRecipe(modelStr);
+  assertTouchpoint(recipe, 'chat', parsed.modelId, getExtendedModelsForProvider(parsed.providerId));
+  return isCodexResponsesRecipe(recipe) ? { recipe, modelId: parsed.modelId } : null;
+}
+
+function resolveCodexBaseURL(recipe: Recipe, cfg: AIGatewayConfig): string {
+  const baseURL = cfg.base_urls?.[recipe.id] ?? recipe.base_url_default;
+  if (!baseURL) {
+    throw new AIConfigError(
+      `${recipe.name} requires a base URL.`,
+      recipe.setup_hint,
+    );
+  }
+  try {
+    const parsed = new URL(baseURL);
+    const host = parsed.hostname.toLowerCase().replace(/\.+$/, '');
+    if (host === 'api.openai.com') {
+      throw new AIConfigError(
+        `${recipe.name} must use the ChatGPT/Codex Responses endpoint, not public OpenAI API base URL ${baseURL}.`,
+        'Use https://chatgpt.com/backend-api/codex or a Codex-plan proxy endpoint, not https://api.openai.com/v1.',
+      );
+    }
+  } catch (err) {
+    if (err instanceof AIConfigError) throw err;
+    throw new AIConfigError(
+      `${recipe.name} has an invalid base URL: ${baseURL}.`,
+      recipe.setup_hint,
+    );
+  }
+  return baseURL;
 }
 
 function getCodexAuthSnapshot(cfg: AIGatewayConfig): CodexCredentialSnapshot {
@@ -2518,6 +2558,14 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       });
     }
   }
+  const codexTarget = resolveCodexChatTarget(modelStrEarly);
+  if (codexTarget) {
+    // Codex first slice is text-only. This must run before budget reserve/fetch
+    // so unsupported tool definitions/history cannot be masked by no_pricing or
+    // leave budget audit side effects.
+    assertCodexTextOnly(opts);
+  }
+
   const estimatedInputTokens = estimateChatInputTokens(opts);
   const maxOutputTokens = opts.maxTokens ?? 4096;
 
@@ -2574,6 +2622,53 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
           // original error (if any) wins; the BudgetExhausted is surfaced
           // on the NEXT call via reserve(). For test transport this branch
           // is rare in practice.
+        }
+      }
+    }
+  }
+
+  if (codexTarget) {
+    const cfg = requireConfig();
+    const baseURL = resolveCodexBaseURL(codexTarget.recipe, cfg);
+    const credential = getCodexAuthSnapshot(cfg);
+    let res: ChatResult | null = null;
+    let threw: unknown = null;
+    try {
+      res = await runCodexResponsesChat({
+        recipe: codexTarget.recipe,
+        modelId: codexTarget.modelId,
+        opts,
+        credential,
+        baseURL,
+      });
+      return res;
+    } catch (err) {
+      threw = err;
+      throw err;
+    } finally {
+      if (tracker) {
+        try {
+          if (res) {
+            tracker.record({
+              modelId: res.model,
+              inputTokens: res.usage.input_tokens,
+              outputTokens: res.usage.output_tokens,
+              label: 'gateway.chat',
+            });
+          } else {
+            const usage = _extractUsageFromError(threw, {
+              inputTokens: estimatedInputTokens,
+              outputTokens: maxOutputTokens,
+            });
+            tracker.record({
+              modelId: `${codexTarget.recipe.id}:${codexTarget.modelId}`,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              label: 'gateway.chat',
+            });
+          }
+        } catch {
+          // BudgetExhausted (TX1) raised here; surface via next reserve().
         }
       }
     }
