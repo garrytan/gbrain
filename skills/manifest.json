@@ -275,6 +275,11 @@
       "description": "Opus corpus-level viewpoint synthesis (top of DIKW): map a whole source, propose themes + cross-document tensions, then deeply synthesize each into a 观点与洞察 page. Top-down (no embedding dependency); borrows gbrain's min_evidence gate + content_hash idempotency. KOS-Jarvis fork extension."
     },
     {
+      "name": "kos-jarvis/corpus-ingest",
+      "path": "kos-jarvis/corpus-ingest/SKILL.md",
+      "description": "One-command bulk-ingest pipeline (D->I->K->W) for one isolated source: register -> parallel put -> embed --stale -> enrich-sweep -> extract links/timeline -> [synthesis-sweep, opt-in] -> corpus-synth. Each stage idempotent/incremental; --from/--to-stage, --plan, --entity-synth, --refresh-stale. bash orchestrator. KOS-Jarvis fork extension."
+    },
+    {
       "name": "kos-jarvis/image-ingest",
       "path": "kos-jarvis/image-ingest/SKILL.md",
       "description": "Daily cron walking IMAGE_SOURCE_DIR, importing images via Voyage multimodal-3 (v0.36.6.0 cross-modal). Scaffolded — awaits VOYAGE_API_KEY + IMAGE_SOURCE_DIR fill."

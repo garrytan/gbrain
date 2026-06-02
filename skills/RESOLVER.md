@@ -145,6 +145,7 @@ upstream sections above; KOS extensions are append-only by policy.
 | Batch scan brain, extract entities, create people/company stubs (G1 payoff) | `skills/kos-jarvis/enrich-sweep/SKILL.md` |
 | "high-level abstraction", "entity dossier", "synthesis sweep" — Opus per-entity dossier synthesis (Wisdom layer): cluster an entity's mentioning sources via the link graph → deep evidence-cited high-level page | `skills/kos-jarvis/synthesis-sweep/SKILL.md` |
 | "corpus synthesis", "语料级综合", "corpus-level wisdom" — Opus corpus-level viewpoint synthesis: map a whole source → propose themes/tensions → deep per-theme 观点与洞察 page (top of DIKW) | `skills/kos-jarvis/corpus-synth/SKILL.md` |
+| "corpus ingest", "bulk ingest pipeline", "一键入脑", "ingest a knowledge base" — one-command D→I→K→W pipeline for one isolated source (register→ingest→embed→enrich→graph→[entity-synth]→corpus-synth), idempotent/incremental, --from/--to-stage | `skills/kos-jarvis/corpus-ingest/SKILL.md` |
 | Ingest images from IMAGE_SOURCE_DIR via Voyage multimodal-3 (cross-modal v0.36.6.0); scaffolded — awaits VOYAGE_API_KEY + IMAGE_SOURCE_DIR | `skills/kos-jarvis/image-ingest/SKILL.md` |
 
 These chain into upstream skills: digest-to-memory reads patrol output;
@@ -153,7 +154,9 @@ the entity-level Wisdom layer on top of enrich-sweep's entities + the
 extract-links graph; corpus-synth is the corpus-level Wisdom layer (whole-source
 themes/tensions). Both replace gbrain's pack-gated dream synthesis for the fork's
 corpus (gbrain's K→W phases require an atom layer / personal-reflections slugs /
-a VC-forecast prompt the fork's corpus structurally doesn't fit).
+a VC-forecast prompt the fork's corpus structurally doesn't fit). corpus-ingest
+chains the whole D→I→K→W pipeline (ingest → embed → enrich-sweep → extract-links →
+synthesis-sweep/corpus-synth) into one idempotent command per source.
 
 > **Archived (2026-05-05)**: `feishu-bridge` + `pending-enrich` skills
 > moved to `skills/kos-jarvis/_archived/`. Phase 2 Feishu signal-fork

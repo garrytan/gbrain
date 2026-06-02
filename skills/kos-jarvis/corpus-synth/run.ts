@@ -225,13 +225,17 @@ async function callOpus(
 type CorpusMap = { text: string; slugSet: Set<string>; included: number; total: number };
 
 function buildCorpusMap(f: Flags): CorpusMap {
-  // Exclude prior corpus-synth outputs so we never synthesize syntheses.
+  // Theme proposal reads the RAW knowledge (source documents), not derived
+  // pages: exclude prior corpus-synth outputs (never synthesize syntheses) AND
+  // entity stubs/dossiers (those are the per-entity layer; including them dilutes
+  // the map and can push real source pages past the token ceiling).
   const sql = `
     SELECT slug, coalesce(title, slug), left(compiled_truth, ${f.mapCharCap})
     FROM pages
     WHERE source_id = ${sqlStr(f.source!)} AND deleted_at IS NULL
       AND slug NOT LIKE 'synthesis/%'
       AND coalesce(frontmatter->>'synthesized_by','') <> 'corpus-synth'
+      AND type NOT IN ('person','company','concept','project','entity')
       AND coalesce(compiled_truth,'') <> ''
     ORDER BY updated_at DESC`;
   const rows = psqlRecords(sql);
