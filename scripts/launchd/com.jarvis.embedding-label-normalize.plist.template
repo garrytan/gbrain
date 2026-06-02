@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.embedding-label-normalize</string>
+    <!--
+      Daily cosmetic fix for the gbrain embed mislabel bug: the daemon stamps
+      content_chunks.model with the stale gateway default
+      (zeroentropyai:zembed-1) on every write, even though the vector is the
+      real openai:text-embedding-3-large@1536 via avman (§6.32). Label is
+      cosmetic (column resolver routes by column name, not model label) but a
+      drifting label trips the embedding-gateway-guard's mixed-model check.
+
+      Wrapper (scripts/jarvis-embedding-label-normalize.sh) has a config guard:
+      it relabels ONLY while the brain's embedding_model is still te3 — so it
+      never masks a real model switch.
+
+      No secrets → this .plist == .plist.template (unlike serve-http).
+
+      Manual:  bash scripts/jarvis-embedding-label-normalize.sh [--dry]
+      Verify:  launchctl print "gui/$(id -u)/com.jarvis.embedding-label-normalize"
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2/scripts/jarvis-embedding-label-normalize.sh</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/chenyuanquan</string>
+    </dict>
+    <!-- Daily 08:25 local — after kos-patrol (08:07) and the morning
+         notion-poller / mailagent / 舆情 write bursts, so it sweeps up the
+         day's accumulated mislabels in one pass. Cosmetic, so exact time
+         is not load-bearing. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>25</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/chenyuanquan/.gbrain/embedding-label-normalize.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/chenyuanquan/.gbrain/embedding-label-normalize.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/chenyuanquan/Projects/jarvis-knowledge-os-v2</string>
+</dict>
+</plist>

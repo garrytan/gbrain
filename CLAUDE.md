@@ -87,13 +87,33 @@ working on this codebase, before touching anything else:
   [`docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md`](docs/EXTERNAL-CLIENTS-MCP-WIRE-HANDOFF.md)
   is self-contained for any caller. If you change MCP op signatures or
   OAuth client scopes, notify Lucien.
-- **OAuth client identities** live at `~/.gbrain/oauth-clients/<name>.json`
-  (gitignored, mode 600 — contains plaintext `client_secret`). Never
-  commit. If lost: `bin/gbrain auth revoke-client <client_id>` then
-  re-register via `bin/gbrain auth register-client`. 4 clients reserved
-  2026-05-17: `kos-worker` (Notion Knowledge Agent), `lucien-cli` (Lucien
-  ad-hoc CLI), `mailagent` (future, when 方案 B ships), `feishu`
-  (future, dormant since 2026-05-05).
+- **OAuth client identities**: legacy clients live at
+  `~/.gbrain/oauth-clients/<name>.json` (gitignored, mode 600, plaintext
+  `client_secret`); newer ones (post-v0.42) live in the **`oauth_clients` DB
+  table** with a *hashed* secret (shown ONCE at registration — capture it then,
+  it's unrecoverable). Never commit secrets. If lost:
+  `bin/gbrain auth revoke-client <client_id>` then re-register via
+  `bin/gbrain auth register-client`. There is **no update command** — to change
+  an existing client's `federated_read` (cross-source read), `UPDATE
+  oauth_clients SET federated_read = ARRAY[...]` directly (daemon reads it live;
+  keeps the creds). Active clients:
+  - `kos-worker` — Notion Knowledge Agent (default).
+  - `lucien-cli` — Lucien ad-hoc CLI.
+  - `mailagent` — chat-save (write `default`); **`federated_read = {default,
+    mailagent-emails, omada}`** so its LLM can query across all three (2026-06-02).
+  - `mailagent-bulk` — bulk email ingest (write/read `mailagent-emails`).
+  - `omada-sentiment` — the Omada 舆情/竞品 sentiment system's daily writer
+    (write+read `omada`, `client_credentials`; created 2026-06-02; secret in
+    `~/.gbrain/oauth-clients/omada-sentiment.secret.txt`, mode 600).
+  - `feishu` — dormant since 2026-05-05.
+- **MCP skill publishing is ENABLED** (`mcp.publish_skills = true`,
+  `mcp.skills_dir = <repo>/skills`, both in the DB config plane; 2026-06-02). The
+  MCP server publishes all 56 skills (upstream + fork, fork under `kos-jarvis/…`
+  names) via `list_skills` / `get_skill` so a thin client (mailagent's LLM, etc.)
+  can discover + follow them, then call the CRUD MCP tools. Publishing is GLOBAL
+  (one catalog for all OAuth clients — no per-client skill allowlist); curate on
+  the *client/prompt* side (e.g. mailagent should use `query`/`idea-ingest`/
+  `brain-ops`, not the `kos-jarvis/*` batch/operator skills).
 - **Retired (2026-05-17, §6.28)**: `server/kos-compat-api.ts` (661 LoC,
   KOS-v1 Bearer wire that bound `:7225`) → `server/_archived/`, executed
   same-session via atomic port re-use (not 1-week deferred). Mbp-office
@@ -147,7 +167,12 @@ Both axes follow the same 6-tier resolution pattern. See
 `docs/architecture/brains-and-sources.md` for diagrams and
 `skills/conventions/brain-routing.md` for the agent decision table.
 
-For our fork: brain = `host`, sources = `default` (the only one).
+For our fork: brain = `host`. Sources (2026-06-02): `default` (personal
+brain), `mailagent-emails` (email corpus), `gbrain-docs` (upstream gbrain docs,
+145 pages), `omada` (Omada product KB: 114 user-guide sections + 572 FAQs + 24
+corpus-synth viewpoint pages + 720 entities; built via `corpus-ingest`; the
+`omada-sentiment` client appends daily 舆情/竞品 data). All on one coherent
+embedding space (openai:text-embedding-3-large@1536 via avman, §6.32).
 
 ## Skills + routing
 
