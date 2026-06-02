@@ -245,6 +245,13 @@ function normalizeName(name: string): string {
     .replace(/\bmr\.?|\bmrs\.?|\bdr\.?|\bprof\.?/g, "")
     .replace(/[^\w\s]/g, " ")
     .replace(/\s+/g, " ")
+    .trim()
+    // R4 (REFINEMENT-BACKLOG): unify hyphenation/suffix variants so dedupe
+    // merges them. `tplink` ↔ `tp-link` (→ "tp link"), and a trailing
+    // corporate suffix is dropped so "ADP" == "ADP Inc",
+    // "…-distribution-malaysia" == "…-distribution-malaysia-sdn-bhd".
+    .replace(/\btplink\b/g, "tp link")
+    .replace(/\s+(inc|co ltd|ltd|llc|gmbh|sdn bhd|corp|corporation|pte ltd|pty ltd|srl|bv|sa)$/g, "")
     .trim();
 }
 
@@ -311,6 +318,14 @@ function mentionNoise(c: Canonical): boolean {
   // normalizeName output (hyphens→spaces), so \s* covers "bug-123" and "bug123".
   if (/^\d+$/.test(c.key)) return true;
   if (/^bug\s*\d+$/.test(c.key)) return true;
+  // R3 (REFINEMENT-BACKLOG): email addresses / bare domains extracted as
+  // entity names are noise — the real person/company survives under a
+  // non-email alias. Match on the raw display name (normalizeName mangles
+  // `@`/`.`). The dot-before-TLD requirement spares real names like
+  // `4com`, `cnet`, `marcom`, `sct-telecom` (no embedded dot).
+  const nm = c.name.trim();
+  if (/[^\s@]+@[^\s@]+\.[^\s@]+/.test(nm)) return true;
+  if (/^([\w-]+\.)+(com|cn|net|org|io|co|hk|gov|edu|cloud|app)$/i.test(nm)) return true;
   return false;
 }
 
@@ -569,7 +584,14 @@ async function main() {
       const nerPath = nerCachePath(sourceId);
       const nerCache = loadNerCache(nerPath);
       let resumed = 0;
-      const anthropic = new Anthropic();
+      // CRS proxy: ANTHROPIC_BASE_URL carries a `/v1` suffix so gbrain's
+      // @ai-sdk/anthropic gateway (which appends `/messages`) hits
+      // `…/api/v1/messages`. The official @anthropic-ai/sdk used here appends
+      // `/v1/messages` itself, so strip a trailing `/v1` to avoid
+      // `…/api/v1/v1/messages` → 404. (unset env → SDK default base.)
+      const anthropic = new Anthropic({
+        baseURL: process.env.ANTHROPIC_BASE_URL?.replace(/\/v1\/?$/, "") || undefined,
+      });
       let i = 0;
       for (const row of rows) {
         i++;
