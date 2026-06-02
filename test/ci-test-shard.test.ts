@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseShardEnv, selectShardFiles, stableShardIndex } from '../scripts/ci-test-shard.ts';
+import { partitionTestFiles, parseShardEnv, selectShardFiles, stableShardIndex } from '../scripts/ci-test-shard.ts';
 
 describe('ci-test-shard', () => {
   test('partitions every file into exactly one stable shard', () => {
@@ -36,9 +36,42 @@ describe('ci-test-shard', () => {
 
     for (const file of files) {
       expect(stableShardIndex(file, 4)).toBe(stableShardIndex(file, 4));
-      expect(selectShardFiles(files, { shard: stableShardIndex(file, 4) + 1, total: 4 })).toContain(file);
-      expect(selectShardFiles(reversed, { shard: stableShardIndex(file, 4) + 1, total: 4 })).toContain(file);
     }
+
+    for (let shard = 1; shard <= 4; shard++) {
+      expect(selectShardFiles(files, { shard, total: 4 })).toEqual(
+        selectShardFiles(reversed, { shard, total: 4 }),
+      );
+    }
+  });
+
+  test('balances weighted files while keeping deterministic assignments', () => {
+    const files = [
+      'test/tiny-a.test.ts',
+      'test/tiny-b.test.ts',
+      'test/large-a.test.ts',
+      'test/large-b.test.ts',
+      'test/medium.test.ts',
+    ];
+    const weights = new Map([
+      ['test/large-a.test.ts', 20],
+      ['test/large-b.test.ts', 20],
+      ['test/medium.test.ts', 10],
+      ['test/tiny-a.test.ts', 1],
+      ['test/tiny-b.test.ts', 1],
+    ]);
+
+    const partitions = partitionTestFiles([...files].reverse(), 2, {
+      weightForFile: file => weights.get(file) ?? 1,
+    });
+
+    expect(partitions).toHaveLength(2);
+    expect(new Set(partitions.flat())).toEqual(new Set(files));
+    expect(partitions[0]).toContain('test/large-a.test.ts');
+    expect(partitions[1]).toContain('test/large-b.test.ts');
+    expect(selectShardFiles(files, { shard: 1, total: 2 }, {
+      weightForFile: file => weights.get(file) ?? 1,
+    })).toEqual(partitions[0]);
   });
 
   test('rejects invalid shard environment values', () => {

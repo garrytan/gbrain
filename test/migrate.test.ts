@@ -41,6 +41,41 @@ describe('migrate', () => {
     expect(typeof runMigrations).toBe('function');
   });
 
+  test('runMigrations batches consecutive SQL-only migrations', async () => {
+    const { runMigrations } = await import('../src/core/migrate.ts');
+    const calls: string[] = [];
+    const engine = {
+      getConfig: async () => '25',
+      transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+        calls.push('transaction');
+        return fn(engine);
+      },
+      runMigration: async (version: number) => {
+        calls.push(`migration:${version}`);
+      },
+      setConfig: async (_key: string, value: string) => {
+        calls.push(`version:${value}`);
+      },
+    };
+
+    const result = await runMigrations(engine as any);
+
+    expect(result.current).toBe(LATEST_VERSION);
+    expect(calls.filter(call => call === 'transaction')).toHaveLength(1);
+    expect(calls).toContain('migration:26');
+    expect(calls).toContain(`migration:${LATEST_VERSION}`);
+    expect(calls).toContain(`version:${LATEST_VERSION}`);
+  });
+
+  test('freshSchemaMigrationSql can start after an embedded baseline version', async () => {
+    const { freshSchemaMigrationSql } = await import('../src/core/migrate.ts');
+
+    const sql = freshSchemaMigrationSql(25);
+
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS memory_mutation_events');
+    expect(sql).not.toContain('CREATE TABLE IF NOT EXISTS access_tokens');
+  });
+
   test('postgres baseline schema uses nomic-friendly dimensions and defaults', () => {
     const schemaSource = readFileSync(
       new URL('../src/schema.sql', import.meta.url),

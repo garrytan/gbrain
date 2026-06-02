@@ -18,7 +18,7 @@ import {
   assertMemoryCandidateStatusEventInput,
   isAllowedMemoryCandidateStatusUpdate,
 } from './memory-inbox-status.ts';
-import { runMigrations } from './migrate.ts';
+import { freshSchemaMigrationSql, LATEST_VERSION, runMigrations, shouldSilenceMigrationLogs } from './migrate.ts';
 import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import { buildFrontmatterSearchText } from './markdown.ts';
@@ -170,6 +170,7 @@ import {
 
 type PGLiteDB = PGlite;
 const INTERACTION_ID_LOOKUP_BATCH_SIZE = 500;
+const PGLITE_EMBEDDED_SCHEMA_VERSION = 12;
 
 export class PGLiteEngine implements BrainEngine {
   private _db: PGLiteDB | null = null;
@@ -210,10 +211,15 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async initSchema(): Promise<void> {
+    const hasExistingConfig = await this.hasConfigTable();
     await this.db.exec(PGLITE_SCHEMA_SQL);
+    if (!hasExistingConfig) {
+      await this.db.exec(freshSchemaMigrationSql(PGLITE_EMBEDDED_SCHEMA_VERSION));
+      await this.setConfig('version', String(LATEST_VERSION));
+    }
 
     const { applied } = await runMigrations(this);
-    if (applied > 0) {
+    if (applied > 0 && !shouldSilenceMigrationLogs()) {
       console.log(`  ${applied} migration(s) applied`);
     }
   }
@@ -243,6 +249,19 @@ export class PGLiteEngine implements BrainEngine {
       Object.defineProperty(txEngine, 'db', { get: () => tx });
       return fn(txEngine);
     });
+  }
+
+  private async hasConfigTable(): Promise<boolean> {
+    try {
+      await this.db.query(`SELECT value FROM config WHERE key = 'version' LIMIT 1`);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/config/i.test(message) && /does not exist|not exist|no such table|undefined table/i.test(message)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   // Pages CRUD

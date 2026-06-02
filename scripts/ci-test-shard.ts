@@ -8,6 +8,9 @@ export interface TestShardSpec {
 }
 
 type EnvLike = Record<string, string | undefined>;
+type TestFileWeightOptions = {
+  weightForFile?: (file: string) => number;
+};
 
 function normalizeTestPath(path: string): string {
   return path.split(sep).join('/');
@@ -46,7 +49,66 @@ export function stableShardIndex(file: string, total: number): number {
   return hash % total;
 }
 
-export function selectShardFiles(files: string[], spec: TestShardSpec): string[] {
+function normalizeWeight(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+  return Math.max(1, Math.ceil(value));
+}
+
+export function estimateTestFileWeight(file: string, root = process.cwd()): number {
+  let weight = 1;
+
+  try {
+    const bytes = statSync(join(root, file)).size;
+    weight += Math.ceil(bytes / 4096);
+  } catch {
+    return weight;
+  }
+
+  if (file.includes('/e2e/') || file.includes('/scenarios/')) weight += 4;
+  if (file.includes('pglite') || file.includes('postgres') || file.includes('engine')) weight += 3;
+  if (file.includes('import') || file.includes('sync') || file.includes('phase8')) weight += 2;
+  if (file.includes('auto-promote')) weight += 2;
+
+  return weight;
+}
+
+export function partitionTestFiles(
+  files: string[],
+  total: number,
+  options: TestFileWeightOptions = {},
+): string[][] {
+  if (!Number.isSafeInteger(total) || total < 1) {
+    throw new Error('total must be a positive integer');
+  }
+
+  const weightForFile = options.weightForFile ?? (() => 1);
+  const shards = Array.from({ length: total }, (_, index) => ({
+    index,
+    files: [] as string[],
+    weight: 0,
+  }));
+  const candidates = [...new Set(files.map(normalizeTestPath))]
+    .map(file => ({ file, weight: normalizeWeight(weightForFile(file)) }))
+    .sort((a, b) => b.weight - a.weight || a.file.localeCompare(b.file));
+
+  for (const candidate of candidates) {
+    shards.sort((a, b) => a.weight - b.weight || a.files.length - b.files.length || a.index - b.index);
+    shards[0]!.files.push(candidate.file);
+    shards[0]!.weight += candidate.weight;
+  }
+
+  return shards
+    .sort((a, b) => a.index - b.index)
+    .map(shard => shard.files.sort());
+}
+
+export function selectShardFiles(
+  files: string[],
+  spec: TestShardSpec,
+  options: TestFileWeightOptions = {},
+): string[] {
   if (!Number.isSafeInteger(spec.total) || spec.total < 1) {
     throw new Error('TEST_SHARD_TOTAL must be a positive integer');
   }
@@ -54,10 +116,7 @@ export function selectShardFiles(files: string[], spec: TestShardSpec): string[]
     throw new Error('TEST_SHARD_INDEX must be between 1 and TEST_SHARD_TOTAL');
   }
 
-  return [...files]
-    .map(normalizeTestPath)
-    .sort()
-    .filter(file => stableShardIndex(file, spec.total) === spec.shard - 1);
+  return partitionTestFiles(files, spec.total, options)[spec.shard - 1]!;
 }
 
 export function discoverTestFiles(root = process.cwd()): string[] {
@@ -84,17 +143,33 @@ export function discoverTestFiles(root = process.cwd()): string[] {
 
 function runCli(): never {
   const spec = parseShardEnv();
-  const files = selectShardFiles(discoverTestFiles(), spec);
+  const files = selectShardFiles(discoverTestFiles(), spec, {
+    weightForFile: file => estimateTestFileWeight(file),
+  });
   const timeoutMs = process.env.TEST_TIMEOUT_MS ?? '20000';
+  const listOnly = process.argv.includes('--list') || process.argv.includes('--dry-run');
 
   console.log(`Running test shard ${spec.shard}/${spec.total}: ${files.length} files`);
+  if (listOnly) {
+    console.log(files.join('\n'));
+    process.exit(0);
+  }
   if (files.length === 0) {
     process.exit(0);
   }
 
-  const result = spawnSync(process.execPath, ['test', '--timeout', timeoutMs, ...files], {
+  const args = ['test', '--timeout', timeoutMs];
+  if (process.env.TEST_MAX_CONCURRENCY) {
+    args.push('--max-concurrency', process.env.TEST_MAX_CONCURRENCY);
+  }
+  args.push(...files);
+
+  const result = spawnSync(process.execPath, args, {
     cwd: process.cwd(),
-    env: process.env,
+    env: {
+      ...process.env,
+      MBRAIN_TEST_SILENCE_MIGRATIONS: process.env.MBRAIN_TEST_SILENCE_MIGRATIONS ?? '1',
+    },
     stdio: 'inherit',
   });
 

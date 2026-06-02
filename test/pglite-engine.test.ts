@@ -26,6 +26,55 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
+test('initSchema can suppress migration logs for the test shard runner', async () => {
+  const originalLog = console.log;
+  const originalSilence = process.env.MBRAIN_TEST_SILENCE_MIGRATIONS;
+  const logs: string[] = [];
+  const isolated = new PGLiteEngine();
+
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(' '));
+  };
+  process.env.MBRAIN_TEST_SILENCE_MIGRATIONS = '1';
+
+  try {
+    await isolated.connect({});
+    await isolated.initSchema();
+  } finally {
+    await isolated.disconnect();
+    console.log = originalLog;
+    if (originalSilence === undefined) {
+      delete process.env.MBRAIN_TEST_SILENCE_MIGRATIONS;
+    } else {
+      process.env.MBRAIN_TEST_SILENCE_MIGRATIONS = originalSilence;
+    }
+  }
+
+  expect(logs.filter(line => /Migration|migration\(s\)/.test(line))).toEqual([]);
+});
+
+test('fresh initSchema does not replay embedded migrations', async () => {
+  let migrationCount = 0;
+
+  class CountingPGLiteEngine extends PGLiteEngine {
+    override async runMigration(version: number, sql: string): Promise<void> {
+      migrationCount++;
+      await super.runMigration(version, sql);
+    }
+  }
+
+  const isolated = new CountingPGLiteEngine();
+  try {
+    await isolated.connect({});
+    await isolated.initSchema();
+
+    expect(migrationCount).toBe(0);
+    expect(await isolated.getConfig('version')).toBe(String(LATEST_VERSION));
+  } finally {
+    await isolated.disconnect();
+  }
+});
+
 // Helper to reset data between test groups
 async function truncateAll() {
   const tables = [

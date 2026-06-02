@@ -1,7 +1,4 @@
-import { describe, it, expect } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { describe, it, expect, setDefaultTimeout } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runAutoPromote } from '../../src/core/auto-promote/service.ts';
 import { defaultAutoPromoteConfig } from '../../src/core/auto-promote/config.ts';
@@ -10,17 +7,16 @@ import { parsePromotionVerdict } from '../../src/core/auto-promote/verdict.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 
 const NOW = '2026-06-01T00:00:00Z';
+setDefaultTimeout(20_000);
 
 async function withEngine(fn: (engine: PGLiteEngine) => Promise<void>) {
-  const dir = mkdtempSync(join(tmpdir(), 'mbrain-e2e-ap-'));
   const engine = new PGLiteEngine();
   try {
-    await engine.connect({ engine: 'pglite', database_path: dir });
+    await engine.connect({ engine: 'pglite' });
     await engine.initSchema();
     await fn(engine);
   } finally {
     await engine.disconnect();
-    rmSync(dir, { recursive: true, force: true });
   }
 }
 

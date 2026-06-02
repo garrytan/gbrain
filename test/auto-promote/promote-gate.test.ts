@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
-import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { SQLiteEngine } from '../../src/core/sqlite-engine.ts';
 import { runPromoteGate } from '../../src/core/auto-promote/promote-gate.ts';
 import { defaultAutoPromoteConfig } from '../../src/core/auto-promote/config.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -30,16 +27,14 @@ async function seedTargetPage(engine: BrainEngine) {
   });
 }
 
-async function withEngine(fn: (engine: PGLiteEngine) => Promise<void>) {
-  const dir = mkdtempSync(join(tmpdir(), 'mbrain-gate-'));
-  const engine = new PGLiteEngine();
+async function withEngine(fn: (engine: SQLiteEngine) => Promise<void>) {
+  const engine = new SQLiteEngine();
   try {
-    await engine.connect({ engine: 'pglite', database_path: dir });
+    await engine.connect({ engine: 'sqlite', database_path: ':memory:' });
     await engine.initSchema();
     await fn(engine);
   } finally {
     await engine.disconnect();
-    rmSync(dir, { recursive: true, force: true });
   }
 }
 

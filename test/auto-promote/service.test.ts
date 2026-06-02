@@ -1,8 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
-import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { SQLiteEngine } from '../../src/core/sqlite-engine.ts';
 import { runAutoPromote } from '../../src/core/auto-promote/service.ts';
 import { defaultAutoPromoteConfig } from '../../src/core/auto-promote/config.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -31,16 +28,14 @@ async function seedTargetPage(engine: BrainEngine, content = 'Acme is tracked in
     frontmatter: {},
   });
 }
-async function withEngine(fn: (engine: PGLiteEngine) => Promise<void>) {
-  const dir = mkdtempSync(join(tmpdir(), 'mbrain-svc-'));
-  const engine = new PGLiteEngine();
+async function withEngine(fn: (engine: SQLiteEngine) => Promise<void>) {
+  const engine = new SQLiteEngine();
   try {
-    await engine.connect({ engine: 'pglite', database_path: dir });
+    await engine.connect({ engine: 'sqlite', database_path: ':memory:' });
     await engine.initSchema();
     await fn(engine);
   } finally {
     await engine.disconnect();
-    rmSync(dir, { recursive: true, force: true });
   }
 }
 const stubExecutor = (decision: string, confidence: number) => async (_req?: any) => ({
@@ -121,8 +116,8 @@ describe('runAutoPromote', () => {
       await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: stubExecutor('defer', 0.3), contextLoader: stubContext, runner: { kind: 'claude_code' } as any });
       await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: stubExecutor('defer', 0.3), contextLoader: stubContext, runner: { kind: 'claude_code' } as any });
 
-      const rows = await (engine as any).db.query('SELECT * FROM auto_promote_verdicts');
-      expect(rows.rows).toHaveLength(0);
+      const rows = (engine as any).db.query('SELECT * FROM auto_promote_verdicts').all();
+      expect(rows).toHaveLength(0);
       expect(await engine.listCanonicalHandoffEntries({ candidate_id: 'cand-1' })).toHaveLength(0);
     });
   });

@@ -35,7 +35,15 @@ interface MigrationContext {
   log: MigrationLog;
 }
 
-const defaultMigrationLog: MigrationLog = (message) => console.log(message);
+export function shouldSilenceMigrationLogs(): boolean {
+  return process.env.MBRAIN_TEST_SILENCE_MIGRATIONS === '1';
+}
+
+const defaultMigrationLog: MigrationLog = (message) => {
+  if (!shouldSilenceMigrationLogs()) {
+    console.log(message);
+  }
+};
 
 // Migrations are embedded here, not loaded from files.
 // Add new migrations at the end. Never modify existing ones.
@@ -2927,6 +2935,14 @@ export const LATEST_VERSION = MIGRATIONS.length > 0
   ? MIGRATIONS[MIGRATIONS.length - 1].version
   : 1;
 
+export function freshSchemaMigrationSql(afterVersion = 1): string {
+  return MIGRATIONS
+    .filter(migration => migration.version > afterVersion)
+    .map(migration => migration.sql.trim())
+    .filter(sql => sql.length > 0)
+    .join('\n\n');
+}
+
 export async function runMigrations(
   engine: SqlMigrationEngine,
   options: { log?: MigrationLog } = {},
@@ -2936,7 +2952,44 @@ export async function runMigrations(
   const current = parseInt(currentStr || '1', 10);
 
   let applied = 0;
-  for (const m of MIGRATIONS) {
+  for (let index = 0; index < MIGRATIONS.length;) {
+    const m = MIGRATIONS[index]!;
+    if (m.version <= current) {
+      index++;
+      continue;
+    }
+
+    if (!m.handler) {
+      const batch: Migration[] = [];
+      while (index < MIGRATIONS.length) {
+        const candidate = MIGRATIONS[index]!;
+        if (candidate.version <= current) {
+          index++;
+          continue;
+        }
+        if (candidate.handler) {
+          break;
+        }
+        batch.push(candidate);
+        index++;
+      }
+
+      await engine.transaction(async (tx) => {
+        for (const migration of batch) {
+          if (migration.sql) {
+            await (tx as SqlMigrationEngine).runMigration(migration.version, migration.sql);
+          }
+          await tx.setConfig('version', String(migration.version));
+        }
+      });
+
+      for (const migration of batch) {
+        log(`  Migration ${migration.version} applied: ${migration.name}`);
+        applied++;
+      }
+      continue;
+    }
+
     if (m.version > current) {
       // SQL migration (transactional)
       if (m.sql) {
@@ -2955,6 +3008,7 @@ export async function runMigrations(
       log(`  Migration ${m.version} applied: ${m.name}`);
       applied++;
     }
+    index++;
   }
 
   return { applied, current: applied > 0 ? MIGRATIONS[MIGRATIONS.length - 1].version : current };
