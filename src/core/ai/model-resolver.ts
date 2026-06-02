@@ -77,6 +77,18 @@ export function resolveRecipe(modelId: string): { parsed: ParsedModelId; recipe:
   return { parsed, recipe };
 }
 
+export function resolveEmbeddingDefaultDims(recipe: Recipe, modelId: string): number {
+  const tp = recipe.touchpoints.embedding;
+  if (!tp) {
+    throw new AIConfigError(
+      `Provider "${recipe.id}" does not offer embedding models.`,
+      `Pick a recipe with an embedding touchpoint (gbrain providers list).`,
+    );
+  }
+  const canonicalModelId = recipe.aliases?.[modelId] ?? modelId;
+  return tp.fixed_dims_by_model?.[canonicalModelId] ?? tp.default_dims;
+}
+
 type KnownTouchpointKey = 'embedding' | 'expansion' | 'chat' | 'reranker';
 
 function getTouchpoint(recipe: Recipe, touchpoint: TouchpointKind): EmbeddingTouchpoint | ExpansionTouchpoint | ChatTouchpoint | RerankerTouchpoint | undefined {

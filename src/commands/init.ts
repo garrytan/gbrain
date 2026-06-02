@@ -245,9 +245,8 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
     out.embedding_dimensions = dimsArg;
   } else if (out.embedding_model && out.embedding_dimensions === undefined) {
     // Derive default dims from the resolved recipe when verbose form was used.
-    const { getRecipe } = await import('../core/ai/recipes/index.ts');
-    const providerId = out.embedding_model.split(':')[0];
-    const recipe = getRecipe(providerId);
+    const { resolveRecipe, resolveEmbeddingDefaultDims } = await import('../core/ai/model-resolver.ts');
+    const { recipe, parsed } = resolveRecipe(out.embedding_model);
     // v0.32: user_provided_models recipes (litellm, llama-server) have
     // default_dims=0 and ship with `models: []` — there's no sensible
     // fallback. Refuse explicitly here too. Without this, the verbose path
@@ -262,8 +261,9 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       );
       process.exit(1);
     }
-    if (recipe?.touchpoints.embedding?.default_dims) {
-      out.embedding_dimensions = recipe.touchpoints.embedding.default_dims;
+    const defaultDims = resolveEmbeddingDefaultDims(recipe, parsed.modelId);
+    if (defaultDims > 0) {
+      out.embedding_dimensions = defaultDims;
     }
   }
 

@@ -6,6 +6,7 @@
  */
 
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
+import { resolveEmbeddingDefaultDims } from '../core/ai/model-resolver.ts';
 import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
@@ -187,7 +188,7 @@ async function runTest(args: string[]): Promise<void> {
       const dims =
         configuredModel === modelArg && typeof configuredEmbeddingDimensions === 'number'
           ? configuredEmbeddingDimensions
-          : (recipe?.touchpoints.embedding?.default_dims ?? 1536);
+          : (recipe?.touchpoints.embedding ? resolveEmbeddingDefaultDims(recipe, modelId) : 1536);
       configureGateway({
         embedding_model: modelArg,
         embedding_dimensions: dims,
