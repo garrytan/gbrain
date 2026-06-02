@@ -80,7 +80,7 @@ export async function tryAcquireDbLock(
     // `gbrain sync --break-lock --max-age <s>` uses last_refreshed_at (not
     // acquired_at) to identify wedged-but-alive holders without stealing
     // healthy long-running holders that are actively refreshing.
-    const rows: Array<{ id: string }> = await sql`
+    const rows: Array<{ id: string; acquired_at: Date | string }> = await sql`
       INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
       VALUES (${lockId}, ${pid}, ${host}, NOW(), NOW() + ${ttl}::interval, NOW())
       ON CONFLICT (id) DO UPDATE
@@ -90,13 +90,14 @@ export async function tryAcquireDbLock(
             ttl_expires_at = NOW() + ${ttl}::interval,
             last_refreshed_at = NOW()
         WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
-      RETURNING id
+      RETURNING id, acquired_at
     `;
     if (rows.length === 0) return null;
+    const acquiredAt = rows[0].acquired_at;
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await sql`
         DELETE FROM gbrain_cycle_locks
-        WHERE id = ${lockId} AND holder_pid = ${pid}
+        WHERE id = ${lockId} AND holder_pid = ${pid} AND acquired_at = ${acquiredAt}
       `;
     });
     return {
@@ -109,14 +110,14 @@ export async function tryAcquireDbLock(
           UPDATE gbrain_cycle_locks
             SET ttl_expires_at = NOW() + ${ttl}::interval,
                 last_refreshed_at = NOW()
-          WHERE id = ${lockId} AND holder_pid = ${pid}
+          WHERE id = ${lockId} AND holder_pid = ${pid} AND acquired_at = ${acquiredAt}
         `;
       },
       release: async () => {
         deregister();
         await sql`
           DELETE FROM gbrain_cycle_locks
-          WHERE id = ${lockId} AND holder_pid = ${pid}
+          WHERE id = ${lockId} AND holder_pid = ${pid} AND acquired_at = ${acquiredAt}
         `;
       },
     };
@@ -135,14 +136,15 @@ export async function tryAcquireDbLock(
              ttl_expires_at = NOW() + $4::interval,
              last_refreshed_at = NOW()
          WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
-       RETURNING id`,
+       RETURNING id, acquired_at`,
       [lockId, pid, host, ttl],
     );
     if (rows.length === 0) return null;
+    const acquiredAt = (rows[0] as { acquired_at: Date | string }).acquired_at;
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await db.query(
-        `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
-        [lockId, pid],
+        `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND acquired_at = $3`,
+        [lockId, pid, acquiredAt],
       );
     });
     return {
@@ -152,15 +154,15 @@ export async function tryAcquireDbLock(
           `UPDATE gbrain_cycle_locks
               SET ttl_expires_at = NOW() + $1::interval,
                   last_refreshed_at = NOW()
-            WHERE id = $2 AND holder_pid = $3`,
-          [ttl, lockId, pid],
+            WHERE id = $2 AND holder_pid = $3 AND acquired_at = $4`,
+          [ttl, lockId, pid, acquiredAt],
         );
       },
       release: async () => {
         deregister();
         await db.query(
-          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
-          [lockId, pid],
+          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND acquired_at = $3`,
+          [lockId, pid, acquiredAt],
         );
       },
     };
