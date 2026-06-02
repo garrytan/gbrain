@@ -63,3 +63,6 @@ I have updated the table to include the mixed drinks and wine menu items. You ca
 ## Assistant
 
 The table has been updated to include the wine menu items along with the previously included drinks and mixed drinks. You can now review the final list of all items sold last night. If you need any additional details, feel free to ask.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

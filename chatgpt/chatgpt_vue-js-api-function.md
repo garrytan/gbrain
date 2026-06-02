@@ -102,3 +102,6 @@ async getBlogPost() {
 ```
 
 Note that the `response.data` property holds the actual data returned by the API, rather than the object that contains the data and the status. So you should assign `response.data` to `blogPost` instead of `response.data.data`.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

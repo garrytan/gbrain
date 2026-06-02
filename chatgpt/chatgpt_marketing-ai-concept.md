@@ -51,3 +51,6 @@ Or sharper:
 Key design rule: separate her from the human team visually. Maybe put her on the right side as “AI Operating Layer” or “How we scale,” while the human team remains clearly human leadership. This avoids any weirdness around implying she is a real employee, while making the AI-native company story much stronger.
 
 I’d include it if the photo quality is genuinely premium. It makes the team slide memorable and reinforces that Jovie is using its own product philosophy internally.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

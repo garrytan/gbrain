@@ -29,3 +29,6 @@ Respond to this comment with practical logical science backed fitness advice
 Reply with this:
 
 > Yes, that helps. But timing and total leucine intake still matter for MPS (muscle protein synthesis). Studies show ~2.5–3g leucine per meal spikes MPS best. If your vegan protein has 1.5g, you’ll need either 2 scoops or to add leucine/EAA-rich foods (like tempeh, lentils, or EAA powder) around your main meals to match whey’s anabolic effect. It’s doable—just takes planning.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

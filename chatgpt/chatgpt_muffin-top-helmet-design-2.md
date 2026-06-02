@@ -37,3 +37,6 @@ Mr. White, here’s a refined DALL·E prompt that incorporates your latest specs
 > • Neutral background under soft studio lighting”
 
 Let me know if you want to tweak any element (proportions, color tones, visor shape, etc.) before generating.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

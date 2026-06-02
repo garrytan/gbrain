@@ -361,3 +361,6 @@ Key points:
 
 **Bottom line:**  
 Stick with `postcss.config.js` unless you’re converting the entire repo to ESM and want `export default`. No need to change just for Tailwind 4.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

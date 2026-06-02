@@ -38,3 +38,6 @@ Mr. White, **Modern Family** was filmed mostly in Los Angeles.
 - **Mitchell & Cameron house:** 2211 Fox Hills Dr, Century City. citeturn1search5turn2image1
 
 Everything else (parks, malls, streets) was a mix of on-location shoots around L.A. and occasional travel episodes, but the “home life” interiors you see week to week are Stage 5. citeturn0search3turn0search9
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

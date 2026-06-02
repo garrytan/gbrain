@@ -205,3 +205,6 @@ So if we answer your original question directly:
 If you want, next step I can sketch a concrete data model + cron / worker design for Jovi (tables, fields, and how to key everything on ISRC so it stays robust across DSPs).
 
 navlistSpotify API volatility & why to design defensivelyturn0news30
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

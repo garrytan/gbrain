@@ -26,3 +26,6 @@ When was gay marriage... When was gay marriage legalized in the state of New Yor
 ## Assistant
 
 Gay marriage was legalized in the state of New York on June 24, 2011.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

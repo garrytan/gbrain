@@ -194,3 +194,6 @@ Got it, Mr. White. Here are the most cost-effective **home Internet** and **cell
 - **Best unlimited mobile:** Visible at \$25/mo all-in on Verizon’s 5G.
 
 Let me know which setup you’d like to move forward with.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

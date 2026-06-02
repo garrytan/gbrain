@@ -53,3 +53,6 @@ If I only have rocks glasses?
 ## Assistant
 
 If you only have rocks glasses, you can still enjoy a Cosmopolitan. Simply follow the same recipe and pour the shaken mixture into the rocks glass. It's common to serve it without ice in the glass, but if you prefer, you can add a few ice cubes. The taste will be the same, just the presentation differs slightly. Cheers, Mr. White!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

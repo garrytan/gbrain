@@ -228,3 +228,6 @@ Small body copy beneath:
 CTA button: “See the loop.”
 
 Mood: premium Frame.io editorial landing page, cinematic product narrative, luxury music industry, quiet creative power, expensive but restrained, modern black UI, Kodak film warmth, 35mm grain, realistic web design mockup, no obvious SaaS comparison cards, no fake logos, no celebrity likenesses, no nightclub, no crowd.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

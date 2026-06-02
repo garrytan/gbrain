@@ -35,3 +35,6 @@ Fixes:
 1. **Reboot and reconnect to Wi-Fi** to trigger a time-server sync.  
 2. **Check the Toast Web Dashboard → Devices**. Make sure the store location and time zone are set to Pacific.  
 3. If it’s still wrong, **contact Toast support or your POS admin** to push the correct time zone or update the MDM profile. You won’t be able to change it on the device itself.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

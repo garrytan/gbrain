@@ -365,3 +365,6 @@ Swap = change adapter + config, nothing else.
 **Event → create notification row → NotificationService fans out (push/email/sms) via adapters → iOS Inbox reads & realtime-syncs status changes cross-device.**
 
 If you want, I can give you a tiny reference folder layout (server + iOS) that matches this exactly.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

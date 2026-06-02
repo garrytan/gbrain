@@ -107,3 +107,6 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 - Restart dev server and clear cookies after changing domain settings.
 
 If you want, tell me your exact value you set for the “frontend URL,” and I’ll map the precise Clerk settings + envs so this stops breaking.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

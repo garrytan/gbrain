@@ -379,3 +379,6 @@ If you want next:
 - A comparison of **Claude Tasks vs Cursor agents**  
 
 Say the word.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -42,3 +42,6 @@ LINEAR DESIGN SYSTEM LINEAR.APP
 Linear *does* have its own UI patterns internally — simple components for typography, color, layouts, etc. — but it isn’t published as an independent open “design system” like Material or Carbon. Some public discussion indicates design usage is pragmatic (e.g., using screenshots as baselines and iterating) rather than a heavily documented component library. citeturn0search6
 
 If you specifically meant UI design methodologies or toolkit elements from Linear, clarify whether you want *their internal design philosophy*, *any published assets*, or *third-party design kits (e.g., Figma files)* related to it.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

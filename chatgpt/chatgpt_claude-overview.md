@@ -36,3 +36,6 @@ claude
 For developers, Claude provides an API and supports integration with tools like GitHub and IDEs, facilitating the development of AI-powered applications and agents. citeturn0search3
 
 Overall, Claude represents Anthropic's commitment to advancing AI technology while prioritizing safety and ethical considerations. 
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -26,3 +26,6 @@ The DEXA scan affected by water weight and all.
 ## Assistant
 
 Yes, Mr. White,
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

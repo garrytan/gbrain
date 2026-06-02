@@ -409,3 +409,6 @@ If you want, I can:
 - Give the **exact same button** in shadcn/ui terms
 - Normalize this into a reusable `ToolbarButton` component
 - Or show the minimal diff for “active/open” state (Linear barely changes it)
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

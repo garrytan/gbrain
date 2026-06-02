@@ -64,3 +64,6 @@ Here’s how the clues line up:
 6. **Featured on Jon Bellion’s *The Human Condition*** – Alec co-wrote and sang background vocals on **“New York Soul Pt. II.”**
 
 It’s Alec Benjamin.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

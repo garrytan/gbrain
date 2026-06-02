@@ -520,3 +520,6 @@ Do these in order:
 14. Keep improving metrics every day until May 4.
 
 The highest-leverage thing is not another feature. It is showing YC that between April 23 and May 4, you can turn a live product and founder-market insight into real artist adoption.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

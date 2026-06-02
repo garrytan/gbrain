@@ -131,3 +131,6 @@ function useFilteredUsers(users: User[], query: string) {
 - ✅ Enforces best-practice hook usage faster than manual prompting
 
 If you want, tell me **which editor** you’re using (VS Code / Cursor / CLI Claude Code) and I’ll list the **exact supported slash commands** and what each one expands into.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

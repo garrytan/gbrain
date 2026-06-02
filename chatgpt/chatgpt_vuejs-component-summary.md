@@ -124,3 +124,6 @@ In this example, we define an interface for the `NavigationLink` type, and use i
 The `transparent` prop is used to conditionally apply classes to the `div` element in the template.
 
 We also import the `defineProps` function from the `vue` library in the second script block, and use it to define the component's props. Finally, we export the component as default.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

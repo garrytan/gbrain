@@ -675,3 +675,6 @@ Explain:
 - what shipping becomes
 
 Be brutally honest.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

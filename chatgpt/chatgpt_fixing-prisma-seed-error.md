@@ -547,3 +547,6 @@ Prisma is still being picked up in your client bundle. Even with `transpile`, `o
    - Likewise, any Pinia store or composable that imports Prisma must be moved into `server/` or refactored to call a server API instead.
 
 Once there are no client-side imports of `@prisma/client`, Nuxt will no longer try to resolve `index-browser.js`, and the build error will disappear.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

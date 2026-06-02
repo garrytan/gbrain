@@ -36,3 +36,6 @@ beatport streaming cdj vs files
 For a visual guide on accessing Beatport Streaming directly from the CDJ-3000, you may find the following tutorial helpful:
 
 videoCDJ-3000 Tutorial - StreamingDirectPlay Support for Beatportturn0search2 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

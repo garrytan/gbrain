@@ -42,3 +42,6 @@ chrome-webstore-upload upload --client-id *** --client-secret *** --refresh-toke
 Make sure to replace the `<extension id here>` placeholder with the actual extension ID for your extension.
 
 If you continue to have issues, please provide more information about the context in which you are trying to run this command and any error messages or output you are seeing.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

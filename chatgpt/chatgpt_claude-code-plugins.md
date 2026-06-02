@@ -221,3 +221,6 @@ When you paste the stack trace, I’ll look for:
 2) The **component file** it points to (or at least the hook section around the referenced line).
 
 And I’ll reply with: **(a)** the exact loop cause, **(b)** the single-line guard/deps change, and **(c)** the minimal Next.js-safe fix if it involves URL syncing.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

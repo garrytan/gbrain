@@ -307,3 +307,6 @@ Start by locating all chat-related components, hooks, query/cache code, streamin
 ```
 
 The key phrase is **“one canonical ordered message list used for rendering.”** Most chat jank like this comes from multiple competing render sources: server-loaded messages, optimistic messages, streaming messages, cache refetches, and route hydration all taking turns owning the UI.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

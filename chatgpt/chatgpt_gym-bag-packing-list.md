@@ -58,3 +58,6 @@ Remember that
 ## Assistant
 
 Got it, Mr. White. I’ll remember your gym bag packing list.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

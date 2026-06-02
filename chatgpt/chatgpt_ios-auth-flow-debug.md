@@ -284,3 +284,6 @@ Minimum acceptable proof:
 7. **Navigation guard fires before session hydration completes**.
 
 The key instruction for Codex is: **do not debug the provider login; debug the callback consumption path after the sheet closes.**
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

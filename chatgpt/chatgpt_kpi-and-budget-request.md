@@ -284,3 +284,6 @@ TPPL = **Tip Pool Policy & Logic** (eligibility, point system, tip-out splits, p
 
 I’ll tweak your line to:
 “...and the **tip pool (TPPL) rules and payout logic in writing**—otherwise I’m managing blind.”
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

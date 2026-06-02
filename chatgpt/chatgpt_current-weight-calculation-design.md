@@ -420,3 +420,6 @@ Return:
 ```
 
 Drop that into your AI of choice and watch it generate a rock-solid, production-ready email-input spec.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

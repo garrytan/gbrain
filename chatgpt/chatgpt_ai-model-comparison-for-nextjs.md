@@ -143,3 +143,6 @@ For practical Next.js coding: **GPT-5.1 Codex Max Low > GPT-5.1 High Reasoning**
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'You’re very welcome, Mr. White. Happy to help!'}
 {'asset_pointer': 'sediment://file_00000000ab1471f7bdda503f4301aeee', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-06-10T06:08:46.436528+00:00', 'format': 'wav', 'metadata': {'end': 3.25, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 156078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

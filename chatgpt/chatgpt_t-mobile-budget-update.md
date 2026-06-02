@@ -87,3 +87,6 @@ Understood. I’ll add a monthly Amazon miscellaneous budget (with car-bag items
 ## Assistant
 
 Got it—your Amazon miscellaneous budget is now set at $100/month.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

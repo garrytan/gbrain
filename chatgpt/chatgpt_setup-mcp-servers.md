@@ -112,3 +112,6 @@ There are a couple of reasons you might not see them:
 - **Integration settings**: Ensure the CodeRabbit bot has permission to push commit suggestions to your repository. If the bot only has read access, it can leave review comments but can’t offer commit‑level changes.
 
 If you want to make use of the AI‑driven fixes within your editor, install the CodeRabbit extension for VS Code or Cursor, log in with the same account, and you should see “One‑click fix” and “Fix with AI” buttons alongside each review suggestion. For PR‑based usage, you can enable CodeRabbit’s CLI or contact their support to see whether the feature is available for your plan.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

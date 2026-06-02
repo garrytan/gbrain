@@ -34,3 +34,6 @@ Here’s what to do, Mr. White — fast, simple, and effective:
 5. **Don’t fight it**: Shift your focus from “trying” to sleep to “just resting.” Ironically, that’s when it sneaks up on you.
 
 Want me to talk you through a 60-second guided wind-down?
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

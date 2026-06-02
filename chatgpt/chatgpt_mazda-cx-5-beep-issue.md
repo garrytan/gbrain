@@ -50,3 +50,6 @@ Mr. White, on a **2016 Mazda CX-5**, three beeps right when you start it is most
    **Try:** check tire pressure and look for the TPMS light.
 
 Best move: **look at the dash during the three beeps.** If you see a **door/liftgate icon**, it is the hatch/door latch sensor. If there’s **no icon**, buckle seat belt before starting and remove anything from the passenger seat. If it still happens, replace the fob battery and scan for body-control codes.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

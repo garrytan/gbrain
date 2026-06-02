@@ -106,3 +106,6 @@ Do not leave them truly untracked. Keep them as a small, repeatable dose.
 A good phrase for this is: **bonus volume, not surprise volume**.
 
 I can sketch a weekly setup that fits around your 2–4 day gym schedule and your RP sessions.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

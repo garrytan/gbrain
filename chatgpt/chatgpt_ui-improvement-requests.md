@@ -163,3 +163,6 @@ Okay, batch 2. When I start typing, as soon as I put a letter into the inbox for
   - Display “Your username is available” (or equivalent) clearly on Create Account page, styled cleanly, to reinforce completion/FOMO.  
 
 - Create a separate issue: switch homepage handle availability checking to a non-blocking flow (async validation that doesn’t stall CTA progression).
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

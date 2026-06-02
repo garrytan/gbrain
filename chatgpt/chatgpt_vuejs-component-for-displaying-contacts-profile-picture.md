@@ -163,3 +163,6 @@ export default {
 In this modified template, the `<img>` element has an added `@click` attribute that calls the `handleClick` method when clicked. The `handleClick` method checks if the component is editable, and if so, creates an `<input type="file">` element, sets its `accept` attribute to allow only image files, adds an event listener to it that calls the `handleFileChange` method when a file is selected, and triggers a click event on the input element to open the file upload dialog.
 
 The `handleFileChange` method is responsible for uploading the selected file and updating the `contact.profile_pic_url` property to reflect the new image. This functionality is not implemented in the code above and will need to be added separately depending on the specific requirements of your application.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -188,3 +188,6 @@ Mr. White,
 
 If you want, tell me:
 **CLI workflow, GitHub PR workflow, or inline diff workflow**—and I’ll give you a razor-clean setup for that path.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -333,3 +333,6 @@ export default {
 This code uses a `template` element with a `v-if` directive to conditionally render the hyphen `-` separator only if the fourth element in the `code` array is truthy. This allows you to use a single loop to render all the input elements and the separator, which makes the code more concise.
 
 I hope this helps! Let me know if you have any questions.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

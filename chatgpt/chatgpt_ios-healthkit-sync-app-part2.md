@@ -927,3 +927,6 @@ Remember, to deploy apps to a physical iOS device, you need a Mac computer with 
 
 
 Could not locate device support files
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

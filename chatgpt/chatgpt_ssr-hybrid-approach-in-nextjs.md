@@ -144,3 +144,6 @@ It matches the intent (marketing SSR, app client) *without relying on a brittle 
 If you’re under time pressure to get green tests today: do **Option 1 now**, then migrate to **Option 2** as a follow-up. But if you can afford a small refactor, **go straight to Option 2**.
 
 If you paste your current `app/` (or `pages/`) structure + the current `CoreProviders.tsx`, I’ll tell you exactly how to split it (which providers belong in marketing vs app, and where to put `"use client"`).
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

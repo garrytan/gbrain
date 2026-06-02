@@ -520,3 +520,6 @@ This matches the described specs (using Linear’s official **Nordic Gray** and 
 - Linear homepage text content (for structure of headings and CTA)【16†L18-L26】【59†L15-L23】 (showing hero text and button in context)  
 
 These sources reflect the implementation of Linear’s **current marketing pages** as closely as possible. The values given (font sizes, colors, spacing) are drawn from the observed design tokens and public information, ensuring you have an accurate foundation to recreate the Linear landing page design in Tailwind or code.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

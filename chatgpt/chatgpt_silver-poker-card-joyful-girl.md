@@ -38,3 +38,6 @@ shes covering her mouth with the cards
 ## Assistant
 
 Here's the image with the girl covering her mouth with the silver poker cards.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

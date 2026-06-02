@@ -679,3 +679,6 @@ Add Jovie Profile to Apple Wallet
 ```
 
 Then use the profile landing page as the monetization surface. The Wallet pass becomes the physical-world entry point into the Jovie profile, and payments can come later through Apple Pay, tips, bookings, or payouts.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

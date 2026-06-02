@@ -43,3 +43,6 @@ Your task is to identify and fix anything less than optimal. Be thorough, aim fo
 ---
 
 Want me to also write you a **Linear issue template** so Claude can auto-file this as a project with sub-issues, or do you just want the raw prompt?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

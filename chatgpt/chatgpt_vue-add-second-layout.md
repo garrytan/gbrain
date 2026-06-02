@@ -180,3 +180,6 @@ describe('MyComponent', () => {
 This code defines two test cases for the `MyComponent` component. The first test case checks that the component renders correctly with the given props, and the second test case checks that the `onClick` method is called when the button is clicked.
 
 By running this code, you can see how the `MyComponent` component behaves in a test environment and ensure that it meets your expectations. You can then use this example as a reference for how to use and interact with the component in your actual application.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

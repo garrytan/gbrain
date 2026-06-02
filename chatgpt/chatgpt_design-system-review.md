@@ -791,3 +791,6 @@ The layout owns the data presentation. Data should not randomly resize the layou
 ```
 
 This fits the existing Jovie design direction: calm operational UI, subtle motion for small interactions, compact data presentation, stable dashboard surfaces, and no cheap-feeling flicker or layout popping. fileciteturn55file0
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

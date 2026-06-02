@@ -521,3 +521,6 @@ Mr. White, a “Undelivered” on a Twilio trial almost always means one of two 
 - Optionally upgrade your account to remove the trial’s verification restriction.
 
 Once your destination is verified (or you upgrade) and you’re using an SMS-enabled Twilio number, your messages will deliver.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -112,3 +112,6 @@ The template defines the structure and layout of the component, which includes a
 The script includes some imports, including the WorkSection component, the HeaderWithNav component, the FooterSection component, and the VideoPlayer component. It also defines a data property called `currentItem`, which is initially an empty object. There is a method called `setCurrentVideoId` that takes an ID and sets `currentItem` to the ID that was passed in. 
 
 Finally, there is an export statement that exports an object with the data and methods defined in the script.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -925,3 +925,6 @@ The error message "Target class [WeightLogController] does not exist" typically 
    - Check your `composer.json` file's `autoload` section to make sure it's correctly configured. It should include the `App\` namespace and point to the correct directories.
 
 After following these troubleshooting steps, you should be able to resolve the "Target class [WeightLogController] does not exist" error. If the issue persists, please double-check the file structure, namespaces, and any recent changes you've made to the controller or routes.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

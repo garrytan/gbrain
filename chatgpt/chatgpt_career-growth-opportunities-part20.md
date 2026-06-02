@@ -352,3 +352,6 @@ Here are **three solid opportunities** you (Mr. White) can use to further your
 - Come prepared: for music events bring your demo; for modelling/acting events bring portfolio/photos; carry a clear pitch (“songwriter + DJ + actor + model”) to communicate your multi‑discipline value.
 
 If you like, I can pull **5–10 specific upcoming events this month** in your ZIP (90048) or within West Hollywood that are targeted for all four disciplines.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

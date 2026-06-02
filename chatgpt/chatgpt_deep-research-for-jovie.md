@@ -661,3 +661,6 @@ Remove names, emails, phone numbers, payment information, and private account de
 ```
 
 Best first run: give Deep Research the Jovie site, any support chats, onboarding emails, product screenshots, pricing copy, and founder notes. Then have it produce the KB plus evals in one pass.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

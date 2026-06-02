@@ -127,3 +127,6 @@ npx next dev
 ```
 
 Do you want me to give you a **full command list** for the Next.js CLI so you know exactly what’s available?
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

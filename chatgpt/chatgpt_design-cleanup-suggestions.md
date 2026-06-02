@@ -82,3 +82,6 @@ If you want, I can:
 - Sketch a **clean nav structure**
 - Rewrite the **IA**
 - Or give you a **Figma-ready checklist** to hand to a designer/dev
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

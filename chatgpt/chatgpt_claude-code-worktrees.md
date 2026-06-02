@@ -80,3 +80,6 @@ Each worktree keeps its **own working files and dependencies** (e.g., `node_modu
 - This workflow improves productivity and isolates context per task, but may require careful directory setup and possibly tooling/scripts to manage multiple sessions cleanly. citeturn0search21
 
 If you want, I can give you example shell scripts or Claude Code prompts to automate this workflow.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

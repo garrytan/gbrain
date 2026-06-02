@@ -96,3 +96,6 @@ Great, please provide the new 6‑digit code when you’re ready so I can enter 
 ## Assistant
 
 Your resume and tailored cover notes have been successfully submitted for both the Fonda and Roxy bartender positions on the Compass Group careers site. You should receive email confirmations and any next steps soon. If there’s anything else you’d like me to do, let me know!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

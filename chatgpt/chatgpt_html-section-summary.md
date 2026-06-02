@@ -163,3 +163,6 @@ Sure! Here's the code in Shopify Liquid:
           <source srcset="{{ image_src }}?w=172&amp;sm=aspect&amp;aspect=1:1&amp;fmt=webp" media="(max-width: 1023px)" type="image/webp">
           <source srcset="{{ image_src }}?w=172&amp;sm=aspect&amp;aspect=1:1" media="(max-width: 1023px)">
           <source srcset="{{ image_src }}?h=320&amp;sm=aspect&amp;aspect=1:1&amp;fmt=webp" media="(min-width: 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

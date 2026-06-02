@@ -28,3 +28,6 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Oh man, that sounds super stressful! I'm glad you're okay, though. In this situation, it’s definitely still a good idea to file a police report, even if they don't come out right away. You can do that online or at a station later. Also, definitely let your insurance company know about what happened. They might want that police report, but they can guide you through the process. It’s always good to have everything documented, even if it’s a bit of a hassle. Hopefully, it all gets resolved without too much trouble!"}
 {'asset_pointer': 'sediment://file_000000009bd46230bcdb350d48750028', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-13T00:17:11.113773+00:00', 'format': 'wav', 'metadata': {'end': 31.1, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1492878, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

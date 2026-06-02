@@ -31,3 +31,6 @@ Moataz,
 Thanks for trying. Who do I need to talk to in order to get you promoted and empowered to make this happen?
 
 –Mr. White
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

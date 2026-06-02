@@ -119,3 +119,6 @@ export default {
 ```
 
 In this example, the input field's value is bound to the `location` data property, and the `input` event is listened to update the value. The Google Maps Places autocomplete functionality is initialized in the `mounted` lifecycle hook, and the selected place's formatted address is used to update the `location` data property.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

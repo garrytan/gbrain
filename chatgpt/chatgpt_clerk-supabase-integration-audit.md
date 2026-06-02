@@ -638,3 +638,6 @@ NOTES
 ```
 
 If you want me to prefill the `price_` IDs and wire this into your existing routes/components, paste your current file paths and I’ll tailor the prompt to your tree.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -46,3 +46,6 @@ Mr. White — best places in 2025 to hire a freelance landing-page designer:
 - Check **portfolio specifically for landing pages** (conversion-focused work).
 - Prefer **UX/UI + copy experience** if conversions matter.
 - Set **clear brief + assets** upfront to reduce revisions.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

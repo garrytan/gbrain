@@ -1173,3 +1173,6 @@ print('User is $userAge years old.');
 ```
 
 This code snippet assumes that `userBirthday` is already available in your application, possibly retrieved from a user profile object or input by the user. Remember to handle cases where the birthday might not be set (which could be `null` in your `UserModel`).
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

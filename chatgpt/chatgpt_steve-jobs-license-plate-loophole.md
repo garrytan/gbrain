@@ -28,3 +28,6 @@ Someone claimed that Steve Jobs used a loophole in California law to never have 
 Mr. White, Steve Jobs did indeed exploit California’s pre-2019 grace period for new vehicles. He signed consecutive six-month leases on identical Mercedes-Benz SL55 AMGs so each stayed “new” and could legally be driven without metal plates for up to six months at a time citeturn0search10turn0news9.
 
 That loophole existed because dealers only had to file a report of sale—no temporary plate was required—so a car under six months old needed no visible plate. As of 2019, California now mandates dealer-issued temporary paper plates immediately upon sale, closing the “Steve Jobs loophole” citeturn0search10turn0search8.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

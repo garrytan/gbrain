@@ -34,3 +34,6 @@ Carbohydrates (in grams) = Weight (in grams) × Carbohydrate content (in grams p
 Carbohydrates = 35 grams × 1 gram/gram = 35 grams
 
 So, there are 35 grams of carbohydrates in 35 grams of dextrose.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

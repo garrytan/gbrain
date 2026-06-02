@@ -98,3 +98,6 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "There isn't a single definitive study that points to one universally highest converting onboarding experience, because a lot depends on the specific app and its audience. However, there are definitely best practices that have been shown to improve conversion and user retention. For example, keeping the onboarding flow as simple and streamlined as possible, using tooltips or progressive disclosure to introduce"}
 {'asset_pointer': 'sediment://file_00000000dd8c61f6988c2639037838c1', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-06T22:41:46.932591+00:00', 'format': 'wav', 'metadata': {'end': 22.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1080078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

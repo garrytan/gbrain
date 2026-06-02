@@ -85,3 +85,6 @@ Mr. White, no—handling cremated ashes isn’t a biohazard. At cremation temper
 
 **Exceptions:**  
 - Uncremated fragments (e.g. shrapnel, medical implants, brachytherapy seeds) can remain and carry mechanical or radioactive risks—treat those per specialist guidance. citeturn0search0turn0search8
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -57,3 +57,6 @@ ai sdk vercel
 - **Streaming support** for real-time output. citeturn0search22
 - **Framework integrations** for frontend UI. citeturn0search0
 - Enables building **chatbots, assistants, agents, and multimodal apps** faster. citeturn0search22
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

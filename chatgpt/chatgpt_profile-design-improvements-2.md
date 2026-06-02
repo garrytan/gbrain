@@ -85,3 +85,6 @@ Mr. White, here are high-impact improvements you can make fast:
 - **Bottom:** Log out (destructive card)
 
 If you want, tell me what actions each row triggers (editable vs read-only, where it navigates). I’ll propose a tightened layout + component spec.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -48,3 +48,6 @@ It refers to an **integration where Claude (the conversational/agent AI from Ant
 - Claude can assist with *issue summaries, triage, and workflow automation* without switching contexts between tools. citeturn0search2
 
 If you want a brief setup guide or example prompts for using Claude with Linear, just let me know.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

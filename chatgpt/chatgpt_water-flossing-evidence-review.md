@@ -134,3 +134,6 @@ In summary, **water flossing is a scientifically validated method for improving 
 8. Magnuson B, et al. *J Clin Dent.* **2013** – RCT on water flosser vs floss around dental implants (bleeding outcomes)【23†L667-L671】.  
 9. Mancinelli-Lyle D, et al. *J Dent Hyg.* **2023** – 4-week RCT on water flossing vs floss (inflammation and plaque indices) – referenced in narrative【25†】 (see also Cureus review).  
 10. Zhao L, et al. *BMC Oral Health.* **2024** – Meta-analysis of oral irrigators in orthodontic patients (found no significant benefit over brushing)【21†L83-L92】【21†L99-L107】.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

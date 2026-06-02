@@ -37,3 +37,6 @@ Here are some American-themed drinks:
 8. **Hurricane** - A fruity and potent New Orleans cocktail with rum, passion fruit, and citrus.
 9. **Long Island Iced Tea** - A strong drink combining vodka, gin, rum, tequila, triple sec, and cola.
 10. **California Dreamin'** - A refreshing cocktail with vodka, orange juice, and grenadine.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

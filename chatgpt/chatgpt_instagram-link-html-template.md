@@ -631,3 +631,6 @@ a:hover {
 ```
 
 In this update, I've added the `hover:opacity-100 transform transition-transform duration-200 hover:scale-110` classes to the `<a>` elements to achieve the desired hover effect. The `style scoped` block ensures that the hover opacity rule is applied correctly.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -165,3 +165,6 @@ That one word tells you everything you need.
 ---
 
 If you want, tell me **the name of the group (just the name, nothing personal)**, and I’ll tell you what its privacy setting means for visibility.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

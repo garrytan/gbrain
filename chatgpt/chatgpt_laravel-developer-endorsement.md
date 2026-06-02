@@ -30,3 +30,6 @@ I highly recommend Aamish for his exceptional work on multiple Laravel projects.
 Throughout the project, Aamish maintained clear and effective communication, always keeping us updated on progress and responding promptly to any questions or concerns. He was also proactive in suggesting improvements and optimizations, which greatly contributed to the success of the project.
 
 Overall, I highly recommend Aamish for any Laravel project. His technical skills, attention to detail, and strong work ethic make him an invaluable asset to any team.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

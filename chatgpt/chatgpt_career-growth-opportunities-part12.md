@@ -696,3 +696,6 @@ Mr. White, here are **top career‑focused events and opportunities** in West 
 These events put you in direct proximity to **festival programmers**, **A&R reps**, **producers**, **stylists**, **casting directors**, and **multidisciplinary creative talents**—maximizing exposure and momentum in all four of your creative disciplines.
 
 Execution tip: prioritize attendance and follow up where possible—visibility plus intentionality equals results.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

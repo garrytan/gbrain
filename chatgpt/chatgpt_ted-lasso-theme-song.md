@@ -38,3 +38,6 @@ Theme song
 ## Assistant
 
 The theme song for "Ted Lasso" is called "You'll Never Walk Alone." This song is famously associated with the football club Liverpool FC, and it's used in the show to underscore its themes of unity and support. The version used in "Ted Lasso" is a rendition by Marcus Mumford of Mumford & Sons, adding a unique touch to this classic song.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

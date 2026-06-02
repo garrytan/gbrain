@@ -20,3 +20,6 @@ tags: [chatgpt, import]
 ## User
 
 i want a nightly agent run that looks at our app tests and runs logic to determin if the tests actually test meaningful things, and then suggestes addtional tests and constantly improves our tests so that our were catching bugs faster. it should be a worldcalss ever improving testing agent. research what worldcalss version fo this exsit and pull in the best skill files and alll that and combile a new skill for us and have it optimized for token use
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

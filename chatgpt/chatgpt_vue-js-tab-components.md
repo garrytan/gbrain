@@ -221,3 +221,6 @@ import AccountPassword from '../components/Account/AccountPassword.vue';
 You can also remove any elements or attributes in the template that are not being used, such as the `Switch` and `RadioGroup` elements.
 
 It's a good practice to remove any unused code in your project to keep it clean and efficient.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

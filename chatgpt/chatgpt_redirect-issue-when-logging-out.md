@@ -954,3 +954,6 @@ Setting up TestFlight for beta testing your iOS app involves a series of steps, 
    - If you encounter issues such as not seeing your app in TestFlight after uploading, check the "Activity" section in iTunes Connect, and ensure that your build has been approved by Apple for beta testing【20†source】.
 
 Remember, the first build of your app must be approved by TestFlight App Review before testing can begin【17†source】. Also, keep in mind that builds are available for testing for up to 90 days after upload【17†source】.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -114,3 +114,6 @@ Here’s your **effective hourly rate**, Mr. White:
 | Pre-Tax                   | $208.99   | **$36.35/hr**  |
 | Post-Tax (all tips)       | $177.64   | **$30.89/hr**  |
 | Post-Tax (credit tips only) | $183.19 | **$31.88/hr**  |
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

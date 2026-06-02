@@ -514,3 +514,6 @@ It’s the “how it feels to build” side of engineering: how fast and pleasan
 - CI flake rate / how often builds fail for non-code reasons
 
 If you want: for Jovie, you can treat DX as a first-class metric by tracking “PR cycle time” and “CI duration” and optimizing around those.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

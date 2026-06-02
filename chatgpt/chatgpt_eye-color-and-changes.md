@@ -64,3 +64,6 @@ To increase your intake of vitamins and nutrients beneficial for eye health, con
 5. **Omega-3 Fatty Acids**: Found in fatty fish (salmon, mackerel, sardines), flaxseeds, chia seeds, and walnuts.
 
 Eating a balanced diet with a variety of these foods can help you get these important nutrients. However, for specific dietary advice, especially if you have any health conditions or dietary restrictions, it's best to consult with a healthcare professional or a registered dietitian.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -54,3 +54,6 @@ Animation on a landing page isn’t just decoration — it helps:
 - Test **on mobile** — many animations don’t translate well without adjustments. citeturn0search9
 
 If you want, I can draft a short snippet of HTML/CSS/JS that implements a basic segmented scroll animation for a hero section.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

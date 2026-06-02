@@ -259,3 +259,6 @@ You’ll want to build completely custom login/signup components while just call
 ---
 
 If you want, I can draft a minimal starter integration showing how a **headless Stytch auth flow with custom UI** looks on Next.js 16 App Router + Turbopack.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

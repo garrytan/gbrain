@@ -69,3 +69,6 @@ Here's the Aperol Spritz recipe with measurements in ounces:
 4. Garnish with an orange slice.
 
 Enjoy your drink!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

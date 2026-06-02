@@ -26,3 +26,6 @@ saban health
 ## Assistant
 
 ​Saban Community Clinic is a network of community health centers in Los Angeles, dedicated to providing comprehensive medical services to individuals regardless of their ability to pay. Their offerings include primary care, dental, vision, behavioral health, and on-site pharmacy services. They also provide specialized care in areas such as women's health, pediatrics, senior care, and HIV prevention and treatment. The clinic operates multiple locations, including the Beverly Health Center at 8405 Beverly Blvd, the Hollywood Health Center at 6043 Hollywood Blvd, and the Melrose Family Health Center at 5205 Melrose Ave. For more information or to request an appointment, visit their official website. citeturn0search0 
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

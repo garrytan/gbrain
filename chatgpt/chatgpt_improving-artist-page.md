@@ -87,3 +87,6 @@ For fans of: [Artist 1] • [Artist 2] • [Artist 3]
 :::
 
 If you tell me your **main goal** (streams vs followers vs tickets) and drop **1–2 links** (latest song/video + Spotify), I’ll reorder this into the best-converting layout and write tighter copy in your voice.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

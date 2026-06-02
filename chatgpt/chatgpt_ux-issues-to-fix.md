@@ -888,3 +888,6 @@ Mr. White, here are ten five-letter, person-style names that feel sexy, model-fr
     – From “sensation”—feel and see every shift in your form.  
 
 Each is short, evocative, and ready for a clean, modern brand. Let me know which sparks the most “plain-sight” magic!
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

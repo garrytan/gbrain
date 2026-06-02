@@ -50,3 +50,6 @@ Why this fixes it:
 - Uses the **current column** (no hard-coded R/S/T) for tickets and the server rows (15:27).
 - Counts only non-blank server cells and **excludes “On Call.”**
 - Compares that to your required servers logic and returns Under/Over/Adequate.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

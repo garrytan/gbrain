@@ -93,3 +93,6 @@ Make a table of stock of each and drink count
 ## Assistant
 
 I’ve created a table showing the stock of each drink type and the corresponding number of drinks you can make from that stock. Let me know if you need any further details!
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

@@ -156,3 +156,6 @@ If you’re trying to pull this into your own company, the pattern looks like:
 That’s about as close as we can get to “how OpenAI runs dev cycles” from public info, and it’s very aligned with Altman’s “more shots on goal” worldview.
 
 navlistMore on OpenAI's product and dev cadenceturn0news32
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

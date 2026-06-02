@@ -179,3 +179,6 @@ Once you tell me that, I will:
 - Draft **pitch, landing page, and fundraising memo**
 
 All concise and investor-proof.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

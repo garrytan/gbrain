@@ -1105,3 +1105,6 @@ After you've reviewed these areas, try to run your app again. If you've made cha
 
 flutter: Error fetching user details: type 'String' is not a subtype of type 'double?'
 flutter: Error fetching user details: type 'String' is not a subtype of type 'double?'
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -137,3 +137,6 @@ Generate:
 • Networking stubs and CoreData setup  
 • Inline comments and TODOs for backend endpoints and asset integration  
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

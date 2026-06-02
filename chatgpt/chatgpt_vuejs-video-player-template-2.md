@@ -74,3 +74,6 @@ export default {
 ```
 
 The `v-on:error` directive is used to trigger the `showPlaceholder()` method when the video fails to load. The `v-if` directive is used to conditionally render the placeholder div based on the value of `displayPlaceholder` data property. The `showPlaceholder()` method sets `displayPlaceholder` to `true`, which causes the placeholder div to be displayed. In this example, the placeholder div has a height of 1920px and a gray background color, but you can modify these styles as needed.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

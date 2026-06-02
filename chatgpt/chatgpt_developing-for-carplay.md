@@ -238,3 +238,6 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "I still think I'd go with a classic Coke! It just has that iconic taste. But honestly, you can't go wrong with any of them!"}
 {'asset_pointer': 'sediment://file_0000000085f061f6ada01bcd9778fde0', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-14T23:37:56.329185+00:00', 'format': 'wav', 'metadata': {'end': 8.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 408078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

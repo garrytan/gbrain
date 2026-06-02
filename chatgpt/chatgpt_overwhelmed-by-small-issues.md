@@ -65,3 +65,6 @@ I love seeing you and I want to say hi properly. I just need a little understand
 
 I’m overwhelmed, I’m tired, and I need us to actually deal with these things instead of letting them keep piling up.
 :::
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

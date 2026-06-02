@@ -38,3 +38,6 @@ make it look like a switch or power button or something you can turn one and off
 ## Assistant
 
 Here's the revised logo for your app "Superhero Mode," designed to resemble a power button or switch, using simple, one-color geometric shapes. This design aims to symbolize the activation of superhero strength and empowerment.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

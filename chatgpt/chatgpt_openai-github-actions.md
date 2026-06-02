@@ -39,3 +39,6 @@ OpenAI maintains official Actions like `openai/codex-action` that are intended t
 Whether by OpenAI or by third parties building on OpenAI tech, there are many GitHub Actions integrating OpenAI models into CI/CD pipelines (e.g., code review, log summarization, docs generation). citeturn0search2turn0search14
 
 **Conclusion:** OpenAI uses GitHub Actions in its GitHub repositories for CI/CD and provides official Actions (like the Codex Action) that integrate its tools into GitHub workflows. In that sense, GitHub Actions *is* part of OpenAI’s development and automation tooling. citeturn0search24turn1search3
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

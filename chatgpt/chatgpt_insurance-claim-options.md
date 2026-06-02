@@ -338,3 +338,6 @@ Use this sequence:
 6. Confirm rental before booking one.
 
 Do **not** get the car repaired before GEICO inspects/approves it unless GEICO explicitly says to proceed.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

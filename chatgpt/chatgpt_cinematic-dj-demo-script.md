@@ -1171,3 +1171,6 @@ That is the bigger investor story.
 The link-in-bio becomes the front door. The actual company becomes:
 
 **the AI operator that turns songs, fans, shows, files, and data into revenue.**
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

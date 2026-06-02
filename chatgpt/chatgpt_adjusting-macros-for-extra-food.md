@@ -40,3 +40,6 @@ Here's a general guideline on how to adjust:
 3. **Adjust your dinner accordingly**: Reduce the portion sizes of the chicken, broccoli slaw, or olive oil in your dinner to compensate for the excess macros consumed through the milk and eggs.
 
 If you can provide the specific macro content for your meals, I can give you a more precise calculation.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

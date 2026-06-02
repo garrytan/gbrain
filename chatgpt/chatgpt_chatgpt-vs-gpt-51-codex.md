@@ -155,3 +155,6 @@ In the `mcp_config.json` you showed, there’s a **GitHub personal access token 
 2. Switching the config to read the token from an env var instead of hard-coding it.
 
 If you want, I can sketch exactly how to restructure that config to be safer.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -143,3 +143,6 @@ If you want, tell me:
 - React / Next / plain HTML?
 
 I’ll give you the fastest exact workflow.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

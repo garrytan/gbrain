@@ -55,3 +55,6 @@ If you’re on a shared repo, check open PRs first. You don’t want to kill a b
 👉 Best practice: delete feature branches right after merging the PR. Keeps the repo lean and avoids confusion.  
 
 Want me to give you a script you can run to batch-delete all merged branches locally and on origin in one go?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

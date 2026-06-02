@@ -98,3 +98,6 @@ clerk supabase intergration
    - Sign in with Clerk and perform operations to ensure that data access is appropriately restricted based on the authenticated user.
 
 For a comprehensive guide and example code, refer to Clerk's official documentation on integrating with Supabase: linkturn0search0. 
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

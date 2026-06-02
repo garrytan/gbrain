@@ -110,3 +110,6 @@ Also:
 ---
 
 If you like, I can **pull together 10 real-world mobile profile screen designs (live apps)** with screenshots and links so you can pick one as inspiration. Would you like me to do that?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

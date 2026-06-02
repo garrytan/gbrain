@@ -217,3 +217,6 @@ Avoid:
 1. Call the finance manager, ask “cash purchase, what form of payment do you want?”  
 2. Have the bank print the cashier’s check **payable to the dealership’s legal name**; note the exact purchase price incl. tax/fees.  
 3. Bring a second form of ID + proof of insurance to drive away same day.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

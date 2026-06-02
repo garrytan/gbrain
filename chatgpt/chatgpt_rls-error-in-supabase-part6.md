@@ -866,3 +866,6 @@ This modern, clean design leverages Tailwind CSS and Headless UI components to e
 
 
 Lets infer the users age and display that in the form as well. And make sure we update the store on save.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

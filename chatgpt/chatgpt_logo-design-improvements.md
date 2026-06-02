@@ -107,3 +107,6 @@ Notes:
 - Themeable: change `--icon-fill` and `--icon-stroke` in the `<style>` block.
 - ViewBox is 256×256; it scales perfectly from favicon to app icon.
 - Includes a subtle gray outline to match your PNG; remove the two `<circle>` strokes if you want a flat mark.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

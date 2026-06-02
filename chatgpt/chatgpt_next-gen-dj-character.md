@@ -43,3 +43,6 @@ Mr. White, to push MuffinTop beyond the existing masked-DJ mold, consider these 
    – Tell MuffinTop’s origin across short films, graphic novels or interactive webisodes—each release answer one lore question, driving engagement between tracks.
 
 Which of these resonators speaks to you most? We can then drill into engineering, storytelling or marketing next.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

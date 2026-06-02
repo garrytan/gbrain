@@ -70,3 +70,6 @@ Yes, since the records use the same ISRC codes, the playcounts and playlist plac
 - **Platform Policies**: Verify with each streaming platform that the ISRC code handling is consistent and that metrics will indeed be retained.
 
 Given that the ISRC codes are the same, the process should maintain the continuity of your playcounts and playlist placements, making it primarily an issue of listener experience and catalog management.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

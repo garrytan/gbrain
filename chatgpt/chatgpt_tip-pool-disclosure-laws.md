@@ -41,3 +41,6 @@ Mr. White — short answer: **California law doesn’t require employers to disc
 - You can set a mandatory pool and choose the distribution, but keep it **reasonable**, **exclude managers**, **pay out on time**, and **document the policy** (who’s in, how it’s split), even though the formula itself isn’t legally required to be disclosed. The core legal risks come from **who shares** and **whether any “house cut” occurs**, not from failing to publish the math. citeturn4search0turn4search4
 
 If you want, I can draft a one-page written policy that’s CA/LA-compliant and employee-friendly.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

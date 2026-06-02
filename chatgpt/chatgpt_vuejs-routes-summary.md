@@ -589,3 +589,6 @@ async function loadPage(page) {
 ```
 
 However, this is not necessary in this case, since the `loadPage` function only needs to return the Promise returned by `import(...)`, which will be handled by the Vue.js router when the route is visited.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

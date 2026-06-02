@@ -106,3 +106,6 @@ If you value speed, simplicity, and modern defaults → **Biome wins**.
 If you need maximum rule coverage → **ESLint still has a place**.
 
 If you want, I can give you a **migration checklist from ESLint → Biome** or a **side-by-side config tuned for Next.js App Router**.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

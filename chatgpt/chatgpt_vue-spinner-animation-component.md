@@ -114,3 +114,6 @@ A Vue.js spinner component with size and color set by props `spinnerSize` and `s
 ## User
 
 show me an example of the code that is refactored
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

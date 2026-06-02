@@ -96,3 +96,6 @@ Just make a bullet list
 - Tips are Venmoed out at the end of the month.
 
 Thank you for your cooperation!
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -684,3 +684,6 @@ Mr. White, here are the most relevant **in-person opportunities** available **
 ---
 
 These carefully selected opportunities provide direct access to **festival curators**, **producers**, **casting directors**, **stylists**, and **creative peers**—spanning songwriting, DJing, modeling, and acting domains.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

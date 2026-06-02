@@ -93,3 +93,6 @@ From the stories, the following tend to make or break a case:
 Yes — quite possible, and it happens often enough that it's a known issue. That doesn’t guarantee any particular outcome, but your situation (host claiming thousands, you believe them unjust) is in line with many stories people post.
 
 If you want, I can try to see if there are *official cases* (legal filings or regulatory bodies) showing Airbnb was taken to court over exactly this kind of thing, to assess how strong your position might be. Do you want me to pull those up?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

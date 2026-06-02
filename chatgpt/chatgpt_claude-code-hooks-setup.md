@@ -67,3 +67,6 @@ Hooks run **where Claude Code is running** (your cloud box). So to notify mobile
 Also, Claude Code sets an environment variable **`$CLAUDE_CODE_REMOTE="true"`** in remote web environments, which can help you branch behavior (local notify vs. webhook). citeturn1view1
 
 If you tell me what you mean by “post to Claude” (Slack? Discord? an HTTP endpoint? something else) and what cloud you’re running on, I’ll give you a ready-to-paste hook command for that target.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

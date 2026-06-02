@@ -28,3 +28,6 @@ http://localhost:300`/onboarding
 I can’t access **localhost** links (like `http://localhost:300/onboarding`) — those run on your own machine/network.
 
 If you want help with something specific on that page, **paste the content or describe the issue** and I can assist.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

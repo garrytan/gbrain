@@ -57,3 +57,6 @@ Mr. White — here’s the straight read:
 - **Today’s traffic and GMV are stable-to-modestly up vs. 2023**, but **seller net take-home is generally a bit worse** due to higher ad/fee burden. Expect **gross prices ≈ flat**; **net proceeds slightly lower** unless you avoid ads, sell locally, or operate in hot categories.
 
 If you tell me the category you care about (electronics, sneakers, pro audio, furniture, etc.), I’ll give you a tighter “then vs now” price + net sheet.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

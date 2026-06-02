@@ -40,3 +40,6 @@ Can you find out what time your kitchen closes?
 Mr. White — The kitchen at entity["restaurant", "Ysabel", 0] in West Hollywood seems to close around **1 AM** on most weeknights (Mon–Wed) and around **2 AM** on Thu–Sat. citeturn0search9turn0search0turn0search1  
 
 If you want, I can check **today’s** hours specifically (they may vary).
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

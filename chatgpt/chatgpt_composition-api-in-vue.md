@@ -72,3 +72,6 @@ In this example, the `setup()` function defines a reactive `count` and `message`
 
 The reactive properties and methods defined in the `setup()` function can be used in the template just like any other data or methods in the Options API.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -667,3 +667,6 @@ The critical path is only considered done when these four flows pass automated t
 3. waitlist -> manual approval -> invite email -> signup
 4. waitlist -> auto-accept after configured days -> invite email -> signup
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

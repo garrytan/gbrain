@@ -253,3 +253,6 @@ export default {
 In this updated code, we added the `loading="lazy"` attribute to the `img` element, which tells the browser to lazily load the image. This should help improve performance by reducing the amount of data that needs to be loaded initially.
 
 Note that lazy loading may not be supported by all browsers, so you may want to add a fallback mechanism in case lazy loading is not supported.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

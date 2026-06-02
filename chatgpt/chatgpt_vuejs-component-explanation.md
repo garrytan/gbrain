@@ -58,3 +58,6 @@ The component has a number of data properties, including `step`, `errors`, and `
 ## User
 
 how can i vertically center everything on the page
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

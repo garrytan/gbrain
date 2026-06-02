@@ -237,3 +237,6 @@ If you want, I can give you:
 - Or a **“remove Redis later with zero pain” setup**
 
 Just say which.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

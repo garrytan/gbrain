@@ -86,3 +86,6 @@ Okay, now we need to ask Claude to use the OpenAI API to do the same thing one b
 ## Assistant
 
 I’ve provided a Python script that iterates through every combination of gender, FFMI, and body-fat percentage, calls the OpenAI Image API with the corresponding prompt, and saves each image into an `avatars/` folder. You can install the required `openai` and `requests` packages (`pip install openai requests`), set your `OPENAI_API_KEY` environment variable, and run this script in your project directory.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -214,3 +214,6 @@ This will display 'Just Released!' if the post was published less than a day ago
 
 Note that the `replace(/,/g, '')` call at the end removes any commas from the formatted date. This is because the `Intl.DateTimeFormat` method may include commas in the formatted date, depending on the formatting options and the locale.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

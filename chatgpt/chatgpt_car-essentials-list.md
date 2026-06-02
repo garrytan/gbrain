@@ -89,3 +89,6 @@ Here’s a concise “in-apartment” stash for your car, Mr. White:
 - Rubber gloves and disposable wipes  
 
 Keep these on hand and restock as needed.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

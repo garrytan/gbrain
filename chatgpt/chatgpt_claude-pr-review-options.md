@@ -75,3 +75,6 @@ You **cannot assign Claude as a PR reviewer**, but you **can request Claude revi
 If you want, I can outline:
 - A **minimal GitHub App** setup for Claude
 - Or a **CI-based approach** (GitHub Actions) using Claude’s API
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

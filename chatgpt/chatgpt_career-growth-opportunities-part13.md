@@ -681,3 +681,6 @@ Mr. White, here are key **in-person events and networking opportunities (July�
 These events put you in direct contact with **A&R reps**, **festival promoters**, **casting directors**, **stylists**, **producers**, and **creative peers**, across all four of your disciplines. With consistent attendance and strategic presence, these engagements can significantly boost your visibility, credibility, and professional connections.
 
 — Automation Turn #163 complete.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

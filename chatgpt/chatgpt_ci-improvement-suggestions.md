@@ -56,3 +56,6 @@ Mr. White — here’s the straight shot.
 
 # Answer to your constraint
 Yes—you **can** ensure `preview` and `main` only get touched after `develop` passes checks by: locking direct pushes, forcing PRs from `auto-promote/*`, and requiring the “came-from-previous-stage” status in `web-pr-verify`. That enforces the exact flow you want, end-to-end. fileciteturn1file3L28-L36
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

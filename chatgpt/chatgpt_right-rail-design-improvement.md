@@ -259,3 +259,6 @@ Start with these five changes:
 5. **Add a “Next action” block based on release state.**
 
 That will make the rail feel more like an operational control panel instead of a dense metadata drawer.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

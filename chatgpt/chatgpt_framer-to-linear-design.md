@@ -88,3 +88,6 @@ Avoid bouncy or springy defaults.
 ---
 
 If you tell me **what your current Framer structure is** (hero, features, testimonials, pricing), I’ll give you a concrete “Linear pass” for each section (exact sizes + color values + what to remove). **Which section looks least Linear right now: hero, cards/testimonials, or nav?**
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -1356,3 +1356,6 @@ If you want, I’ll now:
 
 - refine this into your **final homepage hero + scroll copy**
 - or generate **section headers for “features,” “use cases,” “benefits,” and “trust”** all built around music-career growth and monetization.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

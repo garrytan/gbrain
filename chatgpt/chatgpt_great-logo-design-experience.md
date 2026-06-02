@@ -109,3 +109,6 @@ If the `SocialIcons.vue` file is not on GitHub, you'll need to ensure it is trac
    Once the file is on GitHub, trigger a new deployment on Vercel. This can usually be done by pushing a new commit or redeploying from the Vercel dashboard.
 
 Following these steps should resolve the issue, and your build should complete successfully on Vercel. If you encounter any further issues, please let me know!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

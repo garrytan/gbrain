@@ -247,3 +247,6 @@ And in GitHub rulesets, make `UI Guard` + `Test` mandatory on `preview` and `pro
 5) **CODEOWNERS** gate UI changes.  
 
 Do these and the AI can’t quietly fork your UI—if it tries, CI blocks it until the legacy is removed.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

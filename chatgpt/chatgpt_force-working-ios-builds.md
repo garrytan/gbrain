@@ -195,3 +195,6 @@ So the realistic pattern is:
 ---
 
 If you tell me whether you’re on GitHub Actions vs Xcode Cloud for LogYourBody, I can sketch a minimal concrete CI + Codex Autofix config tailored to that setup.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

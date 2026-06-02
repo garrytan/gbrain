@@ -430,3 +430,6 @@ More like that.
 ## Assistant
 
 Having toured the country as a DJ since 13, I was practically raised in bars and nightclubs before becoming a Clio Award–winning audio engineer and West Hollywood bar manager who mixes craft cocktails, codes apps, and works out so much my abs practically demand their own spotlight. If pouring vodka Red Bulls were an Olympic sport, I’d have the gold—think you can keep up?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

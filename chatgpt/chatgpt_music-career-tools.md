@@ -50,3 +50,6 @@ A more creator-forward version with a stronger YouTuber cadence:
 On the commit count: I would not make that a centerpiece. Live product, traction, and your domain credibility are stronger signals. Commit count can read as vanity unless the audience is explicitly technical.
 
 I can turn this into a 30-second, 60-second, and interview-length version.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

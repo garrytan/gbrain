@@ -62,3 +62,6 @@ Dr. Mike Isratel generally recommends increasing carbohydrate intake by about 50
 Remember, the exact amount can vary based on individual factors like your metabolism, current diet, and how your body stores glycogen. It's crucial to monitor your body's response and adjust accordingly. Some individuals might require a more conservative increase, while others might benefit from a more aggressive approach.
 
 For personalized advice, consider consulting with a nutritionist or a coach who understands your specific needs and goals.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

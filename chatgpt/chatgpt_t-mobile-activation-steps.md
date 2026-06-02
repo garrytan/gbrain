@@ -55,3 +55,6 @@ Mr. White — to activate your service with entity["brand", "T-Mobile", 0]
 ---
 
 If you tell me **which model device** you’re using and **whether it’s prepaid or postpaid**, I can send you **device-specific activation steps**.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

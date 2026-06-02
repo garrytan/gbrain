@@ -32,3 +32,6 @@ Selling a pair of Pioneer XDJ-1000MK2s in *near-mint* condition. Bought brand ne
 Perfect for home setups, gigs, or long-term investment—these decks have essentially been in storage. Fully functional, no cosmetic damage. Skins keep them showroom-ready for resale even years down the line.
 
 **Price is for the pair. Serious buyers only.**
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

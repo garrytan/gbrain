@@ -62,3 +62,6 @@ class="{{cellActive ? 'ring-4 ring-indigo-500 dark:ring-indigo-500 ' : ''}}
  {{columnWidth ? 'w-' + columnWidth : ''}}
  text-center text-xs font-medium focus:border-none focus:outline-none focus:ring-0 border-collapse overflow-auto whitespace-nowrap border-x border-slate-300 dark:border-jovieDark-border"
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

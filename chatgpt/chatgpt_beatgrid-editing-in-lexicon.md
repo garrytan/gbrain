@@ -39,3 +39,6 @@ lexicon beatgrid
 For a comprehensive overview of Lexicon's features, consider watching the following video:
 
 videoGetting started with Lexicon. Must watch for new users!turn0search5 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -57,3 +57,6 @@ My ranking:
 
 **#1: AI label ops for independent artists**  
 It implies: label services, artist independence, operational pain, AI leverage. Very YC-friendly.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

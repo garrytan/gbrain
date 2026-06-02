@@ -26,3 +26,6 @@ djtechtools
 ## Assistant
 
 ​DJ TechTools is an online community and resource hub for DJs and producers, offering gear reviews, news, tutorials, and a store featuring products like Chroma Caps, Chroma Cables, and Midi Fighters. citeturn0search0 They maintain an active presence on social media platforms, including Facebook, Instagram, X (formerly Twitter), and YouTube. citeturn0search1turn0search3turn0search4turn0search2 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

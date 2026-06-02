@@ -63,3 +63,6 @@ So the same pattern applies:
 - **Claude Code / Codex** = needs CLI/web/IDE context → use **SSH from Shortcuts** to a machine running the agent, or use their dedicated apps/CLIs. citeturn1view0turn4view2turn3search9  
 
 If you tell me what you’re trying to do with the slash command (e.g., “run tests”, “open PR review”, “apply formatting”, “generate a patch”), I’ll give you a concrete Shortcuts recipe (actions + the exact SSH command) for either Claude Code or Codex.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

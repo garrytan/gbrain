@@ -45,3 +45,6 @@ RevOps teams typically handle:
 Organizations with a RevOps function can *drive predictable, scalable growth* because they eliminate friction between teams, unify data for better decision-making, and streamline the revenue life cycle end to end—rather than optimizing departments in isolation. citeturn0search10
 
 If you want, I can outline **RevOps roles & career paths** or how to **implement a RevOps function** in a startup or enterprise.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

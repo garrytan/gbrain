@@ -40,3 +40,6 @@ No, I want the smile and eye thing for my design of the muffin, the blueberry mu
 ## Assistant
 
 Here’s a simplified, black-and-white version of your blueberry muffin face—two solid blueberry eyes and a curved smile on a clean muffin outline. Let me know if you’d like further tweaks, Mr. White.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

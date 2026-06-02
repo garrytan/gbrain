@@ -20,3 +20,6 @@ tags: [chatgpt, import]
 ## User
 
 everything you know on current funding state and revenue of linktree or beacons or laylo i want to know
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

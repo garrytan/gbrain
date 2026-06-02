@@ -46,3 +46,6 @@ geist design system
 • The community library hasn’t seen very recent active maintenance, so check its GitHub for updates before using in long-term projects. citeturn0search10
 
 If you want a link to the official docs or installation steps for Geist UI, I can provide them.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

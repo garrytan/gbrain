@@ -191,3 +191,6 @@ If you want, paste a **single loop example** (component + effect). I’ll tell y
 - refactor locally
 - split components
 - or move that slice to a store
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

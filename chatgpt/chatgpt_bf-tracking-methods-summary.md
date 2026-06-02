@@ -40,3 +40,6 @@ Dr. Mike Isratel, co-founder of Renaissance Periodization (RP Strength), recomme
 6. **Bioelectrical Impedance Analysis (BIA)**: Devices that measure body fat percentage through electrical impedance can be useful but are often inconsistent. Isratel suggests using them more for trends over time rather than absolute accuracy.
 
 Isratel emphasizes consistency in the method of measurement and conditions under which measurements are taken to track trends over time accurately. He also advises focusing on trends rather than overanalyzing small fluctuations, as numerous factors can influence body fat measurements.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

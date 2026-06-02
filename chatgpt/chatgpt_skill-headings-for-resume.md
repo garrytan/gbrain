@@ -140,3 +140,6 @@ doesnt make sense that way
 My apologies for the confusion. Here's a more concise format:
 
 Height: 6'4" | Hair: Brunette/Bleached Blonde | Eyes: Blue/Green
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

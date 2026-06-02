@@ -43,3 +43,6 @@ Useful if you want one place for TRT + other “sports supplements,” plus remi
 If you’re talking about non-prescribed “gear” (anabolic steroids/SARMs/peptides), tracking is fine, but I’m not going to help plan cycles or dosing. Those drugs carry real risks (lipids, BP, hematocrit, fertility, mood, cardiac strain), and in California possession/use without a prescription is illegal. If you’re using anything hormonal, the safest move is: **medical supervision + regular labs** (CBC/hematocrit, CMP, lipids, testosterone/estradiol, BP). The apps above can help you *record* what you’re doing and what your labs/symptoms show so a clinician can keep you safer.
 
 If you want, tell me your platform (iOS/Android) and whether you want simple reminders vs deep lab/symptom dashboards, and I’ll point you to the best fit from that list.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

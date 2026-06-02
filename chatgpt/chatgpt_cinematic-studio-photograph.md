@@ -74,3 +74,6 @@ desaturated shadows and warm sunset highlights. David Fincher / Greig Fraser
 reference. Photorealistic editorial cinematography, ultra-high detail in
 hair, skin, fabric weave, and OLED highlights. --style raw --quality 2
 --stylize 250 --ar 3:2 landscape
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -68,3 +68,6 @@ To get a **24×24 button with a 16×16 icon via padding** (no fixed width/height
 - Total size: `16 + 4 + 4 = 24`
 
 This is the clean, canonical Tailwind solution when sizing via padding only.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -44,3 +44,6 @@ Here’s what **Claude Code Desktop** refers to and how it ties into Claude:
 - Claude Code is also available through the **terminal (CLI)** and via **web-based tools** or IDE extensions (e.g., VS Code), but the desktop version is meant to make it more user-friendly. citeturn0search8turn0search15
 
 If you want direct download links or friction-less setup steps, I can provide those next.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

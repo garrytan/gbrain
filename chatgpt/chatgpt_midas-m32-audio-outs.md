@@ -38,3 +38,6 @@ Beyond the USB card, the desk itself also provides:
 * Physical XLR outs on the rear are 16, but you can expand with AES50 stage boxes if needed.
 
 So with only the internal USB card, your max “unique audio outs to the computer” is **32 channels**.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -47,3 +47,6 @@ Here are a few concise and engaging SMS options that you can use to announce you
 4. "👋 Fans of Tim White! Get ready for my new song 🎉 Presave it now: https://neversayaword.com Your support means everything!"
 
 Each of these messages includes an emoji to catch attention, a direct call to action, the essential link, and a reminder of who you are.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -21,3 +21,6 @@ tags: [chatgpt, import]
 
 {'asset_pointer': 'sediment://file_000000003fa471fd8ad4d7dcc3d390f4', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 512, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 16527, 'width': 512}
 turn this current logo for our app into a logo in the style of linear.app that looks modern 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

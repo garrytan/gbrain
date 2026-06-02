@@ -44,3 +44,6 @@ Here’s how you can explore jobs at entity["organization", "Netflix", 0]�
 ---
 
 If you like, I can **scan current job openings in Los Angeles** for you and pull a few suitable ones (based on your background or interest). Would you like me to do that, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

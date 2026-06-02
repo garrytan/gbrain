@@ -48,3 +48,6 @@ Here’s a concise overview of OpenAI, Mr. White:
 - It’s shaping how businesses, developers, and researchers access and deploy AI models.  
 
 If you like, I can pull up **recent news about OpenAI** (e.g., partnerships, investments, controversies) or **dive deeper into a specific product or model** (like GPT-4 or DALL·E). Which would you prefer?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

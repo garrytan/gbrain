@@ -80,3 +80,6 @@ A Negroni is a classic Italian cocktail known for its perfect balance of bitter,
 5. **Serve**: Enjoy your Negroni!
 
 The Negroni is a strong, bold cocktail with a bittersweet profile, making it a favorite among classic cocktail enthusiasts.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

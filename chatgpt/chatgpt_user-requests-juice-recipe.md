@@ -27,3 +27,6 @@ adopt this to use lime juice and lemon juice and simple
 ## Assistant
 
 The image couldn't be displayed directly here. Please describe the specific changes you would like to make to use lime juice, lemon juice, and simple syrup in place of the current ingredients. This will help me understand how to adapt the recipe for you.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

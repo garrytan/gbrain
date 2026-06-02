@@ -65,3 +65,6 @@ Explanation:
 - `object-fit: cover;` can be translated to `object-cover`.
 
 Note: The `inset-0` class is a shorthand for `top-0 right-0 bottom-0 left-0`, which sets all four inset properties to 0.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

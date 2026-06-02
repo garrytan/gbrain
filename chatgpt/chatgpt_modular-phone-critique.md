@@ -111,3 +111,6 @@ The best product isn’t the one with the fastest processor or the longest spec 
 “Cute conspiracy, but Ara didn’t die because Big Phone needed profits—it died because physics. You can’t Lego a phone that’s waterproof, drop-proof, 5G-ready, cool-running and still have real battery. Every seam wrecks antennas, heat flow, and strength. Extra connectors murder signal integrity and steal battery space. Cameras need micron-tight alignment, and swappable modules would rattle out of spec after one drop. FCC and carrier certs for every module combo? Legal nightmare.  
 
 The best product isn’t the one with the fastest processor or the longest spec sheet—it’s the one that solves the problem so well you’re happy to pay for it. Modular phones just ain’t it.”
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

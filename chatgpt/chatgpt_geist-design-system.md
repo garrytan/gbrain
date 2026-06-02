@@ -45,3 +45,6 @@ geist design system
   The community library is MIT-licensed and focuses on simplicity and aesthetics but is **not an official Vercel product**; it’s maintained separately by the open-source community. citeturn0search5
 
 In summary, the **Geist Design System** is both a conceptual design language used by Vercel and an open-source React UI library (Geist UI) that brings that language into practical use for building modern web user interfaces. citeturn0search4turn0search5
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

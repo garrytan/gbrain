@@ -123,3 +123,6 @@ Assuming no complex trusts or deductions and a straightforward inheritance, here
 - **You can deposit the full ~$605.6M** into your bank or investment accounts.
 
 Let me know if you want the number assuming estate planning strategies (trusts, gifting, charitable deductions, etc.).
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

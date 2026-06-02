@@ -54,3 +54,6 @@ But memoing is still relevant as an **escape hatch** in a few common situations:
 - **Without it:** memo tools are still part of normal performance hygiene.
 
 If you tell me your stack (Next/Vite/Expo/etc.) I can tell you what “Compiler on” actually looks like in that setup and what to watch for.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

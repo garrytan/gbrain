@@ -211,3 +211,6 @@ Here’s the updated 10-artist set:
 10. **Måneskin**  
 
 Would you like me to replace **Shawn Mendes with Måneskin** (so they’re the 10th), or keep both and make it an 11-artist roster?
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

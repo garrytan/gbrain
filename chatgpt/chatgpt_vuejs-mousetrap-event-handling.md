@@ -111,3 +111,6 @@ this.$mousetrap.bind('/', () => {
 ```
 
 Finally, it might be a good idea to add some comments to the code to explain what each event handler is doing and why it is necessary. This can make the code easier to understand for future developers working on the project.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

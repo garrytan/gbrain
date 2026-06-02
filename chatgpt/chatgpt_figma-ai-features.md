@@ -48,3 +48,6 @@ figma ai
 - AI outputs are a starting point and usually need fine-tuning by designers. citeturn0search17
 
 If you want, I can walk you through how to use a specific Figma AI feature step-by-step.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

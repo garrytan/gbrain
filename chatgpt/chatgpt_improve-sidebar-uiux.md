@@ -687,3 +687,6 @@ Arrange the sidebar vertically into:
 ---
 
 Using all of the above, describe the final sidebar UX, visual hierarchy, and interaction states in detail, and outline how you would structure the components and variants. Do not provide any code.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

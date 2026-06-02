@@ -394,3 +394,6 @@ export default {
 - Deploy your application to Vercel and verify that CORS issues are resolved.
 
 By using middleware and proper configuration, you can handle CORS issues effectively for your Nuxt.js application deployed on Vercel.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

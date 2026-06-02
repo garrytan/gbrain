@@ -175,3 +175,6 @@ If you tell me:
 - Whether you want you or Liv to be the one who can file claims,
 
 I can give you a very tight, specific “do exactly this” set of steps tailored to your setup.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

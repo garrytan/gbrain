@@ -122,3 +122,6 @@ make it more simple with a power button
 ## Assistant
 
 Here's the newly designed app icon for "Superhero Mode," featuring an ultra-simple and flat power button theme. This minimalistic design is tailored to represent the concept of activating superhero-like abilities effortlessly.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

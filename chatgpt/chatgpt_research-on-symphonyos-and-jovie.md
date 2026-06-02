@@ -626,3 +626,6 @@ The practical strategy:
 Rollout is a credible competitor for **music team operations**. It is stronger where managers need tasks, rosters, budgets, splits, contacts, and internal coordination. Jovie is stronger where artists need release execution, public profiles, one synced link, promotion, fan capture, and momentum.
 
 The risk is that Rollout becomes the manager’s default workspace and later adds more fan-facing features. The opportunity is that Jovie can become the front-office system every artist and manager needs: the place where the release actually reaches fans and turns into streams, tickets, money, and owned audience.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

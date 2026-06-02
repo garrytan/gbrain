@@ -209,3 +209,6 @@ Here are some things you can check to fix this issue:
 3. If the `chrome-extension-.zip` file was generated in a different location, update the `path` parameter in the `actions/upload-artifact@v2` step to point to the correct file path.
 
 Once you've verified that the `chrome-extension-.zip` file is generated and in the expected location, try running your workflow again.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

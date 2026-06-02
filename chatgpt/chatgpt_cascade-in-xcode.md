@@ -155,3 +155,6 @@ Here’s the typical flow:
 ---
 
 If you like, I can **walk you through a live example prompt flow** with Claude in Xcode (e.g., “Generate a SwiftUI view + unit tests”), so you can try it step-by-step. Do you want that, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

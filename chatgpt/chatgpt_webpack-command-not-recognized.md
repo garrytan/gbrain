@@ -477,3 +477,6 @@ By setting the `mode` to "development", webpack will enable some development-spe
 
 This webpack.dev.js file,  you are using webpack-merge library to merge webpack common.js config to webpack dev specific config, and you can use this dev specific config to run development build, it will be used in your npm script like "npm run watch"
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

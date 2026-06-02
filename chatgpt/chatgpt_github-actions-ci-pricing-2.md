@@ -193,3 +193,6 @@ If you tell me:
 - Whether Docker is involved  
 
 I’ll give you a **specific, minimal fix**.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

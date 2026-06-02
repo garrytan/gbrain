@@ -46,3 +46,6 @@ Windsurf treats MCP servers as micro-services. Docker is the “lowest common de
 ⚡ In short: Docker is used because MCP servers like `github-mcp` are distributed as containers for **ease of setup, consistency, and isolation**.  
 
 Would you like me to walk you through running `github-mcp` without Docker (building from source), or are you mainly trying to understand why Windsurf forces Docker?
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

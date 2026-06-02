@@ -38,3 +38,6 @@ Here’s a snapshot of **Neon (serverless PostgreSQL) pricing** — the database
 Neon doesn’t sell fixed flat bundles anymore; instead, you pay **for actual compute, storage, and optional features** you consume, scaling down to near $0 when idle. citeturn0search2
 
 If you meant **other “Neon” pricing** (like CRM software or live token price), let me know which one and I’ll detail that instead.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

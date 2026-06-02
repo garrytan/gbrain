@@ -52,3 +52,6 @@ Here's a classic **Mai Tai** recipe (original Trader Vic–style):
 5. Garnish with mint and lime shell.
 
 Let me know if you want a version using well spirits or batched for service.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

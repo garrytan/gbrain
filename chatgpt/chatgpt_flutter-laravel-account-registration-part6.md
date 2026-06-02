@@ -434,3 +434,6 @@ Ensure that the `login` method in your `AuthModel` correctly updates the state. 
 If your app's home screen or other screens rely on knowing the user's logged-in status, they should check this status in the `AuthModel` or equivalent. This might involve using a `Consumer<AuthModel>` widget or similar.
 
 Lastly, review how your backend and frontend handle authentication tokens. Ensure that the token received upon registration is the same type of token expected in subsequent requests for authentication.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

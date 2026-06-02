@@ -58,3 +58,6 @@ Anthropic also recently introduced **Cowork plugins** for enterprise use, lettin
 ---
 
 If you want specifics on *how to install* plugins or the *best ones for a given workflow*, let me know what you’re trying to accomplish and I’ll tailor the suggestions.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

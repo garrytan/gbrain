@@ -43,3 +43,6 @@ Mr. White — **Stripe Atlas does *not* automatically file your annual state or 
 - There’s no free, automatic annual tax return service built into the Atlas package as part of the $500 setup. citeturn0search8
 
 **Bottom line:** Atlas handles setup and gives you tools and partners, **but you still have to file and pay for actual federal/state tax returns yourself or hire a CPA.** citeturn0search10
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

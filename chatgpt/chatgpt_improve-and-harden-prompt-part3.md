@@ -1058,3 +1058,6 @@ to be clear i mean hermes agent. the text speach stuff keeps messing that up and
 
 
 Mr. White, paste this into the already-running Hermes orchestrator as a dispatcher addendum. It creates isolated coding sub-agents and directs them to request Claude Code where appropriate.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

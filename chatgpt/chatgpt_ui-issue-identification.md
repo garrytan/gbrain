@@ -179,3 +179,6 @@ Best pattern for this kind of health chart:
 That gives you:
 - True numbers when you zoom in.
 - Clean, readable trends when you zoom out, without the spaghetti.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

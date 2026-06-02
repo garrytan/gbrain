@@ -288,3 +288,6 @@ Output a full high-fidelity homepage with real section copy, layout decisions, i
 ```
 
 Best practice: paste the long prompt first, then in a second Stitch pass add, “Push this 20% more premium and 15% more product-led. Reduce generic marketing language. Increase clarity in the hero and strengthen the release-OS narrative.”
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

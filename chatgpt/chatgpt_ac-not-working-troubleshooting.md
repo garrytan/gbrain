@@ -84,3 +84,6 @@ Turn it off, run **Fan Only** for 30–60 minutes, clean the filter, then restar
 | Loud rattling | Loose mounting, fan obstruction, bad bearing |
 
 If it’s blowing air but not cold after reset + filter check + 5 minutes on max cool, it’s probably a compressor/capacitor issue.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

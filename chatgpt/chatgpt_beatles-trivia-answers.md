@@ -46,3 +46,6 @@ Here are the answers to the trivia questions:
 5. The Beatles song recorded live on an international TV special called "Our World" is "All You Need is Love."
 6. On the album "Let It Be," the song title that is three words and seven letters long and opens the album is "Two of Us."
 7. The Beatles song about Paul's pet sheepdog is "Martha My Dear."
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

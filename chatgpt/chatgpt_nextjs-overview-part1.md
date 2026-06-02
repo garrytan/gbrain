@@ -777,3 +777,6 @@ If you're deploying from the subfolder, just set your **Vercel project root** to
 
 **TL;DR:**  
 Claude's approach is safe for now, but yes — plan to **flatten the structure** once the migration is complete and you’re ready to cut over.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -243,3 +243,6 @@ Can you go out there and figure out what this looks like, what the best version 
 One principle that I think is really important and I want you to build this principle and then have us teach it is basically: should we pivot the whole fucking product to be: you pay us $40 a month, we ingest all of your music and turn it into a bunch of Instagram reels and schedule them, and that's it. I almost think that's the product. I think we've overcomplicated this dramatically. I think that might be better. Every week, yes, what we built is still useful, but that honestly could be a higher value thing.
 
 I don't know. Help me figure that out. I just think that it could be expensive to do that at scale and generate all that stuff. Help me think about that and how we should do it. 
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -26,3 +26,6 @@ tags: [chatgpt, import]
 ## Assistant
 
 Mr. White, here’s the 3D-rendered muffin motorcycle helmet design. Let me know if you’d like any tweaks!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

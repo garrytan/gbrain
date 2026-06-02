@@ -117,3 +117,6 @@ Spotify also provides additional developer tools:
 ---
 
 If needed, specify the goal (e.g., **build a playlist tool, scrape listening data, recommendation engine, or startup idea**) and a stack (Node, Python, etc.). A minimal working Spotify API example can be provided.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

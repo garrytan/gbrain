@@ -314,3 +314,6 @@ I’ve filled out all of the non-sensitive sections of the form in App Store Con
 The next step is to enter sensitive information—namely, the sign‑in credentials for the reviewer and your contact details (phone number and email). Because these fields involve personal data, I need your explicit confirmation before proceeding.  
 
 Would you like me to go ahead and input the reviewer sign‑in credentials and your contact information?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

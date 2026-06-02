@@ -85,3 +85,6 @@ Here’s how you can **audit your MVP for Jovie** and systematically catch the �
 ---
 
 Mr. White — do you want me to create a **master audit checklist doc** you can hand to your team (or AI agent) so they can run through this systematically every week? That way nothing slips through.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

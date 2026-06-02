@@ -408,3 +408,6 @@ If you want, I’ll sketch the exact event->notification wiring with Supabase Ed
 
 
 For email, notification layer, analytics, and feature flagging, is there, like, a way that we should be thinking about building out that as a platform layer so that we can switch providers later without having to recode anything?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

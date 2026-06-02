@@ -154,3 +154,6 @@ That aligns best with:
 - Jovie’s visual positioning as premium creator infrastructure
 
 Also: the strongest founder decks in 2026 are increasingly sparse. Minimal copy. Strong screenshots. One idea per slide. Investors care more about clarity and momentum than fancy animation. citeturn0search1turn0search6turn0news19
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

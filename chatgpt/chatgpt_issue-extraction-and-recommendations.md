@@ -108,3 +108,6 @@ I'm gonna give you a list of issues. I need them just extracted, okay? So, one, 
 79. Audit and prioritize any open Sentry issues.
 80. Audit and prioritize any open Linear issues created by Sentry.
 81. Consolidate all into prioritized plan for Linear and Codex execution.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

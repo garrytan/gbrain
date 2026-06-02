@@ -517,3 +517,6 @@ Yes — a **higher-quality orgasm is better for recovery** than a short/weak one
 ---
 
 Do you want me to sketch a **sex “progression model”** (like meso → microcycles) showing how you could periodize orgasm *quality and frequency* the same way you do training volume — to balance recovery and performance?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

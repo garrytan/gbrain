@@ -226,3 +226,6 @@ Here's the revised recipe for a Mojito with Chambord using simple syrup:
 6. Garnish with the remaining lime wedge and a sprig of mint.
 
 Enjoy your refreshing Mojito with Chambord!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -365,3 +365,6 @@ In this updated code, `frequencies` is an array of objects that contains the dif
 In the template, a `select` element is used to display the available frequency options. The selected option is bound to the `frequency` variable using `v-model`. The selected frequency's price suffix is displayed in a `p` element below the `select` element.
 
 Using the composition API, `priceSuffix` is also declared as a reactive variable that is updated whenever `frequency` changes its value.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

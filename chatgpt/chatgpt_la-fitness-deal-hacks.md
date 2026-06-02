@@ -60,3 +60,6 @@ Mr. White, the lowest standard Nationwide rate you’ll find in SoCal is **\$39.
 - **Annual fee**: \$59 citeturn0search3  
 
 Every other L.A.-area club charges at least \$49.99/mo if you want to skip the initiation fee, so \$39.99 is as low as it gets locally. Anything below \$39.99 requires an external promo or corporate discount (e.g. Groupon codes at \$29.99/mo or Blue Cross wellness rates down to \$28/mo).
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

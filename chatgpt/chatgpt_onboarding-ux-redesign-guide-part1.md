@@ -602,3 +602,6 @@ After you’ve redeployed, `import.meta.env.VITE_REVENUECAT_PUBLIC_KEY` will be 
 
 
 Give Claude instructions to make sure this is all set up correctly throughout the app
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

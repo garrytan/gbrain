@@ -188,3 +188,6 @@ My resume is attached. I’m available for a one-on-one interview at your conven
 **Sincerely,**  
 Mr. White  
 timwhitebartending@gmail.com | (732) 668-2148
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

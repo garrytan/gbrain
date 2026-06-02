@@ -214,3 +214,6 @@ Tell me:
 - Repo (GitHub only?)
 
 I’ll design a minimal, robust auto-fix architecture that won’t wreck prod.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

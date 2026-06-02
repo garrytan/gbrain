@@ -97,3 +97,6 @@ Good fit when you need to:
 - Simplify a cluttered interface
 
 A *linear UX redesign* isn’t about stripping all creativity—it’s about *prioritizing user goals* and reducing wasted effort in the experience. citeturn0search7
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

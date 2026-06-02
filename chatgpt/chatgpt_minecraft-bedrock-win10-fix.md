@@ -115,3 +115,6 @@ If this still fails, say:
 - Whether Minecraft is Store-bought or Game Pass
 
 That narrows it to the exact failing dependency.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

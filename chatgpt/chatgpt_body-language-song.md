@@ -26,3 +26,6 @@ theres a song about body language that came out probably 15 or 20 years ago, try
 ## Assistant
 
 The song you're thinking of is likely "Body Language" by Queen, featuring David Bowie. It was released in 1982, which is a bit earlier than the 15 to 20 years ago timeframe but fits the description. This track is known for its focus on body language and was a notable departure from Queen's usual rock style, leaning more towards funk and dance.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

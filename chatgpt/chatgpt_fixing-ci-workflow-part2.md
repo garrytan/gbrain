@@ -212,3 +212,6 @@ Your auto-merge workflow builds a regex of required checks. It still includes `P
 - Manual tools are labeled as such, so they don’t interfere with the fast path.
 
 If you want, I can draft the tiny diff PR that: (1) removes the extra preview deployer, (2) renames the fallback promotion workflow, and (3) edits the auto-merge regex block.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

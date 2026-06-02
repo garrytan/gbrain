@@ -673,3 +673,6 @@ If you tell me whether you’re building in **SwiftUI or UIKit**, I can give you
 
 
 I mean the iOS 26 Liquid Glass
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

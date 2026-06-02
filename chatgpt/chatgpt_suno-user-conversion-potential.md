@@ -555,3 +555,6 @@ No résumé clutter.
 The final slide should make investors feel:
 
 # “Of course he is the one building this.”
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

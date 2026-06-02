@@ -67,3 +67,6 @@ DJI’s products are widely used in filmmaking, agriculture, conservation, infra
 DJI has been targeted by U.S. regulators over security concerns, with new restrictions affecting *future approvals* of drones and drone components in the U.S. while current models remain operational for now. citeturn0news32
 
 If you want recommendations based on use case (e.g., photography, inspection, beginners, pros), tell me your purpose and budget.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

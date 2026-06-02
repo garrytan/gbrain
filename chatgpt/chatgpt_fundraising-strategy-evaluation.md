@@ -46,3 +46,6 @@ ground it incontext of jovie specifically and tim white (me) and my domain exper
 and ground it in the last 3 months not the last 30 years. ai today is a different world then ai 3 months ago. ground this in a world of open claw and spacex trying to buy cursor. like this is not your openai vs antrhopic gpt 4 world. this is new world and the research needs to be current.
 
 take your time and be thorough.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

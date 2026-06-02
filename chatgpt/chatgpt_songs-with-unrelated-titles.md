@@ -38,3 +38,6 @@ Certainly, Mr. White. Here are some 2000s pop songs where the title doesn't appe
 9. "Hollaback Girl" - Gwen Stefani
 
 Note that while the titles might encapsulate the song's theme or feeling, they are not directly stated in the lyrics.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

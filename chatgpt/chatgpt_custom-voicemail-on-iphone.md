@@ -134,3 +134,6 @@ The two biggest mistakes are **using your home address in public records** and *
 This is general information, not legal advice for a specific matter. For Los Angeles-specific implementation, a California litigation/privacy lawyer is worth it here because the value is in the setup, not just the defense after the fact.
 
 I can draft you a one-page “legal contact protocol” for your assistant/team so random threats get routed correctly.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

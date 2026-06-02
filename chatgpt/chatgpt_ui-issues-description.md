@@ -222,3 +222,6 @@ Mr. White, here’s a **concise, design-focused UI audit** of the **Audience** p
 If you want, I can:
 - Redesign this page as a **clean SaaS CRM layout**, or  
 - Give you a **before/after component-level checklist** for engineers.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

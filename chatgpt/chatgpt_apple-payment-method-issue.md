@@ -59,3 +59,6 @@ Apple also allows paying with:
 - redeemed gift cards citeturn0search0turn0search20
 
 A big reason they do it this way is fraud/risk management. They care more about restoring a valid billing source than giving a transparent accounts-receivable style experience. Apple treats App Store purchases more like continuous account authorization than traditional invoicing.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

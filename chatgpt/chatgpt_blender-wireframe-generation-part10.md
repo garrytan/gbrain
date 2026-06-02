@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'The error you\'re seeing usually happens because the MakeHuman socket server, which allows Blender to communicate with MakeHuman, isn\'t running. To fix this, you\'ll want to make sure that the standalone MakeHuman application is open and that the socket server is enabled. In MakeHuman, you can find this option in the settings under the "Community" tab or "Sockets" tab, depending on your version. Once the socket server is running, Blender should be able to connect without any issues. Let me know if that helps!'}
 {'asset_pointer': 'sediment://file_00000000a57c622fbdfde952a33fdf50', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:34:40.864170+00:00', 'format': 'wav', 'metadata': {'end': 30.05, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1442478, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

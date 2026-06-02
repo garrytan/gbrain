@@ -140,3 +140,6 @@ If you want to use a ternary operator to determine the value of the `color` prop
 
 This will pass the value of `'#ffffff'` (white) if `darkMode` is truthy, and `'#000000'` (black) if it is falsy.
 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

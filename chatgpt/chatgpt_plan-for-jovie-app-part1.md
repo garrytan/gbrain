@@ -1229,3 +1229,6 @@ By following these steps, you can quickly build and deploy your initial Nuxt.js 
 
 
 Make a generic landing page that is full screen height with a simple copyright of the current year in the bottom corner and a logo in the top left. Use a hero text that says Instant smart links for the music industry. this will be our home page for now
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

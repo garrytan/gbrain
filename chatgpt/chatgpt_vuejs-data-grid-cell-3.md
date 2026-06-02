@@ -194,3 +194,6 @@ export default {
 
 This will bind the `tabindex` attribute to the `tabIndex` computed property, which will return `-1` if `freezeColumn` is `true` and `0` if it is `false`.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

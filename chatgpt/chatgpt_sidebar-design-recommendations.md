@@ -242,3 +242,6 @@ Everything else:
 ---
 
 If you share a screenshot of your actual Jovie sidebar, the recommendations can be tightened into a concrete redesign spec (spacing, hierarchy, exact labels).
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

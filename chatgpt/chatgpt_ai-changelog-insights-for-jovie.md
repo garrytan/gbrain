@@ -26,3 +26,6 @@ We don’t need to repeat mistakes as long as they apply to us.
 Winddsirf and other companies are changing up business models as they learn about AI.
 
 Help us avoid mistakes by looking at these and other ai companies in music and other industries and extract the things they’ve been shipping. Dedupe and research each then decide if it applies to Jovie based on our previous chats and repo context.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -185,3 +185,6 @@ Here’s the updated list, including the adjusted **Giggle Water** recipe:
 - Ingredients: Whiskey (12.65L), Triple Sec (1.58L), Simple Syrup (1.58L), Angostura Bitters (0.68L), Water (3.50L)
 - Instructions: Mix all ingredients. Refrigerate. Garnish with an orange slice.
 - Yields: ~140 drinks
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -50,3 +50,6 @@ Now, I’m not saying Mel himself is back there flipping burgers and shaking up 
 But Mel’s isn’t just about the food. It’s about the experience—the neon lights, the classic cars lined up outside, and the waitstaff who somehow manage to pull off the retro look without looking like they’re on their way to a Halloween party. It’s the kind of place that makes you want to linger a little longer, maybe order that extra side of fries because, well, you’re at Mel’s, and why the hell not?
 
 So yeah, Mel’s Drive-In is more than just a pit stop on the Strip—it’s a cultural institution. A place where you can refuel both your body and your spirit, with a side of sass and a whole lot of flavor. And if you happen to catch Mel himself wiping down a table or handing you a menu, well, just know you’re in the presence of greatness.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

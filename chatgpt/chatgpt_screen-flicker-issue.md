@@ -394,3 +394,6 @@ chat_ui_blank_body_after_first_token
 The highest-value test is:
 
 > Start with an existing chat, begin assistant streaming, trigger cache invalidation or route refresh mid-stream, and assert the chat thread never unmounts, the full-page loader never appears, and assistant text never resets.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

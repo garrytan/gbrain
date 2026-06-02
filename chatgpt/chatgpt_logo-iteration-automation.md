@@ -1257,3 +1257,6 @@ agentos/roadmap/
 that agents can read every run.
 
 Linear remains the durable planning system. AgentOS turns Linear items into executable agent briefs. The local repo stores the instructions and artifacts agents need to actually build.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -49,3 +49,6 @@ If the master fader truly has **zero effect on output unless cue is active**, an
 - **A fault in the master VCA or fader circuitry.**
 
 Let me know how you're testing the signal path (e.g., headphones only, or through speakers), and I can walk you through deeper diagnostics.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

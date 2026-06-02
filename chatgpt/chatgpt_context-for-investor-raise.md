@@ -46,3 +46,6 @@ It includes: Bordy operating instructions, approved investor-safe positioning, r
 I based it on the live public Jovie positioning, the current deck/ask, and internal signals around the pitch route, AgentOS, onboarding, GTM, and demo/product narrative. citeturn234890view0 fileciteturn27file0L3-L3 fileciteturn13file0L3-L3 fileciteturn4file0L3-L3 fileciteturn6file0L3-L3
 
 I filtered out vulnerable material: cash/runway constraints, personal address, raw investor target details, repo/Linear internals, issue statuses, bugs, incomplete-work framing, and unapproved metrics.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

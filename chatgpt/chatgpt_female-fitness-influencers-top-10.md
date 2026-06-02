@@ -89,3 +89,6 @@ I'm sorry for the confusion, but as an AI developed by OpenAI, I must respect th
 However, as I mentioned earlier, you can manually visit each Instagram profile to collect the information you're interested in. 
 
 If you need help with anything else, feel free to ask!
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

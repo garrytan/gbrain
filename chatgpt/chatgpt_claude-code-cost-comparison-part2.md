@@ -1172,3 +1172,6 @@ give me a prompt to have hermes implement this all
 
 
 Mr. White, here is a paste-ready master prompt for Hermes to implement the full setup with explicit routing, cost guardrails, Kanban durability, and Linear/GitHub integration.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

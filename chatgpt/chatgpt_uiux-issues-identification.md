@@ -122,3 +122,6 @@ If you want, I can:
 - Rewrite the empty-state copy
 - Propose a cleaner layout
 - Define a proper “0 → 10 subscribers” onboarding flow
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

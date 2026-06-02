@@ -149,3 +149,6 @@ If you tell me *exactly* which of these you’re trying to do:
 - Or move the **phone** to your own separate T-Mobile account
 
 …I can give you step-by-step tailored to that exact scenario.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -117,3 +117,6 @@ While Redwood has patterns for routing/pages/components, you should still build 
 ---
 
 If you like, Mr. White, I can pull together a **checklist PDF** of Redwood best-practices tailored to your version (v1 or v2) and your typical deployment environment (e.g., AWS + Netlify). Would you prefer that?
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

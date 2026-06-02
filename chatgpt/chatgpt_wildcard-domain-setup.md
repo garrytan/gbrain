@@ -282,3 +282,6 @@ That will:
 ⚠️ You’ll be asked for your password at the `sudo` steps.  
 
 Do you want me to also give you the **Electron cache cleanup commands** for Windsurf/VS Code so you wipe those at the same time?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

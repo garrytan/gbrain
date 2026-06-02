@@ -174,3 +174,6 @@ Every release gives me new data, and every Friday teaches me what to do next.
 ## Tighter closing option
 
 So instead of four songs disappearing after release week, Jovie gives me a year of Fridays — and every Friday teaches me what to release next.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

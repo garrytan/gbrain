@@ -36,3 +36,6 @@ Concise breakdown of iPhone 15 pro I have vs the 16 pro vs the best speculation 
 | Memory                 | 8 GB RAM citeturn1search4                   | 8 GB RAM citeturn0search2                    | Possibly 8 GB (Pro), 12 GB (Pro Max) citeturn3view0 |
 
 Mr. White, the 16 Pro brings a ~30% faster CPU, a slightly larger display, longer battery life, Camera Control and USB 3 speeds over your 15 Pro—ideal if you want solid gains now. If you’re after a bigger leap (48 MP telephoto, unified controls, A19 Pro and 8 K video), hold out for the iPhone 17 Pro in September 2025.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

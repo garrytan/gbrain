@@ -187,3 +187,6 @@ List locally first for **48–72 hours**:
 3. SM7B + Cloudlifter: **$450 ask**
 
 Then move smaller/high-search items to **eBay**. Use **Samy’s / KEH / MPB only if you want fast cash and accept lower payout**.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

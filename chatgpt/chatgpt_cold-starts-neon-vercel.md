@@ -83,3 +83,6 @@ If you want, tell me:
 - traffic pattern (spiky vs steady)
 
 I’ll give you a concrete architecture recommendation in one shot.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

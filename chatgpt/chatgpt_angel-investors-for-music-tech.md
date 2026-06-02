@@ -26,3 +26,6 @@ find me angel investors who invest in music tech. for jovie an ai music managmen
 ## User
 
 give me the list
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

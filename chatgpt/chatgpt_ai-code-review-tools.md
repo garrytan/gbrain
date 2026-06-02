@@ -113,3 +113,6 @@ If you want the **simplest upgrade with major impact**:
 ---
 
 If you want a tailored recommendation (e.g., for Python backend, TypeScript frontend, CI/CD pipelines), tell me your stack and workflow and I’ll optimize the tool choices for you.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

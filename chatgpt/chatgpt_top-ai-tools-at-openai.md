@@ -58,3 +58,6 @@ OpenAI also relies on sophisticated machine learning engineering foundations:
 **Tech stack foundations:** PyTorch, high-performance cloud compute, and formal eval systems to optimize models. citeturn0search5turn0search6
 
 If you want a breakdown of *which tools developers outside OpenAI most often adopt in the wild* (e.g., Copilot, Agent Builder, etc.), let me know.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

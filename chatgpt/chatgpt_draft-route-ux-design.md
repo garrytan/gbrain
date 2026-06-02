@@ -118,3 +118,6 @@ The skeleton should only ever appear:
 - never during intra-chat transitions
 
 The current “Welcome Back Tim” intermediate state should be removed entirely from New Thread flow.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

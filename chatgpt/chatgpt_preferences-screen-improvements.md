@@ -345,3 +345,6 @@ struct AccountHeaderView: View {
 - Header is **informational, not a competing card**.
 
 If you want, paste your current SwiftUI code and I’ll refactor it into this structure without changing your data flow.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

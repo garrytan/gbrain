@@ -42,3 +42,6 @@ Play stupid games. Win stupid gravity-assisted fireball prizes.
 ---
 
 Let me know if you want a shorter version or one with even more bite.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -321,3 +321,6 @@ Perfect. Here’s your lean, optimized onboarding flow now:
 ---
 
 Let me know if you want copywriting for tooltips or need help with PDF parsing or the PWA push config.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

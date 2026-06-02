@@ -34,3 +34,6 @@ Proceeding without `todo_list` or `update_plan` is correct. Treat the instructio
 If you want, I can:
 - Help you refactor the flow to be stateless and tool-agnostic, or  
 - Identify which parts would actually benefit from persistent planning and suggest a clean workaround.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

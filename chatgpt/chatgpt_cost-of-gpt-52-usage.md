@@ -124,3 +124,6 @@ Only if:
 If you want, I can:
 - Estimate your **monthly burn** under realistic workloads
 - Recommend **spend caps + model routing** to keep this under control
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

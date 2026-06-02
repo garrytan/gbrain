@@ -50,3 +50,6 @@ If you are encountering the error message "docker command not found," it could b
 4. Docker is not compatible with your operating system: If you are running an older or unsupported operating system, Docker may not be compatible with your system. Check the Docker documentation to ensure that your operating system is supported.
 
 I hope this helps you resolve the issue!
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

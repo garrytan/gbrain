@@ -46,3 +46,6 @@ Here’s a concise overview of T-Mobile US, Inc., Mr. White:
 - If you’re considering switching or upgrading: watch for device financing terms (36 months is now common) and dependencies on certain plan tiers.  
 
 If you like, I can check **specific plans currently available in your ZIP code (90048, Los Angeles)** and compare them with other carriers. Would that be helpful?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

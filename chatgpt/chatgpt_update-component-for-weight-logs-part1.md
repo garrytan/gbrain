@@ -924,3 +924,6 @@ If after checking these points the issue still isn't resolved, you might need to
 my model has   protected $fillable = [
         'name', 'email', 'password', 'height', 'age', 'gender',
     ];
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

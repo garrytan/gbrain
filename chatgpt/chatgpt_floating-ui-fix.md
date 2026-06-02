@@ -102,3 +102,6 @@ If it still jumps, it’s usually:
 - Reference not sized yet (wrap `open` toggle after reference mounts).
 - Parent CSS transitions affecting layout—remove transitions on ancestors during mount.
 - A portal re-parenting late—ensure the portal container exists before opening.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

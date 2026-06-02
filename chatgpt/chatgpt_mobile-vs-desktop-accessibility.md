@@ -40,3 +40,6 @@ A TikTok video might be available on desktop but not on mobile due to several re
 6. **Content Moderation**: TikTok's content moderation system might flag and restrict the video differently on mobile devices due to more stringent automated filters.
 
 These are common reasons why a TikTok video could be accessible on one platform but not another.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

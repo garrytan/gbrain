@@ -56,3 +56,6 @@ Yes, Mr. White — **Canvas is still a thing**.
 It’s now a **core feature** for long-form writing and coding, not an experiment. When you ask for a document, code file, or iterative edits, ChatGPT opens a **side-by-side canvas editor** automatically. Availability depends on your plan and model, but for Plus/Teams it’s standard.
 
 Short version: **Canvas is permanent and actively used.**
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

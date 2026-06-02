@@ -46,3 +46,6 @@ At 7-Eleven, you can find a variety of carb-heavy snacks that are low in fat and
 4. White Bread: A loaf of white bread is high in carbs and low in fat and protein.
 
 Please keep in mind that a diet mainly composed of carbs may not be the healthiest choice in the long run, as a balanced diet is important for overall health.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -128,3 +128,6 @@ module.exports = { extends: ['@commitlint/config-conventional'] };
 - If you use MDX/remark plugins with front-matter rules, add those checks to CI, not pre-commit.
 
 That’s it—clean commits, safe pushes, minimal friction.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

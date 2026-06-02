@@ -307,3 +307,6 @@ In another thread, a QNAP guru mentioned that the order in which QPKG services a
 It's important to note that any changes made to the init scripts or service order are not persistent and would need to be reapplied after each NAS restart, unless an autorun script is created to automate the process.
 
 Before attempting any of these more technical solutions, it's always recommended to back up your data and ensure that the NAS is not performing any critical operations that could be interrupted. If you are not comfortable with these steps or the problem persists, reaching out to QNAP's official support would be advisable.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

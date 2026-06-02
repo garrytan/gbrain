@@ -236,3 +236,6 @@ Priority order:
 6. **Avoid browser scraping unless desperate**
 
 The clean answer: **you can dump everything manually, but continuous sync requires moving future conversations into a client you control or explicitly pushing selected ChatGPT threads into Gbrain.**
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

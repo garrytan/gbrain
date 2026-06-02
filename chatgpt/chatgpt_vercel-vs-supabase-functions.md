@@ -330,3 +330,6 @@ Mr. White—here’s the quick take for **Jovie (Next.js + Clerk + Drizzle)**:
 - **Only consider PlanetScale** if you explicitly want **MySQL/Vitess** workflows (branching + online DDL) and are okay giving up Postgres-native features (RLS, extensions). citeturn0search0turn0search10
 
 If you want, I’ll sketch the **RLS policy map for Clerk claims** and the **Drizzle connection snippets** for Supabase vs Neon so you can swap cleanly with env vars.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

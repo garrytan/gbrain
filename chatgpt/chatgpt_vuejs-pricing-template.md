@@ -511,3 +511,6 @@ Sure, here's a shorter version of the code:
             </div>
             <p class="mt-4 text-sm text-slate-500">{{ tier.description }}</p>
             <p class="mt-6 flex items-baseline gap-x-1"><span class="text-4xl font-bold tracking-tight text-gray-900">${{ tier.price[frequency.value] }}</span><span class="text-sm font-semibold leading-6 text-gray-600
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

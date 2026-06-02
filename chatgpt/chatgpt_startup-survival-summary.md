@@ -64,3 +64,6 @@ A startup will reach **profitability** on its **current trajectory** *without ra
 
 In short:  
 If you do nothing new and fundraising fails, **the company survives anyway**.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

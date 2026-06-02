@@ -91,3 +91,6 @@ If you like the tool and consider using it for something public/commercial, then
 ---
 
 If you like, Mr White, I can **walk you step-by-step** through using Suno AI (getting an account, navigating the interface, best practices for prompts) **or** we can compare it to other AI music-generation tools. Would you like that?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

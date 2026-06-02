@@ -132,3 +132,6 @@ What we *can’t* see publicly is the single smoking gun (lawsuit, contractor te
 - lender conditions / interest carry / recap fights once the market turned (COVID + rate shock)
 
 If you want, tell me roughly **which side of Cahuenga you’re on** (east/west) and **what you can see on the roofline right now** (any visible equipment/screens/railings), and I’ll map that to the typical “what’s missing” checklist for getting from “looks done” to “CO issued.”
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -85,3 +85,6 @@ In an Instagram comment format
 ## Assistant
 
 Mr. White: pure BS. they trapped Claude into only blackmail-or-accept its fate, used a fake affair with zero real-world relevance, ran no controls so that 84% means nothing, and just exposed prompt bias—not true self-preservation drive.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

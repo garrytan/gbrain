@@ -1036,3 +1036,6 @@ The positioning becomes:
 > **“Jovie builds the marketing system for every release, then turns the results into the reports your distributor needs to pitch DSPs.”**
 
 That is much more defensible than generic AI content generation.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -72,3 +72,6 @@ Vodka, peach schnapps, orange juice, cranberry juice. Garnished with a cherry. 
 4. **Garnish**: Add a maraschino cherry on top.
 
 Enjoy your Peachy Keen cocktail!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

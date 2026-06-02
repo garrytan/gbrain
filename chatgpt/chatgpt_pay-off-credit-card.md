@@ -66,3 +66,6 @@ To calculate how long it will take to pay off a $20,000 credit card balance with
 ## Assistant
 
 It will take approximately 81 months, or about 6 years and 9 months, to pay off a $20,000 credit card balance with a 24% annual interest rate by making monthly payments of $500. Keep in mind that this is a simplified calculation and actual time may vary slightly due to rounding and how the credit card company applies payments and calculates interest.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

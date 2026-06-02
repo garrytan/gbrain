@@ -195,3 +195,6 @@ Mr. White, both frameworks excel at SEO out of the box. Here’s a side-by-side:
 - **Nuxt** offers a more integrated SEO experience with first-party modules (sitemap, robots, image) and convention-over-configuration for `head()`.  
 
 Pick Next.js if you need granular React-based control and incremental updates; pick Nuxt if you want turnkey SEO modules and conventions.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

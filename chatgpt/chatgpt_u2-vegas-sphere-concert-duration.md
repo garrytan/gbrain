@@ -128,3 +128,6 @@ Did Larry Mullen jr leave u2
 Larry Mullen Jr. is not leaving U2, but he has decided to sit out any touring the band may undertake in 2023 due to physical issues. He expressed a deep commitment to the band and a desire to take time to heal various ailments, such as issues with his elbows, knees, and neck. This decision comes from his need to address these physical challenges, with a focus on recovery and returning to drumming again. There has been speculation among fans about his future with the band due to the dynamics within U2 evolving over the years, but Mullen has clarified that his intention is to get healthy and continue playing. Despite his absence from the tour, U2 is working on new music and projects, indicating ongoing activities for the band. 
 
 For more detailed information, you can refer to the articles on American Songwriter【49†source】 and iHeart【50†source】.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

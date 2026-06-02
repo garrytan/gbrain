@@ -90,3 +90,6 @@ Place that in a `ZStack` with `.padding(.bottom, 20)` to lift it off the bottom 
 ---
 
 Let me know if you’re using SwiftUI, UIKit, or a hybrid — I can give the exact implementation.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

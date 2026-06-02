@@ -1053,3 +1053,6 @@ Here's an example of how you can modify your component to display additional use
 4. **Error Handling:** If an attribute like `age`, `gender`, or `height` is not defined in the `user` object, Vue will render them as blank. Ensure these attributes are available in the `user` object for them to be displayed correctly.
 
 By following this structure, your dashboard will display the user's name, age, gender, and height as long as they are provided by the backend.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

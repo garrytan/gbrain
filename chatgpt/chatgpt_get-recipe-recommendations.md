@@ -86,3 +86,6 @@ Here are some additional example items added to the array:
       'Getting enough quality sleep is essential for your physical and mental health. Learn about the benefits of sleep, the risks of sleep deprivation, and tips for improving your sleep habits.',
     imageUrl:
       'https://images.unsplash.com/photo-1621425486784-4e2a
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -333,3 +333,6 @@ python -m pip install -r requirements.txt
 Right now `runners/__init__.py` is importing submodules eagerly, which forces optional deps (like `dotenv`) even when you only want `roadmap`. Best fix is to **remove those imports from `runners/__init__.py`** (or make them lazy/inside functions). That way `python -m runners.roadmap.orchestrator` won’t require ideation deps.
 
 If you paste your `runners/__init__.py` contents, I’ll tell you the minimal change to make it safe.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

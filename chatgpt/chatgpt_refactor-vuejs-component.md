@@ -347,3 +347,6 @@ export default {
 ```
 
 Either of these approaches should allow you to pass a valid value to the `color` binding on the `ColorDot` component.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

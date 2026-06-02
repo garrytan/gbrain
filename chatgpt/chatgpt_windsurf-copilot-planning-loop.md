@@ -145,3 +145,6 @@ jobs:
 
 That’s it. Copilot can keep opening PRs as drafts; this job flips them to “ready” and merges as soon as CI is green—no manual review.  
 If you want literally **everything** merged on green, remove the `ai-task` label check.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

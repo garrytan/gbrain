@@ -743,3 +743,6 @@ Notice how each placeholder in the SQL statement (like `%(firstName)s`) matches 
 In your case, you should ensure that your `record` dictionary contains all the keys that your SQL statement expects and that the data types are appropriate for inserting into MySQL. Additionally, since `lastmodified` is a nested dictionary, you may need to serialize it to JSON before insertion, as demonstrated with `json.dumps(user_record['lastmodified'])`.
 
 Check the dictionary you are using in your `save_records_to_database()` function to ensure all expected keys are present and correctly spelled. If the error persists, verify that the data being passed in the `record` matches the schema of your MySQL table.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

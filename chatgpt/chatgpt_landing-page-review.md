@@ -250,3 +250,6 @@ An AI link-in-bio that shows each fan the single best next action—subscribe, l
 - “Converts and improves” begs the question: *converts how? improves what?*
 
 If you want, I can rewrite the **entire above-the-fold section** (headline → CTA → first scroll) so it reads like a YC-backed company instead of a feature list.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

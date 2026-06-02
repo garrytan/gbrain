@@ -194,3 +194,6 @@ Output:
 :::
 
 If you want, I can tighten this further for **App Router**, **pnpm vs npm**, or **remote caching on/off**.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

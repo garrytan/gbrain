@@ -430,3 +430,6 @@ class _ProfileCompletionPageState extends State<ProfileCompletionPage> {
 ```
 
 Remember to pass the updated `User` object that reflects the current state of the form fields to the `updateUserDetails` function. If you have added or removed fields from the `User` model, make sure to update the form fields and validation logic accordingly.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -759,3 +759,6 @@ Mr. White, you won’t break any core Clerk functionality by doing Apple Sign In
 - All other providers (Google, email magic links, built-in profile screens, etc.) remain fully functional.  
 
 In short: you’re just swapping out one entry point for the Apple flow—nothing else in the SDK is affected.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

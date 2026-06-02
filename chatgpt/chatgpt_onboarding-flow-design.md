@@ -486,3 +486,6 @@ Answer these and I’ll turn this into a tighter coding-agent spec:
 7. Should checkout happen before publish, after publish, or only when the artist approves the first paid workflow?
 
 8. Which mode should the segmented control default to: **Profile**, **Tip**, **Alerts**, or **Release**?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

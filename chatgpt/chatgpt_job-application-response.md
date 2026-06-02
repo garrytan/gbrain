@@ -150,3 +150,6 @@ Provide a one liner that sums up all the things they ask and how i check those b
 ## Assistant
 
 With 9 + years bartending, expert POS/cash-drawer/printer skills, Fri/Sat 5 PM–3 AM availability, ready to train this week, a 15-minute walk/drive to Beverly Center, organized, guest-focused, and fully credentialed (checking account & SSN), I check every box.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

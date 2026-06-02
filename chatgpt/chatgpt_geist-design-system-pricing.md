@@ -48,3 +48,6 @@ Mr. White,
 - **Competitive SaaS pricing:** Geist favors *clarity over persuasion tricks*—few badges, minimal urgency, factual copy.
 
 If you want, **tell me whether this is for inspiration, cloning structure, or designing a pricing page for your own product**, and I’ll give you a concrete layout spec or component breakdown.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

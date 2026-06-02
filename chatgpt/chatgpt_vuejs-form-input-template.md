@@ -271,3 +271,6 @@ methods: {
 ```
 
 With these changes, the password reveal toggle should now function as expected. When the toggle is clicked, the "togglePasswordReveal" method will be called, which will toggle the value of "passwordReveal" and cause the input field to switch between displaying the password as plain text or as masked characters.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

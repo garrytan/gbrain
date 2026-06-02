@@ -102,3 +102,6 @@ export default {
 
 This will display a list of category names for the given blog post.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

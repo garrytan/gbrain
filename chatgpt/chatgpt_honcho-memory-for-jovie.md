@@ -1205,3 +1205,6 @@ Always wrap it with:
 If you want, I can map:
 - exactly which tools to build in-house first  
 - vs which ones are worth delegating to Composio early based on Jovie’s roadmap
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

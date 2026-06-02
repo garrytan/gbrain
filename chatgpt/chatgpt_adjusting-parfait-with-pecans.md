@@ -202,3 +202,6 @@ With 7g of fat coming from pecans, you'd want to reduce the amount of fat from c
 - **Granola:** 100g for 42.5g carbs.
 
 These are approximations. Verify with the nutritional information on your specific products and adjust as needed.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

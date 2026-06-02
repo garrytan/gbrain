@@ -93,3 +93,6 @@ If it’s **a form** → React Hook Form
 If it’s **app state** → Zustand  
 
 They are complementary, not competitors.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

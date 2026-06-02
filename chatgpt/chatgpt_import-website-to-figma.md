@@ -58,3 +58,6 @@ If you have access to the website’s **HTML/CSS code**:
 - These are best for UI extraction / redesign workflow; not for production-ready code. citeturn0search1
 
 Would you like step-by-step instructions for a **specific URL**? (I can tailor the exact steps.)
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -30,3 +30,6 @@ Crime London is a contemporary footwear brand founded by Italian sisters Lisa an
 The brand caters to a fashion-forward audience that appreciates a blend of luxury and streetwear. Their collections often include both high-top and low-top sneakers, with a focus on comfort, style, and versatility. Crime London has gained popularity for its attention to detail, from the stitching to the choice of premium leather and suede.
 
 The brand has also collaborated with various artists and designers to create limited-edition sneakers, further solidifying its position in the fashion world as a label that merges art with fashion. Overall, Crime London is a brand that appeals to those who want to make a statement with their footwear, combining contemporary design with an edgy, rebellious vibe.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

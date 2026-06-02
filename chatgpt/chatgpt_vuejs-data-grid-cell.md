@@ -334,3 +334,6 @@ export default {
 
 This will allow the user to navigate the cells using the mouse keys, and the parent component will update the data that determines which cell is currently focused.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

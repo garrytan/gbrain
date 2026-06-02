@@ -338,3 +338,6 @@ Mr. White—best practice for user-uploads (PNG, JPEG, HEIC, mixed resolutions) 
 ---
 
 This pipeline ensures every photo—regardless of source format—ends up as a fast, cacheable, properly sized asset you can display consistently across web and mobile.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

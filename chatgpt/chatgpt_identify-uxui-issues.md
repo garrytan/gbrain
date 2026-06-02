@@ -68,3 +68,6 @@ Here are the main **UX/UI issues** visible in the screenshots:
 ---
 
 Would you like me to outline **specific UI/UX improvements** (e.g., redesign suggestions for layout, hierarchy, and visual feedback) next?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

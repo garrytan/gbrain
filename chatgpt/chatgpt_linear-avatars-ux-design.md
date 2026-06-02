@@ -47,3 +47,6 @@ Here’s a concise breakdown of what **“Linear avatars UX”** could refer to 
 ---
 
 If you’d like, I can tailor this specifically to **Linear the product’s UI patterns** (e.g., where and how they show avatars in issue lists, comments, team views)—just clarify which context you’re targeting.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

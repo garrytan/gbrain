@@ -37,3 +37,6 @@ write 10 options for a 1 liner call to action for our facebook ads, for example 
 8. Take your life to the next level with A7X3 🚀👊
 9. Dominate your goals with A7X3 🔝
 10. Discover your edge with A7X3 🔥🔥
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

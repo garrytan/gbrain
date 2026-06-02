@@ -1149,3 +1149,6 @@ This makes the thesis stronger:
 > **The future is AI content attached to identities, grounded in real places, driven by music.**
 
 Google is handling the world model. Jovie should own the artist identity, music workflow, scene taste, TikTok format, and monetization layer.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

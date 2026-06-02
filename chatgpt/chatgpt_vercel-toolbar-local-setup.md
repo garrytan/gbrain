@@ -419,3 +419,6 @@ This gives you parallelized tasks locally/CI and shared caches in Vercel—no co
 If you actually meant **Turbopack**: it’s fine to use for dev; for builds, try `next build --turbopack` on 15.4+, and fall back if any library (rarely) misbehaves. citeturn0search12
 
 Want me to wire this into your repo with a PR?
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

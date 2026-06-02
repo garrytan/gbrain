@@ -41,3 +41,6 @@ Here are the key details:
 - Since the underlying provider is AWS (plus others), you still may not have the same level of control as if you were directly managing your own AWS account.
 
 If you like, I can check **which AWS services** (EC2, Lambda, S3, etc) Vercel uses underneath — would that be helpful, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -87,3 +87,6 @@ Here’s your detailed market price report for the specified items:
 {{file:file-VAnQ3iPt9HwWcGXM8aBn2v}}
 
 I included a summary table with averages and a full breakdown of every valid eBay sale used to compute the figures. Let me know if you need any updates or further analysis!
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

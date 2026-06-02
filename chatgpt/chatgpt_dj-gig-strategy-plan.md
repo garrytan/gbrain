@@ -74,3 +74,6 @@ Mr. White, here’s a concise action plan to secure high-paying DJ gigs:
    - **Follow-Up & Feedback**: After each event, secure testimonials from promoters and attendees to bolster your EPK and social proof.
 
 By reinforcing your established reputation, showcasing fresh content, and aligning with promoters who regularly book top-tier talent, you’ll better position yourself to secure consistent, high-paying gigs.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

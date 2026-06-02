@@ -587,3 +587,6 @@ import neverSayAWordAlbumArt from "./../assets/img/never-say-a-word-album-art.jp
 ```
 
 In this updated version, I've added a CSS class `.btn` for the button styling and applied it to each link. You can adjust the colors and other styles as needed.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

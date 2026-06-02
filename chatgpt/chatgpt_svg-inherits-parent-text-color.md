@@ -42,3 +42,6 @@ Here is an example code snippet:
 In this example, the `div` element has a text color of red. The `text` element inside the SVG inherits this color using the `currentColor` keyword. So the text inside the SVG will also be red.
 
 Note that the `currentColor` keyword only works for properties that accept color values, such as `fill`, `stroke`, `stop-color`, etc.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -30,3 +30,6 @@ lexicon analysis
 However, lexicon-based methods have limitations. They often struggle with context sensitivity, sarcasm, and the dynamic nature of language, which can lead to less accurate sentiment detection compared to machine learning-based approaches. To address these challenges, recent advancements propose combining lexicon-based methods with machine learning techniques. For instance, the eXplainable Lexicons (XLex) methodology utilizes transformer models and SHapley Additive exPlanations (SHAP) to enhance and expand sentiment lexicons. This hybrid approach aims to improve sentiment analysis accuracy while maintaining interpretability and efficiency. citeturn0academia9
 
 In summary, while lexicon-based sentiment analysis offers a straightforward and interpretable means of evaluating text sentiment, especially in the absence of labeled data, integrating it with machine learning techniques can enhance performance and address its inherent limitations. 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

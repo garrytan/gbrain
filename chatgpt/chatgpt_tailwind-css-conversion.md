@@ -41,3 +41,6 @@ Explanation of utility classes used:
 - `pointer-events-auto`: Allows the element to receive pointer events (equivalent to `pointer-events: auto;`).
 
 Please make sure you have included the Tailwind CSS framework in your project for these utility classes to work.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -32,3 +32,6 @@ I’ve started the applications you requested:
 - **Lead Bartender (JINYA Ramen Bar):** I completed the initial qualification questions. The next step is to submit your existing resume (“Tim White.pdf”) to the employer. I need your explicit confirmation before uploading your resume.
 
 Please let me know once you’ve signed in on the Four Seasons site and confirm whether you’d like me to submit your resume for the Lead Bartender application. Then I can proceed with these and start on the Living Room and Hwood Group bartender roles.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

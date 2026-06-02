@@ -212,3 +212,6 @@ class RootTabBarController: UITabBarController {
 ---
 
 Bottom line: **stop drawing the pill** and let iOS draw the tab bar for you. That’s what will make it visually match Apple Health.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

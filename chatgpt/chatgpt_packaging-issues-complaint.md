@@ -252,3 +252,6 @@ I’ve noticed a bunch of changes since the rebrand and honestly I’m not a fan
 - **Rebrand/ingredients:** The rebrand looks cheaper to me and the ingredient list seems longer/more “processed” than I remember. Also confusing that there’s no clear continuity/mention of the original folks.
 
 Net: I’m glad they said the foil issue is going away, but I’m still not ordering more right now because the **taste + formula** feel like a downgrade from the original.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

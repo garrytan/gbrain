@@ -83,3 +83,6 @@ Use your backend or Supabase Edge Functions to handle the sensitive logic and ex
 ---
 
 Let me know if you want a custom Capacitor plugin setup to pass variables from `Info.plist` to JavaScript.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

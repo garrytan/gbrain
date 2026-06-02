@@ -88,3 +88,6 @@ Got it, Mr. White. Looking at your Jovie preview screenshots, here are some clea
 ---
 
 Do you want me to draft **an Apple-level polish spec** (animations, typography, spacing, accessibility, deep linking behavior) so you can hand it straight to your front-end devs? That way this goes from MVP-looking to premium instantly.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

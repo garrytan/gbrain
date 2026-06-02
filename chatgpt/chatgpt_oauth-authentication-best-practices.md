@@ -535,3 +535,6 @@ No client ever accidentally dumps the user into another client.
 ```
 
 That is the clean architecture.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

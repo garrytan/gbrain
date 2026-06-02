@@ -52,3 +52,6 @@ For preview deployments and some production setups, the toolbar can show up auto
 ---
 
 If you want direct links to the Chrome or Firefox extension pages, tell me your browser and I’ll fetch them.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

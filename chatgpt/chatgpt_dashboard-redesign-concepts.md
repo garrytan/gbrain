@@ -390,3 +390,6 @@ Mr. White, I mocked up all five directions as PNGs.
 [Option 5 — Polished Finder](sandbox:/mnt/data/jovie_mockup_finder.png)
 
 [Download all mockups as a ZIP](sandbox:/mnt/data/jovie_dashboard_mockups.zip)
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

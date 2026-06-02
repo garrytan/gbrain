@@ -93,3 +93,6 @@ So:
 **RED Studios Hollywood lot → retained separately by Jarred Land / Jim Jannard and rebranded as RSH Studios in 2025.** citeturn184558search0turn184558search3
 
 So the Cahuenga studio didn’t become “Nikon Studios.” It’s basically the old RED Studios Hollywood operating under the new **RSH Studios** name.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

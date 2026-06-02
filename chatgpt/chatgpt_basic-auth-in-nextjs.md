@@ -106,3 +106,6 @@ Here’s a clean prompt you can drop into your AI coding agent to implement the 
 
 That’s all the agent needs to generate the file.  
 Remember to set `ADMIN_SECRET` in your `.env.local` before deploying.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

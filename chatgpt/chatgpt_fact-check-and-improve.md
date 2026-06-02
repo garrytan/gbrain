@@ -75,3 +75,6 @@ The weak spots:
 > this is why an agent tweets for me. i’m literally not even here right now.
 
 I’d post the **best improved version**. It keeps the bite, reduces derailment, and makes the AI-agent punchline land harder.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

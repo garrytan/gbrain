@@ -41,3 +41,6 @@ Mr. White, aim for a lean, iterative mix of design and code rather than a big up
    – Deploy early (even a bare-bones MVP), gather usage data, then refine both prototype and production UI.
 
 By overlapping design and development you catch UX issues before they’re costly to fix, keep momentum high, and ensure what you build actually works for real users.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

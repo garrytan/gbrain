@@ -590,3 +590,6 @@ Here’s the **updated, consolidated backlog**, now including **TestFlight / Fas
 
 This list should be pretty much plug-and-play for sprint planning.  
 If you want, I can turn just **P0 + P1 + the Fastlane/TestFlight items** into a table of “Ticket title / Description / Priority” you can paste straight into Linear or Jira.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

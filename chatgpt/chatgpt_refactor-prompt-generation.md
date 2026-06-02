@@ -158,3 +158,6 @@ At the end, provide:
 --- 
 
 If you want, I can also adapt this prompt into two versions: one for a “planner” agent (triage + selection) and one for “executor” agents (each picks up one Linear issue and ships the PR).
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

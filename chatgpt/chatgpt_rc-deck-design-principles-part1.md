@@ -1210,3 +1210,6 @@ Mr. White, I’d start with pricing power and buyer identity, then derive produc
 
 
 The next step is separating user, demo surface, and payer: price against replaced labor or revenue created for teams already spending on operators.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

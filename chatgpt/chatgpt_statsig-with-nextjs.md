@@ -141,3 +141,6 @@ If your goal is “most performant overall”:
 **Never rely on client-side flags for security or access control.** Client flags are inherently bypassable; enforce permissions server-side and treat client flags as UX hints.
 
 If you tell me whether you deploy on **Vercel** (sounds likely) and whether you want **A/B tests that change hero copy / SEO**, I can outline a concrete Next.js App Router structure (middleware routing scheme + where to bootstrap in layouts).
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

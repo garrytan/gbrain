@@ -113,3 +113,6 @@ So yes, there is risk of misuse, but the law’s structure (reporting, documenta
 - Be aware that if your income is very high, the deduction phases out. Also that in 2029, the law might expire or change.  
 
 If you like, I can run a mock example estimating how much tax you’d save under different levels of tip income, to see if it’s meaningful for you. Do you want me to do that?
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

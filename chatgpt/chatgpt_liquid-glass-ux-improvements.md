@@ -60,3 +60,6 @@ Here’s a concise bullet list of actionable UX/UI improvements for your onboard
 - **Optionality needs clarity** — emphasize that Health data import/photo import/notifications are skippable *without penalty*.
 
 Want me to mock up a corrected screen or two?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

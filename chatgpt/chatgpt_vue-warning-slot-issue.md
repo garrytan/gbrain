@@ -772,3 +772,6 @@ import SocialIcons from './SocialIcons.vue';
 ```
 
 With the import statement updated to include `onUnmounted`, the lifecycle hook should now be defined and work correctly within your component, ensuring that the event listener is properly cleaned up when the component unmounts.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -590,3 +590,6 @@ Creating the full data for four diet phases, including all 12 weeks of data for 
 ```
 
 For the "Weight Loss," "Maintenance," and "Mini Cut" phases, I've provided a structural framework. You can fill in the weekly data (`weeksData`) based on the specific progression you expect for each phase, similar to how it's done for the "Mass" phase. The data for weight, body fat percentage, and FFMI would typically follow the specific goals and patterns of each phase.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

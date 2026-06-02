@@ -1516,3 +1516,6 @@ pip install -e .
 ```
 
 That's the next step. The repo structure clearly indicates that's how it expects to be installed. fileciteturn5file0
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -73,3 +73,6 @@ Can we add some flavor
 - Garnish with chocolate shavings.
 
 Feel free to mix and match these ideas to suit your taste!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

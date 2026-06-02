@@ -399,3 +399,6 @@ Every action must produce one of:
 ```
 
 The highest-leverage next move is to have it inspect your current Linear backlog and produce a **revenue-prioritized issue list** with everything else marked defer.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

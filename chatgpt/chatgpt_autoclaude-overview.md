@@ -40,3 +40,6 @@ autoclaude
 **In short:** *AutoClaude/Auto-Claude* is not a new core AI model — it’s a **framework or toolset that layers autonomous task management on top of Claude Code or similar AI to automate and accelerate software development workflows.* citeturn0search1
 
 If you want help with a specific *AutoClaude* tool or setup workflow (e.g., how to install or use it), tell me what environment you’re targeting (local desktop, VS Code, CLI) and I’ll guide you.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

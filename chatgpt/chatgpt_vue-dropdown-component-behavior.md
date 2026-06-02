@@ -171,3 +171,6 @@ export default {
 
 This is one way you can combine the two blocks of code into one component, you can also make some other changes as per your requirement but the overall structure is similar.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

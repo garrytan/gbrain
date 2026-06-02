@@ -43,3 +43,6 @@ At a rate of $39 an hour, a deep cleaning that takes between 4 to 6 hours would 
 - For 6 hours: \( 6 \times 39 = \$234 \)
 
 So, the cost would range from $156 to $234.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

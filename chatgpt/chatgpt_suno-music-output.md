@@ -94,3 +94,6 @@ If you want:
 - Or implications for a startup strategy  
 
 say the word.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

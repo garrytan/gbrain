@@ -219,3 +219,6 @@ If you want the **“final” hardened policy** after you confirm legit mail is 
 ```zone
 _dmarc IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc@meetjovie.com; adkim=s; aspf=r; fo=1; sp=reject; ri=86400"
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

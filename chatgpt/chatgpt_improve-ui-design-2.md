@@ -396,3 +396,6 @@ Got you, Mr. White. Here’s a concrete checklist to move your screen toward the
 ---
 
 If you tell me whether you’re in SwiftUI or React Native, I can translate this into specific layout primitives (VStacks/HStacks, padding values, font weights) so your dev can implement it directly.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

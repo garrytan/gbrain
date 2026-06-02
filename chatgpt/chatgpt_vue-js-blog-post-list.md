@@ -152,3 +152,6 @@ fetchPosts() {
 ```
 
 This will sort the posts in descending order by publish date, so the newest posts will be displayed first. If you want to display the oldest posts first, you can reverse the sort order by changing the comparison function to `return new Date(a.publish_date) - new Date(b.publish_date);`.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

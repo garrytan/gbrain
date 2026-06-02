@@ -54,3 +54,6 @@ Explain fuel cell cars
   • Station downtime is common; an empty pump means a tow, not a Level‑2 plug.  
 
 **Bottom line for LA:** If you live near one of the West L.A. or Hollywood stations and value 5‑minute refuels over widespread charging, a Mirai lease can be painless thanks to the free‑fuel perk. For everyone else, a battery EV is simpler and cheaper to run today.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

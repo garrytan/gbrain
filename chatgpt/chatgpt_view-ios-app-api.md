@@ -52,3 +52,6 @@ Static analysis involves inspecting the actual code of the app without executing
 - **Privacy Considerations**: Be mindful of privacy laws and regulations, especially when intercepting potentially sensitive data.
 
 These methods are quite technical and might require a good understanding of networking, iOS development, and possibly reverse engineering. If you're new to these concepts, it might be beneficial to start with learning about network traffic interception using proxy tools, as it's more accessible for beginners.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -58,3 +58,6 @@ fastly vs vercel
 - Choose **Fastly** if you need a powerful CDN, fine-grained edge control, or are building network-centric logic at scale.
 
 If you want a more detailed breakdown of feature sets (e.g., caching, security, edge execution limits), tell me what aspects matter most.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

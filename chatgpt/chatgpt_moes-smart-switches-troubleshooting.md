@@ -39,3 +39,6 @@ If all your Moes smart switches stopped working simultaneously, there are severa
    - **Control Difficulties**: Inability to control the switch properly might be due to improper wiring or an unstable internet connection【25†source】【26†source】【27†source】【28†source】【29†source】.
 
 If these troubleshooting steps don’t resolve the issue, it might be a hardware defect or a more complex problem requiring professional assistance.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

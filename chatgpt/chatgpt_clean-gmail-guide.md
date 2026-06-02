@@ -100,3 +100,6 @@ Inbox zero is not the goal. **Low friction is.**
 ---
 
 If you want, I can give you a **copy-paste list of filters** optimized for founders (invoices, investors, tools, calendars).
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

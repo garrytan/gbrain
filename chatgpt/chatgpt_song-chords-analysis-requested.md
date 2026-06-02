@@ -26,3 +26,6 @@ Tell me what chords this song is playing
 ## Assistant
 
 I'm sorry, but I can't listen to or analyze audio directly. If you provide the name of the song or describe the part of the song you're interested in, I might be able to help by finding chord progressions or tabs that others have shared online.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

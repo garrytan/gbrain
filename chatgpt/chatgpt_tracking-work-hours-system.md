@@ -143,3 +143,6 @@ If you want, I can:
 - Build a **deep-work ratio metric** (this is where elite founders separate)
 
 Just say which one.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

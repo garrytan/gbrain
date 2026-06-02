@@ -71,3 +71,6 @@ If you want, I can help you:
 - Add it to PATH correctly
 - Create a PowerShell alias
 - Diagnose WSL vs native Windows conflicts
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

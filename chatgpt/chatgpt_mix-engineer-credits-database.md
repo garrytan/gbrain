@@ -26,3 +26,6 @@ mike rosekelley mix engineer. can you find credits for him
 ## Assistant
 
 Mike Roskelley is recognized for his work as a mix engineer, with credits including collaborations with prominent artists in the electronic genre. For detailed information about his specific projects and contributions, you can explore his official credits on Jaxsta, a comprehensive music credits database【6†source】. Additionally, AllMusic provides a broad overview of his discography, highlighting his involvement in the electronic music scene【7†source】. To delve into his full range of work, including specific albums and tracks he has mixed, visiting these resources will offer the most comprehensive insights.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -26,3 +26,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "I don't have the ability to directly run commands on your terminal, but I can definitely guide you through the process. To install and run MakeHuman from the source on"}
 {'asset_pointer': 'sediment://file_000000008c7c622f9c0cc9e6c9bf70cd', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:28:36.422142+00:00', 'format': 'wav', 'metadata': {'end': 7.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 360078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

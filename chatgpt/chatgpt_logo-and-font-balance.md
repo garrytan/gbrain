@@ -42,3 +42,6 @@ Mr. White, paste this:
 > Use a modern, premium, friendly geometric sans direction, but make it feel custom rather than using an off-the-shelf font. Prioritize optical balance, consistent stroke weight, clean spacing, and strong legibility. The wordmark should feel soft, confident, minimal, and brandable.
 >
 > Output only the wordmark version. Do not show the compact icon next to it. Do not create a horizontal logo lockup. Do not use both marks at the same time. Show the wordmark alone on a clean background, with spacing and proportions refined for production use.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

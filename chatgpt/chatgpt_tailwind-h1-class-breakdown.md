@@ -369,3 +369,6 @@ Mapping from what you pasted:
 - `text-wrap: balance` → `[text-wrap:balance]`
 
 If you paste the H1’s **responsive** computed font-size at different breakpoints, I can translate that into `sm:/md:/lg:` Tailwind sizes too.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

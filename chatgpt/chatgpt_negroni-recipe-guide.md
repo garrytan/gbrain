@@ -38,3 +38,6 @@ Mr. White, here’s the classic Negroni—equal parts, no fuss:
 4. Express an orange peel over the drink, rim the glass, then drop it in.  
 
 Cheers.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -1209,3 +1209,6 @@ onMounted(async () => {
 Make sure your environment variables for Supabase (especially `SUPABASE_SERVICE_ROLE_KEY`) are correctly set in your deployment or local environment, as the "Invalid API key" error is coming from Supabase.
 
 Let me know if you need any further adjustments!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

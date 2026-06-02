@@ -265,3 +265,6 @@ export default {
 ```
 
 By passing different props to the `ActionPanel` component, you can customize the title, description, and button text for different action panels in your application.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

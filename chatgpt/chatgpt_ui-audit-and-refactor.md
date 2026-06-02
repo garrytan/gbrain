@@ -217,3 +217,6 @@ Mr. White — here’s the revised drop-in **Claude Code Plan** prompt using **u
 ---
 
 Want me to set the canonical `@/ui` path and target folders (e.g., `app/(dash)/`, `features/auth/`, `components/`) before you run it?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

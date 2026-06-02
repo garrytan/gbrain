@@ -113,3 +113,6 @@ When you run Lighthouse or PageSpeed:
 ---
 
 If you want, I can provide a **template Lighthouse audit report** tailored for Next.js to use in CI.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

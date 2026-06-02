@@ -241,3 +241,6 @@ For a modern Swift app in 2025, use the following stack:
 ---
 
 Want a template or boilerplate starter repo suggestion too?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

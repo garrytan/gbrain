@@ -65,3 +65,6 @@ Tim White
 ---
 
 That should give them all the key details without extra back-and-forth.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

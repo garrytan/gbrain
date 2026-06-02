@@ -315,3 +315,6 @@ Let's also add setting it as an Artist Pick on Spotify, and then running the Pan
 - Keep an eye on all platforms for any technical issues and address them promptly.
 - Stay active and engaged with your audience throughout the day.
 - Encourage fans to share their thoughts and tag you in their posts.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -104,3 +104,6 @@ The CLI runs like any other command-line tool.
 If you’re using scripts that mention `--dangerously-skip-prompts`, that’s not part of Anthropic’s tool. A third-party wrapper might include that flag to bypass confirmation dialogs or safety checks. In that case you’d need normal execution rights for that custom script—nothing special at the OS level.
 
 Bottom line: no hidden or elevated permissions from Claude itself. Just your API key and whatever rights you normally have to run command-line apps.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

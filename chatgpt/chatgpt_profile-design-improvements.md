@@ -781,3 +781,6 @@ Do you want me to mock up a version where:
 - The **social bar remains icons-only**,  
 - Below the CTA you get a **second row with “functional links”**,  
 - DSPs remain tied to the Listen button flow?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

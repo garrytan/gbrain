@@ -282,3 +282,6 @@ If you want, I can build you:
 - Interview answer scripts  
 
 Which role do you want to target first?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -897,3 +897,6 @@ What was generated from it?
 # The upgraded one-line plan
 
 **Build Jovie’s audio system as an asset graph with first-class versions, roles, cues, markers, comments, approvals, deliverables, and Trigger-powered agent workflows, starting with audio but using media-agnostic primitives so album art, music videos, lyric videos, ad creative, and full DAM workflows fit without a rewrite.**
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

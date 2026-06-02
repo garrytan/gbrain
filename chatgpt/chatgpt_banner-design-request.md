@@ -29,3 +29,6 @@ Yeah, so I need to make a little batter image, like 600 pixels wide by 250 pixel
 Here’s a 600×250 banner featuring Brian Stack, Phil Murphy, and the Hudson County Democratic Organization badge:
 
 [Download the banner](sandbox:/mnt/data/final_banner.png)
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

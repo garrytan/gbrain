@@ -27,3 +27,6 @@ Yo, what’s up, friend? I’m thinking about getting this as a tattoo and I wou
 ## Assistant
 
 I wasn’t able to generate that image because the request violates our content policies. Please provide a different prompt or describe another design idea you’d like to explore.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -148,3 +148,6 @@ On publish: **compile** profile → a single, minified **artifact** (HTML+JSON) 
 - CDN keys per artifact; pre-generate image sizes (thumb, card, hero) and store in props to avoid runtime transforms.
 
 If you want, I’ll translate this into exact Supabase SQL + zod schemas next.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

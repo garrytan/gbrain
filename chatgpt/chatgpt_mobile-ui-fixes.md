@@ -66,3 +66,6 @@ Mr. White — issues visible in this screen and concrete fixes.
 - Confirm Dynamic Type doesn’t truncate “Releases/Audience/More” or overlap the dot indicator.
 
 If you tell me your stack (SwiftUI/UIKit/React Native/Flutter), I can translate the above into exact layout rules/components to implement.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

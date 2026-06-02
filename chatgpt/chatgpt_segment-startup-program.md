@@ -35,3 +35,6 @@ segment startup
 The program also provides access to over $1 million in additional software tools through Segment's dealbook citeturn0search3.
 
 For more information and to apply, visit the [Twilio Segment Startup Program](https://segment.com/industry/startups). 
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

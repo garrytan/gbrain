@@ -43,3 +43,6 @@ An Aperol Spritz is a classic Italian cocktail, perfect for sipping in the after
 6. **Garnish:** Finish with a slice of orange.
 
 This combination ensures a refreshing, slightly bitter, yet sweet drink, embodying the essence of Italian aperitivo culture.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

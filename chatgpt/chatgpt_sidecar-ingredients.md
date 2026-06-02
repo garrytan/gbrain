@@ -32,3 +32,6 @@ Classic Sidecar ingredients:
 - **0.75 oz fresh lemon juice**
 
 Optional: Sugar rim on the glass. Shake with ice, strain into a coupe.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

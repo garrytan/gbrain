@@ -71,3 +71,6 @@ Guide + sample code here. citeturn1search7
 - See usage & pricing page for storage, ops, and transfer. citeturn0search0
 
 If you want, I can sketch the minimal Next.js page + API route wired for client-side direct image uploads with basic type/size validation.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

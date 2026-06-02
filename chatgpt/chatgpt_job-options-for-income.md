@@ -588,3 +588,6 @@ Want a:
 - IG content plan to tease launch?
 
 Say the word.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

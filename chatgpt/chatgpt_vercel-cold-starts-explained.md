@@ -58,3 +58,6 @@ Vercel has made cold starts **much less frequent and less painful**, especially 
 ---
 
 **Summary:** Vercel cold starts are the latency from starting up a function with no warm instance. Recent improvements like Fluid compute, pre-warming, and bytecode caching make them rare and shorter when they occur. citeturn0search0
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

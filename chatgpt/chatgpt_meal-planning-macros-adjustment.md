@@ -153,3 +153,6 @@ Since you want to have 4 chicken and rice meals, each meal will have:
 | **Total** | 37.3        | 4.31    | 41.3      | 369.2    |
 
 Thus, each of your four chicken and rice meals will consist of 107.5g of chicken and 147.5g of rice to meet your macro requirements for the day.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -32,3 +32,6 @@ Mr. White — nah, he didn’t *just* become a clown for the role.
 Eric Stonestreet (Cam) was into clowning **way before** *Modern Family*: as a kid he **created a clown character named “Fizbo”** and even **performed at children’s birthday parties**. citeturn0search1turn0search6
 
 When the show later gave Cam a clown alter-ego named Fizbo, it was basically pulling from **Stonestreet’s real childhood clown persona**, not something invented from scratch for TV. citeturn0search2turn0search0
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

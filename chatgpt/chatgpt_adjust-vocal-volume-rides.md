@@ -53,3 +53,6 @@ Bad:
 - "1:22 - 'Now, now, don’t you speak' - Same as above - Can we do a volume ride on that to make sure it stays clear."
 - "1:37 - 'I, I, Love the way it sounds' - When I sing the stutter 'I, I' it sounds a little lower to me. Can we do a volume ride on that to make sure it stays clear."
 - "3:05 - Can we make the female ad-lib much more subtle? Verbed out or pushed way back in the mix."
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

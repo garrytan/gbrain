@@ -62,3 +62,6 @@ Let's break down the meal plan considering your needs for convenience, whole foo
 6. **Microwave:** While it’s not convenient, having a prepped meal that can be quickly heated could be useful when you have a longer break at work.
 
 This plan provides a balanced distribution of protein throughout the day, with carbs concentrated post-workout, and aligns with your macronutrient targets. The options above give you flexibility and allow you to stick to whole foods as much as possible while maintaining convenience.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

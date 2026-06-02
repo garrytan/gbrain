@@ -186,3 +186,6 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'in', 'text': "So I'm looking at the MakeHuman site, and it's very confusing because there's MPFB, MPFB2, and then MakeHuman. And there's also talk about how it was an add-on, and then it was an extension, and all this stuff. And there's downloads, and there's the marketplace. And I'm like, what do I need to download to make this work?"}
 {'audio_asset_pointer': {'asset_pointer': 'sediment://file_00000000cda8622faf0d8817d7e6b041', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:26:50.357255+00:00', 'format': 'wav', 'metadata': {'end': 26.14, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1254798, 'tool_audio_direction': None}, 'audio_start_timestamp': 751.0866198860022, 'content_type': 'real_time_user_audio_video_asset_pointer', 'expiry_datetime': '2025-12-18T04:26:50.357255+00:00', 'frames_asset_pointers': [], 'video_container_asset_pointer': None}
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

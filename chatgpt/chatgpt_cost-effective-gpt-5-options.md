@@ -49,3 +49,6 @@ OpenAI lists GPT-5 API at approx **$1.25/M input** and **$10/M output**; **GPT-5
 - Approve **diffs**, not whole-file rewrites.
 
 If you want, I’ll set a step-by-step: pick Windsurf or Cursor, wire your OpenAI key, and set sane token/output caps so you start strong without burning cash.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

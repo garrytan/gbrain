@@ -61,3 +61,6 @@ Here are four hot-pink, circular stamp-style variations for **The Bubblegum Fact
 - **Fonts**: Each option uses a different typeface for the central text—let me know which you prefer!
 
 Happy to tweak fonts, spacing, or texture further.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

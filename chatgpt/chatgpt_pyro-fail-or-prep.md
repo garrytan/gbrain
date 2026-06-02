@@ -29,3 +29,6 @@ This caption implies that achieving those pyros is going too far, like an artist
 Mr. White, here’s a snarky reply you could drop:
 
 > “£4 million in molten LEDs isn’t ‘pushing boundaries’—it’s pushing your pyro crew’s incompetence. Real stagecraft dazzles without turning the Arc Stage into an impromptu metal foundry.”
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

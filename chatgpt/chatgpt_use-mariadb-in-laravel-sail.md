@@ -117,3 +117,6 @@ If your Laravel Sail environment is continuously restarting after switching to M
    This will ensure a clean start by removing existing containers and rebuilding them.
 
 If the problem persists after trying these steps, it might be helpful to provide the specific error messages or logs you encounter, as it can assist in diagnosing the issue further.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

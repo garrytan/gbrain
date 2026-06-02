@@ -72,3 +72,6 @@ Here’s why:
 - **Hint #4:** He’s teased **collaborative albums** and tracks with multiple major artists on his upcoming work, and is notoriously secretive about features until release.
 
 It checks every box.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

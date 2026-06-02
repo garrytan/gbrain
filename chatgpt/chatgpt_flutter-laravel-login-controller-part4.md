@@ -62,3 +62,6 @@ Widget build(BuildContext context) {
 ```
 
 If you're still facing issues after checking these points, please provide the part of your `main.dart` where you set up the `ChangeNotifierProvider` and the portion of your `MyHomePage` where you're trying to access the `UserModel` provider, so we can give you more targeted advice.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

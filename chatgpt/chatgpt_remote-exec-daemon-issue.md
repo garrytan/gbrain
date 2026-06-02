@@ -76,3 +76,6 @@ This error means the **remote environment exists**, but **VS Code can’t reach 
 This is **not a VS Code bug**. It’s an unhealthy remote execution environment. Restarting or recreating the container fixes it in >90% of cases.
 
 If you want, tell me **Docker vs Kubernetes vs SSH**, OS, and whether this is **local or cloud**, and I’ll give you the exact fix path.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

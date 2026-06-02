@@ -860,3 +860,6 @@ A landing page where the user sees:
 
 When a user clicks a pill, the input is prefilled. When they press Enter, their prompt is saved and they are sent into auth/onboarding.
 ```
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

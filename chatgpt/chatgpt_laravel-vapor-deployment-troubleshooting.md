@@ -100,3 +100,6 @@ This is a quick project that needs to be completed as soon as possible. We are l
 If you have experience with Laravel Vapor, AWS, Laravel Mix, and Tailwind CSS, and can work quickly and collaboratively with our team, please apply for this job. We will provide more details about the project during the interview process.
 
 Please apply with your resume, relevant experience, and your flat rate fee for fixing the issue.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

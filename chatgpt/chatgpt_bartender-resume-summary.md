@@ -109,3 +109,6 @@ If everything’s set up correctly, you’ll see ChatGPT’s reply printed below
 ---
 
 **[End Screen: Channel logo, “Subscribe” button, and links to other videos]**
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

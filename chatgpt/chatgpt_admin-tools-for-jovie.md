@@ -117,3 +117,6 @@ I’d start with:
 5. **Audit log of admin actions.**
 
 If you tell me what volume and use cases you expect in the first 3–6 months (creator type, geo, monetization or not), I can tighten this into a exact v1 spec.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

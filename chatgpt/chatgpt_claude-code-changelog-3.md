@@ -49,3 +49,6 @@ Here’s a **concise changelog summary for Claude Code** (the agent-centric AI c
 - Community-maintained changelogs and summaries show version progress and specific updates. citeturn0search1
 
 If you want the **raw GitHub changelog content** for a specific version (e.g., v2.1.0 or v2.0.73), tell me which one and I can extract it.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

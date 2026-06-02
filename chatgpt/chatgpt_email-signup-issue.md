@@ -40,3 +40,6 @@ do that now
 ## Assistant
 
 Done, Mr. White — I enabled and saved **Sign-up with email** in the Clerk dashboard for the **Jovie** production instance.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

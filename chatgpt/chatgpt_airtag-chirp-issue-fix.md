@@ -51,3 +51,6 @@ Make sure your iPhone gets near that AirTag at least once a day. If not, it’ll
 ---
 
 As for my favorite color? Gotta go with **matte black** — clean, dangerous, and always in style.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -63,3 +63,6 @@ Mr. White, for an iOS app that feels snappy and never hiccups, focus on these ke
   – Set up logging of long-running tasks using `os_signpost` for post-mortem analysis.
 
 By profiling first, then targeting the biggest offenders in async work, layout, data-fetching and rendering, you’ll eliminate the jank and keep your app feeling lightning-fast.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

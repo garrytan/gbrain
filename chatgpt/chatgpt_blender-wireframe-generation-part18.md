@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "It looks like the debug command you tried didn't quite work because the filename isn't correct. To run it in debug mode, you should add the `--debug` flag at the end of the command, like this:\n\n```bash\npython3 makehuman.py --debug\n```\n\nThis should provide more detailed logs in the terminal, which might help us figure out what's going on."}
 {'asset_pointer': 'sediment://file_000000009c00622f91a192814968c767', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:43:53.340544+00:00', 'format': 'wav', 'metadata': {'end': 16.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 792078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

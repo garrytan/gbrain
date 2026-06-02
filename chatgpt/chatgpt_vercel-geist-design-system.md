@@ -32,3 +32,6 @@ vercel geist
 - There’s a **community-created open UI library** inspired by it called *Geist UI* (separate from Vercel’s official internal system). citeturn0search14
 
 Additionally, **Geist** extends into a **font family** (Geist Sans, Geist Mono, and Geist Pixel) designed for developers, UI, and terminals. citeturn0search2turn0search7
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

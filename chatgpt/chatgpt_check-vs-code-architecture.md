@@ -36,3 +36,6 @@ To determine if your VS Code installation is built for Intel or Apple Silicon, y
 If the "Kind" or "Architecture" field displays "Intel" or "x86_64," it means your VS Code installation is built for Intel-based Macs. If it shows "Apple Silicon," "ARM," or "Apple," then it indicates that your VS Code installation is built natively for Apple Silicon-based Macs.
 
 Please note that as of my knowledge cutoff in September 2021, Microsoft had not released an official Apple Silicon build of VS Code. However, this information might have changed since then, so make sure to keep your VS Code installation updated to the latest version to take advantage of any new developments.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

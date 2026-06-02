@@ -86,3 +86,6 @@ ___
 ___
 
 If you like, Mr. White, I can walk you through a **live code example** of setting up a Next.js project and implementing data fetching + routing (step-by-step. Do you want that?
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

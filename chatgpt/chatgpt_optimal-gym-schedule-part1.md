@@ -234,3 +234,6 @@ Let me know if adjustments are needed!
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'in', 'text': 'Based on everything you know about me, what would you say my Myers-Briggs type is?'}
 {'audio_asset_pointer': {'asset_pointer': 'sediment://file_0000000035e461f68eb90fe6848e5db6', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-11-16T02:33:17.759684+00:00', 'format': 'wav', 'metadata': {'end': 5.12, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 245838, 'tool_audio_direction': None}, 'audio_start_timestamp': 63.436409001995344, 'content_type': 'real_time_user_audio_video_asset_pointer', 'expiry_datetime': '2025-11-16T02:33:17.759684+00:00', 'frames_asset_pointers': [], 'video_container_asset_pointer': None}
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

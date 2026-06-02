@@ -425,3 +425,6 @@ Good for CI pipelines where:
 - You’re progressively fixing lint errors.
 
 Let me know if you want it to **only fail on errors, not warnings** — that’s also doable.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -1018,3 +1018,6 @@ Place this file in your `components/` folder and verify that your API at `/api/g
 
 
 Ok we need the logic to pull in the clerk user id from the currently authenticated user using the clerk nuxt package
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

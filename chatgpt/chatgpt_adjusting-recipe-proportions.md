@@ -92,3 +92,6 @@ The adjusted recipe is:
 - 5.29 liters of lemonade
 
 This adjusted recipe maintains the same proportions of the ingredients while using the amount of lemonade you have.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

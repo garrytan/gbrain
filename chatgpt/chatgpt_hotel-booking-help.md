@@ -117,3 +117,6 @@ Book the **$123 Hot Rate 3★**. You’re almost certainly just buying the Ramad
 If you want, I can:
 - Compare this vs booking direct (cancellation risk analysis), or  
 - Decode the **$132 2.5★** too (lower certainty, more variance).
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

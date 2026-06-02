@@ -107,3 +107,6 @@ These are all super minor things and didn’t take away from the experience at a
 Hey Ryan! Just left the review and some private feedback as you requested. Thanks again for being such a great host – we’d definitely love to check out another one of your properties in the future. We’ve stayed at a few other spots in Joshua Tree before, but this was our favorite so far. 🙌  
 
 – Tim
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

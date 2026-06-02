@@ -154,3 +154,6 @@ If the tag can appear in a **follow-up comment**:
 ### Bottom line
 Your architecture is sound.  
 CodeRabbit is the immovable object.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

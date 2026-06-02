@@ -48,3 +48,6 @@ Startups often lack internal experimentation and analytics infrastructure. Stats
 You apply via the **Statsig Startup Program page** on statsig.com’s site — typically a simple application form tied to your company info. citeturn0search0
 
 If you want specifics on cutoff criteria (years, funding size, etc.) or help drafting an application, let me know.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -67,3 +67,6 @@ If you haven’t already:
 - Best move: run network diagnostics, try desktop version, and check support/status for updates.
 
 If you want, tell me exactly *what error message you’re seeing* (and whether it’s the web UI or desktop IDE) and I can help debug that specific case.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

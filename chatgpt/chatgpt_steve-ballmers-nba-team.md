@@ -26,3 +26,6 @@ Hey, what basketball team does Steve Ballmer own?
 ## Assistant
 
 Steve Ballmer owns the Los Angeles Clippers, an NBA basketball team.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -59,3 +59,6 @@ Here are the most common causes of an **AL code** on Kwikool units:
 📞 Since your unit’s inside panel even lists the **Kwikool Tech Support number (1-800-594-5665)**, if the AL code doesn’t clear after checking the above, call them—they can walk you through pressure/diagnostic checks step by step.  
 
 Mr. White, do you want me to pull the **specific error code table from the Kwikool KPO12-23 service manual** for you so you know exactly what “AL” maps to?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -253,3 +253,6 @@ The correct move is:
 That is the reliable way to stop AI agents from inventing “almost right” patterns.
 
 If you want, I can draft a concrete `AGENTS.md` policy plus a first-pass `eslint` + `semgrep` rule set for Neon/Drizzle and TanStack.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

@@ -1169,3 +1169,6 @@ bottomNavigationBar: BottomNavigationBar(
 ```
 
 Make sure to apply this change to all instances where you have used `const BottomNavigationBarItem` and are trying to use runtime values inside them. This change will ensure that your widget can rebuild with the correct icons and labels based on the user's logged-in status.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

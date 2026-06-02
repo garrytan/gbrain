@@ -34,3 +34,6 @@ Key legal points:
 - **Intent matters** — if you’re simply sunbathing or walking around nude without lewd conduct, and not trying to be seen, courts are less likely to convict.
 
 **Bottom line:** If your backyard is **fully fenced** and **you’re not visible** from the street or other homes, you’re likely fine. If people can see you and complain, you risk legal trouble. Consider privacy screens or tall hedges if you're going to make it a habit.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -120,3 +120,6 @@ If you’d like, I can now:
 - Or rewrite it to feel more founder-visionary and less portfolio  
 
 Which direction fits where this is being published?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

@@ -36,3 +36,6 @@ Mr. White, based on the page content I can see, here are the likely UI issues:
 - **Sidebar toggle icon-only risk**: There’s a sidebar toggle button (good that it has `aria-label`), but if it’s icon-only without any nearby context, it’s easy to miss and can feel “mystery meat.”
 
 If you tell me whether this is meant to be production vs staging, I can prioritize which are true blockers vs polish.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

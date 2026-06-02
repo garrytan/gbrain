@@ -35,3 +35,6 @@ Put **only issued shares**, not reserved.
 Do **not** include the 1,000,000 employee option pool if those shares are **reserved but not issued**.
 
 That’s it.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

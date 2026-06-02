@@ -273,3 +273,6 @@ If you want, I can:
 - Map this to a paid traffic funnel
 
 Just say which.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

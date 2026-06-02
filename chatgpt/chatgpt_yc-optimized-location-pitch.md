@@ -115,3 +115,6 @@ Competitors include Laylo and Linkfire (adjacent: marketing/link and fan capture
 - “Its” → **It’s** (optional, but helps)
 
 If you want, I can also rewrite your **tech stack** answer to be 30–40% shorter and cleaner while keeping all the substance.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

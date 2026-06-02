@@ -87,3 +87,6 @@ The main shift is making Jovie feel less like a link-in-bio tool and more like a
 The Frame.io influence is strongest in the dark product UI, oversized product panels, modular workflow cards, and “one platform” feel. The Apple influence is in the restraint: fewer visual tricks, larger type, more negative space, and hero sections centered around one premium product object.
 
 Send feedback on any section; I’ll revise that section next.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

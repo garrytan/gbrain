@@ -1140,3 +1140,6 @@ Do not commit your `.env` file to version control. Add `.env` to your `.gitignor
 ```
 
 By following these steps, you will securely store your Spotify access token and make it accessible throughout your Nuxt.js application.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

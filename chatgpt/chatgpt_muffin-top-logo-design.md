@@ -74,3 +74,6 @@ Let's try the first option instead.
 ## Assistant
 
 Here’s the version with a clear dark-brown seam line under the scallops—eyes and smile fully on the top half so they won’t be cut by the helmet split. Let me know if this nails it!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

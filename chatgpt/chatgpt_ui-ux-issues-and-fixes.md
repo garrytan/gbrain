@@ -98,3 +98,6 @@ Mr. White — here are the most obvious UI/UX issues I see from the screens, plu
 12. **Accessibility pass**: tap targets ≥44px, contrast checks, dynamic type support.
 
 If you want, paste the primary user journey you care about (e.g., “artist sets up profile → shares link → tracks fans → books shows”) and I’ll turn the above into a tight, step-by-step redesign backlog with acceptance criteria.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

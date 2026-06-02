@@ -85,3 +85,6 @@ California law also gives you one important storage protection: if the vehicle i
 There is also a separate **lien fee** issue. During the **first 72 hours of storage**, you have the right to retrieve the vehicle **without paying a lien fee**. That does **not** eliminate the tow charge or the daily storage charge. citeturn762323search0turn762323search1
 
 If you want the practical takeaway: for a normal LA private-property tow, every extra day hurts, but the usual two-day bill for a standard car is **mid-$300s, not thousands**.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

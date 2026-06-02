@@ -113,3 +113,6 @@ close-out, ensured compliance with venue standards.
 ---
 
 Would you like me to now **structure this OCR text into a JSON object** for the job experience section?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

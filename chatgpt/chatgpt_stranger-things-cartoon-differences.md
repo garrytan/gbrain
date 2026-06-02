@@ -80,3 +80,6 @@ My best read: **probably a mix of legal caution and design choice.** Netflix has
 ## User
 
 Find out for sure 
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

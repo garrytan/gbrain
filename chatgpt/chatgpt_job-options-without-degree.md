@@ -73,3 +73,6 @@ Mr. White, given your actual experience shipping technical products solo—espec
 You’ll get recruiters and founders in your DMs.
 
 Want help writing that post or job-specific resumes? I got you.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

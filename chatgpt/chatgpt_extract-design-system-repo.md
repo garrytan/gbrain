@@ -127,3 +127,6 @@ Good instincts—this *can* be overhead for a one-man shop, but it depends on yo
 👉 So: build the design system as a **workspace package**, not a separate repo, and keep it private until it stabilizes. That way you get the separation benefits with minimal overhead, but you can flip the switch to open source whenever you want.  
 
 Do you want me to sketch out a **“minimal one-man setup”** that gets you the separation today but keeps the option open to make it a polished open source repo later?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

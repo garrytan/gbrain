@@ -191,3 +191,6 @@ A tighter version for an image model:
 ```text
 Premium macOS DMG installer background for “Jovie”, a dark cinematic music-tech desktop app. Small Finder installer window, 660x420 px, near-black glassy background, subtle blue/purple glow, refined Apple-level typography. Left side reserved for Jovie.app icon, right side reserved for Applications folder alias, elegant minimal arrow between them, headline “Drag Jovie to Applications”, subtext “Install Jovie on your Mac”, tiny footer “jov.ie”. Native macOS feel, high-end creative tool aesthetic, subtle waveform texture, soft shadows, restrained gradients, polished and production-ready. No fake browser UI, no wizard, no clutter, no cheesy music notes, no childish gradients.
 ```
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

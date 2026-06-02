@@ -458,3 +458,6 @@ Run it before `drizzle:check` in CI.
 ---
 
 **TL;DR:** Commit your Drizzle migrations folder (including `meta/_journal.json`) and make sure `drizzle.config.ts`’s `out` path matches where that folder lives. Codex/CI is failing because it can’t find the committed journal it needs to know what to apply/check.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

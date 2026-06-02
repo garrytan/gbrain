@@ -982,3 +982,6 @@ useSeoMeta({
 ```vue
 <template>
   <tr class="hover:bg-gray-50
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

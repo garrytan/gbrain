@@ -161,3 +161,6 @@ Optional closing line if needed:
 ---
 
 Let me know if you want a version geared more toward talking to a specific resident.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -298,3 +298,6 @@ Add two named colors in your asset catalog:
 - `CardBackground` – slightly lighter dark (#0B1220-ish).
 
 That’s enough to get a high-end, production-quality version of the mock in SwiftUI. Drop these files into a new SwiftUI project, set `MetricsDashboardView` as the `WindowGroup` root, and you’re good.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

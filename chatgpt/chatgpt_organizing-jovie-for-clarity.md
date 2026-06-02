@@ -114,3 +114,6 @@ Mr. White, call them **Chats**.
 - Admin (collapsed; only “Overview” visible; everything else inside)
 - Utilities (inside Admin)
 - Settings
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

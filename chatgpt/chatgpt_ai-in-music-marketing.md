@@ -668,3 +668,6 @@ If you want next:
 - or sketch **why distributors are the best Trojan horse**
 
 Say which direction you want.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

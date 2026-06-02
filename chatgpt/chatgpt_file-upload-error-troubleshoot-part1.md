@@ -1067,3 +1067,6 @@ heres my route
 //add a route for tracking weight
 Route::post('/weight-logs/import', [WeightLogController::class, 'import'])->name('weight-logs.import');
 
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

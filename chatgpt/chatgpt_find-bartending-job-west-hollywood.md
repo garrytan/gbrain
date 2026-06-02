@@ -65,3 +65,6 @@ show me only jobs posted in the last 24 hours
 ## Assistant
 
 I am unable to fetch the latest postings due to a browsing restriction. However, you can easily check the latest bartending job postings within the last 24 hours by visiting job listing websites such as Indeed, SimplyHired, or Glassdoor. These platforms have filters that allow you to sort job listings by the date posted, making it easier to find the most recent opportunities.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

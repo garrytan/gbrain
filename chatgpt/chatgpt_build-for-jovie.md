@@ -53,3 +53,6 @@ The auth routes are placeholders. Replace:
 ```
 
 with your actual NextAuth/Auth.js, Clerk, Supabase, or custom auth handlers.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

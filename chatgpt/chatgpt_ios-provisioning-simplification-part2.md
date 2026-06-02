@@ -326,3 +326,6 @@ Everything else—Swift now scanned by CodeQL, composite bootstrap reused, concu
 | **Artifact storage** | SBOM + xcresult retention = 3 days — good. Monitor Action storage; lower if >1 GB. | — |
 
 Fix the issuer-ID env name and you’ll unblock Fastlane’s API-key auth. The remaining refactors just cut copy-pasta and a few minutes of runtime; functionality is otherwise solid.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -1282,3 +1282,6 @@ If you want, next I can:
 - Adapt this for ESLint as a second line of defense
 
 This is the right move before launch.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

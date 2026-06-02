@@ -465,3 +465,6 @@ Do not continue running it until fixed. Ongoing pooling can damage flooring and 
 
 One quick check:
 Is airflow still strong and cold, or has it weakened?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -379,3 +379,6 @@ definePageMeta({
 lets add the creators name to the page title use nuxt seo
 Lets also dynamically add al the profile data for the meta fields in the example below
 <head><meta name="description" content="Singer.YouTuber \ Find TIm White's music, videos, merch, &amp; more"><meta property="og:title" content="Tim White | Linktree"><meta property="og:description" content="Singer.YouTuber \ Find TIm White's music, videos, merch, &amp; more"><meta property="og:url" content="https://linktr.ee/timwhite"><meta property="og:image" content="https://linktr.ee/og/image/timwhite.jpg"><meta property="og:image:secure_url" content="https://linktr.ee/og/image/timwhite.jpg"><meta property="og:updated_time" content="1718903614000"><meta property="og:type" content="store"><meta property="profile:username" content="timwhite"><meta name="twitter:title" content="Tim White | Linktree"><meta name="twitter:description" content="Singer.YouTuber \ Find TIm White's music, videos, merch, &amp; more"><meta name="twitter:image" content="https://linktr.ee/og/image/timwhite.jpg"><meta property="snapchat:sticker" content="https://linktr.ee/sticker/timwhite.png"><link rel="canonical" href="https://linktr.ee/timwhite"></head>
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

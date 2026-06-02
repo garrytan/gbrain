@@ -63,3 +63,6 @@ In summary:
 - It’s not exactly a design *trend* but a **UX philosophy** prioritizing task success with minimal fuss. citeturn0search4
 
 If you want examples of linear flows or a checklist for implementing this in your product, I can provide that too.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

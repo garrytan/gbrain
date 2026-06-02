@@ -93,3 +93,6 @@ How to treat the main buckets:
 For Radix components, if the child element you supply via `asChild` is semantically correct (button for triggers, etc.), you’re usually fine. Most “use native element instead of ARIA role” warnings are Sonar not recognizing the library pattern.
 
 If you want, paste **one example warning + the JSX around that line** (especially anything with `asChild`) and I’ll tell you *exactly* whether to suppress it, refactor the child element, or adjust ARIA/alt.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

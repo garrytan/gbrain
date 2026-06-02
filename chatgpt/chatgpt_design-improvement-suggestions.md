@@ -84,3 +84,6 @@ Here’s how you can elevate this design to a more premium, Apple/Linear-level U
 ---
 
 Would you like a Figma-style visual mockup of this revised layout?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

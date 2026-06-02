@@ -229,3 +229,6 @@ Braintrust is useful for Jovie because your product quality depends on AI output
 - “Which real user failures should become tests?”
 
 For Jovie, Braintrust should become the operating system for AI quality control: prompts, evals, production traces, scoring, and continuous improvement in one place.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

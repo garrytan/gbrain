@@ -35,3 +35,6 @@ vitest
 - **Usage:** Typically installed as a dev dependency (`npm install -D vitest`), then tests are run via `vitest` or `npm test`. citeturn0search2
 
 Vitest is ideal for projects using Vite but can be used more broadly in JavaScript/TypeScript environments. citeturn0search0
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -133,3 +133,6 @@ class ItemStore: ObservableObject {
 – On launch, check `Auth.session` and refresh if needed before you start syncing.  
 
 With this pattern you get instant local reads/writes, automatic background sync, and full dark-mode SwiftUI.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

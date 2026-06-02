@@ -906,3 +906,6 @@ If you want, I can:
 - give you a **migration plan that fixes prod in <1 day without architectural damage**
 
 Say the word.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -162,3 +162,6 @@ Please:
 - Make minimal, targeted edits (no full-file rewrites).
 - Show the final diff or the updated Swift files for the main screen and any new views (`FloatingTabSwitcher`, `AddEntryFloatingButton`).
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

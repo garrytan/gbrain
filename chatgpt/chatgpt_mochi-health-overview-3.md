@@ -87,3 +87,6 @@ Mochi Health is a credible telehealth-weight-loss option that aligns with the cu
 ---
 
 If you like, Mr. White, I can **look up user reviews specific to California** for Mochi Health (so you see local-state experiences) or compare **3-5 other telehealth weight-loss platforms** side-by-side (medication + cost + results) for you. Would you like me to do that?
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

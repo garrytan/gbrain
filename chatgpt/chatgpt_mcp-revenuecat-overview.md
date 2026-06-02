@@ -50,3 +50,6 @@ With MCP you can do things like:
 ---
 
 If you like, Mr. White, I can pull up **detailed instructions (with code samples)** for using the MCP server (authentication, tool calls, examples) in your workflow. Would you like that?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

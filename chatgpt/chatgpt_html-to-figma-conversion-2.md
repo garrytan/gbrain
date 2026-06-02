@@ -52,3 +52,6 @@ You **can convert HTML (code or live websites) into editable Figma designs** —
 - Imports usually maintain visual hierarchy and styles, letting you tweak them as native Figma components.
 
 If you want step-by-step instructions for one specific tool (like html.to.design), tell me which you prefer and I’ll break it down.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

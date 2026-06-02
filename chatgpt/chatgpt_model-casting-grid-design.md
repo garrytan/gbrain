@@ -115,3 +115,6 @@ Hard rules:
 - no text, no labels, no numbers, no watermarks
 
 Photographic look: shot on Hasselblad medium format, shallow depth of field, slightly cool natural color grade, prominent fine grain in background but tack-sharp on faces, deep blacks, lifted shadow contrast. Magazine quality, 8K, not AI-looking, no uncanny valley. Catchlights in eyes.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

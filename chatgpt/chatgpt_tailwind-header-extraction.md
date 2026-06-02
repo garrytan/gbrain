@@ -267,3 +267,6 @@ Mr. White, same cleanup principles — reduce lines, tighten hierarchy, and make
 - On error: show one line under input, e.g. “Invalid code. Try again.” and shake the field lightly
 
 If you tell me whether you want **6 separate boxes** or the **single centered field**, I’ll give you the exact JSX/Tailwind for your component.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

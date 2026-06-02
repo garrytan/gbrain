@@ -343,3 +343,6 @@ text, letters, words, logo, watermark, readable UI, subtitles, cartoon, anime, i
 ```
 
 Best next move: generate 8–16 stills from this prompt, pick the strongest composition, then use that still as the reference image for the entrance video.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

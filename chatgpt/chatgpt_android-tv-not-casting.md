@@ -42,3 +42,6 @@ To troubleshoot your Android TV not showing up in the Apple TV app as a casting 
 7. **Reset Network Settings**: On your Android TV, go to Settings > Network > Network settings reset.
 
 If the issue persists, there might be a compatibility issue or a specific problem with the app on your device. You may need to contact customer support for further assistance.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

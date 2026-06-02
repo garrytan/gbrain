@@ -71,3 +71,6 @@ In an earnings-call example reported by TechCrunch, Spotify co-CEO Gustav Söder
 - **Closest match:** an **internal “agent platform”** (agent orchestration + guardrails + repo/CI integration) with **Slack as the UI**. citeturn4view1turn1view0  
 
 If you want, I can also map this to an architecture diagram (components + data flow) and compare it to “Cursor-style IDE agents” vs “CI bots” vs “AutoGPT-style runners,” but the key point is: **Spotify’s described approach is orchestration-first, UI-light (Slack), and deeply integrated into their internal platform (Backstage/Fleet/CI/PRs).** citeturn4view1turn4view0
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

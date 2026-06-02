@@ -38,3 +38,6 @@ When did the movie yesterday come out?
 ## Assistant
 
 The movie "Yesterday" was released on June 28, 2019, in the United States.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

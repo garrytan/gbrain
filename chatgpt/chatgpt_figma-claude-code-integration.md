@@ -80,3 +80,6 @@ This asks Claude to invoke the MCP capture and add the UI as layers to your Figm
 - This is different from generating designs *in* Figma with an AI prompt; instead it captures *working UIs* from Claude Code. citeturn0search6
 
 If you want sample plugin code for Figma itself (e.g., a custom Figma plugin that calls Claude APIs directly), tell me what language/framework you want (TypeScript/JavaScript), and I’ll generate a starter template.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

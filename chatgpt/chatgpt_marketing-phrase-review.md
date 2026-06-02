@@ -301,3 +301,6 @@ Summarize logyourbody
 LogYourBody is an aesthetics-first physique tracker that pulls in your DEXA scans, scale data, FFMI, body fat, and key ratios (waist-to-hip, shoulder-to-waist, etc.) to show you how close you are to your genetic best-looking body—and what it’ll take to close that gap.  
 
 It’s built for people who get paid to look good (models, actors, on-camera talent), making “how hot you are” an actual measurable metric instead of a vague idea, so you can see if you’re on track, off track, and exactly how your body is changing over time.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

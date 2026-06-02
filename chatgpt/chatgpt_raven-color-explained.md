@@ -26,3 +26,6 @@ Yo dawg, so there's this fucking desk that I just saw, and I just see the box, a
 ## Assistant
 
 Mr. White, “raven” simply means a deep, rich black finish (often with a subtle sheen or cool undertone)—basically just black.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

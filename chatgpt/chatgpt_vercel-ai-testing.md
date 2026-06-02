@@ -48,3 +48,6 @@ Vercel’s ecosystem also includes AI integrations (e.g., Autonoma AI for end-to
 
 **Bottom line:**  
 “AI testing” on the Vercel platform refers to practices and tooling around **evaluating, validating, and automating checks for AI-powered application behavior**, especially where traditional software testing isn’t sufficient due to model variability. citeturn0search0
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

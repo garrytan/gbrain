@@ -85,3 +85,6 @@ So for Windsurf without MCP, the nearest workaround is:
 - If you want the smoothest loop in either Claude Code *or* Windsurf, set up **XcodeBuildMCP**.
 
 If you want, tell me your current build command (scheme/workspace/destination) and I’ll write a tight one-liner that produces the cleanest AI-parsable output.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -53,3 +53,6 @@ To permanently install your Flutter app on your iOS device, you need to follow t
    - For broader distribution (e.g., through the App Store), follow the App Store submission process in Xcode.
 
 By following these steps, your Flutter app will be permanently installed on your iOS device, assuming you have an active Apple Developer Program membership.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -58,3 +58,6 @@ AND column2 LIKE '%John%'
 This query checks that `column2` is not null, contains an email format (indicated by the presence of `@`), and contains the string "John". 
 
 Note that this will find any occurrence of "John" in the email address. If you need a more specific location (e.g., at the start of the email address), you would adjust the `LIKE` pattern accordingly. For example, `AND column2 LIKE 'John%@%'` would look for emails starting with "John". Keep in mind this approach is case-sensitive in some SQL databases. If you need a case-insensitive search, you might need to use additional functions depending on the SQL dialect you are using.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

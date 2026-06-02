@@ -119,3 +119,6 @@ This code uses the `Array.prototype.find()` method to return the first object in
 For example, if the `stage_name` property is equal to `'Interested'`, the `color` prop will be set to `'sky'`. If the `stage_name` property is equal to `'complete'`, the `color` prop will be set to `'fuchsia'`.
 
 I hope this helps! Let me know if you have any other questions.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

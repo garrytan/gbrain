@@ -137,3 +137,6 @@ Mr. White,
 Follow-up re-skins (no new hardware) drop to about **$2–$3 / ft²**, so subsequent flights are cheaper—the rent always dwarfs the vinyl.
 
 That’s the ballpark: mid-six-figures per quarter once you factor in media, while the plastic itself is only tens of thousands.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

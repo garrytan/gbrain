@@ -62,3 +62,6 @@ These typically include **free breakfast**, but hot tub access is less guarantee
 
 If you tell me **specific dates and city (LA/San Diego/Palm Springs)** I can pull exact availability and lowest nightly rates that match all your criteria.
 map
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

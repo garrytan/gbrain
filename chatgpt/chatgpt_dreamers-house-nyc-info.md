@@ -37,3 +37,6 @@ This is probably what you’re referencing if the handle is **dreamershouse.nyc*
 - **Dreamers Coffee House** — A cozy local café on **54 W Henry St** in Manhattan (specialty coffee and snacks). citeturn0search2
 
 If you need links, social profiles, or specifics about the Dreamers House (collective), tell me which one you mean.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

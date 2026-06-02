@@ -241,3 +241,6 @@ If you want, I can:
 - Give you a **minimal worktree + Claude Code SOP**
 - Show how to **assign one agent per branch safely**
 - Explain when *not* to use worktrees (rare, but real cases)
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

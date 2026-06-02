@@ -26,3 +26,6 @@ a recording studio
 ## Assistant
 
 Welcome to the studio where music bends reality! 🎶✨
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

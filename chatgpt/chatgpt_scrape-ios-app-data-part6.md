@@ -969,3 +969,6 @@ if __name__ == '__main__':
 
 
 add mysql saving to this
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

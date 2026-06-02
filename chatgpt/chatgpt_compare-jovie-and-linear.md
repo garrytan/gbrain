@@ -192,3 +192,6 @@ html{
 ```
 
 If you paste your current footer CSS (or Tailwind classes), I’ll mark exactly what to change to match Linear’s look.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

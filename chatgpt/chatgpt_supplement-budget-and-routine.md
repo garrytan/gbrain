@@ -66,3 +66,6 @@ Take these **every morning with water**:
 4. **Genius Mushroom** – 3 capsules
 
 Let me know if you want timing around food, workouts, or specific goals.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

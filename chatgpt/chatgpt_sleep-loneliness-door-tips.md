@@ -49,3 +49,6 @@ Mr. White,
 - **Caffeine cutoff:** no caffeine after 2 PM.  
 
 Combine these: closed door, a pre-bed call or recording from Livvy, and a strict wind-down routine to tackle both loneliness and sleep latency in one go.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

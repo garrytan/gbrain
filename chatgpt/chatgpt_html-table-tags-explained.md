@@ -66,3 +66,6 @@ Here's an example of how the `<th>` tag might be used in an HTML table:
 ```
 
 This code would create a table with two columns and three rows, with the text "Column 1" and "Column 2" in the top row, serving as headers for the rest of the cells in the table.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

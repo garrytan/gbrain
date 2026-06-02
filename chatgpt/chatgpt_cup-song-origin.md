@@ -61,3 +61,6 @@ Facts:
 
 Bottom line:  
 If you recognize the campus vibe, it’s **LSU dressed up as a fake East Coast college**.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

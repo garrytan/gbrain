@@ -158,3 +158,6 @@ STOP CONDITION:
 ```
 
 If you tell me **your Linear statuses/label for “ready to build”** (or the exact view/filter name), I’ll tighten the ingest filter to reduce noise even more.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

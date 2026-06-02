@@ -197,3 +197,6 @@ Until this is done, Managed Apple IDs *cannot* shop.
 
 ### Tell me what you’re trying to buy (Macs? iPhones? qty?)
 I’ll tell you **exactly which path is optimal** and how to avoid rework.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

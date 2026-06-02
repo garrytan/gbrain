@@ -28,3 +28,6 @@ Who is the actor who got rushed off on the red carpet so they could interview so
 At the 2025 Grammy Awards, legendary musician Babyface was abruptly interrupted during a red carpet interview by Associated Press reporters who chose to engage with pop artist Chappell Roan instead. This incident led to public apologies from the reporters and the Associated Press. citeturn0search1
 
 navlistRed Carpet Incidents Spark Controversyturn0news15,turn0news12,turn0news14 
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

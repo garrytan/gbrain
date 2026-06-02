@@ -68,3 +68,6 @@ what is the ring light on a cdj-3000 mean
 For a visual demonstration of the CDJ-3000's jog wheel display and its features, you may find the following tutorial helpful:
 
 videoDJ Tutorial #160: How To Read The CDJ-3000 Jog Wheel Displayturn0search1 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

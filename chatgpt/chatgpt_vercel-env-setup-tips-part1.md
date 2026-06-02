@@ -775,3 +775,6 @@ This keeps users and sessions isolated per tier, PRs always work, and prod stays
 
 
 It appears that we can't use clerk across multiple domains without satellite domains which costs more money. Clerk Allowed Origins can't be set for our preview.jov.ie domain. So what do we do
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

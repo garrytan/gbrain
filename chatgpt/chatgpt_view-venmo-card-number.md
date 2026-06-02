@@ -73,3 +73,6 @@ That screen is **not** your card number. It’s your **bank account & routing** 
 - You’re using a **teen/business profile** (card number hidden).
 
 In that case, only Venmo Support can enable it. The numbers shown in your screenshot **cannot be used** as a debit card number.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

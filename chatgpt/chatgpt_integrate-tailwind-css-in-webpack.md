@@ -153,3 +153,6 @@ npm install style-loader css-loader postcss-loader
 ```
 
 After adding this rule to your webpack config, you should be able to import the Tailwind CSS file in your JavaScript files and use Tailwind in your extension.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

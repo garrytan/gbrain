@@ -510,3 +510,6 @@ You will never regret `/app`.
 You might regret `/a` in a year.
 
 If you want, I can give you a **final reserved-namespace list** and a **Next.js route tree** that locks this in cleanly and avoids every common collision I’ve seen at scale.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

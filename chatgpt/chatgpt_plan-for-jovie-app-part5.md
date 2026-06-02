@@ -1000,3 +1000,6 @@ const selectedService = ref(product.services[0]);
 
 
 Remove unused paramets and rename things to make sense if needed. Also fix centering of the album art on the page which is currently left justified
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

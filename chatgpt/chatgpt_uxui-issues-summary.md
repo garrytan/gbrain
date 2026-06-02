@@ -116,3 +116,6 @@ Let's focus just on the stats for now. Specifically the bottom row of stats has 
 - **Rounded Corners:** Apply subtle rounding to stat boxes or bars for a softer, premium feel.
 
 Let me know if you want visuals or wireframe examples!
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

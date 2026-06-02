@@ -61,3 +61,6 @@ Here’s why, Mr. White:
 - ✅ A GitHub Action or native CodeRabbit fixes are the correct solutions
 
 If you want, I can sketch a **clean PR workflow using Claude via GitHub Actions** that actually auto-applies fixes safely.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

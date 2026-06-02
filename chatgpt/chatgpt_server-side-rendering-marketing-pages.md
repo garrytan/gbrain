@@ -34,3 +34,6 @@ To implement this, you would need to set up a server-side rendering solution for
 Once you have your server-side rendering solution set up, you can use it to render the Vue components for your marketing pages on the server and serve the resulting HTML to the client. The rest of your SPA can continue to work as it does now, with the Vue components being loaded on the client and managed by the Vue router.
 
 I hope this helps! Let me know if you have any further questions.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

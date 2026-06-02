@@ -46,3 +46,6 @@ The **Neon Startup Program** is an initiative from **Neon**, the serverless Post
 - There’s a simple application form at Neon’s startup page where you submit basic company details. Neon reviews applications on a rolling basis. citeturn0search0
 
 In short, the Neon Startup Program functions like a **cloud credits + technical support package** for early builders that need an efficient, scalable Postgres backend without upfront infrastructure cost. citeturn0search2
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

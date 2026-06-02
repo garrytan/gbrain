@@ -87,3 +87,6 @@ If useful, this can also be upgraded into a **fully autonomous Claude Code agent
 2. screenshots sections  
 3. builds the Figma file section-by-section  
 4. performs visual diffing against the site.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

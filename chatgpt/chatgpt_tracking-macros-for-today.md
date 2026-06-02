@@ -64,3 +64,6 @@ Hey Mr. White, it sounds like you're tracking your macros. To estimate them for 
 - **Turkey Burger**: This is a good source of protein. A typical turkey burger patty might have around 22 grams of protein, 10 grams of fat, and 0 carbs, assuming it's just the meat without a bun or additional toppings.
 
 These are rough estimates. Exact values can vary based on the portion sizes and specific brands or recipes used. For accurate tracking, it might be helpful to use a food scale and a nutrition tracking app.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

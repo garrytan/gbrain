@@ -59,3 +59,6 @@ In Swift (especially SwiftUI), view files should be **as small and focused as po
 > **If you can't describe the purpose of the view in one sentence, it's probably too big.**
 
 Want help breaking one down? Drop it in and I’ll split it cleanly.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -64,3 +64,6 @@ Yes, several big companies are using Flutter for web applications. Some notable 
 5. **The New York Times:** The New York Times uses Flutter, particularly for their KenKen puzzle game, which is available on both mobile and web.
 
 These examples show that Flutter is being adopted by major companies for web development, especially when they seek a unified framework to handle both mobile and web platforms efficiently.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -229,3 +229,6 @@ Fix the AuthBackButton / “Back” button positioning bug in this repo.
 Proceed to implement the best fix (layout-level mount preferred), make the minimal necessary changes, and output the diff.
 
 If you want, paste the relevant auth layout/page file(s) (where the forms are used) and I can tailor the prompt to your exact routing structure (App Router vs Pages Router) — but the above should be enough for Claude to take a solid swing.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -164,3 +164,6 @@ Assuming your lean mass stays at 141.9 lb (64.4 kg) fileciteturn3file0 
 \]
 
 A 17.3 FFMI still falls in the “novice” range (<18), meaning you can continue to build muscle even at maintenance (full recomp).
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

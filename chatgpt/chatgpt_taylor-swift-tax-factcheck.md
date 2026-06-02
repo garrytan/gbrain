@@ -50,3 +50,6 @@ The **strategy described** in the post (selling a company that owns IP instead o
 ### ✅ Conclusion:
 - **The tax loophole exists**, but **Taylor Swift didn’t use it**.
 - The post is **misleading and factually incorrect** in its example.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

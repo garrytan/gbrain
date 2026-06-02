@@ -132,3 +132,6 @@ Wizard asks: release type (single/EP/album), distributor lead time, budget, team
 - Week 4: Reporting + Content Packs + Marketplace (fork/share templates).
 
 If you want, I’ll draft the initial JSON for “Single Release v1” with ~40 steps and the validator rules so you can drop it into Supabase today.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

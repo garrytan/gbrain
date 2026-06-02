@@ -28,3 +28,6 @@ Yo, this Instagram reel is trying to claim that the reason that title failed is 
 Here’s a concise, hard-hitting comment you can drop:
 
 > That take is pure revisionist BS. Tidal didn’t fail because it focused on Beyoncé and Jay-Z — it failed because it entered *way too late* into a market Spotify had already dominated with a massive head start, superior UX, and aggressive freemium growth fueled by VC burn. Spotify had 60M+ users before Tidal even launched. By 2015, Spotify had *10x* the market share, better algorithms, deeper label deals, and brand trust. Tidal charged more and offered less. This isn’t about “framing.” It’s basic market dynamics and product execution. Don’t rewrite history to fit a narrative.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

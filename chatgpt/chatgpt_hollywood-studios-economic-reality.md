@@ -216,3 +216,6 @@ Should film production dip, these large complexes might pivot to producing other
 
 **Bottom Line:**  
 Expect a mixed picture. Some of these complexes will stay busy (especially if incentives remain robust and they’re outfitted for modern production). Others could see periods of dust-gathering if there’s too much capacity versus the volume of high-end projects. Overall, there’s likely to be *some* overbuild and consolidation, but the best-equipped, best-subsidized stages will still find work.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

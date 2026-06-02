@@ -41,3 +41,6 @@ So your Tailwind classes should look like:
 That way, mouse users don’t see the outline, but keyboard users still get the accessibility indicator.  
 
 Want me to give you a short Tailwind snippet that makes buttons *pretty* but still passes accessibility?
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

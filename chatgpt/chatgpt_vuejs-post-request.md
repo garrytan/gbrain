@@ -68,3 +68,6 @@ methods: {
 In this example, we're using Axios, a popular JavaScript library for making HTTP requests. The `createCustomerPortalSession` method is defined in the Vue.js component's `methods` section. Inside the method, we use `axios.post` to send a POST request to the `/create-customer-portal-session` endpoint with the specified parameters.
 
 The `params` object contains the request parameters, such as the customer ID and the return URL. Upon receiving a successful response, we extract the session URL (`response.data.url`) and redirect the user to that URL using `window.location.href`. Any errors that occur during the request are caught in the `catch` block, allowing you to handle them accordingly.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

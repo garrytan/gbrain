@@ -68,3 +68,6 @@ Go deep. Make it as big a list of real tactics as possible. I will vet; you sour
 ## User
 
 can we turn this into a table/data set Explain each item with its source(s) and the general concept. Categorize them, prioritize them, and indicate where they would fit in terms of the flow. Then we’ll keep building from there. You don’t necessarily need to know the actual processes for play and all that, because we already know them. We usually need them listed, and then I can fill in the blanks.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

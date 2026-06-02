@@ -106,3 +106,6 @@ Since you’re building for a product (you’re a startup founder, after all):
 ---
 
 If you like, I can do a **full UX audit checklist** (including accessibility, performance, SEO, cross-browser, responsiveness) tailored to preview.jov.ie. That might help you catch issues early as you build. Want me to build that checklist for you now, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

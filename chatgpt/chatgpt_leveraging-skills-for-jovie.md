@@ -23,3 +23,6 @@ Any website can expose skills via /.well-known/skills/index.json — the skills 
 automatically. - this is a note inside hermes terminal.
 
 how do we leveage this for jovie? both for a gtn stratey and for a retention straegty etc. 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

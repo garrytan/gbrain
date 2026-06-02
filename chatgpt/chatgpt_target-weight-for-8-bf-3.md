@@ -64,3 +64,6 @@ Let's calculate the total calories.
 ## Assistant
 
 You are consuming 1,960 calories from 150 grams of protein, 60 grams of fat, and 205 grams of carbohydrates.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

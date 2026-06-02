@@ -42,3 +42,6 @@ Here’s the info for the hotel you asked about:
 **Address:** 900 Newport Center Drive, Newport Beach, CA 92660. citeturn0search0
 
 Want me to list nearby attractions or best local restaurants around VEA?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

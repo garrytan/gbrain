@@ -51,3 +51,6 @@ timwhitebartending@gmail.com | 732-668-2148
 ---
 
 Let me know if you want me to submit directly or tweak for a different tone.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

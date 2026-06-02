@@ -26,3 +26,6 @@ What does Imodium help us?
 ## Assistant
 
 Imodium (loperamide) is primarily used to treat diarrhea by slowing down the movement of the gut. This helps reduce the frequency and urgency of bowel movements.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

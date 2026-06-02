@@ -97,3 +97,6 @@ Mr. White — here’s a clean, high-impact redesign spec that’ll look world-c
 ---
 
 If you want, I can instantly output a polished poster in **Minimal Luxe** or **Vibrant Pop** to the right IG sizes—just say **“Luxe”** or **“Pop.”**
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

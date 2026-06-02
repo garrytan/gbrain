@@ -44,3 +44,6 @@ Use these classes:
 **Fact:** Tailwind’s default spacing unit is `0.25rem = 4px`, so `2 × 4px = 8px`.
 
 If you’re using a **custom spacing scale**, say so and I’ll map it precisely.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

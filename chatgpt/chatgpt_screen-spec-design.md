@@ -197,3 +197,6 @@ Make it feel like Apple Health but tie into your palette.
 - Keep **purple** as brand accent for icons/chips; keep **all data ink in blue** for consistency.
 
 If you tell me what you’re building this in (SwiftUI, React Native, Flutter), I can translate this into component structure and spacing tokens you can hand straight to a dev or Figma.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

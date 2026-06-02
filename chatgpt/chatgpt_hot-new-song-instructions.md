@@ -157,3 +157,6 @@ I love the way it sounds when your body talks to me - use that line for the firs
 ### Photo 3: Smiling and Embracing with a Girl in Dress Shirt
 
 "Secrets are overrated, my new song isn't. ❤️ Save 'Never Say A Word,' stream it, and spread the love. 🔥 #NewMusic #OutNow"
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

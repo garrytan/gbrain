@@ -100,3 +100,6 @@ These photos are **effectively already deleted**.
 They’re just **waiting on Apple’s garbage collection**.
 
 If they’re blocking storage math or just annoying to look at, I can tell you **exactly when they’ll disappear** based on the delete date — want that?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

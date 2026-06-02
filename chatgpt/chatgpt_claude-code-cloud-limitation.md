@@ -54,3 +54,6 @@ Claude Code is an **executor**, not an **orchestrator**.
 Multi-instance or cloud-distributed workflows require tooling you build *around* it (often using APIs from entity["company","Anthropic","ai research company"] plus your cloud provider).
 
 If you want, I can outline a **clean architecture** for running parallel Claude Code jobs at scale (CI, serverless, or agent-manager pattern).
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

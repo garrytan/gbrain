@@ -39,3 +39,6 @@ Make it flirty
 ## Assistant
 
 Amidst the dim studio lights, a suave artist leans into the microphone, a hint of a smile playing on his lips as he crafts a melody that's as charming and alluring as his casual stance suggests.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

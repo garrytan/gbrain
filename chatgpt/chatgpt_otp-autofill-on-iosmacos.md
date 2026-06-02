@@ -234,3 +234,6 @@ Output format:
 ```
 
 If you want, I can also add a “hard requirement” section to force the agent to **standardize behavior** (e.g., always keep entered digits on error vs always clear) so it doesn’t leave you with inconsistent flows.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

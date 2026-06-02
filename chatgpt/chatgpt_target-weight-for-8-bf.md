@@ -44,3 +44,6 @@ Now, calculate the target weight at 8% body fat (0.08):
 \[ \text{Target Weight} = \frac{155.295}{1 - 0.08} = \frac{155.295}{0.92} \approx 168.8 \text{ lbs} \]
 
 So, you would need to weigh approximately 168.8 lbs to be at 8% body fat, assuming no muscle loss.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

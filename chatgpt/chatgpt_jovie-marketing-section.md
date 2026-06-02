@@ -58,3 +58,6 @@ Use this prompt when retrying:
 
 **Prompt**
 Create a cinematic, Apple-quality minimalist luxury LA interior at sunrise. A blonde model-esque woman is on the far right side of the frame, relaxed on a low modern couch that extends seamlessly from the indoor living room into the outdoor area. The house has no back wall, fully open to an infinity pool and ocean view. No glass doors, no windows, no visible wall barrier. She is sitting sideways with her feet up and crossed, coffee beside her or in hand, watching the sunrise. The mood is calm, expensive, serene, and aspirational. Warm golden sunrise light, soft shadows, polished concrete or warm wood floors, neutral cream upholstery, sparse modern decor, Malibu/Hollywood Hills energy. Keep the composition wide with negative space on the left for Jovie marketing copy. Ultra-realistic, premium commercial photography, shallow depth of field, natural skin and hair, understated styling, no clutter, no text.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

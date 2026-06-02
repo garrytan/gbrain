@@ -56,3 +56,6 @@ Mr. White, absolutely – you can keep both your Next.js site and your Swift iOS
    - In your CI, add two jobs or steps: one for `npm ci && npm run build` under `apps/web/`, another for `xcodebuild` in `apps/ios/`.  
 
 This keeps code organized, lets you share assets or scripts if needed, and makes it trivial to clone once and have both apps side by side.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

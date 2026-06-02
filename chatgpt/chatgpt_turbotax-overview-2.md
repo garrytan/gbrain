@@ -53,3 +53,6 @@ turbotax
 TurboTax used to offer a program tied to the IRS *Free File* system for low-income taxpayers, and Intuit has faced scrutiny and legal action over how it presented free options compared with paid products. citeturn0search18
 
 If you want, I can explain which TurboTax tier might fit your tax situation this year.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

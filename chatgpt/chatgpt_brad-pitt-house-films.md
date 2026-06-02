@@ -40,3 +40,6 @@ Yes the first
 Mr. White, there’s no credible evidence that the same house (the “Jack Conrad” mansion in *Babylon*) was ever used in *Entourage*. Most sources identify the Paramour Estate in Silver Lake as the filming location for Brad Pitt’s house in *Babylon*, and there is no record of *Entourage* shooting there. 
 
 In general, *Entourage* used a variety of real-life mansions and Los Angeles spots, but none match the Paramour Estate. If you see any rumors claiming otherwise, they don’t appear to be backed by official production notes or reputable location databases.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

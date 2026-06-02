@@ -245,3 +245,6 @@ Mr. White,
 - Avoid “cardifying” the entire page, which preserves density and scan speed
 
 If you want, I can map radius usage across all Linear components as a quick reference table.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

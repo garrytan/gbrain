@@ -79,3 +79,6 @@ Mr. White — in **Team Settings → Whitelisted MCP Servers → Add Server**, a
 citeturn1view0turn0search14turn0search6
 
 If you tell me which GitHub option you want (plugin-store vs hosted remote), I’ll tailor the GitHub entry to match your setup.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

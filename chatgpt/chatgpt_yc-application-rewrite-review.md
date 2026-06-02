@@ -59,3 +59,6 @@ Fix these before you submit:
 - Keep automated follow-ups and catalog monitoring out of the application unless your private canon confirms the public product has caught up. The public feature registry still marks them as planned. citeturn269003view1
 
 The rewrite files already reflect those constraints. The main remaining risk is consistency across pricing and shipped-feature claims.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

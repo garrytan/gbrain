@@ -65,3 +65,6 @@ Mr. White, when hot water only trickles while cold flows normally, it’s almost
    - **Solution** is to open the faucet, adjust or replace that piece.
 
 Given that the shower is fine, but the tub fails on hot, the tub faucet internals are suspect. Your first step: remove the tub faucet assembly, locate the cartridge or mixing valve, and see if it’s blocked or broken. If it’s too complicated, a plumber can quickly diagnose and replace the defective parts.  
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

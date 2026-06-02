@@ -116,3 +116,6 @@ If you want, send me **Jovie’s vertical / product category** and I’ll genera
 I want you to compule a list for me and deliver it a table alonge with any info you can gather about: avg check size, likelyhook of a yes.
 
 solo founder with no previous exit, or faang experience,. went to drexel for music industry. professional touring artist before working for sevel agencies with fortune 500 clients. now building jovie the agentic operating system for indidpent music careers
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

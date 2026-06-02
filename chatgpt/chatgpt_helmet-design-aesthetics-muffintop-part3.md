@@ -26,3 +26,6 @@ Here’s the updated MUFFINTOP helmet with a more rectangular base, clean edges,
 
 
 Here’s the 3D-rendered concept helmet, incorporating all the research-backed details: a lightweight blueberry muffin form with a friendly upturned smile, large rounded visor, and subtle wrapper ridges. Let me know if you’d like any tweaks!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

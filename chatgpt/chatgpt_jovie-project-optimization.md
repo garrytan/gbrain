@@ -103,3 +103,6 @@ Even though the build script is trying to run `corepack prepare pnpm@9.0.0 --act
      - tooling that installs pnpm globally (and pins 6.x)
 
 If you want, tell me which change you made (npm→pnpm? added `packageManager`? changed Node version?), and I’ll narrow it to the single most likely culprit.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

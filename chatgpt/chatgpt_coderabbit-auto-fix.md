@@ -41,3 +41,6 @@ coderabbit auto fix
 - It’s not a fully autonomous bug fixer that rewrites large features on its own — fixes still require acceptance by a dev. It suggests and applies appropriate small corrections; larger or complex changes are suggested and may be assisted by an AI agent. citeturn0search19
 
 In short, CodeRabbit **auto-fix** is the platform’s feature to generate and let you apply automated corrective patches for code issues it finds during AI-assisted code reviews. citeturn0search3
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

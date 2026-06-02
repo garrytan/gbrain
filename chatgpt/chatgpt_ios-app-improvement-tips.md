@@ -172,3 +172,6 @@ World-class apps minimize trips to the settings screen:
 ---
 
 If you want, next step I can sketch a re-organized hierarchy as a simple tree or wireframe so you can hand it straight to a designer or dev.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

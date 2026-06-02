@@ -81,3 +81,6 @@ Yeah, mock it up. But also, I think it probably wants something that's, like... 
 ## User
 
 Right, this is what I was talking about. Except, we don't need the redundant cut and bulk labels, so let's just keep the cut and bulk label that we have under the week count, and make that... have a color. And then we can eliminate the big labels, and compact the height of those cards down a little bit.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

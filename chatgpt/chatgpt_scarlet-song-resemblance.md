@@ -74,3 +74,6 @@ But what's the advantage to putting it in the fridge over just chilling it with 
 ## Assistant
 
 Refrigerating tequila can be convenient because it's ready to drink cold without needing to add ice, which can dilute the flavor. It also saves time if you prefer your tequila chilled but don't want to use a shaker each time.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

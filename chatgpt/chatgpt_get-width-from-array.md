@@ -150,3 +150,6 @@ export default {
 In the above code, the `columnWidth` computed property uses the `find` method to search the `visibleColumns` array for an object that has a `name` property that matches the `columnName` prop. If such an object is found, its `width` property is returned. If no object is found, an empty string is returned instead.
 
 You can then use the `columnWidth` computed property in the template like you would use a regular prop, by binding it to the `class` attribute of
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

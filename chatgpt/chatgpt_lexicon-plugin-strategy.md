@@ -24,3 +24,6 @@ https://www.lexicondj.com/docs/developers/plugin
 Explore this for Jovie from both a perspective of revenue generation and for just like, "oh, this is cool." Like, what could we do with this? This is the DJ software that I use, and it's what a lot of big DJs use to manage their libraries. Anything interesting that we could do with this that could be a competitive advantage or possibly a good growth opportunity? Because I know a lot of people are probably making plug-ins for Lexicon, so if we made a plug-in for Lexicon and sent it to them, it might be a good way to build a relationship and get traffic into Jovie. Um, Lexicon's a company I would literally probably end up buying like after we succeed, you know, but um yeah, what do we think about that? 
 
 Big, big strategy-wise, like what we could do with it, etc. What can we do with this API? What interesting things can we build? How can we integrate with Lexicon in an interesting way? Is it worth doing? Etc. It is like our core niche. 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

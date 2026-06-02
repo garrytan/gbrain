@@ -605,3 +605,6 @@ PR must be approved by humans; on merge, the same CI runs on *main* and deploys 
 * iOS jobs pin exact Xcode and reuse cache for speed. citeturn0search2  
 
 Drop these files in, add the secrets, switch on branch protection, and you’ve got a **green-only, mono-repo aware pipeline** from commit to Vercel + TestFlight with zero manual babysitting.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

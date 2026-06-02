@@ -120,3 +120,6 @@ Leave unchanged:
 - Product link: `https://jov.ie/tim`
 - Login credentials: `N/A — no login required. Artist profiles are public.`
 - Revenue: keep as **No** unless actual cash has come in.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

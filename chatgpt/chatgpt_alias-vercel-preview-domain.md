@@ -47,3 +47,6 @@ alias vercel preview domain
      ```
 
 This approach allows you to assign custom domains to preview deployments efficiently. citeturn0search0 
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

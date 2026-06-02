@@ -43,3 +43,6 @@ Certainly, Mr. White. Here's a concise recipe for a Paloma, as a bartender would
 6. Garnish with a slice of grapefruit or a lime wedge, if using.
 
 This recipe provides a balance of citrus and sweetness, typical of a classic Paloma.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

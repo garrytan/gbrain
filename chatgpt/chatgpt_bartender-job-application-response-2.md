@@ -194,3 +194,6 @@ Bartender/Barback
 • Clean, organized, fast
 
 [Photo attached separately as requested.]
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

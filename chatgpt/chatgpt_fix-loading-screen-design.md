@@ -110,3 +110,6 @@ Where you `suspense` or `use` data, supply the same styled fallback:
 - Keep the background identical to your app shell to avoid a visual jump.
 
 This replaces the plain white “loading…” with a branded, dark-aware shell and eliminates the flash.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -64,3 +64,6 @@ Here are top Swift/iOS issues only experienced devs tend to know, often missed b
    - Knowledge of Instruments, memory profilers, Xcode sanitizers (Address, Thread, Undefined Behavior), XCTest/UI test stability, and test flakiness.
 
 These subtleties are best caught through experience and careful review rather than purely relying on AI.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

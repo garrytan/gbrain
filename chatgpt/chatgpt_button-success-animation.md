@@ -109,3 +109,6 @@ Links with deeper discussion:
 ---
 
 If you like, I can **pull together 3 ready-to-use code snippets** (CSS + HTML + minimal JS) for different styles (minimal, morph-to-check, and ripple) that you can drop into your project. Would you like that, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

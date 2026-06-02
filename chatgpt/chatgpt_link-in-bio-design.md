@@ -223,3 +223,6 @@ Mr. White — **monolith vs microservices** is mostly a trade: *speed and simpli
 4. Repeat only if benefits are real
 
 If you tell me your team size, stage (0→1 vs scaling), and traffic profile, I’ll recommend the right architecture for your case.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

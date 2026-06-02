@@ -239,3 +239,6 @@ If you want, next I can:
 - Map conversion types per DSP
 - Define rollout / migration strategy
 - Or pressure-test this against label requirements
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -176,3 +176,6 @@ No, use the exact smile and eyes in the image that you gave me. Just make it a b
 ## Assistant
 
 Here’s the simplified MUFFINTOP logo in black and white, using the exact rectangular eyes and curved smile from the helmet design. Let me know if you’d like any further adjustments to spacing or proportions!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

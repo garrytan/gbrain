@@ -159,3 +159,6 @@ Mr. White:
 - **Q5 (Skeleton consolidation):** **A** — move **Skeleton + LoadingSkeleton** to `@jovie/ui`; keep domain skeleton layouts in-app.  
 - **Q6 (Segment control tabs):** **A** — use **Radix Tabs** under the hood.  
 - **Q7 (Sliding indicator animation):** **B** — **pure CSS transforms**; quick duration, **ease-out**, consistent with your Linear-style motion (and respect `prefers-reduced-motion`).
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -109,3 +109,6 @@ export default function Home() {
 ```
 
 If you want, paste your current `app/page.tsx`, `_app.tsx`/`layout.tsx`, `next.config.js`, and SW setup—I’ll mark exactly what’s making iOS show a white screen and give the smallest change set to hit “instant.”
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

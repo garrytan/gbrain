@@ -69,3 +69,6 @@ No emoji, no marketing decoration, no fake brand logos, no bright accent colors 
 ## User
 
 Yeah, I mean, these are cool, but could you show them to me, like, what the desktop version could look like? 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

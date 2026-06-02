@@ -770,3 +770,6 @@ If you want, I can:
 - Decide whether Spotify should be treated as social or content
 
 Say the word.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

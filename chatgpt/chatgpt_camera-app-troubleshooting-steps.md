@@ -78,3 +78,6 @@ Understood, Mr. White. Focusing purely on software fixes:
    – As a final software-only measure: connect to a Mac/PC, enter DFU mode and restore iOS.  
 
 If after a DFU restore the viewfinder stays black, it’s virtually certain to be hardware—and you’d need a Genius Bar visit.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

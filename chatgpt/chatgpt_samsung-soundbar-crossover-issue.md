@@ -79,3 +79,6 @@ If you want proper low-end, your options are basically:
 You’re not crazy – it really is acting like it’s crossed over for a sub, because it is. On Samsung bar+sub bundles there’s essentially **no “let the bar run full-range” switch**, so without the sub you’ll always feel like the low-end is missing.
 
 If you tell me the exact model number printed on the back (HW-Qxxx, HW-Kxxx, etc.), I can look up the manual for that specific unit and double-check if there’s any hidden bass/sub setting worth trying, but I’d bet heavily the answer is still “no real way to defeat the high-pass.”
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

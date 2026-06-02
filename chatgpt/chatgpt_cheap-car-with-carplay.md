@@ -34,3 +34,6 @@ Got it, Mr. White. To narrow this down and get you the best options, could you c
 5. How many miles do you expect to drive per year?
 
 Once I have that, I’ll get to work on the best total cost of ownership options that meet your needs.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

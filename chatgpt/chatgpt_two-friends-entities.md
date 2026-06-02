@@ -34,3 +34,6 @@ two friends
 3. **Boutique and Wine Bar**: Located in St. Simons Island, Georgia, Two Friends is a luxury boutique featuring ladies' clothing, shoes, jewelry, art, home decor, and gifts. It also houses a wine bar, providing a unique shopping and dining experience.
 
 If you are referring to a different "Two Friends" or need more specific information about any of these, please let me know. 
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

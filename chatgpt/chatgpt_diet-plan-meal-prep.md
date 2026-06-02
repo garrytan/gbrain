@@ -1104,3 +1104,6 @@ Carbs you high
 - Carbs: 125g
 
 This updated plan provides a structured approach to your daily meals with adjustments to better align with your macro goals. Let me know if this works for you or if further changes are needed!
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

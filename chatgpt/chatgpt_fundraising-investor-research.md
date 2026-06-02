@@ -32,3 +32,6 @@ Then broaden your search to music-tech investors and general angels. Look for in
 ## User
 
 can you update airtable for me
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

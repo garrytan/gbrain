@@ -945,3 +945,6 @@ If you want, I’ll generate exact patches for B–D so you can paste them into 
 
 
 So, based on your feedback, I've removed the up-to-date-with-preview branch protection. Per your point number 4, do we even need this in our CI, or is it just slowing us down? I don't know if there's any use for it, since doesn't it do the same thing as the ruleset? We have it turned on in the ruleset for production and off for preview, so do we even need it as its own CI job?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

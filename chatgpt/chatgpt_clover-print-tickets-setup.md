@@ -26,3 +26,6 @@ Can clover print tickets when orders are filled
 ## Assistant
 
 Clover POS systems do have the capability to print tickets when orders are filled, but it depends on how your system is set up. You can configure the Clover device to print a ticket at the completion of an order, and this can be done through the settings in the Clover system. You may need to set up or adjust the settings for order types and fulfillment notifications to ensure tickets are printed when an order is marked as "filled" or "completed." If you're not seeing this functionality, check your specific Clover setup or consider reaching out to Clover support for assistance in enabling this feature.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -28,3 +28,6 @@ find me a gym in la that has a cammered bar for bench press
 Finding a specific gym in Los Angeles that offers a cambered bar for bench press is challenging based on the available online resources. The search results mostly provide general information about gyms in Los Angeles or about the cambered bar itself, rather than specifics about gyms that have this equipment.
 
 However, some well-known gyms in Los Angeles, like Muscle Beach Venice and Gold’s Gym, are famous for their extensive range of equipment and might be good places to start. These gyms often cater to serious fitness enthusiasts and bodybuilders and are likely to have specialized equipment like cambered bars. It would be best to contact these gyms directly to inquire about the availability of a cambered bar for bench press【19†source】.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

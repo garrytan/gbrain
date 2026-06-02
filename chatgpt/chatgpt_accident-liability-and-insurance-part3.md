@@ -359,3 +359,6 @@ I’m checking the California rules that actually matter for your exposure here,
 
 
 I have the California rules. The practical gap now is less about texting and more about whether this turns into an insurer or police contact.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

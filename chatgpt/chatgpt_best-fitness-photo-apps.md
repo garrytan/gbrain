@@ -53,3 +53,6 @@ Good if you: don’t care about logging sets/reps or macros and just want a clea
 ---
 
 If you tell me **iOS vs Android** and whether you care more about **privacy** or **data/graphs**, I can narrow it down to a single pick and specify how I’d set it up (poses, frequency, angles, etc.) for your own progress photos.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

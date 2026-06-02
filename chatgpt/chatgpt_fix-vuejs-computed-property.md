@@ -80,3 +80,6 @@ computed: {
 
 This code uses a `switch` statement to determine the color based on the value of `this.creator.crm_record_by_user.stage_name`. The `switch` statement is more concise and easier to read than a series of `if` statements. It also includes a `default` case, which handles any values that are not explicitly covered by the `case` statements. This can help to prevent unexpected behavior if the value of `this.creator.crm_record_by_user.stage_name` does not match any of the expected values.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

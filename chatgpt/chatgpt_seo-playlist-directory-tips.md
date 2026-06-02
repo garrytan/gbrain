@@ -88,3 +88,6 @@ A solid layout looks like this:
 The main mistake is turning the page into a thin wall of cards with no descriptive copy and no dedicated pages behind each playlist.
 
 If your playlists are **music**, **video**, or **Spotify/YouTube embeds**, say which one and I’ll give you the exact page template and schema.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

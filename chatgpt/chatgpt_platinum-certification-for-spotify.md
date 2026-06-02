@@ -144,3 +144,6 @@ To achieve Platinum certification for a single in New Zealand, you need to sell 
 - 30,000 units * 150 streams/unit = 4,500,000 streams.
 
 Thus, you would need 4.5 million streams to achieve Platinum certification for a single in New Zealand【39†source】【41†source】.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

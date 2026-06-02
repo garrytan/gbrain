@@ -95,3 +95,6 @@ Everything else can stay the same:
 - Auto Insurance $175  
 
 This alignment gives you realistic spending caps and keeps your surplus transfers flowing to investments. Let me know if you’d like to tweak any line.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

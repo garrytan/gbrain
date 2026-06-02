@@ -65,3 +65,6 @@ For **Next.js** projects deployed on **Vercel**, the coverage tooling is straigh
 - **SonarQube Cloud** → governance and enforcement  
 
 If you want, I can give you a **drop-in Jest + Next.js + Vercel CI config** or a **Playwright coverage setup**.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

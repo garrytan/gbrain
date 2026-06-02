@@ -28,3 +28,6 @@ Fact check
 ## Assistant
 
 Mr. White, a 54-page interim report from the Senate Permanent Subcommittee on Investigations (PSI) released May 21, 2025, does show that CDC and FDA records—such as a February 23, 2021 VAERS search—flagged myocarditis cases early in the vaccine rollout citeturn3search1.  The first formal public Health Alert Network advisory didn’t go out until mid-May 2021, and the official COVID-19 vaccine fact sheets weren’t updated to include myocarditis warnings until June 25, 2021 citeturn3search5.  While the PSI report frames this as “withholding” alerts, health agencies say they waited to confirm the signal and to balance benefit-risk messaging—myocarditis after mRNA shots remains very rare, usually mild, and experts agree the benefits of vaccination outweigh this risk.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

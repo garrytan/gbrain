@@ -77,3 +77,6 @@ Mr. White, send this as one consolidated message:
 > The page is generally strong. Keep the overall premium, world-class brand kit feel, the dark/cream aesthetic, the usage rules, icon pack, stationery examples, downloads, and brand system structure.
 >
 > Focus this pass on cleanup, correction, and polish. The goal is a tighter final brand kit with fewer false assumptions, stronger wordmark craft, and more accurate usage rules.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

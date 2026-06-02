@@ -103,3 +103,6 @@ An example of grapefruit soda that can be used in a Paloma cocktail includes:
 - Wink
 
 These sodas have a sweet but tart grapefruit flavor that complements the tequila and lime juice in a Paloma.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

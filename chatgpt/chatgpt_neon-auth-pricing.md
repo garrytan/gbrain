@@ -50,3 +50,6 @@ Neon Auth is a part of the Neon ecosystem and inherits Neon’s overall pricing 
 There’s no separate **Neon Auth pricing plan** on Neon’s pricing page. Instead, Auth usage is bundled with your Neon project’s usage and billed under Neon’s usage-based model. You pay for compute and storage as you go, with a minimum of $5/month beyond the free tier. citeturn1search1
 
 If you want precise numbers for your expected traffic and auth load, tell me your expected monthly active users and typical request volume and I can help estimate costs.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

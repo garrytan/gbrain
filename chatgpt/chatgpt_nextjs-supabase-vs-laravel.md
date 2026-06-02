@@ -718,3 +718,6 @@ iOS 26 Dev Beta is exciting but unstable: major battery and boot bugs (now pat
 —
 
 navlistKey iOS 26 Beta Coverageturn0news16,turn0news17,turn0news18
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

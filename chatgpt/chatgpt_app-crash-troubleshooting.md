@@ -358,3 +358,6 @@ There were serious vulnerabilities and subsequent patches in React Server Compon
 ---
 
 If you want, I can help you verify whether your specific code path is triggering the **true React bug** vs a *conditional hook pattern problem* — just share the component’s render function that fails.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

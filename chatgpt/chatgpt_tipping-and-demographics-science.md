@@ -236,3 +236,6 @@ I would still avoid saying the race itself is the cause. Race is probably acting
 **In your dataset, one demographic group may have a materially higher probability of stiffing or under-tipping servers. That is a real operational pattern if the data holds after controls.**
 
 The practical fix is race-neutral: auto-gratuity thresholds, clearer service charges, suggested tip percentages, minimum large-party gratuity, QR/payment prompts defaulting to 18–22%, and manager review of zero-tip tables to separate bad service from chronic underpayment behavior.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

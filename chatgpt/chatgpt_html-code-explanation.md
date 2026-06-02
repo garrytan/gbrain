@@ -133,3 +133,6 @@ make this more concise
 
 It looks like you have provided some code written in HTML, which is a markup language used for structuring and formatting content on the web. The code includes a few `div` elements and some `button` elements with links to Stripe and Amazon AWS. The `div` elements are used to group and apply styles to elements within them, while the `button` elements are used to create clickable buttons that can be used to trigger actions or navigate to other pages. The code also includes some inline SVG (Scalable Vector Graphics) elements, which are used to display images and graphics in the web page. 
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

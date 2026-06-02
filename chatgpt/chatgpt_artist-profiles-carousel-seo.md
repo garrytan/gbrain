@@ -1403,3 +1403,6 @@ Card 5 headline: “Drop Music”. Show a Jovie release countdown page with cove
 
 The design should be minimal, premium, high contrast, and product-focused. Do not add paragraphs inside the cards. Do not add badges, emojis, or extra marketing text. Make the product screenshots look realistic and readable.
 ```
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

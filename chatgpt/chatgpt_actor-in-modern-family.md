@@ -28,3 +28,6 @@ Yo dawg, Season 3, Episode 21 of Modern Family, before the opening credits roll,
 Mr. White, that woman in the gray suit at the dealership is played by **Gina Fricchione**.  
 
 She’s credited for that episode as **“Woman at Car Dealership”** in *Modern Family* S3E21 “Planes, Trains and Cars,” though it’s an uncredited/background role on screen. citeturn2search6turn2search10turn2search1
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

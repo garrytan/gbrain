@@ -125,3 +125,6 @@ Each `codex task` you start is an isolated cloud sandbox. Your local machine (or
 * Watch your OpenAI rate limits—Plus handles several concurrent sandboxes, but you still don’t want dozens of simultaneous heavy builds.
 
 So yes: Cascade can *orchestrate* multiple Codex cloud agents—just express each agent as a parallel step or background command in your Cascade plan.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

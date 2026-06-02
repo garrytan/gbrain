@@ -96,3 +96,6 @@ Mr. White, I was unable to generate the image because the image tool hit a rate 
 ## User
 
 camera in abck of hte roomw facing straight at windows. girl in the left right at windows gran dpiano right camea is easily 80 feet back consol is half way between camera and glass facing glass and occupying bottom third about 80percent wide. girl is in focus the rest is not. shallow dop
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

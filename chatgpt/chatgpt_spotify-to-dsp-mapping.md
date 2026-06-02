@@ -482,3 +482,6 @@ You’re in **bot territory**:
 MusicBrainz’s API is **free for non-commercial use** and they point commercial users to their commercial plans. If your product is commercial, assume you’ll need to address that. citeturn4view0
 
 If you tell me *which exact “profile fields” you want to update* (DSP links? artist URLs? credits? label relationships?), I’ll map each one to: **API-submit / website-edit / bot-safe / don’t-do**.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

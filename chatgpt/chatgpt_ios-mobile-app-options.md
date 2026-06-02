@@ -189,3 +189,6 @@ However, you can achieve a similar effect in a few ways:
 5. **Third-Party Libraries**: There might be third-party libraries that attempt to bring a Tailwind-like experience to SwiftUI or UIKit, but they won't be a direct translation of Tailwind CSS and might have limitations.
 
 In summary, while you can't use Tailwind CSS directly in Swift, you can bring its design philosophy into your iOS app development by creating reusable style components in SwiftUI or UIKit.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

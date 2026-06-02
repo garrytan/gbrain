@@ -268,3 +268,6 @@ To run Swift/iOS CI:
 - Codex’s default runner is Linux. You need to explicitly switch to macOS if supported.
 
 Let me know where you’re configuring this (Codex, GitHub Actions, etc.) and I’ll give you exact steps.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

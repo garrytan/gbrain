@@ -275,3 +275,6 @@ If you want, I’ll:
 - drop a **server action** for handle availability + claim,  
 - add **Turnstile + rate limits**,  
 - and wire **event tracking** with a tiny helper so every step logs consistently.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

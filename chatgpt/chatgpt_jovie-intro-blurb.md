@@ -124,3 +124,6 @@ Tim has spent 15 years doing exactly that from inside the industry: driving 90M+
 
 Now he’s building Jovie: a closed-loop AI manager for music artists that automates those workflows at scale — understanding an artist’s catalog, identifying revenue opportunities, executing the work, and measuring what compounds.
 :::
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

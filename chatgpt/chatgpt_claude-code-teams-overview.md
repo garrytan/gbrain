@@ -63,3 +63,6 @@ If by “Teams” you mean **Microsoft Teams** (chat/collab), there are multiple
 ---
 
 If you want specific **code examples** for connecting Claude Code to Microsoft Teams (e.g., using MCP or a particular platform), tell me your platform preference.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

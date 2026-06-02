@@ -38,3 +38,6 @@ tailwind ui
 - **Lifetime Access**: A one-time purchase grants lifetime access to all current and future components and templates, eliminating recurring fees. citeturn0search5
 
 For more information or to explore the components and templates, visit the official Tailwind UI website. 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

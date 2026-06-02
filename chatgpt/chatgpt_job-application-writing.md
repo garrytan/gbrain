@@ -88,3 +88,6 @@ Thanks for reviewing — looking forward to connecting.
 
 Tim White
 ~~~
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

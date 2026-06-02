@@ -74,3 +74,6 @@ Since you’re being invited to use a company (Bossevents.com) Amazon business/p
 ---
 
 If you like, I can look up **Amazon Business/Prime specifically** (the “business purchasing account” side) to confirm if their policy differs from Seller Central. Would you like me to do that?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

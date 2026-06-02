@@ -81,3 +81,6 @@ Even if CI is perfect, add a *server-side* guard so production can’t deploy if
 ---
 
 If you tell me which CI you’re on (GitHub Actions / GitLab / Circle / Jenkins / Buildkite) and paste the relevant YAML around the migrate + deploy parts, I’ll point to the exact line causing the deploy to ignore the failure and show the minimal fix.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

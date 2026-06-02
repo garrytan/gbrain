@@ -43,3 +43,6 @@ Certainly, Mr. White. To compute the macronutrients, I'll need the specific type
    - Fat: ~1g
 
 For a more accurate count, especially for the Quest Bars, please provide the specific type.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

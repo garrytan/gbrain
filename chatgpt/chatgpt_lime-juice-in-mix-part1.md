@@ -810,3 +810,6 @@ This cocktail combines classic Manhattan flavors with a smoky twist, creating a 
 
 
 name for a mexican mule
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

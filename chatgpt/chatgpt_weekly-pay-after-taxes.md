@@ -59,3 +59,6 @@ Mr. White — here’s a rough estimate of weekly take-home pay after taxes for 
 - Weekly net is simply Net Annual ÷ 52 for comparability.
 
 If you like, I can compute a more precise chart using your specific filing status, deductions, contributions (401k, HSA), etc.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

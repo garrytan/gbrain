@@ -153,3 +153,6 @@ For iOS specifically, the stricter internal target is:
 Keep the main thread free enough to render every frame,
 and keep tap-to-feedback under 100ms at p95 or better.
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -41,3 +41,6 @@ Here are your options, Mr. White, depending on your goals:
   → Flip the dynamic so they have to fight for your time, not the other way around.
 
 Let me know your goal, and I can help you word the message.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

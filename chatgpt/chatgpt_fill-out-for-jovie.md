@@ -32,3 +32,6 @@ Jovie Technology, Inc. builds software products that help businesses automate wo
 ~~~
 
 If you want this **more specific** (e.g., AI agents, SaaS, consumer app, fintech-adjacent, dev tools) or **more conservative** to minimize Atlas review risk, **tell me the core product in one line and I’ll tighten it further**.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

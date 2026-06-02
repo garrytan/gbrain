@@ -62,3 +62,6 @@ Make it more pop
 ## Assistant
 
 "In my life, I've got golden friends, more precious than the whole wide world."
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

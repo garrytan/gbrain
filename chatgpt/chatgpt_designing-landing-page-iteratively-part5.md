@@ -1007,3 +1007,6 @@ Design:
 ```
 
 My call: **yes to AI on the homepage, one AI tile on Artist Profiles, no standalone AI page yet unless you’re ready to show a real multi-tool workflow.**
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

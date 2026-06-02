@@ -34,3 +34,6 @@ serato
 Additionally, here's a video that provides insights into managing your Serato library:
 
 videoDJ CEE B: Serato Library Q&Aturn0search5 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

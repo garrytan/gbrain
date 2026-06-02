@@ -32,3 +32,6 @@ cdj 3000 hot cue
 For a visual demonstration, you can watch Pioneer's official tutorial on using the 8 Hot Cue buttons on the CDJ-3000:
 
 videoHow to use the 8 Hot Cue buttons | CDJ-3000 Tutorial Seriesturn0search0 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

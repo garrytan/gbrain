@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "MakeHuman is still an active project, but it seems that the Homebrew cask for it has been disabled, likely because the version they had isn't available or supported anymore. You can still get MakeHuman by downloading it directly from their official website. Just head over to the MakeHuman site, download the latest version for your operating system, and install it manually. Let me know if you need any help with that process!"}
 {'asset_pointer': 'sediment://file_0000000041b4622f9f64fd68d4f2184e', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:33:28.213316+00:00', 'format': 'wav', 'metadata': {'end': 25.15, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1207278, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

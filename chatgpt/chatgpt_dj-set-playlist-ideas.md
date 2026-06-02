@@ -89,3 +89,6 @@ Throughout the set, the **transitions are harmonic** and smooth, ensuring the mi
 Each of these tracks flows into the next, creating a **cohesive 90-minute journey**. The selection balances **tech house grooves, deep house atmospheres, progressive melodies, and minimal/acid touches**, all within a danceable 124–132 BPM range. This guarantees a set that’s never too dark or too commercial, yet always engaging and **after-hours appropriate**. Enjoy the ride!
 
 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

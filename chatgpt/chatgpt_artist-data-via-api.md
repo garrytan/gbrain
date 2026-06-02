@@ -77,3 +77,6 @@ Yes, **Spotify’s Artist object includes `external_urls`**.
 - The same `external_urls` field also appears in “simplified” artist objects returned inside other endpoints (tracks, albums, search results, etc.). citeturn0search2turn0search15  
 
 One nuance: people often expect socials (Instagram/Twitter/etc.) there, but Spotify generally **only returns the Spotify link** in `external_urls`. citeturn0search18
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

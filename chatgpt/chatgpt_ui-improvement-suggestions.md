@@ -214,3 +214,6 @@ That keeps the hierarchy clear: Face ID first, passcode always available.
   - Make “Use Passcode Instead” a full-width tappable area even if it looks like a text link.
 
 If you’d like, I can write the exact iOS view hierarchy (stack views, constraints, and text) so your devs can drop it straight into the project.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

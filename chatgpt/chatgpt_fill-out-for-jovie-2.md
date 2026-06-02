@@ -44,3 +44,6 @@ Yes
 **Team field:**
 
 Jovie is led by Tim White, solo founder and full-time builder. Tim is a professional musician with 90M+ streams across releases on Sony, Universal, Armada, and Black Hole, and has lived the release-ops problem firsthand. He handles product, engineering, design, operations, and customer development, using AI-agent workflows to move quickly. Jovie is also supported by music and startup advisors as needed.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

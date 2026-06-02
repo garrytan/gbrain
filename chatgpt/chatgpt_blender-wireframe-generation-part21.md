@@ -824,3 +824,6 @@ Let me know if no window appears, and I’ll walk you through OpenGL or Qt displ
 
 
 check
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

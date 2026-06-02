@@ -206,3 +206,6 @@ If you want, I can:
 - Design a “future-proof” funnel you can show on a slide  
 
 Just tell me where you want to go next.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

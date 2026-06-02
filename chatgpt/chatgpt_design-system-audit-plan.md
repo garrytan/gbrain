@@ -197,3 +197,6 @@ These are structural improvements, not visual redesign:
 Those are not cosmetic standards. They are baseline UX and accessibility requirements in WCAG 2.2. citeturn891660view2turn891660view6turn891660view7turn891660view8turn891660view9turn549875search2turn549875search3
 
 The shortest path to visible improvement is this: fix the broken/inconsistent routes, centralize tokens, unify shell + CTA + form primitives, normalize docs accessibility and links, then migrate pricing/support/legal/profile modules onto the shared system.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

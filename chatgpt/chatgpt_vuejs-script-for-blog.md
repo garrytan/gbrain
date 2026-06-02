@@ -143,3 +143,6 @@ You can then pass a value for `catTags` when you use the component in your app:
   <MyComponent v-bind:catTags="true" />
 </template>
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

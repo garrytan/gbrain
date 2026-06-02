@@ -26,3 +26,6 @@ jacki chan sptofiy
 ## Assistant
 
 ​Jackie Chan, the renowned actor and martial artist, has a presence on Spotify as a musical artist. His profile features songs like "醉拳" (Drunken Fist) from 1995 citeturn0search5, "Power On" from 2010 citeturn0search8, and "OK I Love You" from 2014 citeturn0search9. Additionally, the 2018 track "Jackie Chan" by Tiësto, Dzeko, Preme, and Post Malone is available on Spotify citeturn0search1. 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

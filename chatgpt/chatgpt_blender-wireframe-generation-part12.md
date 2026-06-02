@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "It looks like the script you're trying to run isn't named `makehuman.py` or it's located in a different directory. Usually, the main script in the MakeHuman repository is named `makehuman` without the `.py` extension, and you can run it using Python 3.\n\nTry running this command inside the `makehuman` directory:\n\n```bash\npython3 makehuman\n```\n\nIf that still doesn't work, you can also try running the script directly by"}
 {'asset_pointer': 'sediment://file_00000000b894622f8f77375e740d9a77', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:37:13.083524+00:00', 'format': 'wav', 'metadata': {'end': 22.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1080078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -419,3 +419,6 @@ Here’s a curated batch of songs that could be re-imagined in that **“Skyfall
 ---
 
 Would you like me to **assemble a 6–8 song “Halloween Skyfall” setlist** that balances **cinematic torch songs + a few campy Halloween crowd-pleasers**?
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

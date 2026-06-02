@@ -115,3 +115,6 @@ export default {
 ```
 
 This component has a `value` prop that is used to bind the value of the input element, and two custom event listeners: `update:value` and `select-next-creator`. These event listeners can be used by the parent component to handle the input value update and the keyup event, respectively.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

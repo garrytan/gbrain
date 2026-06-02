@@ -219,3 +219,6 @@ Do the work. Keep shipping small slices until the repo-wide prelaunch trust-hard
 ```
 
 Optional harder variant: add one line near the end — `On any slice that still feels visually unstable after /qa, run /design-review before /ship.` gstack’s docs describe `/design-review` as a live-site visual audit + fix loop, which fits your “feels solid” bar well. citeturn232682view0
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

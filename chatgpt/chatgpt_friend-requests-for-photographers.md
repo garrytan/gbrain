@@ -115,3 +115,6 @@ Keep scanning
 The virtual browser has been disabled, so I can't continue scanning Model Mayhem listings right now.
 
 If you'd like, you can re-enable the browser and I’ll immediately resume the task. Or, if you prefer, I can guide you through the filtering process manually or provide a checklist for evaluating portfolios based on your criteria. Let me know how you want to proceed.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

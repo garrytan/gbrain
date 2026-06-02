@@ -392,3 +392,6 @@ If you want, I can also generate:
 - A stricter enterprise variant (≤200 LOC)
 - A startup velocity variant (≤400 LOC, fewer splits)
 - Or a version tuned for Jest vs Vitest specifically
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

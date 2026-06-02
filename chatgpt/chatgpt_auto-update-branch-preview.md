@@ -265,3 +265,6 @@ Short answer: **don’t dogmatically TDD.** As a YC-speed team with AI writing c
 - **Merge Queue**: ensures up-to-date with base before merging.
 
 Bottom line: **tests-first where it matters, tests-later where it doesn’t. Ship fast, protect the core.**
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

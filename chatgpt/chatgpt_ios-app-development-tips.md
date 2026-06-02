@@ -173,3 +173,6 @@ Common pattern:
 ---
 
 If you tell me where your API lives today (Next Route Handlers in `app/api/*` vs separate service), I’ll sketch the exact folder structure + the minimal set of endpoints to start (auth “whoami”, CRUD for your first object, pagination conventions, error format), and the turbo tasks for codegen + CI.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

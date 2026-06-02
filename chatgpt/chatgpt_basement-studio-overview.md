@@ -83,3 +83,6 @@ A **design studio that also invests** isn’t just a creative agency — it’s 
 - **Capital + execution:** They reduce risk by offering **funding and operational muscle** — design, product strategy, team building — under one roof. citeturn0search0
 
 If you want a list tailored to **a specific industry** (e.g., AI tools, consumer hardware, fashion) or advice on structuring a similar firm, let me know.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

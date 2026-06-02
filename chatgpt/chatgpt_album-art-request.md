@@ -110,3 +110,6 @@ This artwork should convey the themes of love, adventure, and dreamlike escapism
 ---
 
 Would you like me to generate this album art for you now?
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

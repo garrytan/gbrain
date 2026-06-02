@@ -197,3 +197,6 @@ clean like apple
 ## User
 
 clean lines. smooth. golden ratios etc. 
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

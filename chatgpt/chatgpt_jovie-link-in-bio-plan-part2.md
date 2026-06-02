@@ -120,3 +120,6 @@
 
 
 I'm not familiar with Firebase Dynamic Links or Branch. Could you concisely explain that? And then could you also tell me if you think that Firebase makes more sense than SuperBase? I'm just not familiar with Firebase at all. I've never used it, but I've used SuperBase a little bit. Would that make more sense on backend for this, or is it kind of like not? I don't know. Tell me your thoughts.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

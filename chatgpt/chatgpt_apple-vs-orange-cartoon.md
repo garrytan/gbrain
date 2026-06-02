@@ -155,3 +155,6 @@ Make them 30 something’s in street clothes
 ## User
 
 Overall my handle @itstimwhite on X as a watermark in the lower corner. Subtle
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

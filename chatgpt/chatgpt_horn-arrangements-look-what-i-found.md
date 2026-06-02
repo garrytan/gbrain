@@ -63,3 +63,6 @@ Let me know if you’d like details on the session musicians themselves or any f
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Yes, Mr. White, it is. Steve Jordan did indeed play drums on "I Don\'t Trust Myself (With Loving You)" by John Mayer. It\'s a well-known collaboration since Steve Jordan was a big part of the "Continuum" album. So you\'ve got that right on the money.'}
 {'asset_pointer': 'sediment://file_000000004ec061f6ba0b24c3b53d2fa5', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-03-04T10:00:44.522345+00:00', 'format': 'wav', 'metadata': {'end': 14.15, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 679278, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

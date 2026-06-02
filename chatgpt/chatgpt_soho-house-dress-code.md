@@ -26,3 +26,6 @@ Is there a dress code at Soho House, and will I feel out of place in, like, a ni
 ## Assistant
 
 Soho House doesn't have a strict dress code, but they emphasize a stylish yet relaxed look—think smart-casual. A nice, well-fitted t-shirt paired with quality jeans and clean shoes is totally acceptable. You won't feel out of place without a button-down, but avoid overly casual or athletic wear.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

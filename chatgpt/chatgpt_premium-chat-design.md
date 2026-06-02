@@ -740,3 +740,6 @@ Reduce font sizes on the settings page to a tighter scale.
 - Reduce padding in cards by 2–4px to match smaller text.
 - Do not change layout structure or add new elements.
 ```
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

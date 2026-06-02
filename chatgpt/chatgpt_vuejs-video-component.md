@@ -117,3 +117,6 @@ In this modified code, the `iframe` element has several attributes:
 - `allowfullscreen` allows the player to enter fullscreen mode.
 
 The `methods` section and `style` section remain unchanged.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

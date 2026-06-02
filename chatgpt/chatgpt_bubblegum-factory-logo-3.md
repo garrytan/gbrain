@@ -55,3 +55,6 @@ Create a logo for a t-shirt with the following specifications:
 ---
 
 This prompt should help you achieve a consistent design across various AI tools.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

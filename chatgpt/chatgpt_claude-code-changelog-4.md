@@ -73,3 +73,6 @@ From changelog/meta summaries:
 - **Release bot feeds / RSS** for automated changelog alerts.citeturn0search9
 
 If you want the **full raw text of the latest changelog entries**, including minor bug fixes and CLI flags, tell me and I can provide them.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

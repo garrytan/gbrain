@@ -87,3 +87,6 @@ what does AWAL and the orchard say about this
 Both AWAL and The Orchard follow industry standards similar to other major DSPs like Spotify and Apple Music, which also define an EP as having 4-6 tracks and a total duration under 30 minutes. Always check specific platform requirements as guidelines can occasionally be updated.
 
 For more detailed information, you can refer to the AWAL [Content Guidelines](https://awal-support.zendesk.com/hc/en-us/articles/8512542760083-Content-Guidelines) and [Scheduling Your Release](https://awal-support.zendesk.com/hc/en-us/sections/7870808600851-Scheduling-Your-Release) resources on their support website.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -58,3 +58,6 @@ Yes, cheesecloth bags are available and can be very useful for infusing liquids 
 4. **Remove and Strain**: After infusing, simply remove the bag. If desired, you can pour the mezcal through a fine mesh strainer to catch any small particles that might have escaped.
 
 These bags are reusable and easy to clean, making them a convenient option for infusing cocktails.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

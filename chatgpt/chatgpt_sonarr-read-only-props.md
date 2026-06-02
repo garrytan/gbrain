@@ -80,3 +80,6 @@ Mr. White, it should be **different** between production and staging.
 - Don’t put long-lived secrets in URLs; keep tokens **short TTL** and scoped.
 
 If you tell me what you mean by “URL encryption key” (e.g., Laravel `APP_KEY`, Rails `secret_key_base`, JWT/HMAC signing secret, or something custom), I’ll give the exact best-practice setup for that stack.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

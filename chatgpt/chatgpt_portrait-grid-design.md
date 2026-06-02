@@ -45,3 +45,6 @@ Vary across the 16 cells (styling only — same person):
 Shared (every cell): plain white seamless cyclorama background, simple white tank top OR fitted white tee (low enough to show collarbones), thin gold chain or small gold studs OK, natural skin texture with visible pores, light tinted lip balm only, photographed on Hasselblad medium format with shallow depth of field, slightly warm clean color grade with deep blacks — 2000s editorial color science. Photorealistic, magazine quality, not AI-looking, no uncanny valley. Catchlights in eyes.
 
 Hard rules: same person across all 16 cells, identity unmistakable — only styling/expression/angle/lighting vary. NO modern Instagram filler aesthetic, NO BBL silhouette, NO overdrawn lips, NO buccal-fat-removal hollows. Exactly 16 cells. No text, labels, numbers, or watermarks.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

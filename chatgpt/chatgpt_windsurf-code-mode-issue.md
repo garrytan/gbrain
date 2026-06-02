@@ -101,3 +101,6 @@ If you tell me:
 - And **what exactly you click** and what happens (does the toggle not appear, appear but not change, grayed out, etc.),
 
 I can give you very specific “click here / do this” steps.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

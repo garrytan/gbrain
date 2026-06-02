@@ -1123,3 +1123,6 @@ Make sure all components have consistent styles and proper alignment. Adjust any
 
 
 Ok let's display everything in a single table with all tracks viewable at once. We will add a column for album name. And this will be our new table view. The current view will be our album view. We will have a toggle up top to switch between the two.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

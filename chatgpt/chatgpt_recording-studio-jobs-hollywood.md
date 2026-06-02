@@ -88,3 +88,6 @@ If you’re looking to get a job or gig: NightBird is a legitimate, top-tier fac
 
 If you want — I can **pull up a directory** of ~10–15 of the *big* recording studios in Hollywood/WeHo — including NightBird — with **contact info + whether they seem to be hiring or open to freelancers**. Could help you target applications quickly.  
 Do you want me to build that list now, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

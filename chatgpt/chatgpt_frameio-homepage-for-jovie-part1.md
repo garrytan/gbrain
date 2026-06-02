@@ -1121,3 +1121,6 @@ Start with a release idea. End with a live campaign. this puts too much on work.
 
 
 Mr. White, this changes the homepage thesis: Jovie becomes always-on marketing infrastructure, with campaigns framed as the broken old model and heartbeat/flywheel momentum as the new one.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

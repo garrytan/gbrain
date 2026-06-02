@@ -41,3 +41,6 @@ Here's a standard bartender recipe for an **Aperol Spritz**:
 5. Garnish with an **orange slice**.
 
 Serve and enjoy!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

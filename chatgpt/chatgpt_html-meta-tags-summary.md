@@ -112,3 +112,6 @@ Sure, here's an updated version of the HTML document with the meta tags and page
 ```
 
 Please note that I've assumed that North Bergen First has a website at "https://www.northbergenfirst.com/", and I've used the URL to link to the website in the `og:url` and `twitter:url` meta tags. Also, I've used a sample logo image URL for the `og:image` and `twitter:image` meta tags, so you may want to update those to the actual image URL for North Bergen First's logo.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

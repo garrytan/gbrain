@@ -58,3 +58,6 @@ ORDER BY e.priority ASC
 ```
 
 This way, you can efficiently retrieve and manipulate the information you need about a user's emails.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

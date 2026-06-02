@@ -60,3 +60,6 @@ Convert these quantities to liters (1 oz = 0.0295735 L):
 - Lemonade: 5.54 L
 
 Combine all the ingredients in a large container, stir well, and serve chilled.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

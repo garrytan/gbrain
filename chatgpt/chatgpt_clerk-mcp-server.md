@@ -35,3 +35,6 @@ clerk mcp server
 - These servers enable AI applications to access user data (with permission) securely and consistently by managing tokens, scopes, and consent screens via Clerk. citeturn0search1
 
 In short: it’s a backend service implementing the MCP spec and using Clerk to authenticate users and authorize AI clients to access protected resources. citeturn0search1
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

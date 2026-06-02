@@ -57,3 +57,6 @@ If you want the logo to fade in and zoom out when it loads, rather than when it 
 
 This will cause the logo to fade in and zoom out when the page loads.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -34,3 +34,6 @@ Here are details:
 - There’s also mention of a “Shipped” page by Vercel titled *OpenAI — How OpenAI uses Vercel* confirming usage. citeturn0search2  
 
 If you want, I can check whether OpenAI uses Vercel for its *core model serving / inference* vs just its website / marketing site. Do you want that?
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

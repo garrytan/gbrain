@@ -109,3 +109,6 @@ Here’s a single prompt you can drop into any AI art tool to get a killer MUFFI
 ```
 “Design a bold, modern vector logo for the music project MUFFINTOP: feature a stylized smiling muffin-head helmet perched atop a muscular, shirtless torso with defined eight-pack abs, integrate clean, bold sans-serif lettering, and use a limited palette of warm muffin-brown, buttery yellow, and black accents; crisp lines, minimal shading, playful yet edgy vibe, optimized for both digital and print.”
 ```
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

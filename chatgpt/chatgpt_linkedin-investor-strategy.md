@@ -112,3 +112,6 @@ If you want, tell me:
 - Topic themes you’re considering  
 
 I can give you a high-signal content framework investors reliably engage with.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -48,3 +48,6 @@ To add a blog to your Laravel and Vue.js application, you will need to follow th
    - Add support for editing and deleting existing blog posts.
 
 I hope this helps! Let me know if you have any questions.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

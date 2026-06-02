@@ -49,3 +49,6 @@ If useful, provide:
 - where to **buy/pre-order the 4K UHD**,  
 - the **best streaming source currently in 4K**, or  
 - **differences between the Blu-ray and the new 4K transfer**.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -34,3 +34,6 @@ Key points:
 - Vercel is also behind the Next.js framework and increasingly focused on AI-enabled tooling and workflows. citeturn0search4
 
 In short: it’s like a specialized hosting + deployment + edge platform built for modern web developers to ship fast, scalable applications. citeturn0search0
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

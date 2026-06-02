@@ -227,3 +227,6 @@ The finished page should feel like premium software for serious independent arti
 ```
 
 For the best first pass, attach current jov.ie screenshots or import the site URL/design-system context before generating; Stitch now supports bringing images, text, or code into the canvas and extracting design-system context from a URL. citeturn832938view0
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

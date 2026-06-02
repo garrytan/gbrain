@@ -60,3 +60,6 @@ This location was used for:
 The club itself is **fictional in the story**, but filming took place at this **actual private golf club** in Rancho Palos Verdes.
 
 If you want, I can list **specific episodes** or **other filming locations** used for club-related scenes.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

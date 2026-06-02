@@ -164,3 +164,6 @@ Here's the schedule and expected outcomes for each phase of your plan:
 | Final Cut    | July 08, 2024    | 166.6       | 8.1        |
 
 This table assumes that the weight and body fat percentage remain constant during the 4-week break. The final cut aims to bring you to around 8.1% body fat.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

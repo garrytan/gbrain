@@ -112,3 +112,6 @@ Perfect. Since you're on **iOS 18** and **not jailbroken**, here’s how to play
 ---
 
 If you want me to walk you through installing AltStore and sideloading one of these, I can guide you step-by-step.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

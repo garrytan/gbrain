@@ -48,3 +48,6 @@ From their public FAQ and membership info, typical rules are:
 - Avoid jeans, open-toe shoes, and anything that looks like you’re testing the “how naked can I be” limit
 
 If you’re planning something borderline (stringer, sports-bra-only training partner, etc.), ask the front desk once at *your* club and you’ll know exactly how strict they are.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -71,3 +71,6 @@ So your kid has:
 - **Blue: 25%**
 
 So roll the genetic dice, but either way your kid’s eyes are gonna be sexy.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -38,3 +38,6 @@ XDJ CABLES
 **LAN Cables**: To connect multiple XDJ units or to link them with a computer for rekordbox integration, LAN cables are used. Discussions on Pioneer's forums provide insights into LAN connectivity for models like the XDJ-RX. citeturn0search7
 
 When selecting cables, ensure they are compatible with your specific XDJ model to maintain optimal performance and reliability. 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

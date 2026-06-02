@@ -138,3 +138,6 @@ items: [
 Note that the `require` function is used to import the image and the `.default` property is used to get the actual URL of the image. The `@` symbol in the path is a shorthand for the `src/` directory of your project.
 
 Now, when you run the Vite development server (`npm run dev` or `yarn dev`), Vite will automatically handle the import of your images and provide their correct URLs. When you build your project for deployment (`npm run build` or `yarn build`), Vite will also correctly bundle your images and provide their correct URLs for production.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

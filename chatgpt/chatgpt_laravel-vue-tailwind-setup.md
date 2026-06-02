@@ -81,3 +81,6 @@ To build a Laravel app with a Vue.js frontend and Tailwind CSS, you can follow t
    - Once your application is ready, you can deploy it using services like Heroku, AWS, or DigitalOcean.
 
 Remember, Laravel's extensive documentation and community support will be invaluable as you work through these steps. Vue.js and Tailwind CSS also have great resources to help with
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

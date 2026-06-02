@@ -243,3 +243,6 @@ Organized shorthand notes:
 ## Other notes:
 - Guy coming Thursday. Give him something and have it quick.
 - For us - Refer to answers for Jessica. Get the captions.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

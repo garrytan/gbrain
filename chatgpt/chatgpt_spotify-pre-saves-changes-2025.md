@@ -176,3 +176,6 @@ If your product is mostly a profile hub (not a campaign tool), the feature can b
    - Competitors push it (Linkfire/Feature.fm), but it’s the highest trust + compliance burden because it implies ongoing access. citeturn0search7turn0search19  
 
 If you tell me your product’s current positioning (bio hub vs release marketing suite) and your typical customer (indie DIY vs label/manager), I’ll give you a clear “build / partner / link-out” recommendation and a minimal spec that avoids the common OAuth traps.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

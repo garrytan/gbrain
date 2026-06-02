@@ -108,3 +108,6 @@ function clickFirstProfile() {
 ```
 
 You can call this function whenever you want to click on the first profile in the carousel.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

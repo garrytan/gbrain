@@ -135,3 +135,6 @@ Hey Jenn — thanks for the reply. The induction part was clear and I had alread
 
 Just flagging it in case it helps to include that note for future guests so they don’t run into the same confusion.
 :::
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

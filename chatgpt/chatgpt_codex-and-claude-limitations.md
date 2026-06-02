@@ -26,3 +26,6 @@ im out of codex and claude usage for 2 says. wahts that move
 ## User
 
 find me subsidze tools or something with generous free trial
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

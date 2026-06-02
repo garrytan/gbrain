@@ -28,3 +28,6 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Hey! Sounds like an interesting project. Reddit has a unique community dynamic, so influencer marketing there is quite different from other platforms. You'll want to focus on understanding subreddits, their rules, and the kind of engagement that"}
 {'asset_pointer': 'sediment://file_00000000036c522faa76d64d2b5348b0', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-04-04T23:17:30.408695+00:00', 'format': 'wav', 'metadata': {'end': 12.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 600078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

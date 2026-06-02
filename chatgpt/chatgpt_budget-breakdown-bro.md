@@ -184,3 +184,6 @@ iCloud storage we can add
 ## Assistant
 
 Updated with Spotify, iCloud, and haircuts. Your new break-even point is ~$3,118/month. Anything above that gets automatically saved. Let me know if you want to build in a travel fund or emergency savings next.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

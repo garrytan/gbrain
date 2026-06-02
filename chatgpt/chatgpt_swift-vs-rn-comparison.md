@@ -60,3 +60,6 @@ Mr. White, here’s a concise side-by-side:
 **When to choose which?**  
 - **Swift** if you need pure iOS performance, deep Apple-ecosystem integration or push UI/UX boundaries.  
 - **React Native** if you must hit both iOS and Android fast with limited resources, and can accept minor performance trade-offs.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

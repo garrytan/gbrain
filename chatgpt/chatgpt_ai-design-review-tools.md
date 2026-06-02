@@ -57,3 +57,6 @@ You can approximate what you want by combining:
 3. **AI prompt tools (ChatGPT/Claude with screenshot input)** where you feed them screenshots and ask for detailed UI critiques — not automated in a pipeline, but possible manually.
 
 If you want tools that integrate into CI/CD and add comments on pull requests similar to CodeRabbit for *code*, the UX/design ecosystem hasn’t fully produced that yet — but the pieces are emerging.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -136,3 +136,6 @@ You need **duplicate entries**: public for the browser, private for the server.
 ---
 
 If you want, I can rewrite your Supabase + Statsig init files so they **automatically pick the correct keys** whether running on the client or server. That would stop these errors entirely.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -72,3 +72,6 @@ Mr. White, here’s a clean point list + a note you can use.
 - Inventory transparency for cast meals is missing; no clear source-of-ingredients trail.
 
 If you want this as a pasteable message for the team, say the word and I’ll format it.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

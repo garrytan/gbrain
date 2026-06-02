@@ -574,3 +574,6 @@ Specific examples of issues to catch:
 Final instruction:
 Move fast, work in parallel, and produce the audit report only. Use screenshots and code references wherever possible. Do not implement fixes.
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

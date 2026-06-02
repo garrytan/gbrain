@@ -34,3 +34,6 @@ I couldn’t find public information on how long after submission one typically 
 **Recommendation:** Since there’s no standard publicly stated timeframe, you’d be best served to reach out directly to their team—ideally via email or a query form—to ask for an update on your status. If you let me know when you applied, I can help you draft a concise follow-up.
 
 Would you like assistance composing that follow-up message?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

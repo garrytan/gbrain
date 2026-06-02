@@ -80,3 +80,6 @@ Here’s how Israetel frames it:
 - Tomorrow = rest. That way your weekly volume balance is intact.  
 
 Would you like me to map out what your Week 1–2 arm/shoulder volumes look like (set counts per muscle group) so you know you’re inside Israetel’s MEV–MRV window?
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

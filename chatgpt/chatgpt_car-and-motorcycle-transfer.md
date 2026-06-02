@@ -146,3 +146,6 @@ By following the above steps and ensuring you have the correct paperwork, you ca
 - Law Office of M. Cahill – *How to Get Duplicate Title for a Decedent’s Vehicle* (example of executor signing format and estate title transfer process)【15†L73-L81】【17†L121-L129】  
 - Nevada DMV – **Vehicle Titles** and **Registration Guide** (title fee, no-insurance needed for title-only, etc.)【8†L1-L4】【1†L97-L105】  
 - Nevada DMV – **Emissions Program** (smog requirements and exemptions for Clark County, noting motorcycles are exempt)【23†L144-L152】.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -121,3 +121,6 @@ A **solid** check engine light with no leaks and normal temperature is less imme
 ## My practical recommendation
 
 **Do not drive it beyond a short, slow trip to a nearby mechanic or parts store for a scan.** If it vibrates, pulls, scrapes, clunks, or the CEL flashes, **tow it**. The risk is less “engine instantly explodes” and more “damaged wheel/suspension turns into a dangerous failure or ruins tires/axle/brakes.”
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

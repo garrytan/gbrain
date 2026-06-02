@@ -460,3 +460,6 @@ Check our ci
 10. **Set `XCODE_VERSION` in a single repo secret**; reference it in all `setup-xcode@v1` calls to avoid drift.
 
 Fix the cert/profile mismatch first—everything else is polish.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

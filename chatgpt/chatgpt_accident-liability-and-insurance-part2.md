@@ -380,3 +380,6 @@ So the answer is:
 - **No more texting tonight** is the cleanest move unless she comes back with actual verification.  
 
 If she replies, paste it here exactly and I’ll tell you whether it has enough to justify a response.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

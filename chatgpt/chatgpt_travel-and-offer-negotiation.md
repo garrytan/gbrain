@@ -74,3 +74,6 @@ If you want a bit more snark:
 
 > If texting you magically summons a bus to my neighborhood, I’m in.  
 > Until that superpower kicks in, I can’t deliver and I’m keeping it at $50 pickup near Bronson only.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

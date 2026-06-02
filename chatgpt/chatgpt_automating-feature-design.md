@@ -203,3 +203,6 @@ Use the coding agent for **implementation**.
 Do not rely on an implementation agent to infer all the hidden product architecture from a short Linear issue. That is exactly how you get a “What’s New component” instead of a release communication system.
 
 My recommendation: **build a GPT-5.5/GPT-5.5 Pro Linear planner as a small internal service.** Don’t automate the ChatGPT browser. Don’t make every issue use Pro. Run normal planning on `gpt-5.5`, escalate high-ambiguity specs to `gpt-5.5-pro`, then hand the resulting plan to Claude Code or Codex.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

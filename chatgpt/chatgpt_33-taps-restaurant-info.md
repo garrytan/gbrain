@@ -34,3 +34,6 @@ If so:
 - They advertise “33 taps” of beer + a full bar. citeturn0search0turn0search4turn0search6  
 
 If you meant something else by “33taps,” clarify and I’ll dig deeper.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

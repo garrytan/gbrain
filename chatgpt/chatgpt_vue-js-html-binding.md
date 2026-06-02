@@ -99,3 +99,6 @@ Keep in mind that the DOMPurify library works by parsing the HTML, sanitizing it
 
 Also, if you are not sure that the HTML is coming from a safe source, you should not use v-html at all, you can use v-text instead.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

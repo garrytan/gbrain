@@ -787,3 +787,6 @@ MetricDisplayComponent(
 ```
 
 This should display a graph of steps taken over the last 7 days in your app. Make sure to handle any edge cases, like days when no data is available, to ensure a smooth user experience.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -602,3 +602,6 @@ for (let i = 0; i < billingTypeRadios.length; i++) {
 ```
 
 This code sets the monthly and annual prices, retrieves the radio buttons for the billing type, and sets up an event listener that updates the displayed price based on the selected radio option. When the user selects "Monthly", the price displayed will be the monthly price, and when the user selects "Annual", the price displayed will be the annual price.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

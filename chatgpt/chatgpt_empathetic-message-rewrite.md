@@ -62,3 +62,6 @@ Costumes are Vincent’s call, and he’s in New York for Brandon’s wedding to
 ---
 
 It keeps it friendly, notes the timing, and leaves room in case plans shift.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

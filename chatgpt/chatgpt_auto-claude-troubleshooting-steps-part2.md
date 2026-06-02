@@ -365,3 +365,6 @@ It’ll usually be one of these:
 - Python dependency import error (very common when the venv is wrong)
 
 If you paste the **last ~60 lines** of that command output, I’ll tell you the exact fix (it’ll be obvious once we see the exception).
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

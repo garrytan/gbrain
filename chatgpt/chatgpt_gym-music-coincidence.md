@@ -50,3 +50,6 @@ Technically possible in the abstract, but **unlikely in practice**:
 - Ask staff: “Is the music a corporate feed (like FITRADIO/Mood Media) or something local?”
 
 If you tell me the exact LA Fitness location (street/city) I can check whether people report a specific in-club music system there.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

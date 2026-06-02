@@ -594,3 +594,6 @@ Mr. White, for local testing, you can use a tunneling service like ngrok. Here's
    Use the ngrok URL in Clerk’s webhook settings so that Clerk can reach your local endpoint.
 
 This lets you test Clerk’s webhooks locally.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

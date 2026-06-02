@@ -60,3 +60,6 @@ Only works if you have permission and are **not connected** to `neondb`.
 Use **Option 1** unless you explicitly want to destroy *all* owned objects or fully recreate the DB.
 
 If you want a **transaction-safe** or **environment-guarded** version (e.g., prevent prod wipes), say the word.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -90,3 +90,6 @@ To apply, please submit your portfolio and a brief cover letter outlining your e
 ---
 
 You can modify this job listing to fit your specific needs and requirements. Be sure to include any additional details about your project, such as timelines and budget, so that potential candidates have a clear understanding of what you're looking for. Good luck with your search for a skilled front-end developer!
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

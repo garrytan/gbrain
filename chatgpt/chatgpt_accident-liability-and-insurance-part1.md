@@ -339,3 +339,6 @@ Quick Risk Recap
 You’re in LA — if things feel off after their next reply, a quick consult with a California traffic attorney (many do 15–30 min free or low-cost) is worth it for peace of mind. Many handle these exactly.
 Send me what they reply next (or if you see anything in your Geico account), and I’ll help tweak the message or next move. Stay low-key — this is still very solvable without blowing up your rates or her license situation.
 
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

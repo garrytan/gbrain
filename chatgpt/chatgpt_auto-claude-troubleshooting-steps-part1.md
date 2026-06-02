@@ -998,3 +998,6 @@ tail -n 200 "/Users/timwhite/Library/Application Support/auto-claude-ui/<whateve
 “exit code 1” is just the wrapper. The logs will show the *actual* reason (missing command, permissions, failing script, bad env var, etc.).
 
 Paste the output of step **2** (the grep). That will be enough for me to tell you the exact fix.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

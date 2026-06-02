@@ -51,3 +51,6 @@ ryan goslns wife
 Ryan Gosling isn’t publicly known to be *officially* married in the traditional sense, but his long-term partner is **entity["people","Eva Mendes","actress"]**. They’ve been together since **2011**, after co-starring in *The Place Beyond the Pines*, and share two daughters, **Esmeralda Amada** (born 2014) and **Amada Lee** (born 2016). citeturn0search0turn0search1
 
 Although they keep their relationship extremely private, Mendes has referred to Gosling as her “husband” in media and has a “de Gosling” tattoo, leading many to believe they are married even if no formal confirmation has been publicly detailed. citeturn0search0turn0search21
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

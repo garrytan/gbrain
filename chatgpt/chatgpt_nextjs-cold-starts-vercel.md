@@ -114,3 +114,6 @@ If you want, I can:
 - Audit a specific route pattern
 - Suggest Edge vs Node per endpoint
 - Give a reference architecture that’s effectively cold-start-free
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

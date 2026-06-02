@@ -378,3 +378,6 @@ Keep the round process clean. If this is a private Regulation D raise, confirm w
 ## The best path in one sentence
 
 Raise a **$1.5M target / $3M hard-cap pre-seed** on a clean post-money SAFE, use the $25k check to rapidly close $250k–$500k from strategic angels, reframe Jovie from “music link page” to “owned fan graph for artists,” then use that momentum to pull in one or two creator/music/pre-seed funds and expand only if demand becomes real.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

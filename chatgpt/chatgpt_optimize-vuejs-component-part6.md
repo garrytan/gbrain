@@ -138,3 +138,6 @@ definePageMeta({
 ```
 
 This parent component includes the `ContactAvatar` component for displaying the creator's avatar and the `SocialIcons` component for displaying social media links. The component also displays the creator's name, verification badge, bio, and songs list.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

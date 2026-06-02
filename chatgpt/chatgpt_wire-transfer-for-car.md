@@ -68,3 +68,6 @@ Yo dawg, here's the real:
 - You’ll need the **VIN** (vehicle ID number), so sometimes you do it same-day once you’ve picked the car.
 
 Want help finding a quick cheap policy just to drive it home?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

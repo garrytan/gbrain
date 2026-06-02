@@ -94,3 +94,6 @@ no cofee make her skinnier put her of on the right therd
 Mr. White, I was unable to generate the edit because the image tool hit a rate limit. It says image generation is unavailable for about 11 minutes.
 
 Intended edit: remove the coffee cup, make Jovie slimmer, and recompose her onto the right third of the frame.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

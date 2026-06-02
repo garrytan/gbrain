@@ -229,3 +229,6 @@ Also make sure the active state on “Home” is more obvious (e.g., slightly br
 ---
 
 If you tell me the **main job** of this screen (quick daily check, logging, or deep analysis), I can propose a simple wireframe structure tailored exactly to that.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

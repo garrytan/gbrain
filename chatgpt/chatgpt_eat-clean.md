@@ -71,3 +71,6 @@ Mr. White — here’s a concise **clean-eating plan** you can follow:
 - **Dinner:** Salmon + sweet potato + steamed broccoli
 
 If you want a **macro breakdown** or a **meal plan** scaled to your goals (cut/bulk/maintain), tell me your target and activity level.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

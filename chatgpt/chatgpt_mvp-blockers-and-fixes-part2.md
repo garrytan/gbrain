@@ -852,3 +852,6 @@ Got it, Mr. White. Here’s a **minimal, sequential rollout plan**—each step i
 - Keep SSR-only branding gate; client analytics never used on public pages.
 
 Want these as GitHub issues with checklists? I can output a CSV or Markdown bundle ready to import.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -60,3 +60,6 @@ No — at least **not publicly**.
 - a16z’s own published portfolio/investment lists don’t show Rho as a disclosed investment. citeturn0search8turn0search9  
 
 So: **Capital = yes, a16z-backed. Rho = no disclosed a16z backing.**
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

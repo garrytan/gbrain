@@ -26,3 +26,6 @@ make a logo for The Bubblegym Factory
 ## Assistant
 
 Here is the logo for "The Bubblegym Factory." If you need any adjustments or further customization, please let me know!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

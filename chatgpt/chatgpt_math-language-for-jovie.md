@@ -163,3 +163,6 @@ Each block: minimalist icon + one-sentence description. No walls of text.
 ---
 
 This plan keeps the page laser-focused on a single action while matching Apple’s polish: minimal color, perfect spacing, fluid animations, and lightning speed.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

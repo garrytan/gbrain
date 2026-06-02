@@ -50,3 +50,6 @@ And what would 240 pounds put me at?
 ## Assistant
 
 At 240 pounds and 6'4", your BMI would be approximately **29.2**, placing you in the overweight category (25–29.9).
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

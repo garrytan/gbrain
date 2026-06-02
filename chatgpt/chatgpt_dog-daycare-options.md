@@ -98,3 +98,6 @@ so if he got it on feb 20 2024 then when is the next one
 ## Assistant
 
 If your dog received a rabies vaccination on February 20, 2024, the next booster is due on February 20, 2027. In California, the initial rabies vaccination is valid for one year, and subsequent vaccinations are valid for three years. citeturn0search4 
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -305,3 +305,6 @@ If you want, I can also turn this into:
 - a **shorter “paste into terminal” version**
 - a **`.claude/skills/` setup**
 - a **multi-agent role pack** with custom subagent prompts for each role.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

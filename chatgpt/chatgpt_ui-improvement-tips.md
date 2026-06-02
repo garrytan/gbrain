@@ -693,3 +693,6 @@ select
 ### When to *not* do this in Edge
 
 *If* the run time will be long (tens of thousands of artists) or you need heavy processing (audio analysis, images), ship the logic to a GitHub Action or Docker worker and call the DB with the service key. For everything else, the above keeps the stack tight and free.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

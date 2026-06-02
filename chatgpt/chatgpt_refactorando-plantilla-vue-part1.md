@@ -1074,3 +1074,6 @@ This code ensures that the artist name is included in the data fetched from the 
 
 
 {'asset_pointer': 'file-service://file-tCxlhD5TWma55csTPVisvFfN', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 792, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 362942, 'width': 1464}
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

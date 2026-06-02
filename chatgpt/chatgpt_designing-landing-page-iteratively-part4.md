@@ -1436,3 +1436,6 @@ The strongest immediate move is to rename **fan CRM with CSV export** to **Own y
 
 after capture every fan a section after capture every fan that says Notify them automatically.
 help me think if this is a good idea and what it should be 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

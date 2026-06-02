@@ -125,3 +125,6 @@ If you’re willing to **go outside the LA region**, you’ll find significantly
 - The closest legal way to pay noticeably less tax on a purchase that stays within California is to **buy in a low-tax county (e.g., outside Southern California)** and either **travel there to pick it up** or coordinate pickup/shipping from there — but if it’s used in California, **CA use tax still applies**. citeturn0search6
 
 If you want, I can list specific nearby cities with the **lowest current sales tax rates and exact figures**.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -124,3 +124,6 @@ If you’re willing to be surgical:
 > **Opus 4.5 Thinking → GPT-5.2 X-High → GPT-5 Codex Max High**
 
 That is the highest-fidelity approach available in 2026 for design-system translation into real code.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

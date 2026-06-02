@@ -1671,3 +1671,6 @@ Tim can take a walk, dictate voice memos, get transcripts synced/exported into t
 ```
 
 One tweak I would make before running it: tell Hermes the Air’s Tailscale machine name if you know it. That avoids it guessing the MCP URL.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

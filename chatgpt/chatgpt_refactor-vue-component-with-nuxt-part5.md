@@ -988,3 +988,6 @@ update this with proper links for tim white
 ```
 
 Replace the JSON data in your `creators.json` file with this updated content. This ensures the links for Tim White are accurate and functional.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

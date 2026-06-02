@@ -136,3 +136,6 @@ Absolutely, Mr. White. Updated notes with **% lean moved to hero card**:
 - Add score sharing via two triggers:
   - Automatically prompt/share flow when a screenshot is detected.
   - Manual share button on the score screen.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

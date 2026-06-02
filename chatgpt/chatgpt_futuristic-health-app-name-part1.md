@@ -1222,3 +1222,6 @@ As soon as I add clerk to the modules I get the error below. Removing it solves 
   at async NuxtDevServer.load (node_modules/.pnpm/nuxi@3.11.1/node_modules/nuxi/dist/chunks/dev2.mjs:6811:7)
   at async NuxtDevServer.init (node_modules/.pnpm/nuxi@3.11.1/node_modules/nuxi/dist/chunks/dev2.mjs:6806:5)
   at async Object.run (node_modules/.pnpm/nuxi@3.11.1/node_modules/nuxi/dist/chunks/dev-child.mjs:99:5)
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

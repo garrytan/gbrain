@@ -77,3 +77,6 @@ Keep it concise, sexy, and credible.
 ---
 
 Do you want me to **draft you a 10-slide “YC-style” deck outline** (tailored to Jovie’s narrative) so you can start pitching angels this week? That’s the fastest bridge to $50k.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

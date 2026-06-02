@@ -33,3 +33,6 @@ Create a logo for a t-shirt with the following specifications:
 ## Assistant
 
 Here is the logo design for the t-shirt based on your specifications. If you need any adjustments or have additional requests, let me know!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -231,3 +231,6 @@ Yes lets add it to the signupview
 ## Assistant
 
 Done. The Sign in with Apple button in `SignUpView.swift` now uses Clerk's native sign-in strategy via `Clerk.shared.signIn(with: .apple, strategy: .native)`. Let me know if you want the same added to the sign-in screen as well.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

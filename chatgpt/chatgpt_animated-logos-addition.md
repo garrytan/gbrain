@@ -130,3 +130,6 @@ I can:
 If you want, I can also make a **favicon version** of Animation 1 where only the O spins/draws in (good for browser tabs), and a **hero animation** of Animation 2 for your site/app load.
 
 Do you want me to **set this up for you now** if you send the logo files, or do you want me to walk you through doing it in SVGator so you have full control?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

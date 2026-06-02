@@ -60,3 +60,6 @@ methods: {
 
 Now, when the child component's `@click` event is triggered, it will emit an `archive-creators` event, and the parent component will receive the event and execute the `handleArchiveCreators` method with the provided arguments.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

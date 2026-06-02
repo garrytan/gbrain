@@ -136,3 +136,6 @@ Okay, so remove Allo because it's a bad example.
 Got it, Mr. White—here’s the cleaned, post-ready version (Alo removed):
 
 Correlation ≠ causation—and this is mostly reverse causality + survivorship bias. Tons of today’s “short-name winners” shortened after traction: **AirBed & Breakfast → Airbnb**, **UberCab → Uber**, **/dev/payments (incorporated as “SlashDevSlashFinance”) → Stripe**; **Netflix** even used the internal name **“Kibble”** pre-launch. Short names aren’t making them succeed; success gives them the money and leverage to buy clean domains, clear trademarks, and hire branding teams to compress. Early-stage teams ship with whatever’s available and rebrand once they have PMF. The real signal is resources and product-market fit, not character count.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

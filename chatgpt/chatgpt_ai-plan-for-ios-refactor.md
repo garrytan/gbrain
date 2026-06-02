@@ -401,3 +401,6 @@ Test **everything that adds logic, layout complexity, or is reused across contex
 
 **Verdict**:  
 Test **molecules, organisms, and pages**. Only test atoms when they contain conditional logic or have high visual importance.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

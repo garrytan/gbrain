@@ -51,3 +51,6 @@ These carriers historically quote cheaper than $250/month for many drivers in LA
 $250/month is **above average** in LA for full coverage — much of the market tends to be cheaper than that if you shop around — but your exact price depends heavily on age, vehicle, driving record, ZIP code, credit (though California limits credit use), and coverage levels. citeturn0search8
 
 If you want, I can help you **compare rates for your specific situation** (car year/model, coverages, driving history, ZIP code). Just send that info.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

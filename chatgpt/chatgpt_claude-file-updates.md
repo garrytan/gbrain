@@ -698,3 +698,6 @@ Add some rules about keeping unit tests fast. You can add the up stash usage as 
 ## Assistant
 
 I added new sections for **Unit Test Performance Rules** (fast feedback, <200ms per test, mocking external services) and **Upstash Usage** (rate limiting, caching, QStash, server-only, YC-speed focus). Testing Guidelines and later sections were renumbered.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

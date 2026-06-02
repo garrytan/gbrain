@@ -162,3 +162,6 @@ Here’s how I’d tighten this up, Mr. White.
 - Ensure all big blue buttons are exactly the same width, corner radius, and vertical margin across screens.
 
 If you want, Mr. White, I can sketch a revised layout for one screen (e.g., the weight step) in pseudo-Figma specs so your devs can implement it directly.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

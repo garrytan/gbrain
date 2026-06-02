@@ -441,3 +441,6 @@ Generate sensor/ISR synthetic data and autonomous-agent red-team scenarios; deli
 All three can hit **$10k/mo in 2–4 weeks** with 2–3 clients each.
 
 Pick a lane and I’ll draft: offer page, pricing, SOPs, agent prompts, and a 200-account outreach list. Which one are we spinning up first?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

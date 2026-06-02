@@ -515,3 +515,6 @@ If you're using Inertia.js with Vue.js to build your Laravel application, you ca
    In this example, we're including the `WeightLog/Index` Inertia Vue component and passing the `weightLogs` data as a prop.
 
 By following these steps, you can access and display the weight logs in your Inertia Vue component. Make sure your Inertia Vue component is properly registered and that you've set up your Inertia view to pass the data correctly.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -135,3 +135,6 @@ This limits blast radius while gathering real data. citeturn0search1
 ---
 
 If you want, I can give a **ready-to-use chaos testing example for a specific Next.js feature** (e.g., data fetching, optimistic UI) with code and automated test scripts.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

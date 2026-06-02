@@ -66,3 +66,6 @@ In the example above, the `sidebar` component emits a `filter-change` event when
 
 This approach will minimize the number of times the table is re-rendered, improving performance and minimizing reloading.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

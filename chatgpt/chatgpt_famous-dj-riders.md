@@ -36,3 +36,6 @@ famous dj riders
 - **Pauly D**: His rider included "24 white hand towels" and "one bottle of Grey Goose vodka," aligning with his high-energy persona. citeturn0search2
 
 These riders offer insight into the personalities and performance styles of these DJs, blending practical needs with personal flair. 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

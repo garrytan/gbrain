@@ -70,3 +70,6 @@ If you only want to target certain files or folders, replace `.` with a path or 
 ```bash
 pnpm eslint src --fix
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

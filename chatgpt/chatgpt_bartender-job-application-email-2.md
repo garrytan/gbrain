@@ -120,3 +120,6 @@ Tim White
 timwhitebartending@gmail.com  
 732.668.2148  
 @timwhite (195k+ Instagram) | @itstimwhite (250k+ TikTok)
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

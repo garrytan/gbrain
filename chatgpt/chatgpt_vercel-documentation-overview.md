@@ -44,3 +44,6 @@ Here’s a concise overview of **Vercel documentation**, the official source for
 - **Templates & Starters** — docs and documentation site starters (e.g., Nextra) for building your own documentation websites. citeturn0search3turn0search7
 
 If you want links to specific sections (e.g., CLI, deployments, functions), let me know.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

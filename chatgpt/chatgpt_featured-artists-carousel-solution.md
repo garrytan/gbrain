@@ -127,3 +127,6 @@ export async function POST() {
 - **Deterministic variety:** weekly seed changes order without thrashing cache.
 
 If you want global, sub-100ms reads regardless of region, you can swap `unstable_cache` for writing the computed list into **Vercel Edge Config / Upstash Redis** on your cron, then read it in the server component (still rendered server-side so the HTML includes the data). But for your “week-latency OK, instant load” requirement, **ISR + cached server query** is the simplest, fastest path.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

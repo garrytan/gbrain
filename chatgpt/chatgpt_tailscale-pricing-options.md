@@ -49,3 +49,6 @@ For your setup specifically — MacBook Air + desktop + servers + Hermes + GBrai
 - or want enterprise audit/security features.
 
 For a solo AI-agent startup stack, Tailscale free tier is unusually generous and commonly used by indie founders. citeturn0search5turn0search9
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -67,3 +67,6 @@ Ordinary long-term capital-gain treatment generally starts after more than 1 yea
 Section 1202 has a specific short-position rule. Collars, short hedges, and similar downside-protection trades can complicate or impair QSBS treatment. citeturn883576view3
 
 The practical checklist is straightforward: confirm whether the SPV is a partnership or blocker, whether it bought **original-issue** shares or a secondary block, and whether an IPO triggers an **in-kind distribution** or a **forced sale/wind-down**. Then review the operating agreement for sponsor carry, fee bleed, tax distributions, and manager discretion to sell shares. The single most useful document is the SPV operating agreement together with your latest K-1.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

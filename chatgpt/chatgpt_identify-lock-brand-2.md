@@ -79,3 +79,6 @@ I've researched several lock manufacturers, including:
 Unfortunately, I wasn't able to find a manufacturer that specifically fits your description, where the regular door handle/lock and the deadbolt share a common metal plate. It's possible that this is a less common or proprietary design. 
 
 If you have any other information that might help to narrow down the search, like a logo, a specific product name, or even a description of the unique key, it could help in identifying the manufacturer. If not, you might consider reaching out to a local locksmith or a hardware store—they might be familiar with the type of lock you're describing.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

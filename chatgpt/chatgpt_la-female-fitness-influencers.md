@@ -62,3 +62,6 @@ Payment:
 We are offering a flat rate per 1000 leads.
 
 If you are interested in this project, please provide your experience and qualifications related to social media research and data entry, as well as your proposed rate per 1000 leads. We look forward to hearing from you!
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -126,3 +126,6 @@ Purely scientifically, if you keep your phone out of airplane mode for the whole
   - Extra load and confusion for ground cellular networks.
 
 The safety rules are mostly about **conservatism, standardization, and system hygiene**, not because your single phone is likely to bring down a modern airliner.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

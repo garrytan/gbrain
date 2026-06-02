@@ -344,3 +344,6 @@ It seems like the error message is still pointing to the same video file path.
 Make sure that you've saved your changes to the Vite configuration file and that you're pointing to the correct file path in your code. 
 
 Also, try restarting your Vite server and see if that resolves the issue.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

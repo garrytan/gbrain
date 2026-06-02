@@ -351,3 +351,6 @@ I’ll return shortly with the most relevant options.
 - **Budibase** – An open-source app/workflow builder for internal tools. It connects to any data source (REST APIs, SQL, spreadsheets) and can auto-generate forms, dashboards, and approval flows. Budibase advertises “coding optional” and says it lets you “deliver apps and workflows in minutes” by combining visual design with auto-generated logic【69†L39-L41】【69†L93-L100】. You can also download/customize the code if you need deeper control.  
 
 **Sources:** Project READMEs and docs (GitHub)【11†L311-L319】【12†L279-L288】【14†L1-L4】【15†L147-L156】【16†L322-L330】【18†L340-L349】【19†L139-L147】【24†L342-L351】【25†L310-L319】【30†L298-L306】【31†L138-L142】【33†L351-L360】, AI tool documentation/blogs【37†L49-L58】【49†L637-L646】【52†L350-L359】【56†L197-L205】【62†L164-L173】【65†L20-L25】, and product pages【59†L43-L51】【58†L90-L99】【61†L26-L34】【69†L39-L41】.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

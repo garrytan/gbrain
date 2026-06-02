@@ -63,3 +63,6 @@ Suno describes itself as a “music company built to amplify imagination… a gl
 ---
 
 If you like, Mr. White, I can **pull a full list of current openings** at Suno specifically in Los Angeles, filter by e.g. “Music/Creative” or “Product/Tech”, and send you direct apply-links. Would you like me to do that?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

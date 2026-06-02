@@ -203,3 +203,6 @@ You know the vendor ecosystem and pain points of repetitive RFP cycles. The soft
 If you tell me **which direction excites you most** (creative workflow, technical mapping, or operational logistics), I can outline the **first 3–6 months of concrete steps** — including tech stack, MVP scope, and how to validate it with your existing contacts.  
 
 Which of the three speaks to you most?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -162,3 +162,6 @@ To use the values stored in the local storage inside a function, you can retriev
 In this example, two variables `count` and `message` are created and assigned the values of the `savedSwipeRightCount` and `savedWelcomeMessage` respectively. The `parseInt` method is used to parse the string value of `savedSwipeRightCount` into an integer, with a base of 10. The `||` operator is used to provide a default value of 0 for `count` if `savedSwipeRightCount` is falsy, and a default value of "Welcome!" for `message` if `savedWelcomeMessage` is falsy.
 
 Now, inside the function `yourFunction`, you can use the `count` and `message` variables as needed.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -85,3 +85,6 @@ Certainly, Mr. White. For constructing a GPT-based diet planner with the outline
 ---
 
 This prompt structure provides a clear, step-by-step guide for the GPT model to collect relevant user data, perform necessary calculations, and outline the diet plan phases along with predicted outcomes. It also includes a final overview to summarize the plan in a tabular format.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

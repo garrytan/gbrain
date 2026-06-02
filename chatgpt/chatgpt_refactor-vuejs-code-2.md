@@ -591,3 +591,6 @@ This refactored component is more concise because it removes the unnecessary log
 ## User
 
 if the number of contacts is undefined hide the contactcount
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

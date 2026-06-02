@@ -741,3 +741,6 @@ Do not add unnecessary abstraction.
 If you want next steps:
 - I can give you a **Codex-optimized prompt**  
 - Or a **drop-in GitHub Actions implementation** based on this design
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

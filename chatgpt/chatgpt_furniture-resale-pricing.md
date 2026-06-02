@@ -156,3 +156,6 @@ Got it, Mr. White. Here’s a **UX audit** of your dashboard (dark mode vs. ligh
 ---
 
 Do you want me to mock up **Figma-style UI adjustments** (buttons, hierarchy, sidebar icons) so you can hand it off directly to your devs/designers, or keep it as text-based recommendations?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

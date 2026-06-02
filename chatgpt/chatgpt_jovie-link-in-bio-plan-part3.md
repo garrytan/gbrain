@@ -752,3 +752,6 @@ CLERK_SECRET_KEY=sk_test_RS2raun9iVe9B0DnsvO4cCO9lQ7MDRtqaVuPheJBAv
 
 Spotify client id b66af2f96f4e4b9ca13199188a881e21
 Spotify client secret 3f43227710fd43dbb3688c2eb32a0cb3
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -211,3 +211,6 @@ Checklist: input → auth → claim artist → dashboard, e2e test.
 3) Green-light the **2 months free (card required)** offer flag.
 
 Want me to draft the exact PR templates and a 1-page outreach tracker (Notion or Google Sheet)?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

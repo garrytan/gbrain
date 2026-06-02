@@ -440,3 +440,6 @@ Yes, Mr. White — but only certain ways.
 For leather/suede sneakers, use a proper sneaker cleaner (Jason Markk, Reshoevn8r) instead.  
 
 Want me to give you a **quick 2-step “safe cleaning protocol”** that covers both your leather and canvas pairs so you don’t need to think each time?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

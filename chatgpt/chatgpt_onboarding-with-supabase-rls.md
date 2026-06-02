@@ -121,3 +121,6 @@ Mr. White—here’s a tight prompt you can drop into your AI/code-agent:
    - Ensure 401/403 paths handled gracefully.
 
 **Deliverables:** Updated env usage, client/server Supabase factories, migrations for policies, server onboarding endpoint (if used), and passing tests.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

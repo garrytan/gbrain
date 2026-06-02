@@ -53,3 +53,6 @@ Mr. White, here’s how I’d dial in a classic margarita behind the stick—str
 - If you have a mandoline or channel knife, add a lime twist for extra flair.  
 
 Enjoy the balance—tangy, boozy, and perfectly salted.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -824,3 +824,6 @@ SUCCESS CRITERIA
 ```
 
 If you want this wired into a GitHub Actions workflow (so CI blocks merges on console errors too), say the word and I’ll drop a Playwright helper + workflow snippet.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

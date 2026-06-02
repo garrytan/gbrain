@@ -10,3 +10,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "If you're trying to change the Terminal's appearance or layout, you can do that by going"}
 {'asset_pointer': 'sediment://file_000000006740622fba6281759acffc28', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:32:09.337597+00:00', 'format': 'wav', 'metadata': {'end': 3.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 168078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

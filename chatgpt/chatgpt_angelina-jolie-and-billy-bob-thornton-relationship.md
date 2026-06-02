@@ -62,3 +62,6 @@ Why were people making incest jokes
 The incest jokes about Angelina Jolie likely stem from a widely publicized incident involving her and her brother, James Haven, at the 2000 Academy Awards. During this event, Jolie and Haven shared a kiss on the lips on the red carpet, which many observers and media outlets perceived as unusually affectionate for siblings. This incident, coupled with Jolie's acceptance speech for her Best Supporting Actress win, where she said she was "so in love" with her brother, sparked rumors and led to inappropriate jokes and speculation about the nature of their relationship.
 
 It's important to note that both Jolie and Haven have clarified that their relationship is a close but normal sibling bond, and the public interpretation of the incident was a misrepresentation of their affection for each other.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

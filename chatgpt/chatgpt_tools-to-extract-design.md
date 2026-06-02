@@ -79,3 +79,6 @@ For a meaningful design system from an existing site you don’t control:
 ---
 
 If you want **recommendations tailored to a specific tech stack** (e.g., React/Next, Tailwind) or need help constructing a workflow/script using tools like Scrapy or Puppeteer, let me know the stack — I can provide concrete code examples.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

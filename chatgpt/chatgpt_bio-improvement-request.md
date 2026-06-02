@@ -35,3 +35,6 @@ Mr. White, here’s a concise improvement:
 • 👁: I produce music and creative projects  
 • 📍: Los Angeles  
 • ✉️: m@timwhite.co
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

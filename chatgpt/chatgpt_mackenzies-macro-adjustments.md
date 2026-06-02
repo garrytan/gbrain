@@ -36,3 +36,6 @@ For most days: 145g protein, 45g fat, 190g carbs.
 On Mondays (dance class): 145g protein, 45g fat, 235g carbs.
 
 -Tim
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

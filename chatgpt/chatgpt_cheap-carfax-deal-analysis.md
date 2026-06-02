@@ -44,3 +44,6 @@ Mr. White, listings that look “too good to be true” usually are. These are
 4. Get an out‑the‑door quote in writing—doc fees, taxes, “protection packages,” everything—so the bargain doesn’t vanish in the finance office.  
 
 If none of those issues show up and a PPI checks out, you’ve just found a legit deal—grab it. Otherwise, walk.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

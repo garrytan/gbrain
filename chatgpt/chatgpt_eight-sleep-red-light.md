@@ -58,3 +58,6 @@ On the Eight Sleep Pod’s **hub LED**, a **solid pink/red light** typically ind
 - **Blinking or sensor-error red** → *connection trouble*—check cables, reboot, or contact support
 
 Let me know if you need help troubleshooting further, Mr. White.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

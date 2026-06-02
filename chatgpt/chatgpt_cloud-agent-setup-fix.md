@@ -97,3 +97,6 @@ This won’t fix a dead backend daemon, but it can fix local state weirdness:
   - `~/Library/Application Support/Cursor/User/workspaceStorage` citeturn6view0turn6view1
 
 If you paste your **Request ID** (and your Cursor version from **About Cursor**), I’ll tell you which forum thread to append it to so it lands with the right engineers.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

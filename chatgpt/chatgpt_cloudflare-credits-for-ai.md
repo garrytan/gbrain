@@ -133,3 +133,6 @@ Use it like this:
 For Jovie, I’d use this to build a **Cloudflare AI edge layer**: Workers as the API, Workers AI for cheaper inference/transcription/embeddings where quality is acceptable, AI Gateway for OpenAI/Anthropic observability, Vectorize for memory/search, R2 for generated assets, and Queues/Workflows for long-running AI jobs.
 
 The one question to ask Cloudflare or Stripe before committing architecture: **“Do Stripe Atlas Startup Program credits apply to AI Gateway Unified Billing for third-party models like OpenAI/Anthropic, or only to Workers AI under the $50k cap?”**
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

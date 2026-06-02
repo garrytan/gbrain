@@ -74,3 +74,6 @@ To summarize:
 | `claude --dangerously-skip-permissions` | Skips all permission prompts           |
 
 Let me know if you’d like help configuring allowed tools selectively or refining your workflow to reduce risk.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

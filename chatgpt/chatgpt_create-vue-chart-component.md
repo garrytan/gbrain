@@ -271,3 +271,6 @@ In this example:
 - Make sure that the `weightLogs` data is structured as expected by the `BodyMetricsChart` component.
 
 Remember to replace `weightLogs` with the actual data source you're using and ensure it contains the necessary data fields. The key is to maintain consistency in data structure and prop names across the parent and child components.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

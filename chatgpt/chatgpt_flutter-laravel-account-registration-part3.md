@@ -998,3 +998,6 @@ With these changes, the first name and last name fields are removed, and the reg
 
 
 ok now when i try to register with the app i get 501
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

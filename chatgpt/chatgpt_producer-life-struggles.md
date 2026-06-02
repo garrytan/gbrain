@@ -48,3 +48,6 @@ Producing is 20 years of X so that i can earn the right to stand in the back of 
 ## Assistant
 
 “Producing is 20 years of late-night EQ tinkering, obsessive sound design marathons, unsolicited therapy sessions with every vocalist, and living off espresso — all so I can stand in the back of the room and repeatedly shout ‘Not that knob!’ until I finally sigh, roll my eyes, tap the console and whisper, ‘Let me drive.’”
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

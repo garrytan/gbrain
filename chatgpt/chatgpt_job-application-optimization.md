@@ -93,3 +93,6 @@ my name is tim white not mr white
 ## Assistant
 
 The application process has reached a section that asks for voluntary self‑identification information (e.g., protected veteran status). Since these questions involve sensitive personal data and weren’t part of your original instructions, I need your guidance on how you’d like to proceed. Would you prefer to answer these questions, skip them, or indicate “I don’t wish to answer”?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

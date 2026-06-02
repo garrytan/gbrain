@@ -215,3 +215,6 @@ Add in a haircut every 4 weeks for $75, and then tell me how much I have to make
 ## Assistant
 
 With haircuts added, you now need to make approximately **$1,989 per week** to support your lifestyle and save 30% of your income.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -600,3 +600,6 @@ VStack(spacing: 0) {
 ```
 
 Let me know if you want me to refactor the whole screen layout based on this logic.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -89,3 +89,6 @@ Putting that together:
 - The apron logo contradicts the fiction, so what you’re seeing is almost surely a **continuity/prop goof**, not a twist — they didn’t mean “Bel Air wine country,” they just didn’t bother to hide the real branding.
 
 So: you’re right to notice it, but the answer is boring — TV magic + L.A. laziness.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

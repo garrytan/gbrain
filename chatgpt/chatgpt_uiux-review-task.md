@@ -126,3 +126,6 @@ When I'm in a chat thread or something, it should be pretty clear. The input is 
   - Repeated headings; unclear what’s primary vs supporting.
   - “Last refreshed: never (seed on load)” and “Mark refreshed” feel like developer/debug copy.
   - Table columns include mix of provider names and long notes; needs stronger column width management and readable truncation.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

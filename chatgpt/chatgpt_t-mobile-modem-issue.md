@@ -57,3 +57,6 @@ Mr. White, here’s what usually makes a T-Mobile 5G Home Internet gateway go AW
    Ask T-Mobile for the new FAST 5688W “G5AR” gateway—it runs a newer chipset and the disconnect bug hasn’t shown up on it yet.
 
 That’s it—update, auto-reboot, cool it, and you’ll probably stop babysitting the thing.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -60,3 +60,6 @@ Then, you can use the `privacyHtml` computed property in your template, like thi
 ```
 
 This will render the HTML version of the markdown in the template.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

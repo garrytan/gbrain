@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Got it! If you're looking to install MakeHuman, you can download it directly from the MakeHuman community website. Once you've downloaded it, the installation is pretty straightforward—just follow the installer instructions. After it's installed, you can integrate it with Blender using the MakeHuman plugin. Let me know if you need any help with that!"}
 {'asset_pointer': 'sediment://file_000000002c54622fb73bda8d7f1b8d0f', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:30:14.828092+00:00', 'format': 'wav', 'metadata': {'end': 19.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 936078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

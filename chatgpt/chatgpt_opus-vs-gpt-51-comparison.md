@@ -92,3 +92,6 @@ Here’s a comparison between **entity["software", "GPT-5.1", 0]** (fro
 
 ---  
 If you like, I can pull together a detailed **benchmark comparison table** (public scores, token-efficiency, context window size, tool-integration support) for both models. Would you like that, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -93,3 +93,6 @@ If you want, tell me:
 - How Node 24 was installed (`nvm`, `brew`, pkg)
 
 I’ll give you the exact cleanup commands.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

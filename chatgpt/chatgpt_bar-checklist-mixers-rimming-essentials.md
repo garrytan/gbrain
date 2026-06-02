@@ -90,3 +90,6 @@ Here's a checklist for everything your bar should have ready for the show:
    - Selection of Wine (Red, White, Rosé, and Sparkling)
 
 Ensure that all items are well-stocked and accessible to keep the bar running smoothly throughout the show.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

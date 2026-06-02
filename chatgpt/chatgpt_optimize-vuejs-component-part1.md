@@ -820,3 +820,6 @@ export default defineComponent({
 });
 </script>
 Use Nuxt picture not image and use composition API
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -26,3 +26,6 @@ Hey dawgs, I was gonna make a finstub but then I saw that Instagram has an abili
 ## Assistant
 
 They live right in your normal profile grid—there’s no extra tab. Close-Friends posts show up alongside your other feed pics (with a green “Close Friends” badge or border) but only folks on your list can see them. citeturn1view0turn2view0
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

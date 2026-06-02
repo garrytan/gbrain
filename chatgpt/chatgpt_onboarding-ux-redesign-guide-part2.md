@@ -826,3 +826,6 @@ Here’s how to configure RevenueCat in line with a YC-style ultra-short trial a
 – A/B test trial length via multiple offerings.
 ```  
 This aligns with “time-to-value” and “convert early” from the YC playbook.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -59,3 +59,6 @@ GitHub announced that starting **March 1, 2026** a **$0.002 per minute platform 
 - **Self-hosted private runners:** ~$0.002/min platform charge (plus your own infrastructure costs). citeturn0search3
 
 If you want, I can estimate your monthly bill based on your expected CI minutes and runner types.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

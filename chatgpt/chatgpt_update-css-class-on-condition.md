@@ -162,3 +162,6 @@ class="[
 ```
 
 This will set the `focus:border-none` and `focus:ring-none` classes when `freezeColumn` is `true`, and the `focus:outline-none` class otherwise.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

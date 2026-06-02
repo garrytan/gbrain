@@ -43,3 +43,6 @@ Here is a concise overview of **Spotify**:
 - Leadership change with founder Daniel Ek moving to Executive Chairman as of 2026. citeturn0news30
 
 If you want a **link to Spotify’s web player or sign-up page**, tell me what you’re trying to do (listen for free, get Premium, etc.).
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

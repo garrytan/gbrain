@@ -62,3 +62,6 @@ Mr. White—here’s a concise checklist to troubleshoot each quirk you’re see
 ---
 
 If any of these still misbehave, you may need a dealer-level Mazda Connect firmware bump (beyond 74.x) or a deeper adapter-firmware downgrade. Let me know which step moves the needle.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

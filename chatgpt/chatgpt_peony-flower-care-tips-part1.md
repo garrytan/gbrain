@@ -593,3 +593,6 @@ If you want the “walk-in glow” without a flame:
 - use any **battery tea light** if you have one (but don’t go buy it).
 
 Also: keep the candle **away from the bouquet paper/ribbon** — that wrap will catch fast.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -216,3 +216,6 @@ Plans = thinking.
 API = execution.
 
 If you want, I can map this to a **10-engineer-equivalent agent stack** with CI, tests, and review gates.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

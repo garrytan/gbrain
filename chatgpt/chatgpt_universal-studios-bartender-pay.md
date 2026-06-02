@@ -50,3 +50,6 @@ Can you see if any previous bartenders from Universal Studios have commented on 
 ## Assistant
 
 Bartenders at Universal Studios can earn a substantial amount in tips, significantly increasing their overall income. According to former employees, bartenders at Universal Studios can make good money during peak seasons, although tips can vary depending on the clientele and the bartender's efficiency. On average, bartenders at various locations can earn around $150 per day in tips, which can add up to approximately $39,000 annually when working full-time. This would bring the total annual income, including base salary, to about $65,095【17†source】【9†source】.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

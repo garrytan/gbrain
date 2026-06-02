@@ -48,3 +48,6 @@ Here are some **online color picker tools** you can use right now to choose colo
 - **Color Picker for Chrome** — eyedropper that picks colors from any webpage in HEX/RGB. link_titleGet Chrome Color Picker Extensionturn0search12
 
 If you want one specific tool recommendation for a task (like picking from screen vs generating palettes), tell me what you need it for and I’ll point you to the best fit.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

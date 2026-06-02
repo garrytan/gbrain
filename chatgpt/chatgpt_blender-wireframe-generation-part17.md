@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "No worries! Let's try a couple more steps to get this working.\n\n1. **Run with Debug Mode**: Try running MakeHuman in debug mode to see if any additional information pops up:\n   ```bash\n   python3 makehuman.py --debug\n   ```\n\n2. **Check for Missing Dependencies**: Sometimes even if the main script runs, a missing library can prevent the interface from showing. You can try installing common dependencies:\n   ```bash\n   pip3 install PyQt5 PyOpenGL numpy\n   ```\n\n3. **Check if the Interface is Running in the Background**: If the application launched but"}
 {'asset_pointer': 'sediment://file_0000000033cc622fbd7bbbac71c33750', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:43:34.985948+00:00', 'format': 'wav', 'metadata': {'end': 29.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1416078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

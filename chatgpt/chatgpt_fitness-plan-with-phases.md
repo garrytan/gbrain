@@ -172,3 +172,6 @@ Here's a basic overview of how it works:
 3. **Estimation of Body Fat Percentage**: Based on the impedance and the algorithm, the scale estimates the percentage of body fat.
 
 It's important to note that while BIA scales provide a convenient way to estimate body fat percentage, they are less accurate than other methods like DEXA scans, hydro
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

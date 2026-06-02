@@ -47,3 +47,6 @@ xdj connections
 - Connect additional CDJs or XDJs using Ethernet cables to the LINK ports, enabling track sharing and synchronized performance features.
 
 For detailed guidance, refer to the [Pioneer DJ XDJ-XZ Quickstart Guide](https://www.sweetwater.com/sweetcare/articles/pioneer-dj-xdj-xz-quickstart-guide/). 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

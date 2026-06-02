@@ -756,3 +756,6 @@ DeepSeek:
 ```
 
 This gives you the “hand everything to Hermes” feel while keeping the code execution reliable, inspectable, and replayable. The important implementation detail is that Claude Code should be launched by a **runner process**, not treated as a vague sub-profile instruction. The runner controls auth, model routing, worktrees, Linear updates, test gates, and PR creation.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

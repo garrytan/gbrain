@@ -246,3 +246,6 @@ Proceed without asking further questions unless blocked by a missing credential,
 ```
 
 Bottom line: **approve implementation after this delta**. Ruflo is now initialized and useful, but it must remain a helper layer. Hermes Kanban owns work, Codex judges, DeepSeek implements, GitHub Actions gates, and Ruflo hooks support the lifecycle.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

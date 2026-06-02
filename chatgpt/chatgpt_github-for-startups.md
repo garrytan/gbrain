@@ -54,3 +54,6 @@ github startups
 3. Submit your startup info through GitHub’s program portal. citeturn0search5
 
 Let me know if you want a direct link or steps to join based on your current funding stage.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

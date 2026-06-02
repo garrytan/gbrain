@@ -34,3 +34,6 @@ go clean up crm and starting adding that data to it
 ## User
 
 try airtable now
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

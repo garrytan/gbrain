@@ -681,3 +681,6 @@ Here’s a lean, end-to-end spec for your in-house, RevenueCat–powered referra
    - In your webhook or nightly cron, flag > N signups from the same IP/device and hold credits for manual review.
 
 That’s it—no new vendors, < 200 lines of code, zero extra budget, full control over tiers and fraud checks.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

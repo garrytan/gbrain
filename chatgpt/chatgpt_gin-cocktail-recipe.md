@@ -135,3 +135,6 @@ The original recipe makes approximately 8.31 liters, so to make exactly 18 liter
 - Garnish with cucumber slices.
 
 This will give you a total of approximately 18 liters before adding club soda.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -28,3 +28,6 @@ Clean this up in a concise text to my gf
 ## Assistant
 
 Got a Toradol shot, so I’m not dying but still have a solid headache. Doc said I can take extra-strength Tylenol every 8 hrs. If I get worse—vomiting, blurred vision, slurred speech, confusion—I need to go to the ER. They think it’s all from dehydration.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

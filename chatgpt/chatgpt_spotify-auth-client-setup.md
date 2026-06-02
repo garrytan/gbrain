@@ -47,3 +47,6 @@ spotify auth client
 If you're developing an Android application, Spotify provides an `auth-lib` to handle authentication flows. The `AuthorizationClient` class within this library offers methods to manage the authorization process, including Single Sign-On (SSO) and fallback to browser-based authentication. citeturn0search5
 
 For more details on implementing the Client Credentials Flow, refer to Spotify's official documentation. linkturn0search0 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

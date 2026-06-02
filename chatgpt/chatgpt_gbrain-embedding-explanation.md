@@ -850,3 +850,6 @@ Use **local embeddings later** only if:
 - you are ready to lock an embedding model and maintain reindexing
 
 Do the boring hosted thing first. It gets you to a working GBrain faster.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

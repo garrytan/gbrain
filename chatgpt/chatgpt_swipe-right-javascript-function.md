@@ -95,3 +95,6 @@ async function swipeRight(numOfSwipes = 0) {
 ```
 
 The function now takes an optional parameter `numOfSwipes`, which specifies the number of times to swipe right. If `numOfSwipes` is 0, the function will keep swiping right until there are no more profiles to swipe on, at which point it will alert the user that there are no more profiles.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

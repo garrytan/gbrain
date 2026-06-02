@@ -39,3 +39,6 @@ Your feed gives off a strong, curated vibe, but here are a few observations:
 5. **Missed Opportunities for Branding**: There’s a clear opportunity to weave in more branding—whether it’s your music, your fitness journey, or your work at The Vault. Right now, the focus is mostly on lifestyle without much personal branding.
 
 Overall, it’s clear you put effort into your feed, but tightening up the theme and variety could make it more dynamic and engaging.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

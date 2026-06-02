@@ -186,3 +186,6 @@ Make the deck feel like a focused seed-stage software company. Use large headlin
 
 ```markdown
 Do not add extra slides. Do not make the deck wordy. Do not use generic startup buzzwords. Do not invent traction, customers, revenue, partnerships, or investor names. Use placeholders for unknown metrics. Keep the company positioning as: “AI manager for music creators,” not “distribution,” not “record label,” and not “social network.”
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

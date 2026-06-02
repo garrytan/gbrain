@@ -124,3 +124,6 @@ Jovie is selling the thing artists actually want:
 > the ability to keep going.
 
 That is much bigger.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -905,3 +905,6 @@ So: yes, it’s helpful, and it fits your stack and goals nicely—as long as yo
 
 
 https://vercel.com/ai-gateway that's the gateway whats that buy us over just the dk
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

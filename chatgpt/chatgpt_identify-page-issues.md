@@ -59,3 +59,6 @@ Highest-leverage fixes:
 3. Tighten positioning from “operating system” to a concrete release/fan workflow promise.  
 4. Clean up pricing so Free, Pro, and Max have distinct jobs.  
 5. Audit hidden/responsive text for screen readers and SEO.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

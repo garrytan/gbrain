@@ -59,3 +59,6 @@ Mr. White — in these screenshots you’re in the same “typing with the keybo
 5) **Tap targets**: every icon/button ≥44px and spaced so you can’t fat-finger next to the keyboard.
 
 If you tell me what the embedded “tim” field is doing (search? connect Spotify? pick an integration?), I’ll map this into a tighter “typing state” layout with exact component behavior and acceptance criteria.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -104,3 +104,6 @@ You can also use the `mx-auto` utility on the inner `div` element to center it a
 ```
 
 Note that these utilities only work if the parent element has a defined height. In the examples above, the parent element has a full height thanks to the `h-full` utility. If the parent element does not have a defined height, you may need to use additional techniques to center the element vertically.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -68,3 +68,6 @@ Here’s a more diplomatic and positive version of your message — assertive, b
 - Ends with appreciation again to leave a positive impression.
 
 Would you like me to make it slightly more **formal/professional** (e.g., for an email) or keep it in this **friendly text-message tone**?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

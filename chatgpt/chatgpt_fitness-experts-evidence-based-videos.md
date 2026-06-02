@@ -28,3 +28,6 @@ https://www.youtube.com/@MikeIsraetelMakingProgress/videos
 This YouTube channel, "@MikeIsraetelMakingProgress," hosts videos featuring Dr. Mike Israetel, a renowned fitness expert known for sharing evidence-based advice on strength training, nutrition, and fitness strategies. He covers a wide range of topics, such as exercise programming, hypertrophy training, and nutrition guidelines.
 
 If you're looking for information or workout plans, check out his videos that break down the scientific principles behind effective training, or specific tutorials that offer practical advice for muscle growth and performance.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

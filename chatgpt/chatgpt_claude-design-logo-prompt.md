@@ -337,3 +337,6 @@ And if you want a tighter one-line concept for Claude, use this:
 **“Design Jovie as a minimal upward-right flywheel/resonance mark — clean like Linear, suggestive of a speaker or signal, app-icon strong, black/white first, and clearly distinct from Spotify.”**
 
 If you want, I can also rewrite the **entire full Claude Design prompt** with this new direction baked in so you can paste one clean version.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -70,3 +70,6 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "You got it, Mr. White. So, Storybook does have some built-in tools for visual testing and checking for things like layout shifts. For example, you can use add-ons like Storybook's Accessibility or Storybook's Visual Regression Testing to catch certain UI issues. But if you're looking for really specific state-related checks—like how a super long name overflows a button—that often does need some custom coding or a bit of extra configuration. So you might have to write those checks explicitly. But Storybook can definitely help"}
 {'asset_pointer': 'sediment://file_00000000c9c0622f85dd172cd3ace002', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-02-19T20:36:41.161934+00:00', 'format': 'wav', 'metadata': {'end': 28.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1368078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

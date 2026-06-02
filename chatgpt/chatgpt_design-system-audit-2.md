@@ -877,3 +877,6 @@ I’d run one fast design spike:
 - public profile
 
 Same screenshots, Inter vs Satoshi. Then pick.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

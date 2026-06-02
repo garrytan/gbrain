@@ -186,3 +186,6 @@ function moveRowsBasedOnDate() {
 Remember, this script is just a starting point and will need to be adapted to fit your specific needs, including handling the logic for moving or highlighting rows.
 
 If you're not familiar with Google Apps Script, you might want to consult someone who has experience with JavaScript and Google Sheets scripting.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

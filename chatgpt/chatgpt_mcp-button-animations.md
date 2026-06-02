@@ -67,3 +67,6 @@ Keep the code mostly Tailwind classes with only minimal custom CSS where necessa
 For inspiration sources to feed into MCP, Uiverse lets you copy elements as HTML/CSS, Tailwind, React, and Figma, and buttons.ibelick is a Tailwind button gallery with copy-paste no JS. citeturn423939view2turn423939view3
 
 Tell me your editor and I’ll narrow it to one setup.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

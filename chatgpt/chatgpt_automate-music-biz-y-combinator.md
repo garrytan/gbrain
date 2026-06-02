@@ -42,3 +42,6 @@ Best default:
 **AI back office for the music industry**
 
 It’s clear, serious, and broad enough for YC without sounding small.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

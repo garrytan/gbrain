@@ -468,3 +468,6 @@ A tighter one-line correction to the first prompt would have been:
 **“All visual changes must be implemented by reusing and refining our existing production components; do not create any separate demo-only components or layouts.”**
 
 If useful, I can rewrite the first prompt so it keeps the Linear styling goal **and** adds that missing parity constraint.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

@@ -1566,3 +1566,6 @@ The strongest first wave is:
 5. one narrow token-consolidation pilot  
 
 That gives Aaron’s agent a clean structure: fix obvious broken UX first, then consolidate the system underneath it without creating a giant redesign branch.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

@@ -39,3 +39,6 @@ Give me a slamtastic comment about this. All talent had to sign releases and thi
 ## Assistant
 
 "Ah yes, nothing says 'authentic NYC break' like applying to a casting call, signing a talent waiver, and acting surprised when tea magically appears."
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -697,3 +697,6 @@ The strongest visual motif is:
 **Fan taps → Jovie captures → Jovie follows up → artist sees momentum.**
 
 That should appear on almost every product page.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -46,3 +46,6 @@ We need trend weight calculation in our app and we need FFMI to be calculated of
 Mr. White, here’s a single-paragraph prompt you can drop into your task/spec:  
 
 “Implement a **Trend Weight** metric that smooths daily scale weigh-ins to estimate true bodyweight: build a daily weight series (linearly interpolate across missing days), then compute a recency-weighted moving average (e.g., exponential moving average) so newer days influence the value more while filtering short-term water/food noise; expose this as `trend_weight` updated each day. Then modify our **FFMI** calculation to use `trend_weight` instead of raw scale weight: `lean_mass_kg = trend_weight_kg * (1 - bodyfat_decimal)`, `FFMI = lean_mass_kg / (height_m^2)` (apply any existing height-normalization/adjusted-FFMI step we already use), and ensure all FFMI charts/exports reference trend weight as the base.”
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

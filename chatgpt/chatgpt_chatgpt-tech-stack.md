@@ -70,3 +70,6 @@ Mr. White — short and straight:
 - **Mobile apps:** **Native**—industry consensus and dev discussions point to **iOS (Swift/SwiftUI)** and **Android (Kotlin/Jetpack Compose)** rather than cross-platform frameworks. (Not formally documented by OpenAI, but consistent with app behavior and community technical threads.) citeturn1search18turn1search11turn1search9
 
 If you want, I can sketch the exact client architecture (React app shell + API client, streaming handlers, Realtime WebRTC graph) for your Jovie stack in a diagram.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

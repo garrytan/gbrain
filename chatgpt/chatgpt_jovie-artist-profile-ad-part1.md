@@ -922,3 +922,6 @@ Okay, this is Slick. Off of this, I'm gonna show you what we're using as the foo
  And what I want to do now is almost go editorial with this and have some sections that have very cool photos and stuff to tell this story, and other sections that are just more abstract and stuff. I am even thinking of a section: it's just a giant, oversized section where it says "Jovie makes the moments that build an artist." You said I can get one of my friends, who's like a music manager, to say that. It could be cool.
 
 Anyway, I want to think about what the couple of moments will be that we can put in these videos that we can show on the site, on the website, because the website will come first and then we will build the rest of this after. Help me think about it, and we're going to be targeting DJs and the L.A. late-night artist scene. For the studio one, I'm thinking we want the color schemes to be nice here, so all dark mode at first, with a slight cyberpunk feel: the blues and purples and pinks and stuff. Help me think about what the other sections could look like. 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -101,3 +101,6 @@ Mr. White — here are several current job-opportunities in the Los Angeles area
 ---
 
 If you want, I can **perform a live feed search** and send you a *list of all currently open roles* (with links + deadlines) in LA that specify Resolume/MadMapper this week. Would that work for you?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -46,3 +46,6 @@ timwhitebartending@gmail.com
 732-668-2148  
 
 **Attachment:** Tim_White_Bartending_Resume.pdf
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

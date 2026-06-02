@@ -37,3 +37,6 @@ What Apple does provide (and what teams actually use for IAP setup/ops):
 If you specifically want MCP-based workflows, there are **community MCP servers** that wrap Apple’s official APIs (not Apple-hosted/endorsed), for example the open-source **App Store Connect MCP Server**. Evaluate security and scope before using. citeturn0search1turn0search19
 
 If you’d like, Mr. White, I can sketch the minimal flow (keys → JWT → `POST /v2/inAppPurchases`) or provide a ready-to-run curl/Node snippet using Apple’s docs.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

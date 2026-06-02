@@ -34,3 +34,6 @@ If you meant **Arlo (the tech/surveillance brand)**:
 - They also introduced a wired floodlight camera with 2K HDR, 160° field of view, integrated siren, adjustable brightness up to 2,000 lumens. citeturn0news10turn0news18  
 
 If you tell me which one you meant, I can dive deeper.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

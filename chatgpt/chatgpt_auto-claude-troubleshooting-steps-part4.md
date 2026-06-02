@@ -533,3 +533,6 @@ If you paste the command you’re using to start the app/runner (the exact line 
 
 
 {'asset_pointer': 'sediment://file_0000000053fc71f6ad08f2db3013871d', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1046, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 771179, 'width': 1862}
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

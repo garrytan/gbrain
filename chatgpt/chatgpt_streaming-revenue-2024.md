@@ -30,3 +30,6 @@ What was the streaming revenue for the entire music industry in 2024?
 In the United States, recorded music revenues reached $17.7 billion, with streaming contributing $14.9 billion, representing 84% of the total. citeturn0search11
 
 navlistMusic revenues rise again in 2024, boosted by streaming subscriptionsturn0news27 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

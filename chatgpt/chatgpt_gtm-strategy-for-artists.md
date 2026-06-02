@@ -128,3 +128,6 @@ If you do this, you’ll end month one with:
 - and proof of which outputs people share.
 
 If you tell me which two features you’re currently debating as the “lead wedge” (e.g., bio/EPK vs release planning vs pitching), I’ll give you a tighter positioning line + the exact first 3 Skills to ship and how to message them.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

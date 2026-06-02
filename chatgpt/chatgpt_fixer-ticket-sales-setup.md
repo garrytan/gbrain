@@ -79,3 +79,6 @@ Here’s a rough flow:
 ---
 
 If you like, I can pull up the exact API endpoint names (URLs, request/response schema) for your account type so you can integrate cleanly. Do you want me to grab those?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

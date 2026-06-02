@@ -48,3 +48,6 @@ Mr. White — I couldn’t find credible evidence that entity["organizatio
 Given the evidence, the most defensible answer is: **No —** There is *no publicly confirmed* use of Storybook by Vercel for Geist. It might be used internally, but if so it isn’t shared or documented publicly.  
 
 If you like, I can check deeper (e.g., Vercel’s internal‐components jobs, commit history) to see if there’s an un-indexed Storybook setup for Geist.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

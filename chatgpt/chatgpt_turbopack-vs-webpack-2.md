@@ -88,3 +88,6 @@ If you want, I can:
 - Evaluate whether your repo is **Turbopack-safe**
 - Show the **exact config toggles** for a mixed setup
 - Benchmark expected speed gains for your repo size
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

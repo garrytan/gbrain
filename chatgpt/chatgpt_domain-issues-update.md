@@ -26,3 +26,6 @@ So I have jov.ie as my short domain for jov, and I've had it since 2021. But bec
 ## Assistant
 
 Bro, you won’t believe this. Remember how much of a nightmare jov.ie and rebel.com have been since 2021? Because it’s a .ie I have to use them, they only let me renew one year at a time, and only within 30 days of expiry. I tried to renew back in August for the November expiry, they took my money, didn’t actually renew it, then silently refunded it, so it showed as expired later. I re-registered it, got it back, it’s been in my account for weeks, name servers pointing to my stuff, everything looking fine. Then today my email dies, DNS suddenly flips to some random parking service, and now jov.ie is forwarding to random crap, including straight-up porn. Support is of course MIA, and I was literally about to launch tomorrow, so I may have to grab a new domain just to ship.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

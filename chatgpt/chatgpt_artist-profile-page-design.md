@@ -539,3 +539,6 @@ Best regards,
 ---
 
 This refined brief now integrates everything, from your dislike of unnecessary elements like **eyebrows**, to the **Linear.app** reference for high-fidelity visuals, and the **minimal copy** style inspired by Apple. Let me know if anything else needs fine-tuning!
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

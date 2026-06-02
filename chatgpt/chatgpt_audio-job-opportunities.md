@@ -56,3 +56,6 @@ Mr. White — If you’re looking for “audio jobs,” here are some good leads
 ---
 
 If you like, I can **pull together a live list of audio job openings in the Los Angeles area** (with filters for your interests). Would you like me to do that?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

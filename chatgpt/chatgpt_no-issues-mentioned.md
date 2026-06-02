@@ -253,3 +253,6 @@ Mr. White, audit based on the captured Calendar page text at `/app/calendar`.
 **Observed:** Buttons are announced as numeric days only.  
 **Expected:** Buttons announce full date and state. Example: `Saturday, May 23, 2026, today, selected`.  
 **Priority:** P1.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

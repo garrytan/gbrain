@@ -52,3 +52,6 @@ Then:
 ```
 
 Most of the time, `max-w-2xl` is perfectly fine.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

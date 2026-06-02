@@ -87,3 +87,6 @@ These tools hook into your **pull request workflow** to automatically comment on
 ---
 
 If you want, I can tailor a **recommended tool stack** for the languages and CI/CD system your startup uses—just tell me what your stack looks like (e.g., Python/Node/Go, GitHub Actions, etc.).
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

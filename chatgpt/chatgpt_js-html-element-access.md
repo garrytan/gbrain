@@ -160,3 +160,6 @@ chrome.storage.onChanged.addListener(function(changes, namespace) {
 ```
 
 The code logs messages to the console when values are retrieved from storage, stored in storage, or changed in storage. This will give you a better understanding of what's happening during the execution of the code and can help you identify and fix any issues.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

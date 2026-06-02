@@ -99,3 +99,6 @@ Mr. White, Linear does **not publish fixed pixel constants**, but inspection of 
 - `xl+`: prevents logo from hugging top on tall viewports
 
 If you want, I can **match Linear to sub-pixel accuracy** using browser DevTools heuristics or adapt this to a **design-token system**.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

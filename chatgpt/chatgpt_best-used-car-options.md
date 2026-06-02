@@ -58,3 +58,6 @@ I'm looking to buy a used car with under 130,000 miles on it that is at least a 
 **Skip for now:** Toyotas/Lexus with factory CarPlay start in 2019 (over budget), older Hondas/Mazdas/Jeep need aftermarket screens or sit too low.
 
 Bottom line: grab a clean‑title **’17 Buick Encore Preferred** first—ticks every requirement and still leaves you cash for the DMV and an In‑N‑Out stop on the way home.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

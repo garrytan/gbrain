@@ -125,3 +125,6 @@ The terms **Session Medium** and **First User Session Medium** in Google Analyti
 - **First User Session Medium**: For the same User A, their first user session medium would always be "organic," reflecting how they initially discovered your site, even if they return through other mediums later.
 
 Understanding these differences helps in better segmenting and analyzing user acquisition and behavior, allowing for more targeted marketing strategies and performance evaluations.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

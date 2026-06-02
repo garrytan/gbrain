@@ -61,3 +61,6 @@ You can add the `object-center` class to the `style` binding to center the backg
 ```
 
 The `backgroundPosition` property is set to `center` to center the background image both vertically and horizontally. This will ensure that the background image is centered within the element, regardless of its aspect ratio.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

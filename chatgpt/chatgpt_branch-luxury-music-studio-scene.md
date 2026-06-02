@@ -285,3 +285,6 @@ CTA:
 **See the loop →**
 
 Style: Frame.io-inspired, editorial magazine layout, black graphite background, large premium typography, cinematic image, minimal product overlays, soft shadows, warm Kodak film look, subtle 35mm grain, natural lens flare, clean negative space, no obvious SaaS comparison cards, no nightclub, no crowd, no celebrity likeness, no text baked into the photo itself except website UI text.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

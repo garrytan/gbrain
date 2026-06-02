@@ -113,3 +113,6 @@ Perfect — then here’s a **direct-to-build version** of the prompt with world
 ---
 
 Do you want me to also **write out the full HTML/Tailwind structure** for this so you can literally drop it into your Next.js project and iterate from there?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

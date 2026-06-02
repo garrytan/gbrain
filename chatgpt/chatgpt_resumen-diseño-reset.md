@@ -190,3 +190,6 @@ If you want, I can:
 - Translate this into **design tokens (JSON)**  
 - Produce a **Figma-ready variable schema**  
 - Or adapt it for **Tailwind / CSS variables**
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

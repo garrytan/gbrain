@@ -46,3 +46,6 @@ generate mock ups
 ## User
 
 9 is sick becuase you can pit a release on the calender and see wher it dies so you can keep the whole caleder hot. i like that. its rective. if youre relase cucles get closer the whole thing becomes mroe stbale.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -40,3 +40,6 @@ beatport streaming cdj vs files
 In contrast, using local files stored on USB drives or SD cards ensures reliability, as it doesn't depend on internet connectivity. This method also allows for personalized organization and metadata management, such as setting cue points and loops, which can be crucial for performance preparation. Moreover, playback history is typically recorded when using local media, aiding in track selection analysis post-performance.
 
 In summary, while Beatport Streaming on the CDJ-3000 offers unparalleled access to music, using local files provides greater control and reliability, especially in environments where internet
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

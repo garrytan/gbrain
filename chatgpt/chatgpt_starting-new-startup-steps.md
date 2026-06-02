@@ -47,3 +47,6 @@ Mr. White — short answer: **yes**, you can form a brand-new Delaware C-corp wi
 
 ### Bottom line
 Form **NewCo** with a clean cap table → revive OldCo → assign the domain/IP to NewCo → dissolve OldCo → file/lock the trademark. That keeps your investors’ old SAFEs ring-fenced and lets you reuse “Jovie” without drama. If you want, I’ll draft a 1-page action checklist and the asset-assignment template. (Not your lawyer; this is info, not legal advice.)
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

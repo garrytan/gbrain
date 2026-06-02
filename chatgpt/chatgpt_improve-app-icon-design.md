@@ -74,3 +74,6 @@ If you tell me what the app does (posture, physio, training, etc.), I can sketch
 ## User
 
 Generate it for me
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

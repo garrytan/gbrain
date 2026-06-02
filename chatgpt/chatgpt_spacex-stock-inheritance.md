@@ -188,3 +188,6 @@ Your default stance should be:
 “How do we preserve long-term ownership in the most tax-efficient way possible?”
 
 That is the right framing going into the call.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

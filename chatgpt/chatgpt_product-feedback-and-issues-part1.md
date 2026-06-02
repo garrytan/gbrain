@@ -504,3 +504,6 @@ jovieinc/jovie is the code repo. There's extensive testing in place in the actua
 
 
 Also instructed to use G-Brain and to make sure all of this knowledge exists in G-Brain. Instructed to use ROOTFLOW for spinning up agent teams to handle this in parallel as quickly as possible, and to make sure it uses G-STACK so that everything is validated as it ships. It ships all of this in relevant order and quickly and fully autonomously. 
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

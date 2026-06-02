@@ -35,3 +35,6 @@ So:
 - **Only exception:** Some super–stretchy silicone sleeves *might* physically go on, but the buttons, mute/action button, camera cutout, and MagSafe alignment will be off. Not worth it for a phone that expensive.
 
 Tell her to look for cases that specifically say **“iPhone 17 Pro”** on the listing/package. Anything else is a gamble.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

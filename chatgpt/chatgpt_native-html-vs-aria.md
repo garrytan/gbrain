@@ -74,3 +74,6 @@ Use **native HTML elements first**. They come with built-in semantics, keyboard 
 > **No ARIA is better than bad ARIA.**
 
 If you want, share a snippet and I’ll refactor it to native HTML, Mr. White.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

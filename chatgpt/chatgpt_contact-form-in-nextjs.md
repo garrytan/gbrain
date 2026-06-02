@@ -121,3 +121,6 @@ export default function ContactPage() {
 ### Notes
 - **Why Resend?** SMTP (Nodemailer) is flaky on serverless + Gmail blocks; Resend is API-first and works great on Vercel.
 - If you want zero code: go with **Formspree**/**Basin** today, switch to the Resend route later with no UX change.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

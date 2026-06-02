@@ -76,3 +76,6 @@ Additional context:
   - More music than Spotify’s historical catalog every ~2 weeks. citeturn0search13turn0search17
 
 That number appears to come from investor materials first reported by Billboard and then repeated by multiple outlets. It’s likely directionally accurate, though not independently audited. citeturn0search3turn0search16turn0search21
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

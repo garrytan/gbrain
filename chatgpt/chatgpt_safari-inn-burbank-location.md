@@ -38,3 +38,6 @@ What's the location
 ## Assistant
 
 The Safari Inn is located at 1911 West Olive Avenue in Burbank, California.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

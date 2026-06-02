@@ -44,3 +44,6 @@ tailwind 4 next
 For developers using Next.js, Tailwind CSS v4.0 integrates seamlessly, especially when paired with the official Vite plugin for optimal performance citeturn0search0.
 
 To upgrade, refer to the official upgrade guide and utilize the automated upgrade tool provided by Tailwind Labs citeturn0search0. 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

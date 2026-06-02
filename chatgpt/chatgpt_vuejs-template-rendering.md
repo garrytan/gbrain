@@ -49,3 +49,6 @@ The `@blur` event is being used to emit an event called `updateCrmMeta` from the
 
 The `:modelValue` prop is being used to bind a data property called `modelValue` to the value of `creator.meta[column.key]`, which means that the value of `modelValue` will be set to the value of the property at the key `column.key` of the `meta` object of the `creator` object.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

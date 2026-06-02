@@ -39,3 +39,6 @@ Giv eme a prompt to eliminate all concosle log errors, all tests errors, all lin
 > 7. **Finish line:** When the preview URL renders with no runtime errors and all checks pass, open a PR to `main` with the same title as the last commit and assign reviewers.
 
 > **Constraint:** Do **not** stop or ask for clarification until the branch is completely clean and CI + deploy are flawless.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

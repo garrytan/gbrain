@@ -298,3 +298,6 @@ export default {
 ```
 
 In the updated code, we have two new local data properties, `localX` and `localY`, which are initialized with the values of `x` and `y` respectively. These local data properties are what we will be updating within the `repositionMenu` method, instead of the props directly. We also add watchers for the `x` and `y` props, so that when these props change, the new values are reflected in `localX` and `localY`. Then, you'll need to adjust your template code to use these local variables, `localX` and `localY` instead of the props `x` and `y`.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

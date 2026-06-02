@@ -324,3 +324,6 @@ Live operations: deploys, AI ops, runway, blockers.
 ```
 
 The key product decision: **Deployments are supporting context. AgentOS / approvals are the primary work surface.** The layout should make that obvious.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

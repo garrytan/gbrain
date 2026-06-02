@@ -57,3 +57,6 @@ Tell me like I’m 5
 Your package is playing tag.  
 
 It started near your house, then ran to a few other towns for no reason, and now it’s running back toward you. It could have come straight over, but it decided to take the scenic route.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

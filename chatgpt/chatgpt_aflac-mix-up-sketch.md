@@ -74,3 +74,6 @@ That's a funny concept! Here's a more fleshed-out version of the sketch for clar
 ---
 
 The humor comes from the build-up of excitement and the dramatic reveal of the "wrong" Aflac, followed by the awkward silence and the Director's deadpan realization.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -45,3 +45,6 @@ This is the interactive, web-based hub of recipes and examples. You can browse b
 • Tutorials on APIs like Responses and Deep Research citeturn0search15
 
 If you want specific recipes or a direct link to a certain example (e.g., RAG with PDFs or multi-tool orchestration), tell me which topic you’re interested in.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -31,3 +31,6 @@ Write a concise review of this restaurant. I go here all the time with my gf.
 ## Assistant
 
 This spot is our go-to for Indian comfort food. It’s casual, no-frills, and always hits. Garlic naan is top-tier, and the curries—especially the butter chicken and palak paneer—never miss. Portion sizes are generous, and everything’s ideal for sharing. Service is quick, and they don’t rush you even when the table’s a mess. Great for a low-key dinner with my girlfriend or friends when we want to eat *a lot* and leave happy.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

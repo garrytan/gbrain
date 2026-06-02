@@ -119,3 +119,6 @@ Mr. White, Builder’s Interact pane simply frames whatever URL you’ve set as 
 - **Setting a .env in Builder.io’s dashboard** only feeds Builder Cloud Pages/Functions—it won’t magically inject into your front-end code. The Interact view never “reads” Builder’s Cloud secrets; it just pulls in your app from whatever host you’ve configured citeturn0search6.
 
 **Bottom line:** give your Vue app access to Supabase via env on the host it’s actually running on (local or Vercel). Builder’s Interact will faithfully render it with whatever keys your app has available.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

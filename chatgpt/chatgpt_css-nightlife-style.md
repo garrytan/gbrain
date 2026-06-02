@@ -20,3 +20,6 @@ tags: [chatgpt, import]
 ## User
 
 can you modify the css so i can preview different looks? i want more contrast more badass dj nightlife look
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

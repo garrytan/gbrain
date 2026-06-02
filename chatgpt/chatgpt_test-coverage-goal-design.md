@@ -211,3 +211,6 @@ traces → feedback → evals → failing cases → Codex handoff → harness ch
 ```
 
 That is a better fit for Jovie’s agent than simple unit coverage. Unit tests prove code paths work. Agent evals prove the product brain behaves well.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

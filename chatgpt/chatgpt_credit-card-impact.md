@@ -34,3 +34,6 @@ Mr. White —
 **Also generally no — it usually won’t build your personal credit with on-time payments.** Most coverage (and issuer practices) indicate Amex business cards typically **don’t report ongoing positive activity** to your personal credit reports, but **can report negative events (delinquency/default)** which *can* hurt your personal credit. citeturn1search16turn1search15turn1search3
 
 If your goal is specifically to **raise your personal score**, you usually need a **personal** credit card (or a business card issuer that reports ongoing activity to consumer bureaus). citeturn0search8
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

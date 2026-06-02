@@ -259,3 +259,6 @@ Realistically:
     - Outputs DisplayPort/HDMI to the monitor.
 
 So: if you’ve confirmed you’re in the 85W port, tried a known-good cable, and macOS never sees a charger or Thunderbolt device, then yeah — that TB port is basically **fucked**, and the sane fix is to work around it rather than repair it.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

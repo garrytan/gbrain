@@ -1026,3 +1026,6 @@ const importCSV = () => {
 </script>
 
 when i click import nothing seems to happen. i do see a request in console though. but the modal is staying open and i cant tell if the file is being sent
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

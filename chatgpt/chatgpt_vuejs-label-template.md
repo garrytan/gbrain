@@ -102,3 +102,6 @@ You can register this filter globally on your Vue instance using `Vue.filter()`,
 In this example, `myString` is the string you want to convert to title case. The `|` character is a filter delimiter, and `titleCase` is the name of the filter you registered. The output of the filter will be displayed in the `p` element.
 
 For example, if `myString` is "the quick brown fox jumps over the lazy dog", the output of the filter will be "The Quick Brown Fox Jumps over the Lazy Dog".
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -200,3 +200,6 @@ For **“What are you building?”**, paste this:
 That is **221/250 characters**.
 
 Reasoning: Jovie’s own site positions it as a release operating system for music artists and teams, with release plans, smart links, presaves, fan capture, notifications, and launch automation. citeturn479441view0
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

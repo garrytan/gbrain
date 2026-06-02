@@ -32,3 +32,6 @@ Owners on both r/MechanicAdvice and r/CX5 report that their CX-5 sun visors (dri
 - **DIY hinge reinforcement:** Drill tiny holes in the cracked hinge barrel, loop in fine tie-wire, and twist to compress the crack—this wire wrap hack pulls the plastic back together and holds it tight citeturn2search1  
 
 Each of these solutions has helped other CX-5 owners get their visors to stay put.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -314,3 +314,6 @@ Here’s the ticket-sales table you asked for, sorted by date/time:
 | Fri Oct 31  | 7:00 PM | 17 |
 | Fri Oct 31  | 9:30 PM | 21 |
 | Sat Nov 1   | 8:00 PM | 8 |
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

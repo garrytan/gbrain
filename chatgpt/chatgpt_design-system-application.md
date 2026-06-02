@@ -72,3 +72,6 @@ Only update visual presentation details:
 Goal:
 Make our right drawer visually consistent with the Linear sidebar design language while preserving our exact UX structure and behavior.
 :::
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

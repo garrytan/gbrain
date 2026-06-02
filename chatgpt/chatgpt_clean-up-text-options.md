@@ -68,3 +68,6 @@ Got it, Mr. White. Here are two tightened versions that include that point.
 
 **Extra concise**
 > Hi Connor—can you or someone other than Vincent meet me today so I can collect my things and return the keys? I won’t go alone to avoid any accusations of theft or sabotage. Could be a couple car loads; I’ll start with the car and reassess.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

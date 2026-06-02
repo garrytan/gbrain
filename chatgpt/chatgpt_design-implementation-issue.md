@@ -49,3 +49,6 @@ Specific issues visible in the screenshot:
    The artist name, verified badge, face crop, back button, and social icons all compete visually. The crop places the face directly behind the name/badge, which makes the header feel accidental rather than composed.
 
 Most likely code-level cause: a combination of **negative margin / absolute positioning / transform** on the release card or card contents, plus a parent with **`overflow: hidden`**. The first fix I’d check is the release card’s title container: remove any negative `top`, `translateY`, or margin, then add proper internal padding to the card.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -86,3 +86,6 @@ make a table of all of tim whites music releases
 ## Assistant
 
 For a detailed list of Tim White's music releases, including singles, EPs, and collaborative works, you can visit his MusicBrainz page [here](https://musicbrainz.org/artist/51972833-bb04-46b7-9401-45a5ab449ebd). The page provides a comprehensive overview of his discography.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

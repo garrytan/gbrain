@@ -66,3 +66,6 @@ In Extensions panel:
 The extension must appear under **Remote** to work there.
 
 If you want, tell me **which remote you’re using** (SSH, WSL, Docker, Codespaces) and **what background-composer is supposed to do**, and I’ll give you the exact fix.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -151,3 +151,6 @@ I’m looking for someone who wants to produce something exceptional — not ave
 :::
 
 If you’d like, I can also make a sharper, higher-filter version that screens out 90% of applicants upfront.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

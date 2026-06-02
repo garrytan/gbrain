@@ -157,3 +157,6 @@ Here’s a UI snapshot of OpenAI's typical web aesthetics—clean typography, ge
 OpenAI’s internal UI stack reflects modern best practices using **utility-first** styling (Tailwind), accessible component frameworks (Radix/shadcn), and common frontend foundations (Next.js, React). Though their brand design (OpenAI Sans) is refined, a public or open-source **UI component library/design system** has not been released. The internal toolkit is modern, likely custom-built, and not directly exposed to developers.
 
 Let me know if you’d like a breakdown of how those frontend pieces (Tailwind + shadcn/ui, Radix, Motion) work together in actual component usage.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

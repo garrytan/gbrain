@@ -49,3 +49,6 @@ Third-party trackers put them around **~$3.6M annual revenue (2024)** / **~$4M r
 From these numbers + public pricing signals, a reasonable ballpark is **low single-digit millions to maybe high single-digit millions in annual revenue**, with the screenshot mostly supporting **scale (contacts + campaigns)** rather than pricing power.
 
 If you tell me what you believe their *paying creator count* and *average monthly messaging volume* might be, I can tighten the range fast.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

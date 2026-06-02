@@ -33,3 +33,6 @@ Key points:
 • Qodo was originally founded as *CodiumAI* in 2022 and rebranded; it’s backed by significant funding and used by enterprise teams to accelerate quality assurance in modern, AI-augmented software workflows. citeturn0search2
 
 In practice, Qodo aims to reduce manual review overhead, surface deeper logical or architectural issues, generate tests and documentation, and integrate into engineers’ existing toolchains. citeturn0search3
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

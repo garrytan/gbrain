@@ -705,3 +705,6 @@ To really lock it in:
 - Use **Mint** to pin SwiftLint/SwiftFormat versions and call them via Mint inside the Fastlane lanes.
 
 But even without that, the **“always go through Fastlane”** pattern is the main answer.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -946,3 +946,6 @@ removing the function made it work
 Great to hear that removing the `setHeightAttribute` function resolved the issue! By sending the height in centimeters directly from the frontend and having the database set up to store this value as-is, you've streamlined the process and eliminated the need for additional transformation in the model. This is a good example of simplifying your codebase by aligning the data formats between your frontend and backend, leading to more straightforward and maintainable code.
 
 If you have any more questions, need further assistance, or have another feature in mind, feel free to ask. I'm here to help!
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

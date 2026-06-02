@@ -620,3 +620,6 @@ Deliver:
 ```
 
 The first prompt is better if you want stronger art direction. The second is better if the model tends to wander.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

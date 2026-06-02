@@ -74,3 +74,6 @@ If you want, provide:
 - the framework (Next.js, React, etc.)
 
 and the exact fix can be identified.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -105,3 +105,6 @@ You asked for "CDM links for Spotify"—here they are:
 | Måneskin   | https://open.spotify.com/artist/0lAWpj5szCSwM4rUMHYmrr         |
 
 Let me know if you'd like direct album or track links (e.g., for *Take Me Over* single or *Supermodel* track), or anything else!
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

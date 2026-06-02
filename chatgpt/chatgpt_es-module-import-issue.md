@@ -78,3 +78,6 @@ If you’re actually using a different “geist-icons” package (there’s a co
   https://www.npmjs.com/package/geist-icons citeturn0search2
 
 Most Geist UI icon imports (e.g., `import { AcronymPpr } from '@geist-ui/icons'`) come from **@geist-ui/icons**. citeturn0search0
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

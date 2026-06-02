@@ -506,3 +506,6 @@ Acceptance criteria:
 ## Final call
 
 Use the adapter. Keep it thin. Make **events and redaction** the real abstraction. Sentry is just the first sink.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

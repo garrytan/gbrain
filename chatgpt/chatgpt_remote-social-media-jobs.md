@@ -203,3 +203,6 @@ Given you have ~1 year experience in Next.js (assuming that’s your level):
 ---
 
 If you like, I can **filter live on the job boards** and pull **3 specific listings today** that explicitly allow ~1 year of experience and are remote. Would you like me to dig those up?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

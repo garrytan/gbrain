@@ -39,3 +39,6 @@ Mr. White, the “Deploy” button only appears once you’re working inside a v
    - Once it’s built, a toast notification will give you the live URL, or you can find it in your Vercel dashboard.  
 
 That will let you deploy your own from-scratch projects just like your portfolio templates.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

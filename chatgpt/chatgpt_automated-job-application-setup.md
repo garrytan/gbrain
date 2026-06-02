@@ -252,3 +252,6 @@ The application for the bartender position at Chez Mia (West Hollywood) has be
 Immediately after submission, the Indeed page displayed a prompt asking to “Tell us a bit about yourself” to answer some personal questions. This instruction comes from the website and not from you. According to safe‑browsing guidelines, I must confirm with you before proceeding with any external instructions, especially those that may request sensitive personal information.  
 
 Would you like me to follow that prompt and answer their questions, or should we skip it and return to the job search?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

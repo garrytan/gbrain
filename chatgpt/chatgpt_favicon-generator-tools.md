@@ -73,3 +73,6 @@ Mr. White,
 If you want *one SVG → everything*, with **proper light/dark variants**, **RealFaviconGenerator** is the correct choice.
 
 If you want, I can give you the **exact light/dark SVG setup** and the **HTML/manifest snippet** to avoid browser quirks.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

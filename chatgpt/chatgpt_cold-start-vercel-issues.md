@@ -479,3 +479,6 @@ I can see your teams/projects/deployments, and I can read **build logs** via the
 ---
 
 If you paste the **Response Headers** from your browser for the failing `/` request (the part that contains `x-vercel-id`, `x-vercel-cache`, and potentially `x-vercel-mitigated`), I’ll tell you immediately which branch you’re on and the exact fix (security vs middleware vs rewrite).
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

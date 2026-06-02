@@ -57,3 +57,6 @@ Hi Mr. White — here’s a summary of entity["software", "RevenueCat MCP 
 ---
 
 If you like, I can pull together the **full list of the 26 tools/commands**, and we can review how to integrate this into your stack (e.g., mobile apps built with Flutter/React-Native) — would that be useful?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

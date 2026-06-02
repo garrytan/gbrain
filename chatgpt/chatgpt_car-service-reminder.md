@@ -69,3 +69,6 @@ Roughly estimate how much that'll cost and then also I want you to remember my s
 Expect around \$150 for oil + filter change, air/cabin-filter replacements, tire rotation, brake fluid top-off and multi-point inspection.
 
 Got it—I’ve noted your service history and current mileage. Next time you give me the date and odometer, I’ll tell you what maintenance’s due.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -29,3 +29,6 @@ Clap back on the bs
 Mr. White, try this:
 
 > “Three Zoom sessions to erase ancestral baggage? Bold. Does it come with a money-back guarantee if I’m still emotionally unavailable on Day 4?”
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

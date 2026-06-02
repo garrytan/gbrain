@@ -412,3 +412,6 @@ Tim White, currently residing in West Hollywood, California, has rapidly emerged
 Despite his success in electronic music, White’s true passion lay in pop. He began to transition with tracks like “Love Don’t Let Me Down” in 2018 and “Wheels Up” with Lynx on Sony’s DiscoWax imprint. In 2020, he released “This Is Love” and “Tomorrow Sounds,” blending his electronic roots with pop sensibilities.
 
 White’s latest single, “Never Say A Word,” released in 2024, has taken the music scene by storm. Featuring sultry LA vibes and infectious dance beats, it has quickly become a fan favorite, embodying the carefree and exhilarating spirit of nightlife. Beyond his own releases, White's talents as a songwriter and producer have made him a sought-after collaborator for major acts, with creative contributions to projects like Hulu’s Clio Award-winning Pride Fest.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

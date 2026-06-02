@@ -158,3 +158,6 @@ If you want a **deeper angel list tailored by stage or geography** (e.g., top an
 ## User
 
 i want a list of angeles, and who they invested in and at what stage, and if their an angel or a vc etc. 
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -388,3 +388,6 @@ To get **as close as possible to Apple’s Health UI**:
   - `spring(response: 0.25, dampingFraction: 0.85)` gives that snappy, slightly underdamped slide.
 
 You can now put this above your chart or cards exactly like in the Health app, reuse it anywhere, and tweak a couple of constants (font size, height, padding) while visually comparing to the real app until it’s indistinguishable.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

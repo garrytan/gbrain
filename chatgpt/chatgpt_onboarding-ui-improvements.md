@@ -976,3 +976,6 @@ Here's the reality:
 ✅ No automated AI-driven reorganization yet. Your best bet now is manual reorganization guided by AI recommendations.
 
 Want help scripting a semi-automated folder reorganization based on AI recommendations?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

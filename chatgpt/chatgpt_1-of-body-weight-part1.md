@@ -742,3 +742,6 @@ This will need to be repeated for each row in your full table, and you can use a
 
 
 provide me the full table with each week listed out
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

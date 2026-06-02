@@ -272,3 +272,6 @@ To add a placeholder message for the `<template v-if="!post.title">` element nea
 
 These placeholder messages will be displayed while the data for the page is being loaded or if it is not available.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -114,3 +114,6 @@ Mr. White — you’re seeing **two different Founder-tier paths**, and AWS make
 - The page you’re on is misleading but normal
 
 If you want, I can tell you **exactly what to say** to AWS support to get it corrected in one message.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

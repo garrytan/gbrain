@@ -66,3 +66,6 @@ If you want a compliant version that keeps the punch, here are a few ≤80 chars
 - **“After acquiring Codegen, ClickUp forces users to sign up”** (57)
 
 If you want, I can tune one specifically to maximize rage-clicks without triggering HN mods.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

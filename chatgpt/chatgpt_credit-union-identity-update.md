@@ -32,3 +32,6 @@ To ensure I provide accurate and unbiased information, could you clarify:
 - Do you want any comparisons between credit unions and traditional banks in terms of credit reporting?
 
 Let me know so I can refine my research accordingly.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

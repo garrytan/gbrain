@@ -45,3 +45,6 @@ This property fits the Fashion Island zone perfectly and matches the “Marriott
 5. **Only buy if you’re ok with “final sale.”** Hotwire states Hot Rate bookings are **final/no changes**. citeturn0search5turn0search13turn0search7  
 
 If you want, paste the **exact** Hotwire line-items you see (all amenities + the exact guest rating + the chain list + your nightly price), and I’ll tell you which of those 2–3 candidates it matches most tightly.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

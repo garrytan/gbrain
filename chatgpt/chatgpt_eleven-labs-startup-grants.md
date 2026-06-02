@@ -145,3 +145,6 @@ Voice cloning is one of the areas regulators are increasingly watching. cite�
 5. Experiment with a callable AI manager after the core product is further along.
 
 For your current stage, the demo-video angle alone is probably worth more than the entire grant value. You can iterate investor demos, onboarding flows, landing page videos, YC content, and artist explainers almost infinitely for the next year without worrying about voice production costs. citeturn0search0turn0search2
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

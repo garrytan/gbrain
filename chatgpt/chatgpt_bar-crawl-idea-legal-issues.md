@@ -117,3 +117,6 @@ If St. Felix is valuable to your friend, **don’t gamble the license** for a fr
 - **Fixable:** ✅ Yes, with non-alcohol or discount-based rewards  
 
 If you want, I can rewrite the promo **exactly** how ABC-safe crawls are usually structured in Los Angeles.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

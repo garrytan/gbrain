@@ -42,3 +42,6 @@ Here's a classic Cosmopolitan recipe:
 5. **Garnish**: Add a twist of lime or lemon for garnish.
 
 Enjoy your Cosmopolitan!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

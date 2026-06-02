@@ -26,3 +26,6 @@ Yeah dawg, what's going on? So I just accidentally pulled my girl's shorts down 
 ## Assistant
 
 Yeah dawg, you’re thinking of the **Coppertone** logo — that classic one with the little girl in pigtails and a dog tugging her swimsuit bottoms down, showing her tan line. Iconic vintage branding. Total accidental throwback on your part.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

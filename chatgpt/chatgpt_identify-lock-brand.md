@@ -34,3 +34,6 @@ Based on the information provided, it can be challenging to pinpoint the exact b
 3. Master Lock: While Master Lock is a popular brand, it typically does not produce locks specifically for residential deadbolts. However, they offer various types of locks, so it's worth checking if they have any residential deadbolt options.
 
 Please note that these are just suggestions based on the limited information provided. It would be helpful to conduct further research, examine the lock more closely, or consult a professional locksmith who might be able to assist you in identifying the brand accurately.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

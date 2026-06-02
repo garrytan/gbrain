@@ -149,3 +149,6 @@ In this example, the `items` array contains objects for each row in the table, w
 
 You can then use the `selected` property to perform any actions you need, such as submitting the selected items to the server or displaying a list of selected items.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -631,3 +631,6 @@ def save_records_to_database(records):
 - **Logging**: Added more specific logging for database errors, which can help in debugging and maintaining the database operations.
 
 Make sure you adapt this approach for any other dictionary-type fields in your records that need to be stored in the database. This setup will prevent errors related to data type mismatches and ensure robust error handling in your database operations.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

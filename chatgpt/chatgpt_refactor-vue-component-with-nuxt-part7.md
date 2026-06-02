@@ -1140,3 +1140,6 @@ This will ensure that the `redirectToCanonicalSiteUrl` feature is enabled only i
 
 
 {'asset_pointer': 'file-service://file-w9DBNKqrvSVyoCXSYzFIOXfM', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 612, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 194287, 'width': 1536}
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

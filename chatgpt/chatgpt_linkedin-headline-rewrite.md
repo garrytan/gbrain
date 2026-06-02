@@ -394,3 +394,6 @@ I set your LinkedIn experience as follows:
 - **Career Break (Health and well-being)** — filled the gap with **Jan 2023 – Nov 2024**
 - **Founder — Previous Venture** — filled the gap before that with **Jan 2021 – Dec 2022** (Self-employed, LA/Remote) and your description
 - Your headline is already **Option A**
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

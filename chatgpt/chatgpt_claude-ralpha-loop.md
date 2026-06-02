@@ -37,3 +37,6 @@ claude ralpha loop
 • Lets an AI agent work unattended (hours/days) on large or mechanical coding tasks that would otherwise require lots of back-and-forth. citeturn0search9
 
 In short: *Ralph Loop is a continuous iterative loop pattern/plugin for Claude Code that keeps Claude executing code tasks until verifiable completion without human re-prompting.* citeturn0search9
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

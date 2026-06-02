@@ -1232,3 +1232,6 @@ Ship later:
 - CRM and campaign automation
 
 The early-stage MRR benefit comes from giving artists a recurring, concrete reason to believe Jovie is managing their career every week. Verified web intelligence plus recommended actions is a stronger paid feature than passive analytics.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

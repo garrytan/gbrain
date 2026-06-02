@@ -203,3 +203,6 @@ If you’d like, I can outline a minimal-hassle routine tailored to your habits 
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': '…wearing a mask. It really just comes down to comfort and personal preference at that point!'}
 {'asset_pointer': 'sediment://file_00000000961461f695d49cb6f98bccae', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-23T20:56:56.906023+00:00', 'format': 'wav', 'metadata': {'end': 6.65, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 319278, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

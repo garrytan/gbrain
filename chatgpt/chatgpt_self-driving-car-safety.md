@@ -28,3 +28,6 @@ There's a bunch of Tesla anti-Elon Musk activists who have posted a video online
 Mr. White, here’s a concise comment you could post:
 
 > What’s remarkable about self-driving cars is that every flaw exposed by demos like this can be fixed with a quick software update and pushed overnight to millions of vehicles. You can’t upgrade human drivers at scale. If we truly care about keeping kids safe, we should welcome these tests and accelerate deployment—over-the-air improvements will drive safety far beyond anything humans alone can achieve.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

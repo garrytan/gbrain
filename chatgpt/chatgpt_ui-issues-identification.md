@@ -37,3 +37,6 @@ Mr. White, based on what’s on-screen in that Jovie profile page, here are the 
 - **Hierarchy/spacing risks**: with so many small icon actions around the header, the page can feel cluttered and the main action (notify) doesn’t dominate.
 
 If you tell me what device you’re viewing on (mobile vs desktop) and whether you want **UX issues only** or **accessibility issues too**, I’ll prioritize the list accordingly.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -203,3 +203,6 @@ Can you link me to where there's discussion about having to disable the built-in
 Additionally, users on forums have discussed issues related to wireless CarPlay, noting that turning off Bluetooth and Wi-Fi on their phones can disable the wireless connection, forcing a wired connection instead. citeturn0search2
 
 To disable the built-in Bluetooth on your Mazda CX-5, navigate to the vehicle's settings menu, select "Bluetooth," and turn off the function. This should help resolve the audio and volume control issues you've been experiencing with the wireless CarPlay module. 
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

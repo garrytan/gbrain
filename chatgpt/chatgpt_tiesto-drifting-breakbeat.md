@@ -32,3 +32,6 @@ Tiësto's track "Drifting" incorporates genres such as breakbeat and future gara
 ## Assistant
 
 Tiesto's "Drifting" can be classified within the Electronic Dance Music (EDM) genre, specifically under progressive house or trance subgenres, given Tiesto's historical music style and production. However, without specific information about a track titled "Drifting" by Tiesto, it's essential to note that his style has evolved over the years, touching various EDM subgenres including trance, progressive house, and electro house.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

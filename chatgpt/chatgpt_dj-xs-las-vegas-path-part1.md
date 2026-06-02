@@ -44,3 +44,6 @@ I want the full plan. I will play house music with some crossover main room soun
 
 
 Got it. I'll create a detailed plan outlining the steps to secure a DJ gig at XS Las Vegas, considering your experience, connections, and musical direction. This will include networking strategies, branding and marketing positioning, potential leverage points based on your past success, and the necessary steps to align with XS's booking process. I’ll let you know when it’s ready.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

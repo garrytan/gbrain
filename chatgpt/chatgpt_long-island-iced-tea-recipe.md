@@ -46,3 +46,6 @@ A Long Island Iced Tea is a popular cocktail known for its strong mix of spirits
 6. Garnish with a lemon wedge.
 
 This drink has a high alcohol content, so it’s important to enjoy it responsibly.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

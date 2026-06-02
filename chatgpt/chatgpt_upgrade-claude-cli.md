@@ -60,3 +60,6 @@ After reinstalling, check the version again with `claude --version`. citet
 - If you see a message about “already up to date” but version is old, that’s a known issue with some installers. Manual reinstall resolves it. citeturn0search2
 
 If you share how you installed it originally (npm, brew, winget, or script), I can tailor exact commands.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

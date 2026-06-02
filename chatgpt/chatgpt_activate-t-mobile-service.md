@@ -44,3 +44,6 @@ Here’s how to activate service with entity["brand", "T-Mobile", 0], M
 ---
 
 If you tell me **which specific scenario** you’re in (new line, switching carriers, prepaid vs postpaid, SIM vs eSIM), I can walk you through *exactly* what to do (with screenshots if needed).
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

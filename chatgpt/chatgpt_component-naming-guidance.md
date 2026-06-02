@@ -169,3 +169,6 @@ ad it the md file
 ## Assistant
 
 I added a **Component Naming Standard** section into your CLAUDE.md. It now explicitly defines rules for exports, atoms, molecules, organisms, feature components, props, handlers, icons, hooks, enums, accessibility, test IDs, forwardRef usage, deprecation, and CI enforcement.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

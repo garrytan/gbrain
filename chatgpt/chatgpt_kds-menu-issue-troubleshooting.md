@@ -93,3 +93,6 @@ After a long downtime (since Dec 31), devices often need **Device Setup** and th
 5. If tickets aren’t appearing, run the Toast Central KDS troubleshooting steps (common fixes + “No Print”/prep-station misroutes). citeturn0search3
 
 If you want, I can walk you through which permission set your **KDS login** needs and a minimal routing config to get a screen live in under 5 minutes.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -211,3 +211,6 @@ If she doesn’t have a passport yet, these are your fastest options:
 Temporary paper ID won’t work in Vegas clubs. Your best—and legally accepted—option is a **passport**. Many local facilities can issue or renew one quickly, especially via FedEx + RushMyPassport (3 days). In the meantime, you could try smaller bars that might be lenient—but risk being turned away.
 
 Let me know if you want help setting up a passport appointment or walking through expedited services, Mr. White!
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

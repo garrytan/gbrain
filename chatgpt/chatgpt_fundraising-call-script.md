@@ -501,3 +501,6 @@ Use 3–5 of these, depending on time.
 > The next thing I’d like to do is show you the product and get your read on whether this is the kind of company AI House wants to help build.
 >
 > What should the next step be?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

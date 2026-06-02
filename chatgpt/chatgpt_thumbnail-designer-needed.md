@@ -102,3 +102,6 @@ Requirements:
 We are offering a flat rate per video, with the expectation that the candidate will schedule and upload three videos per week over the next few months.
 
 If you are interested in this position, please send us your resume and a brief description of your experience with YouTube SEO and keyword research.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

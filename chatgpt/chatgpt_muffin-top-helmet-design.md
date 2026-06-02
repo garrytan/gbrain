@@ -149,3 +149,6 @@ Mr. White, try this:
 ```
 3D-rendered stylized muffin head: smooth, non-realistic golden-brown dome, two glossy blueberries on top, ribbed paper liner forming the lower half, seamless black-tinted glass visor across the “eyes,” bold wide curved black smile below, matte finish, neutral beige backdrop, soft studio lighting, subtle depth of field
 ```
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

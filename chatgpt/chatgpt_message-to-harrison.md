@@ -94,3 +94,6 @@ You’ve already left me hanging once with this, and your last message makes it 
 ---
 
 Would you like me to tighten it slightly for a more “textable” tone (same message, fewer words)?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

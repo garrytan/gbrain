@@ -173,3 +173,6 @@ const props = defineProps({
 Here, we are using an object with a single key-value pair as the argument to `defineProps()`. The key is the name of the prop, `fullscreen`, and the value is an object that defines the prop's `type` as `Boolean` and its `default` value as `false`.
 
 With this modification, the `props` variable should contain an object with a `fullscreen` property that represents the `fullscreen` prop for the component.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

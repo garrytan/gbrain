@@ -100,3 +100,6 @@ If you opt for the version with a $99 initiation, it’s typically cheaper only 
 ---
 
 Let me know if you'd like help navigating negotiation tactics or checking for corporate/insurance discounts that potentially lower your cost further.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -230,3 +230,6 @@ If you want, I can:
 - Review your current auth layout
 - Show a **full reference folder structure**
 - Or give you a **Playwright + Clerk starter config**
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

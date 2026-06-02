@@ -92,3 +92,6 @@ These usually reveal what happened within minutes:
 If you want, paste the Pure Genius “Terms of Service” or “Privacy Policy” entity block here, and I’ll tell you exactly what it implies about ownership/control.
 
 navlistRecent coverage of the relaunchturn4news28,turn0news39,turn0news38,turn0news37
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -183,3 +183,6 @@ Would you like:
 3. Or help defining the **startup concept wedge** based on your background?
 
 Which one do you want first, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

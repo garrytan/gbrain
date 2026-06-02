@@ -38,3 +38,6 @@ What if weather destroyes a transformer
 ## Assistant
 
 Mr. White, if a storm („act of God“) takes out an SCE transformer, there’s no negligent third party to bill.  Southern California Edison absorbs the repair cost and recovers it as part of its overall rate-base through CPUC-approved rates.  End users don’t get a special surcharge for a specific outage—those costs are spread across all ratepayers.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

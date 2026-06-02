@@ -20,3 +20,6 @@ tags: [chatgpt, import]
 ## User
 
 Dexascan affected by body weight that is mostly water or like water weight and also is a Dexascan
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

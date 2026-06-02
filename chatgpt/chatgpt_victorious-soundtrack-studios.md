@@ -72,3 +72,6 @@ Where was it filmed
 This studio lot—formerly the historic **Hollywood Center Studios**—was used for many Nickelodeon productions during the 2000s and early 2010s. Interior scenes (like classrooms, hallways, and the Hollywood Arts stage) were shot on soundstages there. Some limited outdoor scenes were filmed on set exteriors or at nearby LA locations, but most of the "Hollywood Arts" school was a fabricated set.
 
 > 🔒 Note: *Nickelodeon on Sunset* closed in 2017 and was sold off.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

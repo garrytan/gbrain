@@ -70,3 +70,6 @@ If you want **CarPlay itself** off for that vehicle, Apple says you can go to **
 If you meant **ChatGPT through Siri / Apple Intelligence** instead, OpenAI says to go to **Settings > Apple Intelligence & Siri > ChatGPT** and turn **ChatGPT** off. It also notes you can turn off **Setup Prompts** afterward if you do not want Siri suggesting it. citeturn710921view3
 
 Tell me which one you want disabled, and I’ll give you the shortest exact path.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

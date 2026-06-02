@@ -282,3 +282,6 @@ Mr. White, let’s get that pipeline running with the models you’ve got in `/U
    ```
 
 —After it finishes, you’ll find your PNGs in `~/smplx_render/out/`. If you hit any error, copy the exact message here and we’ll tweak it.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

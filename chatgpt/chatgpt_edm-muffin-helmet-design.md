@@ -54,3 +54,6 @@ Sure, Mr. White—try this:
 ```
 “A photo-realistic portrait of a person wearing a smooth, matte golden-brown dome helmet shaped like a blueberry muffin, topped with two glossy cobalt-blue spheres, featuring a wide rounded black glass visor and a simple upturned black smile, with subtle vertical ridges on the lower wrapper section; minimalist futuristic design, lightweight, shot under soft studio lighting against a neutral background, person in a cool gray jacket.”
 ```
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

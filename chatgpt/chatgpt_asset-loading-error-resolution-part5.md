@@ -944,3 +944,6 @@ ThemeData _buildDarkTheme() {
 In this adjustment, `fillColor` is set to `Colors.grey[900]`, which is a darker shade of grey in the Material color palette. This will make your text fields have a darker grey background while maintaining the rest of the styles as they were. 
 
 Be sure to test this change to see if the darker grey matches your desired look and feel. Adjust the shade as needed to fit your design requirements.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

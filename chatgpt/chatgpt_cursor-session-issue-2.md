@@ -66,3 +66,6 @@ If that doesn’t fix it, tell me:
 - Does it fail immediately or after auth redirect?
 
 I’ll narrow it down fast.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

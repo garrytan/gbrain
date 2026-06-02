@@ -110,3 +110,6 @@ Other recent related X posts note:
 🔎 **No official AnthropicAI tweet specifically titled “task management” from today was found in public search results**, but **multiple recent X threads discuss the new Cowork feature and task-oriented workflows** using Claude Code technology. citeturn1search2
 
 If you want, I can pull a **direct link** to one of the specific X posts about Cowork/tasks mode and display it here.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -819,3 +819,6 @@ Dark-mode Apple-style cards:
 Then each card gets a cinematic image/video from the same LA late-night world.
 
 This gives Jovie a premium product overview that feels editorial, cinematic, and directly aimed at DJs.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

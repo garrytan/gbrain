@@ -186,3 +186,6 @@ It should be the **release + CTA**.
 5. Push socials **down**
 
 Send the primary conversion target—stream, follow, pre-save, or email capture—and I’ll map the first screen precisely.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

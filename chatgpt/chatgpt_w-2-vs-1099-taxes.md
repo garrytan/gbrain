@@ -88,3 +88,6 @@ If you want, I can help you estimate your **likely refund or liability** based o
 - Whether you file single or joint  
 
 Would you like me to run that quick estimate?
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

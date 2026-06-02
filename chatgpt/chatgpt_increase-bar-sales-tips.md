@@ -91,3 +91,6 @@ To optimize your process and increase bar sales, consider the following strategi
 3. **Training and Incentives**: Regularly train staff on upselling techniques and provide incentives for meeting sales targets.
 
 By implementing these strategies, you can streamline operations, create more opportunities for sales, and increase the average bill price effectively.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -135,3 +135,6 @@ You’re not covered by L.A.’s Fair Work Week Ordinance.
 Follow **California Wage Order 5** and **Labor Code** rules for breaks, overtime, and reporting pay.  
 
 Would you like me to summarize the exact **break and scheduling requirements** from Wage Order 5 that apply to restaurants? (That’s the governing document for your type of business.)
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

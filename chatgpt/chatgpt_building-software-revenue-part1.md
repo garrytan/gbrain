@@ -153,3 +153,6 @@ tags: [chatgpt, import, long-form]
 
 
 Should we use revenue cat or just stripe
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

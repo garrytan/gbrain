@@ -1202,3 +1202,6 @@ definePageMeta({
 ```
 
 This should set the button backgrounds to white with dark borders and text, providing a consistent style with the rest of the design.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

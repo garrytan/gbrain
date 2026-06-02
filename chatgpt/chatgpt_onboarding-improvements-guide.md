@@ -147,3 +147,6 @@ Mr. White, quick surgical fixes for each screen + the bigger flow issue they rev
 Your step counts don’t match: earlier screens show **9 steps**, but later it’s **8**. That nukes trust. Pick one count, and don’t change it mid-flow.
 
 If you want a single north-star change: **make the Apple Health path feel like one tap → confirm → score → next plan**, with no duplicated permission/review UI and no giant “why we ask” blocks interrupting momentum.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

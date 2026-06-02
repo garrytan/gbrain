@@ -1297,3 +1297,6 @@ definePageMeta({
 ```
 
 This update should center the album art properly. Make sure to replace `NuxtPicture` with a regular `img` tag as `NuxtPicture` was not defined in your original code. Adjust the `class` properties to ensure the image is centered and appropriately sized.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

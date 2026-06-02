@@ -334,3 +334,6 @@ Got it — now we’re looking at **Laylo’s HAIM profile**. Different angle th
 ---
 
 Mr. White, do you want me to now draft a **side-by-side investor/artist pitch deck slide**: *“Hoo.be vs. Laylo vs. Jovie”* so you can weaponize this in fundraising and artist onboarding?
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

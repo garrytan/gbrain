@@ -45,3 +45,6 @@ Tim
 ---
 
 Chris Voss tactics used: clear value (high-end content + reach), precise dates, a “calibrated question” (“What would make this an easy yes for you?”) to invite a collaborative response, and concise authority by name-dropping past features.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

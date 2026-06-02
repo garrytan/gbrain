@@ -28,3 +28,6 @@ Alright, so, remembering my budget now. Um... Genius Shots are, um... I believe,
 Got it, Mr. White. Budget updated:  
 - **Genius Shots**: $4 per shot × ~3.5 shots/day = ~$14/day (≈$420/month)  
 - **Morro brunch**: $50–75 once weekly (≈$200–300/month)
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

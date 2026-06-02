@@ -201,3 +201,6 @@ If you see multiple trees, fix the dependency that pins a different version.
 The GH UI says output is truncated. Click **“View raw logs”** or **“Download log archive”** in that job and search for `axe` / `violation` / `Help:`. The remediation is then component-specific (labels, contrast, aria-*).
 
 If you paste the **raw “A11y Results Summary”** section here, I’ll map each violation → the exact DOM node/story and the minimal fix.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

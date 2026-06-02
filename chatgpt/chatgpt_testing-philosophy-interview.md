@@ -407,3 +407,6 @@ If you want, next I can:
 - Turn this into **GitHub Actions enforcement**
 - Define a **“Tier-0 test matrix”** for revenue/profile paths
 - Write a **PR rubric** that auto-rejects weak tests
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

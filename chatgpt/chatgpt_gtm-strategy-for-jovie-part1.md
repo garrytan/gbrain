@@ -595,3 +595,6 @@ So Artists are content businesses, but they operate without the systems every ot
 
 
 Mr. White, the cleanest framing is to separate the sales language from the investor category: “AI manager” for artists, “AI marketing operator” for investors. The build plan should now collapse around chat, onboarding, artist profile polish, and hiding anything half-baked.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

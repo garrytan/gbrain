@@ -84,3 +84,6 @@ Very simple outline (assuming familiarity with Node/React):
 ---
 
 If you like, Mr. White, I can walk you through **a practical tutorial** for Next.js (including setting up with TypeScript + API routes) or compare Next.js vs another framework (e.g., entity["software","Gatsby",0] or entity["software","Remix",0]). Would you like that?
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

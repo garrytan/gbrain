@@ -36,3 +36,6 @@ A top-up today (Sunday) would be only 48 hrs after Friday’s shot—inside that
 Stay on your usual schedule: hit the full 50 units next Friday. If you notice unusual side-effects or have any doubt, ping your prescriber.
 
 —Not medical advice; just the facts.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

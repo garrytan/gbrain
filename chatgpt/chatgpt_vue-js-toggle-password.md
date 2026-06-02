@@ -57,3 +57,6 @@ export default {
 ```
 
 In this example, the `togglePasswordVisibility` method is called when the `button` element is clicked, and it toggles the value of the `showPassword` data property. The `input` element's `type` attribute is bound to the value of `showPassword`, so when `showPassword` is `true`, the `input` element will be of type `text`, and when it is `false`, the `input` element will be of type `password`. The `v-model` directive is used to bind the value of the `input` element to the `password` data property, so that the user can enter their password.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

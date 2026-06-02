@@ -1034,3 +1034,6 @@ Ensure the `songs.json` file is correctly formatted and includes all required fi
 Ok now we need to set up our site to dynamically  create linkinbio profiles for each user. So user Tim will be jov.ie/tim and Kenzie with be jov.ie/kenzie.  The profile page will show their name dynamically. For now we will pull the users from a json file. 
 
 Now we might want to call this profiles artists or creators or something. Because we will have in the future users who just manage profiles but aren't the actual person. So we want to distinguish actual users of the app from users with public profiles. So maybe we use the term creators. So lets do creator profiles with dynamic routes based on user name pulllng from json for now
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

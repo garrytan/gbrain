@@ -160,3 +160,6 @@ Add this if Grok struggles with the loop:
 ```text
 Important: the last frame must match the first frame exactly. The phone screen should become a portal into the same scene. The final full-screen phone display must be indistinguishable from the opening frame: black void, blue road lines, same vanishing point, same haze, same tiny silhouette of Jovie in the distance. This creates an infinite recursive loop.
 ```
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

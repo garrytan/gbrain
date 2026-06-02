@@ -36,3 +36,6 @@ Use this for the current field, Mr. White:
 > Music artists and their teams waste hours turning each release into smart links, presaves, fan capture, launch tasks, notifications, and analytics across fragmented tools. As a result, most releases ship with missed steps, weak fan conversion, and no single source of truth for the team.
 
 This matches Jovie’s current positioning around release planning, fan paths, launch tasks, and artist profiles. citeturn151307view0
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

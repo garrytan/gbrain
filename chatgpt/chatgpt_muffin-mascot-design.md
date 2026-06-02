@@ -170,3 +170,6 @@ Now the last design was better. I want the eyes to be on the actual muffin top a
 ## Assistant
 
 Here’s the updated 3D DJ helmet with the glowing blue eyes on the actual muffin top and the smile on the bottom half. Let me know if this nails it or if you'd like further tweaks!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

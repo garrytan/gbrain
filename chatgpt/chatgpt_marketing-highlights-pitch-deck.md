@@ -49,3 +49,6 @@ What's a million minus four hundred and five?
 ## Assistant
 
 A million minus four hundred and five is 999,595.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

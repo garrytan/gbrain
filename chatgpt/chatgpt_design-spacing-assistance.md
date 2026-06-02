@@ -262,3 +262,6 @@ The design must clearly demonstrate protected spacing across all three screen si
 ```
 
 The practical fix: build the layout constraints first, then run pixel-diff tests continuously. A single pretty mockup will still break unless the code protects aspect ratios, min widths, safe areas, and bottom-nav spacing.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

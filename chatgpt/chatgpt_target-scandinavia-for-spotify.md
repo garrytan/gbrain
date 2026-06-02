@@ -149,3 +149,6 @@ Let's break this down:
   - Ad cost: $5,000 - $15,000
 
 These estimates are for planning purposes and can vary. For precise budgeting, you should consult with Spotify's ad sales team or a digital marketing expert familiar with Spotify ads.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

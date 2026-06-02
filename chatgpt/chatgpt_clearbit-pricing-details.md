@@ -53,3 +53,6 @@ clelarbit cost
 - Enterprise: **$10k–$40k+/year** typical range.
 
 If relevant, specify the use case (e.g., **website visitor reveal, lead enrichment, or API enrichment**). Pricing varies significantly across those modules.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

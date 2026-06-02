@@ -214,3 +214,6 @@ export default class DataGridCell extends Vue {
 ```
 
 You will also need to configure the TypeScript compiler by creating a `tsconfig.json` file in the root of your project. You can find more information about using TypeScript with Vue.js in the documentation.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

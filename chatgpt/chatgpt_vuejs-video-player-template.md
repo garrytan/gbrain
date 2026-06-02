@@ -79,3 +79,6 @@ Here's an updated version of the first child div with the `background-size` prop
 ```
 
 Note that the `object-center` class is also applied to this div, which centers the background image horizontally and vertically within the div. If you don't want the image to be centered, you can remove this class.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -526,3 +526,6 @@ jov.ie
 ```
 
 That is the cleanest version: human first, then motion, then system, then brand.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

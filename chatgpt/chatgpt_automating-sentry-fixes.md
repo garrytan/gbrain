@@ -269,3 +269,6 @@ If you'd like, I can:
 - Draft a production-ready architecture diagram
 - Write a hardened AI-fix script
 - Or design a scalable “self-healing repo” system optimized for fast-moving startups
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

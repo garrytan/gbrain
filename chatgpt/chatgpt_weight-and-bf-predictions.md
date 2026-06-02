@@ -165,3 +165,6 @@ Lets put it all together.
 starting today, 4 week mini cut, then 4 week maintanece, then 4 week mini cut, then 14 week bulk.
 
 Give me a table starting today and going through each of those phases 
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

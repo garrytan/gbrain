@@ -81,3 +81,6 @@ I attempted to add the remaining Clerk email DNS records for **jov.ie** again. I
 It appears that the existing `clkmail`, `clk._domainkey`, or `clk2._domainkey` records still exist in the DNS configuration and block adding new CNAMEs. Additionally, the domain is still configured with third‑party nameservers, so Vercel cannot fully manage its DNS until the nameservers are pointed to Vercel.
 
 To proceed, these existing records would need to be removed or updated via the current DNS provider, or the domain’s nameservers need to be changed to Vercel’s nameservers. Only then will Vercel allow adding or modifying the CNAME records for Clerk. Let me know how you would like to handle these existing records or if you’d like to update the nameservers.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

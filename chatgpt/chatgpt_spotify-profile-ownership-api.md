@@ -41,3 +41,6 @@ If `me.id === claimed_user_id`, you’ve effectively verified they control that 
 What **won’t** work: calling **GET `/v1/users/{user_id}`** alone only returns public profile info and does **not** prove control/ownership. citeturn0search2
 
 If you tell me your stack (Node/Python/etc.), I can drop a minimal PKCE + `/me` verification snippet.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

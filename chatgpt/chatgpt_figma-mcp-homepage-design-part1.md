@@ -14,3 +14,6 @@ tags: [chatgpt, import, long-form]
 > Created: 2026-03-06T19:55:40Z
 > Updated: 2026-03-06T19:59:41Z
 > Messages: 2
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

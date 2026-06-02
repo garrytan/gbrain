@@ -77,3 +77,6 @@ Here’s a concise breakdown of the different GPT versions you asked about:
 | o4-mini-high     | No             | Yes        | Varies   | Internal | Internal GPT-4o variant label |
 
 Let me know if you want the difference between **GPT-4o and GPT-4-turbo** too.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

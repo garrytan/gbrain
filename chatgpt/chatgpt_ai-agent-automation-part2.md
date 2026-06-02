@@ -581,3 +581,6 @@ My recommendation: **Airtable as the fundraising CRM source of truth**, **ops re
 - **Best “this becomes sales CRM too” stack:** `Attio + Gmail/Calendar sync + Claude + Clay + ops repo`. Attio is the better long-term CRM if investor, customer, partnership, and recruiting pipelines should all live in one relationship database. citeturn434671search1turn434671search5
 
 - **My final recommendation:** start with **Airtable**, because it is fast, visible, automatable, cheap enough, and easy for agents to update. Build the agent glue yourself. Re-evaluate Attio once the fundraise/customer pipeline gets bigger, and use Foundersuite only if you want a purpose-built fundraising app more than a custom agentic operating system.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

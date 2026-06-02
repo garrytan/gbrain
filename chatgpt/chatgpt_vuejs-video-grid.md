@@ -139,3 +139,6 @@ The component also includes a method to check if the browser supports HTML5 vide
 There is a commented-out section of code that includes a VideoPlayerModal component that can be used to display the video in a modal window. The modal component is not used in the current version of the component. 
 
 The component can be used with the props `items` and `layout`. The `items` prop is an array of objects that contain the data for each video/image item. The `layout` prop determines whether to display the items in a grid of three columns or in a list. The default layout is a grid of three columns. The component emits a `setVideoId` event when a video item is clicked, which can be used by the parent component to handle playing the video.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

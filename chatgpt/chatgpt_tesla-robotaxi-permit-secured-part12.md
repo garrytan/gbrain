@@ -122,3 +122,6 @@ This concludes automation turn number 4 of the *Tripwire: news‑parity detect
 
 
 This automation has been paused due to too many unread executions. You can resume it in automations settings or by asking ChatGPT.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

@@ -202,3 +202,6 @@ For instance, the body might look like this:
 ```
 
 In the example above, `"my_index_name"` would be the name of the Algolia index. If you have access to the complete request, you should look for a similar structure in the body to find the index name.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

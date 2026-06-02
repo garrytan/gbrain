@@ -223,3 +223,6 @@ remove the a7x3 worksamples and instead link to https://www.bravomedia.com/portf
 I updated the Work Samples section by removing the A7X3 link and replacing it with the Bravo Media portfolio URL. The description now highlights your digital strategy leadership and campaign work at Bravo Media. I also rewrote your self‑introduction with the optimized narrative we crafted, emphasizing your creative leadership, award‑winning projects, and experience across A7X3, Bravo Media, Voss Events, and Jovie【242063026404723†screenshot】.  
 
 All other sections remain intact. The form is ready to be submitted. Would you like me to tick the privacy agreement box and submit your application now?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

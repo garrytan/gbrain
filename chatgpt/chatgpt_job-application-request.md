@@ -53,3 +53,6 @@ If you want, I can also:
 - make it slightly more casual or more formal
 
 Just tell me which tone you prefer.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

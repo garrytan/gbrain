@@ -230,3 +230,6 @@ Finally, you can update the template to bind to the `privacyHtml` and `termsHtml
 
 Now, the component will fetch the Markdown files and parse them to HTML when it is created, and the resulting HTML will be rendered in the template.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

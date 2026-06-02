@@ -26,3 +26,6 @@ Why do painters wear white?
 ## Assistant
 
 Painters often wear white because white clothes are more resistant to bleach, allowing them to use it to clean off paint stains without damaging the clothes. Also, white reflects light rather than absorbing it, keeping painters cooler while working. Lastly, wearing white signifies professionalism and cleanliness in the trade.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

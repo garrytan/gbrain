@@ -49,3 +49,6 @@ Excited to see where it is in the next few weeks. Recent updates are already lea
 - “Ruflo” spelling: verify this. Could be wrong or niche.
 - Fixed typos: “unpresicatable,” “sometime,” “use pressed,” “genrrally,” “exteneral,” “reliable stable.”
 - The “type a” anecdote is plausible as user experience, but it reads as personal observation rather than objective claim, which is safer.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

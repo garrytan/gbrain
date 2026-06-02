@@ -38,3 +38,6 @@ Update it
 ## Assistant
 
 Please provide the details of the new tracks and their respective information you want to add to the playlist tracking table.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -43,3 +43,6 @@ Here’s a concise breakdown of the **Claude team** — the people and organizat
 Anthropic’s Claude team combines research, engineering, and safety specialists to build and refine the Claude family of language models (e.g., Opus, Sonnet, Haiku). The company emphasizes *”Constitutional AI”* — a framework guiding behavior and safety for the models. citeturn0search3
 
 In short: Claude is the product of **Anthropic’s leadership and research engineers**, guided by AI safety principles and led by founders with deep experience in large-scale AI research. citeturn0search0turn0search3
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

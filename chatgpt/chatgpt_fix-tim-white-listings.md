@@ -40,3 +40,6 @@ To correct the misinformation on Genius:
 6. **Consistency**: Regularly check your profile and new listings to ensure your discography remains accurate.
 
 Taking these steps should help correct the inaccuracies on your Genius profile.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

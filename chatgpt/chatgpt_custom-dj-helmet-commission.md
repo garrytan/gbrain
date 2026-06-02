@@ -57,3 +57,6 @@ Mr. White, here are rough commissioning‐cost estimates for each vendor:
 - **Prop Masters Inc.**: film/TV–level vacuum-forming and resin-cast helmet projects typically start in the mid-\$8 000s and can climb past \$25 000 once you add programmable LEDs, custom molds, and high-end paint; reach out for a precise estimate.  
 
 Let me know which shop(s) you’d like to approach first, and I can draft outreach or help compare timelines and specs.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -48,3 +48,6 @@ Here’s a concise overview of **Claude-related prompt generators** and tools yo
 ---
 
 If you want, I can generate a **Claude code prompt template** for a specific coding task you’re working on — just tell me what you need the AI to do.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -51,3 +51,6 @@ All with Claude driving the whole cycle on your behalf. citeturn0search9�
 - These are mostly **community projects**, not official Anthropic products, so feature sets and stability vary widely.
 
 If you want a link to a specific *AutoClaude* GitHub or details on how to set one up with your Claude API key, just let me know.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

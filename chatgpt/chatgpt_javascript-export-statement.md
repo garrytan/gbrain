@@ -355,3 +355,6 @@ export default {
 ```
 
 I added an `@click` handler to the `<div>` element that emits a `'video-clicked'` event with the video ID of the clicked item. You can catch this event in the parent component and handle it as necessary.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

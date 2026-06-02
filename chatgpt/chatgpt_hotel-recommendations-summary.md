@@ -96,3 +96,6 @@ Got it. Here's your updated list:
 - Andaz
 - Sixty Beverly Hills
 - Chamberlain Hotel
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

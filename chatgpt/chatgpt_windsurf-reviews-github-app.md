@@ -53,3 +53,6 @@ Here’s an overview of what **Windsurf Reviews (GitHub app)** is and what users
 Windsurf’s GitHub app adds *automated AI PR reviews* that can speed up workflows and offer consistent feedback. It’s promising for team environments but still maturing compared with more integrated code-review solutions.
 
 If you want, I can fetch specific reviews or star/fork stats from the Windsurf GitHub repositories to help gauge popularity.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

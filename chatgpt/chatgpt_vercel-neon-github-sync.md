@@ -62,3 +62,6 @@ You can run both in parallel. The only risk is **duplication of branch logic**:
 For Jovie’s MVP (Next.js + Supabase + Clerk + Drizzle), GitHub sync is probably **overkill until you really need per-PR DB previews**.  
 
 Want me to map out the exact setup for **“Vercel only” vs “Vercel + GitHub sync”** so you can see which fits Jovie right now?
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

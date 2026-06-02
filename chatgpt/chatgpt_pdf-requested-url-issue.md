@@ -28,3 +28,6 @@ grab all the info from this faq and put it a pdf
 ## Assistant
 
 I'm unable to access the content of the page you've provided. It seems the page had no contents or there might be an issue with the URL. If you have the text or content you want to be put into a PDF, you can provide it to me in another format, or if the page is supposed to have content, please double-check the URL or provide a different one.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

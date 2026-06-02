@@ -73,3 +73,6 @@ If you bundle:
 - For theft/loss of a Mac or AirPods, you’d need **separate insurance** (e.g., renters/homeowners) — Apple’s plans don’t cover those as lost/stolen. citeturn0search5
 
 In short, yes you can bundle all three devices under AppleCare One, but **only the iPhone gets theft & loss protection**; **the MacBook Pro and AirPods do not**.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

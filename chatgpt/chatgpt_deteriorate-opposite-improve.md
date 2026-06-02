@@ -26,3 +26,6 @@ What word means the opposite of improve?
 ## Assistant
 
 The word that means the opposite of "improve" is "deteriorate."
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

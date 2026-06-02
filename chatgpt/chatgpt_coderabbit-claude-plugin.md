@@ -53,3 +53,6 @@ coderabiit claude plugin
 It’s essentially a **plugin for *Claude Code*** that pairs Claude’s generative coding with **specialized review capabilities from CodeRabbit**, streamlining code quality checks directly in your development workflow. citeturn0search8
 
 If you want details on setup steps or examples of commands, just ask.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

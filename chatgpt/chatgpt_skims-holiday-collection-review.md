@@ -50,3 +50,6 @@ If you’re looking at the holiday collection from **entity["brand", "SKIM
 - If you care about sustainability or materials, check fabric details (flannel, silk, cotton blends etc).  
 
 If you like, I can pull out **top picks** from the collection (with images + price) that match your style (you’re tall 6’4”, so we can look at item lengths, fits etc). Would that be helpful?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

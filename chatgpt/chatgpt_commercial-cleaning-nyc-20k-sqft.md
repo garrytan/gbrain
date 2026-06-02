@@ -236,3 +236,6 @@ When you request a proposal, make sure to supply or demand the following:
 ---
 
 If you like, I can reach out to these three for you (pretend quotes) and estimate what you might expect to pay for your 20,000 sq ft + event setup in Beverly Center. Do you want me to pull those mock estimates for comparison?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

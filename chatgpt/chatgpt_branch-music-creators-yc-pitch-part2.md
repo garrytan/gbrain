@@ -876,3 +876,6 @@ combine option 1 and 2 and to one clean slide that hsows one line. always in syn
 
 
 great now show me this in a more frame.io style design.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

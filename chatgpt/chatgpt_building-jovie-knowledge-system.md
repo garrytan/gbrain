@@ -349,3 +349,6 @@ Before coding, produce a short implementation plan and identify any risky assump
 Build the core inside Jovie as a **reviewed knowledge + feedback + eval system**.
 
 Use **Claude Code directly** to implement it because this is repo-level product engineering. Use **Hermes later** as a continuous research/eval/candidate-generation worker. Do not let any autonomous agent directly approve knowledge, modify production knowledge, or deploy changes without review.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

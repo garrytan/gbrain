@@ -701,3 +701,6 @@ Once you identify the discrepancy, you can adjust the normalization logic or the
 Remember, `var_dump` outputs will appear in your PHP error log or on the page itself, depending on your PHP configuration. If you're running this in a web environment, make sure you have access to where the output is being sent.
 
 After you have diagnosed and fixed the issue, remember to remove or comment out the `var_dump` statements, as they are meant for debugging purposes and should not be part of the final production code.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

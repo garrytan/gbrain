@@ -51,3 +51,6 @@ Mr. White — here are several bartending job leads in Hollywood / West Hollywoo
 4. Verify any certifications required in California (e.g., alcohol server training) and ensure you meet the “years of experience” expectations.
 
 If you like, I can search and pull **10-15 current bartending jobs** in Hollywood/West Hollywood with direct links, filterable by full-time/part-time and experience level. Would you like that?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

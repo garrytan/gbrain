@@ -32,3 +32,6 @@ cdj-2000nexus
 For a comprehensive overview of the CDJ-2000NXS's features, you can watch the official walkthrough video:
 
 videoCDJ-2000nexus Official Walkthroughturn0search4 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

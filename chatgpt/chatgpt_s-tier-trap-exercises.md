@@ -95,3 +95,6 @@ Mr. White — here’s a ranked “best → worst” list for each head, matchin
 7. **Upright rows (BB/DB/Smith)** — workable but more joint/fatigue cost; usually below lateral-raise variants. citeturn0search4  
 
 If you want, I can turn this into a 2-day shoulder micro-plan with volumes and rep targets RP-style.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

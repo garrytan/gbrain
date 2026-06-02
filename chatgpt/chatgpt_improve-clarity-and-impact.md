@@ -72,3 +72,6 @@ They fail because users are asked to make decisions they never should have had.*
 ---
 
 If you want, I can **rewrite just the opening**, **tighten the middle**, or **polish the ending**—tell me which section to attack first.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

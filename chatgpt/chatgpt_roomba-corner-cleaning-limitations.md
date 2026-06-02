@@ -28,3 +28,6 @@ Because roombas are circular, do they just never vacuum corners?
 Correct — standard circular Roombas can’t fully reach into 90-degree corners. Their design includes a spinning side brush that sweeps debris out of corners and edges into the robot's suction path, but it’s not perfect. Dirt can still accumulate in tight corners.
 
 Some premium models (like the Roomba j7+ or s9+) have improved edge-cleaning, with the s9+ using a more D-shaped design specifically to better reach corners. If corner cleanliness is a high priority, go for a D-shaped robot vacuum or manually hit corners occasionally.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

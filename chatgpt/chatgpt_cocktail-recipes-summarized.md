@@ -563,3 +563,6 @@ Here's a summary of the steps:
      ```
 
 By following these steps, you can accurately calculate the number of bottles needed for your 18L batch of each cocktail ingredient.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

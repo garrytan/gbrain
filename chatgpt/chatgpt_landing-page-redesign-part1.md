@@ -632,3 +632,6 @@ Okay, you've just learned at Apparent that your design skills are clearly better
 *   Disco Wax
 
 Let's try and get all of those logos looking clean and white on black. For the trust bar, let's write "Trusted by artists". I think what I want to do is start having that hero be built by an agent, the codex agent using GPT 5.4, and that logo bar being built by an agent, the codex agent using GPT 5.4. Give it eyes with /browser/designer view or Chrome MTP or one of those, and then just have it iterate and loop until it thinks that it's incredibly polished and high end. You and I can iterate on what the next section should be while it's working on that. Can you give me that prompt, and then I guess I could drop this image in there too, you
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

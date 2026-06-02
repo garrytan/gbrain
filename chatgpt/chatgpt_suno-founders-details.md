@@ -40,3 +40,6 @@ Here are the key details about **Suno, Inc.**, the company and its founders:
 - The company is based in Cambridge, Massachusetts. citeturn0search11turn0search0  
 
 If you meant a **different “Suno”** (for example, a fashion brand or a non-tech company), I can check that too for you, Mr. White.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

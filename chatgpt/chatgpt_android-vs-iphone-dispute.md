@@ -54,3 +54,6 @@ No reply to the jobs died comment
 Here’s a concise, fact-driven reply to the top comment (“Thank God Steve Jobs died...”):
 
 > You don’t have to like the guy, but cheering someone’s death over a phone design is wild. Jobs revolutionized six industries—computing, phones, music, animation, retail, and publishing. That’s just fact.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

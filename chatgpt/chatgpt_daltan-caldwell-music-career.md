@@ -101,3 +101,6 @@ I **couldn’t find an exact archived copy** of the tweet you described (e.g., *
 > **“The argument that ‘AI can do A, but it will be a long time before it can do B’ keeps aging …”** — from Dalton Caldwell’s account on X (@daltonc). citeturn0search1
 
 If you have a **screenshotted snippet**, even a few exact words (e.g., the precise phrasing around *“everyone can make music…”*), I can help reconstruct the full tweet and explain its context.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

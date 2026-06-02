@@ -304,3 +304,6 @@ That means no help if your car gets hit and it’s your fault—or if it's a sin
 | Super paranoid                     | $500 deductible (costs more monthly)
 
 Let me know what your quote looks like with Collision added—I’ll tell you if it’s worth it.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

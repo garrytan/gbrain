@@ -149,3 +149,6 @@ export function ReactQueryProvider({ children }: { children: React.ReactNode }) 
 ```
 
 If you tell me which you meant—**Query** (data fetching), **Router** (routing/search params), or **Store** (client state)—I’ll give you the exact Next.js setup + recommended architecture with `nuqs`.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

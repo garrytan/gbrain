@@ -826,3 +826,6 @@ If you want, I can now make this:
 - **more commercial-growth focused**
 
 Just tell me which direction you want next.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

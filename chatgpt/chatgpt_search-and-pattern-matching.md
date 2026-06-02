@@ -296,3 +296,6 @@ If you enable a Linear connector with write access (or add the Linear issue-crea
 - and assign all of them to Codex.
 
 Workaround (you can do now): paste your Linear team key + the username for “codex” (or its Linear user id), and I’ll output a ready-to-paste batch of issue titles + descriptions + priorities + labels + desired state + assignee so you can import/create quickly.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

@@ -51,3 +51,6 @@ To make a 10-liter batch of the drink, the quantities of each ingredient should 
 - Triple Sec: 0.714 liters
 - Simple Syrup: 0.714 liters
 - Lime Juice: 0.714 liters
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -118,3 +118,6 @@ OpenRouter documents these Claude Code model override variables and warns that C
 **Yes:** Claude Code → OpenRouter endpoint → Anthropic Claude model is viable.
 
 **Risky:** Claude Code dynamic workflows → OpenRouter → non-Anthropic model. The workflow/subagent/tool-use behavior may break, degrade, or produce weird errors because Claude Code depends on Anthropic-compatible semantics.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

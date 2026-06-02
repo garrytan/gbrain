@@ -86,3 +86,6 @@ import Logo from '@/assets/new-logo.png';
 - For background logos, define utilities in `tailwind.config.js`.
 
 If you meant a different “Tailwind” (like Tailwind UI, Tailwind Play, or a Tailwind-branded service), clarify and I’ll tailor it.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

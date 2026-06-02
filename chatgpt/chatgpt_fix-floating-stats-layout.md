@@ -182,3 +182,6 @@ struct StatCard: View {
 - Use `.safeAreaInset` or `padding(.bottom)` to make space for bottom nav.
 
 Let me know if you're using a custom image loader or `AsyncImage` and I’ll tweak that part too.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

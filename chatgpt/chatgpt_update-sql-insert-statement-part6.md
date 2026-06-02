@@ -53,3 +53,6 @@ def save_records_to_database(records):
         try:
             # Log the record and SQL statement before executing the SQL statement
             logging.info(f
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

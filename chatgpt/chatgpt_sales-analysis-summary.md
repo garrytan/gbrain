@@ -230,3 +230,6 @@ Mr. White — assuming 8 fl oz liquid per drink and weekend = Fri–Sun shows (�
 **Total (these 5): ~100.1 L**
 
 If you change the build: multiply by **0.75 / 1.25 / 1.50** for 6 / 10 / 12 oz pours.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -160,3 +160,6 @@ Mr. White, send this:
 > - a more Apple-level landing page feel
 >
 > The current direction feels like a functional draft. I need the next round to feel like a considered, high-end marketing site.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

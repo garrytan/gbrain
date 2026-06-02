@@ -66,3 +66,6 @@ Here's a quick breakdown of what can be improved or fixed in the UI from your sc
 - Use `Text.autoSize` or responsive layout if using SwiftUI.
 
 Want a Figma mockup or SwiftUI refactor for this screen?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

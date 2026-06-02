@@ -36,3 +36,6 @@ Yes, Mr. White — Vercel now has a **first-party queueing service**:
 There are also **build queues** (waiting for build resources), but that’s unrelated to app-level background job queues. citeturn0search1turn0search13  
 
 If you tell me your stack (plain Node, Next.js app router, etc.), I can sketch a minimal example using the `@vercel/queue` SDK. citeturn0search3
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

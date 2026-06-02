@@ -57,3 +57,6 @@ mock this up in high fidelity give me 5 options
 ## User
 
 04 but frame io inspired design system. and make it apple level polished. make it handle states where 0 or 1 tour dates or 0 or 1 releases still look good.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

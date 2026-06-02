@@ -501,3 +501,6 @@ Mr. White — I found several bartending / server‑bartender job listings in yo
 ---
 
 If any of those look good, I can pull up apply links and shift details.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

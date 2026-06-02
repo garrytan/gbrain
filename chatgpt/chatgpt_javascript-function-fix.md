@@ -108,3 +108,6 @@ function sendWelcomeMessage(welcomeMessage) {
 ```
 
 Try using this updated version of the function and see if it works as expected.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

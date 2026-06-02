@@ -336,3 +336,6 @@ Quick care so they look great tomorrow too:
 - Keep them **cool**, away from vents/sun.
 - **Top off water tonight**; **fresh water tomorrow** if you can.
 - If any peonies are still tight, that’s normal — they’ll open more overnight.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

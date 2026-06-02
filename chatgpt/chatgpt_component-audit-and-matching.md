@@ -1150,3 +1150,6 @@ If you'd like, I can also produce a **much stronger version optimized for Cursor
 - and **prevents the agent from prematurely exiting the loop**.
 
 That version tends to improve success rates by **2–3×** on tasks like this.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

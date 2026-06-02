@@ -38,3 +38,6 @@ More friwndly ile and put it on a person
 ## Assistant
 
 Here’s a more friendly version of the muffin head, now worn by a character. Let me know if you’d like any adjustments!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

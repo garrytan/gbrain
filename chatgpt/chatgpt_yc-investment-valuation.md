@@ -48,3 +48,6 @@ Here’s how **Y Combinator (YC) investment and implied valuation** typically wo
 - The fixed portion implies a low early valuation (~$1.7–1.8M), but most startups quickly validate higher market valuations with outside investors at Demo Day. citeturn0search23turn0search16
 
 If you need a simple number range for expected post-YC seed valuation benchmarks, YC startups today commonly price between **$15–$25 million post-money** in their first priced round after the program. citeturn0search16
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

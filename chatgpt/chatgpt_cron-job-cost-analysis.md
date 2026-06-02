@@ -98,3 +98,6 @@ Claude Code supports non-interactive `-p`, `--model` aliases like `sonnet`/`opus
 **Use DeepSeek V4 Pro for the next couple days of setup self-healing.** At the token sizes typical for log-debugging and patching dispatch scripts, the difference between Flash and Pro is cents, and the capability bump is worth it.
 
 Use Claude Code Opus only when the system has already failed once or twice and you need a high-confidence “fix the automation itself” pass.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

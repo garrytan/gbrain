@@ -135,3 +135,6 @@ Separately, **federal law does not force private businesses to accept cash**, bu
 That reduces the chance they spin it as “theft of services.”
 
 If you can get a photo of the exact “cash” wording on the sign/machine, I can tell you how strongly that supports you and what *exactly* to say (and not say) in writing.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

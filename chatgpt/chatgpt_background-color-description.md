@@ -27,3 +27,6 @@ Whats the background color
 ## Assistant
 
 The background color is a very dark gray—RGB approximately **(19, 19, 20)** (almost black).
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

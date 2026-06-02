@@ -200,3 +200,6 @@ Mr. White — chat-only audit:
   - The UI should feel like a merch picker, not a verbose AI transcript.
   - Cards should be compact, visual, and decision-oriented.
   - Internal operational state should be collapsed, hidden, or moved to admin tooling.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

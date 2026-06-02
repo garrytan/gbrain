@@ -44,3 +44,6 @@ Yes. **Onboarding should include a logout option.**
 - Single-use, device-bound flows (e.g., kiosk mode) — even then, admin escape should exist.
 
 Bottom line: **If a user can log in, they must be able to log out—at every step.**
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -163,3 +163,6 @@ export default {
 This component defines a method named `fetchMarkdownContent` that uses the `fetch` function to retrieve Markdown content from the server and stores it in the `privacyMarkdown` and `termsMarkdown` data properties. The `fetch` function returns a `Promise`, so the method uses `async/await` syntax to asynchronously wait for the `Promise` to resolve before storing the retrieved content.
 
 I hope this helps! Let me know if you have any questions.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

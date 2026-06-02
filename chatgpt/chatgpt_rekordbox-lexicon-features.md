@@ -48,3 +48,6 @@ rekordbox lexicon
 - **Rekordbox 6 Write Support**: Lexicon provides support for writing directly to Rekordbox 6, facilitating smooth library management and synchronization.
 
 By utilizing Lexicon, DJs can centralize their music management tasks, reduce manual workload, and ensure consistency across various DJ platforms, enhancing overall performance preparation and execution. 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

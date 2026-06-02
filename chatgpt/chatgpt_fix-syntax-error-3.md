@@ -133,3 +133,6 @@ In this example, the `setup` function defines a reactive property `userLists` an
 
 In the template, the `v-for` directive is used to iterate over the `userLists` array and render a list of the user's lists. When the `getUserLists` method is called, it updates the `userLists` array with the new list of lists, which causes the template to re-render with the updated list.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

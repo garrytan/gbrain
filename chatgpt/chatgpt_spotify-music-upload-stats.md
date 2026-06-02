@@ -578,3 +578,6 @@ What publication or journalist would you most want to tell your story and why?
 ## Assistant
 
 Billboard — because they sit at the intersection of music, business, and culture, and can credibly show both artists and the industry why Jovie is the solution to the discovery crisis.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

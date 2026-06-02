@@ -122,3 +122,6 @@ Woud apple use this in house?
 
 
 Apple’s teams absolutely write a ton of automated tests (using XCTest, XCUITest, etc.), but there’s no public evidence that “strict TDD” (Red-Green-Refactor) is mandated across the company. It’s more likely they mix approaches—writing unit/UI tests early for critical frameworks and features, but not dogmatically authoring every component with a failing test first. In short: rigorous test coverage is core at Apple, but classic TDD isn’t known to be a universal in-house rule.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

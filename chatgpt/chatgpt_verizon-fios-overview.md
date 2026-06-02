@@ -42,3 +42,6 @@ verizon fios
 - Compared to Verizon’s **5G Home Internet**, Fios typically provides higher max speeds and more consistent performance. citeturn0search19
 
 If you want me to check **availability and current local pricing** for your exact address, share your ZIP code.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -32,3 +32,6 @@ the 1975 spotify
 For a curated experience, check out their official playlist, "The 1975: At Their Very Best," featuring hits like "Robbers," "Happiness," and "I'm In Love With You" citeturn0search5.
 
 Their latest studio album, *Being Funny in a Foreign Language* (2022), received critical acclaim and debuted at No. 1 in the UK, Australia, and Ireland citeturn0search11. 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

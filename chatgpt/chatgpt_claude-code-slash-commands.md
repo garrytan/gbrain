@@ -83,3 +83,6 @@ Here are some useful built-in ones:
 ---
 
 If you like, Mr. White, I can **send you a template repository** (with some ready slash commands) for Claude Code that you can customise. Would you like that?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -47,3 +47,6 @@ That keeps it dead simple for launch—just one upsell lever: **remove branding*
 Later, you can expand tiers with more features, but for MVP, this is enough.
 
 Do you want me to also draft copy for the Pricing page (hero line, call-to-action, FAQs), so it’s “ready to ship”?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

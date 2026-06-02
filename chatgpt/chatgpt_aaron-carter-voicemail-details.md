@@ -78,3 +78,6 @@ Summarize the voicemail
 ## Assistant
 
 Mr. White, in that final voicemail Aaron Carter claimed he was being “set up” by Sony Records, insisting they owed him \$3.5 million and wouldn’t pay. He said Michael told him Brad Paisley would sue Sony for \$10 million. He also warned of a plot—naming “Harley Passenick” and referencing “Diddy”—to kill him, mixed in an antisemitic rant, and asserted he’d been forced into misdirection to protect himself.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

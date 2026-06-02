@@ -85,3 +85,6 @@ Add this instruction:
 - **Before finalizing, scan for sentences that use “not … but …” or “isn’t … it’s …” and rewrite them.**
 
 If you want, I can also give you a **full anti-LLM-style prompt** (for removing other tells like em dashes, “crucially,” “it’s worth noting,” etc.).
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

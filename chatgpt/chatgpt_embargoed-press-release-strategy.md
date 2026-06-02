@@ -52,3 +52,6 @@ To ensure your press release is not published until June 21, follow these steps:
 3. **Follow Up**: Consider following up with the recipients a few days before the release date to remind them of the embargo and ensure they adhere to it.
 
 4. **Legal Note**: While embargoes are based on mutual trust and understanding, be aware that not all recipients may honor the embargo. It's advisable to send your press release to trusted contacts who have a track record of respecting embargoes.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

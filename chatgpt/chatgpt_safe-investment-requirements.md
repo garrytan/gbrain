@@ -75,3 +75,6 @@ What *you* should do:
 Mercury is just the bank. Compliance with the SAFE is on you, not the interface.
 
 If you want, I can give you the clean internal bookkeeping language to use so this never becomes an issue in diligence.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

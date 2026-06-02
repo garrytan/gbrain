@@ -149,3 +149,6 @@ If you want, I can now:
 - Convert it into a **tweet-thread / LinkedIn post / Notion guide**
 
 Which direction do you want, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

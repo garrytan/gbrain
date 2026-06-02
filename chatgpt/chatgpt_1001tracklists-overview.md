@@ -26,3 +26,6 @@ tags: [chatgpt, import]
 ## Assistant
 
 ​1001Tracklists is a comprehensive online database that catalogs DJ tracklists from live sets, radio shows, and podcasts, serving as a valuable resource for electronic dance music enthusiasts seeking to identify tracks played by their favorite DJs. The platform allows users to explore tracklists, discover new music, and follow trends within the electronic music scene. Additionally, 1001Tracklists maintains an active presence on social media platforms such as Instagram citeturn0search1, SoundCloud citeturn0search2, Facebook citeturn0search3, X (formerly Twitter) citeturn0search4, and YouTube citeturn0search5, where they share exclusive mixes, live sets, and updates related to the electronic music community. They also curate playlists, like the "Top Overall Tracks" on Spotify citeturn0search6, featuring the most supported tracks over the past four weeks, updated weekly. 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

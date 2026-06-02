@@ -36,3 +36,6 @@ Once I have these, I’ll dig into the science of proportions and visual appeal 
 Great, Mr. White. I’ll research the optimal aesthetic proportions, facial layout, and design principles—backed by cognitive science and visual design research—that make headgear like Marshmello's or Daft Punk’s visually appealing and iconic. This will help ensure your blueberry muffin-inspired helmet design for MUFFINTOP resonates well with adult EDM audiences.
 
 I’ll also incorporate design guidelines related to cuteness, minimalism, and friendly expressions to make sure it’s distinctive but broadly likable. I’ll get back to you shortly with a concept based on this foundation.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

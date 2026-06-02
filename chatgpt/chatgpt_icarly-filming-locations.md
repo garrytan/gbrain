@@ -47,3 +47,6 @@ Mr. White — The most recent season of *Dexter: Resurrection* has **already con
 If you mean "either one" as *Resurrection* or *Original Sin*, *Original Sin* has been **canceled**, so there are no upcoming episodes for that. citeturn0news15turn0news10turn0search5  
 
 If you want, I can check if Season 2 of *Resurrection* has been announced yet and when it might drop.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

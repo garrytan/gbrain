@@ -76,3 +76,6 @@ No cream, no beige, no brown, no clutter, no childish icons, no cartoon style, n
 ```
 
 Geist’s official color docs organize the system around backgrounds plus scales for gray, gray alpha, blue, red, amber, green, teal, purple, and pink; the prompt above uses one family of each and swaps any cream surface for pure white. citeturn420285search1
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

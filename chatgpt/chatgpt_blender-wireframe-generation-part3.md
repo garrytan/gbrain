@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "You can definitely install MakeHuman via Terminal. If you're on macOS and have Homebrew installed, you can use it to install MakeHuman. Just open your Terminal and run:\n\n```bash\nbrew install --cask makehuman\n```\n\nIf you don't have Homebrew installed, you can get it from [brew.sh](https://brew.sh/) and then run the command. Let me know if you need any help with that process!"}
 {'asset_pointer': 'sediment://file_0000000050d4622f9b00b79a92eed587', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:30:42.150107+00:00', 'format': 'wav', 'metadata': {'end': 21.3, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1022478, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -105,3 +105,6 @@ Got it, Mr. White. Here are Los Angeles–area roles with posted base pay ≥ $1
 - **Enterprise Account Executive – Miro (LA)** — listed range $212,000–$260,000 (confirm base vs OTE with recruiter). citeturn14search2  
 
 If you tell me your target field or title, I’ll narrow this to a tight, apply-ready shortlist and draft a laser-targeted résumé for that band.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

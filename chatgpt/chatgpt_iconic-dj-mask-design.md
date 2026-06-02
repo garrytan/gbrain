@@ -91,3 +91,6 @@ For the purposes of the DJ Act that we're creating, this artist project we're cr
 ## Assistant
 
 Got it, Mr. White—MUFFINTOP it is. I’ll remember the styling moving forward.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

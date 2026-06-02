@@ -129,3 +129,6 @@ To bold the check marks in the modified code, you can use the `font-weight` prop
 In this modified code, the `font-weight` property is added to the inline style of the `span` element that contains the check mark. The value of `bold` is used to make the check mark bold.
 
 Note that you can adjust the values of the style attributes (e.g. `padding-right`, `margin`, `text-align`, etc.) and the Unicode character for the check mark to achieve the desired visual layout.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

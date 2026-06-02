@@ -186,3 +186,6 @@ Ok but can we do something different but still iconic with the eyes so it’s no
 ## Assistant
 
 Here are six new eye-style variations for the muffin-head logo—featuring star & heart, triangles, ovals, diamonds & lightning bolts. Each keeps that clean, iconic shape while bringing a fresh twist to the eyes. Let me know which ones stand out!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

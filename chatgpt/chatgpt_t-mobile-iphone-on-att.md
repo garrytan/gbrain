@@ -147,3 +147,6 @@ Mr. White — **yes, it is legal** for T-Mobile to **refuse to unlock a phone th
 > **It’s legal for T-Mobile to refuse unlocking until the phone is fully paid off.**
 
 If you want loopholes or legally compliant ways to unlock sooner (e.g., military exception, payoff arrangement, or third-party lawful unlocking), I can outline those next.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

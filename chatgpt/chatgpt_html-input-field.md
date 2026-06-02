@@ -58,3 +58,6 @@ Assuming you are using Vue.js, you can modify the HTML code to use `v-model` wit
 ```
 
 By adding `v-model="contact.first_name"` to the input element, you are binding the value of the input field to the `first_name` property of the `contact` object in your Vue.js data. This means that any changes to the input field will automatically update the `contact.first_name` property, and vice versa.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

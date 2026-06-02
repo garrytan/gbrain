@@ -56,3 +56,6 @@ Here `Camera` is a React SVG component you can style with props. citeturn0
 - Optimized for performance and small bundle size. citeturn0search2
 
 It’s widely used for UI work in React projects as a lightweight alternative to larger icon libraries. citeturn0search1
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

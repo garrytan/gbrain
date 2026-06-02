@@ -49,3 +49,6 @@ figma desktop app
 - You can still use the browser version if your OS isn’t supported or you prefer not to install. citeturn0search1
 
 If you want direct download links or help installing on your specific machine, tell me your OS.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

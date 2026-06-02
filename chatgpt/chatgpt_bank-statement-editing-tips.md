@@ -48,3 +48,6 @@ Mr. White, quickest workflow:
 8. **Label it “PROP – FOR FILM USE ONLY.”** Keeps everything aboveboard if someone finds the doc on set.
 
 That’s it—15 minutes tops once you have Acrobat (or the free alternatives).
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

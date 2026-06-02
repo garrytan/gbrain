@@ -201,3 +201,6 @@ From the public/other guests looking at *him*:
   - **Doesn’t hide your good history.**
 
 If you want to be extra sure, tell me roughly what that review says (or paste it, minus any personal info) and I’ll help you craft a sharp public response that makes you look sane and him look like the problem—without breaking Airbnb’s review rules.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

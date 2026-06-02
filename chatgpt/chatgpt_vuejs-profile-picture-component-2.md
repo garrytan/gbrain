@@ -343,3 +343,6 @@ To show a fallback background color in case the default image has not loaded yet
 ```
 
 This will show a red background color until the default image has finished loading or until the `contact.profile_pic_url` value is available.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

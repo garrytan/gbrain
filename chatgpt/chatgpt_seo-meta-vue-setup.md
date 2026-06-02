@@ -302,3 +302,6 @@ export default {
 ```
 
 This setup adds the custom title and description specific to the Tim White bio page while keeping the general SEO tags defined globally.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

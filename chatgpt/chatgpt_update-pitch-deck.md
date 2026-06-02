@@ -36,3 +36,6 @@ Mr. White, upload the current pitch deck file.
 I found the prior direction: Jovie as **release ops for artists & labels**, YC/Seibel-simple, dark modern style, focused on post-distribution release workflows and CTA conversion.
 
 Send the deck plus any specific changes. If no notes, I’ll update it using that direction.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

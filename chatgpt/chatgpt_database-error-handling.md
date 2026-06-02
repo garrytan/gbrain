@@ -456,3 +456,6 @@ Mr. White, here’s the quickest way:
    Then pass `redirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL`.
 
 That guarantees each environment sends you right back to itself after Google sign-in.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

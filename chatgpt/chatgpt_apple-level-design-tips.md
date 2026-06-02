@@ -476,3 +476,6 @@ You already have the app logic, models, and behaviors implemented. **Do not chan
 
 Deliverables: update styles, materials, typography, spacing, and component visuals to match these constraints—no new features, no logic changes beyond removing the food/workout UI.
 ~~~
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

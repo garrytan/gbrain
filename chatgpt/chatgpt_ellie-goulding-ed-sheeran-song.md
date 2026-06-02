@@ -29,3 +29,6 @@ Yes, Mr. White—Ellie Goulding has publicly addressed the gossip around Ed Shee
 
 - In June 2015 she told Elle UK that she “never dated Ed Sheeran” and that “Don’t” isn’t about her citeturn0search10.  
 - More recently (Feb 2023), she told PEOPLE that the cheating‐rumor fallout from that song “caused me a lot of trauma” and insisted she’d never even been in a relationship with him citeturn0search3.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

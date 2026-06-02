@@ -60,3 +60,6 @@ When did chrome launch incognito mode
 ## Assistant
 
 Google Chrome launched Incognito Mode on **December 11, 2008** with the release of Chrome 1.0. It allows users to browse the web privately without saving history, cookies, or other local data.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

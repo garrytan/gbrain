@@ -47,3 +47,6 @@ Mr. White — if the entity["software","Windsurf",0] IDE’s entity�
 ---
 
 If you like, I can walk you through *your* specific `mcp_config.json` and logs (you’d need to paste them) and we can identify exactly what’s failing. Do you want to do that?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

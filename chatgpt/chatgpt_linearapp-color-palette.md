@@ -44,3 +44,6 @@ Mr. White — use **Linear.app’s dark theme palette**. Set the fields exactly 
 - Border / divider: `#1C1D22`
 
 This matches Linear’s brand hue and contrast ratios closely.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

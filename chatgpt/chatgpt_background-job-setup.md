@@ -791,3 +791,6 @@ This field is **purely optional**, and **does not affect runtime performance**, 
 ---
 
 If you want, Mr. White, I’ll now also tell you **exact TS + Drizzle migration definitions**, so there’s zero ambiguity on implementation.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -63,3 +63,6 @@ If you want, I can:
 - Propose a corrected table hierarchy  
 - Define proper sync + error states  
 - Suggest a first-time “activation” flow
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

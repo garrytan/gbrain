@@ -40,3 +40,6 @@ I found usable Jovie context: a release operating system for music creators, plu
 Mr. White, the deck is ready: [Download the Jovie A16Z Speedrun pre-seed deck](sandbox:/mnt/data/Jovie_A16Z_Speedrun_PreSeed_Deck.pptx).
 
 I kept live traction numbers un-invented; slide 10 lists the metrics to drop in before submission.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

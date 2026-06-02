@@ -68,3 +68,6 @@ Here’s a general idea of what you might expect:
 The total cycle time can range from 2 to 6 minutes, depending on the specific settings and model.
 
 If you need the exact durations for your model, please refer to the user manual or the control panel settings for cycle options.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

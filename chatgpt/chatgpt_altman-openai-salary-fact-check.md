@@ -127,3 +127,6 @@ Great question. Let’s break this down with clarity and receipts:
 ### 👊 Optional Clapback Comment:
 
 > “Sure, Sam doesn’t take a salary or own OpenAI shares. But don’t worry — he’s got enough indirect equity exposure to GPT his way into a Gulfstream.”
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

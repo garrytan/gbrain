@@ -126,3 +126,6 @@ Backup any edits/albums first—some users have lost local edits after reinstall
 If it’s **still** looping after step 8, it’s likely a regression in the current build. File a ticket with Capture One and attach a short screen recording plus your device, iOS version, and app version; their mobile changelog shows ongoing fixes. citeturn0search12
 
 Want me to draft a terse bug report you can paste to Capture One support?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -107,3 +107,6 @@ Mr. White, here’s the batch plan (18 L per batch):
 So for each of your six drinks:
 - If it’s **still**: make **4×18 L**.
 - If it’s **topped with soda**: make **2×18 L**.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

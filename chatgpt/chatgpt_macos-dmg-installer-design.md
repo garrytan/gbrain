@@ -77,3 +77,6 @@ Mood:
 - Production-ready
 
 Deliver a single polished DMG installer window background for a macOS Electron app called Jovie.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

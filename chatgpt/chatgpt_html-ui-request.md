@@ -178,3 +178,6 @@ Sure! Here's how you can convert the CSS to Tailwind CSS and add it to the previ
 ```
 
 I hope this helps! Let me know if you have any questions.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

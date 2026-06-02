@@ -108,3 +108,6 @@ Clerk works perfectly on Vercel previews **if and only if**:
 - No hardcoded origins or cookie overrides
 
 If you want, I can audit your **middleware.ts**, **auth config**, or **OAuth redirect setup** in under a minute.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

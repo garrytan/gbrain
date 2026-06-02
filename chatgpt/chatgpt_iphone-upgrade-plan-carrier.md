@@ -56,3 +56,6 @@ To be extra safe:
 - Test with the Google Fi SIM before committing.
 
 If you like, I can check whether your specific iPhone model (depending on which one you get) is fully compatible/unlocked for Google Fi. Do you want me to check that?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -915,3 +915,6 @@ Mr. White — here are **ready-to-copy prompts** for each fix batch.
 > - Updated components + short explanation per component of what was leaking and how it’s prevented now.
 
 If you want, I can also rewrite each prompt into a **one-file-at-a-time** version (more copy/paste-friendly for tooling that works best on single diffs).
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

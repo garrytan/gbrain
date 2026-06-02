@@ -31,3 +31,6 @@ Turn that into a well written slamtastic comment
 Here you go, Mr. White:
 
 “‘Wow, nobody appreciates my *real* art, I’m cooler because I do the harder thing to get the same result’ is a wild way to say you’re just mad people like different stuff.”
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

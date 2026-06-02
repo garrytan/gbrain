@@ -605,3 +605,6 @@ This implementation will display Spotify and Apple Music links next to each song
 
 
 check the links to make sure they are valid links to the songs. if they are not remove them and find the correct one
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

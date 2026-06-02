@@ -103,3 +103,6 @@ Understood, Mr. White. If you’re talking about a **water-based upholstery vacu
 After it’s dry, **lightly brush the nap** in one direction to restore the texture and prevent blotchy shading.
 
 If you want, tell me **the brand/model of the cleaner** you have and the **cleaning code on the sofa tag** — I’ll dial this in perfectly so you don’t ruin a $3–5k couch.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

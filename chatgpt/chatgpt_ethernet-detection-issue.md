@@ -38,3 +38,6 @@ Mr. White, try the following steps to clear the phantom Ethernet connection:
 5. **Factory reset (last resort):** If all else fails, try a factory reset in Settings → My Fire TV → Reset to Factory Defaults. This will wipe everything but can fix stubborn hardware detection issues.
 
 If the problem persists even after these steps, the Ethernet jack or its detection circuitry might be defective, and you may need to contact Amazon support or request a replacement.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

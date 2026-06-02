@@ -100,3 +100,6 @@ Thanks for understanding.
 **Tim White**  
 instagram.com/timwhite  
 732-668-2148
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

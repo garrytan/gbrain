@@ -52,3 +52,6 @@ can you find me some facts about the RCA victor's actual investment in the band 
 ## Assistant
 
 RCA Victor's investment in Jefferson Airplane was significant, especially for their breakthrough album "Surrealistic Pillow." The label allocated a substantial budget to ensure high production quality, which included extensive studio time at RCA Victor’s Music Center of the World in Hollywood. Additionally, RCA supported the band with promotional activities, including radio play, television appearances, and live performance tours. This comprehensive support played a crucial role in the band's success and the iconic status of "Surrealistic Pillow"【9†source】【9†source】.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

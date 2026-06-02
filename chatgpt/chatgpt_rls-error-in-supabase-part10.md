@@ -520,3 +520,6 @@ export default defineEventHandler(async (event) => {
    Whether the user was found or newly created, we return a single `userRecord` in the response.  
 
 This way, you avoid the “multiple or no rows” error, and you automatically create the user if they don’t exist yet.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

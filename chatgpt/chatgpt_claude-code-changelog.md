@@ -47,3 +47,6 @@ Mr. White — here’s a summary of the recent changelog and noted updates for �
 ---
 
 If you like, I can **fetch and deliver the full changelog entries** (for the last ~10 versions) for Claude Code and send them as a structured list. Would you like me to pull that together?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

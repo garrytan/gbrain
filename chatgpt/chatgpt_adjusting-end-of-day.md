@@ -75,3 +75,6 @@ Can you look at the product roadmap for the manufacturer and see if there's any 
 You can check the MacroFactor public roadmap to see if the feature to adjust the end of the day has been suggested or is planned for future updates. The public roadmap is available on their website and within the app under the "More" section. Users can vote on features they'd like to see, which helps prioritize development efforts. As of now, there isn't an indication that this specific feature is planned, but you can suggest it and see if it gains traction among other users.
 
 For more details, you can visit the [MacroFactor public roadmap](https://feedback.macrofactorapp.com) or view it directly in the app【19†source】【20†source】.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

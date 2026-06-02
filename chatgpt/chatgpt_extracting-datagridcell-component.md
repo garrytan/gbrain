@@ -104,3 +104,6 @@ export default {
 ```
 
 In this example, the `input` element and the `class` attribute of the `input` element have been moved into the `DataGridCell` component, and the necessary data and attributes have been passed in as props. The `inputValue` data property is used to bind to the `v-model` directive of the `input` element, and the `inputClass` computed property is used to bind to the `class` attribute of the `input` element. The `updateCrmMeta` method is used to handle the `@blur` event of the `input` element.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

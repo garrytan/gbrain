@@ -78,3 +78,6 @@ The component has two methods: supportsVideo() and getVideoSrc(). The supportsVi
 The component uses some CSS classes from the Tailwind CSS library to style the HTML elements. For example, the grid class is used to create a CSS grid layout, the min-h-full class is used to set the minimum height of an element to 100%, and the flex class is used to create a flexbox layout. 
 
 In summary, this component can be used to display a grid of items with video or image backgrounds, titles, subtitles, and buttons. The video backgrounds are supported by checking if the browser can play video, and using a Vimeo video URL with some parameters.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

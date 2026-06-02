@@ -38,3 +38,6 @@ https://mcp.neon.tech/sse
 ``` citeturn0search0turn0search3
 
 Use this URL in your MCP client (e.g., Claude Code, Cursor, etc.) config under the `"url"` or `"args"` field when setting up the Neon MCP server connection. citeturn0search0
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

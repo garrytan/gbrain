@@ -90,3 +90,6 @@ Cannabis is legal for adults **21+** in California. Hollywood follows California
 ---
 
 If you want details on dispensaries, delivery services, or consumption lounges specifically operating in Hollywood, specify and I will narrow it down.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

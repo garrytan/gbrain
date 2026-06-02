@@ -178,3 +178,6 @@ That stall-then-jump behavior usually means you only report the first chunk of w
 - If you can’t measure it, fake the middle by animating toward a “near-done” value, then finish at 100%.  
 
 That eliminates the long 25%-plateau and makes your loader feel alive.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

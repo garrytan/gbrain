@@ -35,3 +35,6 @@ Key clues:
 - Coiled 12 V power cord for a car accessory outlet.
 
 These jacks usually come in a kit with a small impact wrench or tire inflator. Plug it into the car’s 12 V outlet, position it under the lift point, and it raises the car with a switch instead of a manual pump.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

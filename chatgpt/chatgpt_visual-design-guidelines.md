@@ -397,3 +397,6 @@ This keeps trust without changing data.
 ---
 
 If you want a tight next step: implement **row typography + padding + divider changes first**. That alone will make History feel like it belongs. Then optionally add the outlier/duplicate visual treatment.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

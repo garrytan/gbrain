@@ -248,3 +248,6 @@ Mr. White, here are **Linear-style UI tokens** you can drop into your design sys
 ```
 
 If you want this to feel *extra* Linear, the key move is: **derive surfaces + borders from just (base, accent, contrast)**, which Linear has described doing via **LCH-based theme generation** for consistent elevation steps. citeturn5view0turn3view0
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -142,3 +142,6 @@ I’ll give exact commands based on your setup.
 ---
 
 Would you like the patch optimized for `rbenv`, `asdf`, or system Ruby?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

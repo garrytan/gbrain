@@ -447,3 +447,6 @@ Here is the complete code with the requested changes:
 
 Use vue herioicons
 https://github.com/tailwindlabs/heroicons
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

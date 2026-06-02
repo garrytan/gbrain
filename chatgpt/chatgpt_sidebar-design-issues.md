@@ -892,3 +892,6 @@ Do it and open in linear
 ## Assistant
 
 It looks like we need to be signed in to Linear to create these tasks. Please use your credentials to log in to your Linear account in the browser. Once you’ve finished logging in, let me know and I can proceed to add the new issues with the plan we outlined.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

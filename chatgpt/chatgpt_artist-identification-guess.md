@@ -38,3 +38,6 @@ The most likely answer is **Dean Lewis** or possibly **Lewis Capaldi**, but the 
 Another very solid contender is **Mike Posner** (he famously walked across America, had early street hustle, and "I Took a Pill in Ibiza" fits that genre-blurring description).
 
 But if I had to bet: **Mike Posner**.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

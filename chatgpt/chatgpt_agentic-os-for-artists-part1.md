@@ -674,3 +674,6 @@ frame it more like jovie is your manager but shes ai but shes closed loop so she
 
 
 I’ll turn the AI manager framing into a practical homepage spec grounded in the current jov.ie structure, with section order, copy, reused components, CTAs, and what to hide.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

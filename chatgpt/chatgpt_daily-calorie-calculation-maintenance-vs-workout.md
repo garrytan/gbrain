@@ -159,3 +159,6 @@ Instructions:
 7. Serve with a straw and enjoy your Tequila Sunrise!
 
 The key to this cocktail is creating the visually appealing sunrise effect by layering the ingredients. The grenadine sinks to the bottom, creating a gradient of colors in the glass.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

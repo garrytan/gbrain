@@ -445,3 +445,6 @@ Mr. White, the error "Invalid API key" means that the Supabase client isn’t re
    - On Vercel, check your project settings to ensure the environment variables are correctly defined.
 
 Once your environment variables are set up with the correct values, your endpoint should authenticate with Supabase without returning the "Invalid API key" error.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

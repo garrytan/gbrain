@@ -395,3 +395,6 @@ By ensuring that the column types are correct and the data is properly formatted
 
 
 we should skip empty arrays
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

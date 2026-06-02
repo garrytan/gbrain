@@ -26,3 +26,6 @@ an email list youll actually use. fan subscribes section left aligned you scroll
 ## User
 
 no it would be scroll driven. frame.io design system. one single line thatocme out oef the fan caputre section and into the alert section fan capture is physically above the other section with generous white space so the line can carry over. hih end clean. modern.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

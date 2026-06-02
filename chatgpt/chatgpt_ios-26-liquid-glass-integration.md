@@ -107,3 +107,6 @@ Here’s a polished, concise breakdown, Mr. White:
 By adopting this approach, your onboarding will stay modern, responsive, aligned with Apple’s vision, and most importantly, accessible and maintainable. Let Liquid Glass enhance, not hinder, your user experience.
 
 Would you like SwiftUI snippet examples implementing this?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -117,3 +117,6 @@ If Neon is remote and the app boots before pushing migrations, the app runs but 
 4. Any errors shown in terminal
 
 Paste errors if you have them and I’ll pinpoint the cause immediately.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -340,3 +340,6 @@ Do not introduce new functionality or screens. Only refactor and restyle existin
 1. Lean heavily on system components and Materials, especially for any bar/menu elements.  
 2. Apply a small, consistent design system for in-content surfaces and text.  
 3. Achieve a dark, Apple-quality, liquid-glass-ready UI.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

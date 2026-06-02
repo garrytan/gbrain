@@ -1086,3 +1086,6 @@ export default {
 2. **`News.vue`**: Fetches the articles from the JSON file and dynamically imports them.
 
 With this setup, you can add new articles by simply updating the `articles.json` file and adding new Vue components in the `components/articles` directory. This approach keeps your content organized and easily manageable.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

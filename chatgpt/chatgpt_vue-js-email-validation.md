@@ -84,3 +84,6 @@ export default {
 ```
 
 This example uses a regular expression to validate the email format. It also only runs the validation method when the `dataType` prop is set to `email`. You can adjust the validation logic to fit your specific needs.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

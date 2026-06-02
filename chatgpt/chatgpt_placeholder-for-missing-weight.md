@@ -742,3 +742,6 @@ Add it to the heads page too
 Below is the patch to import the profile image and use it in your heads page. This will import the image from your assets folder and assign it to the `profileImage` variable.
 
 
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

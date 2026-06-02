@@ -54,3 +54,6 @@ Write a better funnier comment about it not being quick
 ## Assistant
 
 It crawled slower than dial-up – I finished my coffee waiting for the drama.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

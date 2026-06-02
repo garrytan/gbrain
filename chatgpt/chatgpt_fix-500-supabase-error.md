@@ -837,3 +837,6 @@ Lets set the env file now
 ## Assistant
 
 I've set up the `.env` file with the necessary environment variables for Supabase, PostgreSQL, and Spotify integration. Replace the placeholder values with your actual credentials. Let me know if you need any adjustments! 🚀
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

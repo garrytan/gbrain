@@ -103,3 +103,6 @@ For a classic Cosmopolitan cocktail, here’s how to make it:
 - For a clear, professional look, make sure to strain the cocktail well to avoid ice chips in the drink.
 
 Enjoy your Cosmopolitan!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

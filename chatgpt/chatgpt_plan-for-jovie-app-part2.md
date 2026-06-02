@@ -353,3 +353,6 @@ To create a Linkfire-style link page using Nuxt.js and Tailwind CSS, we will cre
 3. **Deploy the project to Vercel.**
 
 By following these steps, you will have a simple and elegant link page styled similarly to Linkfire, using Nuxt.js and Tailwind CSS. This page will display the artist's name and a list of their links, each styled as a button.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

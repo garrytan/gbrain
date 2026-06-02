@@ -794,3 +794,6 @@ Acceptance:
 - Local bridge exposes only allowlisted commands.
 - Hosted staging never exposes command execution.
 - UI clearly shows `Hosted read-only` vs `Local control mode`.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

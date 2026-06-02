@@ -211,3 +211,6 @@ Let’s run the numbers cleanly, Mr. White:
 ✅ So the most aggressive but realistic play saves you **~$400–600 annually**, about **16–25% off** your Mochi costs.  
 
 Do you want me to show you the **month-by-month playbook** for Year 1 (exact order/skip schedule) so you can see how the savings fall?
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

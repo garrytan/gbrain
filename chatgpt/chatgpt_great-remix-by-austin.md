@@ -169,3 +169,6 @@ now based on the lyrics generate a prompt for some ai album art
 ## Assistant
 
 Create a visually captivating album art for a song that explores themes of loneliness, connection, and the transformative power of intimacy. The artwork should embody a blend of cool and warm tones, symbolizing the contrast between isolation and the warmth of human connection. Imagine a scene where an individual stands at the brink of an expansive, frozen landscape, representing loneliness and the coldness of the world. Yet, this individual is reaching out towards a distant, radiant light, indicative of hope, warmth, and the possibility of closeness with another. Incorporate elements that suggest a journey from isolation towards togetherness, such as pathways leading from the cold shadows into the inviting glow. The overall mood should be one of optimism and the promise of connection, capturing the essence of not wanting to be alone and the pursuit of something real and meaningful. This artwork should not only reflect the depth of the song's emotions but also evoke a sense of anticipation and the potential for transformation through human touch and emotional intimacy.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

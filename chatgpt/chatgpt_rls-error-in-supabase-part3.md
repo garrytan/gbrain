@@ -601,3 +601,6 @@ These steps should help pinpoint whether the 403 originates from Pinggy’s limi
 
 
 Mr. White, yes. If you push your changes to a branch on GitHub (or another Vercel-supported Git provider) and let Vercel create a preview deployment, you'll receive a public URL you can use for Clerk’s webhook. This way, you don’t need a separate tunneling service for testing.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

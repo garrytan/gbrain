@@ -51,3 +51,6 @@ To see how many of each drink was ordered on the Clover point-of-sale system, fo
    - You can see the total quantities and, often, additional details like total sales amount and average price.
 
 By following these steps, you should be able to see how many of each drink was ordered using the Clover point-of-sale system.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

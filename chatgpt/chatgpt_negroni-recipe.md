@@ -38,3 +38,6 @@ negroni
 4. Garnish with an orange twist.
 
 **Pro tip**: Use a dry-style gin and a high-quality vermouth (like Carpano Antica or Cocchi).
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -34,3 +34,6 @@ stutter house effect
 For a practical demonstration of how to create the stutter house effect, you might find this tutorial helpful:
 
 videoHow To Make Stutter House (like Fred Again, BUNT & more)turn0search0 
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

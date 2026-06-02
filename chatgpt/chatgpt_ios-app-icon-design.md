@@ -209,3 +209,6 @@ Great now incorporate all the rules of design and golden ratios and such to adju
 ## User
 
 Make it occupy more space to align with the iOS 26 standards 
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

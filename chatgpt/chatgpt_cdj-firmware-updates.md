@@ -237,3 +237,6 @@ Here’s the latest **firmware and hardware update status for the Pioneer/AlphaT
 - **New hardware:** **CDJ‑3000X** released with major hardware feature upgrades. citeturn0search35turn0news34
 
 If you need exact download links or changelogs for each model’s firmware (current builds), I can pull those too.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

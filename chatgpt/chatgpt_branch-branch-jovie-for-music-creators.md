@@ -387,3 +387,6 @@ Best immediate use:
 Suggested ask:
 
 > “I’m raising for Jovie — artist CRM, release automation, and direct fan engagement. Who are the 3 strongest Launch House or Superpower-adjacent angels I should talk to?”
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

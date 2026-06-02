@@ -230,3 +230,6 @@ In the Arc browser, you can use "Boosts" to inject custom JavaScript into web pa
    - The Boost will automatically inject and run the `scrollAndClick` function on the specified site.
 
 This method allows you to automate actions on a webpage using Arc's Boost feature.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

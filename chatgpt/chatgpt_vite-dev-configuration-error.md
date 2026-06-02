@@ -93,3 +93,6 @@ In the above example, the Vite server will be configured to listen on port 3000.
 Make sure to save the changes to the `vite.config.js` file and restart the Vite development server for the new port configuration to take effect.
 
 Note that if the specified port is already in use, you may need to choose a different port number to avoid conflicts.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

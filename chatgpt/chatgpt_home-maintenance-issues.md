@@ -42,3 +42,6 @@ Mr. White, here’s a concise summary of the issues to address:
 
 4. **Garage door window**  
    - Glass in the garage door window needs replacement.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

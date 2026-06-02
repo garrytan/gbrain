@@ -31,3 +31,6 @@ They’re not wedging an iPhone in there and using the accelerometer—it’s al
 - **3D court model + planar homography:**  A pre-built 3D model of the flat court (or simple planar homography from detected floor lines) lets the engine compute the correct perspective transform.  Computer-vision routines then fine-tune the fit and handle occlusion by keying the players out of the way citeturn3view0.  
 
 No consumer-grade accelerometer needed—precision comes from the encoded head and lens encoders feeding the graphics engine.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

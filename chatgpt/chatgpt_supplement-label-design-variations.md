@@ -55,3 +55,6 @@ The ideal candidate will have:
 - The ability to work efficiently and meet deadlines
 
 Please include your portfolio or samples of previous label design work when applying. We look forward to hearing from you!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

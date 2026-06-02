@@ -103,3 +103,6 @@ Field’s approach involves **organizing playlists** for each tour or set type a
 Whether it’s **David Guetta** stressing saved playlists, **James Hype** pre-loading hot cues and loops, or **Aurora Halal** building smart playlists by mood, top DJs agree on one thing: **thorough organization in Rekordbox is crucial**. By tagging tracks, structuring playlists/folders, and setting cue points (hot cues for performance and memory cues for roadmap markers), they can deliver more creative, prepared, and stress-free sets. As James Hype put it, this prep work *“makes [his] DJing style possible”*【18†L410-L414】, allowing spontaneity on stage backed by an orderly library behind the scenes.
 
 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

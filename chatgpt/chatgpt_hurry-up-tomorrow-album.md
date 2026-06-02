@@ -105,3 +105,6 @@ which ones did max martin produce
 This track was co-produced by Max Martin and Oscar Holter. citeturn0news16
 
 Additionally, Max Martin is credited as a producer on the album, though specific tracks beyond "Dancing in the Flames" are not detailed in the available sources. citeturn0search12 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

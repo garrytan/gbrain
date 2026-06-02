@@ -162,3 +162,6 @@ Use this:
 One trademark note: visual styling helps brand distinction, but the USPTO evaluates similarity in sound, appearance, meaning, and commercial impression, plus relatedness of goods/services. A clearance search is still worth doing separately. citeturn358888view4
 
 Send the current icon SVG/PNG and I’ll turn this into exact wordmark specs: spacing, stroke ratio, alignment, and the specific edits each letter needs.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

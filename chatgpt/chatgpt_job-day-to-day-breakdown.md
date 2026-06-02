@@ -83,3 +83,6 @@ If you'd like, Mr. White, I can also break down:
 - whether this job is realistic for you now,
 - what experience you'd need to get into a similar role,
 - or how to position yourself for Google creative roles.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

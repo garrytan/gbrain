@@ -78,3 +78,6 @@ Here's an example of how you could modify the code to check for both conditions:
 ```
 
 This code will only display the paragraph element if `loading` is false and `contactCount` is not `null` or `undefined`.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

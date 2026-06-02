@@ -51,3 +51,6 @@ Build custom webhook/automation using Sentry and Linear APIs to auto-assign spec
 
 **Summary:**  
 You *can* have Sentry create Linear issues and you *can* assign those issues to a Sentry or other Linear AI agent, but there’s no native toggle in the Sentry integration to auto-assign them to an agent by default. You’ll need to use Linear’s own automation rules or an external automation (API/webhooks) to auto-set the assignee.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -37,3 +37,6 @@ revenuecat
 RevenueCat is free for apps generating up to $2,500 in monthly revenue, after which a 1% fee applies. It's particularly beneficial for developers seeking a streamlined solution for subscription management without dedicating extensive resources to backend development.
 
 For more information, visit their official website: [RevenueCat](https://www.revenuecat.com). 
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

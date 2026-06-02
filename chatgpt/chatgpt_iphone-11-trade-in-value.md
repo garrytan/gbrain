@@ -32,3 +32,6 @@ Here’s a ballpark for what you might get trading in a product_entity["tu
 - In some cases (high storage + good condition + demand), you might get up to **$200–$230** from reseller-style buyback companies. citeturn0search13turn0search20
 
 If you want — I can check **trade-in values today** for your ZIP (90048) across major buyers (Apple, major carriers, resellers) so you get a localized estimate.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

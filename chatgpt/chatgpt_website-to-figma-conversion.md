@@ -652,3 +652,6 @@ If you tell me your real objective, I can optimize the approach:
 - Or building a reusable design system engine?
 
 Those are very different strategies, Mr. White.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

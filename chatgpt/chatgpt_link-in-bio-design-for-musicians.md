@@ -413,3 +413,6 @@ The key sentence is this one:
 **“Do NOT design a homepage, SaaS landing page, dashboard, analytics panel, or feature-marketing site. Design the actual fan-facing product UI.”**
 
 That line will do most of the work. If you want, I can also turn this into an even tighter “one-shot Stitch master prompt” optimized specifically to force iPhone screen compositions.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

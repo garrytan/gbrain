@@ -59,3 +59,6 @@ Positioning-wise, it sits somewhere between:
 - always-on campaign execution
 - artist ops
 - fan conversion and revenue generation instead of just link clicks.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

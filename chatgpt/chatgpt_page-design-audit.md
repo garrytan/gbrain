@@ -84,3 +84,6 @@ You have multiple “Skip to main content”, a hamburger menu, a back button, a
 - Track drop-off at this step; handles can be unexpectedly high friction. Suggestions reduce churn.
 
 If you want, paste a screenshot (or share the CSS/layout) and I’ll give **specific spacing/type scale** recommendations and a revised component layout.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

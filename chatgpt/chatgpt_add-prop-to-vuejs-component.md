@@ -169,3 +169,6 @@ This way, any value of `width` will be mapped to a corresponding `w-*` CSS class
 
 For example, if `width` is `'50'`, the `w-50` class will be applied to the `td` element. If `width` is `'100'`, the `w-100` class will be applied, and so on.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

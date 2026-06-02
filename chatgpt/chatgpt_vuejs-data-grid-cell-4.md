@@ -413,3 +413,6 @@ Here's an example of how you could do this with vanilla JavaScript:
 In this example, we first select all the table cells using the `querySelectorAll` method. We then add a "keydown" event listener to each cell using the `forEach` method.
 
 Inside the event listener, we check if the "Enter" key was pressed (`e.key === 'Enter'`). If it was, we get the input element inside the cell using the `querySelector` method, and call its `focus` method to shift focus to it.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

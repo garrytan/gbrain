@@ -34,3 +34,6 @@ In Tailwind CSS, the terms "ring", "outline", and "border" refer to different st
 - `border`: The "border" utility is used to add a simple border to an element. It has a background color and affects the layout of the document.
 
 Each of these styles can be customized in terms of color, width, and style (e.g. solid, dotted, etc.) using Tailwind's utility classes.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

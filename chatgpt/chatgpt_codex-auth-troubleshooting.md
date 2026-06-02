@@ -46,3 +46,6 @@ Mr. White, likely fixes from this thread:
    Then restart `codex` and sign in again.
 
 Best order: **port 1455 → rename `~/.codex` → CLI logout/login**.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -195,3 +195,6 @@ Then expand only if asked.
 ---
 
 If you share your idea, it can be compressed into this exact format and stress-tested the same way Seibel does.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

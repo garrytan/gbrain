@@ -1339,3 +1339,6 @@ All minimal, elegant, and fast to ship.
 
 
 Should we show waitlist position but count it by a multiplier ie:every signup increments by 3-17) so we seem more in demand and create more fomo
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

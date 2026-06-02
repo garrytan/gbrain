@@ -202,3 +202,6 @@ coverage/
 - **Your own datacenter/direct connect?** Not practical for closed models; you can’t host GPT-5/Opus yourself. Use **BYOK** to call providers directly from Windsurf instead. citeturn2search5
 
 If you want, I’ll set your defaults to: **Tab → SWE-1-mini**, **Cascade default → Sonnet 4 (BYOK)**, **“Heavy” preset → Opus 4.1 or GPT-5**, and drop in the `.windsurfignore` above.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

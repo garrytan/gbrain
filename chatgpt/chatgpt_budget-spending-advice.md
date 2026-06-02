@@ -99,3 +99,6 @@ Mr. White — keep the dose steady for now.
 3. **Order timing:** Place the refill seven days before your final shot to avoid gaps; stay at the same strength until those markers say otherwise.  
 
 Bottom line: Hold steady. Reassess in a month with your hunger log and scale data; escalate only if the drug’s effect clearly fades.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

@@ -78,3 +78,6 @@ If you want a one-line summary:
 That is much closer than “word cloud.”
 
 A useful analogy is this: a word cloud is a pile of ingredients. An LLM is a machine that keeps recomputing relationships among ingredients as the sentence unfolds.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

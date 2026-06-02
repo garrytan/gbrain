@@ -143,3 +143,6 @@ Yes — the **Vercel Toolbar** (via the **Flags Explorer**) *does* support featu
 Yes — the Vercel Toolbar will fully support feature flags: viewing, overriding, and sharing them—all in‑context and in‑flow, no extra tooling needed (as long as you set up the Flags SDK or API route per the docs).
 
 Let me know if you want concise next steps for integrating it into Jovie.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -76,3 +76,6 @@ if (modelValue && modelValue.length > 0 && dataType === 'currency') {
 ```
 
 This will ensure that the object is defined and meets the necessary conditions before trying to access its properties.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

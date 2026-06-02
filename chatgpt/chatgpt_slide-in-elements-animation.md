@@ -147,3 +147,6 @@ In this updated code:
 - The `leave-to` class sets the final state of the element when it finishes leaving the screen, with an opacity of 0 and a negative `translate-y-full` transform (to move it outside the screen, above the viewport).
 
 With these changes, the element will slide down from the top when entering and slide back up when leaving. Adjust the transition duration and other styles as needed to achieve your desired effect.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

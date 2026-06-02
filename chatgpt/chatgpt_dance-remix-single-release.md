@@ -226,3 +226,6 @@ write a 150 character customer facing description of the song
 ## Assistant
 
 "Tim White's 'Never Say A Word' mixes LA chill and Vegas thrill into a dance anthem you can't ignore. Out now!"
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

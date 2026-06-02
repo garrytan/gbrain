@@ -50,3 +50,6 @@ instead of an app icon just giuve ne a logo
 ## Assistant
 
 Here is the logo for "Superhuman Mode," designed as requested.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

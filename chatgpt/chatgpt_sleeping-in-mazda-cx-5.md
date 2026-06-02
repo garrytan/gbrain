@@ -72,3 +72,6 @@ Mr. White —
 3. Pack earplugs — thin foam transmits road noise.
 
 **Comfort verdict:** 6/10 solo, 4/10 with Liv. It’ll work for a few nights, but it’s no Eight Sleep spa.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

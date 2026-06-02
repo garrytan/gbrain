@@ -211,3 +211,6 @@ Notes:
 - **Stripe**: set `STRIPE_SECRET_KEY` via environment; avoid baking keys into args/files. citeturn11search13turn11search0  
 
 If your MCP host prefers `url` instead of `serverUrl`, change those two fields (`statsig`, `vercel`) to `url` (everything else stays the same).
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

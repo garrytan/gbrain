@@ -56,3 +56,6 @@ Three quick ways to verify which it is:
 - Try the web surface for the same hosted workflow. Anthropic explicitly positions web cloud sessions for unattended long-running work, so a web-vs-desktop difference is a strong signal. citeturn263902view0turn263902view1
 
 My bottom line: capacity constraints are real, and Anthropic openly uses promotions and limits to manage them. The specific behavior you’re seeing is more likely an implementation problem than the intended contract of their cloud environment.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -74,3 +74,6 @@ function onVideoLoaded() {
 ```
 
 This code adds a `ref` attribute to the `video` element to access it using the `this.$refs` object. It then listens for the `loadedmetadata` event on the video element and calls the `onVideoLoaded` function, which updates the `videoLoaded` variable to `true`. The `v-if` directive is used to show the video element if `videoLoaded` is `true` and a black background if it's `false`.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -491,3 +491,6 @@ The hard part is stepping away long enough to see what actually matters.
 :::
 
 That last one ties directly back to the "solo vs full mix" metaphor and gives the piece a clean ending.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

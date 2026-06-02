@@ -922,3 +922,6 @@ Oh wait its working on our vercel server.
 
 
 Okay we need to make sure our update user metrics is sending the clerk user id properly
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

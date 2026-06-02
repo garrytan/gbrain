@@ -45,3 +45,6 @@ Here are low-cost, laptop-friendly spots within a few minutes of Attitude Café 
   Picnic tables and decent cell reception; fine for a quick session if you don’t need outlets. Parking lots are at the rec center/park. citeturn1search26
 
 If you want totally minimal spend: hit **Beverly Hills Public Library** first (quiet + 2 free hours of parking), or **WeHo Library** if you only need an hour or two. For a short, casual session, grab a small drink at the **Farmers Market** and use the validated lot.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

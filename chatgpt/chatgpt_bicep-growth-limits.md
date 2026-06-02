@@ -119,3 +119,6 @@ You are **far from that ceiling** right now.
 If you want, I can give you:
 - a **target bodyweight map** for each arm size milestone, or  
 - a **biceps-specialization mesocycle** built exactly around your MRV.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

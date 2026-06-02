@@ -26,3 +26,6 @@ generate an svg of a power button
 ## Assistant
 
 Here is the generated image of a power button in a simple and clean design.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

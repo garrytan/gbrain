@@ -46,3 +46,6 @@ Mr. White, this is almost always a simple clog in the pop-up or the P-trap. Here
    - Run water; if still slow, feed a small drum or hand-crank snake down the trap arm into the wall.  
 
 That will restore full flow. Let me know if you hit any snags.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

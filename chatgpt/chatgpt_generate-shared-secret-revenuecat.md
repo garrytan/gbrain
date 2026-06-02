@@ -489,3 +489,6 @@ Mr. White, the easiest way is to use the community HealthKit plugin:
    ```
 
 That plugin covers steps, weight, height and body-fat via HealthKit in a Capacitor app.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -106,3 +106,6 @@ export default function Cue() {
 - If you only need a **pull** endpoint, you can query playhead/selection over OSC on demand, but push via `/listen` is more reliable for “live now”. citeturn2search3
 
 If you want, I can tailor this exact bridge for Vault’s network layout and drop in a production-ready PM2 service script.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

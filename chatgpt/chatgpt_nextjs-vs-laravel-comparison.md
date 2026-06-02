@@ -144,3 +144,6 @@ Use **Vercel Image** now. Itâ€™s simpler, faster to ship, and plenty for Jovieâ€
 3) Set long `s-maxage` and rely on ISR/on-demand revalidation for instant cache updates.
 
 **Recommendation:** Start with **Vercel Image**. Revisit Cloudinary when marketing/design needs outgrow basic transforms.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -291,3 +291,6 @@ Vincent — I’m aligned with your “long-haul first” approach. The differen
 **Jordan:** Similarly, I didn’t load him onto every available date.
 
 Per your ask, we over-hired; now I’m using this month to identify who we can rely on and lock them for **Nov–Feb**. If you want to reassign specific shifts, I’m happy to adjust. I’ve been working to finalize the schedule today so the team has clarity—it may not be perfect, but it needs to publish so we don’t repeat the last-minute uncertainty we’ve seen elsewhere.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

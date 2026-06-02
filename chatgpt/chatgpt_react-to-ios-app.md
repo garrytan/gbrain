@@ -53,3 +53,6 @@ Mr. White, you have three clear paths:
    • Pros: zero native code; Cons: limited API access, no App Store distribution.
 
 For an App Store–ready build with minimal fuss, start with Capacitor. If you need native speed and UX, go React Native/Expo.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

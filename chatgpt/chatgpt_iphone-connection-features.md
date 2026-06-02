@@ -33,3 +33,6 @@ Mr. White, that “glululup” is Apple’s **“Bringing Devices Together�
 - **Tap to Cash (iOS 18+)** – in Wallet > Apple Cash, enter an amount, hold phones together, authenticate, and the money moves—no phone numbers exchanged. citeturn3search0  
 
 That’s it. Once you pull the phones apart, the link ends; you’ll need to bring them back together to start another drop, SharePlay, or cash transfer.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

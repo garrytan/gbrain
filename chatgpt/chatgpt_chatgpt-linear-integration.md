@@ -209,3 +209,6 @@ Still can’t reach it—`dev.logyourbody.com` isn’t publicly accessible from 
 2. **Whitelist ChatGPT’s IP** (if you have a fixed proxy) so I can hit it directly.  
 
 Once it’s reachable, I can run the Playwright-+GPT fuzz test, Lighthouse CI crawl, or OWASP ZAP scan and deliver a prioritized bug report. Let me know when it’s live (or share a tunnel URL), and I’ll dive in.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

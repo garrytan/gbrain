@@ -34,3 +34,6 @@ djoid
 For a visual overview of Djoid's capabilities, you might find this introductory video helpful:
 
 videoIntroducing Djoid: Your Ultimate DJ Companionturn0search5 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -82,3 +82,6 @@ I get your point: common behavior ≠ company intent, but if the *modal* trip is
 “Lime sells a legal scooter but looks the other way while the *average* rider breaks the sidewalk law. When your core UX is ‘grab it on the sidewalk, ride it on the sidewalk, dump it on the sidewalk,’ the business is riding on illegality, full stop.”
 
 If you want to really nail it, let’s pull actual citation stats and ride telemetry; otherwise it’s still an opinion—even if everyone at that intersection just proved your point anecdotally.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

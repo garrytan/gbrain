@@ -192,3 +192,6 @@ Here are 20 1920s-themed drink names for a sour cocktail featuring Sour Patch Ki
 18. "Silent Jazz Sip"
 19. "Bootleg Jazz Bliss"
 20. "Jazz Patch Flapper"
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

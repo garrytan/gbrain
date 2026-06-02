@@ -48,3 +48,6 @@ Here's an example code snippet that rounds the corners of an image wrapper eleme
 ```
 
 In the above example, the border-radius property is set to 10 pixels, which means that the corners of the element will be rounded by 10 pixels. You can adjust this value to make the corners more or less rounded as per your requirement.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

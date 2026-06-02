@@ -70,3 +70,6 @@ no one dies from lvoe credits tove lo
 
 “No one dies from love”  
 — entity["musical_artist","Tove Lo","Swedish singer-songwriter"]
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

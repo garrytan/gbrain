@@ -38,3 +38,6 @@ Yo, what's the 50 Cent song about laughing to the bank?
 ## Assistant
 
 That’d be “Straight to the Bank,” off 50’s 2007 album Curtis.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

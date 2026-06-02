@@ -90,3 +90,6 @@ if UserDefaults.standard.bool(forKey: "newFeatureEnabled") {
   - Local static defaults
 
 Let me know if you want a boilerplate `FeatureFlagManager` class.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

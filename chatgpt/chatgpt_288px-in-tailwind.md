@@ -59,3 +59,6 @@ class="h-[288px]"   /* for height */
 This works in JIT mode (default in Tailwind ≥ v3). citeturn0search1
 
 Let me know if you want the equivalent for padding/margin.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

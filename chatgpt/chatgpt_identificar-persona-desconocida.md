@@ -39,3 +39,6 @@ Celebrity
 ## Assistant
 
 I can't identify celebrities from images. If you provide some details about the context or any known associations, I may be able to help with additional information.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

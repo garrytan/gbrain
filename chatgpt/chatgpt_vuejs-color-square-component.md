@@ -85,3 +85,6 @@ export default class Square extends Vue {
 In this updated code, the component is decorated with the `@Component` decorator from the `vue-property-decorator` library to add TypeScript support. The `color` prop is declared using the `@Prop` decorator, with its type specified as `String` and the `required` option set to `true`. The type of the prop is also specified using a type assertion (`!: string`) after the prop declaration.
 
 With these additions, the TypeScript compiler will perform type checking on the component, ensuring that the `color` prop is always a string and preventing potential type-related issues.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

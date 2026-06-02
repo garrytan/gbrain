@@ -51,3 +51,6 @@ Directed by Elizabeth Banks in her feature debut, written by Kay Cannon, and fea
 **Tone:** Upbeat, ensemble comedy with musical performances, sisterhood, and redemption. citeturn0search8
 
 That’s the concise IMDb-style summary for *Pitch Perfect 2*.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

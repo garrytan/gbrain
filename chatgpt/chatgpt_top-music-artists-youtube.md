@@ -55,3 +55,6 @@ Beyond individual artists, **T-Series** (Bollywood music) remains *the overall m
 On YouTube, **BLACKPINK, BTS, Justin Bieber, Eminem, and Taylor Swift** are among the most popular **music artist channels by subscribers**. Meanwhile, artists like **Taylor Swift, Justin Bieber, Ed Sheeran, and Shakira** lead in **overall views** across their music videos. T-Series dominates globally when including all music content. citeturn0search10turn0search1turn0search24
 
 If you want, I can break this down by **views vs subscribers** or show **most-watched music videos** too.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

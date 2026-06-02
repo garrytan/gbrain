@@ -534,3 +534,6 @@ Use Framer only for throwaway marketing experiments or standalone microsites.
 ```
 
 The thing you are missing is not Framer. It is a **multi-page visual editor/viewer for your own component system**. That is very buildable, and it should become your internal design cockpit.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

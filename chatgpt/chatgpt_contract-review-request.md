@@ -62,3 +62,6 @@ The clauses I would ask them to change are these:
 The single most important sentence to send them is: **“Upwork may not use our data, prompts, messages, feedback, or deliverables to train or improve any AI model, and must delete or return them at the end of the engagement except for legally required retention.”** fileciteturn0file0
 
 Next step: I can turn this into a short redline list you can send Upwork today.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

@@ -575,3 +575,6 @@ That turns an expensive commission into a deliberate distribution partnership.
 ---
 
 If you tell me what stack you’re using for auth/payments (Stripe? Supabase? etc.), I’ll outline the fastest possible referral + lifecycle follow-up implementation with the exact events to track.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

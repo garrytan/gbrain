@@ -210,3 +210,6 @@ Finally, **sell the house only if you conclude that you neither want to deal wit
 - Nevada Assembly Bill 363 summary (short-term rentals require **owner-occupancy** among other rules)【17†L307-L315】  
 - Short-term rental regulations enforcement (fines for non-compliance)【17†L331-L339】  
 - Mortgage rate trends (historically low ~3% rates in 2020–21 when the home was purchased)【24†L9-L17】.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

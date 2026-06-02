@@ -34,3 +34,6 @@ Releasing an album versus an EP has several key differences that may affect your
 5. **Risk of Inconsistency**: With more tracks, there's a higher risk of inconsistency in quality or style, which can affect overall reception.
 
 Choosing between an album and an EP depends on your goals, resources, and audience engagement strategy.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

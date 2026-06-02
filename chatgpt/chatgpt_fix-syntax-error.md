@@ -94,3 +94,6 @@ This code block sets the `class` attribute of an element based on a condition. I
 The ternary operator `? :` is used to determine which class to apply based on the condition. The syntax is as follows: `condition ? valueIfTrue : valueIfFalse`.
 
 By using the ternary operator, the code becomes more concise and easier to read. The original code used an array of objects to achieve the same result, which is less efficient and harder to understand.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

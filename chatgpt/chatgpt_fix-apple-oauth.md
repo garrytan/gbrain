@@ -92,3 +92,6 @@ Mr. White, I checked the Clerk event payload for the Apple OAuth attempt (strate
 There is no `email` field in that payload because the sign-up didn’t complete successfully, and the Apple identity data wasn’t persisted/attached yet.
 
 So I can’t extract the private relay email from Clerk logs in this state. The next step to capture it is to get the flow to complete successfully (or at least through the step where Clerk attaches Apple profile data), or to inspect the Apple OAuth callback payload before the proxy error (for example, the `id_token` / user info payload).
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

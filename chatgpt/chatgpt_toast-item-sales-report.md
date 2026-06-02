@@ -36,3 +36,6 @@ In Toast you can drill down to item-level sales pretty easily:
 5. Use the **Export** button (CSV or PDF) if you need a spreadsheet.
 
 That report lists every individual menu item within the chosen category, with quantity sold, gross/net sales, modifiers, etc.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

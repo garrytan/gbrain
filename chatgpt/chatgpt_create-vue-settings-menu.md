@@ -84,3 +84,6 @@ To create a bunch of settings menu pages in Vue.js, you can follow these steps:
    ```
 
 With these steps, you can create a bunch of settings menu pages in Vue.js. Each page will have its own route, component, and navigation link. Vue Router will handle the routing and rendering of the appropriate component based on the current route.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -648,3 +648,6 @@ Then it’s **a delay / placement issue.**
 ---
 
 If you can tell me the **exact amp model** (e.g., Powersoft X4, Lab Gruppen PLM, etc.), I’ll tell you **exactly which menu** to open and where the **polarity / delay** settings live on that touchscreen.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -247,3 +247,6 @@ I will notify on any new cohort openings, announced deadlines, changes to key te
 ## Assistant
 
 This automation has been paused due to too many unread executions. You can resume it in automations settings or by asking ChatGPT.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

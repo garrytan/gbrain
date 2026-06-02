@@ -40,3 +40,6 @@ It depends on what you both value.
 **Best practice**  
 Talk first. Agree on when and why you’d use it (e.g., trips, late-night rides) and that either person can pause or stop sharing anytime without drama.  
 If either of you feels uneasy, skip it or use temporary “share until end of day” features instead of constant tracking.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

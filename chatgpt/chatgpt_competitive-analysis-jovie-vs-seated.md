@@ -22,3 +22,6 @@ tags: [chatgpt, import]
 do a competivie analysis on https://www.seated.com/ and how it impacts jovie.
 What can/should we steal. what sucks. where we should be concerned. what featuers we should defensilvey build what we should do in our marketing to stand out. etc.
 you have access to the jovie repo and ops repo both which give you context. look at our docs first and our ycapplicont in the ops repo to learn context on Jovie.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

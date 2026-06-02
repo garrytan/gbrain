@@ -98,3 +98,6 @@ Thank you for watching.
 ## Assistant
 
 You're welcome! If you have more questions in the future, I'm here to help. Take care!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

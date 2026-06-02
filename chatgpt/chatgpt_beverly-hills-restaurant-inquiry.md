@@ -26,3 +26,6 @@ What restaurant in Beverly hills is this
 ## Assistant
 
 That’s **Openaire**, the glass‑roof “greenhouse” restaurant inside The LINE Hotel at 3515 Wilshire Blvd in Koreatown. It’s a popular filming location, but it isn’t actually in Beverly Hills. citeturn6search1turn6search3
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -698,3 +698,6 @@ def save_records_to_database(records):
 ```
 
 With this logging in place, run the script again and check the logs to see the problematic record. Once we identify the issue, we can address it accordingly.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

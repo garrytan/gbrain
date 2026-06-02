@@ -90,3 +90,6 @@ Mr. White — here are some strong prompt templates you can use when working wit
 ---
 
 If you like, I can **generate 10 more ready-to-use prompts** (covering pages, layouts, middleware, API routes, migrations) tailored for your stack. Would you like me to pull those together?
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

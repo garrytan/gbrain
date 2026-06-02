@@ -56,3 +56,6 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Sure! Here\'s a concise prompt you can give to an AI:\n\n"Generate CSS to hide scrollbars while allowing trackpad and wheel scrolling. For WebKit browsers, set scrollbar styles to none. For Firefox, set scrollbar width to none or thin. Ensure content is still scrollable."'}
 {'asset_pointer': 'sediment://file_000000005388722f842d1c4a13c33095', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-07-20T05:14:30.859948+00:00', 'format': 'wav', 'metadata': {'end': 17.3, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 830478, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

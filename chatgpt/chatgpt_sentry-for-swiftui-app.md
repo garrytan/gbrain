@@ -35,3 +35,6 @@ For a normal iOS app using **SwiftUI**, you want the standard UIKit-enabled libr
 - `*-Dynamic` / `*-WithARM64e` → special linking/arch cases you don’t need
 
 After picking `Sentry`, set **Add to Target** to your `logyourbody` app target and add the package.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

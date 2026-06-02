@@ -210,3 +210,6 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Sure, here\'s a concise prompt you can use for your development team:\n\n"Implement a Liquid Glass effect using SwiftUI\'s `.ultraThinMaterial` for the onboarding screens. Apply the material as a background to the onboarding cards or buttons to create a subtle, translucent look. Ensure the implementation'}
 {'asset_pointer': 'sediment://file_00000000dec861f69ec2ff9fe771a8f8', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-06T00:23:06.102309+00:00', 'format': 'wav', 'metadata': {'end': 16.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 792078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

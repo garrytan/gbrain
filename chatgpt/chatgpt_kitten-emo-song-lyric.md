@@ -50,3 +50,6 @@ That's perfect, but add in the perfect word, and then also add in a reference to
 ## Assistant
 
 Call Hello Kitty a girl, not a cat—perfect. But after A Decade Under Influence, she’s scribbled in our emo margins, defying every label and whispering “I’m Just a Girl” through purrfect chaos.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

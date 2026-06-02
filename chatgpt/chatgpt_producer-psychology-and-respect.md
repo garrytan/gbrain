@@ -40,3 +40,6 @@ You can correct someone without embarrassing them. You can teach them without ma
 
 That’s the gig.
 :::
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

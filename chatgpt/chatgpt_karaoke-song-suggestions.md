@@ -104,3 +104,6 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Sure thing, Mr. White. I\'ll keep it concise for you. So "Double Vision" is probably easy for you because it\'s got a pretty straightforward vocal line that sits right in a comfortable mid-range—nothing too high or low. Plus, the rhythm is kind of punchy and fun without being too tricky. \n\nAs for another 3OH!3 song that’s got similar qualities, you might try something like "STARSTRUKK." It\'s got a similar kind of vibe and should fit in your range just as well.'}
 {'asset_pointer': 'sediment://file_00000000d19c61f69a24e1e15434817d', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-03-04T13:23:59.779062+00:00', 'format': 'wav', 'metadata': {'end': 24.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1176078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

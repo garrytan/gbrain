@@ -60,3 +60,6 @@ If zero latency on cold start is critical, consider:
 
 **Summary:**  
 A *cold start* on Vercel is the extra delay when a serverless function wakes up from idle. Vercel mitigates this with warm instances on paid plans and Fluid compute optimizations. Reducing code size, caching, and using edge runtimes further minimizes the impact. citeturn0search0turn0search1
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

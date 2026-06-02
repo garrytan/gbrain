@@ -54,3 +54,6 @@ Agent “teams” and Claude agents can interact with **Microsoft Teams** in a f
 - **Teams integration** uses connectors and APIs to let those agents *interact with Microsoft Teams* — either embedding AI insights into Teams, automating actions in Teams channels, or building custom chatbots/agents tied into Teams workflows. citeturn0search12turn0search0
 
 If you want specific code examples or a step-by-step for a Teams bot or Claude agent setup, just ask.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

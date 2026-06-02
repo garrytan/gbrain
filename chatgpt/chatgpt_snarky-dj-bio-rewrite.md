@@ -86,3 +86,6 @@ Mr. White, here’s a snarky, label-tagging update that sticks to your format, k
 *Promoters, book me.*  
 *DJs, let’s collab.*  
 *Cuties, you know what to do.*
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

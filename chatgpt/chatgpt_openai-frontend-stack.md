@@ -441,3 +441,6 @@ Got it, Mr. White. Here’s a **tight, opinionated playbook** for RStack given N
 - **Perf**: minimal hydration, streaming, and targeted caching keep p95 snappy.
 
 If you want, I’ll generate a drop-in starter: `registry.ts`, Zod node schema, a sample SDUI page, and a tiny Upstash cache helper wired to Next 15.5/RSC.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

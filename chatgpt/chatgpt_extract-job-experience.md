@@ -77,3 +77,6 @@ Here’s the **job experience section** from the resume in the screenshot, extra
 ```
 
 Would you like me to include **Education** and **References** sections in JSON format as well?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

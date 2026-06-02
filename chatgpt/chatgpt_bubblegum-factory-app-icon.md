@@ -26,3 +26,6 @@ generate an app icon for the bubblegum factory
 ## Assistant
 
 Here is the app icon for the Bubblegum Factory. If you need any adjustments, feel free to let me know!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

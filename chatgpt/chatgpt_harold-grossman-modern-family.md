@@ -46,3 +46,6 @@ Mr. White — **Rick Cowling** is an American **singer/musician and music produc
 - On *Modern Family*, he appears as **pharmacist Harold Grossman** and performs “**I Want to Know What Love Is**” in the episode **“A Fair to Remember”** (2013). citeturn0search10turn0search14turn0search8  
 - As a working musician, he’s been a **guitarist for Kenny Loggins** and toured as **lead singer/keyboard player with Ambrosia** (and has credits as a multi-instrumentalist/vocalist/producer). citeturn0search11turn0search6turn0search19  
 - He’s also described as a **co-owner / sound engineer / music supervisor** for **Turning On the Light Entertainment** (TOtLEntertainment). citeturn0search11turn0search13
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

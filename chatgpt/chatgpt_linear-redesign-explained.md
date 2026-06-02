@@ -49,3 +49,6 @@ In the example of the product *Linear* (the issue tracking/project tool), the co
 This is especially important for complex products where users rely on consistency and predictability. citeturn0search1
 
 If you want, I can show concrete examples of steps a typical **linear redesign process** follows (e.g., audit → define goals → prototype → test → iterate → launch).
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

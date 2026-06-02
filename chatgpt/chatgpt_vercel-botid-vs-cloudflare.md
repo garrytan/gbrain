@@ -103,3 +103,6 @@ If you want control and cost optimization → AWS
 If you want velocity and leverage → Vercel
 
 If you want, I can give a **decision rule** for when teams should migrate *off* Vercel to raw AWS.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

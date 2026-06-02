@@ -50,3 +50,6 @@ it should be 2d with an iconice buble in hot pink. think if Y2K met bubblegum po
 ## Assistant
 
 Here is the 2D logo for The Bubblegum Factory, combining a Y2K aesthetic with a bubblegum pop style.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

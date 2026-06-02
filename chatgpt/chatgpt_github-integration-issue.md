@@ -28,3 +28,6 @@ but it is set up correctly as far as i seed. take over my browser and ivestiaget
 ## Assistant
 
 I looked at the GitHub integration settings in Sentry. Under **Settings → Integrations → GitHub**, the integration is installed and active for the **JovieInc** organization. Within the configuration, the repository list includes **JovieInc/Jovie**, so the integration is aware of the repository. This suggests that the GitHub integration is indeed set up correctly and the repository is authorized. The error you saw (“Seer can’t access the JovieInc/Jovie repository”) may therefore be due to a transient issue on Sentry/Seer’s side rather than a missing configuration. You might try reloading the Seer panel or re‑authorizing the integration, but the repository itself is already linked.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

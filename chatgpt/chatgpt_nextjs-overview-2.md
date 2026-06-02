@@ -28,3 +28,6 @@ next.js
 ​Next.js is a React framework developed by Vercel for building high-performance web applications with features like server-side rendering (SSR), static site generation (SSG), and API routing. It simplifies React development by providing built-in optimizations, automatic code splitting, and flexible rendering options. Next.js supports both client and server rendering, enabling developers to create dynamic, SEO-friendly applications efficiently. citeturn0search0
 
 For more information and to get started, visit the official Next.js website: linkturn0search0 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -180,3 +180,6 @@ Call **GEICO: 1-800-841-3000**.
 Open a **third-party property damage claim against the other driver’s GEICO policy**.
 
 Only use your own policy as a fallback if GEICO says the third-party liability investigation will take too long and you confirm you actually have collision coverage.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

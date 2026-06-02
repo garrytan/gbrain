@@ -69,3 +69,6 @@ Mr. White—quick sanity check + a clean budget you can use right now. I can’t
 ---
 
 If you tell me the **city + dates** and the **exact nightly total** shown on that Airbnb, I’ll lock this to a single number and book-ready plan (including the right airport, transfer time, and a grocery list for two).
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

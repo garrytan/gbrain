@@ -64,3 +64,6 @@ It has gained traction partly due to strong performance in **long-context reason
 ---
 
 If you want, specify what you meant (e.g., compare Claude vs ChatGPT, how to use it, or whether it’s better for business), and the answer can be narrowed.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

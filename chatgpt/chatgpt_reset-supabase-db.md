@@ -203,3 +203,6 @@ const users = [
 - Keep `profiles` keyed by `clerk_id` (text), and store plan/role in metadata for gating.  
 
 If you want, I’ll hand you a ready-to-run `package.json` script + `.env.example` for the seeder and the exact Clerk webhook config.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

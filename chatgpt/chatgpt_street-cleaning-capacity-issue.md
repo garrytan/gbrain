@@ -105,3 +105,6 @@ But:
 - Parking half-in the red during street cleaning is basically saying, “I’m betting the officer doesn’t come down this block today.”
 
 If you want, I can walk you through strategies specific to your exact block’s schedule and nearby streets so you’ve got a more concrete game plan for Mondays, but big picture: there is no official “we understand it’s impossible, so we’re flexible” policy.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

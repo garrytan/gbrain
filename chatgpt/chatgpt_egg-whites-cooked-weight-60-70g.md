@@ -38,3 +38,6 @@ How about 4 giant tomatoes slices
 ## Assistant
 
 The cooked weight of 4 giant tomato slices is approximately 200-250 grams.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

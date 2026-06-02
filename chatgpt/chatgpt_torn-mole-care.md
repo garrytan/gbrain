@@ -212,3 +212,6 @@ Under Medi‑Cal in California (including LA County), you **do need a referral f
 - The process usually takes just a few days—give it a little push and you’ll be set to see a specialist.
 
 Let me know if you want tips on what to say to your PCP or how to follow up!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

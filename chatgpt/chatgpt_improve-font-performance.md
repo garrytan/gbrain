@@ -72,3 +72,6 @@ Mr. White — short answer: stop calling Google’s CSS at runtime. Use `next/fo
 - Limit glyphs with `&text=` (only for small, fixed strings) or strict subsets to cut file size.
 
 Bottom line: move to `next/font` and delete the external `<link>` — that’s the biggest real-world win.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

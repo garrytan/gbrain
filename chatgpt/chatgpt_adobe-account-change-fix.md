@@ -77,3 +77,6 @@ If you’re still forced back to the wrong account:
 ---
 
 Would you like me to tailor these instructions to **Windows** or **Mac**, so you can follow the exact path and commands for your system?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

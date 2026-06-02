@@ -40,3 +40,6 @@ statsig deplpoyment velocity
 - **Cross-team alignment:** Visibility into shipped work and trends helps align engineering, product, and business stakeholders on progress. citeturn0search3
 
 **In short:** deployment velocity on Statsig is the rate at which product improvements are released *and* validated through experimentation — a combined measure of shipping speed and learning speed enabled by the platform. citeturn0search3turn0search5
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

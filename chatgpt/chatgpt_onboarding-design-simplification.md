@@ -152,3 +152,6 @@ Either way: less reading, faster choice.
 - **Lower card elevation/contrast** if you keep any.
 
 If you want, I can sketch a cleaned wireframe for each screen in text or Figma-style spec, but this should give your team a clear simplification path fast.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

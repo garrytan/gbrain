@@ -134,3 +134,6 @@ The compressed **Signal** column now represents Jovie-specific release ops:
 The table is designed around releases, songs, assets, links, fans, campaigns, rights, tasks, and rollout readiness. A novice artist sees “what needs attention today.” A serious manager or label team can scan hundreds of songs/releases and instantly know which ones are blocked, ready, live, stale, spiking, or missing assets.
 
 The key shift: the row is no longer about playing a track; it is about getting a song from idea → asset pack → release → fan capture → campaign → post-release optimization.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

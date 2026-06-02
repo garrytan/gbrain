@@ -193,3 +193,6 @@ Mr. White—let’s re-rank every income stream by **net ROI per hour** and **co
 - **Clear runway**: dev/consulting gigs and social-arb keep cash flowing Mon–Thu; big-ticket bar nights Fri–Sun.  
 
 This alignment gives you **high income**, **low load**, **predictable schedule**, and **real off-time**. You’ll hit rent + savings targets in 3 months and still have plenty of weekend war stories with Liv.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

@@ -476,3 +476,6 @@ END OF PROMPT
 ```
 
 Want me to also generate a polished 1-page PDF resume for uploads?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

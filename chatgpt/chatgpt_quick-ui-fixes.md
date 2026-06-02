@@ -323,3 +323,6 @@ Here’s a **comprehensive breakdown and recommendations** based on all your scr
 ---
 
 Do you want me to **rewrite this as a Windsurf-ready instruction set** (structured as a dev task list for GPT-5 to follow)? That way you can drop it in and it’ll be actionable.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

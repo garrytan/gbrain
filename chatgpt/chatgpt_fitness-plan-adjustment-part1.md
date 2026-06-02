@@ -175,3 +175,6 @@ Last DEXA: **16.8% body fat on May 17, 2025.** fileciteturn1file2L60-L6
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Sure! If you're aiming for about half a percent to a percent of body weight gain per week on a lean bulk, that would roughly be about 0.8 to 1.6 pounds per week, given your current weight of 165 pounds. Over 12 weeks, that could mean gaining anywhere from about 6 to maybe 12 pounds. Now, not all of that would be pure muscle, of course, but with a careful approach, a good portion would be lean mass. After that bulk, you'd probably be around the mid-170s. Then, during the mini cut, you could aim to lose a few pounds of fat, which would bring you right to that lean and defined look by Black Friday."}
 {'asset_pointer': 'sediment://file_00000000d98061f6b9e0c1fe0f6e4c3a', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-20T20:28:53.014683+00:00', 'format': 'wav', 'metadata': {'end': 39.65, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1903278, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

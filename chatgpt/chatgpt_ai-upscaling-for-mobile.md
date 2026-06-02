@@ -97,3 +97,6 @@ Move to **self-hosted Real-ESRGAN** once volume is high enough that $200–$2,00
 Use **Grok Imagine Edit** only for rare rescue cases where you accept generative changes.
 
 For the 600px → mobile retina case, I’d default to **2x AI upscale**, then generate exact responsive variants from that master.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

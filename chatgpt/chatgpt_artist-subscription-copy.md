@@ -53,3 +53,6 @@ Subscribe for new music and show alerts.
 - **Join updates** (neutral, low friction)
 
 If you want, I can **A/B test variants** based on artist size (emerging vs established) or tailor copy to **genre, release cycle, or fan intent** (casual vs superfan).
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

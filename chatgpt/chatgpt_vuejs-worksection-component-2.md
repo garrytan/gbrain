@@ -61,3 +61,6 @@ The `script` section defines a `const` variable named `items` that is an array o
 The `import` statement imports the `WorkSection` component from a file located at `"../components/WorkSection.vue"`. 
 
 Overall, this code sets up a basic Vue.js component with a pre-defined list of items that can be used to display a `WorkSection` component with relevant content.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

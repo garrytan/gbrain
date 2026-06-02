@@ -47,3 +47,6 @@ If we want compliance, consistency, and accountability, it has to start with man
 ---
 
 Would you like me to rewrite this in a sharper, almost “legal-defense” style (framing it as *unfair to hold staff accountable without documented policies*) or keep it more solution-oriented like above?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

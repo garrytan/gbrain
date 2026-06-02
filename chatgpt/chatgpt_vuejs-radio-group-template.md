@@ -130,3 +130,6 @@ export default {
 In the modified template, the `RadioButtonGroup` component accepts an `items` prop that is an array of objects. Each object in the array represents a radio button in the group and has a `title`, `description`, and `users` field. The `v-for` directive is used to loop through the `items` array and render a radio button for each item.
 
 The `RadioButtonGroup`
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -543,3 +543,6 @@ Sure, let's create a static route for your first article using a Vue component. 
 Now, you should be able to navigate to `http://localhost:3000/news/single-tim-white-never-say-a-word` and see your statically coded article page.
 
 If you need further customization or have additional questions, feel free to ask!
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

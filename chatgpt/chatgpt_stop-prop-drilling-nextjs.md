@@ -287,3 +287,6 @@ For speed, correctness, and long-term sanity:
 **Zustand + TanStack Query is the optimal default.**
 
 If you want, I can sketch a **folder structure + patterns** that keep this clean as you scale.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

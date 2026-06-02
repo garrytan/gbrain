@@ -50,3 +50,6 @@ Was this due to COVID or was there another reason for the delay?
 ## Assistant
 
 Yes, the delay was primarily due to the COVID-19 pandemic. The reunion special was originally supposed to be filmed and aired earlier, closer to the actual 25th anniversary in 2019, but production was postponed multiple times due to the health and safety concerns and restrictions associated with the pandemic.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

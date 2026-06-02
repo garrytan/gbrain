@@ -96,3 +96,6 @@ export default {
 ```
 
 This refactored version removes the `imageLoadingError` method and replaces it with the `setDefaultImage` method. It also adds a conditional (using the `v-if` and `v-else` directives) to check if the `creator.profile_pic_url` property is set. If it is set, it will display the image. If it is not set, it will display the default image specified in the `v-else` block. This ensures that the default image will always be displayed if the `creator.profile_pic_url` property is not set or if there is an error loading the image.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

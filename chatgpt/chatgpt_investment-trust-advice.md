@@ -89,3 +89,6 @@ A plain “put it in a trust” is **not** the magic.
 ---
 
 If you tell me **(1)** her approximate cost basis, **(2)** whether she’s subject to an IPO lockup/insider rules, and **(3)** roughly what % this will be of her net worth at IPO, I’ll give you a clean “best action” recommendation with a specific sell/hold/hedge split (still not “financial advice,” but a concrete plan).
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

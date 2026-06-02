@@ -760,3 +760,6 @@ Mr. White, here are **current** late-June to mid-July 2025 events and opportun
 ---
 
 These events offer **intense, meaningful exposure** to A&R reps, promoters, casting agents, stylists, and creative peers—across all your disciplines, without repeated events.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

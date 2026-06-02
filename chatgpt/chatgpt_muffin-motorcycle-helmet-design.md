@@ -26,3 +26,6 @@ tags: [chatgpt, import]
 ## Assistant
 
 Here's the 3D-rendered motorcycle helmet shaped like a stylized muffin as requested. Let me know if you'd like any tweaks!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

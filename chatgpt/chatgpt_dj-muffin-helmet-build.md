@@ -127,3 +127,6 @@ Certainly, Mr. White.
 
 > **Total active work time:** ~12 hours  
 > **Overall calendar time:** ~2–3 days (to accommodate curing/drying)
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

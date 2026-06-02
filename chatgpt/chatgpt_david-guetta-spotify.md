@@ -43,3 +43,6 @@ Here’s the **official Spotify info for David Guetta**:
 - *DAVID GUETTA HITS – BEST OF* playlist. citeturn0search3
 
 If you want a direct link to a specific song or playlist on Spotify, tell me which one and I’ll provide it.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

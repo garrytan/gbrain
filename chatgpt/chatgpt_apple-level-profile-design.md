@@ -259,3 +259,6 @@ show me mock ups of this following the fesign system of the profile you jsut gen
 ## User
 
 you did the invest of what i wanted.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

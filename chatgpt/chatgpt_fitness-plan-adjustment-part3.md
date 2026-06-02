@@ -172,3 +172,6 @@ Mr. White—assumes **11% BF stays constant**.
 | 23 | 188.8 | 212.2 | +41.9 |
 
 (“+LBM” = added muscle/lean mass vs your current 146.9 lb LBM.) Need 8% BF or other increments, say so.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

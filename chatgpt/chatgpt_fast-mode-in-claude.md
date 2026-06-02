@@ -34,3 +34,6 @@ fast mode in claude
 - The trade-off is **higher cost**: fast mode runs at a premium price per token (several times the standard Opus 4.6 pricing).citeturn0search8turn0search14
 
 In practice, it’s designed for **latency-sensitive, interactive workflows** like live coding, debugging, or tight feedback loops where response speed matters more than cost.citeturn0search15
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

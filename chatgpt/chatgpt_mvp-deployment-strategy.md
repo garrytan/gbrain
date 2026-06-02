@@ -1025,3 +1025,6 @@ Deliver production-ready code that meets Apple-level polish and Linear-level UX.
 ---
 
 Do you want me to actually **write the Next.js + Tailwind code** for this flyout menu (with the new copy, hover states, accessibility baked in), so you can drop it into JOVIE immediately?
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -962,3 +962,6 @@ Paste your repo’s current script list (just this):
 - the CI steps from your GitHub Actions YAML
 
 …and I’ll rewrite `scripts/fast.sh` to match your exact stack so agents can run it without guessing.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

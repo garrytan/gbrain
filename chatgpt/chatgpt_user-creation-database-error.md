@@ -65,3 +65,6 @@ Failed to create user: Database error creating new user
 - Supabase Documentation on Managing User Data: linkturn0search8
 
 By reviewing and adjusting your triggers, functions, and permissions as outlined above, you should be able to resolve the user creation error in Supabase. 
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

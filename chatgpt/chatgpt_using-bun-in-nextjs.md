@@ -245,3 +245,6 @@ If I were dictating policy for this repo:
 If you want, tell me:
 - **Which package manager you currently use (npm/yarn/pnpm)**  
 and I’ll give you a minimal Vercel + CI config for Jovie that locks this all in and leaves Bun as an optional local accelerator only.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -134,3 +134,6 @@ Why:
 My read: **pool jump = real backyard/pool**, because it’s a wide physical stunt scene in the actual outdoor space, and Season 1 likely used the real location heavily before the show’s sets became more standardized.
 
 The hot-tub/talking scenes later are more likely controlled set/backlot recreations.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

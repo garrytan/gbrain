@@ -113,3 +113,6 @@ I but put in a concise comment and don’t mention any names
 ## Assistant
 
 Emily—you paid top dollar, so here’s the deal: running blasts cortisol in short bursts, which can nibble at lean muscle, while walking 10 000+ steps spreads calorie burn over hours with almost zero recovery hit—ideal for fat loss without sacrificing tone. If you love your runs, keep them—just ramp up your recovery to balance the extra stress.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -107,3 +107,6 @@ If you want, tell me:
 - Exact error text (or whether it silently hangs)
 
 I’ll pinpoint it in one step.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

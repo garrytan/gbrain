@@ -92,3 +92,6 @@ Here’s the standard structure:
 - Shorter is better
 
 If useful, I can tailor this into a concrete deck for your company with actual slide copy.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

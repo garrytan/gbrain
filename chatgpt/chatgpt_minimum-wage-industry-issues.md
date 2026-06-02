@@ -106,3 +106,6 @@ Great not use the top argueing to convinfe princples toake thia comment more com
 ## Assistant
 
 Raising minimum wage in just one industry sounds good—but it actually hurts the people it’s meant to help. Higher-skill workers swoop in for the better pay, crowding out those with fewer options. The result? Fewer jobs for truly low-skill workers, higher prices, and a policy that benefits people who were already doing fine. If we want real help, we need smarter, broader solutions—not feel-good fixes that backfire.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

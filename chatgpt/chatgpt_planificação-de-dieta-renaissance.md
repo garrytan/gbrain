@@ -140,3 +140,6 @@ Here are a few final tips as you embark on this phase:
 - **Stay Active**: Combine your diet with a consistent exercise routine to support lean mass maintenance.
 
 Feel free to reach out if you have any questions during your journey or if you need further assistance later on. Good luck with your cutting phase!
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

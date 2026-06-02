@@ -30,3 +30,6 @@ I couldn’t find verifiable information on **jovie.ai** specifically — there 
 If you meant **Jovie** (the established childcare staffing/franchise brand at *jovie.com*), that is owned by **Bright Horizons Family Solutions, Inc.** as a wholly-owned subsidiary since 2016. citeturn0search4turn0search18
 
 If you were asking about a different *jovie.ai* (like an AI product/service), please clarify or share a link — it may be a newer startup or domain with limited public corporate info.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

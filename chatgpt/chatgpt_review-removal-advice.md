@@ -57,3 +57,6 @@ You’ve already chosen that — keep it. Then, in the follow-up description box
 
 **Bottom line:**  
 Stick with **Content Policy violation**, emphasize **false/unverified claims and privacy**, and include **Airbnb message evidence** showing the host’s statements can’t be supported. That gives you the strongest, policy-aligned argument for removal.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

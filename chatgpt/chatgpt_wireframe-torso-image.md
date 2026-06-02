@@ -56,3 +56,6 @@ Now do 30% and keep everything else exactly the same
 ## User
 
 Now give me an identical image for 40%bf
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

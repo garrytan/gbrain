@@ -55,3 +55,6 @@ npx tailwindcss -o output.css --minify
 This gives you a clean, legal Tailwind build.
 
 If you meant something else (e.g., automated scraping or tooling), clarify and I’ll tailor the advice.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

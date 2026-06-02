@@ -270,3 +270,6 @@ Mr. White, **compounded tirzepatide injections** are not FDA-approved, and there
    - FDA officials have cautioned against “compounded semaglutide” and similar peptides made from unauthorized bulk ingredients, suggesting a similar stance applies to tirzepatide.
 
 Overall, if you opt for **compounded tirzepatide injections**, do so with caution—and if possible, consult a reputable healthcare provider to verify safety and sourcing. The only fully vetted, on-label option is the **branded injectable** (Mounjaro).
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

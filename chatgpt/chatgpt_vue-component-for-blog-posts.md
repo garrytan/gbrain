@@ -282,3 +282,6 @@ In this case, the `setup` function returns an object with the `posts`, `loading`
 The `fetchPosts` function is used to retrieve the list of blog posts from the server using an HTTP GET request to the '/api/blog' URL. The `axios` library is used to send the request. The function sets the `loading` reactive property to `true` while the request is in progress, and to `false` when it completes. If the request is successful and the server returns a valid response, the `posts` reactive property is updated with the list of posts returned by the server.
 
 The `onMounted` hook is used to call the `fetchPosts` function when the component is mounted to the DOM. This ensures that the list of posts is retrieved and displayed as soon as the component is displayed on the page.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

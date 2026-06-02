@@ -158,3 +158,6 @@ For conversion-focused mobile web:
 - Reserve **full-screen views only for heavy content**
 
 This balances speed, perceived performance, and minimal friction while keeping the experience close to native without requiring an actual app.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

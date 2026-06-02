@@ -30,3 +30,6 @@ Mr. White, here’s a concise text prompt you can feed into your favorite AI ima
 ```
 “Marshmello-style EDM helmet shaped like a blueberry muffin: smooth matte golden-brown dome with subtle vertical wrapper ridges, a single wide curved black glass visor spanning the eyes, and a simple upturned smile beneath; minimalistic and slightly futuristic, lightweight, shown under soft studio lighting on a neutral background.”
 ```
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

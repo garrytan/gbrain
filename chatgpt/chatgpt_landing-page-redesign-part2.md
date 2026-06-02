@@ -704,3 +704,6 @@ My strongest recommendation: **do not let the page become a generic feature list
 artist profile seciton i want like this. each card is high res iphone screen shot of like they pay drawer and the word Get Paid. next card is Sell Out with a screenshot of the tour dates mode etc for all mdoes.
 
 make a mock up of this. 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

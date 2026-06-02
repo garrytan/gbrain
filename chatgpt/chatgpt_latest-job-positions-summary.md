@@ -60,3 +60,6 @@ Mr. White, the latest Jovie positions I found from the last 72 hours:
    `/waitlist` is being replaced by `/start`, with `JovieChat` in onboarding mode. The chat handles interview, qualification, profile-building, access tiering, and checkout while progressively revealing the app.
 
 I did **not** find recent Jovie hiring/open-role positions in the last 72 hours.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

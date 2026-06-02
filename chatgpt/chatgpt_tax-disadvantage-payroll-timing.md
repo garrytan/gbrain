@@ -309,3 +309,6 @@ If you want, I can give you:
 - A checklist investors expect to see post-raise
 
 Just say the word.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

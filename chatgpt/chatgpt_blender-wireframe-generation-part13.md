@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "It looks like you found the correct directory now! You should be able to run MakeHuman by navigating into that inner `makehuman` folder and using `python3 makehuman.py`. If everything is set up correctly, you should see the MakeHuman interface pop up. Let me know if you have any more issues or if there's anything else you need help with!"}
 {'asset_pointer': 'sediment://file_000000000da8622f84d6ec253a623a1c', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:37:40.100999+00:00', 'format': 'wav', 'metadata': {'end': 20.05, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 962478, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

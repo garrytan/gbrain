@@ -74,3 +74,6 @@ help me plan all of this
 ## User
 
 this is close  put artist under tim whtie. then give me a prompt for claude design to build this
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

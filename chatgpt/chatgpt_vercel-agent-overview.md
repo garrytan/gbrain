@@ -45,3 +45,6 @@ Agent is not a generic chatbot — it uses **deep knowledge of your project’s 
 Separately, Vercel also supports building **AI agents and autonomous workflows** using its AI SDK, enabling developers to create agentic systems that interact with databases, APIs, deployments, and other tools programmatically. citeturn0search2
 
 In short: *Vercel Agent is a context-aware AI teammate built into the deployment platform to automate code reviews, help debug production issues, and accelerate quality shipping.* citeturn0search1
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

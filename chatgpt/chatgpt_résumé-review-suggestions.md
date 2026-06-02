@@ -68,3 +68,6 @@ Mr. White, from the screenshot you shared, I see a résumé for **Elliot Miele**
 I can **reformat and rewrite this résumé into a polished one-page version** that’s ready to send to hospitality or bartending employers — with tighter language, measurable results, and improved readability.
 
 Would you like me to **create a revised version** of this résumé for Elliot in **Word (DOCX)** or **PDF** format?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

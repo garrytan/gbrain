@@ -224,3 +224,6 @@ case 'md':
 You can customize the class for other sizes as well according to your desired glassmorphism effect.
 
 Remember to set `darkMode` to `
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

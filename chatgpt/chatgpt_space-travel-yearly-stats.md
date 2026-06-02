@@ -148,3 +148,6 @@ As of now, SpaceX's Starship, including its crewed flights, is still in its earl
 SpaceX has launched numerous crewed missions using its Crew Dragon spacecraft, which serves as a precursor to crewed Starship missions. Since 2020, there have been 12 crewed Dragon flights, including missions to the International Space Station (ISS) and other low Earth orbit (LEO) destinations【24†source】.
 
 For detailed and updated information on specific crewed Starship missions, you can visit [SpaceX's official Starship page](https://www.spacex.com/vehicles/starship/) or [SpaceXStats](https://www.spacexstats.xyz/).
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

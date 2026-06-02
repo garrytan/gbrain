@@ -26,3 +26,6 @@ make a cool logo for a t-shirt. use only black and hot pink with a white backgro
 ## Assistant
 
 Here is the logo you requested. If you need any adjustments, let me know!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

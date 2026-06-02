@@ -76,3 +76,6 @@ export default {
 In this example, when the "Update Item Value" button is clicked, the `updateItemValue` method is called. It dispatches the `setItemValue` mutation using `this.$store.commit`. The mutation then sets the `itemValue` property in the state to the new value passed as an argument.
 
 Note that you need to import and configure Vuex properly in your Vue.js application for this to work. Make sure you have installed the Vuex package and imported it into your application.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

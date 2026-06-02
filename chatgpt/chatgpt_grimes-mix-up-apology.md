@@ -38,3 +38,6 @@ Convert $2500 USD to Euros.
 ## Assistant
 
 $2500 USD is approximately €2300, using an exchange rate of 1 USD = 0.92 EUR.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

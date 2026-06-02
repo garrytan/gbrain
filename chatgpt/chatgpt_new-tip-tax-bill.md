@@ -26,3 +26,6 @@ Hey, can you tell me about the new bill that just passed for not taxing tips? An
 ## Assistant
 
 Are you referring to the recent proposal by House Republicans to eliminate taxes on tipped wages, or has a specific bill officially passed? If so, could you provide the bill number or name? Also, do you need information on whether it still requires Senate approval or the President’s signature to become law?
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

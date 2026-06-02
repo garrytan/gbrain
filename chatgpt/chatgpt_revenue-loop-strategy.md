@@ -374,3 +374,6 @@ That is useful as a directional benchmark, but your real near-term win is simple
 **get to several real paid users, show the funnel, and prove the loop repeats.**
 
 Paste the top open issues or the current funnel screenshots, and I’ll turn this into a ranked backlog with exact cut lines.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

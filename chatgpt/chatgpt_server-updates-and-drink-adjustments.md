@@ -57,3 +57,6 @@ Don't add anything to my list, just put down what I said. I don't need you to el
 3. The champagne thing is no longer happening in the cafe.
 4. We now open lobby at 7:30 and the walkthrough by 7:50.
 5. We need to print opening and closing duties for servers.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -102,3 +102,6 @@ I checked the Travel/Availability notices on Model Mayhem using the casting sea
 - **Female models**: Jenny Zhang and XoKatiya (their notices were titled “Traveling Nudes Model – sakurabubbleyum” and “TRAVEL MODEL!” respectively). The third model, Seraphina The Model, had a profile that’s either pending approval or removed, so a friend request couldn’t be sent.
 
 All sent friend requests are now marked as *Pending* on Model Mayhem.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

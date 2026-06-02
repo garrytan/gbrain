@@ -991,3 +991,6 @@ By carefully reviewing these aspects, you should be able to identify where the m
 
 
 Call to a member function getRealPath() on null
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

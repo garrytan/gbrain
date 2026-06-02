@@ -39,3 +39,6 @@ The classic Roy Rogers is a non-alcoholic mocktail made with cola and grenadine,
 4. Garnish with a maraschino cherry.
 
 Enjoy your refreshing Roy Rogers!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

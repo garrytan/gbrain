@@ -65,3 +65,6 @@ For **artist-level “listeners + plays/streams”**, the two platforms aren’t
 - **Spotify:** plan on **distributor/label ingestion** (or provider partnership). There isn’t a clean public API route for streams/listeners. citeturn0search21turn0search0  
 
 If you tell me your situation (Mr. White)—**are you the label/distributor, or building a SaaS where artists connect their accounts?**—I can outline the most realistic integration architecture for each.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

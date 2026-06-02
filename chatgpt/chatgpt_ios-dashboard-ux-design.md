@@ -402,3 +402,6 @@ Mr. White—beyond what we’ve already covered, here are a few more world-class
   - From the dashboard, add a tiny “…” action button to export today’s metrics as CSV or share a progress photo—delight power users and models.
 
 Implementing these will push you from “very good” to “best-in-class,” with that Apple/Linear polish and delight drilled into every interaction.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

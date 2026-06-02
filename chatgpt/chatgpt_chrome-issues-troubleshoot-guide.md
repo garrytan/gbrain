@@ -56,3 +56,6 @@ It sounds like the issues you're encountering with Chrome could be related to br
     - Go to Chrome menu > Settings > You and Google > Add.
 
 If after trying these steps the issue still persists, consider seeking further assistance from Chrome's support forum or consulting with a professional IT service.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

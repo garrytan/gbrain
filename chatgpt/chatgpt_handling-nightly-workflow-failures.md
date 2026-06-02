@@ -75,3 +75,6 @@ If you want it even tighter:
 ---
 
 If you tell me what CI you’re on (GitHub Actions? Circle? Buildkite?) and where you want the signal (Slack vs GitHub Issues vs PagerDuty), I can give you the exact recommended setup and the concrete workflow steps (including the “create or update existing issue” logic).
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

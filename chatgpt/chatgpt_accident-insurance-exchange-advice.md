@@ -1298,3 +1298,6 @@ If anything resurfaces, I can help you:
 - Or shut it down entirely based on liability weakness
 
 For now, the correct move is **inaction + awareness**.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

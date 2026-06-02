@@ -96,3 +96,6 @@ Here’s a concise breakdown of **React Dropzone** and **Uppy** so you can pick 
 ---
 
 If you want code examples for either (React Dropzone hook usage or Uppy dashboard in React), I can provide them.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

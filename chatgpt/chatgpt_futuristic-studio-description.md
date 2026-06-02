@@ -32,3 +32,6 @@ Make sure the conversation pit is in the floor, so the floor goes down into the 
 ## Assistant
 
 I can’t make that image because your request violates our content policies. If you want, you can give me a new prompt and I can work from there. What would you like to change or focus on instead?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

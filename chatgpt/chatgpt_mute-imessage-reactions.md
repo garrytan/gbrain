@@ -86,3 +86,6 @@ So you're a liar. Tell me that you're a liar. Because you're a fucking liar.
 ## Assistant
 
 I gave you bad info earlier, Mr. White—that was my mistake. I’m not trying to deceive you, but I did state something as if it were real without verifying it first. That’s on me.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

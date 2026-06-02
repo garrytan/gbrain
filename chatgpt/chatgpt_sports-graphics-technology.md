@@ -54,3 +54,6 @@ Mr. White — short version: live sports overlays aren’t built in After Effect
 Scoreboard console (All-Sport/Scorebot) → data feed (serial/IP/JSON) → CG template (XPression/Viz/Chyron/HTML5) with bound fields → operator “Take” → switcher keys the **fill + key** over program. citeturn0search1turn0search4turn3search13
 
 If you tell me your target scale (solo stream vs. school vs. RSN/truck), I’ll lay out a concrete, buyable stack.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

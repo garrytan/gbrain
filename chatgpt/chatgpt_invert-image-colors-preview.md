@@ -42,3 +42,6 @@ inver image color preview
 - **Online Tools:** Websites like PineTools offer online image inversion.
 
 These alternatives can help you invert image colors if Preview's functionality is restricted. 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

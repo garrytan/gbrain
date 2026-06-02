@@ -135,3 +135,6 @@ Cheering for someone’s failure when they’ve done nothing to you? Weird way t
 ---
 
 If you want it even shorter or sharper, I can punch it up further.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

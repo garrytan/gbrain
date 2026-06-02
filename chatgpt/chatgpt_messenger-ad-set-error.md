@@ -40,3 +40,6 @@ Here are the steps to resolve this:
    - Follow the guidelines for creating Messenger ads, which typically involve specific call-to-action buttons and creative formats designed for Messenger interaction.
 
 After making these adjustments, you should be able to proceed without errors.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -187,3 +187,6 @@ Best Marketplace pricing:
 **Title price:** `$1,850`  
 **Description line:** “Priced for full kit. Open to reasonable offers, cash/local pickup.”  
 **Negotiation move:** take **$1,650+** if the buyer is serious.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

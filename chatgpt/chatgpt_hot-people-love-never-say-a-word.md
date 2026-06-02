@@ -26,3 +26,6 @@ Write a caption for my reel. It’s going to be a voice memo of the song never s
 ## Assistant
 
 "Hot people love this song. If you're kinda hot like me, use 'Never Say A Word' in your reels and let the heat rise! 🔥 #NeverSayAWord #HotHits"
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

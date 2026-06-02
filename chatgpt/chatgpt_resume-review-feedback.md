@@ -133,3 +133,6 @@ Also: Mention LGBTQ+ friendliness or community experience explicitly, e.g.:
 ---
 
 If you'd like, I can deliver a fully rewritten version formatted for The Abbey. Want that?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

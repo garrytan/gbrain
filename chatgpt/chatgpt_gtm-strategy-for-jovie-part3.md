@@ -691,3 +691,6 @@ A messy release calendar → random posts → lost fans → no attribution.
 
 Talk track:  
 “Music creators do not need another content tool or analytics dashboard. They need a marketing system that runs every release, captures fans, tracks what worked, and improves the next campaign.” fileciteturn4file0
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

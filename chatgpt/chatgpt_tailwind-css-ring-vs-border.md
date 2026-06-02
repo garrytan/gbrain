@@ -28,3 +28,6 @@ im using tailwind css. when is it best to use a ring property vs a border proper
 Use the `border` property in Tailwind CSS to add a solid border around an element, while the `ring` utility can be used to add a border with a transparent center, creating the appearance of a ring or circular shape around the element.
 
 It's best to use the `ring` property when you want to create the appearance of a circular shape around an element, while the `border` property should be used when you want to add a solid border around an element.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

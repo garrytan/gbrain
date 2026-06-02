@@ -203,3 +203,6 @@ From your run:
 Don’t fail on “single-run timing” until you’ve confirmed stability. CI variance will randomly flag borderline suites. If you enforce hard fails, pick thresholds with plenty of margin (like the ones above).
 
 If you tell me whether you consider those three slow suites “unit” or “component/integration,” I’ll map them to the right bucket and suggest specific thresholds for *your* repo.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

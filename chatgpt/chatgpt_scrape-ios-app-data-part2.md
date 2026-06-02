@@ -198,3 +198,6 @@ Traceback (most recent call last):
     from algoliasearch.search_client import SearchClient
 ModuleNotFoundError: No module named 'algoliasearch'
 timwhite@tims-air algoliascraoer % 
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

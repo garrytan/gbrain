@@ -35,3 +35,6 @@ Mr. White, here’s how to create a Shared Album on the latest iOS:
 
 3. **Name, add and share**  
    Enter an album name, pick the photos/videos you want, tap Next (or Create), choose contacts to invite, then tap Done. citeturn3view0
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

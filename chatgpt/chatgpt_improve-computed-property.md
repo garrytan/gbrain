@@ -122,3 +122,6 @@ Unit tests are a type of test that validate the behavior of individual units of 
 Unit tests can be used to test code on both the backend and the frontend of an application. For example, you might write unit tests for a backend service to verify that it is correctly interacting with a database, or for a frontend component to verify that it is rendering and behaving as expected.
 
 Unit tests are typically run automatically as part of a continuous integration (CI) process, and they can be used to catch bugs and ensure that code changes do not break existing functionality.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

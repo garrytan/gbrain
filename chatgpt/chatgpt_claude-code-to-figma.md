@@ -56,3 +56,6 @@ If you just want *to bring Claude-generated code into Figma* without the MCP int
 - Requires MCP setup and authentication between Claude Code and Figma. citeturn0search9
 
 If you want step-by-step terminal commands or a script example for installing and authenticating the MCP connection, let me know.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

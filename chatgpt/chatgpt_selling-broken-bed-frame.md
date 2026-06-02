@@ -43,3 +43,6 @@ First come, first served – make me an offer!
 ---
 
 Let me know if you want a version with more urgency or humor.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

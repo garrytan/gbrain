@@ -48,3 +48,6 @@ Examples that land around **$20**:
 Make sure you’re not accidentally using **GPT-5.2 Pro**: it’s **$21 / 1M input** and **$168 / 1M output**. citeturn2view1turn2view2
 
 If you tell me roughly how many messages/agent runs you do per day (and whether responses are usually short or long), I’ll do a tighter break-even estimate.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

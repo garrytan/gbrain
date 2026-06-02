@@ -106,3 +106,6 @@ Another thing to try is to comment out the different parts of your webpack confi
 You can also try to use the `mix.disableNotifications()` method to disable any notification that may be hiding errors.
 
 Lastly, make sure that you have set the correct environment variables for your production environment. For example, the `process.env.ASSET_URL` might not be set correctly in your production environment, causing the application to break.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

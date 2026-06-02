@@ -26,3 +26,6 @@ How many rice cakes to equal one banana carb wise
 ## Assistant
 
 A banana typically contains about 27 grams of carbohydrates. One plain rice cake usually has about 7 grams of carbohydrates. So, roughly 4 rice cakes are equivalent to the carbohydrates in one banana.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

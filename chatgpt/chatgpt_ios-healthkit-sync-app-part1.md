@@ -587,3 +587,6 @@ By following these steps, you can systematically build out the required function
 
 
 we need to pull in the users step count from healthkit
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

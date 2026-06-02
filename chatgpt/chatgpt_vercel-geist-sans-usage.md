@@ -78,3 +78,6 @@ Mr. White,
 - Limited customization compared to heavyweight tools like Jira (by design).
 
 **Bottom line:** Linear helps software teams ship faster by removing friction from planning and tracking work, with a strong bias toward engineering efficiency.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -604,3 +604,6 @@ Here's the updated footer component:
 - **Link**: The text "at The Bubblegum Factory" is wrapped in an `a` tag linking to `https://thebubblegumfactory.la`.
 
 This will place the current year on the bottom left and the text with the heart emoji and link on the bottom right.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

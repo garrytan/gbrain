@@ -57,3 +57,6 @@ Here are typical steps:
 ---
 
 If you like, I can **walk you through a step-by-step setup** specifically for your project (e.g., with `main` branch, Next.js, custom domain) and include a sample GitHub Actions workflow file. Would that be helpful?
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

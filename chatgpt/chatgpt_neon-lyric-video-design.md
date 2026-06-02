@@ -96,3 +96,6 @@ Make it hot pink
 I've created a more vibrant hot pink gradient for you. You can download it using the link below and use it as a layer behind the text in your lyric video:
 
 [Download Vibrant Hot Pink Gradient](sandbox:/mnt/data/vibrant_hot_pink_gradient.png)
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

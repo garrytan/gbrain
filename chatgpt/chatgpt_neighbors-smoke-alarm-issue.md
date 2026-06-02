@@ -77,3 +77,6 @@ If you want, tell me:
 - Whether management has ignored this before
 
 I’ll tell you exactly how hard to push next.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

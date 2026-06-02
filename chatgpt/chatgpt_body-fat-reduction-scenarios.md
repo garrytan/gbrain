@@ -78,3 +78,6 @@ W ≈ **283 lb**
 - **Practical hybrid:** gain a few pounds of muscle while losing fat would lower the fat-loss required slightly, but the main driver is fat reduction.
 
 That’s the full spread from pure fat loss to the pure-muscle fantasy.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

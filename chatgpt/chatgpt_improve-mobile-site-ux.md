@@ -128,3 +128,6 @@ The header consumes too much vertical space on mobile.
 - Audit performance and Core Web Vitals impact.
 
 Just tell me which you prefer, Mr. White.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

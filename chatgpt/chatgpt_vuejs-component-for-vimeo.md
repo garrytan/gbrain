@@ -135,3 +135,6 @@ The `isLoading` variable is initialized to `true` in the component's `data` func
 In the `mounted` lifecycle hook, an event listener is added to the `iframe` element using the `$refs` property to wait for the video to finish loading. When the video's `load` event is fired, the `isLoading` variable is set to `false`.
 
 This modification allows you to display a loader until the video is fully loaded and ready to play.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

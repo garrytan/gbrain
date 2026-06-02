@@ -100,3 +100,6 @@ Unfortunately, **iOS doesn’t yet support triggering shortcuts based on AirTag 
 ---
 
 Want a custom version of the shortcut with your actual item names pre-filled? I can write out the full shortcut configuration for you.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

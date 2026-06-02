@@ -544,3 +544,6 @@ which provider?
 | GrowthBook | OSS self-host = free; Cloud free ≤3 users, then $20/user/mo citeturn0search8 | You host infra or pay per seat | Extra DevOps or seat fees |
 
 **Bottom line:** Statsig keeps your first year at $0 while giving you enterprise-grade flags and experiment analytics out-of-the-box. Switch later only if you need self-hosted control or strict type-safety.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

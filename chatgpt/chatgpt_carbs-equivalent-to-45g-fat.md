@@ -89,3 +89,6 @@ Instructions:
 9. Your Old Fashioned is ready to enjoy!
 
 Remember that the Old Fashioned is a simple and timeless cocktail, so feel free to adjust the sweetness and bitterness to your personal preference by varying the amount of sugar and bitters you use. Enjoy responsibly!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

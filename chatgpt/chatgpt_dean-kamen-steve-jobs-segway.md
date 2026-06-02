@@ -168,3 +168,6 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Yeah, so Jeff Bezos did invest in the company that produced the Segway, and he was part of that early group of investors who saw its potential. Steve Jobs, on the other hand, didn't invest in it, and it never became an Apple product or anything like that. He was definitely intrigued by the technology and gave"}
 {'asset_pointer': 'sediment://file_0000000065406230b7b11786efad06a6', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-07T23:51:31.608307+00:00', 'format': 'wav', 'metadata': {'end': 16.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 792078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

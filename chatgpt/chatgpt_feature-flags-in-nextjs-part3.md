@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Understood! To get MakeHuman running from source on your Mac, you'll first need to ensure you have Python installed. If you already have Python, you can download the MakeHuman source code from their website, extract the files, and then navigate to the folder in your terminal. From there, you can run MakeHuman by typing something like `python3 makehuman.py`. Once it's running, you can enable the socket server in MakeHuman's settings so that it can communicate with Blender. If you need any more detailed steps or run into any issues, just let me know!"}
 {'asset_pointer': 'sediment://file_00000000c4f0622f9d23048ae71769ec', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:29:11.118199+00:00', 'format': 'wav', 'metadata': {'end': 31.45, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1509678, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

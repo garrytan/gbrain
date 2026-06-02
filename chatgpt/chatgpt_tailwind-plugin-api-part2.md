@@ -560,3 +560,6 @@ If you want, next steps I can help with:
 - exact utility → tier mapping (mechanical checklist)
 - automated diff to confirm all 106 are accounted for
 - lint rule to prevent future “component-as-utility” regressions
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

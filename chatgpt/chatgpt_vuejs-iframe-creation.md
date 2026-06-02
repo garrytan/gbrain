@@ -89,3 +89,6 @@ In this example, we use the Vimeo `iframe` embed code and replace the `{{ videoI
 The `allow` attribute specifies the permissions granted to the embedded video, such as autoplay and picture-in-picture. Finally, the `allowfullscreen` attribute enables the video to be played in full screen mode.
 
 Note that this example assumes a video height of 360 pixels, but you can adjust this value as needed to match the aspect ratio of your video.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

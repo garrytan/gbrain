@@ -64,3 +64,6 @@ If you want, I can:
 - Cross-check the **exact room photo** against known Crowne Plaza images
 - Use **amenity exclusions** to rule out the remaining edge cases
 - Compare against the **$145 Hot Rate 3.5-star** nearby to see which property maps to which price bucket
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

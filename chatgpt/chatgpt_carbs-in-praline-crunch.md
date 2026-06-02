@@ -44,3 +44,6 @@ If you provide the carbohydrate content per serving of your praline crunch, I ca
 ## Assistant
 
 To reach your goal of 40 grams of carbohydrates, you would need to consume approximately 64.5 grams of Praline Pecan Crunch.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

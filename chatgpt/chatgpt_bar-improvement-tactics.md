@@ -106,3 +106,6 @@ Also important:
 ---
 
 If you like, I can build a tailored 12-month growth plan for Vault (with revenue projections, staffing, capital investments). Do you want me to do that?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

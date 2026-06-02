@@ -87,3 +87,6 @@ To make it fire when you pull into Trader Joe’s:
 5. Done.
 
 Now, when you arrive, your Grocery List will open automatically.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

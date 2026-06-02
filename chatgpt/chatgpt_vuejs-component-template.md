@@ -129,3 +129,6 @@ To round the percentage value, you can use the `Math.round()` method in the expr
 ```
 
 This will round the result of `(item.stat / item.limit) * 100` to the nearest integer value, which will be passed as the `percentage` prop to the `ProgressBar` component.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

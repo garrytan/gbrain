@@ -107,3 +107,6 @@ There is a clear rule in lifting culture:
 **If the bar is moving, shut the fuck up and keep your hands to yourself.**
 
 Anyone who violates that rule is either ignorant or entitled. Either way, they’re the problem—not you.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

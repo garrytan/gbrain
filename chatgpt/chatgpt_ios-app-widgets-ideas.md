@@ -170,3 +170,6 @@ If you want quick input from the widget itself:
 ---
 
 Want me to prototype this in Figma or give you layout code for SwiftUI / WidgetKit?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

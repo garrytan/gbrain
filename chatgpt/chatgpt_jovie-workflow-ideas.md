@@ -819,3 +819,6 @@ That should drive product decisions. Every feature should answer:
 5. Does this teach the system what to do next?
 
 The best near-term product is: **context-aware daily campaign execution for artists**, starting with short-form content and merch, then expanding into fan capture, creator campaigns, virtual content, and booking.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

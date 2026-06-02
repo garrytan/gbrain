@@ -217,3 +217,6 @@ i have 115 characters left. put a confidential note in that tim white is baout t
 ---
 
 The pitch is now 385 characters long, including the confidential note regarding Tim White's upcoming HBO role.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

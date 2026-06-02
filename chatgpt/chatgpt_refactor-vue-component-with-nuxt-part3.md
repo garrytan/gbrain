@@ -982,3 +982,6 @@ Here’s how you can adjust the parent component to apply these styles:
 
 
 i mean ring-2 not border radisu
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -102,3 +102,6 @@ Compare to:
 4. Deploy a staging project to test performance, cold starts, and cost—then decide.
 
 Let me know if you’d like help setting it up, or comparing performance/cost with Forge/Cloud for your specific workload, Mr.​ White.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

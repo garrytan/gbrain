@@ -40,3 +40,6 @@ Try these additional steps:
 - Ensure you're **not too far from your router**.
 
 Let me know if the light ring stays blue or changes after trying these.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

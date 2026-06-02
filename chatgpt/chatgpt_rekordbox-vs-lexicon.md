@@ -50,3 +50,6 @@ just for music managment purposes
 For a detailed walkthrough of Lexicon's features, you may find this video helpful:
 
 videoLexicon for Library Management - My Honest Reviewturn0search3 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

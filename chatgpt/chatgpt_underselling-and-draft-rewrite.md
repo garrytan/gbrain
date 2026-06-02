@@ -200,3 +200,6 @@ The sharpest strategic shift is this:
 Stop describing tasks. Describe operational burden, timing sensitivity, and lost momentum.
 
 I can rewrite all three posts with that frame and make them sound more founder-grade.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

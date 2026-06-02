@@ -195,3 +195,6 @@ Walk in and say:
 (aka: Premier Club plan without the $99 fee)
 
 Let me know if you want a follow-up email to send or want to rehearse the call.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

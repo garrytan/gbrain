@@ -85,3 +85,6 @@ If you want, tell me:
 - Rough location (neighborhood, not address)
 
 I’ll tell you straight whether antennas are worth your money.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -62,3 +62,6 @@ Jovie is a software tool for music creators that offers personalized link-in-bio
 ~~~
 
 If you want, I can also **(a)** remove the word "AI" if you want less regulatory scrutiny, or **(b)** make it sound more marketplace-like or SaaS-like for banking preferences.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

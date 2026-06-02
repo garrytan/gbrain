@@ -50,3 +50,6 @@ There are community efforts (e.g., MCP bridges on GitHub) that aim to connect Cl
 - You can also bring AI-generated UI *back into* Figma via the Code to Canvas feature from Figma’s AI partnership. citeturn0news25
 
 If you want setup steps or an example prompt for generating code from a Figma file with Claude, tell me what framework or output you need (React, Tailwind, etc.).
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

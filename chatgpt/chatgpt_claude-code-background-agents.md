@@ -65,3 +65,6 @@ If you (Mr. White) want to set this up in your environment, consider these steps
 ---
 
 If you like, I can **walk you through** a **sample setup** (config files + GitHub Actions workflow) for a background agent in Claude Code tailored for your project. Would you like that?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

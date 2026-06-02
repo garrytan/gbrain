@@ -39,3 +39,6 @@ Here are some spy music themes and spy movie songs that are close to 128 BPM:
 10. **"No Good About Goodbye"** - Shirley Bassey (Approximately 128 BPM)
 
 These tracks should fit well into a playlist aiming for that spy music vibe with a tempo around 128 BPM.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

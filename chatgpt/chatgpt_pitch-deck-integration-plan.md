@@ -312,3 +312,6 @@ After implementation:
 ```
 
 I’d use that prompt as-is. The key strategic constraint is: **same deck source, multiple render modes**. That keeps this from turning into three separate implementations that drift apart.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

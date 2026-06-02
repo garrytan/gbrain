@@ -157,3 +157,6 @@ Email **[add email/ATS link]** with subject **“Dishwasher/Porter – Immersive
 - Food Handler Card status
 
 *To boost top candidates, list an **hourly pay range**, **OT/shift premiums**, and perks (family meal, parking/transit, growth path).*
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

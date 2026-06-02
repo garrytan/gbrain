@@ -53,3 +53,6 @@ apple wallet card
 - Cards in Wallet are secured with **Face ID/Touch ID/Passcode** and use tokenization for Apple Pay so your actual card number isn’t shared with merchants. (general security fact about Apple Pay/Wallet)
 
 If you want step-by-step instructions for a specific card type (e.g., transit card, Apple Card, or digital ID), tell me which one.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

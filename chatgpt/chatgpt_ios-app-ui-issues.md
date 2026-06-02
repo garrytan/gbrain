@@ -379,3 +379,6 @@ Extend the AvatarMesh component so it renders a wireframe torso that reflects bo
    - Switch sex → loads female assets.  
    - Confirm on all breakpoints that mesh remains crisp and aligned.
 ```
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

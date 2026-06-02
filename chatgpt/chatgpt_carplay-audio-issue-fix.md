@@ -116,3 +116,6 @@ Got it — here are a few solid, compact USB-A data blocker options that will wo
 If it were me, I’d go **#1** if you want flush and forget, or **#3** if you want it to look tidier with a cable plugged in all the time.  
 
 Want me to also give you a couple of **good charge-only cable** options in case you want to skip the adapter entirely?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

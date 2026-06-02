@@ -1269,3 +1269,6 @@ If you want next, I can help you:
 
 {'asset_pointer': 'sediment://file_00000000cce471fda29ed2450c6b9cdf', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 608, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 145802, 'width': 1252}
 Improve the headline
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

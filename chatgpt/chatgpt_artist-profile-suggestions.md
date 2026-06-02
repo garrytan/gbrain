@@ -378,3 +378,6 @@ Got it, Mr. White. Here’s a tight spec plus mocks (profile w/ cleaner **Listen
 - `cta_listen_click`, `notify_subscribe`, `tip_amount_select`, `tip_continue`, `service_click` with `artist_id`, `service`, `device`, `referrer`.
 
 If you want revisions to the mocks (colors, radii, icon set), say the word and I’ll iterate.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

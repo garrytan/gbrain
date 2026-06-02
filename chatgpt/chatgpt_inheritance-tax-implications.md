@@ -56,3 +56,6 @@ Here’s the rundown, Mr. White:
 ---
 
 Do you want me to break down how the IRS typically handles **valuation disputes for private shares** like SpaceX, since that’s where things usually get tricky?
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

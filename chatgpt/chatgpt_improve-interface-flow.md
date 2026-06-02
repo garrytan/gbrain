@@ -84,3 +84,6 @@ The “Live Preview” is great—add:
 - Username field: show **availability + rules** if editable; otherwise make it read-only with “Contact support to change”.
 
 If you want, tell me your target user (artist vs creator vs influencer) and whether “links” are meant to be **multiple destinations** or **just music + tip jar**—and I’ll propose a cleaner information architecture + exact component layout.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

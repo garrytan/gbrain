@@ -26,3 +26,6 @@ Generate a clean, modern favicon in black and white for our app called LogYourBo
 ## Assistant
 
 Mr. White, here’s a sleek, black-and-white favicon for LogYourBody—minimal silhouette with precise measurement markers, perfect for representing body composition tracking in a single glance. Let me know if you’d like any tweaks.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

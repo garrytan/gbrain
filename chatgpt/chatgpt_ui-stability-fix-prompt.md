@@ -168,3 +168,6 @@ Got it, Mr. White. Here’s a single, drop-in “make the UI sane” prompt for 
 ---
 
 Use this verbatim. If you want, I can tailor it to your actual folder structure and component names next.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

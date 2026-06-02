@@ -436,3 +436,6 @@ Refactor the Jovie CI pipeline, add CommitLint + Danger, and tighten branch-prot
 ```
 
 *(The prompt is deliberately concise and ordered so Cloud Code can execute it step-by-step without further clarification.)*
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

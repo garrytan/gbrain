@@ -380,3 +380,6 @@ If you want, I can:
 - Pull exact current dependency trees from their public repos
 - Compare their SDK dependency footprint vs competitors
 - Analyze what a “ChatGPT-scale” frontend likely avoids dependency-wise
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

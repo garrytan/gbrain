@@ -326,3 +326,6 @@ Do not build more before selling.
 Do not chase devtools.
 
 Your unfair advantage is clearest in **music + AI ops + artist growth**. Use the product you already built to get the first real signal.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

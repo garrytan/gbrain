@@ -54,3 +54,6 @@ Claude is an AI assistant from Anthropic. It isn’t a standalone *task manageme
 - Use Claude Code if you want programmatic task workflows (especially for technical or repeatable processes). citeturn0search7
 
 In essence, Claude doesn’t replace dedicated task apps on its own, but it **acts as a powerful AI layer that *plans, organizes, tracks, and executes tasks*** — either within Claude’s workspaces or by interacting with your existing tools. citeturn0news26
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

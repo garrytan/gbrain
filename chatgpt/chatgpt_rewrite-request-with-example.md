@@ -164,3 +164,6 @@ Keep all copy short and readable at pitch-deck scale.
 Do not overexplain.
 Do not make it look like a chatbot toy. Make it look like an operating system for artist revenue.
 ```
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

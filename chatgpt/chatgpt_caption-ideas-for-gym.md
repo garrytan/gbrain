@@ -104,3 +104,6 @@ Me: ‘I’m clearly failing.’
 RP Hypertrophy App: ‘You’ve got 2 reps left in the tank—don’t be soft.’  
 *Chugs Genius Shot, tightens Versa Grips*  
 ‘Hold my macros.’”**
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -361,3 +361,6 @@ If you want next:
 - I can help you **name this**
 - Draft the **positioning doc**
 - Or design the **anti-dashboard manifesto**
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

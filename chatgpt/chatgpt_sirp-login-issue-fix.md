@@ -124,3 +124,6 @@ gem install fastlane
 Use **Bundler** if this is for a repo/CI (most reliable), otherwise **brew install fastlane** for a painless global setup.
 
 Once fastlane is updated, retry your login, and if SRP still acts up, switch to API key or `FASTLANE_SESSION` like I mentioned earlier.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -472,3 +472,6 @@ You asked for “instructions to get to something great”; here’s the short e
    - [ ] Add a simple goal pill under the chart.
 
 If you want to send one more screenshot after applying a couple of these, I can nitpick spacing and wording so the whole thing feels tight and “native-Apple but actually useful.”
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

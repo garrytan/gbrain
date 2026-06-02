@@ -59,3 +59,6 @@ That’s the correct workflow if you want real automation.
 ---
 
 If you'd like, tell me how your Sentry ↔ Linear integration is currently configured and I’ll give you the cleanest setup for your workflow.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

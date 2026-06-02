@@ -363,3 +363,6 @@ Mr. White — with a **vial** and August heat, pick one of these:
 - **Compounded multi-dose vial:** stability off-fridge varies by pharmacy; safest is **keep 36–46°F** or **don’t bring it**—use one of the timing options above. (Many pharmacies still say discard ~28 days after first puncture.) Follow your pharmacy’s label. citeturn0search7turn0search17
 
 **My recommendation:** it’ll be hot—**take it Sat Aug 9** or **Fri Aug 15** and skip hauling a vial. Want me to set a one-time reminder?
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

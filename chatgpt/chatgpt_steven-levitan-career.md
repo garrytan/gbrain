@@ -743,3 +743,6 @@ Since you’re building something around music, catalog, and artists:
 
 If you like, I can build a **full ranked list of ~20–30 streaming services** (global + regional) — with **estimated listener counts, geographies served, strengths (audio, catalog, unique features)**.  
 That can help you decide which to support or integrate with, depending on intended reach or niche.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

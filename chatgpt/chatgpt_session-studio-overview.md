@@ -28,3 +28,6 @@ session studio
 ​Session Studio is a free app designed for music creators to collaborate, organize song credits, and manage releases. It allows users to upload and share audio, lyrics, notes, and voice memos, ensuring accurate crediting and facilitating royalty payments. The app is available on web, desktop, and mobile platforms. citeturn0search0
 
 You can download Session Studio from the App Store citeturn0search2 or Google Play Store. citeturn0search1 
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

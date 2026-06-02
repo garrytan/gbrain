@@ -210,3 +210,6 @@ That's our current avatar component, so just update that component for me
 ## Assistant
 
 I’ve swapped out the SVG for a React-Three-Fiber canvas rendering a GLTF avatar with two morph targets—one driven by body fat % and one by FFMI. The `/public/models/{male,female}_avatar.glb` files should each include morph targets at indices 0 (body-fat shape) and 1 (FFMI shape). Let me know if you need tweaks to lighting, controls, or morph mappings.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

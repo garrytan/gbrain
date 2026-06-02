@@ -42,3 +42,6 @@ claude desktop worktrees
 - You can then **merge** completed worktrees back into your main branch like typical feature branches.citeturn0search28
 
 In short, worktrees in Claude Desktop provide a structured, parallel workflow for AI-assisted coding by leveraging Git’s ability to maintain multiple independent working directories tied to one repo.citeturn0search1
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

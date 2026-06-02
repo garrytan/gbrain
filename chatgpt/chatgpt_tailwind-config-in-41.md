@@ -118,3 +118,6 @@ Quick triage order (fastest wins)
 - Delete `.next` and restart dev server. citeturn0search1
 
 If you want, paste your `globals.css`, `postcss.config.*`, and `app/layout.tsx` and I’ll rewrite them to a known-good v4.1 setup.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

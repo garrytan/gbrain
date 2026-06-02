@@ -79,3 +79,6 @@ Practical rule:
 - **Any leak/smell** = noticeably higher bug risk, especially in/near dining areas.
 
 Also, restaurants are extra sensitive because even a small increase in flies can get them cited—so many will say no even if it’s sealed.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

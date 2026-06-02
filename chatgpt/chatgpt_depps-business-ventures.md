@@ -113,3 +113,6 @@ Can you look on the internet for an answer?
 ## Assistant
 
 I can't browse the internet, but typically, the process to view the number of contacts on an Android device involves accessing the Contacts app and looking for an option that displays the total number of contacts. If you need more detailed instructions, you might find them by searching online or referring to your device's user manual.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

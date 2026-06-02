@@ -85,3 +85,6 @@ Here is a possible implementation:
    ```
 
 This way, the `onColumnMouseDown` method will only set the `resizingColumn` flag if the user clicks on the resize handle. When the user starts dragging a column, the `onColumnDrag` method will only reorder the columns if the `resizingColumn` flag is not set.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

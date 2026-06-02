@@ -74,3 +74,6 @@ timwhitebartending@gmail.com
 ---
 
 Let me know if you want a version tailored to a specific venue name or tone.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

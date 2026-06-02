@@ -253,3 +253,6 @@ export default class MyComponent extends Vue {
 We added a type definition for the `items` prop using the `Item` interface, and then added `as any` to the prop definition to fix the issue with TypeScript not recognizing the `items` prop on the `MyComponent` class. 
 
 Now the component should compile without errors.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

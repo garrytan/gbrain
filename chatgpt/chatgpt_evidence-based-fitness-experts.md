@@ -43,3 +43,6 @@ tags: [chatgpt, import]
 - Menno Henselmans: [https://mennohenselmans.com](https://mennohenselmans.com)
 
 These resources provide in-depth information on training methodologies, nutritional strategies, and evidence-based practices to enhance your fitness journey. 
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

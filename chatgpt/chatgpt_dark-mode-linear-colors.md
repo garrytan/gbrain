@@ -86,3 +86,6 @@ body.dark {
 ```
 
 If you want, I can generate **ready-to-use palettes in JSON or CSS variables** tailored to a specific brand color.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

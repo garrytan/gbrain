@@ -88,3 +88,6 @@ Here are your **organized, concise notes** from your visit to **LA Fitness (El C
 ---
 
 Let me know if you'd like this compared directly against another gym.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

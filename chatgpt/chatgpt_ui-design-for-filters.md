@@ -118,3 +118,6 @@ For your unified timeline:
 ---
 
 If you tell me what front-end stack you’re using (e.g. React Native, SwiftUI, Flutter), I can give you the exact component pattern and state management logic to implement this filtering cleanly. Would you like me to sketch a mock layout or React component example for the dashboard filter bar?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

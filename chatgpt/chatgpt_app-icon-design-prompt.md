@@ -77,3 +77,6 @@ Deliverables:
 - Provide the final as a 1024x1024 PNG-style render and a clean vector/SVG-ready version.
 - Include a short design rationale explaining why the final icon feels premium, memorable, and scalable.
 ```
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

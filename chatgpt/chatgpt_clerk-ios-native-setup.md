@@ -87,3 +87,6 @@ App → opens browser Clerk auth → Clerk completes auth → redirects to custo
 ```
 
 That means **iOS should be configured as native**. Electron only needs native-style config if you use a custom protocol return path.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

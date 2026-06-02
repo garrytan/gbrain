@@ -313,3 +313,6 @@ Each one now has:
 ✅ Your `seed.sql` now seeds 16 total profiles with consistent structure.  
 
 Do you also want me to expand these new rows with **social links (Instagram, TikTok, X, Facebook)** the same way we built them in the JSON seed examples earlier, or keep `spotify/apple/youtube` only for now?
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

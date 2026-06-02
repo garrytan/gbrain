@@ -45,3 +45,6 @@ Here are some **cleaning solution options you can use with your upholstery clean
 - DIY mixes (like mild hot water + gentle detergent) *can* work but they may leave residue that attracts dirt if not rinsed properly. citeturn0search0
 
 If you tell me **the cleaning code on your couch tag (e.g., W, S, WS)** I can narrow this down to the best specific solvent for that fabric.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

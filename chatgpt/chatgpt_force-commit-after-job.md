@@ -249,3 +249,6 @@ Do you want:
 3. **one commit only if results differ from previous run**
 
 Tell me **1, 2, or 3**, and I’ll optimize the script into production shape.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

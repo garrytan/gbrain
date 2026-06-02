@@ -63,3 +63,6 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Yeah, great question. So in general, you won't actually place the XBM file itself into the asset catalog. The XBM is more like an intermediate format. What you really want to do is export or save the icon set as a bunch of PNGs at the correct sizes. \n\nSo once you have those PNG files, each one representing a different resolution of your app icon, you'll drag those PNGs into the appropriate slots in the asset catalog in Xcode. And that's really all you need to do. So think of the XBM as just a step along the way, and the final goal is to get those PNGs into the asset catalog."}
 {'asset_pointer': 'sediment://file_00000000e0d071f7bf903ba9cfb4afae', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-05-16T17:40:28.823392+00:00', 'format': 'wav', 'metadata': {'end': 37.35, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1792878, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

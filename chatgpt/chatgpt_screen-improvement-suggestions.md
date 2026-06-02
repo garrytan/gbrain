@@ -70,3 +70,6 @@ Mr. White, here are concrete ways to improve this screen, focusing on hierarchy,
 - “Body Score” vs “FFMI / Body Fat / Weight” mixes an abstract score with raw metrics. Add a short descriptor under Body Score: “Composite of BF%, FFMI, activity, weight trend.”
 
 If you want, I can sketch a revised layout in words or rough wireframe structure.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

@@ -338,3 +338,6 @@ This will show whether the network and CORS handshake even occur.
 ---
 
 Would you like me to write a **copy-paste checklist** Claude’s team can run during staging deploys to catch this class of issues automatically (like a “staging smoke test script”)?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

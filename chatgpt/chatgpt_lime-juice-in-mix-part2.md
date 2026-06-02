@@ -301,3 +301,6 @@ Here's a narrowed down list of 7 specialty cocktails, including 2 vodka-based, 2
    - Garnish: Cucumber slices
 
 This selection offers a diverse and intriguing range of specialty cocktails for your menu.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

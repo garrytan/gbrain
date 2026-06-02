@@ -20,3 +20,6 @@ tags: [chatgpt, import]
 ## User
 
 https://github.com/ruvnet/FACT research this for jovie both for our own agentic coding operations and then for the actual jovie product 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

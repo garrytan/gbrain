@@ -80,3 +80,6 @@ Mr. White, most folks won’t know under the hood, but they may notice:
 - **Offline load**: Web assets live inside the app, but first paint can lag as the WebView initializes; native views render instantly.  
 
 In day-to-day use most users won’t call you out on it—just pay extra attention to animation smoothness, gesture handling, and splash timing.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

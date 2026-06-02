@@ -601,3 +601,6 @@ def save_records_to_database(records):
 ```
 
 This updated version of the function properly handles the conversion of occupations and interests lists to strings before inserting them into the database. This should resolve the issue with data type conversion errors.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

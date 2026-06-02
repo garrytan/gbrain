@@ -81,3 +81,6 @@ Refactor the entire dashboard using atomic design principles while strictly elim
 ---  
 
 Want me to compress this into a **one-liner command-style prompt** (so you can drop it straight into your Claude/agent workflow), or keep it descriptive?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

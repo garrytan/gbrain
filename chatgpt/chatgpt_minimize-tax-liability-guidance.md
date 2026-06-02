@@ -141,3 +141,6 @@ Got it, Mr. White. Since this is for your **main job at Voss**, here’s how you
 ---
 
 Mr. White, do you want me to **run a quick sample estimate** (with rough numbers for bartending income, other jobs, and your company losses) so you can decide if you should enter something under “Other Income” or “Extra Amount”? That would make sure you don’t get hit with a tax bill in April.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

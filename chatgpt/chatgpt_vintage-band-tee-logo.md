@@ -62,3 +62,6 @@ On top put “manufactured at”
 ## Assistant
 
 Here is the logo with "Manufactured at" added on top.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

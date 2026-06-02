@@ -672,3 +672,6 @@ This way you can:
 - Add a toggle later like: “Only show photos with 1 face (likely you)”
 
 Let me know when you're ready to lock in this filter logic — it’s minimal and safe for MVP.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

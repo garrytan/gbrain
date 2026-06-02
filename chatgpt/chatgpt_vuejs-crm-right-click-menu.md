@@ -281,3 +281,6 @@ In this modified code, a `menuStyle` computed property is added to calculate the
 - The resulting `top` and `left` values are then applied to the `style` attribute of the menu container element.
 
 By incorporating this logic into your component, the menu will be adjusted to ensure it remains within the visible viewport, preventing it from opening off-screen or partially off-screen.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

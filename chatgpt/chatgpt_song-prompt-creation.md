@@ -42,3 +42,6 @@ lets add in a vocal like that of haley who features on kaskades tracks frequentl
 Mr. White, try this revised prompt:
 
 "Compose an uplifting deep-house track featuring atmospheric synth layers, emotive melodies, and groovy basslines. Incorporate a captivating female vocal performance with a soulful, signature style often found on iconic deep-house collaborations. The song should build gradually with dynamic drops, subtle progressive trance elements, and smooth transitions, evoking the vibe of late-night urban adventures and nostalgic summer evenings."
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -50,3 +50,6 @@ To have a BMI of 30 at 6'1", the target weight would be approximately **227.4 lb
 ## Assistant
 
 To have a BMI of 30 at 6'4", the target weight would be approximately **246.5 lbs**.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

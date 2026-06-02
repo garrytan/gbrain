@@ -155,3 +155,6 @@ Top → bottom:
 ---
 
 If you tell me what actions you want people to take most (log weight daily? add photos weekly? just view progress?), I can tailor this into a more concrete wireframe for that behavior.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

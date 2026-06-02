@@ -989,3 +989,6 @@ The GET method is not supported for route api/register. Supported methods: POST.
 
 seems the path is correct.
 can i test the end point with postman?
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

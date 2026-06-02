@@ -254,3 +254,6 @@ But **violent threats change the calculus** — police are more likely to act wh
 ---
 
 If you want, I can outline **exact steps to report this to LAPD and LADOT** with phone numbers and what evidence to present.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

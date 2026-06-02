@@ -6,3 +6,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "If the interface isn't popping up, it's possible that there's an issue with the display configuration or a missing dependency. Here are a few things you can try:\n\n1. **Check for Errors in the Terminal**: Sometimes, errors might show up in the terminal that could give clues about what's missing.\n\n2. **Ensure Dependencies Are Installed**:"}
 {'asset_pointer': 'sediment://file_00000000aab4622fac99a6740ff0644f', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T04:38:58.239308+00:00', 'format': 'wav', 'metadata': {'end': 16.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 792078, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

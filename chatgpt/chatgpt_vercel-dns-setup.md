@@ -167,3 +167,6 @@ I do **not** see `g6rhb6...` in your “Current DNS Records” table. Add it:
 2) Go back to Stripe and click **Try verifying now** again.
 
 If you paste the **exact DMARC value Stripe shows** here, I’ll tell you precisely what to put in Vercel (and sanity-check formatting like quotes/semicolons).
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

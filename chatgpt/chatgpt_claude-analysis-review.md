@@ -616,3 +616,6 @@ I can:
 4. Define a **v2 standard for internal dashboards**
 
 Say which and I’ll go straight there.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

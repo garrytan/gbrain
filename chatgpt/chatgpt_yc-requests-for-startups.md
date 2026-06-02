@@ -50,3 +50,6 @@ Recent lists have focused heavily on:
 - However, aligning your startup with a big problem YC *publicly expresses enthusiasm for* can help contextualize your opportunity in the application. citeturn0search0
 
 If you want, I can summarize the **current YC RFS list and themes for the latest batch** — just tell me which one you’re targeting.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

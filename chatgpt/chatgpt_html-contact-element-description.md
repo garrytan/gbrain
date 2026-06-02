@@ -210,3 +210,6 @@ while (element = xpathResult.iterateNext()) {
 ```
 
 Please keep in mind that, this is just a sample code, it may not work as it is and you might need to adjust it according to your requirement.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

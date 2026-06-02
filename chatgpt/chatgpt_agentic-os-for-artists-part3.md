@@ -656,3 +656,6 @@ Jovie watches every release, finds the next move, builds the campaign, routes fa
 Catalog intelligence · Campaign agents · Fan paths · Team workflows · Works with your distributor
 
 This is the version to ship today. It is premium, legible, customer-facing, and strong enough for YC/a16z reviewers to understand the business without you turning the homepage into an investor page.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

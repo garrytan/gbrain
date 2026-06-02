@@ -44,3 +44,6 @@ DJs release X times more on avg...
 DJs have x tour date per city 
 DJ have x tour date per month vs y tour dates
 etc
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

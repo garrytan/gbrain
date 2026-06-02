@@ -73,3 +73,6 @@ Latest Storybook versions (9+) focus on trimming internal bloat and improving pe
 ---
 
 If you want concrete config tweaks (e.g., a tailored `.storybook/main.js` example) for your framework, tell me which bundler (Webpack vs Vite) your project uses.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

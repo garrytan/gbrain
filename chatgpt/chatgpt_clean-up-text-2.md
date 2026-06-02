@@ -107,3 +107,6 @@ Yes, Mr. White — this idea has been talked about a lot, though under different
 Your articulation is basically a mix of **“systems over goals”** and **“daily discipline compounds.”** James Clear is probably the most popular modern voice saying exactly what you’ve written, but the core idea goes way back—Stoics like Epictetus also stressed daily actions aligned with virtue rather than obsessing over outcomes.  
 
 Want me to boil your version down into a branded phrase (like *The Daily Task Rule* or *One Step Doctrine*) so it feels like your own spin?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

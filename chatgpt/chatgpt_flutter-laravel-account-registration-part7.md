@@ -570,3 +570,6 @@ Make sure the endpoints (`/api/register` and `/api/login`) and the `AuthModel` i
 
 
 give the full signup page code
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -1003,3 +1003,6 @@ give me the ships today, we'll iterate later after applciations are in version o
 
 
 Mr. White, here is the version that can ship today using the existing page structure: change copy, CTAs, section emphasis, and hide the cheap/self-serve surface area.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

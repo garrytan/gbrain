@@ -35,3 +35,6 @@ Mr. White — flashing blue means the Ring Video Doorbell 2 is in **setup mode**
 5. **Hard Reset**: Hold down the setup button for **20 seconds**, release, wait 1 minute, then try setup again.
 
 Let me know what it's doing after those steps.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -41,3 +41,6 @@ creditkarma
 In December 2020, Credit Karma was acquired by Intuit, the parent company of TurboTax and QuickBooks.
 
 For more information or to sign up, visit [creditkarma.com](https://www.creditkarma.com). 
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

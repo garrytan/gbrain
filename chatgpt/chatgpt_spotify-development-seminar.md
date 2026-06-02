@@ -196,3 +196,6 @@ Production behind flags
 ```
 
 The key lesson: do not just “add agents.” Build the harness where agents can repeatedly produce safe, reviewable work. Spotify’s leverage came from the boring platform layer first.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

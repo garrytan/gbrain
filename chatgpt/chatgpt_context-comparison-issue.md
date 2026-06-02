@@ -83,3 +83,6 @@ I’d also like the Upwork managed services team to step in here and ensure the 
 ```
 
 The key correction: this message does **not** claim unverifiable specifics about the preview’s exact DOM, colors, sections, or copy. It anchors on the original Jovie page, the agreed assignment, and your firsthand assessment of the delivered pass.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -123,3 +123,6 @@ python main.py --help
 - Missing API key is the most common failure
 
 If you want, tell me **which repo URL you’re using**, and I’ll give you the exact one-line command.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

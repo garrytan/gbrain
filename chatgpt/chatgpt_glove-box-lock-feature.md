@@ -83,3 +83,6 @@ Here’s why that matches your situation:
 So in short: the key blade isn’t for glove-box locking or ignition — its role is purely backup/manual door lock/unlock.  
 
 If you want, I can check the official manual for 2016 CX-5 and show you exactly where it says this, to prove definitively.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

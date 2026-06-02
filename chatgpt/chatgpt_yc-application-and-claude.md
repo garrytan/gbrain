@@ -111,3 +111,6 @@ If useful, I can also show:
 - **5 YC-style Claude startup ideas that actually get funded**
 - **How to structure a YC application answer using AI leverage**
 - **The exact YC questions and how top founders answer them**.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

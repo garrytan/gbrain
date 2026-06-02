@@ -88,3 +88,6 @@ In modern Next.js/AI stacks, skills help AI tools enforce best practices and aut
 ---
 
 If you want, I can also break these down into a **short resume format, interview questions for candidates, or an AI-agent workflow spec** tailored to your use case.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -62,3 +62,6 @@ These are **lint rules** (static analysis), not runtime features. You configure 
 - These rules help maintain best practices with hooks (top-level calls, exhaustive deps), but they don’t replace or implement React hooks themselves. citeturn0search2
 
 If you need examples of those lint rules in action or how they compare to ESLint’s hook rules, I can provide them.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

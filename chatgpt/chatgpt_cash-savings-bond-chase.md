@@ -77,3 +77,6 @@ Mr. White—30‑second playbook for turning that paper bond into cash without
 **Tax note:** Interest is federal‑taxable the year you cash or when the bond hits final maturity (30 years), whichever comes first. No state tax.  
 
 That’s it—paper gone, money in the bank.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

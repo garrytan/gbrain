@@ -40,3 +40,6 @@ mkae it monochrome in hot pink
 ## Assistant
 
 Here is the monochrome logo for "The Bubblegum Factory" in hot pink.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

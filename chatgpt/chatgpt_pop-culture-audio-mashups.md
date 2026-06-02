@@ -295,3 +295,6 @@ use …makes me want a hot dog real bad
 
 10. **Audio Clip 1:** "Houston, we have a problem..."
     **Audio Clip 2:** "...makes me want a hot dog real bad." (Jennifer Coolidge, Legally Blonde)
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

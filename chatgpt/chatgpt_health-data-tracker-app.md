@@ -602,3 +602,6 @@ user.ffmi = newFFMI; // this will automatically call notifyListeners
 ```
 
 Make these changes to your code, and it should resolve the compilation errors. Remember, in Flutter, `ChangeNotifierProvider` and `notifyListeners` are used for state management in non-widget classes, while `setState` is specifically for stateful widgets.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

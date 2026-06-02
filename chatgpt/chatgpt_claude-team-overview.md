@@ -42,3 +42,6 @@ Anthropic’s Claude team builds and maintains:
 Anthropic and the Claude team emphasize **AI safety, transparency, and utility**, aiming to produce powerful language models that behave in aligned, controllable ways. citeturn0search2
 
 If you want specific individuals beyond founders and notable leads (e.g., engineering, research heads), I can list them too.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

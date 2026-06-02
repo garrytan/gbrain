@@ -205,3 +205,6 @@ Yes — **Clerk Billing is a very good option** for your situation **if** you mo
 However, if you want full App Store native subscriptions + web + cross‑platform entitlements from day one, you’ll need to check how well Clerk supports App Store IAP or whether you’ll need an additional layer (like RevenueCat) for the mobile side.
 
 If you like, I can **compare Clerk Billing vs RevenueCat vs DIY (Stripe only + native IAP)** for your precise workflow (iOS + web + future scale) and map out which route is fastest now and best long‑term. Do you want that?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

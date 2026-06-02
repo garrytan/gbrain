@@ -244,3 +244,6 @@ Begin by auditing the current jov.ie landing page using the existing codebase.
 :::
 
 If you want a stricter engineering-focused variant (purely implementation output, minimal prose, maximum code diff style), I can provide that as well.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

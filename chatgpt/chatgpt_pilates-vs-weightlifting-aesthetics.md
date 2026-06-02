@@ -190,3 +190,6 @@ Here’s a **blunt efficiency ranking for aesthetics (hotness ROI):**
 Meanwhile, classes like Pilates are lifestyle extras, not physique drivers.  
 
 Want me to make you a **“Hotness ROI Pyramid”** graphic-style breakdown you could literally show someone as a no-BS guide?
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

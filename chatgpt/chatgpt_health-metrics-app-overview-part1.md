@@ -960,3 +960,6 @@ It seems you are using Laravel's Sanctum package for API token authentication an
     - If your Flutter app and Laravel API are on different domains, ensure that CORS (Cross-Origin Resource Sharing) is correctly configured to allow requests from your Flutter app's domain.
 
 By checking these points and ensuring that both your Flutter app and Laravel API are correctly set up and communicating, you should be able to resolve the issue with updating user details.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

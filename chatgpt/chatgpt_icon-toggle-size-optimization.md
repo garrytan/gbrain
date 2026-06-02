@@ -91,3 +91,6 @@ I apologize for the misunderstanding. To keep the div the same size regardless o
 In this updated code, the size of the div is controlled based on the `contactMenuOpen` variable. When the icon is shown (`archived > 0 && favourites > 0` condition is met), the div will have a height of `h-5`. Otherwise, when the icon is not shown, the div's height is set to `h-0`, effectively hiding the div and maintaining the same size.
 
 Additionally, the `invisible` class is added to the icon when it's not shown, making it transparent (`visibility: hidden`) but still occupying the same space.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

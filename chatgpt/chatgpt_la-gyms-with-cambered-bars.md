@@ -46,3 +46,6 @@ Mr. White, here are LA-area gyms that *specifically mention having a cambered ba
 Before you go, call or DM to confirm they’ve got a **cambered *bench* bar** (not just a cambered squat bar or cambered Swiss/multi-grip). Gyms sometimes use “cambered bar” loosely.
 
 If you tell me what part of LA you’re in (west side, valley, DTLA, etc.), I’ll rank these by drive time and suggest the best fit.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

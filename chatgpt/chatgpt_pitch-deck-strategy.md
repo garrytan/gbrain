@@ -29,3 +29,6 @@ Specific advice on this: there are videos in their library and stuff about what 
 - We're raising $500,000 in a $5 million post-money safe. We should say $125,000 is already in for traction.
 - We should just generally have Daniel Kang as an advisor.
 Let's throw this together.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

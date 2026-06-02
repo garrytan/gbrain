@@ -89,3 +89,6 @@ Mr. White, if you’re looking for something even more AI-centric than Copilot, 
   A free AI-powered tool focused on maximizing credit-card rewards, flagging unused benefits and uncovering hidden savings. It also offers simple calculators for cash-flow and retirement projections. citeturn0search1
 
 Each trades off different levels of “human-like” AI interactivity, cost and emphasis (budgeting vs. rewards vs. debt). Pick the one whose AI features align best with your needs.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

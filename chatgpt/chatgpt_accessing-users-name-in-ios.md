@@ -42,3 +42,6 @@ Remember, any approach that involves accessing or storing user data should:
 - Implement proper security measures to protect the user data.
 
 It's crucial to handle user data responsibly and transparently, respecting their privacy and adhering to legal and platform requirements.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

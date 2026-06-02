@@ -74,3 +74,6 @@ POS & Inventory Management: Proficient with Toast, Clover, Square, and experienc
 Team Leadership & Staff Development: Skilled at training and motivating teams to optimize workflow and morale  
 Customer Engagement & VIP Service: Excels at upselling, building rapport, and delivering memorable guest experiences  
 Certifications & Compliance: RBS Certified, Food Handler Card, well-versed in safe serving practices and venue security protocols
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

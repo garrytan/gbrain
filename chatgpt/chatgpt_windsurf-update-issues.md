@@ -67,3 +67,6 @@ Since you’re a startup founder likely working with code and long sessions, the
 ---
 
 If you like, I can check **which specific version** you’re on vs latest, and **whether any major issues** are reported for the version you’re forced into by auto-update — so you can decide whether to delay updates or not. Would you like me to pull that up?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

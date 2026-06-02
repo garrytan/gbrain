@@ -94,3 +94,6 @@ Mr. White — a few high-leverage table upgrades + clean ways to handle “missi
 - **Keyboard**: arrows to move row selection; enter opens details; `c` copies smart link.
 
 If you tell me whether you want the table to optimize for **(a) scanning coverage** or **(b) quickly copying/opening links**, I’ll recommend a concrete layout (column order + which actions stay inline vs moved to the side panel).
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -149,3 +149,6 @@ Getting started:
 urlPromptfoo getting started guideturn0search16
 
 OpenAI announced an acquisition in 2026 while keeping it open source. citeturn0search4
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -69,3 +69,6 @@ Mr. White, here’s a step‐by‐step on wiring up RevenueCat for both Apple in
 - Use App Store Connect sandbox users + RevenueCat’s sandbox mode to validate iOS flows.  
 - In Stripe test mode, simulate Checkouts + webhook events to confirm entitlements unlock on both platforms.  
 
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

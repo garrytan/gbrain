@@ -1044,3 +1044,6 @@ Make sure the indentation is correct (two spaces per level, no tabs), and that t
 4. **Check for Hidden Characters**: Sometimes, hidden characters can get into the `pubspec.yaml` file, causing issues. Open the file in a plain text editor and check for any unusual characters.
 
 If you continue to face issues, it might help to see the exact structure of your `assets/img/` directory and the relevant section of your `pubspec.yaml`. If possible, share the part of your `pubspec.yaml` where you declare your assets, and double-check the directory structure in your project.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -227,3 +227,6 @@ class WelcomeScreen extends StatelessWidget {
 Make sure to replace the `onPressed` functions with the appropriate navigation logic for your app. Adjust the colors (`primary` for `ElevatedButton` and `side` for `OutlinedButton`) to match your design. The `padding` and `borderRadius` values can also be tweaked to fit the style you're aiming for.
 
 This code will produce a full-width "Log In" button with a solid background and a "Sign Up" button with a transparent background and an outline, both with rounded corners and white text, placed at the bottom of the screen over your background image.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -150,3 +150,6 @@ For a normal person with an expensive new flagship iPhone:
 > If she’s going to get AppleCare+ at all, **getting it now instead of waiting 60 days is usually the smarter, lower-stress play**, because the coverage period doesn’t get longer by waiting, and the riskiest time is often the early days with a brand new toy.
 
 If you tell me how clumsy / careful Olivia is and whether she’s on the monthly or paid-in-full plan, I can ballpark how “worth it” the risk of waiting really is in her case.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

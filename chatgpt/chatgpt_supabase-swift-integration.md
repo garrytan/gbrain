@@ -56,3 +56,6 @@ swift supabase
 For practical demonstrations, consider watching the following tutorial:
 
 videoSupabase Crash Course for iOS Developers | Swiftturn0search6 
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

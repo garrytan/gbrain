@@ -38,3 +38,6 @@ claude linear agent
 This setup effectively lets Claude operate on tasks in Linear on your behalf — akin to a *linear agent* powered by Claude — but “Claude Linear Agent” isn’t an official standalone product name from Anthropic. The integration makes Claude function as an agentic assistant for Linear tasks when properly configured.citeturn0search10
 
 If you meant something else (e.g., a specific agent framework or product release), clarify and I’ll detail that too.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

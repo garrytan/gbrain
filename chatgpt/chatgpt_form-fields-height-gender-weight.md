@@ -89,3 +89,6 @@ Certainly, Mr. White. Here are the form fields for height, gender, and weight, f
 This syntax includes:
 - A `TextInput` for height and weight, similar to the name field.
 - A `SelectInput` for gender, with options for Male, Female, and Other. This can be adjusted to suit your specific needs.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

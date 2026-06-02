@@ -30,3 +30,6 @@ Yes, Mr White — there *are* job listings for entity["organization", "Con
 - Maintenance Technician positions in the LA region (≈ $22–24/hr). citeturn0search4turn0search2  
 
 If you meant jobs at entity["organization", "Team Coco", 0] / entity["organization", "Conaco, LLC", 0] (founded by entity["people", "Conan O'Brien", 0]) instead, I can check current openings there for you.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

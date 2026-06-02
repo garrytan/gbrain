@@ -398,3 +398,6 @@ The biggest growth levers are boring—metadata correctness, lyric timing, terri
 
 **Anything else we should know?**  
 Cancer-free and sprinting; I operate with brutal focus and weekly kill rules.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

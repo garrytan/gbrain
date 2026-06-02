@@ -238,3 +238,6 @@ export default {
 In this example, the `rowIndex` and `colIndex` props are passed to the `DataGridCell` component from the `DataGridRow` component. The `moveUp`, `moveDown`, `moveLeft`, and `moveRight` methods are called when the corresponding arrow key is pressed, and they update the focus by calling the `focusCell` method and passing it the new row and column indices. The `focusCell` method uses the `$refs` property to access the DOM elements for the cells and call the `focus` method on the appropriate element.
 
 You can adjust this example to fit your
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

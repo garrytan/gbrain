@@ -61,3 +61,6 @@ For a quick visual demo, see this short video by The Home Depot:
 [How to Fix a Running Toilet](https://youtu.be/bslK71ygwq8)
 
 That’s it, Mr. White. With this knowledge, you can adjust or replace the chain yourself and get your toilet working properly.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

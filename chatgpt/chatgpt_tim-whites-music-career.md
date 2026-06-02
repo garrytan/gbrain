@@ -349,3 +349,6 @@ Incorporating the provided bio text into the template, you can modify the releva
 ```
 
 This version integrates Tim White's artistic journey, highlighting his impact on the electronic music scene, his notable collaborations, and his achievements beyond music production, all while fitting seamlessly into the provided template.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

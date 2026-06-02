@@ -250,3 +250,6 @@ jobs:
 - **Stale killer + rebase bot** eliminates manual triage.
 
 If you want, I’ll draft the exact GitHub settings, Linear automations, and the Cascade instructions (labels, shard map, and the “no-overlap” guard) tailored to your current repo structure.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

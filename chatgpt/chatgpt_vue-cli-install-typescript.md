@@ -34,3 +34,6 @@ npm install -g @vue/cli
 ```
 
 Once the Vue CLI is installed, you can then run the command `vue add typescript` to add TypeScript support to your Vue.js project.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -148,3 +148,6 @@ The KPI remains:
 - your physical/mental stability
 
 Everything else is secondary.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

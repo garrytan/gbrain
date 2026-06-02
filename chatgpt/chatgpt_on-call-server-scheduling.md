@@ -30,3 +30,6 @@ Got it, Mr. White. Here’s a concise way to explain that process to Nate:
 > “When scheduling servers for shows, I start by checking current ticket sales and estimating how many more will sell before the event. Based on that projection, I schedule just enough servers to cover expected demand. If sales spike unexpectedly, we have an on-call server ready to step in. We usually tell the on-call person that we’ll confirm no later than four hours before showtime whether they’re needed.”
 
 Would you like me to make that sound more formal or conversational?
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

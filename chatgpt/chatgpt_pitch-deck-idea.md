@@ -61,3 +61,6 @@ Best tagline options:
 **“An AI manager for the next generation of artists.”**
 
 **“She handles the business. You make the art.”**
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

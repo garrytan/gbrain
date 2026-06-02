@@ -303,3 +303,6 @@ Dont include john sumit
 ## Assistant
 
 Lady Gaga, David Guetta, Billie Eilish, Marshmello, Rihanna, Calvin Harris, Sabrina Carpenter, The Chainsmokers, Dua Lipa
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

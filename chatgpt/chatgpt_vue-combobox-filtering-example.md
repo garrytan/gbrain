@@ -156,3 +156,6 @@ export default {
 In the above example, I changed the name of the `people` variable to `items` and made it a prop with a default value. The `default` property on the `items` prop is set to an arrow function that returns the original data, this way it will be created afresh every time the component is created. 
 It's important to also update references to `people` in the rest of the code to `items`.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

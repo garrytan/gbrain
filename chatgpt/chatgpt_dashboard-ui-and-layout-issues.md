@@ -136,3 +136,6 @@ Mr. White—here’s what’s still outstanding, what new bugs I spot, and some 
 - **Accessibility tweaks**: ensure all text ≥14 pt and that contrast ratios meet AA.  
 
 —Use these to spin up the next batch of issues.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

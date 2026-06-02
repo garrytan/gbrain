@@ -582,3 +582,6 @@ Pairing knives and cutting board
 **Add to Master Shopping List:**  
 - **Paring knives:** 3 (allow simultaneous garnish prep)  
 - **Cutting boards:** 2 (one for fruit/veg, one for overflow)
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

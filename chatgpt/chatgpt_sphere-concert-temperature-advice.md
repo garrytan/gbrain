@@ -26,3 +26,6 @@ I'm going to a concert at the Sphere in Las Vegas. Is it cold inside the venue?
 ## Assistant
 
 The temperature inside concert venues like the Sphere in Las Vegas is typically controlled to be comfortable for a large number of people. It might feel cooler than outside, especially if it's crowded. It's a good idea to bring a light jacket or sweater, just in case you find it chilly.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

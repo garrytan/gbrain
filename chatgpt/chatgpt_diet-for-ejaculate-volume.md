@@ -433,3 +433,6 @@ Mr. White, your multivitamin already provides the **baseline selenium** (≈55 �
   • Swap in a **100 µg selenium supplement** once daily.  
 
 **No other “extra” minerals** (e.g. chromium, copper) are required beyond what’s in your multivitamin + targeted stack.  Just lock in that 1-nut habit (or 100 µg capsule) and you’ll meet the evidence-backed selenium dose.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

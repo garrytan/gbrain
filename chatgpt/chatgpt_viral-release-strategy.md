@@ -569,3 +569,6 @@ Mr. White, the live-DJ/ID route is materially smarter than a raw upload leak. Iâ
 ## Assistant
 
 A failed YouTube or Shazam match gives useful intelligence, yet it would prove little; a match matters more because it signals an existing database or rights-management entry.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

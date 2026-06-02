@@ -87,3 +87,6 @@ The Wonderland ratio says 3.59 parts whiskey per 1 part water — so your batch 
 - Always mix bitters and syrup thoroughly before chilling or bottling.  
 
 Would you like me to give you the **per-liter scaling formula** so you can easily tweak for future batches?
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

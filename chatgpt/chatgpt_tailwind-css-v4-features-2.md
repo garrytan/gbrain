@@ -42,3 +42,6 @@ tailwind 4
 - **Zero-Config Content Detection**: Automatically scans your project for template files, minimizing manual configuration. citeturn0search1
 
 For a comprehensive overview, refer to the official Tailwind CSS v4.0 release blog: linkturn0search1 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

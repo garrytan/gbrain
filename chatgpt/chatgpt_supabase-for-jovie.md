@@ -139,3 +139,6 @@ The bottleneck for Jovie is:
 not database infrastructure.
 
 Supabase is already above the maturity level Jovie currently needs. citeturn0search1turn0search13turn0search18
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

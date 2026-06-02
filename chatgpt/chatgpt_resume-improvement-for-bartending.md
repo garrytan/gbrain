@@ -180,3 +180,6 @@ Absolutely, here's a list format for your resume:
 - Skilled in the use of Toast, Clover, and Square POS systems
 - Accomplished singer/songwriter
 - Dedicated fitness enthusiast
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

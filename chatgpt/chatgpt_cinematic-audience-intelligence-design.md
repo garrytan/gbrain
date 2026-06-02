@@ -34,3 +34,6 @@ Lighting and style: ultra-photorealistic, high-end commercial cinematography, pr
 Camera: wide 35mm anamorphic lens, slightly elevated rooftop angle, DJ on right third, city depth behind, copy-safe negative space on left, 3:2 aspect ratio.
 
 Do not include any text, logos, watermarks, fake UI labels, readable brand names, extra fingers, distorted hands, distorted faces, cartoon style, illustration style, low-resolution artifacts, cluttered composition, bright objects in the left text area.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -188,3 +188,6 @@ We've got a general need to be able to view a whole library of album art that's 
 One of the better companies doing this, I think, is Frame.io. I think they've got a pretty great interface for their main media viewer, where if you're viewing and you're working in vertical video, you can flip the aspect ratios to vertical video and view with minimal chrome, because it reframes all the rows to vertical video and stuff like that. They also have great mobile support and everything.
 
 I'd like to kind of go out there and look at the whole world right now and be like, "Who are the people at the forefront when it comes to media management in terms of design? Who are the Frame.io's out there in the music world or in the video world or in the photo world or Capture One things like this? Who do culling with large amounts of content media? Who are the best of the best of the best of asset management interfaces? What does that best UX look like? What is a world-class media library UX look like for Jovie?" 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

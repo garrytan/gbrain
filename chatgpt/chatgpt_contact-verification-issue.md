@@ -117,3 +117,6 @@ If it still doesn’t appear, tell me:
 - Does she see verification options for anyone else?
 
 That will narrow it down quickly.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

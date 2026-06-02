@@ -26,3 +26,6 @@ add these records to jov.ie in vercel for me
 ## Assistant
 
 I successfully added the required DNS records for `jov.ie` in your Vercel dashboard.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

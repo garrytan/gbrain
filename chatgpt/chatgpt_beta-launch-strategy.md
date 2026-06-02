@@ -254,3 +254,6 @@ If you want, I can also write:
 - a one-page “beta user guide” you send after onboarding  
 - a Notion/Sheet template for tracking user outcomes week-to-week  
 - 2–3 different positioning variants to A/B on the landing page (DEXA-first vs “camera ready” vs “ideal attractiveness ratios”).
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

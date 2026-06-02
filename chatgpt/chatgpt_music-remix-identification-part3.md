@@ -238,3 +238,6 @@ useSeoMeta({
 3. **Chevron Icons**: Added the `ChevronUpIcon` and `ChevronDownIcon` next to the column headers based on the sorting order.
 
 This approach ensures that the music service icons are only displayed if the links are available, and the sorting order is clearly indicated using chevron icons.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

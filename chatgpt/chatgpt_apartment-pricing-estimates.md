@@ -42,3 +42,6 @@ So the quick ballpark is:
 - **Studios:** I’m not seeing any current studio inventory listed at either property. citeturn404583view0turn404583view1turn776604view0turn776604view1
 
 If you want, I can also pull a quick **2015 vs. 2026 rough inflation-adjusted comparison** for Broadcast Center.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -56,3 +56,6 @@ Mr. White, there are a couple **very common “new Lexus” ads** running lately
 - **If it’s the one where paparazzi swarm a guy and he says “I’m not Jack,” and the car greets him as “Ben Allison” (RX “Recognized”)** → I couldn’t find a reliable public credit for the song in the sources I checked; it may be a **custom score** or simply not publicly listed. citeturn6view0turn4search1  
 
 If you tell me **what happens in the ad** (holiday family montage vs. TX “passions” vibe vs. paparazzi “I’m not Jack”), I’ll pin it down to the exact track.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

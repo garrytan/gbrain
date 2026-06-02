@@ -40,3 +40,6 @@ auto claude
 **In short:** “Auto Claude” isn’t a branded official Anthropic product but rather a set of *automation utilities built on top of Claude or Claude Code*. These tools help automate repetitive or developer-oriented workflows so Claude can run tasks with less manual prompting. citeturn0search1turn0search10
 
 If you want specific examples of what an “Auto Claude” setup can do (e.g., automate testing or deploy workflows), let me know what you’re trying to automate.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

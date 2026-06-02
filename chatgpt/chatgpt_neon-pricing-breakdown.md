@@ -66,3 +66,6 @@ If you meant **Neon (serverless Postgres database service)** rather than physica
 ---
 
 If you want **neon sign quotes or cost estimates from specific vendors** (e.g., for a wall sign or business logo sign) I can help with that too.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

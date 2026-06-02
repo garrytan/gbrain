@@ -58,3 +58,6 @@ Repeat for other branches/worktrees to run parallel AI productivity workflows. �
 - Each worktree’s dependencies (like `node_modules` or venvs) might need installation separately. citeturn0search18
 
 In short: use **Git worktrees + Claude Code** to spawn multiple isolated coding environments allowing parallel AI-assisted development with minimal context loss. citeturn0search1
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -920,3 +920,6 @@ This plan should let you:
   - Future bulk imports.
   - Future “paste any social link” onboarding.
 - Grow into a full creator identity graph / lead engine without throwing anything away.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -122,3 +122,6 @@ Mr. White, here’s the clean comparison.
 Most new projects use **SwiftUI + UIKit bridging** (`UIViewControllerRepresentable`) to get the best of both.
 
 If you want, I can break down how to mix both cleanly or recommend an architecture.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

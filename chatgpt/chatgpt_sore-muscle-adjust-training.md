@@ -26,3 +26,6 @@ According to Mike Israel of I get to the gym and my muscle group is still sore. 
 ## Assistant
 
 If you arrive at the gym and find that your muscle group is still sore, Dr. Mike Israetel generally recommends adjusting your training. This could involve reducing the intensity or volume for that muscle group, or even skipping it entirely for the day. The key is to listen to your body and avoid overtraining, which can lead to injury or decreased performance. Remember, recovery is as crucial as the workout itself for muscle growth and strength gains.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -43,3 +43,6 @@ Keep feedback brutally honest but constructive, and suggest rewrites for weak bu
 ---
 
 Let me know if you want it customized for your resume.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

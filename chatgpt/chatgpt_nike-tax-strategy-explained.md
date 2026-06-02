@@ -53,3 +53,6 @@ Mr. White, these offshore‐IP setups only pay for themselves once you’re movi
 – **Break-even tax savings** at a 21 % U.S. rate: you need to shift roughly \$3 – 4 M in royalties offshore (0.21×\$4 M≈\$840 K saved) just to cover costs.  
 
 That implies annual operating profits of at least \$5 M – 10 M (or revenues in the \$50 M+ range) to make it worthwhile. Smaller businesses almost never recoup those compliance bills.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

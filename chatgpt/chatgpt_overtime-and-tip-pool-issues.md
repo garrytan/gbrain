@@ -314,3 +314,6 @@ If you want, Mr. White, tell me roughly:
 - How long you’ve been there,
 
 and I can walk you through a rough, back-of-the-napkin estimate of how much overtime money *might* be on the table so you can see if this fight is big or small in dollar terms.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

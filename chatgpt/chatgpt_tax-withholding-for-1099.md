@@ -78,3 +78,6 @@ If you earn $1,400 a week as a 1099-MISC worker, here's how much you should cons
 You should consider setting aside about **$512.40 out of every $1,400** you earn, which is approximately **36.6%**.
 
 This percentage can vary based on your actual tax bracket, deductions, and other factors, so it's a good idea to check your exact situation or consult a tax professional for precise calculations.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

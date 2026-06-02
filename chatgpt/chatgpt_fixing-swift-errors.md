@@ -106,3 +106,6 @@ If Xcode is being annoying, click into the string, delete the apostrophe area, a
 - Re-type the string with the hidden character.
 
 If you want, paste the few lines around DashboardViewLiquid line ~138 and I’ll rewrite that exact block cleanly.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

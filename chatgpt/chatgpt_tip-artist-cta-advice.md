@@ -58,3 +58,6 @@ If you want a slightly softer alternative to **Tip artist**, use **Support this 
 
 My recommendation:
 **Use “tips” as the product concept and “Tip artist” as the main CTA.**
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

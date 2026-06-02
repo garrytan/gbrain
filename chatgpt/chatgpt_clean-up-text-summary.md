@@ -44,3 +44,6 @@ All FOH staff share a tip pool on a point system. Lead bartenders who open get a
 You’ll flex between serving and bartending. Bartending is easy—our specialty drinks are fully pre-batched and the bar is service-only with almost no walk-ups. That’s why tips are pooled the way they are.  
 
 You’ll likely beat Kookaburra’s average pay; their big parties might make more, but normal nights here usually pay better.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

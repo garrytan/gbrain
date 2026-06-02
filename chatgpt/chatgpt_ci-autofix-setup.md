@@ -115,3 +115,6 @@ jobs:
 ---
 
 If you like, Mr. White, I can **generate a ready-to-use YAML workflow** tailored to your stack (e.g., Python, Java, etc.) — would you like that?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

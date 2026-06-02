@@ -31,3 +31,6 @@ For a sharper second pass, use one of these refinements:
 - “Make it darker, more cinematic, and more aggressive for high-stakes founder work.”
 - “Make it more minimal and instrumental for deep work, strategy, and writing.”
 - “Make it more electronic and momentum-building for execution sprints and sales energy.”
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

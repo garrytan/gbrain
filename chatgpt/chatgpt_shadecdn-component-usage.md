@@ -513,3 +513,6 @@ That gives you a **clear guardrail**:
 - Custom SVGs are the exception, not the norm.  
 
 Do you want me to also propose a **lint rule** (ESLint) to forbid importing random SVGs unless they’re inside `components/icons/`? That would enforce this Lucide-first policy automatically.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

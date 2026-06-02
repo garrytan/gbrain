@@ -71,3 +71,6 @@ These adjust context, logging, and authentication. citeturn0search6
 - **CLI:** create/list/enable/disable/archive/remove flags, plus manage SDK keys. citeturn0search6
 
 If you want examples of how to use flags in Next.js or how to integrate the Flags SDK in code, I can provide those too.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

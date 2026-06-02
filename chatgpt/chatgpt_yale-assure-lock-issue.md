@@ -48,3 +48,6 @@ Since it works manually, here’s what to check:
    - Perform a **factory reset** or re-run the **door handing detection** to let it re-learn lock/unlock orientation.
 
 Want step-by-step instructions on removing and testing the motorized unit in your hand?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

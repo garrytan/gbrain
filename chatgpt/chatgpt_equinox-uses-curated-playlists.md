@@ -52,3 +52,6 @@ How many equinox employees worldwide
 ## Assistant
 
 Equinox employs approximately 18,000 people worldwide. This number encompasses staff across their more than 300 locations globally, which include clubs in the United States, London, Toronto, and Vancouver, as well as their various subsidiaries and digital platforms【25†source】.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

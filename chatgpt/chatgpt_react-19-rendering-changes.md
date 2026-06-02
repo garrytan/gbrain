@@ -49,3 +49,6 @@ React 19 changed rendering behavior mainly by:
 - Adjusting the internal scheduler and reconciliation logic, which can look like “more renders” especially in dev or when using new async patterns.citeturn0search27
 
 If you want, I can explain specific render patterns or performance adjustments in React 19 (e.g., why a particular component re-renders more).
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

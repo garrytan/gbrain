@@ -46,3 +46,6 @@ djing in 2025 rekorbox
 For a visual guide on creating playlists in Rekordbox 7, you might find the following tutorial helpful:
 
 videoRekordbox 7 Playlist Tutorial – NEW 2025 METHOD!turn0search2 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

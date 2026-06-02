@@ -117,3 +117,6 @@ Best,
 ---
 
 Let me know if you want to add anything about availability or style behind the bar.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -26,3 +26,6 @@ I need to get a DEXA scan once a quarter. It costs $50 from BodySpec. And it's b
 ## Assistant
 
 Got it. The $50 BodySpec DEXA scan billed quarterly has been added to your budget. Want me to update your monthly budget average to include that as $16.67/month?
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

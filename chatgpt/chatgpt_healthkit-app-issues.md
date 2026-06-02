@@ -189,3 +189,6 @@ Focus: **Retention > Revenue.** If they don’t come back, you're done.
 **Build for 100 people who love it, not 10,000 who kind of like it.**
 
 Want a week-by-week roadmap based on this strategy?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

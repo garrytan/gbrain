@@ -61,3 +61,6 @@ This links to your project and applies any new SQL in `supabase/migrations/` to 
 **Bottom line:**  
 - **Previews:** auto‑run if you enable Supabase’s GitHub integration. citeturn0search15  
 - **Staging/Prod:** add a **migration step** in your workflow. citeturn0search2turn0search7
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

@@ -93,3 +93,6 @@ function App() {
 ---
 
 In summary: mix **env-based toggles** for simple static feature switches with **SDK-based feature flags** (Vercel Flags SDK, Unleash, etc.) for controlled rollouts, safe A/B tests, and remotely managed feature visibility. Test and prune flags regularly to keep the codebase clean.citeturn0search0turn0search5
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

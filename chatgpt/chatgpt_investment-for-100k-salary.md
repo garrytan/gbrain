@@ -91,3 +91,6 @@ Here's a table showing the required investment for each annual salary level, cal
 | 10,000,000        | 200,000,000             |
 
 This table provides a clear view of the investments needed to achieve different annual salary levels from S&P 500 profits.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

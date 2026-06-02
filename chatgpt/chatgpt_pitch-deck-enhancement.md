@@ -33,3 +33,6 @@ Every single deck should have one key sentence on it, and then some supporting v
 
 
 
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

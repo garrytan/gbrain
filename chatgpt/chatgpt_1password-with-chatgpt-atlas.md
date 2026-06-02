@@ -53,3 +53,6 @@ Yes — you *can* use entity["software","1Password",0] with entity�
 ---
 
 If you like, I can check **specifically which version of Atlas** supports 1Password fully and whether there are any known bugs or upcoming fixes. Would you like me to do that?
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

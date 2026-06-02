@@ -58,3 +58,6 @@ link me to the actual press release
 You can find the official press release for Taylor Swift's album "The Tortured Poets Department" on Spotify's Newsroom page. The album, released on April 19, 2024, quickly became the most-streamed album in a single week on Spotify, surpassing 1 billion streams in just five days. The press release details the album's record-breaking achievements and Swift's promotional efforts, including a music video release for the lead single "Fortnight" featuring Post Malone.
 
 For the full press release and more details, you can visit [Spotify Newsroom](https://newsroom.spotify.com/2024-04-24/taylor-swifts-the-tortured-poets-department-becomes-spotifys-most-streamed-album-in-one-week/)【22†source】【24†source】.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -93,3 +93,6 @@ For you, I’d use this structure:
 ## The fastest path
 
 Upload screenshots of your Home Screen pages. I’ll turn them into a deletion/organization plan you can execute in one pass.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

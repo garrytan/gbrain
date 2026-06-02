@@ -153,3 +153,6 @@ Minor caveats / tighten-ups:
    - Add a smoke test that greps built CSS for a Tailwind token (e.g., `--tw-ring-offset-shadow`) and fails if missing.
 
 If you want, I’ll remove the redundant `@custom-variant dark`, add safe fallbacks for the menu vars, and drop in a 30-second CI smoke test.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

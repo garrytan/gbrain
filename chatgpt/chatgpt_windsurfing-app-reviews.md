@@ -44,3 +44,6 @@ Here are some **windsurfing-related apps** people use for *reviews, tracking, wi
 If you want *user reviews and ratings* before choosing one, App Store/Google Play pages for iWindsurf, Vadewind, Hoolan, and WindsportTracker will show current star ratings and comments (availability varies by region). citeturn0search1turn0search6
 
 Would you like a ranked list (best wind forecast vs best tracking vs overall performance)?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

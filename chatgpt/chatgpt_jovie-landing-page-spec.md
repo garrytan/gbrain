@@ -918,3 +918,6 @@ Use artist-native language:
 12. **Final CTA:** Claim your profile
 
 The highest-leverage change: **make the Jovie profile the hero object and make automatic fan return the hero promise.**
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

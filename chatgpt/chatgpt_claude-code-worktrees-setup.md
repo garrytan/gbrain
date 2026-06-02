@@ -82,3 +82,6 @@ Some workflows build helper scripts or tools (bash functions or session managers
 ---
 
 **Summary:** With Git worktrees, you can spin up separate directories for each feature branch and run multiple **Claude Code** sessions in parallel, giving each session its own local workspace and avoiding conflicts between tasks. This pattern accelerates development with AI assistance. citeturn0search0
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

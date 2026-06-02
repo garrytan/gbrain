@@ -32,3 +32,6 @@ In the cosmic dance of sound, even the silence between notes is filled with vibr
 ## User
 
 but all white
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

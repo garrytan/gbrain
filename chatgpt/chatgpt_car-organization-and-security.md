@@ -56,3 +56,6 @@ California requires you to carry proof of insurance in the vehicle and provide i
 For search/privacy: a locked container helps, but it is **not warrant-proof**. Police generally need a warrant, consent, or probable cause; under the automobile exception, probable cause can allow a warrantless vehicle/container search. citeturn254821search15turn254821search13turn254821search5
 
 For the plate frame: get a **plain, thin, no-logo frame** that does not cover the plate number, “California,” or registration tabs. California law requires plates to be clearly visible/legible and restricts covers/frames that obscure plate information. citeturn176236search2turn176236search4
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

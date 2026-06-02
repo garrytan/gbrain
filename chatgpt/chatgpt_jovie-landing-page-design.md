@@ -352,3 +352,6 @@ Refine this direction. Reduce generic SaaS styling by 30%. Enlarge the hero prod
 ```
 
 For the strongest result, pair the prompt with 2–3 real Jovie product screens or brand references, since Stitch can also work from image inputs in addition to text. citeturn147680search3turn147680search4
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

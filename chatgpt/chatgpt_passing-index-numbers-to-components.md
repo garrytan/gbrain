@@ -93,3 +93,6 @@ export default {
 
 In this example, the `rowIndex` and `colIndex` variables will contain the index numbers for the rows and columns, respectively, and the `row` and `cell` variables will contain the data for the current row and cell, respectively.  You can then pass these variables as props to the `row-component` and `cell-component` components.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

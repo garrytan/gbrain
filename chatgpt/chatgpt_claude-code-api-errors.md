@@ -118,3 +118,6 @@ Mr. White — here’s a fast, ruthless triage to kill “API errors” from Cla
 5) **5xx/529** → retries + graceful degradation.
 
 If you paste one concrete error line (status code + first line of the message), I’ll pinpoint the exact fix.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

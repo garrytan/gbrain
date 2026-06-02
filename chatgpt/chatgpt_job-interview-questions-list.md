@@ -70,3 +70,6 @@ If you want, I can also prepare:
 - Sample answers to common interview questions  
 
 Just tell me what you want next, Mr. White.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

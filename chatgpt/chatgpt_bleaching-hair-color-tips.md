@@ -54,3 +54,6 @@ Yes, you are correct. The two bottles are both developers from the Schwarzkopf B
 - The **9% / 30 Volume** developer is a higher strength developer, which will lift your hair color by about 2-3 levels.
 
 Other than the strength (volume), they are essentially the same product, both designed for bleaching hair. The choice between the two should be based on how much lift you need and how gentle you want the process to be. For less lift or more fragile hair, the 20 Volume is gentler, while the 30 Volume is stronger and will lighten your hair more.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

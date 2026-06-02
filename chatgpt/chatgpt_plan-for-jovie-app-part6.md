@@ -1088,3 +1088,6 @@ export default {
 /* Add your custom styles here */
 </style>
 Lets define a song object and put the links, name, artist name, album art there and everything will come from that. 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

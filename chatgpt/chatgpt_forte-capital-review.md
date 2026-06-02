@@ -42,3 +42,6 @@ https://www.fortecapitalgroup.com/ give me the dirty dirty on these guys
 * Watch for cold-callers using a “Forte” label — the SEC already flagged a look-alike outfit.  
 
 That’s the dirt.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

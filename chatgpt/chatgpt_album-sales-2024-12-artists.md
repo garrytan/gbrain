@@ -38,3 +38,6 @@ As of 2024, 12 artists have sold at least 1,000,000 albums in the United States 
 ## Assistant
 
 In 2024, 42 artists have sold at least 100,000 albums in the United States. This count includes both physical and digital album sales. Some of these artists have achieved significant success with their recent releases, contributing to their high sales numbers【15†source】【17†source】.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

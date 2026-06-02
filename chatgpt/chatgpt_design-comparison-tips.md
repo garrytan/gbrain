@@ -135,3 +135,6 @@ Apple’s isn’t magic – it’s a bunch of small decisions stacking up. Here�
 6. Put “Trends” in a rounded card with its own padding.
 
 You’re actually close — structurally it’s the same screen. You just need those last 10–20% polish details Apple is obsessive about.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

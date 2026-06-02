@@ -155,3 +155,6 @@ Let’s break this down.
 The tragic death of a 35-year-old woman at Tomorrowland is heartbreaking — but **statistically speaking**, a crowd of that size could be expected to see **more than 8 deaths per day** just based on general population data. So in context, **Tomorrowland appears safer than average**, not more dangerous.
 
 Let me know if you want a breakdown filtered for only 35-year-olds or drug-related causes.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

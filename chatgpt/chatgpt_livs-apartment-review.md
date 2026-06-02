@@ -236,3 +236,6 @@ Mr. White, when you tour 1417 N Bronson today, ask:
 8. How much is the security deposit, and what are common deductions on move-out?  
 9. Is parking available? If so, how are spaces assigned or wait-listed?  
 10. Have there been any code violations or city inspections since 2022? Can you share documentation?
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

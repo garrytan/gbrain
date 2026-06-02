@@ -33,3 +33,6 @@ To use this shortcut in VSCode, you first need to open the editor and then press
 You can also use the "File > Open" menu option in VSCode to open a file, or use the "Explorer" panel on the left side of the editor to browse and open files in your project.
 
 If you are using a different code editor that does not support the "cmd shift o" shortcut, you may need to use a different shortcut or method to open a file. Consult the documentation for your code editor for more information.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

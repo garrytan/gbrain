@@ -66,3 +66,6 @@ Here are deal-types to pay attention to:
 ---
 
 If you like, I can **pull live deals** in the Los Angeles market (for unlocked phones + local carriers) and send **top 5 current offers** with retailer links. Would that be useful?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

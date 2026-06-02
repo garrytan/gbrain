@@ -692,3 +692,6 @@ Mr. White, here are late‑June to early‑July 2025 events in West Hollywood/
 ---
 
 This plan combines **public showcases**, **targeted mixers**, **festival visibility**, **modeling gigs**, and **online communities**. You’ll meet A&R reps, promoters, casting directors, stylists, and creative peers—purposefully, without unnecessary noise.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

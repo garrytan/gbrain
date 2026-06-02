@@ -802,3 +802,6 @@ https://bio.link/Help me decide exactly what sections we should use and what fea
 Don't use those exact examples, but you know what I'm trying to say. Also, take a look at this website and see if there's anything in here that they do well. https://bio.link/
 
 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

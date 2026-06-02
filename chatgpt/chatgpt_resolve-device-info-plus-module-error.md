@@ -662,3 +662,6 @@ The `NSHealthShareUsageDescription` entry in your `Info.plist` file looks correc
    - Consider reaching out to the plugin's support or community forums if the issue persists.
 
 Remember, the purpose strings in `Info.plist` must be descriptive and honest about why the app requires access to health data, as they are reviewed by Apple during the App Store submission process. If the issue remains unresolved, examining other parts of the project or seeking specific support from the plugin maintainers would be advisable.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

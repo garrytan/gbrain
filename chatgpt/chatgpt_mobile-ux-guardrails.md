@@ -458,3 +458,6 @@ Use this as the engineering rule:
 > No production route may create horizontal page overflow at any viewport width from 320px to 430px, including focused inputs and open mobile UI states.
 
 The lint rule catches obvious bad CSS. The Playwright test catches the actual user-facing bug.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

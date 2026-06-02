@@ -287,3 +287,6 @@ You can paste this straight into Figma/Sketch (File → Import, or copy–paste 
   - The teal arc is a single `path` using an SVG `A`rc command. To open more on the lower-left or adjust the sweep, you can re-point the start/end coordinates along the same radius; the structure is already set up for easy editing.
 
 If you want a second variant (e.g., without lat lines, or with a slightly tighter arc radius for more padding around the torso), I can give you an alternate SVG version as well.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

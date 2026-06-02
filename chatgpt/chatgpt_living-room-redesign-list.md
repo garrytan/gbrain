@@ -122,3 +122,6 @@ In the workout room, the room is going to go, all of the workout equipment is go
 **Remove:**  
 - All other furniture  
 - Everything on the bookshelves  
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

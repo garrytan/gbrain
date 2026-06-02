@@ -93,3 +93,6 @@ just give me the art not a background or mockup
 Here is the album art without any background or mockup:
 
 ![Album Art](sandbox:/mnt/data/Album_art_featuring_a_dreamy,_ethereal_scene_with_.png)
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

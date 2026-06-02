@@ -43,3 +43,6 @@ claude sub agents
 - **Modular workflows:** build an “AI team” for multi-stage projects. citeturn0search7
 
 In short, sub-agents in Claude Code are **autonomous, purpose-built AI instances** that help decompose work into manageable, expert-level subtasks. citeturn0search9
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

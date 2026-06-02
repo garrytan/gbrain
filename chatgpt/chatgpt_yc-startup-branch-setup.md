@@ -109,3 +109,6 @@ If you want, I can:
 - Tailor this for **monorepo vs microservices**
 
 Just say which.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

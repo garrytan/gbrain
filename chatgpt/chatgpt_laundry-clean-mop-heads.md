@@ -47,3 +47,6 @@ Yes, Mr. White—most mop heads can be cleaned in the washing machine, but do it
 - **Replace when:** fibers stay gray, smell lingers after washing, or the head frays/sheds.
 
 Also wipe/sanitize the **handle and bucket** (quick bleach or disinfectant wipe) so you’re not re-contaminating a clean head.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

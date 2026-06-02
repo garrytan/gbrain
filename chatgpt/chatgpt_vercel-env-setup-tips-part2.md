@@ -726,3 +726,6 @@ That covers prod, staging, and all PR previews.
 ⚡ Bottom line: DNS is healthy and ~90% propagated; the few ❌ are just stragglers. Functionally, your wildcard previews will already work for most users.  
 
 Do you want me to give you a **curl/browser-based smoke test checklist** you can run against one of your feature branches to confirm the wildcard is actually serving a Vercel preview build right now?
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

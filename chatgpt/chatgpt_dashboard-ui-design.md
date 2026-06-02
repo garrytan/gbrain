@@ -198,3 +198,6 @@ You should only consider the task complete when the following are all satisfied:
 7. All tests and linters pass, and no unrelated features are broken.
 
 Work until you have implemented this fully or can convincingly argue why some specific item cannot be completed given the current codebase.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

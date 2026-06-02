@@ -66,3 +66,6 @@ Overall:
 - **Use o1** for simple or lightweight tasks.  
 - **Use o3** for intermediate/advanced coding support.  
 - **Use o1 pro** only if you need o1’s domain specialties; otherwise, o3 usually outperforms it.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

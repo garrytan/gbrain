@@ -180,3 +180,6 @@ Understood, Mr. White. Here's the revised and concise skills section without men
 - Strong team player, capable of leading and collaborating effectively.
 
 ---
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -41,3 +41,6 @@ If you mean a **Midori shot (cocktail)**, here’s the standard recipe:
 **Optional garnish:** Small melon ball or lime wedge.  
 
 Would you like the **classic Midori Illusion shot** version instead (sweeter and more tropical)?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

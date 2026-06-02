@@ -177,3 +177,6 @@ make it smallr scale like what instagram is on an iphone. taht font sizing
 ## User
 
 kill the up next row and docl te menu at the bottom
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

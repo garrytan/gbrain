@@ -285,3 +285,6 @@ For hooks, minimal, opinionated version:
 - **pre-push:** `xcodebuild build` + tests (no autocorrect here)  
 
 If you want, I can sketch a concrete `.husky/pre-commit` and `.husky/pre-push` tailored to this repo layout.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

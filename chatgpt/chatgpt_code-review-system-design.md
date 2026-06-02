@@ -690,3 +690,6 @@ Add these class presets (apply based on `data-placement`):
 - Optional `data-invert` to force dark bubble in light UIs over bright surfaces.
 
 Ship a small demo page with four buttons showing each placement and a theme toggle to validate.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

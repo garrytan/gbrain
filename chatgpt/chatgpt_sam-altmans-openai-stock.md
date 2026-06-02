@@ -26,3 +26,6 @@ does sam altman have stock in openai
 ## Assistant
 
 As an AI language model, I don't have access to real-time information or personal financial data about individuals unless it has been shared with me in the course of our conversation. As of my last knowledge update in September 2021, Sam Altman was the CEO of OpenAI, but I do not have information about his personal stock holdings in the company or any subsequent changes. For the most accurate and up-to-date information, I recommend referring to reliable sources or contacting OpenAI directly.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

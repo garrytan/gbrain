@@ -150,3 +150,6 @@ Then Claude will proceed to run commands like `npm install`, file edits, or lint
 - **Caution**: Potentially risky—use with care
 
 Let me know if you'd like help setting up a Docker-based sandbox or configuring permission rules via settings instead.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

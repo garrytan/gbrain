@@ -115,3 +115,6 @@ Here’s how I’d structure a reliable monitoring setup for a WiFi-based show e
 ---
 
 If you like, I can pick 2–3 iOS apps that are best-in-class for professional setups (as of 2025), and I can suggest how to integrate them with backend systems. Do you want me to narrow down to a “recommended toolkit” for you (iOS + backend) that fits your show environment?
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

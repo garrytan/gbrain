@@ -113,3 +113,6 @@ Let's specifically talk about... Because this post is about variation between pl
 Here’s a tighter comment you can paste, Mr. White:
 
 **There’s no flat “$3,000 per 1M streams,” and it isn’t the same across platforms.** Spotify, Apple Music, YouTube Music, Tidal, etc. all have different payout mechanics (subscription vs. ad-supported mixes, pro-rata pools), and effective per-stream rates swing by country/territory and user plan. Whatever the service pays then gets split by master vs. publishing, label/distributor deals, and how many writers/producers are credited. So this graphic isn’t accurate—at best a gross simplification, at worst totally fictitious.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

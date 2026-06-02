@@ -26,3 +26,6 @@ studio monitors serban gheana
 ## Assistant
 
 Serban Ghenea, a renowned mixing engineer, is known for his exceptional work in the music industry. He has been associated with using ProAc Studio 100 nearfield monitors and Quested H208 mid-field monitors in his studio setup. citeturn0search0 These choices reflect his preference for accurate and reliable monitoring during the mixing process. 
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

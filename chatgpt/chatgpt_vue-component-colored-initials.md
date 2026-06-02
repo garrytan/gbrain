@@ -73,3 +73,6 @@ In the script section, we define a computed property `firstLetter` that extracts
 You can further customize the box style by modifying the `.box-style` class in the scoped `<style>` section.
 
 Remember to include Vue.js and Tailwind CSS in your project for this component to work properly.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

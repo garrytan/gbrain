@@ -385,3 +385,6 @@ Tim
 ---  
 
 Do you want me to emphasize the *checkout/cleanliness* part too (trash, dishwasher, thermostat, etc.), or keep it focused mainly on the no-party concern?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

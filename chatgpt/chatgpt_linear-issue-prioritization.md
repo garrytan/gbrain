@@ -440,3 +440,6 @@ Here’s the CSV file you can import straight into **Linear** for the Jovie proj
 This contains the 5 **P0 MVP blocker issues** with titles, descriptions, acceptance criteria, priorities, and labels.  
 
 Want me to also generate a **P1 batch CSV** for the polish issues so you can drop those in right after?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

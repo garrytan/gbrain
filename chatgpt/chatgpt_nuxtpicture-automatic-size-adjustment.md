@@ -219,3 +219,6 @@ Explanation:
 - `500px`: For screens wider than 768px, the image will display at its original width of 500px.
 
 This setup provides better responsiveness for smaller screens while respecting the original dimensions of the image.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

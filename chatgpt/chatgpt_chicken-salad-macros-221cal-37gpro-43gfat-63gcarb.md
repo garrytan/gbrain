@@ -52,3 +52,6 @@ For your meal, the approximate macronutrients are:
 - Carbs: ~6.3g
 
 These values are approximate and can vary based on specific brands and preparation methods.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

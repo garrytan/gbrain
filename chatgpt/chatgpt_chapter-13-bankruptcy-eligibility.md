@@ -70,3 +70,6 @@ To qualify for Chapter 7 bankruptcy in Los Angeles, California, you need to meet
 7. **Business-related Debts**: If a significant portion of your debts are business-related, you may not need to pass the means test.
 
 It's crucial to consult with a bankruptcy attorney for a thorough evaluation of your situation and guidance on the most suitable form of bankruptcy for your circumstances.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

@@ -40,3 +40,6 @@ Who is it
 ## Assistant
 
 Mr. White, based on those clues, it’s the singer of the original Pokémon theme song: **Jason Paige**.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

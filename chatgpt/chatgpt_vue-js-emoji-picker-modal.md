@@ -685,3 +685,6 @@ export default {
 ```
 
 With these changes, the `EmojiPickerModal` component will have a dark theme when the `store.state.theme` variable is set to `'dark'`, and a light theme when the `store.state.theme` variable is set to any other value.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

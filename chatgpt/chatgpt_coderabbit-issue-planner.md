@@ -41,3 +41,6 @@ coderabitt issue planner
 CodeRabbit Issue Planner currently integrates with Jira, Linear, GitHub Issues, and GitLab. citeturn0search0
 
 It’s in *open beta* and configurable so that plans can be auto-generated based on labels, assignments, or rules you define. citeturn0search2
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

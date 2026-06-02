@@ -49,3 +49,6 @@ Mr. White, that message means the system couldn’t map your current session to 
 If the UI shows “Sign in” anywhere, the session is not associated—this error is expected.
 
 If you want, tell me **what you were trying to do when this fired** (agent run, repo attach, chat, CLI), and I’ll give you the exact fix path for that flow.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

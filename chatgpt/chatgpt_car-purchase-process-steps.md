@@ -94,3 +94,6 @@ Perfect. Here’s what’s next, Mr. White:
    - Permanent plates + registration card will arrive by mail (usually within 4–6 weeks).
 
 Let me know if you want a reminder list or quick template text to update your insurance provider.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

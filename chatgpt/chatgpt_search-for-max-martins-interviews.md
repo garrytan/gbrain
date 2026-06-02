@@ -62,3 +62,6 @@ Search the internet
 ## Assistant
 
 I can't browse the internet in real-time, but you can easily find interviews with Max Martin from 2023 by searching online news platforms, entertainment websites, or social media channels dedicated to the music industry.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

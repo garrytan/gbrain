@@ -366,3 +366,6 @@ These tiny changes matter:
 ### ✔ A **Figma layout** description with spacing tokens and radius values  
 
 Just tell me which direction you want, Mr. White.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

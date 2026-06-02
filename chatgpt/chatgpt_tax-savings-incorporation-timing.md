@@ -90,3 +90,6 @@ If you’ll be active in CA and want a clean calendar year:
 - **Incorporate Jan 1:** mostly **defers** those items by ~1 year.
 
 If you tell me **(a)** whether you plan to **register/qualify in CA immediately** and **(b)** how many **authorized shares** you’re planning (common startup defaults vary), I can put a tighter dollar range on the Delaware side.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

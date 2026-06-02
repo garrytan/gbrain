@@ -832,3 +832,6 @@ If you want, I’ll package this as a PR with all files wired and one sample Pla
 
 
 Okay, we added our health checkpoint for the database, which is currently showing a fail. So we're working on that. Is there a way that we can, can, and or should, and like should we, add a check so that, like, should we check the API health point and see if things that we're doing are breaking it? You know what I mean? Is that worth adding to the test and to have it check that the API health point works, or is that just going to be cumbersome and cause issues?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

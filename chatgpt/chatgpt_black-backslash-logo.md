@@ -38,3 +38,6 @@ it should be a \
 ## Assistant
 
 Here's the updated logo with the backslash (\) in Lato Heavy Bold font, in black on a white background.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

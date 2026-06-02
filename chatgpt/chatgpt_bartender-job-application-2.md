@@ -188,3 +188,6 @@ Cheers,
 Tim White  
 timwhitebartending@gmail.com | 732-668-2148  
 RBS Certified | CA Food Handler
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

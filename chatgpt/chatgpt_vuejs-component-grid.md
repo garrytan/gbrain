@@ -220,3 +220,6 @@ export default {
 In addition to the fixes described in the previous answer, we have also added an `ItemType` interface that defines the shape of the `item` object. This interface is used to specify the type of the `item` variable in the `v-for` loop.
 
 We have also added return types to the `supportsVideo` and `getVideoSrc` methods, which are inferred to be `boolean` and `string`, respectively. This helps TypeScript ensure that the methods are being used correctly elsewhere in the component.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

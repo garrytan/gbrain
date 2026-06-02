@@ -26,3 +26,6 @@ How tall is the London hotel
 ## Assistant
 
 The London West Hollywood at Beverly Hills hotel is approximately 10 stories tall. The exact height in feet or meters isn't commonly specified in public records, but typically, each story in a hotel is about 10 feet high, which would make the building roughly 100 feet tall. If you need more precise information, you might consider contacting the hotel directly.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

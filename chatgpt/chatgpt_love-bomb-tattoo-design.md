@@ -51,3 +51,6 @@ Want it more romantic, ironic, aggressive, or surreal?
 ## User
 
 What about like a torpedo style? Can you generate an image for me?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

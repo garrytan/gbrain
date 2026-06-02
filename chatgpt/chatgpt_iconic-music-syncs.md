@@ -62,3 +62,6 @@ Who wrote it
 ## Assistant
 
 "Smelly Cat" was written by Adam Chase, Betsy Borns, and Chrissy Hynde. Chrissy Hynde, the lead singer of The Pretenders, even appeared in an episode of "Friends" to perform the song alongside Phoebe. This collaboration highlighted how the song became not only a recurring humorous element within the show but also a beloved cultural reference among fans.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

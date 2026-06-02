@@ -267,3 +267,6 @@ If you want, I’ll do the following now in one go:
 1) Draft your 3 case-study one-pagers (PDF),  
 2) Write the CEO outbound emails tailored to three specific companies you name, and  
 3) Produce the MVP spec for Log Your Body (user stories + acceptance criteria + milestone plan).
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

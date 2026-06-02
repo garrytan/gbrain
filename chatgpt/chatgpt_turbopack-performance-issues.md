@@ -58,3 +58,6 @@ Wait or use a setup/toolchain with persistent disk caching — Turbopack is work
 ---
 
 If you want actionable steps specific to your project (e.g., Next.js version, router structure), share your config and we can tune it.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

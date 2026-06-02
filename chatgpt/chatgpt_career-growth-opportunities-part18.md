@@ -498,3 +498,6 @@ Here are some concrete events, venues, and people in/around West Hollywood you s
 ---
 
 If you like, I can build a **weekly curated list for the next 7 days** of auditions, open mics, DJ gigs, modeling calls within ~5 miles of your address (1417 N Bronson Ave) so you can pick and show up.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -263,3 +263,6 @@ If you want, I can help you:
 - or design a workaround where GPT or Gemini gain execution rights outside Windsurf via a local tool proxy
 
 Just tell me which direction you want.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

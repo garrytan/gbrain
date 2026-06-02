@@ -551,3 +551,6 @@ Pick one event from each category (one for music network, one for acting/modelin
 ---
 
 If you like, I can **pull a fresh list of all upcoming events this month** (DJ nights, songwriting showcases, acting/modeling castings) **within ~5 miles of 1417 N Bronson Ave** and send it to you.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -39,3 +39,6 @@ The **Razz Me Up** cocktail at The Vault is a renamed version of the Lewinsky's 
 **Method:** Shake vodka, raspberry liqueur, and lemonade with ice. Strain into ice-filled glass. Top with soda and garnish.
 
 Let me know if you want a batched version.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

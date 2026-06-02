@@ -93,3 +93,6 @@ When your bit hits that, it feels like the drill just refuses to go deeper, and 
    - If you see wires/pipes/metal plate, patch the hole and shift your hardware.
 
 Short version: nothing is “wrong” with the anchor; your top hole just landed on hidden structure or a protective plate. Don’t brute-force it—move the hole or open it up and see what’s there.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

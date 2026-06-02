@@ -260,3 +260,6 @@ So the practical answer is:
 - **No**, you do not have enough to **settle, price it, or send documents**.
 - **Yes**, you have enough to **pause, preserve evidence, and wait** for either real proof from her or contact from an insurer.
 - **Yes**, you still have the option to **notify GEICO** if you decide the legally cleaner path matters more than the insurance-scrutiny risk. citeturn989737search1turn989737search2turn989737search8
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

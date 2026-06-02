@@ -66,3 +66,6 @@ Here's an example of how you can use the HTML5 video tag to add a fullscreen vid
 }
 ```
 This will create a fullscreen video background that plays automatically and loops infinitely. The `muted` attribute is added to avoid unwanted sound when the video starts playing. You can customize the video by adjusting the `src` attribute and the CSS properties as needed.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

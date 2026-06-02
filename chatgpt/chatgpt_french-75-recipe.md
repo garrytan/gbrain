@@ -39,3 +39,6 @@ French 75 bartender recipe
 4. Garnish with a lemon twist.
 
 *Optional variation:* Use Cognac instead of gin for a richer profile.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

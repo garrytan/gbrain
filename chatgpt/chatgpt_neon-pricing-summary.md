@@ -72,3 +72,6 @@ Here’s a concise summary of **Neon (Postgres serverless database) pricing** �
 ---
 
 If you were asking about pricing for a different *Neon* product (e.g., CRM or media service), tell me which one and I’ll list that too.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

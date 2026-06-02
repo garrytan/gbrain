@@ -100,3 +100,6 @@ Then, you can use the `social-links` component in your template like this:
 
 Note that you will need to pass the necessary props to the component, such as the `networks`, `creator`, `settings`, and `formatCount` data and methods. You may also need to adjust the code to properly bind the data and methods within the component's template.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

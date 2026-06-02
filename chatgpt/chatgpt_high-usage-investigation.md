@@ -397,3 +397,6 @@ After each major task, summarize durable facts back into GBrain, then compress o
 Clear the model filter and inspect **all models / all providers** for the same 1-day window.
 
 This Flash page explains the **pattern**, but not the full **$5.98 today**. The missing spend is likely from additional pages of logs, other sessions, another model, or background Hermes/GBrain jobs.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

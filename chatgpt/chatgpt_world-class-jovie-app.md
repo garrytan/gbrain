@@ -707,3 +707,6 @@ The strongest path:
 
 The immediate wedge is **mobile as the artist’s daily action layer**.  
 The longer-term wedge is **Jovie as the AI manager that knows every fan, every release, every link, every show, and every next move.**
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

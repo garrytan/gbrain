@@ -52,3 +52,6 @@ The issue you're describing is likely due to a faulty flapper, chain, or handle 
     - Flush the toilet a few times to ensure everything is working smoothly and no water is leaking into the bowl when the tank is full.
 
 If you follow these steps and the problem persists, it may be necessary to replace the entire flush mechanism, including the fill valve and flapper assembly. This is also relatively straightforward and can be done with a universal toilet repair kit.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

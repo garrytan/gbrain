@@ -69,3 +69,6 @@ I dug into Reddit and other forums. Here’s what I found:
 - **Corporate/affinity discounts work.** Deals through employers (e.g., WeWork) or perks like AmEx Platinum can shave off dues. citeturn0search5  
 - **Annual increases aren’t budged.** Complaints may earn a spa gift card, not a rate cut. citeturn0search2  
 - **Referrals and partner perks** are the only other levers—standard rates remain non-negotiable. citeturn0search14
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

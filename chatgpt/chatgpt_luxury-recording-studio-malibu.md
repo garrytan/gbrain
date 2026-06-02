@@ -26,3 +26,6 @@ A gorgeous recording studio in Tony starts Malibu home. A camera faces the room 
 ## User
 
 Perfect but she should be all the way at the window and in focus the console is slightly bokehd. Make it modern white fur it and cool toned set design, curved walls. Boujee. Ultra modern posh
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -58,3 +58,6 @@ Here’s a sharper cut with the numbers baked in:
 > Quoting a 2016 crash to judge today’s systems is like judging the iPhone 15 by a 1990s flip phone.
 
 Short, direct, and stat-backed.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

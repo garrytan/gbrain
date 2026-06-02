@@ -1065,3 +1065,6 @@ This setup ensures that the `ContactAvatar` component behaves similarly to the R
 
 
 Give me the parent component
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

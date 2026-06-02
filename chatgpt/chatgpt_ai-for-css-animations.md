@@ -199,3 +199,6 @@ If you want:
 - **SMIL vs CSS comparison**
 
 Say the word and I’ll give you the exact implementation.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

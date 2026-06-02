@@ -913,3 +913,6 @@
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ⏵⏵ bypass permissions on (shift+tab to cycle)
 turn this into a prompt for claude code with the breand new figma mcp that sends code to figma designs
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

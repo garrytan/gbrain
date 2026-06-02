@@ -1033,3 +1033,6 @@ Externally:
 > “Jovie remembers your releases, collaborators, milestones, photos, and creative preferences so it can suggest the right thing at the right time.”
 
 That is the clean version.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

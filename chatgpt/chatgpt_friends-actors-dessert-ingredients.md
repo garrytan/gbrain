@@ -38,3 +38,6 @@ But is that what they used on set?
 ## Assistant
 
 In the "Friends" episode where Rachel makes a trifle-shepherd's pie hybrid, the actors were not actually eating this concoction. According to Matt LeBlanc, who played Joey, the substance they were eating on set was primarily whipped cream and bananas. This was in line with the story, where the characters had to pretend to enjoy Rachel's culinary mishap【9†source】.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

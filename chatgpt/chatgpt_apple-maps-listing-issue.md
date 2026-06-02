@@ -43,3 +43,6 @@ Mr. White, there’s almost certainly no “shelter” operating out of a privat
   - **Code enforcement**: For unpermitted business activity, dial 3-1-1 (or 213-473-3231) to report to LA City’s Code Enforcement.  
 
 There’s no criminal penalty for a bad map pin—your fastest fix is to report it to Apple and, if needed, get your landlord involved.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -29,3 +29,6 @@ Write a comment about how you get better at things over time. And saying it didn
 Here you go, Mr. White:
 
 > We get better at anything with reps. Saying it “didn’t work” the first 18 times isn’t true – it worked *a little* each time. Skills, habits, and mindset all improved. Those weren’t failures, just practice. Keep going.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

@@ -86,3 +86,6 @@ To install Next.js into an existing project, follow these steps:
    - Adjust imports and routes as needed to conform to Next.js conventions.
 
 For detailed project integration, you might need to make additional configurations based on your project's existing setup and dependencies. Let me know if you have specific requirements or further questions!
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

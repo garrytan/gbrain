@@ -32,3 +32,6 @@ xdj-1000 white
 For a visual guide on applying a white skin to the XDJ-1000MK2, you might find this tutorial helpful:
 
 videoPioneer XDJ-1000 MK2 White Skin - Tutorial Doto Designturn0search3 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

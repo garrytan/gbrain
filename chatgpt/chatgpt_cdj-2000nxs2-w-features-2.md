@@ -26,3 +26,6 @@ CDJ-2000NXS2-W
 ## Assistant
 
 ​iturn0image0turn0image1turn0image2turn0image4The Pioneer CDJ-2000NXS2-W is a limited-edition professional DJ multi-player, distinguished by its white finish. It features a 7-inch full-color touch screen that provides intuitive control over functions like Wave Zoom, Needle Countdown, and Phase Meter. The player includes 8 customizable Hot Cues for instant playback and supports high-resolution audio formats such as FLAC and ALAC. A 96 kHz/24-bit sound card ensures superior audio quality. Additional features include Quantize for precise cue and loop synchronization, and Pro DJ Link for enhanced connectivity with other Pioneer DJ equipment. citeturn0search0 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

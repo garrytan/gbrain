@@ -174,3 +174,6 @@ Here’s how to make this **Profile Setup** screen tighter, more modern, and mor
 ---
 
 Would you like a mockup or Figma-ready UI refresh for this screen?
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

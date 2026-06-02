@@ -293,3 +293,6 @@ That’s a venture story.
 ---
 
 ### If you want, I can help you do a 2-minute “full round” pitch for each, and we’ll see which one sounds inevitable.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

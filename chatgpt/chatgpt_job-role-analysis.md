@@ -48,3 +48,6 @@ Once you drop that text in, I’ll give you a clear breakdown like:
 - how client-facing it is  
 - how much strategic ownership vs being an execution hub  
 - red flags / good signs for Hassan specifically (based on what the role really wants, not the fluff)
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

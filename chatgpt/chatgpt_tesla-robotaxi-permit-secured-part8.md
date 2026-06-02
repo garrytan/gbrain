@@ -863,3 +863,6 @@ Latest scans across Tier‑1 outlets—Reuters, Bloomberg, WSJ, Financial Times,
   - **Quick exit guidance**: If thesis is widely reported, consider scaling out unless new, still‑non‑consensus angles remain.  
 
 No action required until coverage breaks.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

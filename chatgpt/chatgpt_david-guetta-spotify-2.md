@@ -46,3 +46,6 @@ Here’s the **Spotify page for David Guetta**:
 - *David Guetta – Top Hits* (popular Spotify playlist of his biggest songs). citeturn0search9
 
 If you want direct links to his top tracks or playlists, I can list those too.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

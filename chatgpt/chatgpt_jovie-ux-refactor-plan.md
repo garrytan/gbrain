@@ -345,3 +345,6 @@ Acceptance criteria:
 ```
 
 I checked the indexed production page too: it currently exposes “New Release” on Home and has Home/Music/Alerts/More tabs, which supports your simplification.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -66,3 +66,6 @@ A **landing page** is a standalone webpage designed to drive a specific action (
 ---
 
 If you want, I can **recommend specific designers or tools based on your use case** (e.g., SaaS lead gen vs e-commerce sales).
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

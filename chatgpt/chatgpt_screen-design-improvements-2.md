@@ -96,3 +96,6 @@ Options:
 This keeps context without wasting space.
 
 If you want, tell me the platform/design system (iOS Health? custom app?) and I’ll sketch a revised wireframe layout in text with exact spacing and component choices.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

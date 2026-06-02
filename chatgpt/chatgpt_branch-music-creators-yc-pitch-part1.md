@@ -929,3 +929,6 @@ wiiner is option 1. now build the next section after that
 
 
 i want to build mix amd match landing pages off of sections that are shared. product cards power the landing pages ets. whats the ebst wya to visual lize this? or plan it?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

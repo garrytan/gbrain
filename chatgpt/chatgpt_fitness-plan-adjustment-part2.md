@@ -173,3 +173,6 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Got it! Aiming for an FFMI of around 20 is definitely a solid goal and more achievable in a shorter time frame than 23. With consistent training and nutrition, you can definitely work your way up there. Just keep at it and you'll see progress!"}
 {'asset_pointer': 'sediment://file_00000000b24861f68278e0ac3fd6d6c8', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-20T20:50:01.490245+00:00', 'format': 'wav', 'metadata': {'end': 16.8, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 806478, 'tool_audio_direction': None}
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

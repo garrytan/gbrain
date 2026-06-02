@@ -198,3 +198,6 @@ Here’s the accurate picture, Mr. White:
    which brings that cloud session back into your CLI. citeturn0search16
 
 If you tell me your `claude version` and whether you’re on the Web or CLI right now, I can give exact syntax that will work for your install.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

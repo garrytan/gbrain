@@ -241,3 +241,6 @@ So, the coverage continues automatically unless you actively cancel it.
 ---
 
 Would you like me to include the **exact loan term fine print from Citizens One’s agreement** (so you can see the prepayment and AppleCare clauses verbatim)? It’s buried in their legal PDF, but I can pull and summarize it.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

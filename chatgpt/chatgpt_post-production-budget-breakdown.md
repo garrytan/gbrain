@@ -189,3 +189,6 @@ Flat annual fee for entire studio/streamer access.
 ---
 
 Mr. White — do you want me to also model **how much cost savings we can credibly claim** (e.g., % of assistants, junior VFX, QC replaced) so you can pitch ROI directly to studios? That’s often what makes the enterprise deals land.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

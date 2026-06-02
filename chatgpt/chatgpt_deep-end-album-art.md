@@ -56,3 +56,6 @@ no text please
 ## Assistant
 
 Here’s the text-free album cover for "The Deep End." Let me know if you want any refinements!
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

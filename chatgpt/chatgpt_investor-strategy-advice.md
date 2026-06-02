@@ -90,3 +90,6 @@ Your current fundraising ladder should be:
 6. Use celebrity/music angels only after momentum.
 
 Core rule: **VC lead first, strategic angels second, famous people last unless they are already warm and excited.**
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

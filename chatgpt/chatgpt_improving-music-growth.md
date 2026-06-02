@@ -114,3 +114,6 @@ If you want, share:
 - Your current monthly listeners or followers
 
 Then a more precise growth strategy can be outlined.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -121,3 +121,6 @@ If you want to replicate something similar yourself without Chartmetric, the clo
 3. Store and analyze these over time to approximate trends.
 
 That’s essentially what analytics platforms do under the hood — they combine **official API outputs with large-scale, repeated data collection** and their own models.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

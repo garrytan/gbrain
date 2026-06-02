@@ -188,3 +188,6 @@ Instead of “dead” products, this looks like a **strategic relaunch / rebrand
 ### Want *community chatter* (Reddit/YouTube) on the *rebrand reaction?*
 
 I can pull real Reddit threads or YouTube comments discussing the redirect or opinions on the name change — just tell me which platform you want first.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

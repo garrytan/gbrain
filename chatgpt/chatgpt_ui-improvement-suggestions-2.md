@@ -90,3 +90,6 @@ Mr. White, here are the highest-leverage UI fixes I’d make, based on these scr
 - Add skeleton loading while syncing instead of freezing.
 
 If you want, tell me your main use case (quick daily check vs deep trend review), and I’ll suggest a tighter layout for that specific job.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

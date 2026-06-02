@@ -50,3 +50,6 @@ You *can’t* directly trigger a Shortcut *on disconnect* from CarPlay *yet*. Bu
 3. Add an action like **“Open Maps”**, or **“Show Directions to Parked Car”** (you might need to manually pass the coordinates — iOS doesn’t expose the parked car location to Shortcuts natively)
 
 **Best move:** Let iOS do its thing with the pin automatically, and optionally use the Shortcut to pop open Maps when CarPlay disconnects. Want help setting that up?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

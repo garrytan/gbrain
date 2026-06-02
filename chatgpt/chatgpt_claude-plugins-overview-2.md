@@ -54,3 +54,6 @@ Here’s a concise overview of **Claude plugins** — what they are and how they
 - In enterprise settings, plugins can tie Claude into CRM systems, data platforms, or team workflows, exposing domain-specific commands and automations. citeturn0search27
 
 In essence, Claude plugins are a way to turn a base AI model into a customized assistant or development partner tailored to specific tasks and tools. citeturn0search5
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

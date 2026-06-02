@@ -70,3 +70,6 @@ Yes, you *can* do it on AWS, but unless you have credits or a strong reason to k
 - **Inferior performance vs. local hardware**
 
 Let me know how large your library is and what you're trying to optimize for (cost, availability, convenience, remote access), and I can recommend the best setup.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

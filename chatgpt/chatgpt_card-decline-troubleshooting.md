@@ -85,3 +85,6 @@ Send both parties this (edit the blanks):
 ---
 
 If you tell me **(1)** what Mercury shows for the attempt (decline reason or nothing logged) and **(2)** whether you’re using Mercury **debit vs IO/credit**, I’ll tell you the most likely root cause and the exact next step.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

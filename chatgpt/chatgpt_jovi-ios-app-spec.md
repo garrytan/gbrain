@@ -131,3 +131,6 @@ The cleanest first PR still remains:
 - root state + auth/session interfaces
 
 The next useful artifact is a repo-ready engineering checklist with file structure and acceptance criteria for Clarke.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

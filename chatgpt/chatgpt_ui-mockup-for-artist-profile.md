@@ -55,3 +55,6 @@ The design must clearly demonstrate protected spacing across all three screen si
 ## User
 
 do we need 2 image of the artist? can we have just one? the cover art ist hard to deal with right now.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

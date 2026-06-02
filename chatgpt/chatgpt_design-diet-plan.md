@@ -89,3 +89,6 @@ Based on the principles outlined, you can design your diet using the following s
 - **Adjust Intake**: Based on whether you're gaining or losing weight as planned.
 
 By following these steps, you can create a tailored diet plan to achieve your body composition goals. For more detailed guidelines and specific recommendations, refer to the corresponding chapters in the "Renaissance Diet" book, such as those on calorie balance, macronutrients, nutrient timing, and diet design.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

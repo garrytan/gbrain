@@ -97,3 +97,6 @@ Mr. White — **Windsurf Command** is the **inline “do this edit” AI** that 
 Use **Cascade** only when you need multi-step reasoning / repo-wide changes. Use **Command** for the rapid back-and-forth micro-edits that would otherwise cost you **one credit per chat message** in Cascade.
 
 If you tell me your OS (Mac/Windows) and whether you’re mostly editing in-editor vs chatting in Cascade, I’ll give you a tight workflow to minimize paid prompts.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

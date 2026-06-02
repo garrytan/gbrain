@@ -60,3 +60,6 @@ For a creative professional (or serious hobbyist) working on original music, the
 ---
 
 If you meant a *different* “session music app” (for example an app just called “Session”, or one for live-music sessions, or rehearsal logs) let me know and I’ll pull that up too.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

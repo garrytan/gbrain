@@ -114,3 +114,6 @@ These encoders can create color-accurate H.264 proxy files from camera feeds (in
 ---
 
 If you tell me what camera(s) or Teradek gear you have, I can check whether *your setup* can do Frame.io C2C.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

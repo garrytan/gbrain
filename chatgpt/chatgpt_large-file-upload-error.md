@@ -207,3 +207,6 @@ git push --force origin main
 Note that using `--force` to push changes can overwrite existing history, so use this command with caution.
 
 Also, make sure to communicate with any collaborators on the repository about the changes you've made to avoid any confusion or conflicts.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

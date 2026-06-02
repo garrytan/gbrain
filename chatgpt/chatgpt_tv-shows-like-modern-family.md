@@ -192,3 +192,6 @@ That means:
 It’s still a solid one-season show — the writing and cast got praise even from people who were disappointed by the cancellation. citeturn0search9
 
 If you’re okay with just eight episodes, it’s worth watching; if you want something that *keeps going* like *Modern Family*, let me know and I can suggest strong alternatives with continued runs.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

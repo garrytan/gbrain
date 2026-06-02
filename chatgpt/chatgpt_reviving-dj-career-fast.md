@@ -314,3 +314,6 @@ Thank you for your time and consideration, and I look forward to potentially wor
 4. **Follow Up Politely:** If you don’t hear back in a week or two, a brief, polite follow-up is acceptable.
 
 Good luck with your outreach! Let me know if you need any additional refinements.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

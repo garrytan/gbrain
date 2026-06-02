@@ -67,3 +67,6 @@ Here's an example of how to use `router-link` in a Vue.js application:
 With the above code in place, when you click on the "About" link, the router will navigate to the "/about" route and render the `AboutComponent`.
 
 Note that the exact usage of `router-link` may vary depending on the framework you are using. The above example is specific to Vue.js with its default router.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

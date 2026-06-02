@@ -32,3 +32,6 @@ tailwind jobs
 For a more extensive search, platforms like Indeed, ZipRecruiter, and specialized sites such as Web3 Jobs and Working Nomads regularly update their listings for Tailwind CSS positions. Additionally, the official Tailwind CSS job board is being reimagined, but their showcase features companies using Tailwind CSS, many of which may have openings. citeturn0search6
 
 Given your location in West Hollywood, exploring both local and remote opportunities can broaden your prospects. 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

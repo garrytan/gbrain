@@ -441,3 +441,6 @@ When you’re building a new screen:
 ---
 
 If you want, show me one of your current SwiftUI screens and I’ll rewrite it into a “design-optimized” version with previews and fake data, so you have a concrete template you can reuse.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

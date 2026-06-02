@@ -239,3 +239,6 @@ export default {
 ## Assistant
 
 It looks like the `handleItemClick` method in the `WorkSection` component is not passing the `videoId` of the clicked item correctly. Instead of `this.handleItemClick(videoId)` in the `v-for` loop, you should pass `item.videoId` like this: `@click="handleItemClick(item.videoId)"`. This will pass the correct `videoId` to the method and emit it to the parent component.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

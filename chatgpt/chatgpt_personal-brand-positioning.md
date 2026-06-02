@@ -880,3 +880,6 @@ If it sounds lived-in, it is getting close.
 *To update: add new stories, sharpen beliefs, refine examples, and keep the voice samples aligned with how Tim actually talks now.*
 
 If you want, I can also turn this into a **shorter one-page brand sheet** and a **separate voice/style guide for copywriters**.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

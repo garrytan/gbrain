@@ -134,3 +134,6 @@ export default {
 
 This will call the `onBlur` method in the parent component whenever the `blur` event is emitted by the `my-component` component.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

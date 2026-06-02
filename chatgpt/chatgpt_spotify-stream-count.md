@@ -36,3 +36,6 @@ Mr. White, I couldn’t get an exact stream count from the data available here.
 The Spotify connector found the track, but it only exposed catalog metadata, not total streams. Spotify’s public track API also exposes metadata and a `popularity` score from 0–100; Spotify describes that score as algorithmic, based partly on total plays and recency, and says it can lag actual activity. That is not an exact stream count. citeturn444877view0
 
 To get the exact number, check **Spotify for Artists → Music → Songs → “Take Me Over”**, or your distributor/label dashboard. One note: the Spotify catalog result I found lists the collaborator as **Erica Gibson**, not **Eric Gibson**.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -117,3 +117,6 @@ serve -s build
 For more detailed guidance, refer to the official Create React App documentation on making a Progressive Web App. citeturn0search0
 
 --- 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

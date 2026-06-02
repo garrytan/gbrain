@@ -108,3 +108,6 @@ Once completed, please provide the spreadsheet in a downloadable format.
 ---
 
 This prompt clarifies the need for dynamic formulas that adjust as each week progresses. It should help the document creator set up a spreadsheet that auto-calculates the needed values each week based on the inputted data and specified criteria. Please make sure to review and test the provided spreadsheet to ensure it meets the required specifications before using it for your tracking.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

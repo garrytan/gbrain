@@ -114,3 +114,6 @@ export const config = {
 ---
 
 If you want, I can provide a boilerplate template (with `package.json`, `proxy.ts`, and root layout) tailored specifically for Clerk + Next.js 16.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

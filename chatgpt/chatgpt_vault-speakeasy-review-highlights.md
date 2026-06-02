@@ -52,3 +52,6 @@ More like a personal google reciew
 ## Assistant
 
 Vault Speakeasy is a must-visit! The shows are as spectacular as anything you’d see in Vegas, and the drinks are top-notch. The service is next level, with staff fully immersed in their roles, making the whole experience super immersive and sexy. If you're looking for a unique and unforgettable night out, this is the place to be. Highly recommend!
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

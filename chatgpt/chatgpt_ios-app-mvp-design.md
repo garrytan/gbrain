@@ -145,3 +145,6 @@ Show one dashboard screen with the QR and share actions.
 Skip SwiftData, Nuke, offline queue, releases APIs, chat, and APNs until a shipped screen actually needs them.
 
 That gets you the wedge you want today without painting yourself into a corner.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

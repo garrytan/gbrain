@@ -104,3 +104,6 @@ Given your startup context (you’re building a product), using Geist (or Geist 
 - A foundation you can build on and customise
 
 If you’d like, I can pull together a **starter template** using Geist UI (React + Next.js) tailored for your stack (since you’re founder in LA and likely building web product). Would that be useful to you, Mr White?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

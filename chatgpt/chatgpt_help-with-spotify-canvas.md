@@ -53,3 +53,6 @@ Here are some steps to help you create it:
    - Make sure it aligns with your release timeline for "Never Say A Word."
 
 If you have any specific visual ideas or need help with any part of the process, let me know!
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

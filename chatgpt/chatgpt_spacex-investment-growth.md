@@ -206,3 +206,6 @@ So SpaceX at **$1.5T** is about a **55.6× increase** over its 2018 valuation.
 ---
 
 If you want, I can also run returns for other hypothetical valuations (e.g., $500B, $750B, $1T, $2T) in a quick comparison table.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -60,3 +60,6 @@ Apple explicitly recommends testing Release locally this way. citeturn0sea
 If you do that, your USB build should behave basically like TestFlight, and any remaining delta is just normal noise (different install path, no debugger, etc.).
 
 If you want, tell me what stack you’re using (SwiftUI/UIKit, RN/Flutter, etc.) and I’ll point out the specific perf/race pitfalls that tend to show up only in Release/TestFlight.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

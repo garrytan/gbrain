@@ -629,3 +629,6 @@ Jovie is being built from an unusual founder position: I am the customer, the op
 I have spent years doing the manual version of this work. I am now using Jovie for my own music every day and paying for it myself at $39/month. That is not external customer validation, but it is real dogfooding. I am building the product I need, using it on my own releases, and tightening it before reopening onboarding broadly.
 
 The core insight is simple: independent artists already have enough tools. They need the work done. Jovie starts with the free artist profile and grows into the AI label operator that turns a small catalog into weekly drops, each scheduled, published, fulfilled when needed, and texted to fans.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

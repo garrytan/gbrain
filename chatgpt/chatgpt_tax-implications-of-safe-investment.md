@@ -54,3 +54,6 @@ These are the common “gotchas” that make a SAFE look more like **equity** (e
 4. For CA residents: model outcomes assuming **no CA QSBS benefit**.
 
 If you tell me **(a)** are you asking as the *founder/company* or the *angel*, and **(b)** is the company a **Delaware C-corp**, I can tailor this to your exact fact pattern (still general info, not legal/tax advice).
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

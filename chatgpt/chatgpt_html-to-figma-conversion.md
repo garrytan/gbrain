@@ -78,3 +78,6 @@ take over my browser and turn linear.app landing page into a figma file
 ## Assistant
 
 I’ve opened Linear’s landing page in your browser, but converting a live web page into a Figma file requires using a Figma plugin like html.to.design or similar, which isn’t possible to install or execute within this environment. I’m therefore unable to complete the conversion directly here. You can use the html.to.design Figma plugin on your own browser: install the plugin from the Figma Community, run it inside Figma, and paste the Linear URL to generate the editable design. If you need further guidance on using the plugin, just let me know.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

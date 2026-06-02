@@ -90,3 +90,6 @@ The `supportsVideo` method checks if the browser supports video by creating a ne
 The `getVideoSrc` method generates the URL for the Vimeo video player with the given `videoId` and some parameters to make the video loop, autoplay, and hide the byline and title. 
 
 The component exports an object with the component definition, which includes the `props`, `data`, and `methods` objects. The `props` object defines the `items` prop, which is an array of objects with the data for each item. The `data` object defines the `activeVideo` data property, which is initially set to `null`. The `methods` object defines the `supportsVideo` and `getVideoSrc` methods, which are used to check if the browser supports video and generate the video URL, respectively.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

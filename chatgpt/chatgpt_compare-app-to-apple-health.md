@@ -134,3 +134,6 @@ Apple Health subtly animates data updates and transitions. Your app appears stat
 ---
 
 Would you like me to create a **side-by-side visual redesign mockup** (Apple Health–style layout adapted to your app’s data and color scheme)? It’ll help you visualize the changes directly.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

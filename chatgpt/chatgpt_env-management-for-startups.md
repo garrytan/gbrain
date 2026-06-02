@@ -395,3 +395,6 @@ If you want, I can turn this into:
 - or a **decision memo for investors**
 
 Just say which.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

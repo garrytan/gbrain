@@ -184,3 +184,6 @@ PY
 Once you need to switch versions again just create another venv with a matching interpreter—no need to touch the Homebrew system Python.
 
 That should get you a working GUI and a live socket that Blender can talk to. Let me know how far you get!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

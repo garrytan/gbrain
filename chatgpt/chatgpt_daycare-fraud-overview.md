@@ -69,3 +69,6 @@ Agencies investigate by:
 ---
 
 If you want specifics about **reporting suspected fraud** in California or how enforcement works locally, let me know, and I can outline the relevant agencies and procedures.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

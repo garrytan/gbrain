@@ -271,3 +271,6 @@ PostHog + Segment
 ```
 
 That keeps Jovie model-agnostic while giving you a persistent institutional memory layer that compounds over time. Hermes is the operator. GBrain is the brain. citeturn0search31turn0search8turn0search15
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

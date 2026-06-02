@@ -36,3 +36,6 @@ Yamaha HS5 5 inch Powered Studio Monitor Pair
 For a detailed overview, you might find this video informative:
 
 videoThe Standard in Studio Monitors: Yamaha HS5 Powered Speakerturn0search6 
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

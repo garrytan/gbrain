@@ -108,3 +108,6 @@ In Clerk Dashboard:
 6. Inspect the OAuth callback/error route to see whether incomplete OAuth attempts are redirected to `/signin#/reset-password`.
 
 Most likely fix: remove password credentials from existing users where appropriate, ensure emails are verified before OAuth linking, and override/handle Clerk’s account-linking/reset step so Google users see a clear Jovie-branded explanation instead of a password reset form.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

@@ -77,3 +77,6 @@ Sincerely,
 Mr. White  
 732 – 668 – 2148  
 timwhitebartending@gmail.com
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

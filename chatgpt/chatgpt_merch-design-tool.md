@@ -349,3 +349,6 @@ Scrape broadly. Train cautiously. Rank aggressively.
 The moat is **demand-adjusted taste data**:
 
 > What sells because the design is good, separated from what sells because the artist is famous.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

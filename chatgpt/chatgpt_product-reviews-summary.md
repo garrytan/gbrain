@@ -609,3 +609,6 @@ If you want, next I can:
 - Validate **12-core vs 14-core Pro** (spoiler: negligible)
 - Explain **why the 14″ Pro still won’t throttle for your load**
 - Give you a **post-purchase checklist** to verify you’re not core-limited in practice
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

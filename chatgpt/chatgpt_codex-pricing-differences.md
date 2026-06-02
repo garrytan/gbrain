@@ -90,3 +90,6 @@ Local work generally lets you do **many more interactions per window** than clou
 ---
 
 If useful, I can also explain **when Codex actually spins up cloud compute vs staying local**, because that distinction is what determines whether your usage burns through quota quickly.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

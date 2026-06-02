@@ -54,3 +54,6 @@ If you’re scanning Tailwind CSS 4 code:
 - There is no built-in Sonar plugin that fully understands Tailwind — handling it today is about **configuration and rule tuning**.
 
 If you want, I can provide **example Sonar Quality Profile configurations** or step-by-step guidance on excluding specific rules in SonarQube.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

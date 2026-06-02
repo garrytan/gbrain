@@ -47,3 +47,6 @@ There’s no smoking-gun video proving she’s faking, but plenty of chatter say
 | Objective evidence | Mixed | No conclusive “fake-DJ” proof; no virtuoso skills either. |
 
 **Bottom line:** She’s mixing live in the simplest, safest way possible—pre-prepped playlists, heavy on the sync button—but the “she’s totally faking it” claim is based on anecdotes, not hard evidence.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

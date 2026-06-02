@@ -385,3 +385,6 @@ Mr. White — quick deltas (Cloudinary vs Vercel Blob + Next/Image) for **overhe
 - If you want avatars to **always look pro** (creator-first brand) and avoid future rework: **Cloudinary now** (small upfront overhead; big downstream savings).
 
 Want me to drop in the exact upload handlers and a tiny URL helper for both paths so you can pick one and go?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

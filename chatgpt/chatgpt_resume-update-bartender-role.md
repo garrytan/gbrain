@@ -50,3 +50,6 @@ Keep all the experience and improve this overall to convert better
 ## Assistant
 
 I’ve overhauled the layout to a punchy profile, quantified your impact with metrics, and highlighted leadership and revenue-driving achievements—while retaining all your experience. Let me know if you’d like any tweaks or additional details!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

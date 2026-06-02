@@ -51,3 +51,6 @@ Explanation:
 - The `installment_price` variable is assigned the value of the product price divided by 4.
 - The code checks if the `installment_price` is greater than or equal to 35, the minimum order value.
 - If the condition is met, the code outputs the Klarna payment link with the installment price and the minimum order value. The `installment_price` variable is converted to a string with the `money` filter, which adds the currency symbol to the output.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -87,3 +87,6 @@ Testers download the **TestFlight app**, accept your invite/public link, and ins
 ---
 
 If you want, tell me your setup (UIKit/SwiftUI, iOS-only vs multi-platform, manual vs auto signing), and I’ll tailor the exact clicks/screens to your case.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

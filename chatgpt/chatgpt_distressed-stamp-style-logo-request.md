@@ -146,3 +146,6 @@ Not the Death Star just the doors in the hallway of the death star
 ## Assistant
 
 I'm unable to generate images related to specific copyrighted elements like the Death Star from Star Wars, as this request doesn't align with our content policy. However, if you have another concept or a different setting in mind where you'd like to see the logo applied, I'd be happy to help create that for you. Please feel free to share any other ideas you have!
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

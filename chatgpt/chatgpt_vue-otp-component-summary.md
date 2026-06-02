@@ -312,3 +312,6 @@ The `beforeinput` event is supported in most modern browsers, but it is not supp
 
 This will allow you to intercept paste operations in Internet Explorer as well as other modern browsers.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

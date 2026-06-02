@@ -46,3 +46,6 @@ Mr. White, if your Ring Video Doorbell 2 is **flashing blue and not progressing 
 - **Contact Ring support and request a replacement.** If under warranty, they’ll usually ship a new one. If out of warranty, politely but firmly push for a courtesy replacement—mention it’s stuck in a boot loop and you’ve already tried hard reset + battery swap.
 
 Let me know if you want a script for dealing with Ring support.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

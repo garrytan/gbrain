@@ -561,3 +561,6 @@ Give it to me as an audit that I can give to an agent that has the whole code in
 ---
 
 If needed, next step is converting this into a **component-level checklist mapped to actual files (e.g. `/components/ui/button`, `/sections/hero`, etc.)**.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

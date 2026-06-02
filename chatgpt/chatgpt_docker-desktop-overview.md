@@ -57,3 +57,6 @@ docker desktop
 For a visual overview, you might find this video helpful:
 
 videoDocker Concepts: Get Docker Desktopturn0search8 
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

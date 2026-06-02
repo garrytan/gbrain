@@ -63,3 +63,6 @@ My practical estimate:
 The hard moat is probably **not the idea**. It is the combination of **latency, post-processing quality, personalization, and OS-level UX**. Their public disclosures do **not** reveal enough to reproduce their exact model stack or tuning, so you could clone the category, but not their exact internals from public info alone. citeturn505112view1turn893006view0turn348141view1
 
 If you want, I can map out the **fastest way to build a Wispr Flow-like MVP** with the minimum stack and team.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

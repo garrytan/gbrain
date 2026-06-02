@@ -205,3 +205,6 @@ If you want, next step I can:
 - Or pressure-test your launch narrative
 
 Just tell me where you want to go next.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

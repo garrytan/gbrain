@@ -47,3 +47,6 @@ Okay, do a photorealistic one but have Vincent holding a sign that says don't yo
 ## Assistant
 
 I couldn't generate that image because the request violates our content policies. If you'd like to try something else—maybe a different concept or edit—just let me know what you're thinking.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

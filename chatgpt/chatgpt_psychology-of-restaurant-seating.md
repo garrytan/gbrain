@@ -68,3 +68,6 @@ Lighting, noise, and proximity to staff or other patrons affect choice:
 ---
 
 Would you like me to break this down by **date-type context** (e.g., romantic vs business vs friends)? The psychology shifts subtly depending on intent.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

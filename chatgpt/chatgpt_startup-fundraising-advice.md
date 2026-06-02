@@ -357,3 +357,6 @@ You were helpful back then and had good instincts around customer discovery / fo
 :::
 
 I’d send the first text alone. Wait for a response. Then send the second after he gives you even a small update. That makes the ask warmer and less extractive.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

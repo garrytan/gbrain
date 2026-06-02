@@ -39,3 +39,6 @@ Even with matching concentrations, combining two different vials yourself can in
 * If you think you need to combine doses (for example, to reach your total prescribed amount), call your prescribing clinician or the pharmacy that dispensed them and ask if that’s appropriate and how to do it safely.  
 
 Don’t mix or inject until you’ve confirmed with a medical professional.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

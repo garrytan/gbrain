@@ -81,3 +81,6 @@ Mr. White, you can track your weekly tirzepatide injections just like any other 
    - Export your Health data (Profile → Export All Health Data) to get an XML/ZIP that your doctor can import or review alongside prescriptions.
 
 With that, you’ll have precise dose-by-date records for tirzepatide in HealthKit—fully integrated with your sleep, weight, and any third-party journal entries you import.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

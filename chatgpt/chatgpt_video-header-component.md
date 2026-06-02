@@ -193,3 +193,6 @@ The `<video>` element has a class of `absolute inset-0 w-full h-full object-cove
 The `<div>` element that contains the header component has a class of `absolute top-0 left-0 w-full`, which positions it at the top-left corner of the container and sets its width to 100% of the container.
 
 With these classes, the header component will be displayed on top of the video, and the video will take up the entire background.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

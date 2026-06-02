@@ -175,3 +175,6 @@ The repo documents both environment variables and says telemetry is anonymous, b
 **Do not let artists browse or install open ecosystem skills.**
 
 The product-level opportunity is stronger than the reel: “Jovie has specialized artist skills for every part of a release.” That is a clean internal architecture and a better user-facing story.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

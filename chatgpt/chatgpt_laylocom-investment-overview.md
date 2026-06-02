@@ -77,3 +77,6 @@ Here’s a **funding/investment snapshot for Linkfire** (music-marketing SaaS & 
 - The company pivoted from public markets back to private with core investors holding significant stakes. citeturn0search7
 
 If you need **specific cap table percentages, latest valuation, or major shareholder names with ownership stakes**, I can pull that from recent filings or investor reporting.
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

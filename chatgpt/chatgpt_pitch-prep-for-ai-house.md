@@ -409,3 +409,6 @@ For a generic startup, I’d be cautious. For Jovie, it may be strategically val
 Your meeting should treat the terms as:
 
 > **Potentially worth it if they are a true technical/product/fundraising co-builder. Not worth it if they are mostly a brand and a check.**
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

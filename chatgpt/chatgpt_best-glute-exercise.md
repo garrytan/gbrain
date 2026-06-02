@@ -43,3 +43,6 @@ In practice, that usually means:
 - **Reps (per Mike’s glute guide):** lunges in the **20–30 rep range per set** work very well for glute hypertrophy. citeturn0search2  
 
 So, Mr. White: if you want the Mike-Israetel-approved “best” glute move, program **front-foot-elevated lunges/Smith lunges** as a staple and push them hard with control and deep range.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

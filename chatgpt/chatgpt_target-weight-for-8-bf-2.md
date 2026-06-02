@@ -40,3 +40,6 @@ Let's plug in your numbers: a current weight of 173 pounds and a current body fa
 ## Assistant
 
 To reach a body fat percentage of 8% without losing any muscle mass, you would need to weigh approximately 168.3 pounds.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

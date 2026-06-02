@@ -323,3 +323,6 @@ If useful, Mr. White, a precise estimate can be made from three variables:
 - **body fat %**
 
 Those numbers allow a realistic projection of **maximum arm size at your height**.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

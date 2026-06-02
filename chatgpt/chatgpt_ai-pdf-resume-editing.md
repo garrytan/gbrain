@@ -54,3 +54,6 @@ Mr. White, the quickest, most “vibe-coding”-style way to iteratively tweak a
 - **Rezi / Zety**: Resume-specific AI that parses your PDF, suggests ATS-friendly rewrites, then outputs a polished PDF.
 
 All follow the same vibe-coding ethos: natural-language instructions → instant in-document edits → seamless export.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

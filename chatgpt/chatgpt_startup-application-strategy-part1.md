@@ -439,3 +439,6 @@ If you want, I’ll spin this into a one-pager for YC (“ads at scale as a seco
 
 
 Now you have my general thinking and what i do, lets compile our overall ycombitor optimized concept of who we are and what problem we solve and all that
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

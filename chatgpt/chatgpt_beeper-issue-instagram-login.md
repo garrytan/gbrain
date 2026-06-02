@@ -42,3 +42,6 @@ It seems you're experiencing an issue with the Beeper app when trying to log int
 7. **Compatibility Check:** Ensure that your device meets the minimum requirements for running the Beeper app and that there are no known issues with your operating system version.
 
 If you've tried these steps and still face issues, it may require a more detailed investigation by the Beeper support team.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

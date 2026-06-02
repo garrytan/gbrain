@@ -381,3 +381,6 @@ Looking forward to connecting, Yifan.
 Best,
 Tim
 ```
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

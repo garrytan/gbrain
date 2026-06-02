@@ -26,3 +26,6 @@ Marrying bottles legal
 ## Assistant
 
 Marrying bottles, or combining partial bottles of the same alcoholic beverage, is generally illegal in California and many other states. This practice is prohibited primarily for health and safety reasons, as well as to prevent fraudulent practices. The California Department of Alcoholic Beverage Control (ABC) explicitly prohibits this practice under Section 23399.1 of the California Business and Professions Code. Violating this regulation can result in penalties, including fines and the potential loss of the establishment's liquor license.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

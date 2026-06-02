@@ -82,3 +82,6 @@ What it will not fully fix:
 - any branch that is hard-coded to require manual user action can still stop, especially browser auth, CAPTCHA, or explicit AskUserQuestion gates baked into the skill. fileciteturn1file0turn2file1
 
 The cleanest long-term fix is to complete the one-time gstack setup once, so future runs start past those gates.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

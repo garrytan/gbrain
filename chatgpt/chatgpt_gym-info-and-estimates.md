@@ -101,3 +101,6 @@ To find the current hours of operation for each gym, it's best to reach out to t
    - Crunch also typically has extended hours, from early morning until late evening.
 
 These hours can vary, so please check with each gym directly for the most accurate information.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

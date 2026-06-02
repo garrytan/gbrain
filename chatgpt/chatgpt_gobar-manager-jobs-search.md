@@ -74,3 +74,6 @@ Since you’re in LA, here are some strategic moves:
 ---
 
 If you like, I can **pull up current live listings** for Bar Manager roles *within 10 miles of your zip (90048)* and send you a list of 5-10 opportunities with links. Would you like me to do that?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

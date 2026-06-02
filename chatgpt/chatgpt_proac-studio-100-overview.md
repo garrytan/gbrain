@@ -32,3 +32,6 @@ ProAc Studio 100
 The Studio 100 was known for its open, clean midrange, excellent image focus, and freedom from the "head-in-a-vise" effect common to some speakers. However, it had an overly forward midrange balance and a tweeter that could be overly prominent. Pairing it with tube amplifiers was recommended to achieve the best sound quality. citeturn0search0
 
 As of January 2025, used ProAc Studio 100 speakers are available on the second-hand market, with prices varying based on condition and location. citeturn0search4 
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

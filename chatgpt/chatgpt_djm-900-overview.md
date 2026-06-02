@@ -28,3 +28,6 @@ djm-900
 iturn0image0turn0image1turn0image2turn0image3The Pioneer DJM-900 is a series of professional 4-channel DJ mixers renowned for their robust build and advanced features. The DJM-900NXS, introduced in 2011, offers excellent connectivity, up-to-date effects, and high performance features, making it a centerpiece of many professional DJ setups. citeturn0search1
 
 In 2016, Pioneer released the DJM-900NXS2, which features a 64
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

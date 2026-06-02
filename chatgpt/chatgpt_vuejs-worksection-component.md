@@ -57,3 +57,6 @@ This is a Vue.js component template with a script section that imports the `Work
 In the template section, the `WorkSection` component is used with a `:items` prop that is bound to the `items` array defined in the script section. The `WorkSection` component will receive the `items` array as a prop and render the contents of each object in the array as a separate section.
 
 The first object in the `items` array has an image of a Lamborghini and the second object has an image of Tahiti, along with other details such as a title, subtitle, and button link.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

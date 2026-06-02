@@ -240,3 +240,6 @@ Right now, level 2 and level 3 are blending together because every row has wavef
 7. Tighten the bottom player and make it the only full-detail waveform area.
 
 The main principle: make the table scannable first, interactive second, and detailed only when a track is selected.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

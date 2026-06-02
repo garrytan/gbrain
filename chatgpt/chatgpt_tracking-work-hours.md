@@ -392,3 +392,6 @@ If you want, next I can help you:
 - Set a **Joby-specific weekly coding floor**
 - Decide what “good” looks like at your current stage
 - Pair this with a lightweight shipping metric (without extra tools)
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

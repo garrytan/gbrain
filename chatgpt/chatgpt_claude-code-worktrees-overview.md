@@ -58,3 +58,6 @@ Claude Code’s security restrictions may block navigating outside the initial r
 
 **Summary**  
 *Worktrees* + *Claude Code* = efficient, isolated AI-assisted parallel development without losing context or stepping on branches.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

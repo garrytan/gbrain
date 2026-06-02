@@ -131,3 +131,6 @@ Mr. White — updated: **no text** on **Zero setup** and **Opinionated design**,
 - **Speed:** [Download](sandbox:/mnt/data/feature_speed_linear_grey_notext_1344x1280.png)  
 - **Opinionated design (no text):** [Download](sandbox:/mnt/data/feature_design_linear_grey_notext_1344x1280.png)  
 - **Zero setup (no text):** [Download](sandbox:/mnt/data/feature_zero_linear_grey_notext_1344x1280.png)
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

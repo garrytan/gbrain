@@ -36,3 +36,6 @@ Mr. White, I found several resources that feature Mike Israetel and his company 
 Additionally, there's an article on BOXROX where Dr. Israetel explains how to achieve long-term muscle gain. He emphasizes not rushing the process and sticking to a regimen that includes gain, maintain, and mini-cut phases. Experimentation with exercises and techniques, and setting realistic expectations for gains over time are also key points. You can read more about this approach in the article [here](https://www.boxrox.com/how-to-achieve-long-term-muscle-gain/).
 
 These resources should provide comprehensive guidance on clean bulking as per Dr. Mike Israetel's expertise.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

@@ -132,3 +132,6 @@ There’s a lot of black between status bar, greeting, title, and the first card
 - **Cards start immediately after**
 
 This will read cleaner, feel more intentional, and free up space.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

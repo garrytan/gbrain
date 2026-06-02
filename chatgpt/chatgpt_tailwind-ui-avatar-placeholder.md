@@ -52,3 +52,6 @@ Useful for representing user initials when you don’t have an image. cite
 - Some UI kits (like Flowbite or DaisyUI) provide built-in **placeholder avatar classes** you can leverage. citeturn0search4turn0search2
 
 If you want an example tailored to specific framework (React/Vue/Svelte) or with animations/status indicators, tell me which stack you’re using.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

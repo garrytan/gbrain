@@ -59,3 +59,6 @@ Given your minimal data use, those big-carrier plans erase any “free phone” 
 - **If cash flow is key:** Apple Upgrade Program spreads payments at 0% without forcing a carrier change.
 
 Bottom line: **stay on Google Fi, downgrade to Essentials, and finance through Apple if you prefer monthly payments.** Big-carrier “free phone” deals cost more long-term.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

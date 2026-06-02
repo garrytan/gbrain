@@ -50,3 +50,6 @@ Mr. White, here’s a polished version you can post:
 > I actually started speccing out what it would cost to build something similar, and my rough guess is that the underlying AI usage for our volume would be far below what we were charged. I am seriously considering building an open-source alternative, especially if it can piggyback on existing repo-memory/indexing providers.
 >
 > Before going down that rabbit hole: are there any good alternatives people are actually happy with? Ideally something with GitHub integration, predictable pricing, and no surprise seat/usage expansion.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

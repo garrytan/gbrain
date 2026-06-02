@@ -66,3 +66,6 @@ Here `page` reflects the `?page=` in the URL and updates it on change. cite�
 ✘ For UI state that shouldn’t change the URL (animations, ephemeral modals, etc.). citeturn0search1
 
 In short, **nuqs** makes query-param-based state in React apps **simple, type-safe, shareable and URL-synced**. citeturn0search0
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

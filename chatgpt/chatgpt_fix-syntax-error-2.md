@@ -41,3 +41,6 @@ It looks like there is a syntax error in the code you provided. Here is how the 
 Note that the `searchBox` prop should be an object literal wrapped in single quotes, and the keys and values within the object should be separated by a colon and wrapped in double quotes.
 
 I hope this helps! Let me know if you have any further questions.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

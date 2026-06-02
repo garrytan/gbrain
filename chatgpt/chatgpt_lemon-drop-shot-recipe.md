@@ -26,3 +26,6 @@ Lemon drop shpt
 ## Assistant
 
 A lemon drop shot typically consists of vodka, lemon juice, and a sweetener like simple syrup or sugar. It's often garnished with a sugar rim and a lemon slice. The mix is usually shaken with ice, strained, and served in a shot glass. The sweet and sour combination makes it a popular choice at bars and parties. Would you like a specific recipe for making a lemon drop shot?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

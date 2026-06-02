@@ -131,3 +131,6 @@ Each of these positions offers significant face-time with artists or DJs and wou
 - Velvet Hammer job description – Day-to-Day Manager【24†L41-L49】【24†L61-L69】
 
 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

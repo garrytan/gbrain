@@ -238,3 +238,6 @@ Replace **“The web app, faster.”** with **“Keep your release workflow sepa
 Replace **“Apple-signed and notarized”** with **“Developer ID signed and Apple notarized.”**
 
 Replace **“Universal”** with **“Apple Silicon + Intel.”**
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

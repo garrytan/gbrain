@@ -88,3 +88,6 @@ I’d score the current screen:
 **Debuggable:** 4/10  
 
 The screen communicates status, but it does not consistently expose the next click, the owning system, or the unique ID needed to delegate work.
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

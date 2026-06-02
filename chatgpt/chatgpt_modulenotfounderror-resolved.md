@@ -91,3 +91,6 @@ import { buildStories } from '../../../.storybook/lib.js';
 ```
 
 This import statement uses `../` to move up one directory at a time, starting from `resources/js/components`, until it reaches the root directory of the project. From there, it goes to `.storybook/lib.js` to import the `buildStories` function.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

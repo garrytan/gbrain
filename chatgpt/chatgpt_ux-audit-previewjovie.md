@@ -167,3 +167,6 @@ If you’re designing / reviewing this:
 5. **Audit accessibility**: labels, contrast, keyboard navigation, and focus states.
 
 If you want, you can paste screenshots or HTML/CSS for `preview.jov.ie`, and I’ll give you a much more specific, screen-by-screen teardown.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

@@ -60,3 +60,6 @@ Also update TypeScript types if you use TypeScript (`@types/react`, `@types/reac
 - Test thoroughly — large projects may require manual adjustments beyond the codemod. citeturn0search1
 
 If you want a more detailed migration checklist tailored to your project’s use of App Router, middleware, and cache patterns, I can provide one.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

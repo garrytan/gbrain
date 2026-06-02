@@ -140,3 +140,6 @@ WITH CHECK (auth.uid() IS NOT NULL AND auth.uid() = clerk_user_id);
 ```
 
 This policy ensures that the new row is only inserted if the authenticated user's UID is not null and equals the clerk_user_id field.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

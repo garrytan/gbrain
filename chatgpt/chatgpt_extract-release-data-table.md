@@ -521,3 +521,6 @@ include the year, remove the isrce codes and durations
 | Wheels Up            | Lynx & Tim White                       |      | Wheels Up                       |
 
 I've included the year of release where available and removed the ISRC codes and durations. The years are based on common release years for the EPs mentioned, but some specific years may need to be verified or added.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

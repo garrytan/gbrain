@@ -107,3 +107,6 @@ Other creative themes include palettes like **Dawn** and **Pale** with purple/te
 - Custom themes generate semantic shades automatically (background, text, borders) from a few base colors. citeturn0search4
 
 If you want a **ready-to-use palette with hex codes and suggested UI roles (background/text/accents)** tailored to Linear’s style (light & dark variants), tell me and I can generate one.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

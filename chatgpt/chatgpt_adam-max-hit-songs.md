@@ -88,3 +88,6 @@ Beyond the previously mentioned tracks, Kesha and Max Martin have collaborated o
 3. **"Only Wanna Dance with You"** - Also from *Warrior*.
 
 These songs continue to highlight the successful partnership between Kesha and Max Martin in crafting popular and influential pop music.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

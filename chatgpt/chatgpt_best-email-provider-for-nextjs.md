@@ -80,3 +80,6 @@ If I were to pick one for most Next.js apps (especially if you’re building and
 ---
 
 If you like, I can pull **a comparative table** of say 3-5 providers (features, cost tiers, Next.js integration details) so you can pick the best match for *your* requirements (volume, budget, template complexity). Would you like that, Mr. White?
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

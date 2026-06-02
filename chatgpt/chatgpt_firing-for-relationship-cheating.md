@@ -35,3 +35,6 @@ Where it **can** cross the line:
 - **Privacy violations.** Even if the firing reason is legal, an employer can get in trouble if they *invade privacy* to dig it up (intrusion into private affairs under CA’s constitutional privacy right). citeturn4search3turn4search6
 
 Bottom line: in Los Angeles, a blanket “I fire cheaters” stance is generally **not** wrongful termination by itself, but it becomes risky if it’s enforced in a way that targets protected groups, punishes political activity, conflicts with a specific protection, or relies on unlawful snooping. citeturn5search3turn3search2turn0search0turn1search0
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

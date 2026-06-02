@@ -671,3 +671,6 @@ else:
 ```
 
 This script defines `new_prefixes` within the global scope, so it's available when you assign it to `prefixes` later in the script. After running the script, it should use the `new_prefixes` list for fetching records and provide a report at the end about any truncated prefixes.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

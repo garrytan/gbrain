@@ -63,3 +63,6 @@ tags: [chatgpt, import]
 ---
 
 If you need further assistance comparing these models or exploring alternatives, feel free to ask! 
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

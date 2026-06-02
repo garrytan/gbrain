@@ -45,3 +45,6 @@ Tailwind’s spacing scale:
 • `16` = 4rem (64px)  
 
 Tell me if you want custom sizing.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

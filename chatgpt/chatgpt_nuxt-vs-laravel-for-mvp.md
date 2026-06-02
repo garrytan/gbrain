@@ -30,3 +30,6 @@ Mr. White,
 If speed to MVP and low initial costs are your priorities, sticking with Nuxt on Vercel (using Supabase plus Clerk for auth) is typically faster to spin up than adding a Laravel backend. Vercel’s serverless functions will let you deploy quickly and scale automatically, and you can keep your logic in a single place rather than juggling a separate Laravel application. You also avoid managing your own infrastructure for a separate backend.
 
 That said, if you see the application expanding into a larger ecosystem with more complex business logic, Laravel might be worthwhile. It’s a very mature framework, with a robust ecosystem for rapid development of backend features. But for the leanest launch—from zero to something live—Nuxt + Vercel functions + Supabase is usually faster and cheaper to get going. Then, if you outgrow that architecture, you can move or rewrite the backend in Laravel later.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

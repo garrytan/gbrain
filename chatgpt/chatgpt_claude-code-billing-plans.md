@@ -284,3 +284,6 @@ That way:
 - Bursty bulk work gets billed efficiently per token.
 
 If you want, tell me **typical tokens per hour or approximate responses/hour**, and I’ll do a tighter dollar estimate for you.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

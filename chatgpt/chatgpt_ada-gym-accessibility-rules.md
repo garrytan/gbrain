@@ -43,3 +43,6 @@ Useful way to evaluate it on the floor:
 If you want to push it, take photos and tape-measure shots, then complain first to the club manager and corporate accessibility contact. DOJ also has a complaint process and an ADA Information Line. citeturn648921search1turn648921search3
 
 If you want, I can help you turn your observations into a short complaint that cites the exact ADA provisions.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

@@ -298,3 +298,6 @@ General rules:
 - The timeline must **never hide photos just because metrics are missing**, and must **never hide metric dates just because photos are missing**.
 - Scrubbing should always produce a meaningful state: either a real photo, a nearest photo with metric label, or a clear “no data yet” message.
 - Handle very dense periods and very sparse periods gracefully using time-based sampling of thumbnails (like iOS Photos) rather than fixed “one dot per entry” layouts.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

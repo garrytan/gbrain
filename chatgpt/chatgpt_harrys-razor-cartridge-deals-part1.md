@@ -372,3 +372,6 @@ To build a **systematic, forward-looking budget**, I need to clarify a few thing
 ---
 
 Mr. White — want me to **draft a baseline budget template** (fixed + variable + savings targets) with these items filled in, and then refine it with your answers?
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

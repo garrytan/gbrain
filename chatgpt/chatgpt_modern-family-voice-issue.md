@@ -65,3 +65,6 @@ Adding “English” or “original” sometimes nudges the resolver.
 This is a metadata + ranking issue across Amazon’s unified catalog. It’s not something you can fully “fix” locally if the backend keeps prioritizing the Spanish entry. The routine workaround is the most reliable long-term solution.
 
 If you want, provide your exact phrasing and which app you prefer, and I can suggest a routine setup that reliably hits the correct listing.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

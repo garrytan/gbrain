@@ -60,3 +60,6 @@ Cut the length In half
 Tim White is a marketing genius – yes, I’m that good. While corporate labels debate, I’ve already got my song in thousands of heads.
 
 Stream ‘Never Say A Word’ now! Enjoy great music and support indie artists while giving a big middle finger to corporate giants. Link in bio! #NeverSayAWord #NewMusic #MarketingTips
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

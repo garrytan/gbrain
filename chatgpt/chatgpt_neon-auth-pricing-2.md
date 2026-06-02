@@ -78,3 +78,6 @@ Because Neon bills usage-based, your cost depends on how much database load your
 - You **don’t pay extra per MAU for Neon Auth** the way you would with Auth0/Clerk — user count itself doesn’t generate auth billing. Auth is synced to your DB and the cost come from the DB usage behind it. citeturn0search0
 
 If you can share an expected **RPS/queries per second**, I can give a tighter cost projection based on compute requirements.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

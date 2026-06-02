@@ -92,3 +92,6 @@ Based on the pricing details you've provided and assuming you have 5,000 fans th
 - SMS (US/CAN): 8 credits per SMS, so 1,666 SMS will cost 13,328 credits.
 
 Now let's calculate the total monthly cost and how that fits into the plan you've shown.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

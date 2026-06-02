@@ -230,3 +230,6 @@ To advertise a *privacy-first experience*, you should:
 ---
 
 If you want, I can help you write the actual *marketing copy* and the **privacy policy** language that accurately reflects what you implement while keeping it user-friendly and trust-building.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -26,3 +26,6 @@ lexocon basic plan wtih rekorbox
 ## Assistant
 
 ​Lexicon's Basic plan, priced at $17 per month, offers comprehensive library management and cleanup tools, along with basic customer and community support. citeturn0search5 It supports integration with major DJ applications, including Rekordbox, allowing you to manage and sync your music library seamlessly. citeturn0search1 If you have an existing Rekordcloud subscription, it includes the Lexicon Basic plan. To access Lexicon, log in using your Rekordcloud-associated email and reset your password if necessary. citeturn0search0 
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

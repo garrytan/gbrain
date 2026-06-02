@@ -94,3 +94,6 @@ Text(floor((time*41500/comp.RenderEnd)-1))
 ``` 
 
 Note that this modified expression assumes that `comp.RenderEnd` is the total length of the animation or visual effects sequence in seconds or frames, depending on the software you're using. If your software uses a different variable or method to determine the total length of the sequence, you'll need to adjust the expression accordingly.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

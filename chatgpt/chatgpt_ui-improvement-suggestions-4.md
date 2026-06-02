@@ -119,3 +119,6 @@ If you want, I can:
 - Spec this as a **component API** (props + states)
 - Mock ideal avatar crops for creator profiles
 - Tie avatar quality directly to profile CTR metrics
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

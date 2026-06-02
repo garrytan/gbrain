@@ -891,3 +891,6 @@ Product promise:
 > **Every song becomes a release plan. Every release plan becomes more releases.**
 
 That is the direction I would build toward.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

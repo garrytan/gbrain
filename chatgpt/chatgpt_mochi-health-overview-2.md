@@ -42,3 +42,6 @@ mochihealth
 - Patients report an average weight loss of 16% in the first year, with over half losing at least 10% of their body weight within six months citeturn0search12.
 
 For more information or to determine eligibility, visit [joinmochi.com](https://joinmochi.com). 
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

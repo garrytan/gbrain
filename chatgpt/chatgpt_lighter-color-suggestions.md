@@ -33,3 +33,6 @@ Here are a few options:
 - **#f2f2f2** — even lighter
 
 If you want *much* lighter, use **#fafafa** or **#ffffff** (pure white).
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

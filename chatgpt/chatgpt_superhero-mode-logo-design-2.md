@@ -26,3 +26,6 @@ lets generate a logo for our ios fitness app called Superhero Mode. it should be
 ## Assistant
 
 Here's the logo for your iOS fitness app "Superhero Mode," designed as per your specifications.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

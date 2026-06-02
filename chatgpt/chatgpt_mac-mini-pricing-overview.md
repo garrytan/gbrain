@@ -325,3 +325,6 @@ Keep it simple:
 If you want, I can design:
 - exact Jovie agent architecture on a 4090 box  
 - or a minimal “ship tomorrow” setup that runs nonstop without babysitting
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -65,3 +65,6 @@ Here's an example of how you can display the div with the "Loading..." text 6 ti
 The `v-for` directive here is used to loop over the number of iterations you want to display the div for (in this case, 6). It also requires a `key` attribute to be set, which is used to identify each element in the list.
 It will create 6 divs with class "select-none space-y-4" and inside each div, it will display the loading message.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

@@ -27,3 +27,6 @@ compose an email with inline resume bullet points to apply to jobs@terafab.ai bu
 - cater this explicitly to the company. THat means deep research first, compose email second.
 
 draft it in my email and design it to convert and get me the job. give me a follow up tweet to elon. could even be ..the nice thing about having an army of agents? i just had grok build research, compile, and submit my resume to a job im proabbly never going to get, but the cost of YOLO is free, so i can take every shot i want. Apply to all the dream jobs, build all the tools ive wanted etc.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

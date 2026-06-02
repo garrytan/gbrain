@@ -247,3 +247,6 @@ fi
 ```
 
 My recommendation: use the rewrite above, split the current large agent instructions into scoped files, and add the artifact scan before the next production deploy.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -203,3 +203,6 @@ My recommendation is to keep pushing one of these two lanes:
 - **Compounding lane**: multiple outputs feeding a flywheel, more strategic and ownable
 
 I would personally bet on **Compounding Rotor**, then simplify it another 20–30% so it becomes more iconic.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

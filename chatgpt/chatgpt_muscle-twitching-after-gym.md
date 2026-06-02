@@ -50,3 +50,6 @@ Mr. White—post-workout muscle twitching is **usually normal and not harmful**.
 - You’re using **very high stimulant doses** (pre-workout) and feel jittery or tremory
 
 In healthy lifters, twitching is **usually just neuromuscular fatigue** and **not bad**. Let me know your symptoms and training volume if you want me to assess more specifically.
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

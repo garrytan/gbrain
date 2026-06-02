@@ -43,3 +43,6 @@ Based on the image, it looks like a docking/charging base for a handheld vacuum 
 - **Check your vacuum's manual** for LED behavior specifics (brand/model would help if you want me to look it up).
 
 Let me know the brand/model and I can give you more precise troubleshooting.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

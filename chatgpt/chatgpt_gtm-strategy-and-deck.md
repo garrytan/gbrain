@@ -89,3 +89,6 @@ bottle neck was never creation...it was marketing and distributions
 
 
 
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

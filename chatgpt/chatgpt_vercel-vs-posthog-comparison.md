@@ -186,3 +186,6 @@ Since you already have **Statsig** in your stack, here’s the **practical break
 - **Statsig + PostHog** = product insights + experimentation (growth focus).
 
 If you tell me your current instrumentation goals (e.g., retention improvement, conversion optimization, onboarding flows), I can suggest an ideal event schema.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

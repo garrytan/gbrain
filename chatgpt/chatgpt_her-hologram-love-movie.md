@@ -50,3 +50,6 @@ I have two tabs open I don't think I can handle that
 ## Assistant
 
 It can be overwhelming to have multiple tabs open at once, especially if you are trying to focus on a specific task. You may want to consider closing
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

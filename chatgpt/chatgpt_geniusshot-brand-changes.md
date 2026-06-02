@@ -224,3 +224,6 @@ Mr. White — here’s a **clean, direct, non-accusatory DM** that maximizes you
 If they respond with vague language like *“exciting evolution,” “new chapter,” “same mission”* and avoid the BLG + founder questions, that’s effectively your answer.
 
 If you want, once they reply, paste it here and I’ll translate what they’re *actually* saying.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

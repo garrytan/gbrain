@@ -42,3 +42,6 @@ Designing a database before you start coding is a good idea because it helps you
 7. Test your design: Once you have designed your database, it's a good idea to test it out to make sure it meets your needs and is structured in an efficient way. You can do this by creating sample data and running some queries against it to see how the database performs.
 
 By following these steps, you can design a well-organized and efficient database that meets the needs of your application.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

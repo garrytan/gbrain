@@ -41,3 +41,6 @@ Alternatively, if you need to bounce tracks as audio files rather than commit:
 3. **Bounce to Disk:** Solo each auxiliary track one at a time and use the "Bounce to Disk" feature to export. Ensure your master bus is included in this routing to capture its effects on each solo'd track.
 
 This method allows you to process each track through the master bus effects individually, giving you the bounced files with the desired processing applied. Keep in mind this can be time-consuming for sessions with a large number of tracks, but it's effective for ensuring each track is processed through the master bus chain.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

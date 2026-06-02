@@ -44,3 +44,6 @@ claude code figma
 - Two-way workflows: with MCP, you can also connect Figma to Claude Code to help generate code from designs and keep context synced. citeturn0search9
 
 In short, “Claude Code Figma” is about **turning AI-generated or coded UIs into editable design files** inside Figma, speeding up handoff and iterative design cycles. citeturn0search0
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

@@ -26,3 +26,6 @@ Can my Turo charge a cleaning fee for a service animal
 ## Assistant
 
 According to Turo's policies, owners cannot charge a cleaning fee specifically for service animals. Turo's policy states that service animals are permitted in vehicles, and any cleaning required due to a service animal must be treated as a normal cleaning scenario, without additional fees. This is to ensure compliance with laws regarding service animals, such as the Americans with Disabilities Act (ADA).
+
+
+**Topic:** [[chatgpt-clusters/code_review]]

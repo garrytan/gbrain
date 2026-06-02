@@ -52,3 +52,6 @@ Hi Mr. White! It sounds like the issue with your Android TV that has issues with
    - Ensure that network discovery is enabled on your Android TV and that there are no settings in your router blocking specific devices or services.
 
 Try these steps, and hopefully, your Android TV will start working properly with all features.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

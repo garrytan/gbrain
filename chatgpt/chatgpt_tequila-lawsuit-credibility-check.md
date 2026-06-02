@@ -41,3 +41,6 @@ But make a point that super premium prices is a bs claim and that supply and dem
 ## Assistant
 
 “‘Super-premium prices’? Total BS—if enough people will pay up, that’s pure supply and demand, not some agave purity crusade.”
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

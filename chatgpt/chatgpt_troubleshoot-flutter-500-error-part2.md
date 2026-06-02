@@ -1078,3 +1078,6 @@ Remember to create a new function `setMeasurementSystem` in your `UserModel` if 
 now we need to change the height and age inputs to dropdown menus.
 age should show 18 to 99
 height should show 4'10" to 8'0" if imperial is selected or the CM version if imperial is selected
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

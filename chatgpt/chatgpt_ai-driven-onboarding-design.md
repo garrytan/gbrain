@@ -58,3 +58,6 @@ and just lay out exactly what you think for Jovie? Look at the wider landscape o
 ## User
 
 plan this as a feature use gstack /autoplan and generate a plan file for me.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

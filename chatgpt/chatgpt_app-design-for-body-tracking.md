@@ -516,3 +516,6 @@ Design a **high-fidelity iOS 17/18 Home dashboard** for a physique-only progress
 - Calories, macros, workouts, social feed, ads, or badges.
 
 ---
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

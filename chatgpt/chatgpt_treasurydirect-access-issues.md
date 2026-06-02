@@ -179,3 +179,6 @@ A Wall Street Journal article (Oct 2024) explains that due to surging demand and
 Yes, current mailed-in bond processing delays are real and ongoing. What used to take a few weeks now often stretches to **two to four months**, or even longer. I’d recommend calling for a case number and tracking progress. Let me know if you’d like help drafting what to ask or requesting escalation, Mr. White.
 
 navlistRead more on Treasury delaysturn0news18
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

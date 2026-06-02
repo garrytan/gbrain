@@ -162,3 +162,6 @@ These are norms, not their disclosed numbers.
 5. **Annual default with “why now” framing**: their “protein powder” line is a strong anchor. citeturn2view0  
 
 If you want, tell me your app’s core loop and target user, and I’ll map a retention/aha/paywall plan that matches this price point.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

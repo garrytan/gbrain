@@ -249,3 +249,6 @@ Then, modify your Vue template to match the new style:
 ```
 
 This code will render each stat in a grid layout, with each stat's name, value, and unit (if any) displayed in the specified style. The `v-if` directive on the unit ensures that it only displays if a unit is provided for the stat. The overall appearance will be a series of dark-themed cards in a grid, each showing a different statistic.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

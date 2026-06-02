@@ -68,3 +68,6 @@ echo "🚀 Xcode workspace opened. Ready to build!"
 ```
 
 Save it, make it executable (`chmod +x setup_codex_env.sh`), then run it in a macOS shell.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

@@ -206,3 +206,6 @@ If you want a precise fix, paste:
 - First log line (if any)
 
 I’ll tell you exactly where it’s breaking.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

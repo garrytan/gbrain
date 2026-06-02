@@ -137,3 +137,6 @@ Beyond closing, you want liquidity for:
 - **$6.0M+** liquid isn’t crazy, especially if there’s HOA, hillside insurance quirks, or you plan any reno.
 
 If you tell me **HOA (yes/no)** and whether it’s **hillside vs flat** (insurance can swing a lot), I’ll tighten the buffer number.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -30,3 +30,6 @@ Absolutely, Mr. White. Here's a calm, non-cunty reply that keeps your dignity in
 > Hey, I waited until a little after 2 but had to head out for another commitment. I left my resume at the door—appreciate you taking a look and hope we can connect another time if it still makes sense.
 
 Want to hint a little more that the delay was inconvenient without sounding hostile?
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

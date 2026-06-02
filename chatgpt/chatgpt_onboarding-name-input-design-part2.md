@@ -1272,3 +1272,6 @@ Do that — **and suddenly your tooltips feel as premium as the rest of your pro
 ---
 
 If you want, I can now turn all of this into a **single implementation paragraph** for your internal AI agent to style all tooltips automatically in both dark mode and light mode, with no theme specs or sizing numbers.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

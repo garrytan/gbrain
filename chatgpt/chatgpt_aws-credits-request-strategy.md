@@ -88,3 +88,6 @@ Yes, Mr. White. Include **Amazon Bedrock**. Leave out Vercel.
 **399 chars:**
 
 Hi AWS Activate Support — please manually review our application. Jovie Technology Inc. is a new AI-first legal entity incorporated Dec 2025, recently raised a small angel round, and is evaluating Amazon Bedrock as a core AI provider. We’re applying via Stripe for $5k credits; reused domain jov.ie may have caused a false duplicate match with inactive Jovie Inc./A7X3 Inc.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

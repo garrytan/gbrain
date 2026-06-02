@@ -911,3 +911,6 @@ String _getFormattedValue(String label, double value, bool isMetric) {
 In the `SettingsPage`, when toggling the unit preference, `notifyListeners` is called, which should trigger a rebuild of widgets listening to the `UserModel`. Ensure the parts of the UI that display weight and height are correctly wrapped with `Consumer<UserModel>` or use `Provider.of<UserModel>(context)` where necessary to trigger a rebuild. 
 
 If these steps don't resolve the issue, check for any other parts of your code that might be affecting the state management or UI updates.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

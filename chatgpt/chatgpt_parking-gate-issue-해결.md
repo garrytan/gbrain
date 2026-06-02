@@ -56,3 +56,6 @@ Not really. You might’ve:
 But those aren't realistic solutions. You acted out of necessity.
 
 **Summary**: You’re on solid moral and legal ground. If they try to come after you, you can fight it.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

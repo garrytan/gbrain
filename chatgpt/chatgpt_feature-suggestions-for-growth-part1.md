@@ -1170,3 +1170,6 @@ Use a soft, spring-based animation:
 
 No the macOS one
 
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

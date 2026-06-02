@@ -298,3 +298,6 @@ That eliminates “wake up and do nothing” per-user runs.
 - The lever is: **global scheduler + due-job table + batching**, and only use cron to *kick* the scheduler.
 
 If you tell me what DB you’re on (Postgres? Redis? etc.), I’ll outline a minimal schema (`jobs` table), the exact query pattern, and the batching strategy for your six job types.
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

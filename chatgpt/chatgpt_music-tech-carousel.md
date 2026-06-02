@@ -55,3 +55,6 @@ Mr. White, generated as 7 separate 1080×1080 PNG slides with the Jovie watermar
 
 [Download carousel ZIP](sandbox:/mnt/data/jovie_side_quests_carousel.zip)  
 [Preview contact sheet](sandbox:/mnt/data/jovie_side_quests_carousel_preview.png)
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

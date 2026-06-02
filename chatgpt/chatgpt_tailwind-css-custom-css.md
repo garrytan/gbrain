@@ -70,3 +70,6 @@ Alternatively, you can also apply specific styles from the `.dp__theme_dark` cla
 
 This will apply only the `background-color` and `color` styles from the `.dp__theme_dark` class to the `.my-element` class.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

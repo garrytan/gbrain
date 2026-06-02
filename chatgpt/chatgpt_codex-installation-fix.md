@@ -169,3 +169,6 @@ Two ways to really work on different branches at once:
    Use one terminal per clone.
 
 Bottom line: different **directories**, different HEADs; same directory, one HEAD.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

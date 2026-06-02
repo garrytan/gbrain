@@ -72,3 +72,6 @@ Tim White
 ---
 
 Let me know if you want to tighten it even more or add a resume link.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

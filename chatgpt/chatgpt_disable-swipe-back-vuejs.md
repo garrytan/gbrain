@@ -168,3 +168,6 @@ it being handles by the operating system
 In that case, it is not possible to disable the swipe back gesture at the webapp level since it is being handled by the operating system. The swipe back gesture is a common navigation feature in many mobile browsers and operating systems, and is designed to provide a convenient way for users to navigate backwards in their browsing history. 
 
 As a result, it is not possible to disable the swipe back gesture for your webapp. You may want to consider alternative navigation options for your users, such as a custom back button or modifying the UI to eliminate the need for the swipe gesture altogether.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

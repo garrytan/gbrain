@@ -257,3 +257,6 @@ Mr. White — here’s the delta to your spec to match ChatGPT’s feel, minus �
 - Mobile: chip sits at bottom of the drawer; tap opens account sheet; drawer has only **X** to close.
 
 If you want, I can provide a minimal React/ARIA snippet for `<UserChip />` and the footer container.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

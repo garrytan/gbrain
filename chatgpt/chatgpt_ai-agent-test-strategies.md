@@ -98,3 +98,6 @@ Require that the agent’s tests include **at least one “anti-cheat” check**
 That prevents agents from writing a test that accidentally defines “correct” as “whatever I just built”.
 
 If you tell me what you’re building (backend API, data pipeline, agent toolchain, UI), I can suggest the exact test mix (unit vs integration vs property) that typically converges fastest.
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

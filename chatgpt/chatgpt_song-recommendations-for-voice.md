@@ -82,3 +82,6 @@ If those feel comfortable, your phrasing likely fits smooth topline-style vocals
 ---
 
 Would you like me to narrow this list down to **songs that best showcase your vocal tone (texture, phrasing, and richness)** vs. **songs that stretch your range and dynamics**? I can tailor two focused shortlists for performance or recording use.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

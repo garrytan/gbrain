@@ -139,3 +139,6 @@ We seek Spotify’s support to highlight "Never Say A Word" in key playlists, en
 ---
 
 This version is crafted to appeal specifically to Spotify’s platform and its focus on playlist placements and streaming potential.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

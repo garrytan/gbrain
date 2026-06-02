@@ -169,3 +169,6 @@ export default {
 ```
 
 In this modified version, the `SidebarNavMenu` component is imported and registered with the correct file name. The component is then used in the template section with the `:items` prop bound to the `menuItems` array containing the desired menu items.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

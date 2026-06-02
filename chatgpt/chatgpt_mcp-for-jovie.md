@@ -532,3 +532,6 @@ For Jovie:
 **Use Hermes** as an experimental internal assistant, not as the production mutation layer.
 
 The main architectural principle: **agents suggest; services decide; workflows orchestrate; APIs write; DB records.**
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

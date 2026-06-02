@@ -505,3 +505,6 @@ const mainText = computed(() => (isReleased.value ? 'Listen now:' : 'Pre-save:')
 2. **Computed Properties**: Kept the computed properties to dynamically change the text based on the current date.
 
 This ensures that the "Listen" section with streaming icons is only shown when the single is released.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

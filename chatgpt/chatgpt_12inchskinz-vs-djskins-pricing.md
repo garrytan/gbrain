@@ -30,3 +30,6 @@ tags: [chatgpt, import]
 For a detailed review of 12inchSkinz's products, you can watch the following video:
 
 video12inch Skinz DJ Equipment Vinyl Wrap: My Thoughts and Reviewturn0search4 
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

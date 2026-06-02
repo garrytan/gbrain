@@ -104,3 +104,6 @@ Here is a recipe for a Pineapple Mezcal Margarita with a Tajín garnish:
 6. Garnish with a pineapple slice or a lime wedge.
 
 Enjoy your Pineapple Mezcal Margarita with a Tajín garnish!
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

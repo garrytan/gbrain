@@ -26,3 +26,6 @@ What's the car subscription service that's like 700 bucks a month, but the only 
 ## Assistant
 
 The car subscription service you're referring to is likely **SimpleCar**. They offer a Gen 3 (2010-2015) Toyota Prius subscription for $699 per month. This all-inclusive plan covers insurance, maintenance, registration, roadside assistance, and more. citeturn0search0 SimpleCar operates in Southern California, including Los Angeles County and Orange County. citeturn0search7 
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

@@ -861,3 +861,6 @@ This can be fully driven by a 3rd-party ACL library like Casl or Casbin.
 ---
 
 If you want, I can map concrete starter code for combining **Stripe metadata + Statsig + CASL** into a unified entitlement engine and show how to generate your pricing page automatically from that model.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

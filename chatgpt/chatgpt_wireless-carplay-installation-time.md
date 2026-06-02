@@ -643,3 +643,6 @@ Will this work
 That’s exactly the right socket head for the MZD-Connect bolt—10 mm across the flats—and the 3∕8″ label just means it fits a 3∕8″-drive ratchet. It’ll work fine.  
 
 **Tip:** if you have a deep-well 10 mm, that’ll give you a bit more reach behind the dash, but a shallow socket will still remove the bolt.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

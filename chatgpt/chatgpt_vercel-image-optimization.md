@@ -40,3 +40,6 @@ vercel image
 - **Disabling Optimization**: For images that don't benefit from optimization (e.g., small icons, SVGs), you can disable optimization using the `unoptimized` prop or a custom loader. citeturn0search7
 
 For detailed guidance on implementing and configuring image optimization, refer to Vercel's official documentation. linkturn0search0 
+
+
+**Topic:** [[chatgpt-clusters/coding_devops]]

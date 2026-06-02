@@ -158,3 +158,6 @@ Overall, the **“Genius Shot” vs “Pure Genius”** comparison comes down to
 - PR Newswire release announcing Mel Robbins co-founding Pure Genius Protein (Jan 5, 2026)【22†L546-L554】【22†L641-L650】.  
 - U.S. District Court case **Worldwide Sport Nutritional Supplements, Inc. v. Genius Shot OpCo LLC et al** (No. 1:2025-cv-03343) – filing and dismissal information【25†L49-L58】【25†L75-L83】.  
 - Redirect and social media info confirming Genius Shot → Pure Genius transition【6†L39-L44】.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

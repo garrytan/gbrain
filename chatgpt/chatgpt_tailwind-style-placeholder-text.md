@@ -64,3 +64,6 @@ Great! In that case, you can use the `placeholder-*` variants in Tailwind to sty
 ```
 
 In this example, the `placeholder-gray-500` class sets the color of the placeholder text to gray, and the `placeholder-opacity-50` class sets the opacity of the placeholder text to 50%. The `focus:placeholder-opacity-100` class sets the opacity of the placeholder
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

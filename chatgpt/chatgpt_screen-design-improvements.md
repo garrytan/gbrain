@@ -204,3 +204,6 @@ These should feel like the *real* reason you open the app.
 ---
 
 If you want, I can draft exact pixel specs for iOS (spacing, font sizes, component sizes) in one tight sheet.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

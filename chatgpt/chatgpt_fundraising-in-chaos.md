@@ -614,3 +614,6 @@ Mr. White, say it like this:
 Use the shorter version if you’re too tired:
 
 > “I’m overwhelmed and scared, and I think it’s making the apartment stuff feel bigger than it is. I’m stressed about fundraising and cash flow, and I’m afraid of letting you down. I don’t want to take that out on you. I need us to make a small daily reset system and one calm clean zone so I can feel grounded again.”
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

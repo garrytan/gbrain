@@ -61,3 +61,6 @@ What is Seville orange juice?
 - **Seasonal** — typically available in winter (Jan–Feb).
 
 The juice is prized in cocktails, marinades, and sauces for its intense, complex citrus profile—like a cross between lemon, lime, and orange with a bitter edge. If you can’t find it fresh, look for bottled Seville orange juice or use a mix of fresh orange, lemon, and a touch of grapefruit juice as a substitute.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

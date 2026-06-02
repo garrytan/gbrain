@@ -297,3 +297,6 @@ It's also using Terser to minify the javascript in production and it is using a 
 
 Overall, It seems like you have a good configuration in place. If you're still experiencing any issues, you may want to check the console for error messages and make sure all dependencies are correctly installed.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

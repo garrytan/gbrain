@@ -130,3 +130,6 @@ export default {
 ## Assistant
 
 This Vue.js component appears to be a tabbed interface for displaying two separate pages of content: one for privacy information and one for terms of service. The component uses the `TabGroup`, `TabList`, `Tab`, `TabPanel`, and `TabPanels` components from the `@headlessui/vue` package to create the tabbed interface. The `privacyMarkdown` and `termsMarkdown` data properties hold the markdown content for each of the pages, which are then converted to HTML and displayed in the corresponding `TabPanel` using the `marked` library. The `changeTab` method appears to be responsible for changing the selected tab, but it is not being used in the code provided.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

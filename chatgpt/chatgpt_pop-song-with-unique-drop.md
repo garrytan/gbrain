@@ -40,3 +40,6 @@ you lie, it has a drop after the first chorus
 My apologies for the oversight. Another song that plays with the structure of the EDM drop in a unique way is "Take Ü There" by Jack Ü (Skrillex and Diplo) featuring Kiesza. This track has a distinct approach to its arrangement, where it might not follow the conventional EDM formula exactly as you described, but it's known for its creative use of drops and build-ups. 
 
 If "Take Ü There" doesn't match your description perfectly, the specific song you're thinking of might not be immediately coming to mind. The technique of delaying the drop to create tension and anticipation is used by various artists across the EDM genre, making it a bit challenging to pinpoint one song without additional details.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

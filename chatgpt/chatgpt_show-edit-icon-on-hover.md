@@ -130,3 +130,6 @@ export default {
 ```
 
 In the template, the `div` element with the `fa-edit` icon has its `style` attribute bound to the computed property `editIconDisplay`, which determines whether to show the icon or not based on the value of `showEditIcon` and `editable`. The `@mouseover` and `@mouseout` event listeners toggle the value of `showEditIcon` when the mouse enters or leaves the element.
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

@@ -446,3 +446,6 @@ Create a new version of the deck with only these sections:
 8. **Ask: capital + milestone**
 
 The strongest update is shifting the deck from “here is a big vision for artist tooling” to “here is the release/fan-capture system we have already built, here is proof it is shipping fast, and here is the next measurable milestone.”
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

@@ -141,3 +141,6 @@ Just tell me:
 3. Whether you want **safe “suggest-only” mode** or **auto-merge on passing tests**.
 
 I can deliver production-ready code.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

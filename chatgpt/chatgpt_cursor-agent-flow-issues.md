@@ -143,3 +143,6 @@ Given the reports of review loops reverting previously accepted changes, a simpl
 ---
 
 If you tell me your stack (TS/Node + package manager + monorepo or not) I’ll propose a concrete orchestration layout (exact commands + where to run them: Cursor Hook vs Husky vs CI) that stays fast and eliminates the “dialogue errors” problem.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

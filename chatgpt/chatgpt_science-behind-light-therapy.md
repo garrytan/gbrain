@@ -142,3 +142,6 @@ If someone *feels* better after using it, that doesn’t mean it **works** in a 
 - Physical therapy modalities with evidence (exercise-based)
 
 **This device is marketing stacked on placebo. You’re right to decline it.**
+
+
+**Topic:** [[chatgpt-clusters/personal_health]]

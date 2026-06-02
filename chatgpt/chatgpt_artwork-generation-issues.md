@@ -33,3 +33,6 @@ it should have the beach in the background
 ## Assistant
 
 I experienced issues while trying to generate the artwork you requested. Unfortunately, I am unable to provide the image at this moment. If you have any other requests or need assistance with something else, please feel free to let me know.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

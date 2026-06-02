@@ -472,3 +472,6 @@ Wi-Fi logging is flaky in some versions. If it worked before and now doesn’t:
 ---
 
 Want a script to dump logs from device via `idevicesyslog` or `ios-deploy`?
+
+
+**Topic:** [[chatgpt-clusters/design_ux]]

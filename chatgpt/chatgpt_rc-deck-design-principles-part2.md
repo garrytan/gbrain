@@ -559,3 +559,6 @@ The buyer should often be a business.
 The product should be an operator.
 
 The pricing should follow the labor and revenue Jovie replaces.
+
+
+**Topic:** [[chatgpt-clusters/business_startup]]

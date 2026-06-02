@@ -55,3 +55,6 @@ Exactly. Here's a refined version of your slam with that crucial correction bake
 ---
 
 Want it snarkier, cleaner, or more professional?
+
+
+**Topic:** [[chatgpt-clusters/personal_finance]]

@@ -438,3 +438,6 @@ Add social links to each seed profile include instagram, tiktok, x, snapchat, et
 ## Assistant
 
 All seed profiles now have a `social_links` JSON field with at least two platforms (Instagram + TikTok/X) populated using their usernames. This ensures consistency and test coverage for social integrations.
+
+
+**Topic:** [[chatgpt-clusters/jovie_music]]

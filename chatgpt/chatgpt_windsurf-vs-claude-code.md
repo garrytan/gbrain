@@ -152,3 +152,6 @@ Honestly, a lot of serious devs are doing something like:
 If you tell me what stack you’re mainly using (backend language, frontend framework, size of repo), I can give a more concrete recommendation and a “how to set each tool up for that stack” checklist.
 
 navlistFurther reading on Claude Code & Windsurfturn1news21,turn2news36,turn3news10,turn0news34,turn1news26,turn0news35
+
+
+**Topic:** [[chatgpt-clusters/coding_ai]]

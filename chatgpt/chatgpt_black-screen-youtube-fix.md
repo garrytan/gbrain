@@ -141,3 +141,6 @@ If other apps show video fine, it’s almost certainly **YouTube app + HDR/codec
 2) TV brand/model?
 
 With those two, I can point you to the precise HDR/SDR toggle that fixes this on your hardware.
+
+
+**Topic:** [[chatgpt-clusters/coding_troubleshoot]]

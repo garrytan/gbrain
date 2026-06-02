@@ -94,3 +94,6 @@ So yes, **most “free” offers are credits** applied over months. Cancel early
 ---
 
 Let me know if you’d like help comparing specific plan prices, checking eligibility, or reviewing fine print—straightforward and no nonsense.
+
+
+**Topic:** [[chatgpt-clusters/coding_mobile]]

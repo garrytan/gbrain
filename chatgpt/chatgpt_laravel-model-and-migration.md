@@ -1030,3 +1030,6 @@ class BlogPostController extends Controller
 
 You can then use the Vue.js component that you created earlier to display the list of blog posts in your app. The `fetchPosts` method of the component should send an HTTP GET request to the `/api/blog` route to retrieve the list of blog posts.
 
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]

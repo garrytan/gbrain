@@ -116,3 +116,6 @@ Instructions:
 7. Garnish each glass with a fresh orange slice and a cinnamon stick.
 
 This drink offers a warm, spiced, and slightly sweet flavor profile, making it a perfect cozy and romantic beverage for celebrating Valentine's Day.
+
+
+**Topic:** [[chatgpt-clusters/personal_life]]

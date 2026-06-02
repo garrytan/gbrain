@@ -64,3 +64,6 @@ http://localhost:8000/img/notification-logo.png
 ```
 
 The `asset` helper function is used to generate URLs to assets such as images, CSS, and JavaScript files. It ensures that the URLs generated are properly formatted and take into account the base URL of your application. It also makes it easy to switch between local development and production environments, as the base URL can be configured differently in each environment.
+
+
+**Topic:** [[chatgpt-clusters/coding_web_dev]]
