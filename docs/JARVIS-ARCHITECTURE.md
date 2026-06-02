@@ -4296,6 +4296,246 @@ daemon-vs-CLI 分界一度严重误导(所有 zembed-1/gemini 假象都是 daemo
 
 ---
 
+## 6.33 Upstream v0.42.1.0 sync (2026-06-01)
+
+§6.31 之后 6 天的跟进 sync —— 上游 master **27 个 commit**(v0.41.14.0 →
+**v0.42.1.0**,跨过 v0.41.x 整条尾巴 + v0.42.0/v0.42.1),merge commit
+**605 文件 / +66,781 / −37,154 LoC**(约 §6.31 818 文件的 0.74×)。**4 个
+conflict**(CLAUDE.md + .github/workflows/test.yml modify/delete +
+skills/manifest.json + llms-full.txt —— 全部按 §6.31 playbook 分类解决)。
+本次比 §6.31 顺:`pglite-engine.ts` / `recipes/google.ts` / `RESOLVER.md` /
+`package.json` 四个含 fork patch 的文件 **auto-merge 干净**(无 marker),
+patch 全部 grep 验证存活。fork-protected 区域(`skills/kos-jarvis/`、
+`server/`、`workers/`、`scripts/launchd/`)**零侵入** ——
+`git diff --cached HEAD -- <四路径>` 在 merge index 上为空。Schema 自动
+v97 → **v111**(13 migration)。生产 `kos.chenge.ink` 部署完成,
+**13,613 live pages**(±0 baseline)、**43,311 chunks 单模型
+openai:text-embedding-3-large** 维持(§6.32 收敛 + Lucien R7 清理后状态)。
+
+### 与 §6.31 的两个关键差异
+
+1. **Query 分数回归(§6.31 P3)实质消解**。§6.31 smoke 记 EN 0.51 / ZH
+   0.28 的低分,当时归因于"新 contextual retrieval 重标定"。本次同 probe
+   (EN `Lucien` / ZH `知识管理`)分数回到 **0.81 / 0.83**。真正原因不是
+   retrieval pipeline,而是 §6.32 把全库重嵌进**单一 openai te3 相干空间**
+   —— §6.31 当时 `default`(stale gemini-shim norm≈0.70)+ `mailagent-emails`
+   (zembed-1)是两个不相干空间,单一 query 模型打分自然崩。§6.32 收敛后
+   query-doc 相似度恢复正常标定。**结论:§6.31 P3(eval replay)可降级 ——
+   分数已健康,不是 pipeline 回归。**
+2. **Baseline pages 3140 → 13,613**。§6.30/§6.31 都记 3140;其间
+   `mailagent-emails` 邮件语料 landing(§6.32 记 default 6,940 +
+   mailagent-emails 31,116 chunks),live pages 涨到 13,613
+   (`mailagent-emails` 10,476 + `default` 3,137;`default` 较 §6.31 的
+   3140 少 3 = Lucien R3 在 default 软删的 3 页)。本次 deploy 基线即 13,613,
+   migration 不改 page count,±0 验证通过。
+
+### 上游 27 版本与 fork 关系
+
+| 版本 | 主题 | 对 fork 影响 |
+|---|---|---|
+| v0.41.15.0 | sync --timeout + --max-age + partial status | additive,fork 单 source sync 受益 |
+| v0.41.16.0 | conversation parser cathedral + progressive-batch primitive | parser/ramp 基础设施;migration [99] conversation_parser_llm_cache |
+| v0.41.17.0 | --workers N on every bulk command + facts dim doctor parity | bulk 命令并行,fork enrich-sweep 可受益 |
+| v0.41.18.0 | gbrain onboard activation surface | 新 onboard 命令,additive |
+| v0.41.19.0 | Supavisor Retry Cathedral | 连接重试加固,fork postgres 受益 |
+| v0.41.20.0 | gbrain status + doctor --scope=brain | doctor 增强,additive |
+| v0.41.21.0 | 5 daily-driver pains fixed | bug fix wave |
+| v0.41.22.0 | **type-unification cathedral(94→15 canonical types)** | 大型类型重构;新 `schema-unify` skill(RESOLVER + manifest 加行,本次 additive merge);fork 9 KOS kind 走独立 frontmatter,不受 canonical pack 影响 |
+| v0.41.22.1 | brainstorm/lsd judge fixes | fork 不跑 brainstorm |
+| v0.41.23.0 | extract operator surfaces + pack-driven extractables | additive |
+| v0.41.24.0 | conversation-parser threshold gates(20,167 Circleback msg) | parser 改进;fork mailagent 对话页受益 |
+| v0.41.25.0 | perf(sync) batched deletes + global page-generation clock | migration [107] page_generation_clock;sync 性能 |
+| v0.41.26.0 | dream --source + ingest junk titles + emoji-crash | bug fix |
+| v0.41.26.1 | **lock-renewal cathedral(~39 worker crashes/day)** | migration [98] cycle_locks_last_refreshed_at;worker 稳定性 |
+| v0.41.27.0 | withRetry self-heal + facts:absorb drain;doctor git-aware sync_freshness | bug fix wave(两个 v0.41.27.0 commit)|
+| v0.41.29.0 | conversation-parser bold-name builtin + source-scoped orphan_ratio | parser + orphan;fork 单 source orphan 计算更准 |
+| v0.41.30.0 | brainstorm/lsd --save writes .md | fork 不跑 |
+| v0.41.31.0 | **delta-aware sync --all cost gate + real stale-embedding semantics** | migration [108] pages_embedding_signature;**embedding 新鲜度判定** —— 经 guard 验证不与 §6.32 openai@avman 冲突(signature 列附加,不改 model 解析)|
+| v0.41.32.0 | commit-relative sync staleness | staleness 判定改进 |
+| v0.41.33.0 | intent-aware adaptive return-sizing + agent query param | migration [111] search_telemetry_rank1;return-size 自适应 |
+| v0.41.34.0 | **retrieval cathedral — max-pool + title + alias + evidence** | migration [105] slug_aliases + [110] page_aliases;search/rerank 改写 —— smoke 分数健康(0.81/0.83),无回归 |
+| v0.41.35.0 | vendor-neutral content guardrail seams | `gateway.ts` +113(guardrail 接缝);经 embedding-gateway-guard 验证 embedding 路径无回归 |
+| v0.41.36.0 | mcp publish agent skills(list_skills / get_skill) | 新 MCP op,thin client 可列 skill;fork OAuth client 受益 |
+| v0.41.37.0 | **critical fix wave**(reindex tag wipe / grandfather hang / Windows migration spawn / sync ReDoS) | migration 框架重构为 in-process(`migrations/in-process.ts` 新增);防御性修复 |
+| v0.41.38.0 | code-callers/callees honor .gbrain-source + **dream runs on postgres engines** | fork postgres engine 现可跑 `gbrain dream`(原隐含 pglite 倾向解除)|
+| v0.42.1.0 | **gbrain skillopt — self-evolving skills(closes #1481)** | 新 `skill-optimizer` skill(manifest additive);opt-in,fork 不自动跑 |
+
+(v0.42.0.0 无独立 tag commit,实际 land 在 v0.42.1.0 PR #1563。)
+
+### Conflict resolution(4 个,vs §6.31 的 5)
+
+| File | Decision | Rationale |
+|---|---|---|
+| `CLAUDE.md` | take fork(`--ours`)| fork CLAUDE.md 是 fork-only;上游内容由 `docs/CLAUDE-UPSTREAM.md` 镜像(本次刷新到 v0.42.1.0,2044 行 upstream body)|
+| `.github/workflows/test.yml` | keep fork delete(modify/delete DU conflict)| fork commit `1adab13b` 显式删除("ci: delete .github/workflows/test.yml");保留删除立场 |
+| `skills/manifest.json` | manual additive merge | 上游加 `schema-unify` + `skill-optimizer` 两条(放上游 functional 位);fork 4 条 kos-jarvis 条目放 array 尾部。`bun` 校验 53 skills、4 kos-jarvis 完整、两条上游条目在场 |
+| `llms-full.txt` | 取 upstream 清 marker → `bun run build:llms` 重生成 | 178KB / 3660 行 regenerated;0 banned-name residue |
+
+**Auto-merged 干净(本次比 §6.31 多)**:`src/core/pglite-engine.ts`(WAL
+`pg_switch_wal()` patch 已在 §6.31 折叠进上游 v0.41.8.0 snapshot+try/finally
+结构,本次无 marker)、`src/core/ai/recipes/google.ts`(fork
+`max_batch_tokens: 20_000` / `chars_per_token: 2` block 存活;§6.32 后于 gemini
+recipe 已偏 vestigial 但仍 carry-forward)、`skills/RESOLVER.md`(上游加
+`schema-unify` dispatcher row 在自己 section;fork `## KOS-Jarvis extensions`
+append-only 段完整)、`package.json`(fork `@electric-sql/pglite` override + 上游
+新 deps;`bun install` 报 277 packages no changes,`bun.lock` 未动)、`VERSION`
+(→ 0.42.1.0)、`CHANGELOG.md`、`README.md`。四个 fork src/ patch **grep 验证
+存活**:`pg_switch_wal` ×2 / `max_batch_tokens` ×3 / `KOS-Jarvis extensions` ×1
+/ `@electric-sql/pglite` override ×2。
+
+### Fork adaptation:pre-existing banned-name 元引用(1 个 fix(sync))
+
+本次 `check:resolver` **一次过**(53 skills all reachable,无 §6.31 那样的
+image-ingest / notion-ingest-delta flag)。但 `check:all` 的
+`check-privacy.sh` 命中 **3 处 latent 违规**(以 `⟨banned-name⟩` 代指那个被禁的
+私有 OpenClaw fork 名):
+
+```
+[check-privacy] BANNED NAME in docs/JARVIS-ARCHITECTURE.md:
+  4056: ...165KB regenerated;0 ⟨banned-name⟩ hit
+  4246: ...upstream CLAUDE.md mirror(...,0 ⟨banned-name⟩ hits)
+[check-privacy] BANNED NAME in skills/kos-jarvis/TODO.md:
+  18: ...refreshed to v0.41.14.0 (..., 0 ⟨banned-name⟩ hits)
+```
+
+**根因**:这 3 处是 §6.31/§6.32 自己的 **docs commit 写的**,而那些 docs
+commit 落在各自 check:all gate run **之后**(sync 的 gate 跑在 merge+fix
+commit 上,§6.NN 故事 / TODO header 是后写的独立 docs commit,从未被 gate
+看过)。三处都在用字面 banned name 描述这个词的**不存在**("0 …… hits")——
+grep 是字面的,照样命中。本次 sync 的 check:all 是第一次看到它们。**修法**
+(commit `fix(sync) f31f13dc`):rephrase → "0 banned-name hit(s)",语义不变,
+grep 不再命中。
+
+> **P3 教训(写进本节以免复发)**:sync 的最终 docs commit(§6.NN 故事 +
+> TODO header)凡描述 banned-name 检查,一律用中性词 "banned-name" /
+> `⟨banned-name⟩` 占位,**绝不写字面词**——否则下一次 sync 的 check:all 会在
+> JARVIS-ARCHITECTURE.md / TODO.md 再次命中。本 §6.33 故事即遵此(全节 0 字面
+> banned name;写完后已 re-run check-privacy 确认 clean)。
+
+### Lucien R1–R7 工作:独立 commit(非 sync 产物)
+
+开工前工作区有一批 **2026-06-01 同日未提交**的本地工作
+(`skills/kos-jarvis/REFINEMENT-BACKLOG.md` 的 R1–R7 resolution +
+`TODO.md` P1 段),记录 §6.32 之后的 email-stub 清理。这**不是** sync 产物,
+按用户决定 **独立 commit 在 sync 分支首位**(`fork(kos-jarvis) d98f4530`),
+attribution 干净。要点:R1/R2 retracted(两轴模型下 source 是独立 namespace,
+slug per-source,stub 正确落在 `mailagent-emails`),R3/R4/R7 done(28 页 + 16
+orphan chunk 软删 → 全库单模型 te3),R6 reviewed-no-action。TODO.md 用
+`git diff` 双 hunk 拆分(我的 line-18 privacy fix vs Lucien P1 段),临时 revert
+line-18 → 仅 stage Lucien hunk → commit → 再 reapply,保证两份工作不串。
+
+### Schema migrations(v97 → v111,13 步)
+
+`bin/gbrain init --migrate-only` 一句解决(全 idempotent;NOTICE 非 ERROR,
+沿用 §6.29/§6.30/§6.31 模式)。`--migrate-only` 未触碰 `~/.gbrain/config.json`
+(diff vs backup == 0);备份 `~/.gbrain/config.json.before-sync-v0.42.1.0`。
+pre-deploy `pg_dump` 备份 `/tmp/pg-pre-sync-v0.42.1.0-2026-06-01.dump.gz`
+(**522 MB gzip**,gzip -t 通过;较 §6.31 的 110 MB 大幅增长 = 邮件语料
+landing + 43,311 个 1536-dim 向量)。
+
+```
+[98]  gbrain_cycle_locks_last_refreshed_at          ← v0.41.26.1 lock-renewal
+[99]  conversation_parser_llm_cache_table           ← v0.41.16 parser cathedral
+[101] links_link_kind_column
+[102] timeline_entries_source_in_dedup
+[103] migration_impact_log_and_priority_recent_idx
+[104] pages_atom_source_hash_idx
+[105] slug_aliases                                   ← v0.41.34 retrieval cathedral
+[106] extract_rollup_7d_table
+[107] page_generation_clock_and_statement_trigger    ← v0.41.25 global page-gen clock
+[108] pages_embedding_signature                      ← v0.41.31 stale-embedding semantics
+[109] sources_newest_content_at
+[110] page_aliases                                   ← v0.41.34 retrieval cathedral
+[111] search_telemetry_rank1_columns                 ← v0.41.33 adaptive return-sizing
+```
+
+([100] 在上游为 no-op 跳号。)
+
+### Health score before/after
+
+| 维度 | Pre-sync (§6.31 / v0.41.14.0) | Post-sync (v0.42.1.0) |
+|---|---|---|
+| health_score | 95 | **95** |
+| schema_version | 97 | **111** |
+| pages_count | 3140(§6.31 baseline)| **13,613**(±0 vs 本次 pre-deploy baseline;邮件语料 landing 后的当前真实基线)|
+| sources_count | 1 | **2**(`default` 3,137 + `mailagent-emails` 10,476)|
+| skill count | 49 | **53**(+`schema-unify` +`skill-optimizer` 等上游条目)|
+| resolver_health | ok(post-fix)| **ok(53 skills,一次过,0 fix)** |
+| content_chunks | 43,311(单模型,§6.32 后)| **43,311**(单模型 openai:text-embedding-3-large,±0)|
+| vector unit-norm | ~1.0 | **avg 1.0000 / min 0.9994 / max 1.0005**(500 sample)|
+| embeddings | 100% | 100%(0 missing,guard VERDICT CLEAN)|
+
+### Smoke evidence
+
+- `bin/gbrain --version` → `0.42.1.0`(`bun run build` 重编译,1631 modules)
+- 绿灯门(沿用 §6.31 = typecheck + check:all + check:resolver + test/ai/):
+  `bun run typecheck` clean(`tsc --noEmit`);`bun run check:all` exit 0
+  (21-script chain,**第一次 run 因 pre-existing banned-name 元引用 FAIL,
+  fix(sync) 后绿**);`bun run check:resolver` 0 errors / 0 warnings(53 skills);
+  `bun test test/ai/` **300 pass / 0 fail / 982 expect()**(+11 vs §6.31 的 289,
+  上游 v0.41.x test gap coverage 新增)
+- `curl http://127.0.0.1:7225/health` + `curl https://kos.chenge.ink/health`
+  → `{"status":"ok","version":"0.42.1.0","engine":"postgres"}`(public ingress
+  经 mbp-office cloudflared 仍 live,daemon 可达)
+- query smoke(§6.32 收敛后**分数健康**,与 §6.31 的低分形成对比):
+  - EN `Lucien` → `sources/email/41638`(Lucien.ai v0.2 feat. Jarvis)**0.8135**
+    +`concepts/jarvis`
+  - ZH compound-CJK `知识管理`(4 Han chars,**必走 vector path**,经 avman relay)
+    → `projects/l1`(L1资料检索助手…从知识库系统获取知识)**0.8273**、
+    `concepts/global`(全局管理能力)0.8097、`projects/erd_project_management`
+    —— 语义命中,证明 query→embed(openai te3 @ avman)→vector search 全链路
+    经上游重写的 `gateway.ts`(+113)仍工作
+- **embedding-gateway-guard VERDICT: CLEAN** —— 5 个 config plane 全部一致
+  (config.json / DB-plane `config` 表 / 4 plist / `.env.local` / content_chunks),
+  无 gemini/zeroentropy/litellm leak,无 merge 引入的 provider-SDK bypass。
+  DB config 表:`embedding_model=openai:text-embedding-3-large`、
+  `embedding_dimensions=1536`、`embedding_columns` 相干
+- pages count **13,613 live / 13,657 total**(±0 baseline);schema v111;
+  `gbrain doctor --fast` health_score 95、all checks OK(唯一 WARN 是
+  `--fast` 模式跳过深度 DB check 的预期提示)
+- `gbrain-serve-http` daemon bootout/bootstrap(plist
+  `~/Library/LaunchAgents/com.jarvis.gbrain-serve-http.plist`,
+  **PID 5395 → 47513**,~5 s downtime);config.json diff vs backup == 0
+
+### Branch ops + TODO follow-ups
+
+sync 分支 `sync-v0.42.1.0`(merge 后 4 commit):
+- merge commit `992ddd00 Merge remote-tracking branch 'upstream/master'`
+- `fork(kos-jarvis) d98f4530` —— Lucien R1–R7(独立,非 sync 产物)
+- `chore(llms) 47aa098d` —— llms-full.txt 重生成
+- `docs(upstream-mirror) 284fdb94` —— CLAUDE-UPSTREAM.md 刷新到 v0.42.1.0
+- `fix(sync) f31f13dc` —— pre-existing banned-name 元引用 scrub
+
+`--no-ff` 并入 master:`5af1adf4 Merge branch 'sync-v0.42.1.0' …`(commit
+message 含 27 commits / v0.41.14.0 → v0.42.1.0 / 605 files summary)。本 §6.33
+story commit + TODO header + CLAUDE.md sync-story pointer 是
+post-production-deploy 的独立 docs commit(smoke evidence 写故事前已收集)。
+
+**新增 / 更新 TODO follow-ups(2026-06-01)**:
+
+- (P3 → **可关闭**)§6.31 的 query-score regression observation —— 本次 smoke
+  分数回到 0.81/0.83,确认 §6.30→§6.31 的低分是 §6.32 前的多空间不相干 artifact,
+  非 retrieval pipeline 回归。`eval replay` 不再必要。
+- (P3,沿用)`skills/kos-jarvis/notion-ingest-delta/` 正式归档到 `_archived/`
+  (§6.27 起即 RETIRED;本次 check:resolver 一次过,未再被 flag,但 skill 仍在
+  `skills/kos-jarvis/` 根目录)。
+- (P3,新)`cycle.conversation_facts_backfill` 仍默认 OFF;邮件语料(31,116
+  chunks)now landed,可评估 enable 是否提升长邮件 thread 召回。
+- (P3,新)v0.41.38.0 起 `gbrain dream` 支持 postgres engine —— fork 之前因
+  pglite 倾向未跑 dream-cycle over postgres,可评估启用。
+- (P2,新)v0.41.22.0 type-unification(94→15 canonical)+ 新 `schema-unify`
+  skill —— fork 9 KOS kind 走独立 frontmatter,但可评估是否把部分 stub
+  对齐到 canonical pack 以受益于上游 type-aware retrieval。
+
+### Linked docs
+
+- [`skills/kos-jarvis/TODO.md`](../skills/kos-jarvis/TODO.md) — post-sync header(更新至 2026-06-01)
+- [`docs/CLAUDE-UPSTREAM.md`](CLAUDE-UPSTREAM.md) — upstream CLAUDE.md mirror(刷新至 v0.42.1.0,2065 行,0 banned-name residue)
+- [`skills/kos-jarvis/REFINEMENT-BACKLOG.md`](../skills/kos-jarvis/REFINEMENT-BACKLOG.md) — Lucien R1–R7 resolution(独立 commit d98f4530)
+- Sync plan + verification trail: this conversation's transcript
+
+---
+
 ## 8. Cost and performance snapshot
 
 | Metric | v1 | v2 |

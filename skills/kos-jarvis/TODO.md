@@ -1,5 +1,23 @@
-# kos-jarvis — Outstanding Work (post v0.41.14.0 sync, 2026-05-26)
+# kos-jarvis — Outstanding Work (post v0.42.1.0 sync, 2026-06-01)
 
+> **Updated 2026-06-01**: v0.42.1.0 upstream sync landed (27 commits,
+> v0.41.14.0 → v0.42.1.0, 605 files / +66781 / −37154 LoC). Story in
+> `docs/JARVIS-ARCHITECTURE.md` §6.33. **4 merge conflicts** (CLAUDE.md /
+> .github/workflows/test.yml / skills/manifest.json / llms-full.txt;
+> pglite-engine.ts / google.ts / RESOLVER.md / package.json auto-merged
+> clean this time, fork patches all survived). Schema **v97 → v111** (13
+> migrations). check:resolver one-pass (53 skills, 0 fix); check:all caught
+> 3 pre-existing banned-name meta-refs in §6.31/§6.32 docs (written after
+> their own gate runs) → scrubbed in `fix(sync)`. typecheck clean; test/ai/
+> **300 pass / 0 fail / 982 expect()** (+11 vs §6.31). Production
+> kos.chenge.ink on 0.42.1.0, **13,613 pages** / 43,311 single-model te3
+> chunks (±0). Query scores healthy again (EN 0.81 / ZH 0.83) — §6.32's
+> single-space convergence resolved §6.31's 0.51/0.28 dip. embedding-
+> gateway-guard VERDICT CLEAN. Lucien's R1–R7 email-stub work committed
+> separately first (`fork(kos-jarvis) d98f4530`, not a sync artifact).
+>
+> ---
+>
 > **Updated 2026-05-26**: v0.41.14.0 upstream sync landed (34 commits,
 > 20 versions, v0.38.2.0 → v0.41.14.0, 818 files / +106211 / −37236 LoC —
 > ~3× §6.30's scale). Story in `docs/JARVIS-ARCHITECTURE.md` §6.31.
