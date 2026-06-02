@@ -73,6 +73,20 @@ async function withExitCapture(fn: () => Promise<void>): Promise<number | null> 
   return captured;
 }
 
+async function withConsoleCapture(fn: () => Promise<void>): Promise<string[]> {
+  const origLog = console.log;
+  const lines: string[] = [];
+  console.log = ((...args: unknown[]) => {
+    lines.push(args.map((arg) => String(arg)).join(' '));
+  }) as typeof console.log;
+  try {
+    await fn();
+  } finally {
+    console.log = origLog;
+  }
+  return lines;
+}
+
 describe('sources add', () => {
   test('rejects invalid ids', async () => {
     const { engine } = makeStub();
@@ -171,6 +185,19 @@ describe('sources list', () => {
     await runSources(engine, ['list']);
     const select = calls.find(c => c.sql.includes('ORDER BY (id = \'default\') DESC'));
     expect(select).toBeDefined();
+  });
+});
+
+describe('sources status', () => {
+  test('--json labels freshness mode for the trusted-host live git view', async () => {
+    const { engine } = makeStub();
+    const lines = await withConsoleCapture(() => runSources(engine, ['status', '--json']));
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? '')).toEqual({
+      schema_version: 1,
+      freshness_mode: 'live_git',
+      sources: [],
+    });
   });
 });
 

@@ -182,6 +182,7 @@ describe('buildSyncStatusReport', () => {
     });
 
     const report = await buildSyncStatusReport(engine, sources);
+    expect(report.freshness_mode).toBe('stored_db');
     expect(report.sources).toHaveLength(4);
 
     const byId = new Map(report.sources.map((s) => [s.source_id, s]));
@@ -310,6 +311,7 @@ describe('buildSyncStatusReport', () => {
     expect(report.sources).toEqual([]);
     expect(report.schema_version).toBe(1);
     expect(typeof report.generated_at).toBe('string');
+    expect(report.freshness_mode).toBe('stored_db');
     expect(typeof report.embedding_column).toBe('string');
   });
 
@@ -327,6 +329,7 @@ describe('buildSyncStatusReport', () => {
     // must not change without bumping schema_version.
     expect(report.schema_version).toBe(1);
     expect(typeof report.generated_at).toBe('string');
+    expect(report.freshness_mode).toBe('stored_db');
     expect(Array.isArray(report.sources)).toBe(true);
     expect(typeof report.unacknowledged_failures).toBe('number');
     expect(typeof report.embedding_column).toBe('string');

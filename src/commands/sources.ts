@@ -586,7 +586,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const sources = await loadAllSources(engine, { includeArchived: false });
   if (sources.length === 0) {
     if (json) {
-      console.log(JSON.stringify({ schema_version: 1, sources: [] }, null, 2));
+      console.log(JSON.stringify({ schema_version: 1, freshness_mode: 'live_git', sources: [] }, null, 2));
     } else {
       console.log('No sources registered. Use `gbrain sources add <id> --path <path>` first.');
     }
@@ -597,13 +597,14 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   const metrics = await computeAllSourceMetrics(engine, sources, { probeContent: true });
 
   if (json) {
-    console.log(JSON.stringify({ schema_version: 1, sources: metrics }, null, 2));
+    console.log(JSON.stringify({ schema_version: 1, freshness_mode: 'live_git', sources: metrics }, null, 2));
     return;
   }
 
   // Human-readable table: SOURCE | LAG | EMBED | BACKFILL | FAILS | QUEUE | PAGES | LAST SYNC
   console.log('SOURCES — health');
   console.log('────────────────');
+  console.log('Freshness mode: live_git (host-local HEAD probe)');
   console.log(
     `  ${'SOURCE'.padEnd(20)}  ${'LAG'.padEnd(8)}  ${'EMBED'.padEnd(7)}  ${'BACKFILL'.padEnd(9)}  ${'FAILS'.padEnd(6)}  ${'QUEUE'.padEnd(6)}  ${'PAGES'.padStart(8)}  LAST SYNC`,
   );
@@ -1186,6 +1187,7 @@ Subcommands:
   status [--json]                   v0.40.3.0 — read-only per-source dashboard:
                                     last sync, staleness, page count,
                                     embedding coverage, unacked failures.
+                                    Freshness is live_git on this host.
                                     --json emits {schema_version:1, ...} on
                                     stdout for monitoring pipelines.
   archived [--json]                 List soft-deleted sources and their expiry.

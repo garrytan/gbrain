@@ -7,6 +7,7 @@
  *
  * Six sections:
  *   - Sync       — per-source last_sync_at + staleness
+ *                  (`stored_db` / remote-safe; not a live git probe)
  *   - Cycle      — TWO rows: last FULL cycle (autopilot-cycle) +
  *                  last TARGETED run (any autopilot-* job). Reflects
  *                  v0.36.4.0's health-aware autopilot (healthy brains run
@@ -371,6 +372,7 @@ function renderHuman(report: StatusReport): string {
   // Sync
   if (report.sync) {
     lines.push('Sync:');
+    lines.push(`  freshness=${report.sync.freshness_mode} (newest_content_at column; remote-safe)`);
     if (report.sync.sources.length === 0) {
       lines.push('  (no sources registered)');
     } else {

@@ -77,6 +77,7 @@ describe('gbrain status E2E (PGLite)', () => {
     expect(parsed.schema_version).toBe(1);
     expect(parsed.mode).toBe('local');
     expect(parsed).toHaveProperty('sync');
+    expect(parsed.sync).toHaveProperty('freshness_mode', 'stored_db');
     expect(parsed).toHaveProperty('cycle');
     expect(parsed).toHaveProperty('locks');
     expect(parsed).toHaveProperty('workers');
