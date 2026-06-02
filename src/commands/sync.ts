@@ -515,6 +515,10 @@ async function resolveSyncTarget(engine: BrainEngine, opts: SyncOpts): Promise<S
   if (!repoPath) {
     throw new Error('No repo path specified. Use --repo or run mbrain init with --repo first.');
   }
+  const legacyLastCommit = await engine.getConfig('sync.last_commit');
+  if (legacyLastCommit) {
+    return { id: null, repoPath, legacy: true };
+  }
   const registry = await loadSubbrainRegistry(engine);
   const registeredSubbrain = findRegisteredSubbrainForRepoPath(registry, repoPath);
   if (registeredSubbrain) {
@@ -530,10 +534,16 @@ function findRegisteredSubbrainForRepoPath(
   const targetPath = realDirectoryPath(repoPath);
   if (!targetPath) return null;
 
-  return Object.values(registry.subbrains)
+  const matches = Object.values(registry.subbrains)
     .sort((a, b) => a.id.localeCompare(b.id))
-    .find(subbrain => realDirectoryPath(subbrain.path) === targetPath)
-    ?? null;
+    .filter(subbrain => realDirectoryPath(subbrain.path) === targetPath);
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple sub-brains registered for repo path ${repoPath}: ${matches.map(subbrain => subbrain.id).join(', ')}. ` +
+      'Use --subbrain <id> to choose one explicitly or remove duplicate path registrations.',
+    );
+  }
+  return matches[0] ?? null;
 }
 
 function realDirectoryPath(repoPath: string): string | null {

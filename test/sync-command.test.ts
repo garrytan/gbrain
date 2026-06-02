@@ -299,6 +299,56 @@ describe('performSync incremental safety', () => {
     });
   });
 
+  test('existing legacy checkpoint keeps configured repo path in legacy sync mode', async () => {
+    const repoPath = makeRepo();
+    mkdirSync(join(repoPath, 'people'), { recursive: true });
+    writeFileSync(join(repoPath, 'people', 'alice.md'), [
+      '---',
+      'title: Alice',
+      '---',
+      '',
+      'Alice was synced before this repo was registered as a sub-brain.',
+    ].join('\n'));
+    const headCommit = commitAll(repoPath, 'seed legacy alice');
+
+    await withSqliteEngine(async (engine) => {
+      await performSync(engine, { repoPath, noPull: true });
+      await engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+        subbrains: {
+          office: { id: 'office', path: repoPath, prefix: 'office' },
+        },
+      }));
+
+      const result = await performSync(engine, { noPull: true });
+
+      expect(result.status).toBe('up_to_date');
+      expect(await engine.getPage('people/alice')).not.toBeNull();
+      expect(await engine.getPage('office/people/alice')).toBeNull();
+      expect(await engine.getConfig('sync.last_commit')).toBe(headCommit);
+      expect(await engine.getConfig('sync.subbrains.office.last_commit')).toBeNull();
+      expect(await engine.getConfig('markdown.repo_path')).toBe(repoPath);
+    });
+  });
+
+  test('configured repo path fails when multiple subbrains share the same real path', async () => {
+    const repoPath = makeRepo();
+    writeFileSync(join(repoPath, 'alice.md'), '# Alice\n');
+    commitAll(repoPath, 'seed alice');
+
+    await withSqliteEngine(async (engine) => {
+      await engine.setConfig('sync.repo_path', repoPath);
+      await engine.setConfig(SUBBRAIN_REGISTRY_CONFIG_KEY, JSON.stringify({
+        subbrains: {
+          alpha: { id: 'alpha', path: repoPath, prefix: 'alpha' },
+          beta: { id: 'beta', path: repoPath, prefix: 'beta' },
+        },
+      }));
+
+      await expect(performSync(engine, { noPull: true }))
+        .rejects.toThrow(/multiple sub-brains registered for repo path/i);
+    });
+  });
+
   test('all-subbrains sync keeps checkpoints independent', async () => {
     const personalRepo = makeRepo();
     mkdirSync(join(personalRepo, 'people'), { recursive: true });
