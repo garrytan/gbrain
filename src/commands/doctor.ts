@@ -843,7 +843,8 @@ export async function checkContextualRetrievalCoverage(engine: BrainEngine): Pro
  * wikilinks have matches). Skipped silently when the flag is already
  * enabled (no signal to surface) or the brain is empty.
  *
- * Full scan with a 60s budget. On timeout / DB error, downgrades to an
+ * Bounded scan: batch-loads the 1000 most-recent pages in one query (not a
+ * per-page getPage walk) with a 60s backstop. On DB error, downgrades to an
  * informational `ok` so doctor never blocks on this check.
  */
 export async function checkLinkResolutionOpportunity(
@@ -868,24 +869,25 @@ export async function checkLinkResolutionOpportunity(
     let bareCount = 0;
     let wouldResolveCount = 0;
     const distinctTargets = new Set<string>();
-    let pagesScanned = 0;
 
-    const refs = await engine.listAllPageRefs();
+    // Issue #972 (codex [P2] perf): batch-load the most-recent N pages in ONE
+    // query instead of listAllPageRefs() + a getPage() per page. The prior
+    // full N-page walk hit the 60s budget every run on large brains and
+    // returned a perpetual partial; this bounds the work to a fixed sample.
+    const SAMPLE_LIMIT = 1000;
+    const sampled = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>(
+      `SELECT compiled_truth, timeline FROM pages WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ${SAMPLE_LIMIT}`,
+    );
+    const totalPages = allSlugs.size;
+    const sampledNote = totalPages > SAMPLE_LIMIT
+      ? ` (scanned the ${SAMPLE_LIMIT} most-recent of ${totalPages} pages)`
+      : '';
     const deadline = Date.now() + 60_000;
-    const hb = progress ? startHeartbeat(progress, `scanning ${refs.length} pages for bare wikilinks…`) : null;
+    const hb = progress ? startHeartbeat(progress, `scanning ${sampled.length} pages for bare wikilinks…`) : null;
     try {
-      for (const ref of refs) {
-        if (Date.now() > deadline) {
-          return {
-            name,
-            status: 'ok',
-            message: `Scanned ${pagesScanned} of ${refs.length} page(s) before the 60s budget elapsed; partial result: ${wouldResolveCount}/${bareCount} bare wikilinks would resolve.`,
-          };
-        }
-        const page = await engine.getPage(ref.slug, { sourceId: ref.source_id });
-        if (!page) continue;
-        pagesScanned++;
-        const content = page.compiled_truth + '\n' + (page.timeline || '');
+      for (const row of sampled) {
+        if (Date.now() > deadline) break; // backstop; in-memory scan rarely hits it
+        const content = (row.compiled_truth ?? '') + '\n' + (row.timeline ?? '');
         for (const e of extractEntityRefs(content)) {
           if (!e.needsResolution) continue;
           bareCount++;
@@ -921,7 +923,7 @@ export async function checkLinkResolutionOpportunity(
         status: 'warn',
         message:
           `${wouldResolveCount} of ${bareCount} bare wikilinks (${pct}%) would resolve to ` +
-          `${distinctTargets.size} distinct page(s) under global_basename mode. ` +
+          `${distinctTargets.size} distinct page(s) under global_basename mode${sampledNote}. ` +
           `Enable with: gbrain config set link_resolution.global_basename true`,
       };
     }
@@ -929,7 +931,7 @@ export async function checkLinkResolutionOpportunity(
     return {
       name,
       status: 'ok',
-      message: `${wouldResolveCount}/${bareCount} bare wikilinks (${pct}%) would resolve — below the 20% / 5-link threshold for surfacing a hint.`,
+      message: `${wouldResolveCount}/${bareCount} bare wikilinks (${pct}%) would resolve — below the 20% / 5-link threshold for surfacing a hint${sampledNote}.`,
     };
   } catch (e) {
     return {

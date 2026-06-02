@@ -1310,5 +1310,9 @@ describe('issue #972 — link_resolution_opportunity check', () => {
     expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine\)/);
     // Heartbeat label registered.
     expect(source).toContain("progress.heartbeat('link_resolution_opportunity')");
+    // Issue #972 (T3): scan is bounded to a most-recent sample, not a full
+    // per-page getPage walk.
+    expect(source).toMatch(/ORDER BY id DESC LIMIT \$\{?SAMPLE_LIMIT\}?|ORDER BY id DESC LIMIT 1000/);
+    expect(source).not.toMatch(/await engine\.getPage\(ref\.slug/);
   });
 });
