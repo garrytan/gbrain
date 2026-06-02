@@ -1009,6 +1009,49 @@ describe('makeResolver — fallback chain', () => {
     expect(await r.resolveBasenameMatches!('never-existed')).toEqual([]);
   });
 
+  test('resolveBasenameMatches: scopes the index by sourceId (codex #972)', async () => {
+    // Regression: a bare [[struktura]] in source A must NOT resolve to a
+    // same-tail page in source B. makeResolver({sourceId}) must pass the
+    // scope to getAllSlugs so the index only contains the source's slugs.
+    let sawOpts: any;
+    const bySource: Record<string, string[]> = {
+      'src-a': ['projects/struktura'],
+      'src-b': ['archive/struktura'],
+    };
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy() { return null; },
+      async searchKeyword() { return []; },
+      async getAllSlugs(opts?: { sourceId?: string }) {
+        sawOpts = opts;
+        const sid = opts?.sourceId;
+        return new Set(sid ? (bySource[sid] ?? []) : Object.values(bySource).flat());
+      },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch', sourceId: 'src-a' });
+    const out = await r.resolveBasenameMatches!('struktura');
+    expect(sawOpts).toEqual({ sourceId: 'src-a' });
+    expect(out).toEqual(['projects/struktura']);          // src-a only
+    expect(out).not.toContain('archive/struktura');        // no cross-source
+  });
+
+  test('resolveBasenameMatches: no sourceId stays brain-wide (back-compat)', async () => {
+    let sawOpts: any = 'unset';
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy() { return null; },
+      async searchKeyword() { return []; },
+      async getAllSlugs(opts?: { sourceId?: string }) {
+        sawOpts = opts;
+        return new Set(['projects/struktura', 'archive/struktura']);
+      },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch' });
+    const out = await r.resolveBasenameMatches!('struktura');
+    expect(sawOpts).toBeUndefined();                        // unscoped call
+    expect(out.sort()).toEqual(['archive/struktura', 'projects/struktura']);
+  });
+
   test('resolveBasenameMatches: empty input returns []', async () => {
     const engine = makeFakeEngineWithSlugs(['projects/struktura']);
     const r = makeResolver(engine);

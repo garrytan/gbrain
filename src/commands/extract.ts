@@ -1165,7 +1165,9 @@ async function extractLinksFromDB(
   // Replaces the pre-issue-#972 `nullResolver` ternary — that synthetic
   // resolver lacked `resolveBasenameMatches`, so we always pass the real
   // one and let extractPageLinks's opts gate which pass actually runs.
-  const resolver = makeResolver(engine, { mode: 'batch' });
+  // Issue #972 (codex [P1]): scope basename resolution to the source being
+  // extracted so bare wikilinks don't resolve across unrelated sources.
+  const resolver = makeResolver(engine, { mode: 'batch', sourceId: sourceIdFilter });
   const unresolved: UnresolvedFrontmatterRef[] = [];
   // Issue #972: opt-in global-basename wikilink resolution. Read once
   // per extract run; threaded into each extractPageLinks call.

@@ -781,7 +781,7 @@ export interface SlugResolver {
  */
 export function makeResolver(
   engine: BrainEngine,
-  opts: { mode: 'batch' | 'live' } = { mode: 'live' },
+  opts: { mode: 'batch' | 'live'; sourceId?: string } = { mode: 'live' },
 ): SlugResolver {
   const cache = new Map<string, string | null>();
 
@@ -803,7 +803,12 @@ export function makeResolver(
       return idx;
     }
     try {
-      const all = await engine.getAllSlugs();
+      // Issue #972 (codex [P1]): scope the basename index to the resolver's
+      // source. getAllSlugs({sourceId}) keeps wikilink resolution from
+      // spanning unrelated sources — a bare [[name]] must NOT resolve to a
+      // same-tail page in a DIFFERENT source and create a cross-source edge.
+      // #972 is "global basename across folders," not "cross-source federation."
+      const all = await engine.getAllSlugs(opts.sourceId ? { sourceId: opts.sourceId } : undefined);
       const addKey = (key: string, slug: string) => {
         const existing = idx.get(key);
         if (existing) {
