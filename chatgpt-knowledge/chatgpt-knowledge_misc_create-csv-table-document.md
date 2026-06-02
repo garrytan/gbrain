@@ -8,6 +8,8 @@ topic: misc
 message_count: 18
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Create CSV Table Document
 
 > **Source:** ChatGPT conversation

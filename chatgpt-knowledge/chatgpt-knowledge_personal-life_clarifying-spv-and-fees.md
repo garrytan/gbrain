@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 10
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Clarifying SPV and Fees
 
 > **Source:** ChatGPT conversation

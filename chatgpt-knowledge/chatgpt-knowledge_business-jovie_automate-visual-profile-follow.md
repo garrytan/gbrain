@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 43
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Automate Visual Profile Follow.
 
 > **Source:** ChatGPT conversation

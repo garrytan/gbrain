@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 77
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Audit clod.md for YC alignment
 
 > **Source:** ChatGPT conversation

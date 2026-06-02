@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 106
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Lime Juice in Mix
 
 > **Source:** ChatGPT conversation

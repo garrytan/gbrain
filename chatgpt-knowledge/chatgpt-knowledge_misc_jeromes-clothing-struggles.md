@@ -8,6 +8,8 @@ topic: misc
 message_count: 64
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Jerome's Clothing Struggles
 
 > **Source:** ChatGPT conversation

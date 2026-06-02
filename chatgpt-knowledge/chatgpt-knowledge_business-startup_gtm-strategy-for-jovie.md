@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 28
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # GTM strategy for Jovie
 
 > **Source:** ChatGPT conversation

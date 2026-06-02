@@ -8,6 +8,8 @@ topic: music-production
 message_count: 47
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Bio Link Strategy
 
 > **Source:** ChatGPT conversation

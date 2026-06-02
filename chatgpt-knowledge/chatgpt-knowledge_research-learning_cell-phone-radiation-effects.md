@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 22
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Cell phone radiation effects
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 12
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Fincher's Coffee Preferences: Starbucks
 
 > **Source:** ChatGPT conversation

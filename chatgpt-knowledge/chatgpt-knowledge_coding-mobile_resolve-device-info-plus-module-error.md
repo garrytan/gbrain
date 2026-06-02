@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 32
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Resolve 'device_info_plus' Module Error
 
 > **Source:** ChatGPT conversation

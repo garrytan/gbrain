@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 36
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Marketing Tips for Artists
 
 > **Source:** ChatGPT conversation

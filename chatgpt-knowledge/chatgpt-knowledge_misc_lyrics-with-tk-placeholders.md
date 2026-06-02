@@ -8,6 +8,8 @@ topic: misc
 message_count: 19
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Lyrics with "tk" placeholders.
 
 > **Source:** ChatGPT conversation

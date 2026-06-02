@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 14
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # AI and Open Source
 
 > **Source:** ChatGPT conversation

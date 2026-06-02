@@ -8,6 +8,8 @@ topic: music-production
 message_count: 101
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Scandalous Summer Bar Menu
 
 > **Source:** ChatGPT conversation

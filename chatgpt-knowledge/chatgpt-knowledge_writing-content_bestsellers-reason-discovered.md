@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 8
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Bestsellers Reason Discovered.
 
 > **Source:** ChatGPT conversation

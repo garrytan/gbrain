@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 8
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # FFMI and aesthetics guide
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 318
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Bartending Job Alerts
 
 > **Source:** ChatGPT conversation

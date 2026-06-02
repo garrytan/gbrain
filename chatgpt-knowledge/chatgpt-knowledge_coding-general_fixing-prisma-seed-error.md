@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 20
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Fixing Prisma Seed Error
 
 > **Source:** ChatGPT conversation

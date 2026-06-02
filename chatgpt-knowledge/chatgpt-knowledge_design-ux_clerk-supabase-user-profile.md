@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 70
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Clerk Supabase User Profile
 
 > **Source:** ChatGPT conversation

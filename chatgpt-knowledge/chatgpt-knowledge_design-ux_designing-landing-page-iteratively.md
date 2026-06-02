@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 48
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Designing Landing Page Iteratively
 
 > **Source:** ChatGPT conversation

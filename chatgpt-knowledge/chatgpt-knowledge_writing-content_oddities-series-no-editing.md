@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 37
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Oddities Series: No Editing
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 12
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Estimating Streams: 200 Weeks
 
 > **Source:** ChatGPT conversation

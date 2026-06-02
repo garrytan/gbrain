@@ -8,6 +8,8 @@ topic: music-production
 message_count: 44
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Flirty Comment Replies
 
 > **Source:** ChatGPT conversation

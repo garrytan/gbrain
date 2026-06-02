@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 12
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Experienced Bartender Application
 
 > **Source:** ChatGPT conversation

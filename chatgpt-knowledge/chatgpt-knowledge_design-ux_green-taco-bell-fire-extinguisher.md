@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 30
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Green Taco Bell, fire extinguisher
 
 > **Source:** ChatGPT conversation

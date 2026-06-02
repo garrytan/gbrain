@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 11
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Improve and Harden Prompt
 
 > **Source:** ChatGPT conversation

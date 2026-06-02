@@ -8,6 +8,8 @@ topic: misc
 message_count: 13
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Weight and BF Predictions
 
 > **Source:** ChatGPT conversation

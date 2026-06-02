@@ -8,6 +8,8 @@ topic: music-production
 message_count: 110
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Fitness plan adjustment
 
 > **Source:** ChatGPT conversation

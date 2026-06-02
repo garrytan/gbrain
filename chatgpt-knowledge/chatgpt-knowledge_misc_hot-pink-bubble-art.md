@@ -8,6 +8,8 @@ topic: misc
 message_count: 13
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Hot Pink Bubble Art.
 
 > **Source:** ChatGPT conversation

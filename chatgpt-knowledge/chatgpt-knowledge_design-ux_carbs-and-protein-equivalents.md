@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 20
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Carbs and Protein Equivalents
 
 > **Source:** ChatGPT conversation

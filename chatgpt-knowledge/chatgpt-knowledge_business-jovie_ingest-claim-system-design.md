@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 86
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Ingest claim system design
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 54
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Bar Manager Resume Rewrite
 
 > **Source:** ChatGPT conversation

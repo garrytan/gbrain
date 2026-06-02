@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 68
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Update Component for Weight Logs
 
 > **Source:** ChatGPT conversation

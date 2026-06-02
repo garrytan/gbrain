@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 21
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Bubblegum Factory Concept
 
 > **Source:** ChatGPT conversation

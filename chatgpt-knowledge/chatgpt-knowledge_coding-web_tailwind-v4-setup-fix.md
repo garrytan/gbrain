@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 6
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Tailwind v4 setup fix
 
 > **Source:** ChatGPT conversation

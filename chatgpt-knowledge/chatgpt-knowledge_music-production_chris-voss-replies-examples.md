@@ -8,6 +8,8 @@ topic: music-production
 message_count: 12
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Chris Voss replies examples
 
 > **Source:** ChatGPT conversation

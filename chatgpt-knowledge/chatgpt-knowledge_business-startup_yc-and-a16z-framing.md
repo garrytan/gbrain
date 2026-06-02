@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 30
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # YC and A16Z Framing
 
 > **Source:** ChatGPT conversation

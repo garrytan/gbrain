@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 30
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Frame.io Homepage for Jovie
 
 > **Source:** ChatGPT conversation

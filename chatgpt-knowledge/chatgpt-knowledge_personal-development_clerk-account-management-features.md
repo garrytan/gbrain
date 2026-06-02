@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 18
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Clerk account management features
 
 > **Source:** ChatGPT conversation

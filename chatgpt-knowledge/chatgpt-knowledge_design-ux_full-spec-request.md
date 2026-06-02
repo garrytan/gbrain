@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 54
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Full Spec Request
 
 > **Source:** ChatGPT conversation

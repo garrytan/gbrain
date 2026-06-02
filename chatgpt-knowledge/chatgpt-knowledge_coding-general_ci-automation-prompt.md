@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 30
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # CI automation prompt
 
 > **Source:** ChatGPT conversation

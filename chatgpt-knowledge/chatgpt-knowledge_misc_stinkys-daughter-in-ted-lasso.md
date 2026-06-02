@@ -8,6 +8,8 @@ topic: misc
 message_count: 8
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Stinky's Daughter in Ted Lasso
 
 > **Source:** ChatGPT conversation

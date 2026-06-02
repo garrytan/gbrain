@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 22
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Storybook setup guide
 
 > **Source:** ChatGPT conversation

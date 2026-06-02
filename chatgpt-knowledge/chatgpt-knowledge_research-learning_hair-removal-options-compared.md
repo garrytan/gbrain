@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 16
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Hair Removal Options Compared
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: music-production
 message_count: 36
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Mazda CX-5 Settings Guide
 
 > **Source:** ChatGPT conversation

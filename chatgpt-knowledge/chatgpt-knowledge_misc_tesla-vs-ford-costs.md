@@ -8,6 +8,8 @@ topic: misc
 message_count: 30
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Tesla vs. Ford: Costs
 
 > **Source:** ChatGPT conversation

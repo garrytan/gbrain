@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 54
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Optimize Vue.js Component
 
 > **Source:** ChatGPT conversation

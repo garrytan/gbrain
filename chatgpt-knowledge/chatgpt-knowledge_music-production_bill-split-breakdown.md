@@ -8,6 +8,8 @@ topic: music-production
 message_count: 23
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Bill Split Breakdown
 
 > **Source:** ChatGPT conversation

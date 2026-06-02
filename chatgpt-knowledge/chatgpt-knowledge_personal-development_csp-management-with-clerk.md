@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 8
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # CSP Management with Clerk
 
 > **Source:** ChatGPT conversation

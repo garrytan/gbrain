@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 70
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # iOS HealthKit Sync App
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 26
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Top 10 link-in-bio companies
 
 > **Source:** ChatGPT conversation

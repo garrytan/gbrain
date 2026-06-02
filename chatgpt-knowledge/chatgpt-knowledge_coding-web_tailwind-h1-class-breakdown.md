@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 6
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Tailwind H1 Class Breakdown
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 19
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Branch setup and EDE tests
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 68
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # AI music market infrastructure
 
 > **Source:** ChatGPT conversation

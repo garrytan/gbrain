@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 93
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # AI App Testing Process
 
 > **Source:** ChatGPT conversation

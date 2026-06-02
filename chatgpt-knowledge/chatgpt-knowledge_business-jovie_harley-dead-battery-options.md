@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 6
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Harley dead battery options
 
 > **Source:** ChatGPT conversation

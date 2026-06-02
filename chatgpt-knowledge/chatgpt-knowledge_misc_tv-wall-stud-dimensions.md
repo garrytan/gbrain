@@ -8,6 +8,8 @@ topic: misc
 message_count: 36
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # TV Wall Stud Dimensions
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 22
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Edit Markdoc on Vercel
 
 > **Source:** ChatGPT conversation

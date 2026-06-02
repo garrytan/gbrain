@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 18
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Migration safety workflow
 
 > **Source:** ChatGPT conversation

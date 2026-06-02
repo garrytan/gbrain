@@ -8,6 +8,8 @@ topic: misc
 message_count: 10
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Average Height: Median vs. Mean
 
 > **Source:** ChatGPT conversation

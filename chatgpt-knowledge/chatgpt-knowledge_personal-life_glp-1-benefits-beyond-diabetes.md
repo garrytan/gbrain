@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 9
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # GLP-1 Benefits Beyond Diabetes
 
 > **Source:** ChatGPT conversation

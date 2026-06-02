@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 12
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Muffin Top A&R Plan
 
 > **Source:** ChatGPT conversation

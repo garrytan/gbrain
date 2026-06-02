@@ -8,6 +8,8 @@ topic: music-production
 message_count: 60
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Luxurious LA Rock Vibes
 
 > **Source:** ChatGPT conversation

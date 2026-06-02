@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 23
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Fastlane match cloning error
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 16
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Song Title Accuracy Corrected
 
 > **Source:** ChatGPT conversation

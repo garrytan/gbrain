@@ -8,6 +8,8 @@ topic: misc
 message_count: 52
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Create document outline
 
 > **Source:** ChatGPT conversation

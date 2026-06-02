@@ -8,6 +8,8 @@ topic: music-production
 message_count: 10
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Night or Future
 
 > **Source:** ChatGPT conversation

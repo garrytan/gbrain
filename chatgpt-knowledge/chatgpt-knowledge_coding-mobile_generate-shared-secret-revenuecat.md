@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 26
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Generate Shared Secret RevenueCat
 
 > **Source:** ChatGPT conversation

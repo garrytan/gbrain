@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 20
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Cold Start Crashes Next.js
 
 > **Source:** ChatGPT conversation

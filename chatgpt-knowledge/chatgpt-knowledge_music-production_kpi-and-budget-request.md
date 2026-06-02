@@ -8,6 +8,8 @@ topic: music-production
 message_count: 18
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # KPI and budget request
 
 > **Source:** ChatGPT conversation

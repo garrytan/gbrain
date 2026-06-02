@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 76
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Elvis Costello controversy explained
 
 > **Source:** ChatGPT conversation

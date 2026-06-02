@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 23
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # AI Ops Prioritization Strategy
 
 > **Source:** ChatGPT conversation

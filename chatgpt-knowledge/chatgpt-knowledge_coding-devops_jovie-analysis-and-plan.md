@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 23
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Jovie Analysis and Plan
 
 > **Source:** ChatGPT conversation

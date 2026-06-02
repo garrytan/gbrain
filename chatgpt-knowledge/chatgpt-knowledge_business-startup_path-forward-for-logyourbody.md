@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 24
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Path Forward for LogYourBody
 
 > **Source:** ChatGPT conversation

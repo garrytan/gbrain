@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 10
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Cost analysis for 24-7 agents
 
 > **Source:** ChatGPT conversation

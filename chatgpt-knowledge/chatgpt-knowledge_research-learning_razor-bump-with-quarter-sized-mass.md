@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 8
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Razor Bump with Quarter-Sized Mass
 
 > **Source:** ChatGPT conversation

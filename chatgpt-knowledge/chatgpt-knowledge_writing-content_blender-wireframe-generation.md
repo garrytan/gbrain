@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 96
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Blender Wireframe Generation
 
 > **Source:** ChatGPT conversation

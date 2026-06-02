@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 9
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Store JSON in variable
 
 > **Source:** ChatGPT conversation

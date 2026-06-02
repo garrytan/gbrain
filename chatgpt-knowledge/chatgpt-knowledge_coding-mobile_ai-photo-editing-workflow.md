@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 18
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # AI Photo Editing Workflow
 
 > **Source:** ChatGPT conversation

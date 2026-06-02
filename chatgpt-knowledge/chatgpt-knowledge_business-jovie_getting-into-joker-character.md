@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 14
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Getting into Joker character
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 7
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Bulk Cut Cycle System
 
 > **Source:** ChatGPT conversation

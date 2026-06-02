@@ -8,6 +8,8 @@ topic: misc
 message_count: 28
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Amazon Shopping List
 
 > **Source:** ChatGPT conversation

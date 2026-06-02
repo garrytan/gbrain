@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 40
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Sign up flow analysis
 
 > **Source:** ChatGPT conversation

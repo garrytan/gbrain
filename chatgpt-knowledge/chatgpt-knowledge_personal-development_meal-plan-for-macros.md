@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 61
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Meal Plan for Macros
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 15
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Starbucks Google Wi-Fi Deal
 
 > **Source:** ChatGPT conversation

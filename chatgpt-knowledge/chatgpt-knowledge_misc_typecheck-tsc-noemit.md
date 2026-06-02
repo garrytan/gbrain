@@ -8,6 +8,8 @@ topic: misc
 message_count: 42
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Typecheck tsc --noEmit
 
 > **Source:** ChatGPT conversation

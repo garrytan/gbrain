@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 10
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Auto-continue in Windsurf
 
 > **Source:** ChatGPT conversation

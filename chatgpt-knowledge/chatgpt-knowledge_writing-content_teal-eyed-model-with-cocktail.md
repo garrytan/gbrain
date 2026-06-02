@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 24
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Teal-Eyed Model with Cocktail
 
 > **Source:** ChatGPT conversation

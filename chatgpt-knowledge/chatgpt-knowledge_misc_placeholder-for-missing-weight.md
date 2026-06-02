@@ -8,6 +8,8 @@ topic: misc
 message_count: 43
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Placeholder for missing weight
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 40
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Statism for product analytics
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 20
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Creatine for Workouts.
 
 > **Source:** ChatGPT conversation

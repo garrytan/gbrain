@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 19
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Web Scraper Code Analysis
 
 > **Source:** ChatGPT conversation

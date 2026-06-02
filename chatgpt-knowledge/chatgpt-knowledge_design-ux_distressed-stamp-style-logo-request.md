@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 21
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Distressed stamp-style logo request.
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 16
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Max Martin Construction Permits
 
 > **Source:** ChatGPT conversation

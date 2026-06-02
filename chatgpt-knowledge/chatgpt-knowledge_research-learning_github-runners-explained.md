@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 6
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # GitHub Runners Explained
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 18
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Estimating Blue-Eyed Tall Women
 
 > **Source:** ChatGPT conversation

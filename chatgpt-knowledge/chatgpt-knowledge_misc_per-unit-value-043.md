@@ -8,6 +8,8 @@ topic: misc
 message_count: 6
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Per Unit Value: 0.43
 
 > **Source:** ChatGPT conversation

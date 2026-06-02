@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 29
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Branch · Branch · SMS Subscription Ideas
 
 > **Source:** ChatGPT conversation

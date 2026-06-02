@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 11
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Entourage Filming Locations Table
 
 > **Source:** ChatGPT conversation

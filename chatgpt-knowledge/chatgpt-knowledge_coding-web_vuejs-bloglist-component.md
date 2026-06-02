@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 30
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Vue.js BlogList Component
 
 > **Source:** ChatGPT conversation

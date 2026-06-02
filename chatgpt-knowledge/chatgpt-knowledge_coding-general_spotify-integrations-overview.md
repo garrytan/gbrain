@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 26
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Spotify Integrations Overview
 
 > **Source:** ChatGPT conversation

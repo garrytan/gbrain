@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 24
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # MVP Ideas for Jovi
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 24
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Squashing super-based migrations
 
 > **Source:** ChatGPT conversation

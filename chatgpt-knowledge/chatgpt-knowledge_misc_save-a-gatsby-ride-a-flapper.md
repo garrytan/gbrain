@@ -8,6 +8,8 @@ topic: misc
 message_count: 6
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Save a Gatsby, Ride a Flapper
 
 > **Source:** ChatGPT conversation

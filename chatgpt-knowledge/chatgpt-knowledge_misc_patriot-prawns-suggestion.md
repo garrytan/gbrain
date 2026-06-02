@@ -8,6 +8,8 @@ topic: misc
 message_count: 50
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Patriot Prawns Suggestion
 
 > **Source:** ChatGPT conversation

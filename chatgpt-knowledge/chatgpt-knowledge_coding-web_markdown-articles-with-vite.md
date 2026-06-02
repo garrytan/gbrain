@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 18
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Markdown Articles with Vite
 
 > **Source:** ChatGPT conversation

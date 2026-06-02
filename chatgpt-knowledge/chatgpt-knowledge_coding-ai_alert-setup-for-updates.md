@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 352
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Alert Setup for Updates
 
 > **Source:** ChatGPT conversation

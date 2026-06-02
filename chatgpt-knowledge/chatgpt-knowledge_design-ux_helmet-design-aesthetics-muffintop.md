@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 13
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Helmet Design Aesthetics MUFFINTOP
 
 > **Source:** ChatGPT conversation

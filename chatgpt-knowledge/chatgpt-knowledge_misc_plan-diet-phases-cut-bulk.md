@@ -8,6 +8,8 @@ topic: misc
 message_count: 13
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Plan Diet Phases: Cut-Bulk.
 
 > **Source:** ChatGPT conversation

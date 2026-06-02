@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 108
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Tim White's Core Values
 
 > **Source:** ChatGPT conversation

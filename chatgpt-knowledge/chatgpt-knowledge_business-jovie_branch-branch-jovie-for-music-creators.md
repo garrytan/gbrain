@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 17
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Branch · Branch · Jovie for Music Creators
 
 > **Source:** ChatGPT conversation

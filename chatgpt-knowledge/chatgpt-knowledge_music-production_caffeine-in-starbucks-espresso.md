@@ -8,6 +8,8 @@ topic: music-production
 message_count: 17
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Caffeine in Starbucks Espresso
 
 > **Source:** ChatGPT conversation

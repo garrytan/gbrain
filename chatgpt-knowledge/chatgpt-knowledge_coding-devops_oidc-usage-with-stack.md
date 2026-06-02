@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 16
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # OIDC usage with stack
 
 > **Source:** ChatGPT conversation

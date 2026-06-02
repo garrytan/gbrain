@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 16
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # iOS Dashboard UX Design
 
 > **Source:** ChatGPT conversation

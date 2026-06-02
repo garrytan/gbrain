@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 24
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Embed Laylo in Vue
 
 > **Source:** ChatGPT conversation

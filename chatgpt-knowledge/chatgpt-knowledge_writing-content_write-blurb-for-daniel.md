@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 12
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Write blurb for Daniel
 
 > **Source:** ChatGPT conversation

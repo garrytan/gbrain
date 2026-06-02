@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 9
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Landing Page Feedback
 
 > **Source:** ChatGPT conversation

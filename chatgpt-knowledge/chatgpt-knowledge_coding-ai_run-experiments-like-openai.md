@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 6
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Run experiments like OpenAI
 
 > **Source:** ChatGPT conversation

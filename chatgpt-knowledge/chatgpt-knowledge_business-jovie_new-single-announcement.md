@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 14
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # New Single Announcement.
 
 > **Source:** ChatGPT conversation

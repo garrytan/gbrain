@@ -8,6 +8,8 @@ topic: misc
 message_count: 6
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Mayor Erickson's unanimous election.
 
 > **Source:** ChatGPT conversation

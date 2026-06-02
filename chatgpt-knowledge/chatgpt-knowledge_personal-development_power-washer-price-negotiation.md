@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 6
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Power washer price negotiation
 
 > **Source:** ChatGPT conversation

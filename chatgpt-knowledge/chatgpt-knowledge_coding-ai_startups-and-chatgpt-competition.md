@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 21
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Startups and ChatGPT Competition
 
 > **Source:** ChatGPT conversation

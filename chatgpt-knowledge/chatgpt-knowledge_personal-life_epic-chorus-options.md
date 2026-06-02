@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 18
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Epic Chorus Options.
 
 > **Source:** ChatGPT conversation

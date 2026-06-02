@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 15
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Focus on Business KPIs
 
 > **Source:** ChatGPT conversation

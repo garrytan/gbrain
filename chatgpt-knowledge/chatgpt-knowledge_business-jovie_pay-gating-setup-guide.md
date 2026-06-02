@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 12
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Pay gating setup guide
 
 > **Source:** ChatGPT conversation

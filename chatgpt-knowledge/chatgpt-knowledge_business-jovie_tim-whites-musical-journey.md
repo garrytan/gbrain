@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 23
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Tim White's Musical Journey
 
 > **Source:** ChatGPT conversation

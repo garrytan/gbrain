@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 42
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # LogYourBody app summary
 
 > **Source:** ChatGPT conversation

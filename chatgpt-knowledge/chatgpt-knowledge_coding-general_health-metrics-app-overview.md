@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 28
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Health Metrics App Overview
 
 > **Source:** ChatGPT conversation

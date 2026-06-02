@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 19
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # AI for Music Catalogs
 
 > **Source:** ChatGPT conversation

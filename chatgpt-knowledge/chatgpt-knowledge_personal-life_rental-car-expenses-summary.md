@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 8
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Rental Car Expenses Summary
 
 > **Source:** ChatGPT conversation

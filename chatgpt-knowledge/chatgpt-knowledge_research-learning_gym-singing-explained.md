@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 8
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Gym Singing Explained
 
 > **Source:** ChatGPT conversation

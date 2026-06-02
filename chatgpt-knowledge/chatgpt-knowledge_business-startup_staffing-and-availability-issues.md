@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 17
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Staffing and availability issues
 
 > **Source:** ChatGPT conversation
@@ -19,7 +21,8 @@ tags: [chatgpt, knowledge, business-startup]
 
 Gotcha. Didn’t realize Harrison got fired to work here… he really does need to work on not seeming super miserable the whole time. 
 
-I just figured if Brandon is possibly here we’d want people who are super used to how things work. Jordan has sold drinks outside before which we are starting Thursday and dealt with a room changeover/two show day which we are starting FridaySame with Sophie vs Maya. Just thought these new additions were supplementing the core team who knows how this works, not in place of them?
+I just figured if Brandon is possibly here we’d want people who are super used to how things work. Jordan has sold drinks outside before which we are starting Thursday and dealt with a room changeover/two show day which we are starting Friday
+Same with Sophie vs Maya. Just thought these new additions were supplementing the core team who knows how this works, not in place of them?
 
 
 

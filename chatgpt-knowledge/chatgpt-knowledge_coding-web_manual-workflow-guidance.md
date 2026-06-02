@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 7
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Manual workflow guidance
 
 > **Source:** ChatGPT conversation

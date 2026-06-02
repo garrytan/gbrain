@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 22
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Estimate t-shirt quantity
 
 > **Source:** ChatGPT conversation

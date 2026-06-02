@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 9
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Profile Redesign for Subscribers
 
 > **Source:** ChatGPT conversation

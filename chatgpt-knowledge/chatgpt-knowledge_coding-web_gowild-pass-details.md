@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 16
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # GoWild! pass details
 
 > **Source:** ChatGPT conversation

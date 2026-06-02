@@ -8,6 +8,8 @@ topic: misc
 message_count: 10
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Veneer Cost: $1,000-2,500
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 8
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Three Guitars Identified
 
 > **Source:** ChatGPT conversation

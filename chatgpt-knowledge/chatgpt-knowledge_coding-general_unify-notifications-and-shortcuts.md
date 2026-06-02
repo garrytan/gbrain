@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 6
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Unify notifications and shortcuts
 
 > **Source:** ChatGPT conversation

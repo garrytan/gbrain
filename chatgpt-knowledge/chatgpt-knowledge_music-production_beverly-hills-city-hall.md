@@ -8,6 +8,8 @@ topic: music-production
 message_count: 8
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Beverly Hills City Hall
 
 > **Source:** ChatGPT conversation

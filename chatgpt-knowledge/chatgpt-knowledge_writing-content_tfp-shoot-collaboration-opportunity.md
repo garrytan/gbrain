@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 6
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # TFP Shoot Collaboration Opportunity
 
 > **Source:** ChatGPT conversation

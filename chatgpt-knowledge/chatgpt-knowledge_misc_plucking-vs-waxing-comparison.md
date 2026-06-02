@@ -8,6 +8,8 @@ topic: misc
 message_count: 34
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Plucking vs waxing comparison
 
 > **Source:** ChatGPT conversation

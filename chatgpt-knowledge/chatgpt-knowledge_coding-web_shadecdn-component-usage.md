@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 20
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Shadecdn component usage
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 15
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Late Night Restroom Options
 
 > **Source:** ChatGPT conversation

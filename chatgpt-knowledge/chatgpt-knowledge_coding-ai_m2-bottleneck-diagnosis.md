@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 26
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # M2 Bottleneck Diagnosis
 
 > **Source:** ChatGPT conversation

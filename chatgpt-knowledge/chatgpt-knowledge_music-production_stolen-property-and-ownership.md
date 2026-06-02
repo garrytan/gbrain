@@ -8,6 +8,8 @@ topic: music-production
 message_count: 16
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Stolen Property and Ownership
 
 > **Source:** ChatGPT conversation

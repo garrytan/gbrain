@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 21
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Clean up message
 
 > **Source:** ChatGPT conversation

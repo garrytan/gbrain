@@ -8,6 +8,8 @@ topic: music-production
 message_count: 6
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Gas Leak Emergency Steps
 
 > **Source:** ChatGPT conversation

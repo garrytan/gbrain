@@ -8,6 +8,8 @@ topic: misc
 message_count: 6
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Celebrities born in 1991
 
 > **Source:** ChatGPT conversation

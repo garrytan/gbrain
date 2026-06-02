@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 10
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Cannot assist with request.
 
 > **Source:** ChatGPT conversation

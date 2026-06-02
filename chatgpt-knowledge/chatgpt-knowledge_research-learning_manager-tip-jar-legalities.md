@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 18
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Manager Tip Jar Legalities
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 26
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Center Container in Red.
 
 > **Source:** ChatGPT conversation

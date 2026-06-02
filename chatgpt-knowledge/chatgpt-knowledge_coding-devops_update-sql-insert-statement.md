@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 92
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Update SQL INSERT Statement
 
 > **Source:** ChatGPT conversation

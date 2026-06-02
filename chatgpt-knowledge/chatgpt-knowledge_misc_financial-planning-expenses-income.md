@@ -8,6 +8,8 @@ topic: misc
 message_count: 48
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Financial Planning: Expenses & Income
 
 > **Source:** ChatGPT conversation

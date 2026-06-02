@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 10
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Kevin Lin and Twitch
 
 > **Source:** ChatGPT conversation

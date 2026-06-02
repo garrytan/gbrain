@@ -8,6 +8,8 @@ topic: music-production
 message_count: 10
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Arguing against selective wage hikes
 
 > **Source:** ChatGPT conversation

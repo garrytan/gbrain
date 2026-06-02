@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 28
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Metric entries prompt
 
 > **Source:** ChatGPT conversation

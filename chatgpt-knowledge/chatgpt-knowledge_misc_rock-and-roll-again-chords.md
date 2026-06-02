@@ -8,6 +8,8 @@ topic: misc
 message_count: 7
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Rock and Roll Again Chords
 
 > **Source:** ChatGPT conversation

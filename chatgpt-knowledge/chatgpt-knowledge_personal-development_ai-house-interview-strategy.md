@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 11
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # AI House Interview Strategy
 
 > **Source:** ChatGPT conversation

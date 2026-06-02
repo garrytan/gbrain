@@ -8,6 +8,8 @@ topic: music-production
 message_count: 13
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Fat Loss, Muscle Gain
 
 > **Source:** ChatGPT conversation

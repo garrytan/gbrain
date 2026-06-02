@@ -8,6 +8,8 @@ topic: music-production
 message_count: 19
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Forking Repo Legally
 
 > **Source:** ChatGPT conversation

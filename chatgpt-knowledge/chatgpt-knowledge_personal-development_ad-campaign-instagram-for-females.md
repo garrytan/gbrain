@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 20
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Ad Campaign: Instagram for Females
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 64
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Core values compilation
 
 > **Source:** ChatGPT conversation

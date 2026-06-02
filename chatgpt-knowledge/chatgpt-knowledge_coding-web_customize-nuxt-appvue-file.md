@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 32
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Customize Nuxt App.vue File
 
 > **Source:** ChatGPT conversation

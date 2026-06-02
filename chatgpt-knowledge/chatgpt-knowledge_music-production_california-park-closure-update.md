@@ -8,6 +8,8 @@ topic: music-production
 message_count: 24
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # California park closure update
 
 > **Source:** ChatGPT conversation

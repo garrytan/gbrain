@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 8
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Pacific Design Center: 1975
 
 > **Source:** ChatGPT conversation

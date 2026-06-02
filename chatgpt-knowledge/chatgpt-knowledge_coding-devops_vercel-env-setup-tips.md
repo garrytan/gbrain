@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 48
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Vercel env setup tips
 
 > **Source:** ChatGPT conversation

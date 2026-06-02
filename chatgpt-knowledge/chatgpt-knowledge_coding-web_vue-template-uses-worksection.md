@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 8
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Vue template uses WorkSection.
 
 > **Source:** ChatGPT conversation

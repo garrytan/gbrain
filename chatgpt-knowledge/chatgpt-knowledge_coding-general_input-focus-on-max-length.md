@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 16
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Input Focus on Max Length
 
 > **Source:** ChatGPT conversation

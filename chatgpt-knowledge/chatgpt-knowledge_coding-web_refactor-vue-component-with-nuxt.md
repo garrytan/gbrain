@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 102
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Refactor Vue component with Nuxt
 
 > **Source:** ChatGPT conversation

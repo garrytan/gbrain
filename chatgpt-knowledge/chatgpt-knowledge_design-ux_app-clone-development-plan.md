@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 22
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # App Clone Development Plan
 
 > **Source:** ChatGPT conversation

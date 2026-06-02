@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 6
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Meditation Benefits Fitness
 
 > **Source:** ChatGPT conversation

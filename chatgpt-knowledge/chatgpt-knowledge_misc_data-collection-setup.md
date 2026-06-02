@@ -8,6 +8,8 @@ topic: misc
 message_count: 12
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Data collection setup
 
 > **Source:** ChatGPT conversation

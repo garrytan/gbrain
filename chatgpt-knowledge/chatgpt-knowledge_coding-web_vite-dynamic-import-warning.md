@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 10
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Vite dynamic import warning.
 
 > **Source:** ChatGPT conversation

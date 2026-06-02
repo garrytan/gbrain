@@ -8,6 +8,8 @@ topic: misc
 message_count: 44
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Costco items list
 
 > **Source:** ChatGPT conversation

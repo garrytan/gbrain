@@ -8,6 +8,8 @@ topic: music-production
 message_count: 26
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # TikTok Influencer Campaign
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 58
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Onboarding UX Redesign Guide
 
 > **Source:** ChatGPT conversation

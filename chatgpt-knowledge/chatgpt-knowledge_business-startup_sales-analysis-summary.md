@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 14
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Sales analysis summary
 
 > **Source:** ChatGPT conversation

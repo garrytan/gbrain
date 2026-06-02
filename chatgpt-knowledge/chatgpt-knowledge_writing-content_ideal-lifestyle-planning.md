@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 32
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Ideal Lifestyle Planning
 
 > **Source:** ChatGPT conversation

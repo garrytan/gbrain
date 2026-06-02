@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 30
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Kenan Thompson's Career Highlights
 
 > **Source:** ChatGPT conversation

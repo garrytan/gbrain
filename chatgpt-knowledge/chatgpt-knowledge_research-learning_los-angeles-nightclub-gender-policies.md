@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 36
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Los Angeles Nightclub Gender Policies
 
 > **Source:** ChatGPT conversation

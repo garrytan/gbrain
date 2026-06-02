@@ -8,6 +8,8 @@ topic: misc
 message_count: 68
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Halloween Drink Menu
 
 > **Source:** ChatGPT conversation

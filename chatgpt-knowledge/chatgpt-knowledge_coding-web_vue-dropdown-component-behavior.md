@@ -9,6 +9,8 @@ topic: coding-web
 message_count: 6
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Vue Dropdown Component Behavior
 
 

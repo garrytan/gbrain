@@ -8,6 +8,8 @@ topic: music-production
 message_count: 12
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Vintage Scooter for Sale
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: music-production
 message_count: 8
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Abs analogy response
 
 > **Source:** ChatGPT conversation

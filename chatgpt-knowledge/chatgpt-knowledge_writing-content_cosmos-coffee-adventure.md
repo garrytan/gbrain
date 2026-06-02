@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 16
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Cosmo's Coffee Adventure
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 18
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Pop Culture Audio Mashups
 
 > **Source:** ChatGPT conversation

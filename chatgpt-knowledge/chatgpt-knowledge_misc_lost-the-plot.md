@@ -8,6 +8,8 @@ topic: misc
 message_count: 33
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Lost the plot
 
 > **Source:** ChatGPT conversation

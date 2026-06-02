@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 18
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Python Expat Linkage Fix
 
 > **Source:** ChatGPT conversation

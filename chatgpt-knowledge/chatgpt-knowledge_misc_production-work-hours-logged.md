@@ -8,6 +8,8 @@ topic: misc
 message_count: 56
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Production Work Hours Logged
 
 > **Source:** ChatGPT conversation

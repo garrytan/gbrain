@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 7
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Diet Phase Grid Modification
 
 > **Source:** ChatGPT conversation

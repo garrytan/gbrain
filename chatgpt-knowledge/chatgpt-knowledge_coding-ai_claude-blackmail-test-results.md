@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 8
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Claude Blackmail Test Results
 
 > **Source:** ChatGPT conversation

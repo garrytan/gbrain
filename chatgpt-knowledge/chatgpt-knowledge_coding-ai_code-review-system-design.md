@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 16
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Code review system design
 
 > **Source:** ChatGPT conversation

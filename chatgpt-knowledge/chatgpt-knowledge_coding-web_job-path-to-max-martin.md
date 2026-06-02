@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 10
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Job Path to Max Martin
 
 > **Source:** ChatGPT conversation

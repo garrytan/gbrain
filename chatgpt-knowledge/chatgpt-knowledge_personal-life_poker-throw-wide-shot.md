@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 20
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Poker Throw Wide Shot
 
 > **Source:** ChatGPT conversation

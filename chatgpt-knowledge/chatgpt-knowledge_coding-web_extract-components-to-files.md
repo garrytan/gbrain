@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 80
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Extract Components to Files
 
 > **Source:** ChatGPT conversation

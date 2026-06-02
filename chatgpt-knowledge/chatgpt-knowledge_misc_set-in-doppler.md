@@ -8,6 +8,8 @@ topic: misc
 message_count: 21
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Set in Doppler
 
 > **Source:** ChatGPT conversation

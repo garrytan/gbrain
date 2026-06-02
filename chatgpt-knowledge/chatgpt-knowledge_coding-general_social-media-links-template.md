@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 29
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Social Media Links Template
 
 > **Source:** ChatGPT conversation

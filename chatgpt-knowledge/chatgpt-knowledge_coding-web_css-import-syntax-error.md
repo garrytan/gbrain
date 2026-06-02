@@ -9,6 +9,8 @@ topic: coding-web
 message_count: 12
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # CSS import syntax error
 
 

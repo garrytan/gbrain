@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 34
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Calculate liters consumed
 
 > **Source:** ChatGPT conversation

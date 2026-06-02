@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 6
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # MCP in Music Industry
 
 > **Source:** ChatGPT conversation

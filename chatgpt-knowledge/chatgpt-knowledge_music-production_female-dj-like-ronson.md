@@ -8,6 +8,8 @@ topic: music-production
 message_count: 15
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Female DJ like Ronson
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 13
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Job applications tailored
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 22
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Strip Club Pink Cup
 
 > **Source:** ChatGPT conversation

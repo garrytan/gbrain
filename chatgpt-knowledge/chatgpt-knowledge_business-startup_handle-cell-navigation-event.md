@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 42
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Handle Cell Navigation Event
 
 > **Source:** ChatGPT conversation

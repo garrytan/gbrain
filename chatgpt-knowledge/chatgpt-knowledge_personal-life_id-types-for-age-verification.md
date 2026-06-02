@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 16
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # ID Types for Age Verification
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 46
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Google Sheets: Current Date
 
 > **Source:** ChatGPT conversation

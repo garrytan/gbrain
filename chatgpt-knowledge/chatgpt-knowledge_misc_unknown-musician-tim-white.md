@@ -8,6 +8,8 @@ topic: misc
 message_count: 14
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Unknown Musician: Tim White
 
 > **Source:** ChatGPT conversation

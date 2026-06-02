@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 144
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # RLS Error in Supabase
 
 > **Source:** ChatGPT conversation

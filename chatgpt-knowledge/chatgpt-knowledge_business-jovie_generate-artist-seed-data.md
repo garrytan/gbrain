@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 13
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Generate artist seed data
 
 > **Source:** ChatGPT conversation

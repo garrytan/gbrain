@@ -8,6 +8,8 @@ topic: music-production
 message_count: 7
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # GLP-1 and Drug Effects
 
 > **Source:** ChatGPT conversation

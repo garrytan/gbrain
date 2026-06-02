@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 44
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Windsurf autopilot setup
 
 > **Source:** ChatGPT conversation

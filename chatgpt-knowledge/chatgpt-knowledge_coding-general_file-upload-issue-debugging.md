@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 22
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # File upload issue debugging.
 
 > **Source:** ChatGPT conversation

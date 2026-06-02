@@ -8,6 +8,8 @@ topic: misc
 message_count: 11
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Selling A7 III Gear
 
 > **Source:** ChatGPT conversation

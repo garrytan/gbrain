@@ -8,6 +8,8 @@ topic: misc
 message_count: 19
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Blonde in Men's Shirt
 
 > **Source:** ChatGPT conversation

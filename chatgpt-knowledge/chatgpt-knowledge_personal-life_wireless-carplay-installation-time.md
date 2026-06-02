@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 38
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Wireless CarPlay Installation Time
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 8
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # DNS setup on Vercel
 
 > **Source:** ChatGPT conversation

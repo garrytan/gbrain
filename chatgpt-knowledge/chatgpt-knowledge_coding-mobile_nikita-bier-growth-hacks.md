@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 19
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Nikita Bier Growth Hacks
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 14
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Hosting DeepSeq on Azure
 
 > **Source:** ChatGPT conversation

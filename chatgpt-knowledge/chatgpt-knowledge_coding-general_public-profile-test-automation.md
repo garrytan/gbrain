@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 11
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Public profile test automation
 
 > **Source:** ChatGPT conversation

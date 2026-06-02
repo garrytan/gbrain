@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 10
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Friendly "What's New" Post
 
 > **Source:** ChatGPT conversation

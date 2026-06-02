@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 7
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Attractiveness Data and Models
 
 > **Source:** ChatGPT conversation

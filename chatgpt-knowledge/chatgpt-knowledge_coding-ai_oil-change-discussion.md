@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 129
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Oil Change Discussion
 
 > **Source:** ChatGPT conversation

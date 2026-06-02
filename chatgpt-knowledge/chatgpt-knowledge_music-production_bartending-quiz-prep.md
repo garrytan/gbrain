@@ -8,6 +8,8 @@ topic: music-production
 message_count: 66
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Bartending Quiz Prep
 
 > **Source:** ChatGPT conversation

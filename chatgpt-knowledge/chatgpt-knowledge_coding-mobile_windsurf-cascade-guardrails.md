@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 6
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Windsurf Cascade guardrails
 
 > **Source:** ChatGPT conversation

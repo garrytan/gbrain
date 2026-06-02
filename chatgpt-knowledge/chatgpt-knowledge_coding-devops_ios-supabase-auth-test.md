@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 38
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # iOS Supabase Auth Test
 
 > **Source:** ChatGPT conversation

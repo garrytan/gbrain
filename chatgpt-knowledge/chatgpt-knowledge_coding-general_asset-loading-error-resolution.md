@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 62
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Asset Loading Error Resolution
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 16
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Fundraising in Chaos
 
 > **Source:** ChatGPT conversation

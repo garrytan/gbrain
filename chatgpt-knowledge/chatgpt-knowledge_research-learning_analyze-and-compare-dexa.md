@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 13
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Analyze and compare DEXA
 
 > **Source:** ChatGPT conversation

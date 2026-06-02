@@ -8,6 +8,8 @@ topic: music-production
 message_count: 73
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Merge queue delay explanation
 
 > **Source:** ChatGPT conversation

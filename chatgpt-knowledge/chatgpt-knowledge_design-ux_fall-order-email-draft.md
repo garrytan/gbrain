@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 6
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Fall order email draft
 
 > **Source:** ChatGPT conversation

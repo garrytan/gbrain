@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 24
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Fixing CI workflow
 
 > **Source:** ChatGPT conversation

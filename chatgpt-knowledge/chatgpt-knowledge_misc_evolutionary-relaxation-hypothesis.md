@@ -8,6 +8,8 @@ topic: misc
 message_count: 22
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Evolutionary Relaxation Hypothesis
 
 > **Source:** ChatGPT conversation

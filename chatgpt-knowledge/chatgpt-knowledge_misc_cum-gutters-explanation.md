@@ -8,6 +8,8 @@ topic: misc
 message_count: 17
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Cum gutters explanation
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 15
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Vodka Cocktail Ratio Adaptation
 
 > **Source:** ChatGPT conversation

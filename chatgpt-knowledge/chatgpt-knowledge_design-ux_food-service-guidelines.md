@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 44
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Food Service Guidelines.
 
 > **Source:** ChatGPT conversation

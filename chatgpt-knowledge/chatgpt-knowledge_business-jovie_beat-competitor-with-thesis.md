@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 8
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Beat competitor with thesis
 
 > **Source:** ChatGPT conversation

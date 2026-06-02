@@ -8,6 +8,8 @@ topic: music-production
 message_count: 47
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Electro Artist Tim White
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 16
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Material Icon Favorite Button.
 
 > **Source:** ChatGPT conversation

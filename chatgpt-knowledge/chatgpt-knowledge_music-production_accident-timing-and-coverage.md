@@ -8,6 +8,8 @@ topic: music-production
 message_count: 60
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Accident Timing and Coverage
 
 > **Source:** ChatGPT conversation

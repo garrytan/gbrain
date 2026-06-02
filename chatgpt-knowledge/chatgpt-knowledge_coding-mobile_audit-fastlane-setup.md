@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 10
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Audit Fastlane setup
 
 > **Source:** ChatGPT conversation

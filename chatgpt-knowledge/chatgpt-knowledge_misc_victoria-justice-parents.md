@@ -8,6 +8,8 @@ topic: misc
 message_count: 20
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Victoria Justice parents
 
 > **Source:** ChatGPT conversation

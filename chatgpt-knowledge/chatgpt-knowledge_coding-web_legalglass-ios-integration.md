@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 14
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # LegalGlass iOS Integration
 
 > **Source:** ChatGPT conversation

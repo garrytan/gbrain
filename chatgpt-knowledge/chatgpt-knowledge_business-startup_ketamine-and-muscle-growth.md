@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 20
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Ketamine and muscle growth
 
 > **Source:** ChatGPT conversation

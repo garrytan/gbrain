@@ -8,6 +8,8 @@ topic: music-production
 message_count: 58
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Peony Flower Care Tips
 
 > **Source:** ChatGPT conversation

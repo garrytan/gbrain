@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 48
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Audience tab roadmap
 
 > **Source:** ChatGPT conversation

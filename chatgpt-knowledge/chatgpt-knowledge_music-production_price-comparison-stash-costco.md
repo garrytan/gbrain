@@ -8,6 +8,8 @@ topic: music-production
 message_count: 109
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Price Comparison Stash Costco
 
 > **Source:** ChatGPT conversation

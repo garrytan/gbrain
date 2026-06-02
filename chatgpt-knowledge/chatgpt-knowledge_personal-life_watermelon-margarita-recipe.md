@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 14
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Watermelon Margarita Recipe
 
 > **Source:** ChatGPT conversation

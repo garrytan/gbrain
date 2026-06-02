@@ -8,6 +8,8 @@ topic: music-production
 message_count: 7
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Weight and FFMI Tracker
 
 > **Source:** ChatGPT conversation

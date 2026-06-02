@@ -8,6 +8,8 @@ topic: music-production
 message_count: 37
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Blueberry Muffin Helmet Render
 
 > **Source:** ChatGPT conversation

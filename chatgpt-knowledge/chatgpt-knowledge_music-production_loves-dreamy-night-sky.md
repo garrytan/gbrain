@@ -8,6 +8,8 @@ topic: music-production
 message_count: 9
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Love's Dreamy Night Sky
 
 > **Source:** ChatGPT conversation

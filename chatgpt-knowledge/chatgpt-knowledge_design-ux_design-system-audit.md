@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 11
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Design System Audit
 
 > **Source:** ChatGPT conversation

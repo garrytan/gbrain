@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 45
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Large Numbers Dashboard Display
 
 > **Source:** ChatGPT conversation

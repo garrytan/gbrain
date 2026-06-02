@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 11
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Tim's Developer ID Setup
 
 > **Source:** ChatGPT conversation

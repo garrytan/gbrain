@@ -8,6 +8,8 @@ topic: misc
 message_count: 7
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Penny's Diner Movie Appearances
 
 > **Source:** ChatGPT conversation

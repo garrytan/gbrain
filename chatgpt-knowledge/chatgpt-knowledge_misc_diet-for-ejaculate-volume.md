@@ -8,6 +8,8 @@ topic: misc
 message_count: 25
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Diet for Ejaculate Volume
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 18
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # How Holo Tiles Work
 
 > **Source:** ChatGPT conversation

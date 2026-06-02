@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 9
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Investment for $100K Salary
 
 > **Source:** ChatGPT conversation

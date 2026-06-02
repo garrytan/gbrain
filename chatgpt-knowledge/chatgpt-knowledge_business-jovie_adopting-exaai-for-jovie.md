@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 7
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Adopting Exa.ai for Jovie
 
 > **Source:** ChatGPT conversation

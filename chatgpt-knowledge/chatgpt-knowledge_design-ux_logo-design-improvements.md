@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 6
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Logo design improvements
 
 > **Source:** ChatGPT conversation

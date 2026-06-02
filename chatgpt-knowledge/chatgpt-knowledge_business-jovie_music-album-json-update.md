@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 38
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Music Album JSON Update
 
 > **Source:** ChatGPT conversation

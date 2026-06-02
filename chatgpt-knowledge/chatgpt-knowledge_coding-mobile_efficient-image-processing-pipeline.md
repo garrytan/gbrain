@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 22
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Efficient Image Processing Pipeline
 
 > **Source:** ChatGPT conversation

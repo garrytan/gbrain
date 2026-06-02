@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 6
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # DNS Records Setup
 
 > **Source:** ChatGPT conversation

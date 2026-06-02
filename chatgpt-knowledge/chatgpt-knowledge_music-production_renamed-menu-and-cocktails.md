@@ -8,6 +8,8 @@ topic: music-production
 message_count: 108
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Renamed Menu and Cocktails
 
 > **Source:** ChatGPT conversation

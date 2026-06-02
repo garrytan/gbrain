@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 8
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Agent-First Strategy for Jovie
 
 > **Source:** ChatGPT conversation

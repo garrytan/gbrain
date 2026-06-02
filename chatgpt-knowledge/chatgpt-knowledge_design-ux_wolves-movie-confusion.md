@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 7
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Wolves Movie Confusion
 
 > **Source:** ChatGPT conversation

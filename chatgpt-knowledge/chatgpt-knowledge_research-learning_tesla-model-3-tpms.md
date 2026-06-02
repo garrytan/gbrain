@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 48
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Tesla Model 3 TPMS
 
 > **Source:** ChatGPT conversation

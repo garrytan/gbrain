@@ -8,6 +8,8 @@ topic: music-production
 message_count: 22
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Hot Pink Wonderland Dream
 
 > **Source:** ChatGPT conversation

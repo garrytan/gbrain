@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 79
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Accident Liability and Insurance
 
 > **Source:** ChatGPT conversation

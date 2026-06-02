@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 6
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Sales Tax on Shipping
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: music-production
 message_count: 12
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Corporation vs. Legal Reform
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 12
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # PWA Update 404 Issue
 
 > **Source:** ChatGPT conversation

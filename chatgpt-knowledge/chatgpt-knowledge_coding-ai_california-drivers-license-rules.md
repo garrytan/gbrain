@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 30
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # California driver's license rules
 
 > **Source:** ChatGPT conversation

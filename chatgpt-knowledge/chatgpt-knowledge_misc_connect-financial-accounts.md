@@ -8,6 +8,8 @@ topic: misc
 message_count: 12
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Connect financial accounts
 
 > **Source:** ChatGPT conversation

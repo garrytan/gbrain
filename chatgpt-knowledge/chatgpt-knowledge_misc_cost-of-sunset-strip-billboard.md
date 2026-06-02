@@ -8,6 +8,8 @@ topic: misc
 message_count: 22
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Cost of Sunset Strip Billboard
 
 > **Source:** ChatGPT conversation

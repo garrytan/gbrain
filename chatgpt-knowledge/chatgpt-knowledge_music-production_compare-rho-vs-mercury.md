@@ -8,6 +8,8 @@ topic: music-production
 message_count: 8
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Compare Rho vs Mercury
 
 > **Source:** ChatGPT conversation

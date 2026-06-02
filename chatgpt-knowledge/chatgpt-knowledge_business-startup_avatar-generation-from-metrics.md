@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 18
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Avatar Generation from Metrics
 
 > **Source:** ChatGPT conversation

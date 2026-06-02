@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 10
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Close Dropdown on Edit.
 
 > **Source:** ChatGPT conversation

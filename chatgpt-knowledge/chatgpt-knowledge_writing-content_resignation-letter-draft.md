@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 14
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Resignation letter draft
 
 > **Source:** ChatGPT conversation

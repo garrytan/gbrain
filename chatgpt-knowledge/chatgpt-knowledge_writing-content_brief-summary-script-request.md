@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 7
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Brief Summary: Script Request
 
 > **Source:** ChatGPT conversation

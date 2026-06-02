@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 9
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # CI pipeline plan
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 8
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Attractiveness and Objectivity Debate
 
 > **Source:** ChatGPT conversation

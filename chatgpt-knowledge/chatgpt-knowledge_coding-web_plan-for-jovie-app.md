@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 91
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Plan for Jovie App
 
 > **Source:** ChatGPT conversation

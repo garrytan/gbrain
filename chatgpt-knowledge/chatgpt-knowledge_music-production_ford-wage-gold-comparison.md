@@ -8,6 +8,8 @@ topic: music-production
 message_count: 25
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Ford wage gold comparison
 
 > **Source:** ChatGPT conversation

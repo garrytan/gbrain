@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 11
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Costco vs Amazon products
 
 > **Source:** ChatGPT conversation

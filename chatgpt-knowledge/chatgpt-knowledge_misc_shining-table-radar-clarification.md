@@ -8,6 +8,8 @@ topic: misc
 message_count: 8
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Shining Table Radar Clarification
 
 > **Source:** ChatGPT conversation

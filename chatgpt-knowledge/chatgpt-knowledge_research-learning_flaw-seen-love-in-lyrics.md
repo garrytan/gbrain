@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 38
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Flaw-Seen Love in Lyrics
 
 > **Source:** ChatGPT conversation

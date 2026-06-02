@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 6
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Profile and Release Issues
 
 > **Source:** ChatGPT conversation

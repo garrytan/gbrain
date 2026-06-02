@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 24
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Music Publishing Deal Structure
 
 > **Source:** ChatGPT conversation

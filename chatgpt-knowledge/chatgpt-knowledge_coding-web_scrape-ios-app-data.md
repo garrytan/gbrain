@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 154
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Scrape iOS App Data
 
 > **Source:** ChatGPT conversation

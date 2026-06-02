@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 71
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # 1% of Body Weight
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 54
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # How's it going
 
 > **Source:** ChatGPT conversation

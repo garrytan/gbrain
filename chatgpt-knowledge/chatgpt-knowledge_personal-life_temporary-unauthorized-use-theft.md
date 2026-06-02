@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 12
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Temporary Unauthorized Use Theft
 
 > **Source:** ChatGPT conversation

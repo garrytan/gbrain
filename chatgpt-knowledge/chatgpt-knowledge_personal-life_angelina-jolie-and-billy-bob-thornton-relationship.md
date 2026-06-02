@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 7
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Angelina Jolie and Billy Bob Thornton Relationship
 
 > **Source:** ChatGPT conversation

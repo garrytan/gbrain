@@ -8,6 +8,8 @@ topic: music-production
 message_count: 74
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Sell drives quickly
 
 > **Source:** ChatGPT conversation

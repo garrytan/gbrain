@@ -8,6 +8,8 @@ topic: misc
 message_count: 23
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Fashion Moodboard Inspiration
 
 > **Source:** ChatGPT conversation

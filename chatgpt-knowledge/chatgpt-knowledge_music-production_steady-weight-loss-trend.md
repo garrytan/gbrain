@@ -8,6 +8,8 @@ topic: music-production
 message_count: 18
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Steady Weight Loss Trend
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 34
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Payroll and reimbursements advice
 
 > **Source:** ChatGPT conversation

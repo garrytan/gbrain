@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 32
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Sync preview with production
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 12
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Can Black People Be Irish
 
 > **Source:** ChatGPT conversation

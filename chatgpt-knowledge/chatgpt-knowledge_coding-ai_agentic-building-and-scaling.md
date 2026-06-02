@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 13
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Agentic Building and Scaling
 
 > **Source:** ChatGPT conversation

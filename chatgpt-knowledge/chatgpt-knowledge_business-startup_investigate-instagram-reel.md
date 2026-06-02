@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 7
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Investigate Instagram Reel
 
 > **Source:** ChatGPT conversation

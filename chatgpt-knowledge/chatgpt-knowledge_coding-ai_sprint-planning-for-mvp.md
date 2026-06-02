@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 24
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Sprint planning for MVP
 
 > **Source:** ChatGPT conversation

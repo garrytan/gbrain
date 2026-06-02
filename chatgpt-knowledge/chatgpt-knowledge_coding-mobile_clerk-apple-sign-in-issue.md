@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 14
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Clerk Apple Sign-In Issue
 
 > **Source:** ChatGPT conversation

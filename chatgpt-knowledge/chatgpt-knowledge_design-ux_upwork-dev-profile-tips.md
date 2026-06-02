@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 17
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Upwork Dev Profile Tips
 
 > **Source:** ChatGPT conversation

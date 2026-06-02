@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 28
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Build Laravel-Vue App: Predict Metrics
 
 > **Source:** ChatGPT conversation

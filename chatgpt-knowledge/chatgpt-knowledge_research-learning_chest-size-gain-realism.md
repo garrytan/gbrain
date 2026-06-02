@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 17
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Chest Size Gain Realism
 
 > **Source:** ChatGPT conversation

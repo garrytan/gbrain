@@ -8,6 +8,8 @@ topic: misc
 message_count: 17
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Weight After 8 Weeks
 
 > **Source:** ChatGPT conversation

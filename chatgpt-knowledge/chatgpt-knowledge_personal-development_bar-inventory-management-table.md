@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 17
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Bar Inventory Management Table
 
 > **Source:** ChatGPT conversation

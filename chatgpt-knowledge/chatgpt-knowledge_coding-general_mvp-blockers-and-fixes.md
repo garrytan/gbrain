@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 16
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # MVP blockers and fixes
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 37
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Demo Dashboard Analysis
 
 > **Source:** ChatGPT conversation

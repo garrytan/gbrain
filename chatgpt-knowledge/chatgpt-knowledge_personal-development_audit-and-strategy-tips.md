@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 8
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Audit and strategy tips
 
 > **Source:** ChatGPT conversation

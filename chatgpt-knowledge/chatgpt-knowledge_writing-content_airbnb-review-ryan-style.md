@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 10
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Airbnb review Ryan style
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 8
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # MVP landing page advice
 
 > **Source:** ChatGPT conversation

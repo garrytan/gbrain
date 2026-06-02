@@ -8,6 +8,8 @@ topic: music-production
 message_count: 10
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # GEICO Callback Mystery Explained
 
 > **Source:** ChatGPT conversation

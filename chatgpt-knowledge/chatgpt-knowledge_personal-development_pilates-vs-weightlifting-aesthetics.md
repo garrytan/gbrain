@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 14
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Pilates vs weightlifting aesthetics
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 32
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Setup Storybook with Vue
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 8
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # McDonald's worker pay
 
 > **Source:** ChatGPT conversation

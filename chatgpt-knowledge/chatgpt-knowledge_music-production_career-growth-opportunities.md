@@ -8,6 +8,8 @@ topic: music-production
 message_count: 249
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Career Growth Opportunities
 
 > **Source:** ChatGPT conversation

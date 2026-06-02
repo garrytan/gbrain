@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 14
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Native Swift vs Capacitor
 
 > **Source:** ChatGPT conversation

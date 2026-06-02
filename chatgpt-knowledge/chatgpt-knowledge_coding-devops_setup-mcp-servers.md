@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 12
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Setup MCP servers
 
 > **Source:** ChatGPT conversation

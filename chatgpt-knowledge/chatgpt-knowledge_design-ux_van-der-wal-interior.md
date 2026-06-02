@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 16
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Van der Wal Interior.
 
 > **Source:** ChatGPT conversation

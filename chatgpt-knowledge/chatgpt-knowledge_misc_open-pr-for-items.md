@@ -8,6 +8,8 @@ topic: misc
 message_count: 7
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Open PR for Items
 
 > **Source:** ChatGPT conversation

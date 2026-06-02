@@ -8,6 +8,8 @@ topic: misc
 message_count: 61
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Automated Label Printing Solution
 
 > **Source:** ChatGPT conversation

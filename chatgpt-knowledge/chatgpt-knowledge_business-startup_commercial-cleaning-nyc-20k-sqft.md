@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 7
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Commercial cleaning NYC 20k sqft
 
 > **Source:** ChatGPT conversation

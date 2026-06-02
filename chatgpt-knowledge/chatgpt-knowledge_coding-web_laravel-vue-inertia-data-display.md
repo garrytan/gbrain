@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 26
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Laravel, Vue & Inertia: Data Display
 
 > **Source:** ChatGPT conversation

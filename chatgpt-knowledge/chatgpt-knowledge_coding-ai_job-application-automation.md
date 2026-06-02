@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 6
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Job application automation
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 17
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # QNAP Shutdown Issues Troubleshooting
 
 > **Source:** ChatGPT conversation

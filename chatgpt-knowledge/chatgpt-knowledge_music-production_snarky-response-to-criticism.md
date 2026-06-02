@@ -8,6 +8,8 @@ topic: music-production
 message_count: 119
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Snarky Response to Criticism
 
 > **Source:** ChatGPT conversation

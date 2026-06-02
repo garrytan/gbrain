@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 10
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Force pnpm on Vercel
 
 > **Source:** ChatGPT conversation

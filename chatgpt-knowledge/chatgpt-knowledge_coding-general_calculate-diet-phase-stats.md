@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 15
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Calculate Diet Phase Stats
 
 > **Source:** ChatGPT conversation

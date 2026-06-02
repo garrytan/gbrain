@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 36
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Redis placement guidelines
 
 > **Source:** ChatGPT conversation

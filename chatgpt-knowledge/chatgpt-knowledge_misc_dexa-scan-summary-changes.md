@@ -8,6 +8,8 @@ topic: misc
 message_count: 28
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # DEXA scan summary changes
 
 > **Source:** ChatGPT conversation

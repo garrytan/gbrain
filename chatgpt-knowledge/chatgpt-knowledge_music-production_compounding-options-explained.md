@@ -8,6 +8,8 @@ topic: music-production
 message_count: 65
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Compounding options explained
 
 > **Source:** ChatGPT conversation

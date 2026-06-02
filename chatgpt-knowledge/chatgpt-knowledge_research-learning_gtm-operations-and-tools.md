@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 58
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # GTM Operations and Tools
 
 > **Source:** ChatGPT conversation

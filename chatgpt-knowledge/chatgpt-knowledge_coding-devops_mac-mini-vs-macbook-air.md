@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 26
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Mac Mini vs MacBook Air
 
 > **Source:** ChatGPT conversation

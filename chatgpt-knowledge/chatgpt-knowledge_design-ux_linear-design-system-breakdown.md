@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 9
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Linear Design System Breakdown
 
 > **Source:** ChatGPT conversation

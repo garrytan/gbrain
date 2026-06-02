@@ -9,6 +9,8 @@ topic: coding-general
 message_count: 16
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Automated reply for new messages
 
 

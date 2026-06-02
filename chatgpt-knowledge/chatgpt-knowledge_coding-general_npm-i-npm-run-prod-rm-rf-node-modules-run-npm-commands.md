@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 8
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # npm i && npm run prod && rm -rf node_modules: Run npm commands
 
 > **Source:** ChatGPT conversation

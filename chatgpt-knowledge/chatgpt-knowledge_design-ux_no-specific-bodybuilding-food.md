@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 18
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # No specific bodybuilding food.
 
 > **Source:** ChatGPT conversation

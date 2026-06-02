@@ -8,6 +8,8 @@ topic: misc
 message_count: 28
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Current Vault Menu
 
 > **Source:** ChatGPT conversation

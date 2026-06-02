@@ -8,6 +8,8 @@ topic: music-production
 message_count: 24
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Fact check Reznor SM-58
 
 > **Source:** ChatGPT conversation

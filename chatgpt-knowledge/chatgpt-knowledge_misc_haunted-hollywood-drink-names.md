@@ -8,6 +8,8 @@ topic: misc
 message_count: 81
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Haunted Hollywood Drink Names
 
 > **Source:** ChatGPT conversation

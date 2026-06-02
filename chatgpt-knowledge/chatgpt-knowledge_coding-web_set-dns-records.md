@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 10
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Set DNS records
 
 > **Source:** ChatGPT conversation

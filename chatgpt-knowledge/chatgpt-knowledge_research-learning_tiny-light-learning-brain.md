@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 14
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Tiny Light Learning Brain.
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 35
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Fix 500 Supabase Error
 
 > **Source:** ChatGPT conversation

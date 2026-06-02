@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 9
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Back Pain Relief Tips
 
 > **Source:** ChatGPT conversation

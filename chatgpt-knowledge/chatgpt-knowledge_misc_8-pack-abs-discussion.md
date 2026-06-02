@@ -8,6 +8,8 @@ topic: misc
 message_count: 32
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # 8-Pack Abs Discussion
 
 > **Source:** ChatGPT conversation

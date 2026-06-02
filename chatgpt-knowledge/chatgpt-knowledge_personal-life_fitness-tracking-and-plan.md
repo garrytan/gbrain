@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 11
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Fitness Tracking and Plan
 
 > **Source:** ChatGPT conversation

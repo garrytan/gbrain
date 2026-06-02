@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 14
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # Fix email validation function
 
 > **Source:** ChatGPT conversation

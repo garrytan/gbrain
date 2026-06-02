@@ -8,6 +8,8 @@ topic: misc
 message_count: 14
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Products with Lacprodan BLG-100
 
 > **Source:** ChatGPT conversation

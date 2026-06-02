@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 110
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Jovie link-in-bio plan
 
 > **Source:** ChatGPT conversation

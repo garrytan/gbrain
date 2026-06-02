@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 9
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Search for Max Martin Contract
 
 > **Source:** ChatGPT conversation

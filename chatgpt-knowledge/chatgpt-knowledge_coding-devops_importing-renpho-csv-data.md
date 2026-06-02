@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 66
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Importing Renpho CSV Data
 
 > **Source:** ChatGPT conversation

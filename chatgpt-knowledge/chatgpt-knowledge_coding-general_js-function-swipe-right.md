@@ -8,6 +8,8 @@ topic: coding-general
 message_count: 15
 tags: [chatgpt, knowledge, coding-general]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-general]]
+
 # JS Function: Swipe Right
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: personal-development
 message_count: 10
 tags: [chatgpt, knowledge, personal-development]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-development]]
+
 # Remote social media jobs
 
 > **Source:** ChatGPT conversation

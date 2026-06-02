@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 15
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # Suno User Conversion Potential
 
 > **Source:** ChatGPT conversation

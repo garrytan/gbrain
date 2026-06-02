@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 12
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Waist-to-hip ratio attractiveness
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: personal-life
 message_count: 13
 tags: [chatgpt, knowledge, personal-life]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/personal-life]]
+
 # Model in Popcorn Bath
 
 > **Source:** ChatGPT conversation

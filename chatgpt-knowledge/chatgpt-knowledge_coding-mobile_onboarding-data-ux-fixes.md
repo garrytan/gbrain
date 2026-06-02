@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 56
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Onboarding Data & UX Fixes
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 1616
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Social arbitrage methodology
 
 > **Source:** ChatGPT conversation

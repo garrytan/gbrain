@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 26
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Workout Photo Caption
 
 > **Source:** ChatGPT conversation

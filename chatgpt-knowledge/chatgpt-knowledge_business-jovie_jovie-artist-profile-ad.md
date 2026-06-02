@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 18
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Jovie Artist Profile Ad
 
 > **Source:** ChatGPT conversation

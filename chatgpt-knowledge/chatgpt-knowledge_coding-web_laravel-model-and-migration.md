@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 38
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Laravel Model and Migration
 
 > **Source:** ChatGPT conversation

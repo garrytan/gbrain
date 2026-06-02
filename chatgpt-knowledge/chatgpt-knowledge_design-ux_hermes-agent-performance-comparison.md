@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 128
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Hermes Agent Performance Comparison
 
 > **Source:** ChatGPT conversation

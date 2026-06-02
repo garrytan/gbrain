@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 22
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Body Composition Change Summary
 
 > **Source:** ChatGPT conversation

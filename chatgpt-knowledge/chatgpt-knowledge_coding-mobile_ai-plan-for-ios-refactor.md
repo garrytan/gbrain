@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 12
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # AI plan for iOS refactor
 
 > **Source:** ChatGPT conversation

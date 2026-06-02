@@ -8,6 +8,8 @@ topic: misc
 message_count: 26
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Sam and Cat Filming
 
 > **Source:** ChatGPT conversation

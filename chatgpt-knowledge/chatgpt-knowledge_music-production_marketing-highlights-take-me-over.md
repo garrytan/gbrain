@@ -8,6 +8,8 @@ topic: music-production
 message_count: 14
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Marketing Highlights: Take Me Over
 
 > **Source:** ChatGPT conversation

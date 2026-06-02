@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 40
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # YC Description Comparison
 
 > **Source:** ChatGPT conversation

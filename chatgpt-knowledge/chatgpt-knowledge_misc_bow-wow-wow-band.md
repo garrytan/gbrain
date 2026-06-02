@@ -8,6 +8,8 @@ topic: misc
 message_count: 18
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Bow Wow Wow Band
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: misc
 message_count: 9
 tags: [chatgpt, knowledge, misc]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/misc]]
+
 # Kirk Baxter's Film Work
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: music-production
 message_count: 11
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Camera kit inventory review
 
 > **Source:** ChatGPT conversation

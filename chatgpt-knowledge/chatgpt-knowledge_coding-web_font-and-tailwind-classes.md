@@ -8,6 +8,8 @@ topic: coding-web
 message_count: 48
 tags: [chatgpt, knowledge, coding-web]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-web]]
+
 # Font and Tailwind classes
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 12
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # Work-from-home job options
 
 > **Source:** ChatGPT conversation

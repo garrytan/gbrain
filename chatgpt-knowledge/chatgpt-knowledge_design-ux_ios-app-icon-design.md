@@ -8,6 +8,8 @@ topic: design-ux
 message_count: 10
 tags: [chatgpt, knowledge, design-ux]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/design-ux]]
+
 # iOS app icon design
 
 > **Source:** ChatGPT conversation

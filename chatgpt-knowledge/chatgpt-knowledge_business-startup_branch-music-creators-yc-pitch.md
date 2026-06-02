@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 19
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Branch · Music Creators YC Pitch
 
 > **Source:** ChatGPT conversation

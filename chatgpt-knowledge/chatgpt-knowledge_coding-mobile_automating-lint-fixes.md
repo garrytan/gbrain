@@ -8,6 +8,8 @@ topic: coding-mobile
 message_count: 10
 tags: [chatgpt, knowledge, coding-mobile]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-mobile]]
+
 # Automating lint fixes
 
 > **Source:** ChatGPT conversation

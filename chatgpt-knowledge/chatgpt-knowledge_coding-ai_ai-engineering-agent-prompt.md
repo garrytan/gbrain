@@ -8,6 +8,8 @@ topic: coding-ai
 message_count: 42
 tags: [chatgpt, knowledge, coding-ai]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-ai]]
+
 # AI engineering agent prompt
 
 > **Source:** ChatGPT conversation

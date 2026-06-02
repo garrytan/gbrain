@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 7
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Update ticket numbers
 
 > **Source:** ChatGPT conversation

@@ -8,6 +8,8 @@ topic: music-production
 message_count: 18
 tags: [chatgpt, knowledge, music-production]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/music-production]]
+
 # Muffintop Helmet Designs
 
 > **Source:** ChatGPT conversation

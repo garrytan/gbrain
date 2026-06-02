@@ -8,6 +8,8 @@ topic: research-learning
 message_count: 7
 tags: [chatgpt, knowledge, research-learning]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/research-learning]]
+
 # Dog Show Hollywood Bowl
 
 > **Source:** ChatGPT conversation

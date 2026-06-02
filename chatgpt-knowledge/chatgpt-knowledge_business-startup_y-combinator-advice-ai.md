@@ -8,6 +8,8 @@ topic: business-startup
 message_count: 22
 tags: [chatgpt, knowledge, business-startup]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-startup]]
+
 # Y Combinator advice AI
 
 > **Source:** ChatGPT conversation

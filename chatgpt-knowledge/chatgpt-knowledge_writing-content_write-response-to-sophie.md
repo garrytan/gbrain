@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 6
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Write response to Sophie
 
 > **Source:** ChatGPT conversation

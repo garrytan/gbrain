@@ -8,6 +8,8 @@ topic: writing-content
 message_count: 9
 tags: [chatgpt, knowledge, writing-content]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/writing-content]]
+
 # Apple vs Orange Cartoon
 
 > **Source:** ChatGPT conversation

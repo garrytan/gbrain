@@ -8,6 +8,8 @@ topic: coding-devops
 message_count: 7
 tags: [chatgpt, knowledge, coding-devops]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/coding-devops]]
+
 # Towing Laws and Fees
 
 > **Source:** ChatGPT conversation

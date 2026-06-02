@@ -8,6 +8,8 @@ topic: business-jovie
 message_count: 7
 tags: [chatgpt, knowledge, business-jovie]
 ---
+**Topic:** [[chatgpt-knowledge/_topics/business-jovie]]
+
 # Crossover Between Cast and Crew
 
 > **Source:** ChatGPT conversation
