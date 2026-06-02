@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GBrain 審核</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #0f0f0f; color: #e0e0e0; padding: 24px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #555; margin-bottom: 24px; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; }
+  .refresh-btn { background: #1e1e1e; border: 1px solid #2a2a2a; color: #888; border-radius: 6px; padding: 6px 14px; font-size: 12px; cursor: pointer; }
+  .refresh-btn:hover { background: #2a2a2a; color: #ccc; }
+  .count-badge { font-size: 12px; color: #555; }
+
+  section { margin-bottom: 32px; }
+  section h2 { font-size: 11px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; border-bottom: 1px solid #1a1a1a; padding-bottom: 6px; }
+
+  /* Card */
+  .card { background: #141414; border: 1px solid #222; border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+  .card.done-connect { border-color: #1a4a2a; }
+  .card.done-reject  { border-color: #3a1a1a; }
+  .card.done-later   { border-color: #2a2a1a; }
+
+  .card-header { display: flex; align-items: flex-start; gap: 12px; padding: 13px 16px; cursor: pointer; }
+  .card-header:hover { background: #191919; }
+
+  .card-meta { flex: 1; min-width: 0; }
+  .card-title { font-size: 13px; color: #bbb; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .slug-tag { font-family: 'SF Mono', monospace; font-size: 11px; background: #1e1e1e; padding: 2px 6px; border-radius: 4px; color: #777; }
+  .type-chip { font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 600; }
+  .type-link   { background: #1a2a3a; color: #6aabdd; }
+  .type-signal { background: #2a1a3a; color: #aa6add; }
+  .type-audit  { background: #1a3a2a; color: #6add9a; }
+  .card-reason { font-size: 12px; color: #555; margin-top: 2px; }
+  .status-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-top: 6px; display: inline-block; }
+  .badge-connect { background: #1d6a38; color: #7dda9a; }
+  .badge-reject  { background: #5a2020; color: #e08080; }
+  .badge-later   { background: #3a3a18; color: #c8c860; }
+
+  .expand-icon { font-size: 11px; color: #333; flex-shrink: 0; margin-top: 2px; transition: transform 0.15s; }
+  .card.open .expand-icon { transform: rotate(180deg); }
+
+  .btns { display: flex; gap: 6px; flex-shrink: 0; }
+  button { border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; font-weight: 500; }
+  button:hover { opacity: 0.8; }
+  .btn-connect { background: #1d6a38; color: #7dda9a; }
+  .btn-reject  { background: #5a2020; color: #e08080; }
+  .btn-later   { background: #3a3a18; color: #c8c860; }
+
+  /* Page preview */
+  .pages-panel { display: none; border-top: 1px solid #1a1a1a; }
+  .card.open .pages-panel { display: block; }
+  .page-preview { padding: 14px 16px; border-bottom: 1px solid #141414; }
+  .page-preview:last-child { border-bottom: none; }
+  .page-preview-title { font-family: 'SF Mono', monospace; font-size: 11px; color: #555; margin-bottom: 8px; }
+  .page-body { font-size: 12px; color: #777; line-height: 1.7; white-space: pre-wrap; max-height: 280px; overflow-y: auto; border: 1px solid #1a1a1a; border-radius: 6px; padding: 10px 12px; background: #0d0d0d; }
+
+  /* Execute */
+  .exec-bar { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  .exec-btn { background: #1d6a38; color: #7dda9a; border: none; border-radius: 8px; padding: 9px 22px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .exec-btn:hover { opacity: 0.85; }
+  .exec-btn:disabled { opacity: 0.35; cursor: default; }
+  #exec-result { margin-top: 10px; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.8; }
+
+  .empty-state { color: #333; font-size: 13px; padding: 20px 0; text-align: center; }
+  .loading { color: #444; font-size: 13px; padding: 16px 0; }
+</style>
+</head>
+<body>
+
+<h1>GBrain 審核</h1>
+<p class="subtitle" id="subtitle">載入中…</p>
+
+<div class="toolbar">
+  <button class="refresh-btn" onclick="loadQueue()">↻ 重新整理</button>
+  <span class="count-badge" id="count-badge"></span>
+</div>
+
+<section>
+  <h2>待審項目</h2>
+  <div id="cards"><div class="loading">讀取 review-queue…</div></div>
+</section>
+
+<div class="exec-bar">
+  <button class="exec-btn" id="execBtn" onclick="execAll()">套用所有決定</button>
+</div>
+<div id="exec-result"></div>
+
+<script>
+const BASE = "https://gbrain-production-18fa.up.railway.app";
+const QUEUE_PREFIX = "wiki/review-queue/";
+
+const decisions = {};
+const pageCache = {};
+let items = [];
+let openCard = null;
+
+async function proxy(path) {
+  const res = await fetch(`/proxy?path=${encodeURIComponent(path)}`);
+  return res.json();
+}
+
+async function fetchPage(slug) {
+  if (pageCache[slug] !== undefined) return pageCache[slug];
+  try {
+    const d = await proxy(`page?slug=${encodeURIComponent(slug)}`);
+    pageCache[slug] = d.page ? { title: d.page.title, body: d.page.compiled_truth } : null;
+  } catch { pageCache[slug] = null; }
+  return pageCache[slug];
+}
+
+async function loadQueue() {
+  document.getElementById('cards').innerHTML = '<div class="loading">讀取 review-queue…</div>';
+  items = [];
+  try {
+    const d = await proxy(`pages?type=task&limit=200`);
+    const queuePages = (d.pages || []).filter(p => p.slug.startsWith(QUEUE_PREFIX));
+    // fetch in batches of 5, max 10 items
+    const toFetch = queuePages.slice(0, 10);
+    const fetched = [];
+    for (let i = 0; i < toFetch.length; i += 5) {
+      const batch = await Promise.all(toFetch.slice(i, i+5).map(p => proxy(`page?slug=${encodeURIComponent(p.slug)}`)));
+      fetched.push(...batch);
+    }
+    items = fetched
+      .map(d => d.page)
+      .filter(p => p && p.frontmatter?.status === 'pending')
+      .map(p => ({
+        id: p.slug,
+        slug: p.slug,
+        review_type: p.frontmatter.review_type || 'link',
+        from: p.frontmatter.from,
+        to: p.frontmatter.to,
+        target: p.frontmatter.target,
+        suggested: p.frontmatter.suggested,
+        reason: p.frontmatter.reason || '',
+        title: p.title,
+      }));
+  } catch(e) {
+    document.getElementById('cards').innerHTML = `<div class="empty-state">讀取失敗：${e.message}</div>`;
+    return;
+  }
+  document.getElementById('subtitle').textContent = `wiki/review-queue/ 動態載入`;
+  document.getElementById('count-badge').textContent = items.length ? `${items.length} 項待審` : '';
+  renderCards();
+}
+
+function renderCards() {
+  const container = document.getElementById('cards');
+  if (!items.length) {
+    container.innerHTML = '<div class="empty-state">✓ 無待審項目</div>';
+    return;
+  }
+  container.innerHTML = '';
+  items.forEach(item => {
+    const d = decisions[item.id];
+    const card = document.createElement('div');
+    card.className = 'card' + (d ? ` done-${d}` : '');
+    card.id = `card-${CSS.escape(item.id)}`;
+
+    const typeLabel = { link: '連結', signal: 'Signal', audit: '對帳' }[item.review_type] || item.review_type;
+    const typeClass = `type-${item.review_type}`;
+
+    let titleHtml = '';
+    if (item.review_type === 'link') {
+      titleHtml = `<span class="slug-tag">${item.from}</span> <span style="color:#333">↔</span> <span class="slug-tag">${item.to}</span>`;
+    } else if (item.review_type === 'signal') {
+      titleHtml = `<span class="slug-tag">${item.target}</span> → <span style="color:#aa6add">signal:${item.suggested}</span>`;
+    } else {
+      titleHtml = `<span class="slug-tag">${item.title}</span>`;
+    }
+
+    const btnLabel = item.review_type === 'signal' ? '標' : '連';
+    card.innerHTML = `
+      <div class="card-header" onclick="toggleCard('${item.id.replace(/'/g, "\\'")}')">
+        <div class="card-meta">
+          <div class="card-title">
+            <span class="type-chip ${typeClass}">${typeLabel}</span>
+            ${titleHtml}
+          </div>
+          <div class="card-reason">${item.reason}</div>
+          ${d ? `<span class="status-badge badge-${d}">${d==='connect'?'✅ 確認':d==='reject'?'❌ 拒絕':'⏳ 晚點'}</span>` : ''}
+        </div>
+        <div class="btns">
+          <button class="btn-connect" onclick="decide('${item.id.replace(/'/g, "\\'")}','connect',event)">${btnLabel}</button>
+          <button class="btn-reject" onclick="decide('${item.id.replace(/'/g, "\\'")}','reject',event)">否</button>
+          <button class="btn-later" onclick="decide('${item.id.replace(/'/g, "\\'")}','later',event)">晚點</button>
+        </div>
+        <span class="expand-icon">▼</span>
+      </div>
+      <div class="pages-panel" id="panel-${CSS.escape(item.id)}">
+        ${item.review_type === 'link' ? `
+          <div class="page-preview"><div class="page-preview-title">${item.from}</div><div class="page-body" id="body-from-${CSS.escape(item.id)}">載入中…</div></div>
+          <div class="page-preview"><div class="page-preview-title">${item.to}</div><div class="page-body" id="body-to-${CSS.escape(item.id)}">載入中…</div></div>
+        ` : item.review_type === 'signal' ? `
+          <div class="page-preview"><div class="page-preview-title">${item.target}</div><div class="page-body" id="body-target-${CSS.escape(item.id)}">載入中…</div></div>
+        ` : ''}
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function toggleCard(id) {
+  const card = document.getElementById(`card-${CSS.escape(id)}`);
+  const isOpen = card.classList.contains('open');
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('open'));
+  if (!isOpen) {
+    card.classList.add('open');
+    openCard = id;
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+    if (item.review_type === 'link') {
+      loadBody(`body-from-${CSS.escape(id)}`, item.from);
+      loadBody(`body-to-${CSS.escape(id)}`, item.to);
+    } else if (item.review_type === 'signal') {
+      loadBody(`body-target-${CSS.escape(id)}`, item.target);
+    }
+  } else { openCard = null; }
+}
+
+async function loadBody(elemId, slug) {
+  const el = document.getElementById(elemId);
+  if (!el) return;
+  const data = await fetchPage(slug);
+  el.textContent = data ? data.body : '（頁面不存在）';
+}
+
+function decide(id, choice, event) {
+  event.stopPropagation();
+  decisions[id] = choice;
+  renderCards();
+  if (openCard === id) setTimeout(() => toggleCard(id), 10);
+}
+
+async function execAll() {
+  const toExec = items.filter(i => decisions[i.id] && decisions[i.id] !== 'later');
+  if (!toExec.length) { alert('沒有確認或拒絕的項目'); return; }
+  const btn = document.getElementById('execBtn');
+  btn.disabled = true; btn.textContent = '執行中…';
+  const result = document.getElementById('exec-result');
+  result.innerHTML = '';
+
+  for (const item of toExec) {
+    const d = decisions[item.id];
+    try {
+      if (d === 'connect' && item.review_type === 'link') {
+        for (const [from, to] of [[item.from, item.to], [item.to, item.from]]) {
+          await proxy(`write?action=add_link&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&link_type=relates_to`);
+        }
+        await updateQueueItem(item.id, 'done');
+        result.innerHTML += `<div style="color:#7dda9a">✅ 連結建立：${item.from} ↔ ${item.to}</div>`;
+      } else if (d === 'connect' && item.review_type === 'signal') {
+        await proxy(`write?action=add_tag&slug=${encodeURIComponent(item.target)}&tag=signal:${item.suggested}`);
+        await updateQueueItem(item.id, 'done');
+        result.innerHTML += `<div style="color:#aa6add">✅ 標記：${item.target} → signal:${item.suggested}</div>`;
+      } else if (d === 'reject') {
+        await updateQueueItem(item.id, 'rejected');
+        result.innerHTML += `<div style="color:#666">❌ 拒絕：${item.title}</div>`;
+      }
+    } catch(e) {
+      result.innerHTML += `<div style="color:#e08080">⚠️ 失敗：${item.id} — ${e.message}</div>`;
+    }
+  }
+  btn.disabled = false; btn.textContent = '套用所有決定';
+  setTimeout(loadQueue, 1000);
+}
+
+async function updateQueueItem(slug, newStatus) {
+  // patch the frontmatter status field via put_page
+  const d = await proxy(`page?slug=${encodeURIComponent(slug)}`);
+  if (!d.page) return;
+  const p = d.page;
+  const newFm = { ...p.frontmatter, status: newStatus };
+  const fmLines = Object.entries(newFm).map(([k,v]) => `${k}: ${v}`).join('\n');
+  const newContent = `---\n${fmLines}\n---\n\n${p.compiled_truth}`;
+  await fetch(`/proxy-write?slug=${encodeURIComponent(slug)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: newContent
+  });
+}
+
+loadQueue();
+</script>
+</body>
+</html>
