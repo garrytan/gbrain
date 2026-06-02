@@ -6,18 +6,18 @@ All notable changes to MBrain will be documented in this file.
 
 ### Added
 
-- **MBrain can now auto-promote eligible Memory Inbox candidates to canonical memory — no per-candidate clicking.**
+- **MBrain can now auto-promote eligible Memory Inbox candidates through inbox review — no per-candidate clicking.**
   Run `mbrain auto-promote` (preview by default; pass `--apply` to write) and your
   installed `claude`/`codex` CLI judges each eligible candidate with a JSON-only
-  verdict, then a deterministic gate promotes the confident ones through the
-  existing memory-governance path (advance → promote) — the CLI never holds
-  canonical-write tools, and all candidate/context text is treated as untrusted.
+  verdict, then a deterministic gate advances and promotes the confident ones in
+  the existing Memory Inbox workflow — the CLI never holds canonical-write tools,
+  and all candidate/context text is treated as untrusted.
   Verdicts are cached (escalate-once), risky or low-evidence candidates get one
   stronger-model escalation pass, and `secret`/`unknown` candidates are never
   eligible. Opt-in and conservative by design: `auto_promote.enabled` defaults
-  off, the confidence threshold defaults to 0.8, and every auto-write is tagged
-  `actor=mbrain:auto_promote` and reversible via the mutation ledger within the
-  restore window. A config-gated `auto_promote` dream phase (order 15) is wired in
+  off, the confidence threshold defaults to 0.8, and the current implementation
+  promotes inbox rows only; downstream canonical handoff/rollback remains a
+  separate governed step. A config-gated `auto_promote` dream phase (order 15) is wired in
   as well; it safely no-ops until a runner dependency is injected, so nightly
   autopilot promotion is a planned follow-up and the CLI command is the current
   entry point.

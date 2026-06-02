@@ -176,6 +176,31 @@ describe('dream cycle phase runner', () => {
     });
   });
 
+  test('auto-promote phase forces dry-run unless write_candidates is enabled', async () => {
+    const calls: any[] = [];
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-05-21T10:00:00.000Z',
+      dry_run: false,
+      write_candidates: false,
+      allow_local_runner: true,
+    }, {
+      autoPromote: {
+        run: async (input) => {
+          calls.push(input);
+          return { counts: { selected_low_risk: 1 } };
+        },
+      },
+    });
+
+    expect(calls[0]).toMatchObject({ dry_run: true });
+    expect(result.llm_or_runner_used).toBe(true);
+    expect(result.phases.find((phase) => phase.family === 'auto_promote')).toMatchObject({
+      status: 'warn',
+      llm_or_runner_used: true,
+    });
+  });
+
   test('read-only landed phases warn only on actionable counts', async () => {
     const engine = {
       sql: {

@@ -9,7 +9,7 @@ describe('auto-promote digest section', () => {
       auto_promote_summary: { auto_promoted: 3, escalated: 1, deferred: 2, excluded: 4, generated_at: '2026-06-01T00:00:00Z' },
     } as any);
     const text = formatMemoryReviewReport(report);
-    expect(text).toContain('Auto-promoted');
+    expect(text).toContain('Inbox-promoted');
     expect(text).toContain('3');
   });
   it('omits the section when not provided', () => {

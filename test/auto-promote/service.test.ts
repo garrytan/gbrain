@@ -9,7 +9,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 
 const NOW = '2026-06-01T00:00:00Z';
 
-async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1') {
+async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1', overrides: Record<string, unknown> = {}) {
   return engine.createMemoryCandidateEntry({
     id, scope_id: 'workspace:default', candidate_type: 'fact',
     proposed_content: 'Acme raised a seed round.',
@@ -19,6 +19,7 @@ async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1') {
     sensitivity: 'work', status: 'captured',
     target_object_type: 'curated_note', target_object_id: 'concepts/acme',
     reviewed_at: null, review_reason: null,
+    ...overrides,
   });
 }
 async function withEngine(fn: (engine: PGLiteEngine) => Promise<void>) {
@@ -62,6 +63,65 @@ describe('runAutoPromote', () => {
       await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: counting, contextLoader: stubContext, runner: { kind: 'claude_code' } as any });
       await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: counting, contextLoader: stubContext, runner: { kind: 'claude_code' } as any });
       expect(calls).toBe(1);
+    });
+  });
+  it('does not persist verdict cache rows during dry-run', async () => {
+    await withEngine(async (engine) => {
+      await seedEligibleCandidate(engine);
+      const cfg = { ...defaultAutoPromoteConfig(), enabled: true, dry_run: true };
+
+      await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: stubExecutor('defer', 0.3), contextLoader: stubContext, runner: { kind: 'claude_code' } as any });
+      await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: stubExecutor('defer', 0.3), contextLoader: stubContext, runner: { kind: 'claude_code' } as any });
+
+      const rows = await (engine as any).db.query('SELECT * FROM auto_promote_verdicts');
+      expect(rows.rows).toHaveLength(0);
+    });
+  });
+  it('misses cache when source refs or target context change', async () => {
+    await withEngine(async (engine) => {
+      await seedEligibleCandidate(engine);
+      let context = 'old canonical context';
+      let calls = 0;
+      const executor = async (req: any) => {
+        calls++;
+        return stubExecutor('defer', 0.3)(req);
+      };
+      const cfg = { ...defaultAutoPromoteConfig(), enabled: true };
+
+      await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: executor, contextLoader: async () => context, runner: { kind: 'claude_code' } as any });
+      context = 'new canonical context';
+      await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: executor, contextLoader: async () => context, runner: { kind: 'claude_code' } as any });
+      await engine.updateMemoryCandidateEntryStatus('cand-1', { status: 'candidate', reviewed_at: NOW, review_reason: 'source refs changed' });
+      const current = await engine.getMemoryCandidateEntry('cand-1');
+      await engine.deleteMemoryCandidateEntry('cand-1');
+      await engine.createMemoryCandidateEntry({
+        ...current!,
+        source_refs: ['User, direct message, 2026-04-23 3:01 PM KST'],
+        status: 'candidate',
+      } as any);
+      await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: executor, contextLoader: async () => context, runner: { kind: 'claude_code' } as any });
+
+      expect(calls).toBe(3);
+    });
+  });
+  it('passes escalation_model to risky candidate judge requests', async () => {
+    await withEngine(async (engine) => {
+      await seedEligibleCandidate(engine, 'risky', { extraction_kind: 'inferred' });
+      const models: Array<string | null | undefined> = [];
+      const executor = async (req: any) => {
+        models.push(req.model);
+        return stubExecutor('defer', 0.3)(req);
+      };
+      const cfg = {
+        ...defaultAutoPromoteConfig(),
+        enabled: true,
+        first_pass_model: 'first-pass',
+        escalation_model: 'escalation',
+      };
+
+      await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: executor, contextLoader: stubContext, runner: { kind: 'claude_code' } as any });
+
+      expect(models).toEqual(['escalation']);
     });
   });
   it('does nothing when disabled', async () => {

@@ -356,8 +356,8 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
   if (report.auto_promote_summary) {
     const s = report.auto_promote_summary;
     lines.push('', 'Auto-promotion (non-blocking)');
-    lines.push(`- Auto-promoted: ${s.auto_promoted} | escalated: ${s.escalated} | deferred: ${s.deferred} | excluded: ${s.excluded}`);
-    lines.push('- Revert via mutation ledger (actor=mbrain:auto_promote) within the restore window.');
+    lines.push(`- Inbox-promoted: ${s.auto_promoted} | escalated: ${s.escalated} | deferred: ${s.deferred} | excluded: ${s.excluded}`);
+    lines.push('- Review promoted inbox candidates before downstream canonical handoff.');
   }
 
   return lines.join('\n');

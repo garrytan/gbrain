@@ -522,7 +522,7 @@ async function runAutoPromotePhase(
   const result = await deps.autoPromote.run({
     scope_id: context.input.scope_id,
     now: context.input.now,
-    dry_run: context.input.dry_run,
+    dry_run: context.input.dry_run || !context.input.write_candidates,
   });
   const counts = result.counts ?? {};
   const hasActionableWork = Object.values(counts).some((count) => count > 0);
@@ -531,7 +531,7 @@ async function runAutoPromotePhase(
     counts,
     next_recommended_action: hasActionableWork ? 'Review auto-promotion results.' : null,
     canonical_mutations: 0,
-    llm_or_runner_used: false,
+    llm_or_runner_used: true,
   };
 }
 

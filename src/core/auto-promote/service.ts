@@ -72,7 +72,16 @@ async function judge(
   c: { id: string; proposed_content: string; target_object_id: string | null; source_refs: string[] },
   _model: string | null,
 ): Promise<PromotionVerdict | null> {
-  const contentHash = sha256(c.proposed_content);
+  const targetContext = await input.contextLoader(c.target_object_id ?? '');
+  const contentHash = promptInputHash({
+    candidate_content: c.proposed_content,
+    source_refs: c.source_refs,
+    target_ref: c.target_object_id ?? '(unknown)',
+    target_context: targetContext,
+    runner_kind: input.runner.kind,
+    model: _model,
+    prompt_version: PROMPT_VERSION,
+  });
   const key = { candidate_id: c.id, content_hash: contentHash, runner_kind: input.runner.kind, prompt_version: PROMPT_VERSION };
   const cached = await input.engine.getAutoPromoteVerdict(key);
   if (cached) {
@@ -82,7 +91,7 @@ async function judge(
   const prompt = buildPromotionReviewPrompt({
     candidate_content: c.proposed_content,
     target_ref: c.target_object_id ?? '(unknown)',
-    target_context: await input.contextLoader(c.target_object_id ?? ''),
+    target_context: targetContext,
     source_refs: c.source_refs,
   });
   const toolPolicy = evaluateRunnerToolCall({ task_type: 'candidate_promotion_review', tool_name: 'emit_promotion_verdict' });
@@ -94,11 +103,14 @@ async function judge(
     input: '',
     tool_policy: toolPolicy,
     allowed_tools: ['emit_promotion_verdict'],
+    model: _model,
   });
   if (exec.status !== 'succeeded') return null;
   const parsed = parsePromotionVerdict(exec.output, c.id);
   if (!parsed.ok) return null;
-  await input.engine.putAutoPromoteVerdict({ ...key, decision: parsed.verdict.decision, confidence: parsed.verdict.confidence, reasoning: parsed.verdict.reasoning, judged_at: input.now });
+  if (!input.config.dry_run) {
+    await input.engine.putAutoPromoteVerdict({ ...key, decision: parsed.verdict.decision, confidence: parsed.verdict.confidence, reasoning: parsed.verdict.reasoning, judged_at: input.now });
+  }
   return parsed.verdict;
 }
 
@@ -106,3 +118,12 @@ function zeroCounts(): RunAutoPromoteResult['counts'] {
   return { selected_low_risk: 0, selected_risky: 0, auto_promoted: 0, escalated: 0, deferred: 0, excluded: 0 };
 }
 function sha256(value: string): string { return createHash('sha256').update(value).digest('hex'); }
+function promptInputHash(input: Record<string, unknown>): string {
+  const sourceRefs = Array.isArray(input.source_refs)
+    ? input.source_refs.filter((ref): ref is string => typeof ref === 'string').sort()
+    : [];
+  return sha256(JSON.stringify({
+    ...input,
+    source_refs: sourceRefs,
+  }));
+}

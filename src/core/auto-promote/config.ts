@@ -32,7 +32,7 @@ export function defaultAutoPromoteConfig(): AutoPromoteConfig {
     confidence_threshold: 0.8,
     eligibility: {
       evidence_kinds: ['direct_user_statement', 'source_extracted'],
-      sensitivities: ['public', 'work', 'personal'],
+      sensitivities: ['public', 'work'],
       allow_contradictions: false,
     },
     escalation: { enabled: true, max_per_cycle: 20 },

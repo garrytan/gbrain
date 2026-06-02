@@ -128,6 +128,20 @@ const DREAM_CLI_SPEC: Operation = {
   cliHints: { name: 'dream' },
 };
 
+const AUTO_PROMOTE_CLI_SPEC: Operation = {
+  name: 'auto-promote',
+  description: 'Preview or apply eligible Memory Inbox candidate promotion.',
+  params: {
+    apply: { type: 'boolean', description: 'Apply eligible inbox promotions' },
+    dry_run: { type: 'boolean', description: 'Preview without writing promotions or verdict cache rows' },
+    scope_id: { type: 'string', description: 'Memory scope id (default: workspace:default)' },
+    limit: { type: 'number', description: 'Maximum candidates to review' },
+    json: { type: 'boolean', description: 'Print JSON output' },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'auto-promote' },
+};
+
 const SYNC_CLI_SPEC: Operation = {
   name: 'sync_brain',
   description: 'Sync git repo to brain (incremental). CLI also supports a watch-mode extension for repeated polling.',
@@ -152,6 +166,7 @@ const CLI_ONLY_SPECS: Partial<Record<string, Operation>> = {
   doctor: DOCTOR_CLI_SPEC,
   migrate: MIGRATE_CLI_SPEC,
   'memory-report': MEMORY_REPORT_CLI_SPEC,
+  'auto-promote': AUTO_PROMOTE_CLI_SPEC,
   'setup-agent': SETUP_AGENT_CLI_SPEC,
 };
 

@@ -22,8 +22,8 @@ export type ParseVerdictResult =
 const DECISIONS: ReadonlySet<string> = new Set(['promote', 'reject', 'defer']);
 
 export function parsePromotionVerdict(raw: string, candidateId: string): ParseVerdictResult {
-  const json = extractJsonObject(raw);
-  if (json === null) return { ok: false, reason: 'no_json_object_found' };
+  const json = normalizeJsonPayload(raw);
+  if (json === null) return { ok: false, reason: 'not_json_only' };
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -34,6 +34,8 @@ export function parsePromotionVerdict(raw: string, candidateId: string): ParseVe
     return { ok: false, reason: 'not_an_object' };
   }
   const o = parsed as Record<string, unknown>;
+  const envelopeVerdict = parseVerdictEnvelope(o, candidateId);
+  if (envelopeVerdict) return envelopeVerdict;
   if (typeof o.decision !== 'string' || !DECISIONS.has(o.decision)) {
     return { ok: false, reason: 'invalid_decision' };
   }
@@ -60,27 +62,20 @@ export function parsePromotionVerdict(raw: string, candidateId: string): ParseVe
   };
 }
 
-// Finds the first balanced top-level {...} block, ignoring code fences and prose.
-function extractJsonObject(raw: string): string | null {
-  const start = raw.indexOf('{');
-  if (start === -1) return null;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < raw.length; i++) {
-    const ch = raw[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === '\\') esc = true;
-      else if (ch === '"') inStr = false;
-      continue;
-    }
-    if (ch === '"') inStr = true;
-    else if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) return raw.slice(start, i + 1);
-    }
+function parseVerdictEnvelope(o: Record<string, unknown>, candidateId: string): ParseVerdictResult | null {
+  for (const field of ['result', 'output', 'content']) {
+    const value = o[field];
+    if (typeof value !== 'string') continue;
+    const nested = parsePromotionVerdict(value, candidateId);
+    if (nested.ok) return nested;
   }
   return null;
+}
+
+function normalizeJsonPayload(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/i.exec(trimmed);
+  const payload = (fenced?.[1] ?? trimmed).trim();
+  return payload.startsWith('{') && payload.endsWith('}') ? payload : null;
 }

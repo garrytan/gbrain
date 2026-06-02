@@ -8,7 +8,7 @@ describe('auto_promote config', () => {
     expect(c.confidence_threshold).toBe(0.8);
     expect(c.restore_window_hours).toBe(168);
     expect(c.escalation.max_per_cycle).toBe(20);
-    expect(c.eligibility.sensitivities).toEqual(['public', 'work', 'personal']);
+    expect(c.eligibility.sensitivities).toEqual(['public', 'work']);
     expect(c.eligibility.evidence_kinds).toEqual(['direct_user_statement', 'source_extracted']);
   });
   it('clamps threshold into 0..1 and floors negatives', () => {

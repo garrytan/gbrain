@@ -12,9 +12,18 @@ describe('parsePromotionVerdict', () => {
     const v = parsePromotionVerdict('```json\n' + ok + '\n```', 'cand-1');
     expect(v.ok).toBe(true);
   });
-  it('tolerates trailing prose', () => {
+  it('rejects trailing prose so echoed candidate JSON cannot become the verdict', () => {
     const v = parsePromotionVerdict(ok + '\n\nThat is my verdict.', 'cand-1');
+    expect(v.ok).toBe(false);
+  });
+  it('parses a Claude CLI JSON result envelope', () => {
+    const v = parsePromotionVerdict(JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      result: ok,
+    }), 'cand-1');
     expect(v.ok).toBe(true);
+    if (v.ok) expect(v.verdict.decision).toBe('promote');
   });
   it('fails closed on garbage (treated as no verdict, never promote)', () => {
     const v = parsePromotionVerdict('I think you should promote it!', 'cand-1');

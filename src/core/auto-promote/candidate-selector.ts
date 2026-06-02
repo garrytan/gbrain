@@ -7,8 +7,6 @@ export interface SelectionResult {
   excluded: { candidate: MemoryCandidateEntry; reason: string }[];
 }
 
-const PAGE_BACKED = new Set(['curated_note', 'procedure', 'profile_memory', 'personal_episode']);
-
 export function selectAutoPromoteCandidates(
   candidates: MemoryCandidateEntry[],
   policy: AutoPromoteConfig,
@@ -18,8 +16,12 @@ export function selectAutoPromoteCandidates(
     // Only act on not-yet-decided candidates.
     if (c.status !== 'captured' && c.status !== 'candidate') continue;
 
-    if (!c.target_object_type || c.target_object_type === 'other' || !c.target_object_id || !PAGE_BACKED.has(c.target_object_type)) {
+    if (!c.target_object_type || c.target_object_type === 'other' || !c.target_object_id) {
       result.excluded.push({ candidate: c, reason: 'target_not_clear' });
+      continue;
+    }
+    if (c.target_object_type !== 'curated_note') {
+      result.excluded.push({ candidate: c, reason: 'target_not_page_backed' });
       continue;
     }
     if (!policy.eligibility.sensitivities.includes(c.sensitivity as AutoPromoteConfig['eligibility']['sensitivities'][number])) {

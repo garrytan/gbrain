@@ -28,6 +28,10 @@ describe('selectAutoPromoteCandidates', () => {
     expect(selectAutoPromoteCandidates([{ ...base, target_object_type: 'other' }], policy).excluded).toHaveLength(1);
     expect(selectAutoPromoteCandidates([{ ...base, target_object_id: null }], policy).excluded).toHaveLength(1);
   });
+  it('excludes non-page-backed targets until dedicated context loaders exist', () => {
+    expect(selectAutoPromoteCandidates([{ ...base, target_object_type: 'profile_memory' }], policy).excluded[0].reason).toBe('target_not_page_backed');
+    expect(selectAutoPromoteCandidates([{ ...base, target_object_type: 'personal_episode' }], policy).excluded[0].reason).toBe('target_not_page_backed');
+  });
   it('skips already-terminal candidates (promoted/rejected)', () => {
     const r = selectAutoPromoteCandidates([{ ...base, status: 'promoted' }], policy);
     expect(r.low_risk).toHaveLength(0);

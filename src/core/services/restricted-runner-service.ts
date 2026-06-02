@@ -71,6 +71,7 @@ export interface RestrictedRunnerExecutorRequest {
   input: string;
   tool_policy: RunnerToolPolicyDecision;
   allowed_tools: AllowedRunnerToolName[];
+  model?: string | null;
 }
 
 export interface RestrictedRunnerExecutorResult {

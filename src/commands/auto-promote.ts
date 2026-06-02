@@ -2,6 +2,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig } from '../core/config.ts';
 import { normalizeAutoPromoteConfig, type AutoPromoteConfig } from '../core/auto-promote/config.ts';
 import { detectRestrictedRunners } from '../core/runners/runner-registry.ts';
+import type { RestrictedRunnerCandidate } from '../core/runners/runner-registry.ts';
 import { createCliRunnerExecutor } from '../core/auto-promote/cli-executor.ts';
 import { runAutoPromote } from '../core/auto-promote/service.ts';
 
@@ -40,7 +41,7 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
   }
 
   const availability = await detectRestrictedRunners({ priority: config.runner_priority });
-  const runner = availability.selected;
+  const runner = selectSupportedRunner(availability.candidates, config.runner_priority);
   if (!runner) {
     const msg = { status: 'no_runner', message: 'No restricted runner (claude/codex) available; nothing auto-promoted.' };
     console.log(parsed.json ? JSON.stringify(msg, null, 2) : msg.message);
@@ -68,6 +69,19 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
       `auto-promote (${config.dry_run ? 'dry-run' : 'apply'}, runner=${runner.kind}): promoted ${c.auto_promoted}, escalated ${c.escalated}, deferred ${c.deferred}, excluded ${c.excluded} (low_risk=${c.selected_low_risk}, risky=${c.selected_risky})`,
     );
   }
+}
+
+function selectSupportedRunner(
+  candidates: RestrictedRunnerCandidate[],
+  priority: AutoPromoteConfig['runner_priority'],
+): RestrictedRunnerCandidate | null {
+  const supported = new Set(['claude_code', 'codex']);
+  for (const kind of priority) {
+    if (!supported.has(kind)) continue;
+    const candidate = candidates.find((entry) => entry.kind === kind);
+    if (candidate?.available) return candidate;
+  }
+  return null;
 }
 
 function hasFlag(args: string[], flag: string): boolean {

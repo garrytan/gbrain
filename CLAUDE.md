@@ -61,7 +61,7 @@ Run `mbrain --help` or `mbrain --tools-json` for full command reference. For loc
 
 Deterministic brain-quality tools (no LLM calls, no DB connection, engine-agnostic): `mbrain publish` renders a brain page as a self-contained HTML (optionally AES-256-GCM encrypted behind a password), `mbrain check-backlinks check|fix` enforces the Iron Law of Back-Linking across a brain directory, `mbrain lint` flags LLM preambles, broken frontmatter, and placeholder dates (use `--fix` to auto-clean), and `mbrain report --type <name>` saves a timestamped report into `brain/reports/{type}/YYYY-MM-DD-HHMM.md`.
 
-`mbrain auto-promote` runs a judge-only LLM verdict on eligible memory candidates and, when confidence is high enough, promotes them via the deterministic gate (default dry-run; pass `--apply` to mutate). The command is config-gated (`auto_promote.enabled`, default off). A dream phase `auto_promote` (order 15) also exists in the dream cycle but **safely no-ops unless the runner dep is explicitly injected** — nightly auto-run via autopilot/dream-command is a planned follow-up; the CLI command is the current entry point.
+`mbrain auto-promote` runs a judge-only LLM verdict on eligible Memory Inbox candidates and, when confidence is high enough, promotes the inbox rows via the deterministic gate (default dry-run; pass `--apply` to mutate inbox state). It does not directly write canonical pages. The command is config-gated (`auto_promote.enabled`, default off). A dream phase `auto_promote` (order 15) also exists in the dream cycle but **safely no-ops unless the runner dep is explicitly injected** — nightly auto-run via autopilot/dream-command is a planned follow-up; the CLI command is the current entry point.
 
 ## Testing
 
