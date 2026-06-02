@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.railpack.com/",
+  "steps": {
+    "install": {
+      "commands": ["bun install"]
+    }
+  },
+  "deploy": {
+    "startCommand": "bun run gbrain serve --http"
+  }
+}
