@@ -466,6 +466,83 @@ export function inferTypeFromPack(
   return 'concept';
 }
 
+/**
+ * v0.42 (T5, plan D5): pack-aware type+subtype inference. Same path-prefix
+ * resolution as `inferTypeFromPack` PLUS subtype detection from
+ * `pack.page_types[i].subtypes[]` (declared per type). Walks subtype rules
+ * AFTER the prefix match wins. ReDoS-guarded compile of `path_pattern`
+ * happens here (test/regex per call; acceptable on the ingest path).
+ *
+ * Subtype-rule resolution order:
+ *   1. frontmatter_field+frontmatter_value (exact match)
+ *   2. path_pattern (regex test against the lower-cased full path)
+ *
+ * Frontmatter rule wins when both match. Returns the FIRST matching
+ * subtype name; subtype declarations earlier in the pack's subtypes
+ * array take precedence.
+ *
+ * Back-compat: legacy `inferTypeFromPack(filePath, pack)` preserved
+ * unchanged for the ~17 call sites that don't yet need subtype info.
+ */
+export function inferTypeAndSubtypeFromPack(
+  filePath: string | undefined,
+  pack: { page_types: ReadonlyArray<{
+    name: string;
+    path_prefixes: ReadonlyArray<string>;
+    subtypes?: ReadonlyArray<{
+      name: string;
+      when: { path_pattern?: string; frontmatter_field?: string; frontmatter_value?: unknown };
+    }>;
+  }> },
+  frontmatter?: Record<string, unknown>,
+): { type: PageType; subtype?: string } {
+  if (!filePath) return { type: 'concept' };
+  // Empty pack → legacy fallback; no subtype info available.
+  if (pack.page_types.length === 0) {
+    return { type: inferTypeWithPrefixes(filePath, GBRAIN_BASE_PATH_PREFIXES) };
+  }
+  const lower = ('/' + filePath).toLowerCase();
+  // Stage 1: prefix-match wins (same as inferTypeFromPack)
+  let matchedType: { name: string; subtypes?: ReadonlyArray<{ name: string; when: { path_pattern?: string; frontmatter_field?: string; frontmatter_value?: unknown } }> } | undefined;
+  outer: for (const pt of pack.page_types) {
+    for (const prefix of pt.path_prefixes) {
+      const needle = prefix.startsWith('/') ? prefix.toLowerCase() : '/' + prefix.toLowerCase();
+      if (lower.includes(needle)) {
+        matchedType = pt;
+        break outer;
+      }
+    }
+  }
+  if (!matchedType) return { type: 'concept' };
+  const typeName = matchedType.name as PageType;
+  // Stage 2: subtype rule resolution (if any declared)
+  const subtypes = matchedType.subtypes ?? [];
+  if (subtypes.length === 0) return { type: typeName };
+  for (const st of subtypes) {
+    // Frontmatter rule first
+    if (st.when.frontmatter_field !== undefined && frontmatter !== undefined) {
+      const value = frontmatter[st.when.frontmatter_field];
+      if (st.when.frontmatter_value !== undefined && value === st.when.frontmatter_value) {
+        return { type: typeName, subtype: st.name };
+      }
+    }
+    // Path pattern rule
+    if (st.when.path_pattern !== undefined) {
+      try {
+        const re = new RegExp(st.when.path_pattern);
+        if (re.test(filePath) || re.test(lower)) {
+          return { type: typeName, subtype: st.name };
+        }
+      } catch {
+        // Malformed regex — skip silently; pack-load validation should
+        // have caught this at parse time via redos-guard.
+        continue;
+      }
+    }
+  }
+  return { type: typeName };
+}
+
 function inferTypeWithPrefixes(
   filePath: string | undefined,
   table: ReadonlyArray<{ prefixes: ReadonlyArray<string>; type: PageType }>,

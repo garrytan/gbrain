@@ -197,6 +197,43 @@ describe('buildSyncStatusReport against real PGLite (IRON RULE regression for Bl
     expect(b.embedding_coverage_pct).toBe(100);
   });
 
+  test('v0.41.31: embed-backfill job state surfaced per source (TODO-2)', async () => {
+    // Seed embed-backfill minion jobs for source-a: 2 queued + 1 active +
+    // 1 completed. source-b has none → idle.
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (name, status, data) VALUES
+         ('embed-backfill', 'waiting',  '{"sourceId":"source-a"}'::jsonb),
+         ('embed-backfill', 'waiting',  '{"sourceId":"source-a"}'::jsonb),
+         ('embed-backfill', 'active',   '{"sourceId":"source-a"}'::jsonb)`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (name, status, data, finished_at)
+         VALUES ('embed-backfill', 'completed', '{"sourceId":"source-a"}'::jsonb, now())`,
+    );
+
+    const sources = await engine.executeRaw<{
+      id: string; name: string; local_path: string | null; config: Record<string, unknown>;
+    }>(
+      `SELECT id, name, local_path, config FROM sources
+         WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
+    );
+    const report = await buildSyncStatusReport(engine, sources);
+    const byId = new Map(report.sources.map((s) => [s.source_id, s]));
+
+    const a = byId.get('source-a')!;
+    expect(a.backfill_queued).toBe(2);
+    expect(a.backfill_active).toBe(1);
+    expect(a.backfill_last_completed_at).not.toBeNull();
+
+    const b = byId.get('source-b')!;
+    expect(b.backfill_queued).toBe(0);
+    expect(b.backfill_active).toBe(0);
+    expect(b.backfill_last_completed_at).toBeNull();
+
+    // Clean up so sibling tests in this describe see a clean minion_jobs.
+    await engine.executeRaw(`DELETE FROM minion_jobs WHERE name = 'embed-backfill'`);
+  });
+
   test('soft-deleted pages excluded from pages count (v0.26.5 regression)', async () => {
     // Verifies the `WHERE pg.deleted_at IS NULL` clause in BOTH subqueries
     // of the dashboard SQL. Pre-fix the original PR query would have

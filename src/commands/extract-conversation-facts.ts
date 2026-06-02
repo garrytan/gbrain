@@ -76,13 +76,22 @@ import { listSources } from '../core/sources-ops.ts';
 import {
   loadOpCheckpoint,
   recordCompleted,
-  clearOpCheckpoint,
   type OpCheckpointKey,
 } from '../core/op-checkpoint.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions, maybeBackground } from '../core/cli-options.ts';
 import { loadConfig } from '../core/config.ts';
 import { createHash } from 'crypto';
+// v0.41.15.0 (T5): worker-pool primitive + per-source-clamp wrapper +
+// per-page advisory lock + delete-orphans-first replay safety. See plan
+// `~/.claude/plans/system-instruction-you-are-working-fancy-creek.md`
+// decisions D2, D6, D9, D11, D12, D13, D15.
+import { runSlidingPool } from '../core/worker-pool.ts';
+import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
+import { withRefreshingLock, LockUnavailableError } from '../core/db-lock.ts';
+import { assertFactsEmbeddingDimMatchesConfig } from '../core/embedding-dim-check.ts';
+import { writeReceipt, shortRunId } from '../core/extract/receipt-writer.ts';
+import { upsertExtractRollup } from '../core/extract/rollup-writer.ts';
 
 // ---------------------------------------------------------------------------
 // Tunables (exported for tests).
@@ -215,6 +224,20 @@ export interface ExtractConversationFactsCoreOpts {
   budgetTracker?: BudgetTracker;
   /** Bypass `facts.extraction_enabled=false`. Power-user escape. */
   overrideDisabled?: boolean;
+  /**
+   * v0.41.15.0 (D9 wrapper): in-process worker count for the per-page
+   * fan-out. Default 1 (back-compat). Recommended 5-20 for LLM-bound
+   * work; PGLite engines silently clamp to 1 with a stderr warn. Cross-
+   * process safety is structurally guaranteed by D2's per-page advisory
+   * lock + D11's delete-orphans-first replay.
+   *
+   * Worst-case overshoot on `--max-cost-usd`: D3 documented overshoot is
+   * `N × avg_per_call_cost` over the configured cap because per-worker
+   * `reserve()` calls aren't serialized. At workers=20 × ~$0.02/page,
+   * expect up to ~$0.40 over the cap. Tighten the cap or pin workers=1
+   * if you need exact-ceiling compliance.
+   */
+  workers?: number;
 }
 
 export interface ExtractConversationFactsResult {
@@ -223,6 +246,21 @@ export interface ExtractConversationFactsResult {
   pages_skipped: number;
   pages_skipped_too_large: number;
   pages_skipped_disappeared: number;
+  /**
+   * v0.41.15.0 (D6): pages we attempted to claim but skipped because
+   * another worker / parallel process held the advisory lock. The pages
+   * stay in the backlog; the next enumeration cycle picks them up once
+   * the holder writes its terminal row. Operator surfaces this via the
+   * exit summary; exit code 3 when non-zero AND no hard failures.
+   */
+  pages_lock_skipped: number;
+  /**
+   * v0.41.15.0 (D11): facts deleted by the per-page delete-orphans-first
+   * replay safety pass. Non-zero means a prior run crashed mid-extract;
+   * the current worker cleaned up and re-extracted from scratch. Always
+   * safe; surfaced for operator observability.
+   */
+  orphan_facts_cleaned: number;
   segments_processed: number;
   facts_extracted: number;
   facts_inserted: number;
@@ -231,41 +269,42 @@ export interface ExtractConversationFactsResult {
 }
 
 // ---------------------------------------------------------------------------
-// Message parsing — lines like:
-//   **Name** (YYYY-MM-DD H:MM AM/PM): text
-// Unmatched lines become continuations of the prior message (multi-line
-// imessage bodies).
+// Message parsing — v0.41.13.0 delegates to the new
+// `src/core/conversation-parser/parse.ts` orchestrator (12+ built-in
+// formats + opt-IN LLM polish/fallback). PR #1461's Telegram bracket-time
+// shape is the `telegram-bracket` built-in pattern. PR #1461's existing
+// `MESSAGE_LINE_RX` is the `imessage-slack` built-in pattern.
+//
+// This wrapper preserves the historical `parseConversationMessages(body,
+// opts)` shape for back-compat with the test suite + any direct callers.
+// `processPage` below threads a full Page through `parseConversation` so
+// frontmatter date / timezone / effective_date precedence per D8 takes
+// effect.
 // ---------------------------------------------------------------------------
 
-const MESSAGE_LINE_RX =
-  /^\*\*(.+?)\*\*\s*\((\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?\)\s*:\s*(.*)$/;
+import {
+  parseConversation,
+  type ParseConversationOpts as OrchestratorParseOpts,
+} from '../core/conversation-parser/parse.ts';
 
-export function parseConversationMessages(body: string): ConversationMessage[] {
-  if (!body) return [];
-  const out: ConversationMessage[] = [];
-  for (const rawLine of body.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    const m = MESSAGE_LINE_RX.exec(line);
-    if (m) {
-      const [, speaker, date, hStr, mStr, ampmRaw, text] = m;
-      let hour = Number(hStr);
-      const minute = Number(mStr);
-      const ampm = (ampmRaw || '').toUpperCase();
-      if (ampm === 'PM' && hour < 12) hour += 12;
-      if (ampm === 'AM' && hour === 12) hour = 0;
-      const iso = `${date}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`;
-      out.push({
-        speaker: speaker.trim(),
-        timestamp: iso,
-        text: (text || '').trim(),
-      });
-    } else if (out.length > 0) {
-      const last = out[out.length - 1];
-      last.text = last.text ? `${last.text}\n${line}` : line;
-    }
-  }
-  return out;
+/**
+ * v0.41.13.0 — back-compat shape for direct callers + the existing
+ * test suite. Delegates to the new orchestrator.
+ *
+ * Per D8: callers with a full Page should pass `opts.page` instead of
+ * `opts.fallbackDate` so the orchestrator's date-derivation chain
+ * (frontmatter.date > effective_date > '1970-01-01') applies. The
+ * `fallbackDate` field is preserved for PR #1461's test cases that
+ * pass it explicitly.
+ */
+export function parseConversationMessages(
+  body: string,
+  opts: { fallbackDate?: string } = {},
+): ConversationMessage[] {
+  const result = parseConversation(body, {
+    fallbackDate: opts.fallbackDate,
+  } as OrchestratorParseOpts);
+  return result.messages;
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +515,104 @@ async function resolveTypesFromConfig(
 }
 
 // ---------------------------------------------------------------------------
+// v0.41.15.0 helpers (D2 lock + D6 rate-limited log + D11 delete-orphans).
+// ---------------------------------------------------------------------------
+
+/**
+ * Lock id for the per-page advisory lock (D2). Includes the source so
+ * two pages with the same slug in different sources don't false-share.
+ */
+export function extractConversationFactsLockId(sourceId: string, slug: string): string {
+  return `extract-conversation-facts:${sourceId}:${slug}`;
+}
+
+/**
+ * Per-page lock TTL (D12). 2 minutes — `withRefreshingLock` refreshes
+ * at 1/6 the TTL (`Math.max(15000, 120_000/6) = 20s`) so a long page
+ * (50 segments × Haiku ~3s) gets ~6 refreshes per minute. If the holder
+ * process dies, the lock auto-expires within 2 minutes regardless.
+ */
+export const PER_PAGE_LOCK_TTL_MINUTES = 2;
+
+/**
+ * D6: in-memory rate-limit cache for lock-busy log lines. Keyed on
+ * (source_id, minute-bucket) so we log at most once per source per
+ * minute even under heavy contention. Pure process-local state.
+ */
+const _lockBusyLogCache = new Map<string, number>();
+
+/** Test seam: clear the rate-limit cache so re-runs emit again. */
+export function _resetLockBusyLogCacheForTest(): void {
+  _lockBusyLogCache.clear();
+}
+
+function logLockBusyRateLimited(sourceId: string, slug: string): void {
+  const minuteBucket = Math.floor(Date.now() / 60_000);
+  const key = `${sourceId}:${minuteBucket}`;
+  if (_lockBusyLogCache.has(key)) return;
+  _lockBusyLogCache.set(key, minuteBucket);
+  // Best-effort cleanup: when the map grows past 100 entries, drop ones
+  // older than 10 minutes. Avoids unbounded growth on multi-hour runs.
+  if (_lockBusyLogCache.size > 100) {
+    const cutoff = minuteBucket - 10;
+    for (const [k, v] of _lockBusyLogCache) {
+      if (v < cutoff) _lockBusyLogCache.delete(k);
+    }
+  }
+  process.stderr.write(
+    `[extract-conversation-facts] lock-busy for ${sourceId}:${slug} (and possibly more); skipping — another worker holds it. Page will be retried on next enumeration.\n`,
+  );
+}
+
+/**
+ * D11: delete-orphans-first replay safety. Removes any facts row written
+ * by a prior crashed / killed / partial run for this (sourceId, slug)
+ * pair, scoped to fact rows with this command's source-prefix so we
+ * never touch facts written by other paths (extract.ts, facts/absorb,
+ * markdown fences, etc.).
+ *
+ * The terminal audit row (source=TERMINAL_AUDIT_SOURCE) is ALSO deleted
+ * here — if a prior run wrote it after partial inserts (the
+ * pre-v0.41.15.0 bug class codex caught), we want a clean slate. A
+ * fresh run will re-write the terminal row only after every segment's
+ * insertFacts succeeds.
+ *
+ * Returns the number of rows deleted (surfaced in the result counter
+ * for operator observability; non-zero means a prior run crashed).
+ */
+async function deleteOrphanFactsForPage(
+  engine: BrainEngine,
+  sourceId: string,
+  slug: string,
+): Promise<number> {
+  try {
+    // The two write-source variants this command may have left behind:
+    //   - PER_SEGMENT_SOURCE_PREFIX  ('cli:extract-conversation-facts')
+    //   - TERMINAL_AUDIT_SOURCE      ('cli:extract-conversation-facts:terminal')
+    // Using a LIKE prefix match covers both with one statement.
+    const rows = await engine.executeRaw<{ count: string }>(
+      `WITH del AS (
+         DELETE FROM facts
+         WHERE source_id = $1
+           AND source_markdown_slug = $2
+           AND source LIKE 'cli:extract-conversation-facts%'
+         RETURNING 1
+       )
+       SELECT COUNT(*)::text AS count FROM del`,
+      [sourceId, slug],
+    );
+    const n = parseInt(rows[0]?.count ?? '0', 10);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    // Best-effort: a missing source_markdown_slug column on pre-v0.32
+    // brains (or other rare DDL drift) falls through to "no orphans
+    // cleaned." The subsequent insertFacts call will surface any real
+    // schema issues with a clearer error.
+    return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Core extraction loop (single source).
 // ---------------------------------------------------------------------------
 
@@ -488,15 +625,51 @@ interface ExtractCoreState {
   segmentLimit: number;
   types: AllowedType[];
   signal: AbortSignal | undefined;
+  /**
+   * v0.41.15.0 (D11): shared per-(sourceId, slug) checkpoint map mutated
+   * in place from processPage callers. Map.set is atomic in JS's single-
+   * threaded event loop so parallel workers (D9) don't clobber each
+   * other. Serialized to op-checkpoint string[] via recordCompleted at
+   * batch boundaries + final flush.
+   */
+  cpMap: Map<string, string>;
+}
+
+function cpMapKey(sourceId: string, slug: string): string {
+  return `${sourceId}|${slug}`;
+}
+
+function cpMapToEntries(map: Map<string, string>): string[] {
+  const out: string[] = [];
+  for (const [key, endIso] of map) {
+    const i = key.indexOf('|');
+    if (i < 0) continue;
+    const sourceId = key.slice(0, i);
+    const slug = key.slice(i + 1);
+    out.push(encodeCheckpointEntry(sourceId, slug, endIso));
+  }
+  return out;
+}
+
+function cpEntriesToMap(entries: string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const e of entries) {
+    const d = decodeCheckpointEntry(e);
+    if (!d) continue;
+    // Newest-endIso wins on duplicates (defensive against pre-fix
+    // entries that may have stacked).
+    const key = cpMapKey(d.sourceId, d.slug);
+    const prior = map.get(key);
+    if (prior === undefined || d.endIso > prior) map.set(key, d.endIso);
+  }
+  return map;
 }
 
 async function processPage(
   state: ExtractCoreState,
   page: Page,
   sinceIso: string | undefined,
-  cpEntries: string[],
-  rowNumStart: number,
-): Promise<{ newEndIso: string | null; rowNumAfter: number; cpEntriesAfter: string[] }> {
+): Promise<{ newEndIso: string | null }> {
   state.result.pages_considered++;
 
   // Body cap check first — pre-parse, pre-segment, pre-extraction.
@@ -506,19 +679,48 @@ async function processPage(
     process.stderr.write(
       `[extract-conversation-facts] SKIP ${page.slug}: ${(bytes / 1024 / 1024).toFixed(1)}MB exceeds 25MB cap\n`,
     );
-    return { newEndIso: null, rowNumAfter: rowNumStart, cpEntriesAfter: cpEntries };
+    return { newEndIso: null };
   }
 
   const body = readPageBody(page);
-  const messages = parseConversationMessages(body);
+  // v0.41.13.0: thread the full Page through the orchestrator so D8
+  // date-derivation chain (frontmatter.date > effective_date >
+  // '1970-01-01') AND timezone_policy warnings apply. The historical
+  // `parseConversationMessages(body)` shape only saw the body, which
+  // meant Telegram-bracket pages with frontmatter dates landed at
+  // 1970-01-01. Now they pick up the correct date.
+  const parseResult = parseConversation(body, { page });
+  const messages = parseResult.messages;
+  if (parseResult.timezone_warning) {
+    process.stderr.write(parseResult.timezone_warning + '\n');
+  }
   const segments = splitIntoSegments(messages, { sinceIso });
   if (segments.length === 0) {
     state.result.pages_skipped++;
-    return { newEndIso: null, rowNumAfter: rowNumStart, cpEntriesAfter: cpEntries };
+    return { newEndIso: null };
   }
 
-  let rowNum = rowNumStart;
-  let entries = cpEntries;
+  // D11: delete-orphans-first replay safety. Wipes any facts written by
+  // a prior crashed / killed / partial run for this (sourceId, slug)
+  // pair before we re-extract. The lock we hold (D2 + D12 refreshing
+  // lock above the caller) guarantees no other worker is writing to
+  // this page right now, so the DELETE+INSERT pair is safe.
+  if (!state.dryRun) {
+    const cleaned = await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
+    if (cleaned > 0) {
+      state.result.orphan_facts_cleaned += cleaned;
+      process.stderr.write(
+        `[extract-conversation-facts] cleaned ${cleaned} orphan fact(s) for ${page.slug} from prior partial run\n`,
+      );
+    }
+  }
+
+  // Page-global row_num: after delete-orphans-first the table has no
+  // rows for this (sourceId, slug), so we always start from 0. Peek
+  // is kept as a defensive fallback for dry-run + non-deleting paths.
+  let rowNum = state.dryRun
+    ? await peekRowNumStart(state.engine, state.sourceId, page.slug)
+    : 0;
   let newestEnd: string | null = null;
   let segmentsThisPage = 0;
   let pageInsertedTotal = 0;
@@ -611,18 +813,20 @@ async function processPage(
   }
 
   if (!state.dryRun && newestEnd !== null) {
-    // Update op-checkpoint: filter out prior entries for this slug,
-    // append the newest end. --force clears prior; normal case advances.
-    entries = filterOutSlug(entries, state.sourceId, page.slug);
-    entries.push(encodeCheckpointEntry(state.sourceId, page.slug, newestEnd));
+    // v0.41.15.0 (codex #5/#6): per-page atomic checkpoint write. Mutate
+    // the shared Map in place — JS single-threaded event loop makes
+    // Map.set atomic across parallel workers; we don't need a load-mutate-
+    // flush race. Map serializes back to op-checkpoint string[] at batch
+    // boundaries via the caller's periodic recordCompleted call.
+    state.cpMap.set(cpMapKey(state.sourceId, page.slug), newestEnd);
   }
 
   process.stderr.write(
-    `[extract-conversation-facts] ${page.slug}: ${pageInsertedTotal}/${state.result.facts_extracted - (state.result.facts_extracted - pageInsertedTotal)} facts inserted across ${segmentsThisPage} segments\n`,
+    `[extract-conversation-facts] ${page.slug}: ${pageInsertedTotal} facts inserted across ${segmentsThisPage} segments\n`,
   );
 
   state.result.pages_processed++;
-  return { newEndIso: newestEnd, rowNumAfter: rowNum, cpEntriesAfter: entries };
+  return { newEndIso: newestEnd };
 }
 
 async function writeTerminalAuditRow(
@@ -671,6 +875,8 @@ export async function runExtractConversationFactsCore(
     pages_skipped: 0,
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
+    pages_lock_skipped: 0,
+    orphan_facts_cleaned: 0,
     segments_processed: 0,
     facts_extracted: 0,
     facts_inserted: 0,
@@ -686,10 +892,33 @@ export async function runExtractConversationFactsCore(
     }
   }
 
+  // v0.41.15.0 (D15): preflight facts.embedding dim check. Throws a
+  // paste-ready ALTER hint BEFORE the first insert if the configured
+  // embedding_dimensions differs from the facts column width. Doctor
+  // also warns, but doctor-only doesn't close the bug class: new users
+  // who skip doctor crash on first insert with the opaque pgvector
+  // error. Preflight catches them up-front. Result cached per process.
+  if (!opts.dryRun) {
+    await assertFactsEmbeddingDimMatchesConfig(engine);
+  }
+
   const types = await resolveTypesFromConfig(engine, opts.types);
   const dryRun = !!opts.dryRun;
   const sleepMs = opts.sleepMs ?? DEFAULT_INTER_CALL_SLEEP_MS;
   const segmentLimit = opts.segmentLimit ?? 0;
+
+  // v0.41.15.0 (D9): resolve effective worker count via the PGLite-clamp
+  // wrapper. Embedded engines silently become serial; the explicit
+  // override + auto-concurrency rules from sync-concurrency.ts apply on
+  // Postgres. Page count for the auto-path is unknown ahead of
+  // enumeration, so pass 0 — the wrapper falls back to override-or-1.
+  const workersResolved = resolveWorkersWithClamp(
+    engine,
+    opts.workers,
+    'extract-conversation-facts',
+    0,
+  );
+  const workers = workersResolved.workers;
 
   const state: ExtractCoreState = {
     result,
@@ -700,6 +929,7 @@ export async function runExtractConversationFactsCore(
     segmentLimit,
     types,
     signal,
+    cpMap: new Map(),
   };
 
   // Run body. Either inside the externally-provided tracker scope (no
@@ -707,7 +937,51 @@ export async function runExtractConversationFactsCore(
   // explicitly via withBudgetTracker), or inside a fresh local wrap.
   const body = async () => {
     const cpKey = checkpointKey(sourceId);
-    let cpEntries = await loadOpCheckpoint(engine, cpKey);
+    const initialEntries = await loadOpCheckpoint(engine, cpKey);
+    // v0.41.15.0 (codex #5/#6): hold checkpoint state as a Map so
+    // parallel workers (D9) can mutate it atomically per-page. Serialize
+    // back to op-checkpoint string[] at batch boundaries + final flush.
+    state.cpMap = cpEntriesToMap(initialEntries);
+
+    /**
+     * Wrap processPage in the per-page advisory lock (D2 + D12). The
+     * pool's onItem closes over this so D6's skip-and-continue semantics
+     * land at the right level: a lock-busy page increments the counter,
+     * logs once per (source, minute), and the worker claims the next
+     * page rather than blocking. A hard error from processPage propagates
+     * up; the pool's onError='continue' captures it into failures[].
+     */
+    const processPageWithLock = async (page: Page): Promise<void> => {
+      const lockId = extractConversationFactsLockId(sourceId, page.slug);
+
+      let sinceIso: string | undefined;
+      // Per-page resume: --force clears prior entries; normal path uses
+      // the latest endIso for this (sourceId, slug) from the shared map.
+      if (opts.force) {
+        state.cpMap.delete(cpMapKey(sourceId, page.slug));
+      }
+      const checkpointed = state.cpMap.get(cpMapKey(sourceId, page.slug)) ?? null;
+      sinceIso = pickLaterIso(checkpointed, opts.sinceIso);
+
+      try {
+        await withRefreshingLock(
+          engine,
+          lockId,
+          () => processPage(state, page, sinceIso),
+          { ttlMinutes: PER_PAGE_LOCK_TTL_MINUTES },
+        ).then(() => undefined);
+      } catch (err) {
+        if (err instanceof LockUnavailableError) {
+          // D6: skip-and-continue. Page stays in backlog; next
+          // enumeration picks it up after the holder's terminal row
+          // lands. Rate-limited log so contention doesn't spam stderr.
+          state.result.pages_lock_skipped++;
+          logLockBusyRateLimited(sourceId, page.slug);
+          return;
+        }
+        throw err;
+      }
+    };
 
     if (opts.slug) {
       const page = await engine.getPage(opts.slug, { sourceId });
@@ -720,18 +994,14 @@ export async function runExtractConversationFactsCore(
         return;
       }
 
-      if (opts.force) {
-        cpEntries = filterOutSlug(cpEntries, sourceId, opts.slug);
-      }
-      const checkpointed = findCompletedEndIso(cpEntries, sourceId, opts.slug);
-      const sinceIso = pickLaterIso(checkpointed, opts.sinceIso);
-
-      const rowNumStart = await peekRowNumStart(engine, sourceId, opts.slug);
-      const { cpEntriesAfter } = await processPage(state, page, sinceIso, cpEntries, rowNumStart);
-      cpEntries = cpEntriesAfter;
+      await processPageWithLock(page);
     } else {
       // Multi-page enumeration: paginate per-type at small batch size to
       // bound memory (Eng-v2 C8 — 10 × 25MB = 250MB worst case).
+      // v0.41.15.0 (D9): inner per-page loop replaced with runSlidingPool
+      // so parallel workers can claim pages from the batch. The pool
+      // honors AbortSignal at each claim boundary and threads
+      // BudgetExhausted abort (D13) automatically.
       let processedPagesCount = 0;
       pageLoop: for (const type of types) {
         let offset = 0;
@@ -748,36 +1018,30 @@ export async function runExtractConversationFactsCore(
           });
           if (batch.length === 0) break;
 
-          for (const page of batch) {
-            if (opts.limit && processedPagesCount >= opts.limit) break pageLoop;
-
-            const slug = page.slug;
-            const checkpointed = findCompletedEndIso(cpEntries, sourceId, slug);
-
-            // Terminal audit row check — if this page has the terminal
-            // marker AND not --force, skip immediately (cheap probe via
-            // the checkpointed value covers the recent-run case; the
-            // expensive query is doctor's job, not per-page).
-            const sinceIso = pickLaterIso(checkpointed, opts.sinceIso);
-            const rowNumStart = await peekRowNumStart(engine, sourceId, slug);
-            const { cpEntriesAfter } = await processPage(
-              state,
-              page,
-              sinceIso,
-              cpEntries,
-              rowNumStart,
-            );
-            cpEntries = cpEntriesAfter;
-            processedPagesCount++;
+          // Respect --limit at batch granularity: clip the batch so we
+          // never overshoot the cap by `workers - 1` extra pages.
+          let claimable = batch;
+          if (opts.limit) {
+            const remaining = opts.limit - processedPagesCount;
+            if (remaining < batch.length) claimable = batch.slice(0, remaining);
           }
 
+          await runSlidingPool({
+            items: claimable,
+            workers,
+            signal,
+            onItem: (page) => processPageWithLock(page),
+            failureLabel: (page) => page.slug,
+          });
+
+          processedPagesCount += claimable.length;
           offset += batch.length;
           if (batch.length < PAGE_LIST_BATCH) break;
 
           // Persist checkpoint between batches so a crash mid-walk
           // doesn't lose all progress.
           if (!dryRun) {
-            await recordCompleted(engine, checkpointKey(sourceId), cpEntries);
+            await recordCompleted(engine, checkpointKey(sourceId), cpMapToEntries(state.cpMap));
           }
         }
       }
@@ -785,7 +1049,7 @@ export async function runExtractConversationFactsCore(
 
     // Final checkpoint flush.
     if (!dryRun) {
-      await recordCompleted(engine, checkpointKey(sourceId), cpEntries);
+      await recordCompleted(engine, checkpointKey(sourceId), cpMapToEntries(state.cpMap));
     }
   };
 
@@ -811,6 +1075,9 @@ export async function runExtractConversationFactsCore(
       if (opts.budgetTracker) {
         result.spent_usd = opts.budgetTracker.totalSpent;
       }
+      // Fall through to receipt+rollup write so the partial run is
+      // still observable in extract_health doctor + extracts/ pages.
+      await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true);
       // Return partial result — caller (CLI / Minion) decides how to
       // surface. NOT a thrown failure.
       return result;
@@ -818,7 +1085,69 @@ export async function runExtractConversationFactsCore(
     throw err;
   }
 
+  // v0.42 — Wave B1: extract-conversation-facts writes a receipt page
+  // (queryable + citable per D-EXTRACT-17/19) AND UPSERTs the per-day
+  // rollup row (best-effort cache per F-OUT-19). Both are best-effort —
+  // failures stderr-warn but never fail the parent operation.
+  await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ false);
+
   return result;
+}
+
+/**
+ * v0.42 — Wave B1: best-effort receipt + rollup writes at the end of an
+ * extract-conversation-facts run. Skips the receipt page when the run
+ * extracted ZERO facts (no-op runs don't need brain memory) but always
+ * UPSERTs the rollup row so doctor sees the cycle ran.
+ *
+ * `halted` true means the run hit a budget cap mid-flight; receipt
+ * carries that state in its frontmatter (round='full' regardless; the
+ * halt is recorded as a halt_delta=1 in the rollup table).
+ */
+async function writeRunReceiptAndRollup(
+  engine: BrainEngine,
+  sourceId: string,
+  result: ExtractConversationFactsResult,
+  halted: boolean,
+): Promise<void> {
+  const now = new Date().toISOString();
+  // run_id: stable-ish identifier for this run. Includes day so multiple
+  // runs of the same source on different days don't collide on the
+  // receipt slug. shortRunId() truncates to 8 chars.
+  const runId = `ecf-${Date.now().toString(36)}-${sourceId.slice(0, 4)}`;
+
+  // Receipt write: only when the run actually inserted facts.
+  if (result.facts_inserted > 0) {
+    try {
+      await writeReceipt(engine, {
+        kind: 'facts.conversation',
+        source_id: sourceId,
+        run_id: runId,
+        round: 'full',
+        extracted_at: now,
+        total_rows: result.facts_inserted,
+        cost_usd: result.spent_usd ?? 0,
+        summary: `Extracted ${result.facts_inserted} facts from ${result.pages_processed}/${result.pages_considered} eligible pages.`,
+      });
+    } catch (err) {
+      // Best-effort: receipt write failure shouldn't kill the run.
+      // The audit trail lives in the facts table (terminal rows) +
+      // optionally the new audit JSONL once wired.
+      const msg = (err as Error).message || String(err);
+      console.error(`[extract-conversation-facts] receipt write failed: ${msg}`);
+    }
+  }
+
+  // Rollup UPSERT: ALWAYS fire so doctor's extract_health sees the
+  // cycle ran (even no-op runs are signal — they prove the extractor
+  // was alive). Best-effort per F-OUT-19.
+  await upsertExtractRollup(engine, {
+    kind: 'facts.conversation',
+    source_id: sourceId,
+    cost_delta: result.spent_usd ?? 0,
+    round_completed_delta: halted ? 0 : 1,
+    halt_delta: halted ? 1 : 0,
+  });
 }
 
 /**
@@ -863,6 +1192,8 @@ interface ParsedArgs {
   segmentLimit?: number;
   maxCostUsd?: number;
   overrideDisabled?: boolean;
+  /** v0.41.15.0 (D9): in-process parallel workers per source. */
+  workers?: number;
   yes?: boolean;
   help?: boolean;
   error?: string;
@@ -911,6 +1242,15 @@ function parseArgs(args: string[]): ParsedArgs {
       if (Number.isFinite(n) && n > 0) out.maxCostUsd = n;
       continue;
     }
+    if (a === '--workers' || a === '--concurrency') {
+      try {
+        out.workers = parseWorkers(args[++i]);
+      } catch (e) {
+        out.error = (e as Error).message;
+        return out;
+      }
+      continue;
+    }
     if (a.startsWith('--')) {
       out.error = `Unknown flag: ${a}`;
       return out;
@@ -947,6 +1287,15 @@ Options:
   --sleep <ms>           Delay between extractor calls (default ${DEFAULT_INTER_CALL_SLEEP_MS}).
   --segment-limit <N>    Max segments per page (0 = unlimited).
   --max-cost-usd <FLOAT> Cost cap for this run (default ${DEFAULT_MAX_COST_USD}).
+                         NOTE: under --workers N, the cap can be exceeded by up to
+                         N × per-page-cost because per-worker reserve() calls aren't
+                         serialized. At workers=20 × ~$0.02/page that's ~$0.40 over.
+                         Pin --workers 1 if you need exact-ceiling compliance.
+  --workers N            Parallel page workers within a single source. Default 1.
+                         Recommended 5-20 for LLM-bound work on Postgres. PGLite
+                         silently clamps to 1 (single-writer engine). Cross-process
+                         safety is guaranteed by the per-page advisory lock + replay
+                         safety (delete-orphans-first on each page claim).
   --override-disabled    Bypass facts.extraction_enabled=false brain-wide kill-switch.
   --background           Submit as a Minion job; print job_id; exit (use 'gbrain jobs follow').
   --yes                  Auto-confirm cost preview in non-TTY contexts.
@@ -976,6 +1325,11 @@ function buildJobParams(args: string[]): Record<string, unknown> {
     segmentLimit: parsed.segmentLimit,
     maxCostUsd: parsed.maxCostUsd,
     overrideDisabled: parsed.overrideDisabled,
+    // v0.41.15.0 (D9): thread workers through the Minion job envelope
+    // so `gbrain extract-conversation-facts --background --workers 20`
+    // round-trips. The handler in src/commands/jobs.ts reads
+    // job.data.workers and passes to runExtractConversationFactsCore.
+    workers: parsed.workers,
   };
 }
 
@@ -1018,6 +1372,8 @@ export async function runExtractConversationFacts(
     pages_skipped: 0,
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
+    pages_lock_skipped: 0,
+    orphan_facts_cleaned: 0,
     segments_processed: 0,
     facts_extracted: 0,
     facts_inserted: 0,
@@ -1048,6 +1404,7 @@ export async function runExtractConversationFacts(
         segmentLimit: parsed.segmentLimit,
         maxCostUsd: parsed.maxCostUsd,
         overrideDisabled: parsed.overrideDisabled,
+        workers: parsed.workers,
       });
 
       aggregate.pages_considered += perSource.pages_considered;
@@ -1055,6 +1412,8 @@ export async function runExtractConversationFacts(
       aggregate.pages_skipped += perSource.pages_skipped;
       aggregate.pages_skipped_too_large += perSource.pages_skipped_too_large;
       aggregate.pages_skipped_disappeared += perSource.pages_skipped_disappeared;
+      aggregate.pages_lock_skipped += perSource.pages_lock_skipped;
+      aggregate.orphan_facts_cleaned += perSource.orphan_facts_cleaned;
       aggregate.segments_processed += perSource.segments_processed;
       aggregate.facts_extracted += perSource.facts_extracted;
       aggregate.facts_inserted += perSource.facts_inserted;
@@ -1084,8 +1443,24 @@ export async function runExtractConversationFacts(
   if (aggregate.pages_skipped_disappeared > 0) {
     console.log(`  Skipped ${aggregate.pages_skipped_disappeared} page(s) that disappeared between enumeration and fetch.`);
   }
+  if (aggregate.pages_lock_skipped > 0) {
+    console.log(`  Skipped ${aggregate.pages_lock_skipped} page(s) held by another worker / process (will retry next run).`);
+  }
+  if (aggregate.orphan_facts_cleaned > 0) {
+    console.log(`  Cleaned ${aggregate.orphan_facts_cleaned} orphan fact(s) from prior partial runs (D11 replay safety).`);
+  }
   if (anyBudgetExhausted) {
     console.log(`  Budget cap reached. Re-run with a higher --max-cost-usd to continue.`);
+  }
+
+  // v0.41.15.0 (codex #3): exit 3 when pages were skipped due to
+  // lock-busy AND no hard failures fired. "Incomplete run, please
+  // re-run" — distinct from exit 1 (hard failure) and 0 (clean).
+  // anyBudgetExhausted doesn't trigger exit 3; the budget message
+  // above already tells the user what to do, and exit 0 is the right
+  // signal for "ran to the cap intentionally."
+  if (aggregate.pages_lock_skipped > 0 && !anyBudgetExhausted) {
+    process.exit(3);
   }
 }
 

@@ -58,6 +58,38 @@ Hybrid search applies a source-factor CASE expression at the SQL layer (lives in
 
 The boost map is configurable via `GBRAIN_SOURCE_BOOST` env var or per-call `SearchOpts.exclude_slug_prefixes`. Temporal queries (`detail: 'high'`) bypass the boost so chat pages re-surface for time-sensitive lookups.
 
+## Named-thing retrieval (per-page pool + title + alias + evidence)
+
+A brain organized around *chosen names* (Mingtang, Hall of Light) needs more than
+embedding proximity. Four layers, added after the incident in
+[`RETRIEVAL_MAXPOOL_INCIDENT.md`](./RETRIEVAL_MAXPOOL_INCIDENT.md):
+
+- **Per-page max-pool** — `searchVector` (both engines) collapses chunk-grain
+  candidates to the best chunk per page (`DISTINCT ON (slug)`) over the full
+  candidate set before the user `LIMIT`, via the shared `buildBestPerPagePoolCte`
+  in `sql-ranking.ts`. The vector side returns N distinct pages by best chunk,
+  not N chunks that collapse to fewer pages downstream.
+- **Title-phrase boost** — when the normalized query is a contiguous token-run
+  inside `page.title` (or an exact full-title match), a floor-ratio-gated,
+  bounded multiplier fires (`applyTitleBoost`, `search.title_boost` knob). A
+  query that is a phrase from the title can't lose to a body chunk by luck.
+- **Alias hop** — free-text `aliases:` frontmatter is projected into a
+  `page_aliases` table (separate from the `slug_aliases` wikilink redirect) and
+  consulted at query time: a full normalized-query match injects/boosts the
+  canonical page (`applyAliasHop`). The only layer that bridges true synonyms
+  with zero surface overlap ("Hall of Light" → the Mingtang page). Backfill
+  existing pages with `gbrain reindex --aliases`.
+- **Evidence contract** — every result carries `evidence`
+  (`alias_hit | exact_title_match | high_vector_match | keyword_exact |
+  weak_semantic`) and `create_safety` (`exists | probable | unknown`). An agent
+  deciding "is this page already here, safe to NOT write a duplicate?" keys off
+  `create_safety`, not a raw blended score.
+
+The `search` MCP/CLI op is **cheap-hybrid** (vector + keyword + RRF + pool +
+title + alias, expansion off); `query` is the full-control variant. NamedThingBench
+(`gbrain eval retrieval-quality`) gates these families on every PR. Diagnose a
+specific miss with `gbrain search diagnose "<q>" --target <slug>`.
+
 ## Intent-aware query rewriting
 
 `src/core/search/intent.ts` classifies queries into `entity`, `temporal`, `event`, or `general`. Each routes through different ranking knobs:

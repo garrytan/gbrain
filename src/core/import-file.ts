@@ -8,7 +8,7 @@ import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
-import { embedBatch, embedMultimodal } from './embedding.ts';
+import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
@@ -28,7 +28,10 @@ import {
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
+import { normalizeAliasList } from './search/alias-normalize.ts';
+import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
+import { runGuardrails } from './guardrails.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -272,6 +275,26 @@ export async function importFromContent(
   }
 
   const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
+
+  // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
+  // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
+  // chunking, embedding, and DB write — so a registered guardrail sees the
+  // full markdown payload at the exact pre-persist moment. The returned
+  // verdict is intentionally ignored: this seam cannot block or mutate the
+  // ingest. No-op when zero guardrails are registered (OSS default).
+  await runGuardrails({
+    hook: 'file_storage.markdown',
+    content,
+    metadata: {
+      slug,
+      source_id: sourceId ?? 'default',
+      source_path: opts.sourcePath ?? null,
+      source_kind: opts.source_kind ?? null,
+      source_uri: opts.source_uri ?? null,
+      ingested_via: opts.ingested_via ?? null,
+      content_type: 'markdown',
+    },
+  });
 
   // v0.41 content-sanity gate. Runs AFTER parseMarkdown so the assessor
   // sees the parsed body (compiled_truth + timeline), title, and
@@ -646,18 +669,38 @@ export async function importFromContent(
       );
     }
 
-    // Tag reconciliation: remove stale, add current
-    const existingTags = await tx.getTags(slug, txOpts);
-    const newTags = new Set(parsed.tags);
-    for (const old of existingTags) {
-      if (!newTags.has(old)) await tx.removeTag(slug, old, txOpts);
-    }
+    // Tag reconciliation: ADD-ONLY (v0.41.37.0 #1621).
+    //
+    // We deliberately do NOT delete existing tags here. The `tags` table has
+    // no provenance column, and frontmatter tags are stripped from the stored
+    // `pages.frontmatter` (markdown.ts:118) — so at re-import time we cannot
+    // distinguish a frontmatter-origin tag from a DB-side enrichment tag
+    // (auto-tag / dream synthesize / signal-detector writes to the same
+    // table). The pre-v0.41.37.0 "delete every existing tag not in the current
+    // frontmatter" logic wiped ALL enrichment tags on every re-import — most
+    // visibly under `gbrain reindex --markdown` (#1621), which re-imports every
+    // page with forceRechunk. reindex is a re-chunk/re-embed op; it must not
+    // destroy tags.
+    //
+    // Trade-off (accepted): removing a tag from a page's frontmatter no longer
+    // removes it from the DB on the next sync. That staleness is minor (tags
+    // are additive metadata) and far preferable to silently losing enrichment
+    // tags. Frontmatter-tag REMOVAL would require a `tag_source` provenance
+    // column (deferred — see TODOS.md #1621-followup). addTag is idempotent
+    // (ON CONFLICT DO NOTHING), so re-adding existing tags is a no-op.
     for (const tag of parsed.tags) {
       await tx.addTag(slug, tag, txOpts);
     }
 
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
+      // v0.41.31: stamp embedding provenance when this import actually
+      // embedded (not --no-embed), so a later model/dims swap is detectable
+      // as stale via embed --stale. The deferred/backfill + per-slug embed
+      // paths stamp too; this covers the inline import/sync path.
+      if (!opts.noEmbed) {
+        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+      }
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
       await tx.deleteChunks(slug, txOpts);
@@ -700,6 +743,25 @@ export async function importFromContent(
       } catch { /* same reason — silent skip */ }
     }
   });
+
+  // T3 — project frontmatter `aliases:` into page_aliases (free-text alias
+  // resolution for search). Runs AFTER the page write commits so the slug
+  // exists. Fail-soft: a pre-v110 brain has no page_aliases table yet (the
+  // migration may not have run); an alias-write failure must NOT fail the
+  // import. Always called (even with []) so REMOVING an alias from frontmatter
+  // clears its row — the content_hash includes non-timestamp frontmatter, so
+  // an alias edit changes the hash and reaches this path (not the skip branch).
+  try {
+    const aliasNorms = normalizeAliasList((parsed.frontmatter as Record<string, unknown>).aliases);
+    await engine.setPageAliases(slug, sourceId ?? 'default', aliasNorms);
+  } catch (e) {
+    if (!isUndefinedTableError(e)) {
+      warnOncePerProcess(
+        'setPageAliases:failed',
+        `[import] page_aliases projection failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
 
   return { slug, status: 'imported', chunks: chunks.length, parsedPage };
 }
@@ -870,6 +932,22 @@ export async function importCodeFile(
     return { slug, status: 'skipped', chunks: 0, error: `Code file too large (${byteLength} bytes)` };
   }
 
+  // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER the
+  // code size guard, BEFORE hash compute, code-chunking, embedding, and DB
+  // write. Verdict ignored by design; no-op when no guardrail is registered.
+  await runGuardrails({
+    hook: 'file_storage.code',
+    content,
+    metadata: {
+      slug,
+      source_id: sourceId ?? 'default',
+      source_path: relativePath,
+      source_kind: 'code',
+      content_type: 'code',
+      language: lang,
+    },
+  });
+
   // Hash for idempotency. CHUNKER_VERSION is folded in so chunker shape
   // changes across releases force clean re-chunks without sync --force.
   const hash = createHash('sha256')
@@ -968,6 +1046,14 @@ export async function importCodeFile(
 
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
+      // v0.41.31: stamp embedding provenance ONLY when every chunk was
+      // freshly embedded with the current model this call (no reuse-by-hash
+      // carrying old-model vectors). Mixed pages stay unstamped rather than
+      // falsely marked current; `reindex --code --force` / `embed --stale`
+      // handle the swap for those.
+      if (!opts.noEmbed && needsEmbedIndexes.length === chunks.length) {
+        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+      }
     } else {
       await tx.deleteChunks(slug, txOpts);
     }

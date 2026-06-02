@@ -13,6 +13,27 @@
 > `people|companies|concepts|projects/` slugs; raw emails are
 > `sources/email/*` (NOT stubs — exclude them).
 
+## Resolution status (2026-06-01, executed same day)
+
+| Signal | Disposition |
+|---|---|
+| R1 placement | **RETRACTED** — stubs correctly live in `mailagent-emails`. The email pipeline was *designed* for a dedicated source; per CLAUDE.md's two-axis model **sources are independent namespaces, slugs scope per source**. No move. `--target-source` code change dropped. |
+| R2 cross-source "dups" | **RETRACTED** — same slug in `default` + `mailagent-emails` is two valid pages by design, not a duplicate. Cross-source dedup would violate the separate-source model. No delete. All-source existence-check change dropped. |
+| R3 email pseudo-entities | **DONE** — 19 unambiguous email/domain-mash pages soft-deleted (16 `mailagent-emails` + 3 `default`). Borderline *real* names spared for review: `4com`, `cnet`, `ocn`, `surfnet`, `sct-telecom`, `marcom`, `5gcom`, `concepts/cn`, `projects/hnbu-cn`, `concepts/cloud-org`. |
+| R4 variant dups | **DONE** — 9 thinner variants soft-deleted across 8 clusters; kept the richest-content canonical each. |
+| R5 tier marker | Open — cosmetic; fold into the enrich-sweep code/doc later. |
+| R6 thin shells | **REVIEWED → no action** — all 68 `<300`-char stubs are concise-but-valid (product models w/ part numbers, projects w/ owners, versioned concepts). Short ≠ empty; a blanket `<300` delete would have destroyed real knowledge. |
+| R7 test pages | **DONE** — 16 orphan `zembed-1` chunks dropped; brain now literally single-model (`openai:text-embedding-3-large` 43,311 chunks / 0 non-unit-norm). |
+
+**Net: 28 pages soft-deleted (72h recoverable). Live email-corpus stubs: 3417**
+(concepts 1116 / people 1058 / projects 895 / companies 348). Remaining = code
+fixes only (R3 email→alias in NER, R4 dedupe normalization, R5 tier marker),
+deferred to a focused enrich-sweep code pass — they affect only the *next* sweep,
+not the current brain. **R1/R2 below are the original (incorrect) analysis,
+preserved for the record — do not act on them.**
+
+---
+
 A reusable predicate for "today's new entity stubs":
 
 ```sql
@@ -25,7 +46,7 @@ AND slug ~ '^(people|companies|concepts|projects)/'
 
 ---
 
-## R1 (HIGH, structural) — All stubs landed in the wrong source
+## R1 — RETRACTED (NOT a defect; see Resolution status) — orig: "All stubs landed in the wrong source"
 
 Every new entity stub was written to `source_id='mailagent-emails'`, **not
 the main brain `default`**. Entity pages (people/companies/concepts/projects)
@@ -64,7 +85,7 @@ source pages.
   call, decoupling the *read* source (Phase A scan) from the *write* source
   (Phase D stubs).
 
-## R2 (HIGH) — ~25% of stubs duplicate entities already in `default`
+## R2 — RETRACTED (valid by design; see Resolution status) — orig: "~25% of stubs duplicate entities already in `default`"
 
 The Phase C existence check (`pageExists` over `knownSlugs` from `gbrain list`)
 only saw `mailagent-emails` slugs, so it re-created entities that **already

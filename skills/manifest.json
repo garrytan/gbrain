@@ -240,6 +240,16 @@
       "description": "Everything In Its Right Place — post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
     },
     {
+      "name": "schema-unify",
+      "path": "schema-unify/SKILL.md",
+      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain → assess → propose → apply → sync → verify → commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
+    },
+    {
+      "name": "skill-optimizer",
+      "path": "skill-optimizer/SKILL.md",
+      "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+    },
+    {
       "name": "kos-jarvis/kos-patrol",
       "path": "kos-jarvis/kos-patrol/SKILL.md",
       "description": "Daily patrol with staleness, gap detection, and MEMORY digest. KOS-Jarvis fork extension."

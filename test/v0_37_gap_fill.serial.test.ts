@@ -322,12 +322,12 @@ describe('Lane D.3 — sync surfaces dim-mismatch recipe at incremental AND firs
 // Lane E.4 — loadRecommendationContext provider-aware key check
 // ─────────────────────────────────────────────────────────────────────
 describe('Lane E.4 — loadRecommendationContext is provider-aware', () => {
-  // doctor.ts exports loadRecommendationContext only locally; verify the
-  // behavior via a public surface (the recommendation context the
-  // `doctor --remediation-plan` output uses) is brittle. Use a
-  // source-text assertion instead.
+  // v0.41.18.0 (A1): loadRecommendationContext extracted from doctor.ts
+  // to src/core/remediation/context.ts so onboard CLI + MCP run_onboard
+  // can compose the same context. Source-text grep follows the function
+  // to its new home.
   test('source-text grep: loadRecommendationContext is provider-aware via the shared helper', () => {
-    const src = readFileSync(join(__dirname, '..', 'src', 'commands', 'doctor.ts'), 'utf-8');
+    const src = readFileSync(join(__dirname, '..', 'src', 'core', 'remediation', 'context.ts'), 'utf-8');
     // Pre-v0.37 this was OpenAI-only; the Lane E.4 fix made it branch on
     // provider for the key. v0.40.x replaced the inline prefix ladder with the
     // shared recipe-aware helper `embeddingProviderConfigured` (so doctor +

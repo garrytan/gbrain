@@ -15,7 +15,7 @@
 > comments between `triggers:` and array items break gray-matter
 > parsing). Also caught upstream's missing trailing-newline on a new
 > baseline fixture (mechanical local patch). `docs/CLAUDE-UPSTREAM.md`
-> refreshed to v0.41.14.0 (2021 lines, 0 wintermute hits). fork-protected
+> refreshed to v0.41.14.0 (2021 lines, 0 banned-name hits). fork-protected
 > paths zero-touch. **3140 pages preserved** (exact match to §6.30
 > baseline). OAuth 4-client wire confirmed live under v0.41.3.0 CORS
 > lockdown (kos-worker token exchange + MCP tools/list → 76 tools).
@@ -150,26 +150,31 @@ oauth_*),WAL fork patch retained for brain-db.ts。
 
 ## P1 — Post-enrich-sweep KB refinement (added 2026-06-01)
 
-### [ ] (P1) Batch KB refinement of the email-corpus stubs — see `REFINEMENT-BACKLOG.md`
+### [x] (P1) Batch KB refinement of the email-corpus stubs — DONE 2026-06-01 (data side)
 
 The full `mailagent-emails` enrich-sweep (Tier-3-only, `--min-mentions 3`,
-~3482 stubs) surfaced 6 quality signals. Lucien's call: **one batch refinement
-after the sweep hits `ALL DONE`**, not per-signal mid-run. Full detail
-(detection SQL + counts + fixes + runbook) in
-[`skills/kos-jarvis/REFINEMENT-BACKLOG.md`](REFINEMENT-BACKLOG.md). Headlines:
+3482 stubs, rc=0) surfaced 7 quality signals; one batch refinement ran the
+same day. Full detail + detection SQL + resolution table in
+[`skills/kos-jarvis/REFINEMENT-BACKLOG.md`](REFINEMENT-BACKLOG.md). Outcome:
 
-- **R1 (HIGH)** all ~3482 stubs landed in `source_id='mailagent-emails'`, not
-  `default` (script `export GBRAIN_SOURCE=…` + `gbrain put` no `--source`).
-- **R2 (HIGH)** ~564→~870 stubs duplicate entities already in `default`
-  (Phase C existence check saw only the read source).
-- **R3** ~16 email addresses extracted as entity names (incl. Lucien's own).
-- **R4** ≥5 near-duplicate company variants dedupe missed.
-- **R5** cosmetic `tier 2*` marker confusion under `--tier3-only`.
-- **R6** 68 thin (<300-char) shells.
+- **R1 / R2 — RETRACTED.** Premised on the wrong mental model. Per CLAUDE.md's
+  two-axis design, **sources are independent namespaces and slugs scope per
+  source**, so the stubs correctly live in `mailagent-emails` (not `default`),
+  and the same slug existing in both sources is two valid pages, not a dup.
+  No move, no cross-source dedup. The `--target-source` / all-source-existence
+  code changes are dropped.
+- **R3 / R4 / R7 — DONE** (28 + 16 soft-deletes): R3 19 email/domain-mash junk
+  pages, R4 9 near-dup company variants (kept richest), R7 16 orphan zembed-1
+  test chunks → brain now literally single-model te3 (43,311 / 0 non-unit-norm).
+- **R6 — reviewed, no action**: the 68 `<300`-char stubs are concise-but-valid.
+- Live email-corpus stubs after cleanup: **3417**.
 
-Also lands 4 code fixes (R1 `--target-source`, R2 all-source existence check,
-R3 email→alias, R4 dedupe normalization) so the next sweep is clean. Ties into
-the existing P2 "485 entity pages no link/timeline" graph-coverage item.
+**Remaining (code only, deferred):** R3 email→alias in NER, R4 dedupe
+normalization (strip corp suffixes / `tplink`↔`tp-link`), R5 tier-marker copy —
+a focused enrich-sweep code pass; affects only the *next* sweep. Plus a few
+borderline R3 names left for Lucien's eyeball (`4com`/`cnet`/`ocn`/`surfnet`/
+`sct-telecom`/`marcom`/`5gcom`/`cn`/`hnbu-cn`/`cloud-org`). Ties into the
+existing P2 "485 entity pages no link/timeline" graph-coverage item.
 
 ---
 

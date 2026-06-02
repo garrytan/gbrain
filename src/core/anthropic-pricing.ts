@@ -33,6 +33,8 @@ export const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
   'claude-3-5-haiku-20241022':  { input:  0.80, output:  4.00 },
 };
 
+import { splitProviderModelId } from './model-id.ts';
+
 /**
  * Estimate the upper-bound USD cost of a single submit.
  * Uses (estimatedInputTokens × inputRate) + (maxOutputTokens × outputRate).
@@ -41,20 +43,22 @@ export const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
  *
  * Returns null when the model isn't in the pricing map. Callers warn-once
  * and treat as zero-cost (the cycle runs unbounded for that submit).
+ *
+ * Accepts bare (`claude-opus-4-7`), colon-prefixed (`anthropic:claude-opus-4-7`),
+ * and slash-prefixed (`anthropic/claude-opus-4-7`) ids. Routes through
+ * `splitProviderModelId` so the slash-form (which arrives via CLI `--judge-model`
+ * and OpenRouter recipe lists) hits the pricing table. Pre-v0.41.21.0 the inline
+ * `:`-only split missed slash form → BudgetTracker no_pricing hard-fail with
+ * `--max-cost N` (closes #1540).
  */
 export function estimateMaxCostUsd(
   modelId: string,
   estimatedInputTokens: number,
   maxOutputTokens: number,
 ): number | null {
-  // Accept both bare (`claude-opus-4-7`) and provider-prefixed
-  // (`anthropic:claude-opus-4-7`) ids. Required since cebu-v4's
-  // model-config rewrite (commit c4f03a9d) prefixes every default — without
-  // tail fallback, every internal call would hit BUDGET_METER_NO_PRICING and
-  // silently disable the budget gate.
-  let p = ANTHROPIC_PRICING[modelId];
-  if (!p && modelId.includes(':')) {
-    const tail = modelId.split(':', 2)[1];
+  let p: ModelPricing | undefined = ANTHROPIC_PRICING[modelId];
+  if (!p) {
+    const { model: tail } = splitProviderModelId(modelId);
     if (tail) p = ANTHROPIC_PRICING[tail];
   }
   if (!p) return null;

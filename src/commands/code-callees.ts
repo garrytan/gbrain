@@ -5,9 +5,10 @@
  * Forward view of the A1 call graph. Matches `from_symbol_qualified`
  * in both code_edges_chunk + code_edges_symbol.
  *
- * v0.34 W0b (Codex finding #7): pre-v0.34 default was inverted to
- * cross-source whenever --source was omitted. See code-callers.ts for
- * the full rationale. Same fix here.
+ * Source resolution: honors the full chain (incl. the `.gbrain-source` pin)
+ * via `resolveScopedSourceOrThrow` when --source/--all-sources are omitted.
+ * See code-callers.ts for the full rationale. Same behavior here. JSON
+ * envelope carries `source_id` + `scope`.
  *
  * Output: same JSON-on-non-TTY convention as code-callers / code-def /
  * code-refs.
@@ -15,7 +16,19 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
-import { resolveDefaultSource, SourceResolutionError } from '../core/sources-ops.ts';
+import { resolveScopedSourceOrThrow, SourceResolutionError } from '../core/sources-ops.ts';
+import { formatSoleNonDefaultNudge } from '../core/source-resolver.ts';
+
+/** A bad/invalid `.gbrain-source` pin or GBRAIN_SOURCE value surfaces from
+ * `resolveSourceWithTier`'s `assertSourceExists` as a plain Error with one of
+ * these message prefixes. Mirrors dream.ts:isResolverUserError. */
+function isResolverUserError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const m = e.message;
+  return (m.startsWith('Source "') && m.includes(' not found.'))
+    || m.startsWith('Invalid --source value')
+    || m.startsWith('Invalid GBRAIN_SOURCE value');
+}
 
 function parseFlag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
@@ -49,10 +62,16 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
   const allSources = args.includes('--all-sources');
   let sourceId = parseFlag(args, '--source');
 
-  // v0.34 W0b: source-scoped default. Matches code-callers behavior.
+  // Full source-resolution chain (honors .gbrain-source pin, env, local_path,
+  // brain_default, sole_non_default). Matches code-callers behavior.
   if (!allSources && !sourceId) {
     try {
-      sourceId = await resolveDefaultSource(engine);
+      const resolved = await resolveScopedSourceOrThrow(engine);
+      sourceId = resolved.source_id;
+      if (resolved.tier === 'sole_non_default') {
+        const nudge = formatSoleNonDefaultNudge(resolved.source_id);
+        if (nudge) console.error(nudge);
+      }
     } catch (e: unknown) {
       if (e instanceof SourceResolutionError) {
         const env = errorFor({
@@ -68,6 +87,20 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
         }
         process.exit(2);
       }
+      if (isResolverUserError(e)) {
+        const env = errorFor({
+          class: 'UsageError',
+          code: 'invalid_source_pin',
+          message: (e as Error).message,
+          hint: 'fix the .gbrain-source pin / GBRAIN_SOURCE value, or pass --source <id> / --all-sources',
+        }).envelope;
+        if (shouldEmitJson(args)) {
+          console.log(JSON.stringify({ error: env }));
+        } else {
+          console.error((e as Error).message);
+        }
+        process.exit(2);
+      }
       throw e;
     }
   }
@@ -79,10 +112,23 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
       sourceId: sourceId ?? undefined,
     });
 
+    const scope = allSources ? 'all' : 'single';
+    const envelopeSourceId = allSources ? null : (sourceId ?? null);
+
     if (shouldEmitJson(args)) {
-      console.log(JSON.stringify({ symbol: sym, count: edges.length, callees: edges }, null, 2));
+      const out: Record<string, unknown> = {
+        symbol: sym, source_id: envelopeSourceId, scope, count: edges.length, callees: edges,
+      };
+      if (edges.length === 0 && !allSources && sourceId) {
+        out.hint = `No callees in source '${sourceId}'. Try --all-sources to search every source.`;
+      }
+      console.log(JSON.stringify(out, null, 2));
     } else if (edges.length === 0) {
-      console.log(`No callees found for "${sym}".`);
+      if (!allSources && sourceId) {
+        console.log(`No callees found for "${sym}" in source '${sourceId}'. Try --all-sources to search every source.`);
+      } else {
+        console.log(`No callees found for "${sym}".`);
+      }
     } else {
       console.log(`${edges.length} callee(s) for "${sym}":`);
       for (const e of edges) {

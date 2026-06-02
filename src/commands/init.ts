@@ -38,6 +38,15 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  // v0.42 (T17): pack selection on fresh installs. New brains default to
+  // gbrain-base-v2 (the 15-type canonical taxonomy); --schema-pack
+  // gbrain-base opts back to the legacy 24-type pack for users who don't
+  // want the new taxonomy on day one. Existing brains stay on whatever
+  // schema_pack their config.json already says.
+  const schemaPackIdx = args.indexOf('--schema-pack');
+  const schemaPack = schemaPackIdx !== -1 && args[schemaPackIdx + 1]
+    ? args[schemaPackIdx + 1]
+    : 'gbrain-base-v2';
 
   // Multi-topology v1: thin-client init. Skips local engine entirely; writes
   // remote_mcp config that the CLI dispatch guard reads to refuse DB-bound ops.
@@ -112,7 +121,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts });
+    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack });
   }
 
   // Supabase/Postgres mode
@@ -131,7 +140,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts, schemaPack });
 }
 
 interface ResolveAIOptionsArgs {
@@ -506,43 +515,26 @@ async function resolveChatByEnv(out: ResolvedAIOptions): Promise<void> {
  * clobbering the user's chosen engine.
  */
 async function initMigrateOnly(opts: { jsonOutput: boolean }) {
-  const config = loadConfig();
-  if (!config) {
-    const msg = 'No brain configured. Run `gbrain init` (interactive) or `gbrain init --pglite` / `gbrain init --supabase` first.';
+  // v0.41.37.0 #1605: delegate to the shared runMigrateOnlyCore so the CLI path
+  // and the in-process migration-orchestrator path can't drift (single source
+  // of truth for configureGateway-before-initSchema + the schema bring-up).
+  const { runMigrateOnlyCore, MigrateOnlyError } = await import('./migrations/in-process.ts');
+  try {
+    const result = await runMigrateOnlyCore();
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'error', reason: 'no_config', message: msg }));
+      console.log(JSON.stringify({ status: 'success', engine: result.engine, mode: 'migrate-only' }));
+    } else {
+      console.log(`Schema up to date (engine: ${result.engine}).`);
+    }
+  } catch (e) {
+    const isNoConfig = e instanceof MigrateOnlyError && e.message.startsWith('No brain configured');
+    const msg = e instanceof Error ? e.message : String(e);
+    if (opts.jsonOutput) {
+      console.log(JSON.stringify({ status: 'error', reason: isNoConfig ? 'no_config' : 'migrate_failed', message: msg }));
     } else {
       console.error(msg);
     }
     process.exit(1);
-  }
-
-  // B.3: configureGateway BEFORE initSchema even on the migrate-only path,
-  // so a schema bump on a brain whose file config is missing the embedding
-  // fields doesn't fall through to stale hardcoded fallbacks. Reads
-  // existing config (which loadConfig already merged with env) and
-  // propagates it into the gateway.
-  const { configureGateway: configureGw } = await import('../core/ai/gateway.ts');
-  configureGw({
-    embedding_model: config.embedding_model,
-    embedding_dimensions: config.embedding_dimensions,
-    expansion_model: config.expansion_model,
-    chat_model: config.chat_model,
-    env: { ...process.env },
-  });
-
-  const engine = await createEngine(toEngineConfig(config));
-  try {
-    await engine.connect(toEngineConfig(config));
-    await engine.initSchema();
-  } finally {
-    try { await engine.disconnect(); } catch { /* best-effort */ }
-  }
-
-  if (opts.jsonOutput) {
-    console.log(JSON.stringify({ status: 'success', engine: config.engine, mode: 'migrate-only' }));
-  } else {
-    console.log(`Schema up to date (engine: ${config.engine}).`);
   }
 }
 
@@ -785,6 +777,9 @@ async function initPGLite(opts: {
   apiKey: string | null;
   customPath: string | null;
   aiOpts?: ResolvedAIOptions;
+  /** v0.42 (T17): schema pack to default. Stored as config.schema_pack
+   *  so loadActivePack's homeConfig tier resolves it. */
+  schemaPack?: string;
 }) {
   const dbPath = opts.customPath || gbrainPath('brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
@@ -934,8 +929,20 @@ async function initPGLite(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      // v0.42 (T17): default new brains to the schema_pack selected at init
+      // time. Existing config.schema_pack survives (...existingFile spread)
+      // unless explicitly overridden by --schema-pack on re-init.
+      ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    // PR1: new installs publish their skill catalog over MCP by default
+    // (existing config wins on re-init, so a prior opt-out is preserved).
+    config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
     saveConfig(config);
+    if (opts.schemaPack) {
+      process.stderr.write(
+        `[init] Using schema pack: ${opts.schemaPack} (override with --schema-pack <name>)\n`,
+      );
+    }
 
     // T6 (D7): post-init subagent-Anthropic caveat. Fires for both auto-pick
     // and picker paths so users see the implication of running on a chat
@@ -973,6 +980,11 @@ async function initPGLite(opts: {
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');
       printAdvisoryIfRecommended({ version: VERSION, context: 'init' });
+
+      // v0.41.18.0 (A4 + A18 + A20, T14): post-initSchema onboard nudge.
+      // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
+      const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
+      await runInitNudge(engine);
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -984,6 +996,8 @@ async function initPostgres(opts: {
   jsonOutput: boolean;
   apiKey: string | null;
   aiOpts?: ResolvedAIOptions;
+  /** v0.42 (T17): schema pack to default. */
+  schemaPack?: string;
 }) {
   const { databaseUrl } = opts;
 
@@ -1157,9 +1171,19 @@ async function initPostgres(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      // v0.42 (T17): same schema_pack default as PGLite path.
+      ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    // PR1: new installs publish their skill catalog over MCP by default
+    // (existing config wins on re-init, so a prior opt-out is preserved).
+    config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
+    if (opts.schemaPack) {
+      process.stderr.write(
+        `[init] Using schema pack: ${opts.schemaPack} (override with --schema-pack <name>)\n`,
+      );
+    }
 
     // T6 (D7): post-init subagent-Anthropic caveat.
     if (opts.aiOpts?.chat_model && !opts.aiOpts.chat_model.startsWith('anthropic:') && !process.env.ANTHROPIC_API_KEY) {
@@ -1191,6 +1215,11 @@ async function initPostgres(opts: {
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');
       printAdvisoryIfRecommended({ version: VERSION, context: 'init' });
+
+      // v0.41.18.0 (A4 + A18 + A20, T14): post-initSchema onboard nudge.
+      // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
+      const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
+      await runInitNudge(engine);
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }

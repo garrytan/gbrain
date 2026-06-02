@@ -101,6 +101,54 @@ created: 2026-05-24
       expect(page).toBeNull();
     });
   });
+
+  // ─── v0.41.13: end-to-end coverage for the expanded patterns ────────
+  // Exercises the assessor wiring (not just the regex) per D6.
+
+  test.each([
+    ['Forbidden', 'error_page_title'],
+    ['Access Denied', 'error_page_title'],
+    ['Service Unavailable', 'error_page_title'],
+    ['Robot Check', 'error_page_title'],
+    ['Just a moment...', 'cloudflare_challenge_title'],
+  ])('v0.41.13: title %j → ContentSanityBlockError (matches %s)', async (title, expectedPattern) => {
+    await withIsolatedHome(async () => {
+      const content = `---
+title: '${title}'
+type: note
+created: 2026-05-24
+---
+
+scraper junk body`;
+      let caught: ContentSanityBlockError | undefined;
+      try {
+        await importFromContent(engine, 'test/v04113-' + title.toLowerCase().replace(/[^a-z]/g, '-'), content, { noEmbed: true });
+      } catch (e) {
+        if (e instanceof ContentSanityBlockError) caught = e;
+        else throw e;
+      }
+      expect(caught).toBeDefined();
+      expect(caught!.result.junk_pattern_matches).toContain(expectedPattern);
+      expect(caught!.message).toContain('PAGE_JUNK_PATTERN');
+    });
+  });
+
+  test('v0.41.13: over-match regression — "How to Handle Access Denied Errors" imports cleanly', async () => {
+    await withIsolatedHome(async () => {
+      const content = `---
+title: 'How to Handle Access Denied Errors'
+type: note
+created: 2026-05-24
+---
+
+A legitimate essay about handling access-denied errors in your app.`;
+      // Should NOT throw.
+      const result = await importFromContent(engine, 'test/v04113-essay', content, { noEmbed: true });
+      expect(result.status).not.toBe('error');
+      const page = await engine.getPage('test/v04113-essay');
+      expect(page).not.toBeNull();
+    });
+  });
 });
 
 describe('importFromContent — soft-block (D9 transition + embed_skip)', () => {

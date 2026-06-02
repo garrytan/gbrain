@@ -127,9 +127,16 @@ export async function queryOrphanPages(
  */
 export async function findOrphans(
   engine: BrainEngine,
-  opts: { includePseudo?: boolean } = {},
+  opts: { includePseudo?: boolean; sourceId?: string; sourceIds?: string[] } = {},
 ): Promise<OrphanResult> {
   const includePseudo = !!opts.includePseudo;
+  // v0.41.29.0: `sourceId` (scalar, from `--source` + single-source MCP
+  // clients) or `sourceIds` (federated, from `allowedSources` MCP clients)
+  // scopes the candidate set. `sourceIds` wins when both set (mirrors
+  // sourceScopeOpts precedence).
+  const sourceId = opts.sourceId;
+  const sourceIds =
+    opts.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
   // The NOT EXISTS anti-join over pages × links can take seconds on 50K-page
   // brains. Heartbeat every second so agents see the scan is alive. Keyset
   // pagination was considered and rejected: without an index on
@@ -140,16 +147,40 @@ export async function findOrphans(
   const stopHb = startHeartbeat(progress, 'scanning pages for missing inbound links…');
   let allOrphans: { slug: string; title: string; domain: string | null }[];
   let total: number;
+  let excludedAll: number;
   try {
-    allOrphans = await engine.findOrphanPages();
-    // Count total pages in DB for the summary line
-    const stats = await engine.getStats();
-    total = stats.page_count;
+    allOrphans = await engine.findOrphanPages(
+      sourceIds ? { sourceIds } : sourceId ? { sourceId } : undefined,
+    );
+    // v0.41.29.0 (Codex F6): correct the `total_linkable` denominator.
+    // Enumerate ALL live pages (scoped) and count excluded-by-slug across
+    // the WHOLE set — not just among orphans. The old
+    // `total - excludedOrphans` left excluded NON-orphan pages (e.g. a
+    // `test/` page that HAS inbound links) in the denominator, inflating
+    // total_linkable and suppressing orphan warnings. `getAllSlugs` is NOT
+    // used here because it does not filter soft-deleted rows; `total` must
+    // match `findOrphanPages`'s `deleted_at IS NULL` candidate universe.
+    let scopeClause = '';
+    const liveParams: unknown[] = [];
+    if (sourceIds) {
+      liveParams.push(sourceIds);
+      scopeClause = ` AND source_id = ANY($${liveParams.length}::text[])`;
+    } else if (sourceId) {
+      liveParams.push(sourceId);
+      scopeClause = ` AND source_id = $${liveParams.length}`;
+    }
+    const liveRows = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE deleted_at IS NULL${scopeClause}`,
+      liveParams,
+    );
+    total = liveRows.length;
+    excludedAll = includePseudo
+      ? 0
+      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug) ? 1 : 0), 0);
   } finally {
     stopHb();
     progress.finish();
   }
-  const _totalPages = allOrphans.length; // pages with no inbound links (preserved for ref)
 
   const filtered = includePseudo
     ? allOrphans
@@ -166,7 +197,10 @@ export async function findOrphans(
   return {
     orphans,
     total_orphans: orphans.length,
-    total_linkable: filtered.length + (total - allOrphans.length),
+    // v0.41.29.0 (Codex F6): denominator = live pages minus ALL excluded
+    // pages (orphan or not), so excluded pages with inbound links no longer
+    // inflate it.
+    total_linkable: total - excludedAll,
     total_pages: total,
     excluded,
   };
@@ -224,6 +258,16 @@ export async function runOrphans(engine: BrainEngine, args: string[]) {
   const json = args.includes('--json');
   const count = args.includes('--count');
   const includePseudo = args.includes('--include-pseudo');
+  // v0.41.29.0: explicit `--source <id>` scopes the orphan scan to one
+  // source. Omitted → brain-wide (unchanged). Raw explicit-flag parse on
+  // purpose — NOT resolveSourceWithTier, which would pick a default source
+  // when the flag is absent and silently scope a bare `gbrain orphans`.
+  let sourceId: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--source' && i + 1 < args.length) {
+      sourceId = args[++i] || undefined;
+    }
+  }
 
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`Usage: gbrain orphans [options]
@@ -234,6 +278,7 @@ Options:
   --json            Output as JSON (for agent consumption)
   --count           Output just the number of orphans
   --include-pseudo  Include auto-generated and pseudo pages in results
+  --source <id>     Scope the scan to one brain source (default: brain-wide)
   --help, -h        Show this help
 
 Output (default): grouped by domain, sorted alphabetically within each group
@@ -242,7 +287,7 @@ Summary line: N orphans out of M linkable pages (K total; K-M excluded)
     return;
   }
 
-  const result = await findOrphans(engine, { includePseudo });
+  const result = await findOrphans(engine, { includePseudo, sourceId });
 
   if (count) {
     console.log(String(result.total_orphans));

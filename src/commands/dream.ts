@@ -30,6 +30,8 @@ import {
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
+import { resolveSourceId } from '../core/source-resolver.ts';
+import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'node:path';
 
@@ -54,9 +56,39 @@ interface DreamArgs {
    * Never auto-applied for --input (codex finding #3).
    */
   bypassDreamGuard: boolean;
+  /**
+   * v0.41.13: per-source cycle scoping. Threaded into runCycle as
+   * `sourceId` so `cycle.ts:1947-1967` writes `last_full_cycle_at`
+   * to `sources.config` on success — without it, `gbrain doctor`'s
+   * `cycle_freshness` check stays stale forever. Accepts `--source
+   * <id>` and the alias `--source-id <id>` (the v0.37.7.0 #1167
+   * canonical name across import/extract/graph-query); both work
+   * until a follow-up CLI cleanup picks one. Supersedes PR #1559.
+   */
+  source: string | null;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Collect every occurrence of `--<flag> <value>` in argv. Used to
+ * detect repeated flags with different values (e.g.
+ * `--source X --source Y`) and to surface a clean usage error
+ * instead of silently last-wins. Repeated identical values are
+ * collapsed to one (no-op). Missing values (flag at end of argv)
+ * return null to let the caller raise an explicit usage error
+ * rather than fall through with `undefined`.
+ */
+function collectFlagValues(args: string[], flag: string): string[] | null {
+  const values: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== flag) continue;
+    const v = args[i + 1];
+    if (v === undefined) return null; // flag at end of argv
+    values.push(v);
+  }
+  return values;
+}
 
 function parseArgs(args: string[]): DreamArgs {
   const phaseIdx = args.indexOf('--phase');
@@ -110,6 +142,43 @@ function parseArgs(args: string[]): DreamArgs {
   // --input implies --phase synthesize.
   if (inputFile && !phase) phase = 'synthesize';
 
+  // v0.41.13: --source <id> (and the --source-id alias) drives per-source
+  // cycle scoping. Resolution rules:
+  //   - missing value (flag at end of argv) → exit 2 with usage
+  //   - repeated with different values (e.g. --source X --source Y) → exit 2
+  //   - --source X --source-id Y (conflicting flag aliases) → exit 2
+  //   - --source X --source X (or --source-id repeated with same value) → accepted
+  //   - --help short-circuits BEFORE this block fires (see runDream).
+  // Closes the PR #1559 silent-no-op class through a clean argv contract.
+  const sourceValues = collectFlagValues(args, '--source');
+  const sourceIdValues = collectFlagValues(args, '--source-id');
+  if (sourceValues === null) {
+    console.error('--source <id>: missing value. Usage: gbrain dream --source <source-id>');
+    process.exit(2);
+  }
+  if (sourceIdValues === null) {
+    console.error('--source-id <id>: missing value. Usage: gbrain dream --source-id <source-id>');
+    process.exit(2);
+  }
+  const uniqSource = Array.from(new Set(sourceValues));
+  const uniqSourceId = Array.from(new Set(sourceIdValues));
+  if (uniqSource.length > 1) {
+    console.error(`specify --source once; got [${uniqSource.map(v => `"${v}"`).join(', ')}]`);
+    process.exit(2);
+  }
+  if (uniqSourceId.length > 1) {
+    console.error(`specify --source-id once; got [${uniqSourceId.map(v => `"${v}"`).join(', ')}]`);
+    process.exit(2);
+  }
+  if (uniqSource.length === 1 && uniqSourceId.length === 1 && uniqSource[0] !== uniqSourceId[0]) {
+    console.error(
+      `use --source OR --source-id, not both (different values): ` +
+      `--source="${uniqSource[0]}" vs --source-id="${uniqSourceId[0]}"`,
+    );
+    process.exit(2);
+  }
+  const source = uniqSource[0] ?? uniqSourceId[0] ?? null;
+
   return {
     json: args.includes('--json'),
     dryRun: args.includes('--dry-run'),
@@ -122,24 +191,33 @@ function parseArgs(args: string[]): DreamArgs {
     from,
     to,
     bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
+    source,
   };
 }
 
 /**
  * Resolve the brain directory without the `findRepoRoot` footgun.
  *
- * Prior dream.ts walked up 10 levels of cwd looking for `.git` and would
- * happily run lint + sync against an unrelated git repo the user happened
- * to be cd'd into. This resolver only trusts two sources:
- *   1. An explicit --dir argument.
- *   2. The `sync.repo_path` config key set by `gbrain init` (engine-backed).
+ * Resolution order (v0.41.30 — postgres support):
+ *   1. An explicit --dir argument (exits 1 if it doesn't exist — a real mistake).
+ *   2. T1: when --source resolved to a source that has an on-disk `local_path`,
+ *      use it (matches `gbrain sync`, lets that source's filesystem phases run).
+ *   3. The legacy `sync.repo_path` config key (pre-v0.18 default-source brains).
+ *   4. `null` — no local checkout. The cycle then SKIPS filesystem phases
+ *      (lint/backlinks/sync/synthesize/extract/patterns) with reason
+ *      `no_brain_dir` and runs the DB-only phases (resolve_symbol_edges, embed,
+ *      orphans, ...). This is what makes `gbrain dream` work on a postgres /
+ *      Supabase brain with no checkout. `runDream` owns the only hard error:
+ *      no checkout AND no engine = truly nothing to run.
  *
- * If neither is available, we error out instead of guessing.
+ * Still never walks cwd for a `.git` — only the explicit / source / config
+ * signals are trusted.
  */
 async function resolveBrainDir(
   engine: BrainEngine | null,
   explicit: string | null,
-): Promise<string> {
+  resolvedSourceId?: string,
+): Promise<string | null> {
   if (explicit) {
     if (!existsSync(explicit)) {
       console.error(`--dir path does not exist: ${explicit}`);
@@ -150,6 +228,22 @@ async function resolveBrainDir(
     return resolve(explicit);
   }
 
+  // T1: the user scoped to a specific source via --source/--source-id; if that
+  // source has a checkout on disk, use it so its filesystem phases can run.
+  if (engine && resolvedSourceId) {
+    const src = await fetchSource(engine, resolvedSourceId);
+    if (src?.local_path && existsSync(src.local_path)) {
+      return resolve(src.local_path);
+    }
+    // Explicit --source whose checkout isn't on disk → DB-only (skip FS phases).
+    // Do NOT fall through to the global sync.repo_path below: that path belongs
+    // to the default/unscoped brain, and running FS phases (sync/lint/extract)
+    // against it while the DB phases AND the last_full_cycle_at stamp target
+    // <resolvedSourceId> would mix scopes — syncing one source's checkout while
+    // marking a different source fresh. (codex P1 review finding.)
+    return null;
+  }
+
   if (engine) {
     const configured = await engine.getConfig('sync.repo_path');
     if (configured && existsSync(configured)) {
@@ -157,10 +251,9 @@ async function resolveBrainDir(
     }
   }
 
-  console.error(
-    'No brain directory found. Pass --dir <path> or configure one via `gbrain init`.',
-  );
-  process.exit(1);
+  // No checkout found. Return null (NOT exit) — DB-only phases can still run
+  // against the engine. The both-null hard error lives in runDream.
+  return null;
 }
 
 function printHelp() {
@@ -181,7 +274,19 @@ Options:
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
   --pull              git pull the brain repo before syncing (default: no pull)
-  --dir <path>        Brain directory (default: configured brain)
+  --dir <path>        Brain directory (default: configured brain). On a
+                      postgres/remote brain with no local checkout, the
+                      filesystem phases (lint, backlinks, sync, synthesize,
+                      extract, patterns) are skipped (reason: no_brain_dir)
+                      and the DB-only phases still run.
+
+  --source <id>       Scope the cycle to one source so doctor's
+                      cycle_freshness check sees a fresh stamp on
+                      completion. Without this, gbrain dream's
+                      timestamp never lands and federated brains
+                      see "stale cycle" forever.
+  --source-id <id>    Alias for --source. Matches the v0.37.7.0+
+                      naming used by import/extract/graph-query.
 
   --input <file>      Synthesize a specific transcript file (implies
                       --phase synthesize). Bypasses corpus-dir scan.
@@ -267,15 +372,93 @@ function printHuman(report: CycleReport) {
 
 // ─── CLI entry ─────────────────────────────────────────────────────
 
+/**
+ * Predicate: is this error one of the resolver's user-facing throws
+ * we want to surface as a clean stderr line + exit 1?
+ *
+ * Matches the message prefixes thrown from
+ * `src/core/source-resolver.ts:resolveSourceId` and
+ * `assertSourceExists`. Anything else (TypeError / ReferenceError /
+ * postgres connection failures / unexpected bugs) is intentionally
+ * NOT caught — those propagate to Bun's default unhandled handler
+ * with a stack trace so genuine programmer bugs aren't hidden as
+ * if they were operator errors. (Plan D-T3, codex C-7.)
+ */
+function isResolverUserError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const m = e.message;
+  return (m.startsWith('Source "') && m.includes(' not found.'))
+      || m.startsWith('Invalid --source value')
+      || m.startsWith('Invalid GBRAIN_SOURCE value');
+}
+
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
   const opts = parseArgs(args);
 
+  // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─
+  // Tests pin this ordering so `gbrain dream --help --source whatever`
+  // ALWAYS prints help and exits 0, never reaching the engine-null gate
+  // below. If you reorder this, dream-cli-flags.test.ts will fail.
   if (opts.help) {
     printHelp();
     return;
   }
 
-  const brainDir = await resolveBrainDir(engine, opts.dir);
+  // v0.41.13: --source <id> resolution. Three guards in order:
+  //   1. engine null → exit 1 (the writeback in cycle.ts requires a
+  //      DB connection; without engine we'd silently fail the same way
+  //      PR #1559 was created to fix)
+  //   2. resolveSourceId throws on unknown id → typed-error catch
+  //      surfaces clean message; non-resolver throws propagate
+  //   3. archived source → exit 1 with restore hint (writing
+  //      last_full_cycle_at to an archived source would mask data
+  //      staleness when the source is later restored)
+  let resolvedSourceId: string | undefined;
+  if (opts.source !== null) {
+    if (engine === null) {
+      console.error(
+        'gbrain dream --source <id> requires a connected brain ' +
+        '(no engine available); omit --source or run `gbrain init` first',
+      );
+      process.exit(1);
+    }
+    try {
+      resolvedSourceId = await resolveSourceId(engine, opts.source);
+    } catch (e) {
+      if (isResolverUserError(e)) {
+        console.error((e as Error).message);
+        process.exit(1);
+      }
+      throw e; // genuine bugs propagate with stack trace
+    }
+    // Archived-source guard via fetchSource from sources-load.ts
+    // (single-row SELECT that projects `archived` and falls back to
+    // pre-v0.26.5 schemas via isUndefinedColumnError catch — same
+    // legacy-safety net the rest of the codebase uses). engine's
+    // built-in listAllSources defaults to includeArchived=false AND
+    // doesn't project the archived column, so it cannot be used here.
+    const src = await fetchSource(engine, resolvedSourceId);
+    if (src?.archived === true) {
+      console.error(
+        `source ${resolvedSourceId} is archived; restore with ` +
+        `\`gbrain sources restore ${resolvedSourceId}\` before cycling`,
+      );
+      process.exit(1);
+    }
+  }
+
+  const brainDir = await resolveBrainDir(engine, opts.dir, resolvedSourceId);
+  // Both-null is the only hard error: no local checkout AND no DB connection
+  // means neither filesystem phases nor DB phases can run. With an engine but
+  // no checkout, the cycle skips filesystem phases and runs DB-only phases
+  // (resolve_symbol_edges, embed, orphans, ...) — the postgres support path.
+  if (brainDir === null && engine === null) {
+    console.error(
+      'No brain directory found and no database connection. ' +
+      'Pass --dir <path> or configure a brain via `gbrain init`.',
+    );
+    process.exit(1);
+  }
   const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
 
   const report = await runCycle(engine, {
@@ -283,6 +466,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,
+    sourceId: resolvedSourceId, // undefined when --source not set → legacy back-compat
     synthInputFile: opts.inputFile ?? undefined,
     synthDate: opts.date ?? undefined,
     synthFrom: opts.from ?? undefined,
