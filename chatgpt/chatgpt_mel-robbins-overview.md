@@ -138,3 +138,11 @@ Here’s what the evidence actually shows about **Mel Robbins, *Pure Genius*, *G
 - **Mike Israetel** *is* behind Genius Shot (with a partner) as a fitness protein product. citeturn1search0
 
 If you want, I can dig up direct corporate records (if available) or help parse the trademark/business filings for Pure Genius or Genius Shot, so you can see exact founder listings.
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

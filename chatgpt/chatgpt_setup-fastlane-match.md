@@ -70,3 +70,11 @@ You can download the patch file here: {{file:file-ESEJ7syTAWXjgA9chTmdLk}}.
 4. **Push and run**: Commit the patch to your `dev` branch.  The next run of the workflows will use match to handle code signing and upload to TestFlight or the App Store accordingly.
 
 Let me know if you want me to apply this patch or assist further.
+
+
+## See Also
+- [[chatgpt/chatgpt_fastlane-match-dev-setup]]
+- [[chatgpt/chatgpt_fastlane-match-setup-2]]
+- [[chatgpt/chatgpt_fastlane-match-setup]]
+- [[chatgpt/chatgpt_apple-id-fastlane-setup]]
+- [[chatgpt/chatgpt_audit-fastlane-setup]]

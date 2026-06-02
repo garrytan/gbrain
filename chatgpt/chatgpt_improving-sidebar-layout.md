@@ -135,3 +135,11 @@ Even though Clerk isn’t loading locally, design the fallback properly:
 - Consider renaming “Overview” → “Dashboard” if that page name matches the main content heading.
 
 If you want, I can sketch the full React/Tailwind sidebar component (expanded + collapsed, with upgrade card + Clerk placeholder) so you can just drop it in.
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-app-layout-shifts]]
+- [[chatgpt/chatgpt_audit-sidebar-ui]]
+- [[chatgpt/chatgpt_card-layout-improvements]]
+- [[chatgpt/chatgpt_dashboard-ui-and-layout-issues]]
+- [[chatgpt/chatgpt_fix-floating-stats-layout]]

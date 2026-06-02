@@ -131,3 +131,11 @@ Perfect description — that helps narrow it down a lot. Since you’re **not fe
 💡 From your description, I’d put **#1 brake pad shift** as the leading suspect, with **#2 heat shield** close behind.  
 
 Would you like me to outline a **DIY check you could do in your driveway** to rule out pad shift vs heat shield, without needing a shop visit yet?
+
+
+## See Also
+- [[chatgpt/chatgpt_cx-5-steering-noise-diagnosis]]
+- [[chatgpt/chatgpt_m2-bottleneck-diagnosis-part1]]
+- [[chatgpt/chatgpt_m2-bottleneck-diagnosis-part2]]
+- [[chatgpt/chatgpt_m2-bottleneck-diagnosis-part3]]
+- [[chatgpt/chatgpt_innovation-in-construction-noise]]

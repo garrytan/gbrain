@@ -45,3 +45,11 @@ This tight integration means developers don’t need to switch apps to get code 
 ClickUp **acquired the Codegen company** to embed this capability deeper into its platform and use the technology to power broader AI “Super Agents” that can operate across tasks, docs, chats, and workflows. The standalone Codegen service is being deprecated with migration support to other AI tools. citeturn0search0turn0search4
 
 If you want a **step-by-step** on connecting or using Codegen inside your ClickUp workspace, let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_clickup-codegen-acquisition-issues]]
+- [[chatgpt/chatgpt_codegen-clickup-changes-email]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]

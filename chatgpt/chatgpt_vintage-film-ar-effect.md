@@ -94,3 +94,11 @@ ok no need to add the word filter or effect. now i have another one that desatur
 ## Assistant
 
 1. Black and white background, color subject, depth filter, pop out effect, background desaturation, color pop, color splash, monochrome background, vibrant subject, background black and white, color foreground, grayscale background, subject in color, standout effect, color separation, depth effect, color isolation, subject highlight, contrast effect, selective color
+
+
+## See Also
+- [[chatgpt/chatgpt_fashion-film-shot-list]]
+- [[chatgpt/chatgpt_film-grain-examples]]
+- [[chatgpt/chatgpt_film-productions-returning-to-california]]
+- [[chatgpt/chatgpt_film-title-clarification-needed]]
+- [[chatgpt/chatgpt_film-vs-memory-debate]]

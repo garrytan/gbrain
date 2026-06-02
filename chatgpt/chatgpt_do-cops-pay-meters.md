@@ -63,3 +63,11 @@ In California, disabled-placard holders are exempt, and in some cities, police v
 **Bottom line:** LAPD officers must pay for meters during regular duty. Only clearly marked emergency situations or official exemptions qualify for free parking. Without those, meter payment is required.
 
 If you spot a police vehicle not paying, it’s likely a different situation than a regular parked cruiser—could be an emergency, official business, or legitimate exemption.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

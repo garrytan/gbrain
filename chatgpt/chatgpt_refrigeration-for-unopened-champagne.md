@@ -26,3 +26,11 @@ If champagne has been refrigerated but not opened does it need to stay refrigera
 ## Assistant
 
 Champagne that has been refrigerated but not opened does not need to stay refrigerated. However, it's best served chilled, so you should refrigerate it again before serving. Keeping it at a consistent, cool temperature is ideal for maintaining its quality.
+
+
+## See Also
+- [[chatgpt/chatgpt_champagne-bottle-calculation]]
+- [[chatgpt/chatgpt_champagne-glass-alternatives]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

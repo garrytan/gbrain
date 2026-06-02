@@ -67,3 +67,11 @@ Rules if you do check it out:
 On the co-founder rabbit hole: ignore it. This interaction is nowhere near enough to justify thinking about that.
 
 The fastest action is the polite decline. That is the least mentally expensive move and keeps your position clean.
+
+
+## See Also
+- [[chatgpt/chatgpt_snarky-product-response]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]

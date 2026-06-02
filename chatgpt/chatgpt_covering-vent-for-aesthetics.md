@@ -28,3 +28,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'One easy fix is to put a decorative vent cover over it. You can find vent covers in various styles and finishes that can match your décor.'}
 {'asset_pointer': 'sediment://file_0000000096ac622f820d190b1ca56969', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-11-18T17:35:54.008011+00:00', 'format': 'wav', 'metadata': {'end': 7.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 360078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_ac-vent-deflectors]]
+- [[chatgpt/chatgpt_ffmi-and-aesthetics-guide]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part1]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part2]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part3]]

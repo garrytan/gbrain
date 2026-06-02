@@ -46,3 +46,11 @@ Is it legal for employers to charge minimum wage employees for parking
 The legality of employers charging minimum wage employees for parking can depend on various factors including the state laws, local ordinances, and the specifics of the employment agreement. In California, where you are located, the law tends to favor employees in wage and hour matters. Employers are generally required to bear the costs of doing business, which might include providing parking. However, the specifics can be complex and might require the analysis of a legal professional.
 
 If this situation applies to you, it might be advisable to consult with an employment attorney to understand the nuances of the law as it applies to your circumstances.
+
+
+## See Also
+- [[chatgpt/chatgpt_parking-garage-exit-legalities]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_flight-and-parking-options]]
+- [[chatgpt/chatgpt_parking-fee-legality]]

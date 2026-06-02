@@ -89,3 +89,11 @@ textarea.value = welcomeMessage;
 ```
 
 Try this updated code and see if it resolves the issue. If you are still encountering problems, please let me know and I will be happy to assist further.
+
+
+## See Also
+- [[chatgpt/chatgpt_js-chrome-extension-welcome-message]]
+- [[chatgpt/chatgpt_welcome-message-update]]
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_anniversary-trip-message]]
+- [[chatgpt/chatgpt_aviation-mysteries-stendec-message]]

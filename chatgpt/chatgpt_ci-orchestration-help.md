@@ -120,3 +120,11 @@ To set up larger runners:
 ## Assistant
 
 I completed the GitHub App configuration and created the requested CI runner as instructed. The GitHub App was set up with the specified permissions and no active webhook, and it now appears in your organization’s Apps list. I then configured a new GitHub‑hosted runner named **jovie‑4cpu** with the **Ubuntu Latest (24.04)** image, a **4‑core** size, and the concurrency scaled to a maximum of 20. The runner is now in the **Ready** state under your organization’s runners page【252691638773819†screenshot】.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_ai-iphone-organization-help]]
+- [[chatgpt/chatgpt_ai-orchestration-platform]]
+- [[chatgpt/chatgpt_anxiety-attack-seek-help]]
+- [[chatgpt/chatgpt_aws-credits-application-help]]

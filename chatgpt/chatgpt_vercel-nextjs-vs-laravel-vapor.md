@@ -47,3 +47,11 @@ If speed is your top concern and you don't need complex server-side logic, go **
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_nextjs-cold-starts-vercel]]
+- [[chatgpt/chatgpt_nextjs-image-upload-vercel]]
+- [[chatgpt/chatgpt_nextjs-supabase-vs-laravel]]
+- [[chatgpt/chatgpt_nextjs-vercel-coverage-tools]]
+- [[chatgpt/chatgpt_nextjs-vs-laravel-comparison]]

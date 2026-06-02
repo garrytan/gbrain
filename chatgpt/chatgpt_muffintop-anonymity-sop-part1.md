@@ -36,3 +36,11 @@ This will help ensure the SOP is tailored to your goals and the structure of the
 Great, I’ll compile a detailed SOP for preserving the anonymity of the MUFFINTOP project across all operations—including distribution, live appearances, merch, social accounts, and legal/publishing infrastructure. I’ll draw inspiration from acts like Daft Punk, Marshmello, and others who’ve successfully maintained pseudonymity.
 
 I’ll let you know when it’s ready for review.
+
+
+## See Also
+- [[chatgpt/chatgpt_muffintop-anonymity-sop-part2]]
+- [[chatgpt/chatgpt_muffintop-anonymity-sop-part3]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]

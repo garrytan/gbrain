@@ -125,3 +125,11 @@ If you want, tell me **which part fails**:
 - works quietly but not voiced  
 
 I’ll correct it precisely.
+
+
+## See Also
+- [[chatgpt/chatgpt_pnks-aerial-singing-technique]]
+- [[chatgpt/chatgpt_rock-and-roll-again-chords]]
+- [[chatgpt/chatgpt_rock-n-roll-la]]
+- [[chatgpt/chatgpt_roll-up-vehicle-explained]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

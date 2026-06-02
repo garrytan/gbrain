@@ -839,3 +839,11 @@ Prepare the **Investor Portal** and documents:
 ---
 
 Let me know if you’d like to get specific prompts for Hermes to start mining emails, updating Airtable, or even writing the initial email drafts!
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part4]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part5]]

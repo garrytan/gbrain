@@ -351,3 +351,11 @@ export default {
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_refactor-vue-template-script]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]
+- [[chatgpt/chatgpt_ai-prompt-for-refactor]]
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]
+- [[chatgpt/chatgpt_chris-voss-reply-template]]

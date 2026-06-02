@@ -32,3 +32,11 @@ riffusion copyright commercial use
 However, it's important to note that the U.S. Copyright Office has generally declined to register copyrights for works that are substantially AI-generated. citeturn0search3
 
 Therefore, while you can use Riffusion's code commercially, the legal status of AI-generated music remains uncertain. It's advisable to consult with a legal professional to navigate these complexities. 
+
+
+## See Also
+- [[chatgpt/chatgpt_commercial-cleaning-nyc-20k-sqft]]
+- [[chatgpt/chatgpt_lexus-commercial-song-query]]
+- [[chatgpt/chatgpt_backgrid-copyright-case]]
+- [[chatgpt/chatgpt_copyright-notice-on-website]]
+- [[chatgpt/chatgpt_copyright-status-not-public]]

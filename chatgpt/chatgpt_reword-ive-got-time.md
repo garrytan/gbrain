@@ -26,3 +26,11 @@ rewire the lyric "ive got all the time" to mean something like "i no longer thin
 ## Assistant
 
 A reworded version of the lyric "I've got all the time" to convey the meaning "I no longer think so" while maintaining the same syllable count could be: "I now doubt it so".
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-progress-over-time]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_backup-time-for-20tb]]
+- [[chatgpt/chatgpt_dns-propagation-time]]

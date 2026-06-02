@@ -257,3 +257,11 @@ give me this list as a bullet oint check list to work through
 - [ ] Consider larger GitHub runners if builds exceed 3–5 minutes  
 
 Work through top to bottom. Caching and type-check disabling usually provide the largest immediate gains.
+
+
+## See Also
+- [[chatgpt/chatgpt_github-actions-ci-pricing-2]]
+- [[chatgpt/chatgpt_github-actions-ci-pricing]]
+- [[chatgpt/chatgpt_github-actions-setup]]
+- [[chatgpt/chatgpt_openai-github-actions]]
+- [[chatgpt/chatgpt_slack-webhook-github-actions]]

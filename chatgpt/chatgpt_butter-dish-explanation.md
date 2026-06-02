@@ -42,3 +42,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "It's probably designed that way for easy access to whatever’s inside, like butter, napkins, or small items. The opening also makes it easy to place or remove things without having to lift the entire lid. It’s a quirky design choice, probably more for style than function."}
 {'asset_pointer': 'sediment://file_00000000950462308ac0a3c606600013', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-11-17T21:14:21.326085+00:00', 'format': 'wav', 'metadata': {'end': 18.75, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 900078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

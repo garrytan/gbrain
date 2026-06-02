@@ -46,3 +46,11 @@ Serve and enjoy!
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_aperol-spritz-recipe-3]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe]]
+- [[chatgpt/chatgpt_adjusting-recipe-proportions]]
+- [[chatgpt/chatgpt_bartenders-paloma-recipe]]
+- [[chatgpt/chatgpt_batch-conversion-recipe]]

@@ -1347,3 +1347,11 @@ Since your envelope money ($1,920) doesn't cover all expenses, we'll fund each e
 9. **Entertainment:** $119.08
 
 These allocations ensure that each category receives a proportional amount of your available envelope money on a monthly basis based on your share of the expenses. Let me know if you need any further adjustments or details.
+
+
+## See Also
+- [[chatgpt/chatgpt_budget-planning-overview]]
+- [[chatgpt/chatgpt_calculate-needed-income]]
+- [[chatgpt/chatgpt_connect-financial-accounts]]
+- [[chatgpt/chatgpt_copilot-ai-income]]
+- [[chatgpt/chatgpt_court-fees-low-income]]

@@ -31,3 +31,11 @@ As a language model, I don't have the ability to search the internet or social m
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jobs-with-david-fincher]]
+- [[chatgpt/chatgpt_meeting-david-fincher]]
+- [[chatgpt/chatgpt_david-finch-project-update]]
+- [[chatgpt/chatgpt_david-guetta-spotify-2]]
+- [[chatgpt/chatgpt_david-guetta-spotify]]

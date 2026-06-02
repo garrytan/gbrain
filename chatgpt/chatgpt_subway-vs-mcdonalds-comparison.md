@@ -43,3 +43,11 @@ However, when it comes to sheer **number of locations**, Subway still holds the 
 ---
 
 **Summary**: Subway may be the largest fast food chain in the U.S. by geography, but it's not the leader in profitability or sales. Let me know if you'd like details on trends or competitors.
+
+
+## See Also
+- [[chatgpt/chatgpt_mcdonalds-beeping-explained]]
+- [[chatgpt/chatgpt_mcdonalds-hot-coffee-lawsuit]]
+- [[chatgpt/chatgpt_mcdonalds-pay-in-la]]
+- [[chatgpt/chatgpt_mcdonalds-worker-pay]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]

@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 pull our custom skill files from our repo. then pull worlf class versions of these. then rewrite our skills to expand open them. then otpimzie the skill file for performance with world class techniques. the final result should be udpated skill files that are better than the top tier ai companies are using. be sure to dig deep for public skill files from googlee, enthropic, open ai etc. include our agents.md files and claude.md in this as well
+
+
+## See Also
+- [[chatgpt/chatgpt_custom-dj-helmet-commission]]
+- [[chatgpt/chatgpt_custom-voicemail-on-iphone]]
+- [[chatgpt/chatgpt_deploying-custom-projects-in-vercel]]
+- [[chatgpt/chatgpt_hide-div-with-custom-css]]
+- [[chatgpt/chatgpt_skinit-custom-products]]

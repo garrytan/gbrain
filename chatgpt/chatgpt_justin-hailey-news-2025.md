@@ -32,3 +32,11 @@ Mr. White,
 - **June 15, 2025:** Justin Bieber shared Instagram screenshots of a private text exchange, officially ending a friendship. citeturn5view0  
 - **June 16, 2025:** In a follow-up Instagram Story, Justin Bieber admitted he feels “broken” and has “anger issues” after a heated confrontation with paparazzi outside Soho House Malibu. citeturn0news10  
 - **June 19, 2025:** Hailey Bieber and Selena Gomez quietly unfollowed each other on Instagram, ending their 27-month social media truce. citeturn1news10
+
+
+## See Also
+- [[chatgpt/chatgpt_justin-bieber-updates]]
+- [[chatgpt/chatgpt_justin-timberlake-co-wrote-selfish]]
+- [[chatgpt/chatgpt_vina-robles-vs-justin-cab]]
+- [[chatgpt/chatgpt_your-move-with-justin-tranter]]
+- [[chatgpt/chatgpt_hailey-bieber-deal-facts]]

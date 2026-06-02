@@ -228,3 +228,11 @@ The pitch is now 385 characters long, including the confidential note regarding 
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-music-creators-yc-pitch-part1]]
+- [[chatgpt/chatgpt_branch-music-creators-yc-pitch-part2]]
+- [[chatgpt/chatgpt_music-creators-yc-pitch]]
+- [[chatgpt/chatgpt_music-remix-identification-part1]]
+- [[chatgpt/chatgpt_music-remix-identification-part2]]

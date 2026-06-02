@@ -117,3 +117,11 @@ He gobbled them up
 And then shared with all his friends
 The spoon, the fridge, and all the rest
 Grateful for the chicken in the end.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

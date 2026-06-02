@@ -251,3 +251,11 @@ Avoid using an auto-router as the main long-running Hermes brain. Use explicit m
 **Air runs Hermes lead. MBP runs heavy coding. Hermes delegates real coding to OpenCode or Claude Code.**
 
 Use Hermes as the durable operating system for engineering work. Use OpenCode and Claude Code as specialist executors. This gives you persistent memory, task routing, lower cost, safer worktrees, and better coding output than making one Hermes terminal session on the MBP do everything.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_branch-agent-orchestration-summary]]
+- [[chatgpt/chatgpt_hermes-agent-communication]]
+- [[chatgpt/chatgpt_hermes-agent-for-scraping]]
+- [[chatgpt/chatgpt_hermes-agent-overview]]

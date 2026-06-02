@@ -38,3 +38,11 @@ gusto
 From Italian *gusto* (“taste”), from Latin *gustus* (“taste, pleasure”). citeturn0search2
 
 If you were asking about the Spanish phrase “mucho gusto,” it commonly means **“nice to meet you”** (literally “much pleasure”). citeturn0search16
+
+
+## See Also
+- [[chatgpt/chatgpt_odesli-meaning-and-usage]]
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]
+- [[chatgpt/chatgpt_airbnb-ai-usage]]
+- [[chatgpt/chatgpt_api-usage-and-plan-optimization]]
+- [[chatgpt/chatgpt_backslash-usage-overview]]

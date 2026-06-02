@@ -106,3 +106,11 @@ If you want, tell me the platform/design system (iOS Health? custom app?) and Iâ
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_screen-design-improvements]]
+- [[chatgpt/chatgpt_drag-and-drop-screen-design]]
+- [[chatgpt/chatgpt_fix-loading-screen-design]]
+- [[chatgpt/chatgpt_logo-design-improvements]]
+- [[chatgpt/chatgpt_preferences-screen-improvements]]

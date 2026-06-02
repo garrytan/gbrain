@@ -139,3 +139,11 @@ Seems like $100 is where you wanted to start. If you want just the SM7B, the bes
 :::
 
 Best option: **send the first one**. It is cleaner and doesn’t invite a debate over “what they’re moving for.”
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-5]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-6]]

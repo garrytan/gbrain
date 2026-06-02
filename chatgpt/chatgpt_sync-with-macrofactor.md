@@ -52,3 +52,11 @@ And the community is still asking for a public API, which implies one isn’t av
 - **Best practical path now:** user export → you ingest “Program Settings” + targets, or pull only nutrition totals via Apple Health/Health Connect.
 
 If you want, tell me what your product needs specifically (e.g., just current target calories/macros vs. explicit “cut/bulk/maintain” labels), and I’ll sketch a clean ingestion mapping from the MF export + a fallback logic.
+
+
+## See Also
+- [[chatgpt/chatgpt_offline-sync-with-supabase]]
+- [[chatgpt/chatgpt_sync-git-with-remote]]
+- [[chatgpt/chatgpt_sync-preview-with-production-part1]]
+- [[chatgpt/chatgpt_sync-preview-with-production-part2]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]

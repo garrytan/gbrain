@@ -194,3 +194,11 @@ If helpful, I can also show you:
 1. **The $50/month cold-email stack most YC founders use**
 2. **How to send 1k+ emails/day safely for an MVP**  
 3. **How to automate personalization so replies jump 3–5×**
+
+
+## See Also
+- [[chatgpt/chatgpt_instantly-definition-or-tool]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

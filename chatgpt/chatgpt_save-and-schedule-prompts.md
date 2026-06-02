@@ -38,3 +38,11 @@ Mr. White — short answer: yes.
 **Notes about Atlas:** Atlas is just the browser with ChatGPT built in, so your custom GPTs, Projects, and Tasks work there the same as on web or mobile. It’s currently available on macOS. citeturn6view1
 
 If you tell me the exact prompt and schedule (e.g., “every weekday at 7:30am PT”), I’ll set it up for you now.
+
+
+## See Also
+- [[chatgpt/chatgpt_new-song-pre-save-sms]]
+- [[chatgpt/chatgpt_pre-save-never-say-a-word]]
+- [[chatgpt/chatgpt_save-a-gatsby-ride-a-flapper]]
+- [[chatgpt/chatgpt_bar-staff-run-schedule]]
+- [[chatgpt/chatgpt_bug-fix-prompts-jovie-app]]

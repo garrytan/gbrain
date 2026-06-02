@@ -138,3 +138,11 @@ Either:
 4. CI enforces it; formatter doesn’t invent it
 
 If you paste the exact Sonar rule key/message and your Biome setting snippet, I’ll tell you the exact config changes to make so they stop conflicting.
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-guidelines-for-influencers]]
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_design-improvement-guidelines]]
+- [[chatgpt/chatgpt_food-service-guidelines]]
+- [[chatgpt/chatgpt_gtin-net-content-guidelines]]

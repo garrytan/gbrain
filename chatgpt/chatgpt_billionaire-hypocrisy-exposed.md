@@ -89,3 +89,11 @@ We don’t need billionaires to be saints or sinners — we need people to stop 
 ---
 
 Want it punchier? Snarkier? Let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_billionaire-or-not]]
+- [[chatgpt/chatgpt_military-spending-hypocrisy]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

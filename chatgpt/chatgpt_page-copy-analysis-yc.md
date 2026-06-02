@@ -227,3 +227,11 @@ If you want, I can:
 - Rewrite the hero as if pitching YC Demo Day  
 - Tear down pricing psychology  
 - Or map how *you* would compete against this product and win
+
+
+## See Also
+- [[chatgpt/chatgpt_landing-page-copy-ideas]]
+- [[chatgpt/chatgpt_yc-landing-page-analysis]]
+- [[chatgpt/chatgpt_yc-landing-page-copy]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]

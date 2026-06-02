@@ -15,6 +15,14 @@ updated: 2023-11-21
 
 # Steve Ballmer's NBA Team
 
+
+
+## See Also
+- [[chatgpt/chatgpt_dean-kamen-steve-jobs-segway]]
+- [[chatgpt/chatgpt_steve-jobs-license-plate-loophole]]
+- [[chatgpt/chatgpt_claude-team-overview-2]]
+- [[chatgpt/chatgpt_claude-team-overview]]
+- [[chatgpt/chatgpt_compose-team-schedule-text]]
 **Related:** [[coding_ai]]
 
 > Conversation ID: f7d26b77-14ce-472a-961b-ea55b991762d

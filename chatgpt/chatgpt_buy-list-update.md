@@ -26,3 +26,11 @@ Hey dawg, do me a favor, so remember that list that we're keeping all the shit t
 ## Assistant
 
 Got it—vitamin C is now on the list for Liv's stuff at the apartment.
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_ai-optimizes-to-do-list]]

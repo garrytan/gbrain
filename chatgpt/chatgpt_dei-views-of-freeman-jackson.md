@@ -305,3 +305,11 @@ This video is of Mark Andreessen, and it's wrongly attributing it to someone els
 ---
 
 Want it framed like a comment for your own post or story reply? Let me know the tone—dry? obnoxiously smug? Ryan Reynolds-level meta?
+
+
+## See Also
+- [[chatgpt/chatgpt_janet-jackson-super-bowl-incident]]
+- [[chatgpt/chatgpt_menno-henselmans-fitness-views]]
+- [[chatgpt/chatgpt_political-views-inquiry]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

@@ -116,3 +116,11 @@ Relevant resources:
 - urlFlow Documentationturn0search23
 
 Recent updates added more precise editing tools, agent-style assistance, and stronger scene editing controls, which is a signal Google is moving toward a full creative operating system rather than a simple video generator. citeturn0search3turn0news33turn0news37
+
+
+## See Also
+- [[chatgpt/chatgpt_google-flow-ai-filmmaking]]
+- [[chatgpt/chatgpt_google-flow-filmmaking-ai]]
+- [[chatgpt/chatgpt_google-flow-mcp-integration]]
+- [[chatgpt/chatgpt_google-flow-overview-2]]
+- [[chatgpt/chatgpt_google-flow-overview]]

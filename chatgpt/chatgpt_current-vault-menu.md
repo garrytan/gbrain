@@ -664,3 +664,11 @@ The **Pomegranate Margarita** has been added to your Halloween menu with the fol
 - Kosher salt
 
 Let me know if you need any further adjustments!
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_adjust-off-screen-menu]]
+- [[chatgpt/chatgpt_close-menu-on-click]]
+- [[chatgpt/chatgpt_contact-menu-management]]
+- [[chatgpt/chatgpt_create-onlyfans-tip-menu]]

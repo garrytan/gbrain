@@ -408,3 +408,11 @@ If you want a tight next step: implement **row typography + padding + divider ch
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_design-improvement-guidelines]]
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_a7x3-guidelines-for-influencers]]
+- [[chatgpt/chatgpt_admin-workflow-design]]
+- [[chatgpt/chatgpt_ai-design-review-tools]]

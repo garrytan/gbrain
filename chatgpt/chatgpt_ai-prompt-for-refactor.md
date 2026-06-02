@@ -84,3 +84,11 @@ Want me to compress this into a **one-liner command-style prompt** (so you can d
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_refactor-prompt-generation]]
+- [[chatgpt/chatgpt_test-and-refactor-prompt]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]

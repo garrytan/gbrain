@@ -27,3 +27,11 @@ Favt chexk
 ## Assistant
 
 Yes, that figure comes straight from Bloomberg’s own analysis. Using Bloomberg Billionaires Index data from mid-May 2025, Warren Buffett’s net worth is pegged at roughly \$160 billion, while Elon Musk sits around \$323 billion. Buffett has donated Berkshire shares that, if retained and marked to today’s prices, would add about \$230 billion to his balance sheet—putting his hypothetical total at roughly \$390 billion, or about \$67 billion more than Musk’s estimate. citeturn0search7turn2search2
+
+
+## See Also
+- [[chatgpt/chatgpt_co-domain-worth-it]]
+- [[chatgpt/chatgpt_fast-check-worth-using]]
+- [[chatgpt/chatgpt_ken-griffin-net-worth-breakdown]]
+- [[chatgpt/chatgpt_storybook-ai-worth]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

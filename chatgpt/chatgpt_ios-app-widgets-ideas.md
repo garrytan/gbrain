@@ -181,3 +181,11 @@ Want me to prototype this in Figma or give you layout code for SwiftUI / WidgetK
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]
+- [[chatgpt/chatgpt_better-vvip-name-ideas]]

@@ -45,3 +45,11 @@ Mr. White, try this revised prompt:
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-music-prompt-creation]]
+- [[chatgpt/chatgpt_hardened-prompt-creation]]
+- [[chatgpt/chatgpt_mvp-prompt-creation]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]

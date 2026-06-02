@@ -102,3 +102,11 @@ Rice cakes are 11g of carbs each
 ## Assistant
 
 With the corrected value of 11 grams of carbohydrates per rice cake, your total carbohydrate intake, including the chicken and olive oil, is approximately 22 grams.
+
+
+## See Also
+- [[chatgpt/chatgpt_chicken-salad-macros-221cal-37gpro-43gfat-63gcarb]]
+- [[chatgpt/chatgpt_plate-macros-teriyaki-chicken]]
+- [[chatgpt/chatgpt_cantina-chicken-chalupas-info]]
+- [[chatgpt/chatgpt_chicken-meal-cheaper]]
+- [[chatgpt/chatgpt_soup-packet-for-chicken-rice]]

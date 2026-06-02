@@ -28,3 +28,11 @@ Write a concise comment that just explains how AI is good at reasoning through w
 Mr. White:
 
 AI didn’t kill the deal. Bad use of AI did. It performs best when it wears one hat at a time. Don’t ask, “Is this $50M deal good or bad?” Break it up: 1) **Protection hat** — tell me every way I could get screwed. 2) **Upside hat** — tell me every reason this deal could be a win. 3) **Other-side hat** — if I were the buyer/seller, what would I push for or object to? 4) **Judge hat** — now weigh all of that and tell me what actually matters most. That’s how technical teams already use AI in software: separate passes, then human judgment at the end. AI is great for pressure-testing a deal. It gets worse when you ask one giant vague question and treat the first answer like gospel.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]
+- [[chatgpt/chatgpt_anyjoi-explanation]]

@@ -125,3 +125,11 @@ Mr. White, here’s the checked week (split at midnight per CA rules):
 - **LA City $17.87:** Regular $634.39 + OT $127.32 = **$761.71**
 - **CA State $16.50:** Regular $585.75 + OT $117.56 = **$703.31**
 - **Uninc. LA County $17.81:** Regular $632.26 + OT $126.90 = **$759.15**
+
+
+## See Also
+- [[chatgpt/chatgpt_production-work-hours-logged]]
+- [[chatgpt/chatgpt_tracking-work-hours-system]]
+- [[chatgpt/chatgpt_tracking-work-hours]]
+- [[chatgpt/chatgpt_work-hours-calculation]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]

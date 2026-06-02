@@ -79,3 +79,11 @@ Mr. White — **pre-launch = minimize behavior change**. Choose **Option 1: keep
 Only do it behind a feature flag and explicitly implement debounce (debounced value or debounced trigger). Otherwise you’ll ship a different UX.
 
 If you paste the current `useHandleValidation.ts` signature (just the hook API + how it’s consumed), I’ll tell you the cleanest `fetchQuery`/`useQuery` pattern to avoid double-fetching and race conditions.
+
+
+## See Also
+- [[chatgpt/chatgpt_tanstack-query-overview]]
+- [[chatgpt/chatgpt_nuqs-vs-tanstack-router-2]]
+- [[chatgpt/chatgpt_nuqs-vs-tanstack-router]]
+- [[chatgpt/chatgpt_tanstack-agent-skills]]
+- [[chatgpt/chatgpt_tanstack-and-sonarcloud]]

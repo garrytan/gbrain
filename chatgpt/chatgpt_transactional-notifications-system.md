@@ -727,3 +727,11 @@ The clean homepage structure is:
 7. Social proof from DJs only
 
 Next step: draft the DJ landing page section by section in final copy.
+
+
+## See Also
+- [[chatgpt/chatgpt_cancel-notifications-and-tasks]]
+- [[chatgpt/chatgpt_managing-notifications-effectively]]
+- [[chatgpt/chatgpt_unify-notifications-and-shortcuts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_building-jovie-knowledge-system]]

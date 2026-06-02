@@ -74,3 +74,11 @@ What is the quote she ruins lives, Katie, from?
 ## Assistant
 
 The quote "She ruins lives, Katie" doesn't seem to be a famous line from a widely recognized book, movie, or TV show up to my last update in April 2023. It could be from a lesser-known work, a specific episode of a TV series, or even a line from a recent release that hasn't become widely recognized yet. If it's from a particular context or a recent source, I might not have that information. If you have any more details or another question, feel free to ask!
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

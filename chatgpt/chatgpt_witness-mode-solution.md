@@ -312,3 +312,11 @@ This is a **“maybe → yes if demo blows us away” idea** in YC terms.
 ---
 
 Do you want me to rewrite this as a **YC-style application answer set** (Problem, Solution, Why Now, Market, Team, Revenue) so you can see how it reads on an actual YC form?
+
+
+## See Also
+- [[chatgpt/chatgpt_accessory-mode-activation]]
+- [[chatgpt/chatgpt_add-dark-mode]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-prompt-for-dark-mode]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]

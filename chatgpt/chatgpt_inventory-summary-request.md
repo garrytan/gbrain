@@ -38,3 +38,11 @@ Additional 3 liters of Password expiring on the 16th. An additional 2 liters of 
 ## Assistant
 
 The inventory table has been updated with the additional data. Let me know if you need any further changes!
+
+
+## See Also
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary]]
+- [[chatgpt/chatgpt_drink-inventory-summary]]

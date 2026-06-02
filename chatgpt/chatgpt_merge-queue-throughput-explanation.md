@@ -67,3 +67,11 @@ To verify this in your repo, check these settings on the protected branch:
 - whether `merge_group` workflows are running long or flaking citeturn2view1
 
 If you want, I can help you translate your observed numbers into a likely effective CI/concurrency model for the queue.
+
+
+## See Also
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part1]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part2]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part3]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part4]]
+- [[chatgpt/chatgpt_merge-queue-explanation]]

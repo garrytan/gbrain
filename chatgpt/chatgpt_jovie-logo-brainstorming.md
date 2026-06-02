@@ -214,3 +214,11 @@ I would personally bet on **Compounding Rotor**, then simplify it another 20–3
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-logo-design]]
+- [[chatgpt/chatgpt_ai-tools-for-logo-enhancement]]
+- [[chatgpt/chatgpt_black-backslash-logo]]
+- [[chatgpt/chatgpt_bubble-gum-factory-logo]]
+- [[chatgpt/chatgpt_bubblegum-factory-logo-2]]

@@ -73,3 +73,11 @@ By profiling first, then targeting the biggest offenders in async work, layout, 
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_cinematic-subway-performance-2]]

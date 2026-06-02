@@ -46,3 +46,11 @@ Chrome automatically updates in the background and offers browser tools, extensi
 • **Chrome Remote Desktop** lets you access your desktop remotely using Chrome. citeturn0search1
 
 Let me know if you want step-by-step screenshots or OS-specific instructions.
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-remote-desktop-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]

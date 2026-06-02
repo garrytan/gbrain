@@ -37,3 +37,11 @@ A **Tasmanian devil** is a real animal — a carnivorous marsupial native to the
 - **Conservation:** Endangered, largely due to a contagious cancer called Devil Facial Tumour Disease and habitat threats. citeturn0search1
 
 There’s also a **Looney Tunes character “Taz”** inspired loosely by this animal — but the cartoon version exaggerates traits and isn’t biologically accurate. citeturn0search39
+
+
+## See Also
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_hailey-bieber-deal-facts]]
+- [[chatgpt/chatgpt_salt-lake-city-facts]]
+- [[chatgpt/chatgpt_slammed-with-tax-facts]]
+- [[chatgpt/chatgpt_taco-bell-nugget-facts]]

@@ -73,3 +73,11 @@ I found a list of some A&R contacts at various music labels from a source, altho
    - Mike Gitter, VP, A&R【28†(source)】.
 
 This information comes from a list compiled on avenuear.com for 2023. However, it's worth noting that the specifics of their roles and the current status within their respective companies might change over time, so it's a good idea to check the latest updates from the companies' official websites or contact them directly for the most accurate information.
+
+
+## See Also
+- [[chatgpt/chatgpt_adding-nicknames-to-contacts]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_ai-driven-music-bio]]
+- [[chatgpt/chatgpt_ai-for-music-catalogs]]
+- [[chatgpt/chatgpt_ai-growth-engine-for-music]]

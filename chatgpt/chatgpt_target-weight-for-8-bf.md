@@ -49,3 +49,11 @@ So, you would need to weigh approximately 168.8 lbs to be at 8% body fat, assumi
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_body-fat-target-weight]]
+- [[chatgpt/chatgpt_target-weight-calculation]]
+- [[chatgpt/chatgpt_target-weight-for-8-bf-2]]
+- [[chatgpt/chatgpt_target-weight-for-8-bf-3]]
+- [[chatgpt/chatgpt_blow-up-song-target-sweden]]

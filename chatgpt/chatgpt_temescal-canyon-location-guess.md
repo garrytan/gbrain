@@ -27,3 +27,11 @@ Where was this taken
 ## Assistant
 
 Mr. White, that looks like the Temescal Canyon trail in Pacific Palisades—spring mustard bloom on the hills and that wooden footbridge are right out of Temescal Canyon Park.
+
+
+## See Also
+- [[chatgpt/chatgpt_albertsons-burrata-location]]
+- [[chatgpt/chatgpt_artist-identification-guess]]
+- [[chatgpt/chatgpt_beachwood-canyon-rent-evaluation]]
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_chrome-extension-function-location]]

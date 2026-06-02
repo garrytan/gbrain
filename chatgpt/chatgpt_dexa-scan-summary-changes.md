@@ -332,3 +332,11 @@ Mr. White — here’s a clean, realistic timeline you can play back.
 - Re-scan DEXA or caliper check every 12–16 weeks to confirm fat vs lean.
 
 Stay boring and consistent: small surplus, progressive lifts, protein ~0.8–1.0 g per pound, and mini-cuts as needed. This cadence gets you to 18 at eight percent in **2027**, without spinning your wheels.
+
+
+## See Also
+- [[chatgpt/chatgpt_dexa-scan-results-summary]]
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-comp-changes-summary]]
+- [[chatgpt/chatgpt_bodyspec-dexa-summary]]
+- [[chatgpt/chatgpt_dexa-scan-affected-by-water-weight]]

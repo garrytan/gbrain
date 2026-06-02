@@ -395,3 +395,11 @@ If you want, I can also generate:
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_refactoring-contact-menu]]
+- [[chatgpt/chatgpt_ui-refactoring-prompt]]

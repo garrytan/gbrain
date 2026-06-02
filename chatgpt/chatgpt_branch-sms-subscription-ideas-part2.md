@@ -1185,3 +1185,11 @@ Key decisions reflected:
   - recency
   - one primary action
 - Expanded row shows deeper context without turning the table into a noisy CRM.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part3]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part1]]

@@ -36,3 +36,11 @@ Other major cast members include:
 - entity["known_celebrity","Maya Hawke","actor"] as entity["fictional_character","Wiress","The Hunger Games"] citeturn0search10turn0news26
 
 The movie is currently scheduled for release on **November 20, 2026**. citeturn0search10turn0search13
+
+
+## See Also
+- [[chatgpt/chatgpt_hunger-games-directors]]
+- [[chatgpt/chatgpt_current-football-games]]
+- [[chatgpt/chatgpt_grizzlies-upcoming-games]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

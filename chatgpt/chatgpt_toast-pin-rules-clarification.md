@@ -89,3 +89,11 @@ Here are the key rules and behaviors around **employee PINs / passcodes** in **T
 ---
 
 If you like, I can send you a **one-page “Toast PIN policy template”** you can adopt (rotations, reuse rules, override permissions). Do you want me to generate that now, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_parking-rules-clarification]]
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]
+- [[chatgpt/chatgpt_bikini-rules-in-maldives]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]

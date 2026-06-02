@@ -172,3 +172,11 @@ Bring stanchions inside
 - **Production Support:** Wipe down menus, flip chairs for mopping, refill salt and pepper shakers, and bring stanchions inside.
 
 These updates ensure consistency and quality in our operations, providing guests with an exceptional experience at The Vault Speakeasy. Please adhere strictly to these guidelines.
+
+
+## See Also
+- [[chatgpt/chatgpt_vault-speakeasy-review-highlights]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]

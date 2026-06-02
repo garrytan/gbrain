@@ -125,3 +125,11 @@ If you want, I can also rewrite your **tech stack** answer to be 30–40% shorte
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_8-slide-yc-pitch-deck]]
+- [[chatgpt/chatgpt_amazon-music-remix-pitch]]
+- [[chatgpt/chatgpt_branch-music-creators-yc-pitch-part1]]
+- [[chatgpt/chatgpt_branch-music-creators-yc-pitch-part2]]
+- [[chatgpt/chatgpt_collaboration-pitch-message]]

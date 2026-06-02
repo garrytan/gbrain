@@ -95,3 +95,11 @@ This example uses a regular expression to validate the email format. It also onl
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_combine-email-validation-methods]]
+- [[chatgpt/chatgpt_explain-email-validation-levels]]
+- [[chatgpt/chatgpt_fix-email-validation-function]]
+- [[chatgpt/chatgpt_modify-email-validation-function]]
+- [[chatgpt/chatgpt_vue-email-validation-component-2]]

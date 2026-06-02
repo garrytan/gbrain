@@ -74,3 +74,11 @@ The terms "kcal" and "calorie" are often used interchangeably in everyday contex
 In summary:
 - 1 kilocalorie (kcal) = 1,000 calories (cal)
 - When referring to food and diet, "calorie" typically means kilocalorie (kcal).
+
+
+## See Also
+- [[chatgpt/chatgpt_cold-increases-calorie-burn]]
+- [[chatgpt/chatgpt_daily-calorie-calculation-maintenance-vs-workout]]
+- [[chatgpt/chatgpt_low-calorie-thousand-island]]
+- [[chatgpt/chatgpt_total-calorie-calculation]]
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]

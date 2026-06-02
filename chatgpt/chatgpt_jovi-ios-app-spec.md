@@ -142,3 +142,11 @@ The next useful artifact is a repo-ready engineering checklist with file structu
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_app-spec-and-mockups]]
+- [[chatgpt/chatgpt_avatar-upload-spec]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]

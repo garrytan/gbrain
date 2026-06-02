@@ -168,3 +168,11 @@ export default {
 
 Note that the `this` keyword will not be accessible inside the `getNewStats` function as it is not bound to the component instance. To access component properties and methods, you can use the `$notify` method provided by the `vue-notification` package. You will also need to make sure that the package is installed and properly configured in your project.
 
+
+
+## See Also
+- [[chatgpt/chatgpt_convert-component-to-composition-api]]
+- [[chatgpt/chatgpt_convert-to-composition-api]]
+- [[chatgpt/chatgpt_convert-code-to-emit-event]]
+- [[chatgpt/chatgpt_convert-heic-to-jpg]]
+- [[chatgpt/chatgpt_convert-height-to-feet]]

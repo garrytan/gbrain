@@ -129,3 +129,11 @@ OpenRouter documents these Claude Code model override variables and warns that C
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-agent-teams-integration]]
+- [[chatgpt/chatgpt_claude-code-figma-integration]]
+- [[chatgpt/chatgpt_claude-in-linear-integration]]
+- [[chatgpt/chatgpt_claude-vercel-integration]]
+- [[chatgpt/chatgpt_codex-integration-with-repo]]

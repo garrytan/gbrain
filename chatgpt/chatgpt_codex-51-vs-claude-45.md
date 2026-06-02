@@ -106,3 +106,11 @@ If you tell me your actual workflow (IDE, languages, whether you want real deskt
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-and-claude-limitations]]
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]

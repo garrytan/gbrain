@@ -330,3 +330,11 @@ Here’s the sourced breakdown:
 - **Made up/locked later:** the *technical identities and mechanics* of the supernatural pieces (Smoke Monster origin, Jacob/MIB backstory, candidate system, cork/heart specifics). citeturn1view0  
 
 If you want, I can list **which supernatural elements were “late inventions” with receipts** the same way (Monster/Jacob/Temple/whispers/etc.).
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

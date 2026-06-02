@@ -85,3 +85,11 @@ Relevant links:
 - urlHermes Desktop GitHub Projectturn0search3
 
 The strongest idea for Jovie is probably not replacing your stack with Hermes. It is treating Hermes as a reference implementation for memory, skills, sub-agents, and agent orchestration while keeping Jovie's moat in music data, artist context, campaign execution, and revenue optimization. citeturn0search2turn0search4turn0search7
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-overview-2]]
+- [[chatgpt/chatgpt_agent-skills-overview]]
+- [[chatgpt/chatgpt_github-hermes-overview]]
+- [[chatgpt/chatgpt_hermes-desktop-overview]]
+- [[chatgpt/chatgpt_vercel-agent-overview]]

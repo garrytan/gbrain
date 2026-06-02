@@ -39,3 +39,11 @@ victorious beck
 - Jogia has since continued acting in TV and films, and also pursues other creative projects including music and writing. citeturn0search4  
 
 In short, “Victorious Beck” refers to **Beck Oliver**, a central *Victorious* character known for his acting talent, charm, and on-screen relationship with Jade West. citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-character-web-interaction]]
+- [[chatgpt/chatgpt_anime-character-creation]]
+- [[chatgpt/chatgpt_character-clara-musso-on-lie-to-me]]
+- [[chatgpt/chatgpt_character-of-musician-in-image]]
+- [[chatgpt/chatgpt_disneyland-pays-character-performers]]

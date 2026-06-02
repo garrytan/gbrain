@@ -58,3 +58,11 @@ Notes:
 - Some PRs can’t be updated (e.g., merge conflicts, branch protections, “Require linear history”, or head branch is deleted). Those will fail and print `(failed)`.
 
 If you want, tell me whether you want **only PRs behind base** (current script) or **every open PR regardless**, and whether you want it to **skip Dependabot** PRs.
+
+
+## See Also
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]
+- [[chatgpt/chatgpt_arlo-pro4-firmware-update]]

@@ -44,3 +44,11 @@ what studio monitors does fred again use in his studio
 ## Assistant
 
 In his studio, Fred Again.. utilizes both ATC SCM25A and Mackie HR824 studio monitors. He has used the HR824s for over a decade and appreciates their familiar sound profile. He emphasizes the importance of understanding one's monitors, noting that while some may critique the HR824s' 2-4 kHz response, his familiarity with them allows him to make accurate mixing decisions. citeturn0search2 
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

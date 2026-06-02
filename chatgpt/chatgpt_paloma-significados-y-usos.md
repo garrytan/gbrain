@@ -119,3 +119,11 @@ Manchelada
 Enjoy crafting your Michelada to suit your taste preferences!
 
 navlistExploring Michelada Variations and Recipesturn0news21,turn0news23,turn0news24 
+
+
+## See Also
+- [[chatgpt/chatgpt_bartenders-paloma-recipe]]
+- [[chatgpt/chatgpt_make-a-paloma-cocktail]]
+- [[chatgpt/chatgpt_make-a-paloma]]
+- [[chatgpt/chatgpt_paloma-cocktail-recipe]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

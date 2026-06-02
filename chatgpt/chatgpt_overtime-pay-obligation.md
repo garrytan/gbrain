@@ -212,3 +212,11 @@ Here’s the breakdown of your hours and estimated gross pay at **$20/hour**, ap
 **144.7 hours** worked → **≈ $3,185.90** gross pay before taxes.  
 
 Would you like me to show the exact **overtime vs. regular hour** breakdown per *day* (so you can match it against your paystub)?
+
+
+## See Also
+- [[chatgpt/chatgpt_franchise-tax-payment-obligation]]
+- [[chatgpt/chatgpt_overtime-and-tip-pool-issues]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

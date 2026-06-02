@@ -83,3 +83,11 @@ Certainly, Mr. White. If you can't find grapefruit soda or club soda, you can st
 - Ice
 
 Combine the tequila, grapefruit juice, lime juice, sugar, and salt in a shaker with ice. Shake well and strain into a highball glass filled with ice. Garnish with a lime wedge if desired. This should give you a close approximation of a traditional Paloma.
+
+
+## See Also
+- [[chatgpt/chatgpt_make-a-paloma]]
+- [[chatgpt/chatgpt_paloma-cocktail-recipe]]
+- [[chatgpt/chatgpt_bartenders-paloma-recipe]]
+- [[chatgpt/chatgpt_batch-cocktail-calculation]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]

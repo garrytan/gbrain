@@ -529,3 +529,11 @@ No app code calls Statsig directly except inside @jovie/analytics and @jovie/exp
 That gives you the benefit of Statsig’s OpenAI-aligned experimentation platform without making Jovie’s product-growth brain vendor-owned.
 
 Final answer: **Statsig is probably the better default for Jovie now.** PostHog remains a strong fallback if you later decide raw analytics/query flexibility matters more than experiment-control-loop strength.
+
+
+## See Also
+- [[chatgpt/chatgpt_statism-for-product-analytics-part1]]
+- [[chatgpt/chatgpt_statism-for-product-analytics-part2]]
+- [[chatgpt/chatgpt_statism-for-product-analytics-part3]]
+- [[chatgpt/chatgpt_statism-for-product-analytics-part4]]
+- [[chatgpt/chatgpt_product-demo-strategy]]

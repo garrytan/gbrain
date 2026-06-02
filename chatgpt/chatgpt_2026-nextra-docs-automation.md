@@ -134,3 +134,11 @@ Consider adopting tools like:
 ---
 
 Let me know if you want a suggested folder structure and script config for this setup in a Next.js monorepo.
+
+
+## See Also
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]
+- [[chatgpt/chatgpt_ai-agent-automation-part2]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]
+- [[chatgpt/chatgpt_app-automation-for-youtube]]

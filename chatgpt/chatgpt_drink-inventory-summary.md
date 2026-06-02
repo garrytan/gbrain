@@ -26,3 +26,11 @@ Okay, inventory time. We have seven drinks, starting with the Razz Me Up, Right 
 ## Assistant
 
 The updated inventory and usage for each drink have been calculated. Please review the details in the provided table.
+
+
+## See Also
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary]]
+- [[chatgpt/chatgpt_inventory-count-summary]]

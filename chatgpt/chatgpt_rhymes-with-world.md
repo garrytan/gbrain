@@ -74,3 +74,11 @@ more
 7. Whorl
 
 Some of these are exact rhymes, while others are near or slant rhymes. Each can work depending on the desired effect and context in your writing.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

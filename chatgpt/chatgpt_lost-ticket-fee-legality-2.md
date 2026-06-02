@@ -52,3 +52,11 @@ A parking garage can treat a lost ticket fee as a **contract term / default rate
    - Or **small claims** for the difference if the amount is worth it.
 
 If you tell me **(a)** whether this was inside the **City of Los Angeles** and **(b)** whether the entrance sign mentioned a lost-ticket fee or “daily maximum,” I can apply the rules above more tightly to your situation.
+
+
+## See Also
+- [[chatgpt/chatgpt_lost-ticket-fee-legality]]
+- [[chatgpt/chatgpt_cancelation-policy-legality]]
+- [[chatgpt/chatgpt_childrens-walkthrough-legality]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_lifetime-saas-licenses-legality]]

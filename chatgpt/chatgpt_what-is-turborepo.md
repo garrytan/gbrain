@@ -129,3 +129,11 @@ Here’s a minimal workflow to begin using Turborepo:
 ---
 
 If you like, Mr. White, I can walk you through **setting up Turborepo step-by-step in your existing repo**, including sample `turbo.json`, or compare it to alternatives like entity["software", "Nx", 0].
+
+
+## See Also
+- [[chatgpt/chatgpt_electron-app-turborepo-setup]]
+- [[chatgpt/chatgpt_explain-turborepo]]
+- [[chatgpt/chatgpt_test-turborepo-locally]]
+- [[chatgpt/chatgpt_turborepo-changelog]]
+- [[chatgpt/chatgpt_turborepo-env-setup]]

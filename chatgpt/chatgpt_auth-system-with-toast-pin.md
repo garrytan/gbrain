@@ -74,3 +74,11 @@ Mr. White — technically you *can*, but only for a very low-risk, internal-only
 - **“Keypad” feel without static PINs:** **TOTP** (rotating 6-digit) or **passkeys/WebAuthn**; keep the numeric keypad UI if you like.
 
 Bottom line: a flat-file of static codes is high-risk. If this must ship, meet the controls above and keep it **internal-only**. I can sketch a quick schema and Argon2 config for your stack if you tell me the language/framework.
+
+
+## See Also
+- [[chatgpt/chatgpt_simple-auth-system]]
+- [[chatgpt/chatgpt_auth-provider-for-chatgpt]]
+- [[chatgpt/chatgpt_auth-ux-audit]]
+- [[chatgpt/chatgpt_basic-auth-in-nextjs]]
+- [[chatgpt/chatgpt_best-auth-providers-2025]]

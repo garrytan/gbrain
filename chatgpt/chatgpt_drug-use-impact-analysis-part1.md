@@ -36,3 +36,11 @@ Got it, Mr. White. I’ll compile a detailed, science-backed table comparing the
 I’ll break down effects across three usage patterns—weekly, monthly, and biannual—and focus on meta-analyses and long-term peer-reviewed studies. I’ll include both physical and mental impacts (positive and negative), lifetime implications, and flag any areas where evidence is weak or controversial.
 
 I’ll get started and let you know when the full comparison is ready.
+
+
+## See Also
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part2]]
+- [[chatgpt/chatgpt_cosmos-gravity-impact-analysis]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part1]]

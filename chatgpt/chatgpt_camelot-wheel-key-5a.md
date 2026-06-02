@@ -30,3 +30,11 @@ tags: [chatgpt, import]
 The key labeled as 5A corresponds to C minor. Mixing tracks in the same key (e.g., 5A to 5A) ensures harmonic compatibility. Additionally, transitioning to adjacent keys on the wheel, such as 4A (G minor), 6A (D minor), or 5B (E-flat major), can create pleasing harmonic mixes. citeturn0search1
 
 Utilizing the Camelot Wheel allows DJs to craft sets with seamless harmonic transitions, enhancing the overall listening experience. 
+
+
+## See Also
+- [[chatgpt/chatgpt_steering-wheel-cover-tips]]
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

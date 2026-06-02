@@ -80,3 +80,11 @@ Team — this week’s schedule: https://docs.google.com/spreadsheets/d/13z_9a4Q
 • Two-show days: Fri 10/17 & Sat 10/18.  
 • Walk-through starts Thu 10/16 — let’s meet at call time so we can run the flow before show.  
 • FOH: now that the walk-through is set, uniform can be any Halloween costume.
+
+
+## See Also
+- [[chatgpt/chatgpt_compose-text-message]]
+- [[chatgpt/chatgpt_bar-staff-run-schedule]]
+- [[chatgpt/chatgpt_building-role-based-schedule]]
+- [[chatgpt/chatgpt_button-text-update]]
+- [[chatgpt/chatgpt_cant-hear-ai-text]]

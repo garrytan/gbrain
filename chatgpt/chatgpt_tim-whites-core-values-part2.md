@@ -671,3 +671,11 @@ Tim White's core values, reworded as commands for personal life:
 
 
 Finally 10. Own it. Write a concise value about taking ownership and never falling into a victim mindset. Being in control of your lfie and decisions, always understanding that your fate is in your hands and if you dont like your situation you go change it.
+
+
+## See Also
+- [[chatgpt/chatgpt_core-values-compilation-part2]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part1]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part3]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part4]]
+- [[chatgpt/chatgpt_core-values-compilation-part1]]

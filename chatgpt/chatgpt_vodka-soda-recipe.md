@@ -44,3 +44,11 @@ Certainly, Mr. White. Here's a concise recipe for a vodka soda:
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bitters-soda-garnish-guide]]
+- [[chatgpt/chatgpt_mobleys-cinemas-soda-cup]]
+- [[chatgpt/chatgpt_crystal-head-vodka-bottle]]
+- [[chatgpt/chatgpt_vodka-cocktail-ratio-adaptation]]
+- [[chatgpt/chatgpt_vodka-shot-garnish]]

@@ -199,3 +199,11 @@ If you follow these, you’re essentially doing the “Israetel-approved” vers
 Run it like this, and your current drinking habits are **compatible with getting jacked and strong**.  
 
 If you tell me your weekly split (days + main lifts), I can literally mark “OK to drink here / avoid here” on specific days for you.
+
+
+## See Also
+- [[chatgpt/chatgpt_mike-isratel-creatine-comparison]]
+- [[chatgpt/chatgpt_mike-isratel-heat-exposure-videos]]
+- [[chatgpt/chatgpt_alcohol-catering-license-posting]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_avoiding-alcohol-service-strategies]]

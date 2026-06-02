@@ -26,3 +26,11 @@ Who did Capital One just merge with?
 ## Assistant
 
 Capital One is set to acquire Discover Financial Services in a $35 billion all-stock deal, under the terms of which Discover shareholders will receive 1.0192 Capital One shares for each Discover share. This transaction is noteworthy as it represents a significant premium of 26.6% based on Discover's closing price as of February 16, 2024【4:0†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_forte-capital-review]]
+- [[chatgpt/chatgpt_discover-users-through-browsing]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

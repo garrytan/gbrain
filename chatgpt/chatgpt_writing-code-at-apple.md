@@ -366,3 +366,11 @@ Mr. White — 20-second version:
 4) Attach the grip: insert the grip’s post/contacts into the battery bay, align the tripod screw, tighten the wheel. Most grips have a **holder to stash the removed door**—use it. citeturn0search14
 
 Reinstall is the reverse: align the hinge, hold the slider, seat the door, release. Don’t force it.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_add-cloud-code-ci]]
+- [[chatgpt/chatgpt_agent-skills-vs-code-cli]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_ai-code-review-tools]]

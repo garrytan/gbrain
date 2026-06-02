@@ -139,3 +139,11 @@ That gives a syrup that’ll last **4–6 months** in the fridge.
 ---
 
 Would you like me to give you the exact **water amount** for both recipes using your 1.81 kg bags?
+
+
+## See Also
+- [[chatgpt/chatgpt_making-simple-syrup-2]]
+- [[chatgpt/chatgpt_simple-syrup-8oz-sugarwater]]
+- [[chatgpt/chatgpt_simple-syrup-shelf-life]]
+- [[chatgpt/chatgpt_bartender-making-drinks-images]]
+- [[chatgpt/chatgpt_rsvp-another-simple-favor]]

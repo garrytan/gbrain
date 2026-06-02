@@ -224,3 +224,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Yeah, it's always a balancing act with these kinds of projects, but it’s great that you have a lot of creative ideas to choose from! If you ever want to dive deeper into any of them or brainstorm more, I’m always here to help!"}
 {'asset_pointer': 'sediment://file_00000000f84c623097731e8ca0867d18', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-22T20:31:53.477303+00:00', 'format': 'wav', 'metadata': {'end': 13.55, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 650478, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_license-replacement-california]]
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]
+- [[chatgpt/chatgpt_california-king-on-king-bed]]
+- [[chatgpt/chatgpt_california-park-closure-update]]

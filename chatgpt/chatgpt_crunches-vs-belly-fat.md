@@ -51,3 +51,11 @@ Remove rp reference and highlight the 5-30 rep range
 ## Assistant
 
 Mr. White: Let’s cut the crap—hypertrophy science (Schoenfeld et al.) says true muscle growth happens in the 5–30 rep range with progressive overload. Standard crunches run out of steam long before you hit that window. EMG data (Calatayud 2014) proves weighted crunches activate your abs 60–90 % more than bodyweight reps. Unweighted crunches are endurance fluff, not muscle meat. And if you think they’ll melt belly fat, think again—visible abs are 90 % diet, not crunch count.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

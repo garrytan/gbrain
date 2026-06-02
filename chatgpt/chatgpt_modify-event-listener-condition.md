@@ -162,3 +162,11 @@ openRightClickMenuButton(contact) {
 ```
 
 In this modified version, after setting the `contextMenuTrigger` to `'menu-button'`, the `setTimeout` function is used to introduce a delay of 100 milliseconds (0.1 second) before resetting the `contextMenuTrigger` to `''`. This delay allows time for the desired behavior to be observed before resetting the value.
+
+
+## See Also
+- [[chatgpt/chatgpt_convert-code-to-emit-event]]
+- [[chatgpt/chatgpt_create-calendar-event]]
+- [[chatgpt/chatgpt_event-prep-plan]]
+- [[chatgpt/chatgpt_event-setup-instructions]]
+- [[chatgpt/chatgpt_event-time-change-tracking]]

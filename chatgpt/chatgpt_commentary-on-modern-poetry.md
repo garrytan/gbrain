@@ -197,3 +197,11 @@ Fact check and slam
 ## Assistant
 
 There is *no* high-quality evidence that DNA tests can accurately predict ideal exercise types, how your body responds to carbs, or why you’re not losing weight. Meta-analyses show these tests explain **less than 1%** of variation in weight loss outcomes. Your weight isn’t stuck because of your genes—it’s stuck because you're eating more than you're burning. This ad is just repackaged pseudoscience with a sleek UI.
+
+
+## See Also
+- [[chatgpt/chatgpt_actor-in-modern-family]]
+- [[chatgpt/chatgpt_clowning-before-modern-family]]
+- [[chatgpt/chatgpt_harold-grossman-modern-family]]
+- [[chatgpt/chatgpt_modern-coldplay-inspired-lyrical-refinement]]
+- [[chatgpt/chatgpt_modern-family-country-club]]

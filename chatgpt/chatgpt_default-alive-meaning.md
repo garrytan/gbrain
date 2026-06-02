@@ -37,3 +37,11 @@ In practice this frames two strategic paths:
 2. **Default dead** startups must either cut burn, accelerate revenue growth, or plan to raise more money. citeturn0search1
 
 It’s not merely current profitability — it’s whether your *projected* path gets you there before cash runs out. citeturn0search6
+
+
+## See Also
+- [[chatgpt/chatgpt_default-alive-for-artists]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_anthropic-meaning-and-context]]
+- [[chatgpt/chatgpt_bronson-meaning-and-references]]

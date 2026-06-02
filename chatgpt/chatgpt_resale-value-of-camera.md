@@ -61,3 +61,11 @@ The item in the image is an **AquaCrest Outdoor Water Filter**, typically used f
 - Not typically resold unless new/sealed — resale value drops to ~$5–$10 or less if opened, due to hygiene and performance concerns.
 
 If unopened, list it around **$10–$15** for a quick sale. If opened or used, it may only be worth a couple of bucks or best bundled with other gear.
+
+
+## See Also
+- [[chatgpt/chatgpt_resale-value-of-console-1]]
+- [[chatgpt/chatgpt_furniture-resale-pricing]]
+- [[chatgpt/chatgpt_arlo-camera-charging-model]]
+- [[chatgpt/chatgpt_bike-value-and-info]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]

@@ -41,3 +41,11 @@ Credentials?
 * Direct experience with regulation, antitrust hearings, M&A, hardware launches, AI research, global privacy law, and multi-billion-dollar P&Ls. No MBA on earth teaches that.
 
 So yeah, “no professional experience” is a cute line, but after twenty years of building one of the largest tech companies on the planet, calling Zuck inexperienced is like saying Gordon Ramsay “can’t cook” because he skipped culinary school.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

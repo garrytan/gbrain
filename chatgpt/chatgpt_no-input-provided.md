@@ -42,3 +42,11 @@ Here are some **placeholder hero/avatar visuals** you can use or draw inspiratio
 - Generate custom avatars with automated tools like **Pravatar** (placeholder API). citeturn0search6
 
 If you want a **specific style** (minimalist, comic, 3D, fantasy), tell me the vibe and where you plan to use it.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_chat-input-specs]]
+- [[chatgpt/chatgpt_extract-input-element-to-component]]
+- [[chatgpt/chatgpt_fix-invalid-input]]

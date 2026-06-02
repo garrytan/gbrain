@@ -41,3 +41,11 @@ You aren’t wrong — **Dr. Mike Israetel is widely respected in the strength a
 There’s always debate in any field — online communities critique parts of his style or personality — but the **core of his influence is legitimate expertise grounded in science** rather than guesswork. citeturn0search0
 
 If you want more detail on *specific principles he teaches* (e.g., volume dosing, periodization, training frequency), I can summarize those next.
+
+
+## See Also
+- [[chatgpt/chatgpt_dr-mike-israetel-bio]]
+- [[chatgpt/chatgpt_mike-israetel-content-search]]
+- [[chatgpt/chatgpt_mike-israetel-cuff-recommendation]]
+- [[chatgpt/chatgpt_mike-israetel-maintenance-trazepatide]]
+- [[chatgpt/chatgpt_mike-israetel-mini-cuts]]

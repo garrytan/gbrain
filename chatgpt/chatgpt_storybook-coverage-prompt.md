@@ -372,3 +372,11 @@ If you want, I can:
 - convert components into reusable empty-state patterns
 
 Just tell me what direction you want next, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part3]]

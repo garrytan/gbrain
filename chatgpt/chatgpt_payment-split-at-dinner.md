@@ -51,3 +51,11 @@ Sophie didn't pay any tip, and so my $20 should also cover Sophie's tip.
 ## Assistant
 
 Mr. White, since your $20 tip already covers Sophie’s tip, you still owe her **\$30.64** to cover you and Liv’s meals.
+
+
+## See Also
+- [[chatgpt/chatgpt_christmas-dinner-restaurant-recommendations]]
+- [[chatgpt/chatgpt_vlog-dinner-and-show]]
+- [[chatgpt/chatgpt_5m-house-down-payment]]
+- [[chatgpt/chatgpt_apple-payment-method-issue]]
+- [[chatgpt/chatgpt_bill-split-breakdown]]

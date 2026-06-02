@@ -1093,3 +1093,11 @@ And then what's the physical interface look like for this? Should there always b
 
 
 FounderOS should create a durable task contract, and Coder should execute approved task contracts. For v1, keep both as persistent agents in separate visible terminals, and avoid freeform agent chatter or hidden nested agents as the source of truth.
+
+
+## See Also
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part3]]
+- [[chatgpt/chatgpt_ai-agent-automation-part2]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part2]]

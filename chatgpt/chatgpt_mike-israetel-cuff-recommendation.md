@@ -139,3 +139,11 @@ Despite your recollection, there is no verifiable source or mention in captions,
 Alternatively, I can recommend some high-quality "H-brand" cable cuffs (like HUSLA or Harbinger) that match the profile and features you described—while noting that there’s no confirmed endorsement from Dr. Mike.
 
 Let me know how you’d like to proceed.
+
+
+## See Also
+- [[chatgpt/chatgpt_dr-mike-israetel-bio]]
+- [[chatgpt/chatgpt_mike-israetel-content-search]]
+- [[chatgpt/chatgpt_mike-israetel-genius-explained]]
+- [[chatgpt/chatgpt_mike-israetel-maintenance-trazepatide]]
+- [[chatgpt/chatgpt_mike-israetel-mini-cuts]]

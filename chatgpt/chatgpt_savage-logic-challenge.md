@@ -27,3 +27,11 @@ Write a savage comment challenging the logic here
 ## Assistant
 
 “Ah yes, Walgreens is closing because foot traffic is down… so clearly the move is to put vending machines where *even fewer people* go. Genius-level passive income strategy right there.”
+
+
+## See Also
+- [[chatgpt/chatgpt_early-check-out-logic]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_murderer-escape-logic]]
+- [[chatgpt/chatgpt_packaged-food-logic]]

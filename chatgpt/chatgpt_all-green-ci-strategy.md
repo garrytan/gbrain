@@ -125,3 +125,11 @@ Rulesets also describe the merge-queue behavior in terms of **required checks** 
 3. **If you want SonarCloud to block sometimes:** make it **required** explicitly (clearer than relying on “All green”).
 
 If you tell me whether you’re using GitHub **Rulesets** or classic **Branch protection**, and where exactly you see the “All green / None” dropdown, I can map it to the exact setting name and what it considers “a check” in that context.
+
+
+## See Also
+- [[chatgpt/chatgpt_count-green-cells-excel]]
+- [[chatgpt/chatgpt_green-taco-bell-fire-extinguisher]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]

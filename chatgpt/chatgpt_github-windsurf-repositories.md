@@ -49,3 +49,11 @@ Windsurf refers to an **AI-native coding IDE** / assistant (created by Codeium) 
 It includes features like AI coding completion, multi-file context, and integrations (e.g., GitHub workflows) within your dev environment. citeturn0search8
 
 If you want links to specific apps (e.g., clone + run apps built with Windsurf) or help finding a repo that matches a particular tech stack/language, tell me what you’re building and I can filter.
+
+
+## See Also
+- [[chatgpt/chatgpt_windsurf-reviews-github-app]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_auto-continue-in-windsurf]]
+- [[chatgpt/chatgpt_building-a-github-action]]
+- [[chatgpt/chatgpt_devin-vs-windsurf]]

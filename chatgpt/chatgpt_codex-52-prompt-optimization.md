@@ -80,3 +80,11 @@ Before you start: Clarifying questions (ask now)
 ```
 
 If you want it even more “hands-off,” tell Codex the repo stack (Next.js/Tailwind/etc.) and your lint/typecheck commands, and it can skip the uncertainty and move faster.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-audit-prompt]]
+- [[chatgpt/chatgpt_codex-loop-optimization]]
+- [[chatgpt/chatgpt_codebase-optimization-prompt]]
+- [[chatgpt/chatgpt_mobile-ux-optimization-prompt]]
+- [[chatgpt/chatgpt_unit-test-optimization-prompt]]

@@ -54,3 +54,11 @@ If the display is in portrait orientation and you want the maximum height to be 
 \]
 
 In portrait mode, with a height of 24 inches, the width would be 13.5 inches to maintain a 16:9 aspect ratio.
+
+
+## See Also
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]
+- [[chatgpt/chatgpt_batch-cocktail-calculation]]
+- [[chatgpt/chatgpt_batch-quantity-calculation]]

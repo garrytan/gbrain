@@ -78,3 +78,11 @@ Once Verizon confirms the port:
 5. Let Fi auto-cancel after port.
 
 Need help getting the PIN or account number from Google Fi? Just ask!
+
+
+## See Also
+- [[chatgpt/chatgpt_verizon-fios-overview]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

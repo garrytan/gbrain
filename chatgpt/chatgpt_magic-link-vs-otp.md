@@ -125,3 +125,11 @@ This is a **supported, first-class setup**, not a hack.
 - It’s the **correct default** for power users
 
 If you want, I can tell you how to **bias the UI toward OTP** while still keeping magic links available.
+
+
+## See Also
+- [[chatgpt/chatgpt_behance-link-in-bio]]
+- [[chatgpt/chatgpt_best-link-in-bio-tools]]
+- [[chatgpt/chatgpt_bio-link-explanation]]
+- [[chatgpt/chatgpt_bio-link-strategy-part1]]
+- [[chatgpt/chatgpt_bio-link-strategy-part2]]

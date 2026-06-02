@@ -40,3 +40,11 @@ dead,au5 pluck
 For a practical demonstration, consider this tutorial on crafting a Deadmau5-style pluck in Serum:
 
 videoHow to Make the Deadmau5 Pluck in Serumturn0search0 
+
+
+## See Also
+- [[chatgpt/chatgpt_deadmau5-cdj-transition]]
+- [[chatgpt/chatgpt_deadmau5-gerard-way-collaboration]]
+- [[chatgpt/chatgpt_deadmau5-mastering-chain]]
+- [[chatgpt/chatgpt_kaskade-deadmau5-ableton-tutorials]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]

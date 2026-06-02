@@ -164,3 +164,11 @@ The CLI reads your repo locally, runs commands like `add tests for src/api/logWe
 | Test | “Write Jest tests for the new login route.” |
 
 That’s it—connect once, then treat ChatGPT like a pair programmer who already scanned your repo. Happy building.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-integration-for-auth]]
+- [[chatgpt/chatgpt_healthkit-integration-with-pwa]]
+- [[chatgpt/chatgpt_router-integration-with-claude]]
+- [[chatgpt/chatgpt_ssg-with-clerk-integration]]
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]

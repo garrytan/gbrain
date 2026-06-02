@@ -40,3 +40,11 @@ Here’s the breakdown:
 👉 **Balance still owed to Vincent:** ≈ **$50.75**  
 
 Do you want me to recalc if you have the exact price of the Coke Zero cases?
+
+
+## See Also
+- [[chatgpt/chatgpt_calculate-bill-amount]]
+- [[chatgpt/chatgpt_calculate-diet-phase-stats]]
+- [[chatgpt/chatgpt_calculate-fat-weight-formula]]
+- [[chatgpt/chatgpt_calculate-ffmi-1771]]
+- [[chatgpt/chatgpt_calculate-liters-consumed]]

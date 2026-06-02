@@ -56,3 +56,11 @@ Mr. White, here are the most effective checks when Slack isn’t sending the ema
 - Go to: https://slack.com/help/contact and choose **Login Issues → I didn’t get a confirmation email**.
 
 If you want, Mr. White, tell me your email provider (Gmail, Outlook, corporate domain), and I’ll give the most likely cause and quickest fix.
+
+
+## See Also
+- [[chatgpt/chatgpt_email-sent-total-check]]
+- [[chatgpt/chatgpt_slack-email-issues]]
+- [[chatgpt/chatgpt_slack-help-guide]]
+- [[chatgpt/chatgpt_slack-overview]]
+- [[chatgpt/chatgpt_slack-sign-in-issue]]

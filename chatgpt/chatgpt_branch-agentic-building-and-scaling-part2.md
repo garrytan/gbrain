@@ -813,3 +813,11 @@ Especially if you're getting a fucking, like, these are AI companies people are 
 Just be fucking cool and accepting if they're out. I kind of feel like that's almost worth it. You know what I mean? Because, like, what's the cost? We run this for fucking 3 days and fucking get a fucking check. Great. We run it for a fucking 3 days and we get no checks. Okay, it didn't work. You know what I mean? Or 10 days or 2 weeks or whatever.
 
 I just am very terrified of pulling myself off building right now, because I think that, if you look at our product right now, no wait list. You can open up the product. The product's jank, and the home page isn't pretty. I feel like the next week of my life is spent on fixing those things and making sure someone can actually sign up and give us money and all of that works. If none of that's working, I feel like I shouldn't be spending time fundraising. At the same time, I got fucking less than 400 bucks in the bank, so we need to cash. I'm just trying to figure out how to solve that problem. Help me think about this. Help me go wide on it. I'm grounded in real data of what's happening today. Don't tell me the advice from three years ago. The world is different. If you look at YC, all their advice has changed in the last year or two. Also, don't believe me. Fucking question me and go out there and find real fucking data. 
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-agentic-building-and-scaling-part1]]
+- [[chatgpt/chatgpt_agentic-building-and-scaling]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part2]]

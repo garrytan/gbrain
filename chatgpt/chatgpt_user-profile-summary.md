@@ -79,3 +79,11 @@ We tend to drink alcohol a decent bit together. We tend to do recreational drugs
 ## Assistant
 
 Understood. I’ll factor a “Liv fun fund” into every budget and treat proximity to her as a must‑have for your next apartment and any long‑term planning. Ready when you want the numbers or risk rundown.
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part1]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part2]]
+- [[chatgpt/chatgpt_laylo-user-complaints-summary]]
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]

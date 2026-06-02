@@ -44,3 +44,11 @@ Here’s the clear distinction — **they aren’t comparable categories**; they
 They aren’t interchangeable; you could talk about a musical *opus* or a poetic *opus*, but *sonnet* always refers to that 14-line poem form.
 
 If you meant the AI models named “Sonnet” and “Opus,” that’s a different context — they are different Anthropic AI variants with distinct performance characteristics, but the core English definitions above are what those names originally derive from. citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_opus-46-changelog]]
+- [[chatgpt/chatgpt_opus-vs-gpt-51-comparison]]
+- [[chatgpt/chatgpt_opus-vs-gpt-git-access]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

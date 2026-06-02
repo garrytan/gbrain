@@ -39,3 +39,11 @@ Key points:
 - Great founders prioritize survival and product quality over headcount and optics.
 
 Bottom line: **Know your default state early, avoid over-hiring, and fix the product before scaling—or the company dies.**
+
+
+## See Also
+- [[chatgpt/chatgpt_brief-summary-script-request]]
+- [[chatgpt/chatgpt_flyer-summary-request]]
+- [[chatgpt/chatgpt_inventory-summary-request]]
+- [[chatgpt/chatgpt_markdown-summary-request]]
+- [[chatgpt/chatgpt_segment-summary-request]]

@@ -67,3 +67,11 @@ Yes, Mr. White — the **entity["turn0product0","Philips Norelco OneBlade 
 **Note:** Some older posts mention the charging port doesn’t have a cover — but Philips officially states the design is waterproof and shower-safe. citeturn0search3
 
 In short: **Yes — OneBlade is waterproof and can be used with water or shaving products.**
+
+
+## See Also
+- [[chatgpt/chatgpt_philips-hue-overview]]
+- [[chatgpt/chatgpt_custard-in-boston-cream-donut]]
+- [[chatgpt/chatgpt_shaving-tips-for-irritation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

@@ -48,3 +48,11 @@ For a quick fix to a sore throat, try these remedies:
 5. **Humidifier**: Use a humidifier to keep the air moist, especially while sleeping.
 
 If symptoms persist, consider consulting a healthcare professional.
+
+
+## See Also
+- [[chatgpt/chatgpt_cold-sore-transmission-prevention]]
+- [[chatgpt/chatgpt_quick-cash-options]]
+- [[chatgpt/chatgpt_quick-response-request]]
+- [[chatgpt/chatgpt_quick-ui-fixes]]
+- [[chatgpt/chatgpt_sore-muscle-adjust-training]]

@@ -49,3 +49,11 @@ Schneider 2.0 is being crowdsourced now:
 - Nickelodeon and Nick at Nite are mostly nostalgia dumps now, not cranking out hits.
 
 Bottom line: **Dan Schneider’s era was centralized chaos. Now it’s decentralized chaos — mostly on Disney+, Netflix, and TikTok.**
+
+
+## See Also
+- [[chatgpt/chatgpt_tv-shows-like-modern-family]]
+- [[chatgpt/chatgpt_actor-in-modern-family]]
+- [[chatgpt/chatgpt_clowning-before-modern-family]]
+- [[chatgpt/chatgpt_commentary-on-modern-poetry]]
+- [[chatgpt/chatgpt_harold-grossman-modern-family]]

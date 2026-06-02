@@ -89,3 +89,11 @@ The printer should automatically recognize the new cartridge. If it doesn’t:
 ---
 
 Would you like me to also give you a **step-by-step with pictures** (like Brother’s official illustrated guide) so it’s easier to follow?
+
+
+## See Also
+- [[chatgpt/chatgpt_accessibility-contrast-check]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_auto-promote-blockers-check]]
+- [[chatgpt/chatgpt_ca-rental-application-legal-check]]

@@ -52,3 +52,11 @@ You can optionally sign up for a free account to choose test location, browser, 
 - Can track performance over time if you run repeated tests. citeturn0search0
 
 If you want a test run for a specific site, tell me the URL and I’ll fetch current performance results or walk you through interpreting them.
+
+
+## See Also
+- [[chatgpt/chatgpt_internet-speed-test-tools-2]]
+- [[chatgpt/chatgpt_internet-speed-test-tools-3]]
+- [[chatgpt/chatgpt_internet-speed-test-tools]]
+- [[chatgpt/chatgpt_page-speed-test-tools]]
+- [[chatgpt/chatgpt_unit-test-speed-tips]]

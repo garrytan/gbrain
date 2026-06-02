@@ -52,3 +52,11 @@ For managing inventory at a bar and venue, there are several industry-leading so
    - **Benefits**: Reduces shrinkage, provides accurate inventory counts, and helps optimize ordering.
 
 Each of these solutions offers various features that can help you manage your bar's inventory more efficiently. It might be beneficial to request demos from a few of these providers to see which one best fits your specific needs and workflow.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-inventory-management-table]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_camera-kit-inventory-review]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]

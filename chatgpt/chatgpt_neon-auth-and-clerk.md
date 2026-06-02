@@ -100,3 +100,11 @@ Mr. White — here’s the breakdown, focused on Jovie’s needs:
 👉 Recommendation: **Use Drizzle with Neon** for Jovie. Prisma is overkill for your lean MVP.  
 
 Want me to sketch out what a **Clerk + Drizzle + Neon baseline schema** for Jovie would look like (users, links, plans)?
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]
+- [[chatgpt/chatgpt_neon-and-clerk-keys]]
+- [[chatgpt/chatgpt_neon-auth-blog-mock]]
+- [[chatgpt/chatgpt_neon-auth-explanation]]
+- [[chatgpt/chatgpt_neon-auth-overview]]

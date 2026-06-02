@@ -126,3 +126,11 @@ solo founder with no previous exit, or faang experience,. went to drexel for mus
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_angel-investors-for-music-tech]]
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_adopting-exaai-for-jovie]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-changelog-insights-for-jovie]]

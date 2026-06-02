@@ -93,3 +93,11 @@ At 20 an hour
 ## Assistant
 
 33 hours × $20 /hour = **$660** total pay (before any taxes or deductions).
+
+
+## See Also
+- [[chatgpt/chatgpt_production-work-hours-logged]]
+- [[chatgpt/chatgpt_total-hours-calculation]]
+- [[chatgpt/chatgpt_tracking-work-hours-system]]
+- [[chatgpt/chatgpt_tracking-work-hours]]
+- [[chatgpt/chatgpt_work-hours-and-pay]]

@@ -77,3 +77,11 @@ $200 - $50 = $150
 $150 ÷ $7 = 21.42
 
 So you could buy 21 treats with the $50 you have. However, since you cannot buy a fraction of a treat, you would need to round down to the nearest whole number. Therefore, you could buy a total of 21 treats.
+
+
+## See Also
+- [[chatgpt/chatgpt_cannot-assist-with-request]]
+- [[chatgpt/chatgpt_hello-alice-pilot-fund]]
+- [[chatgpt/chatgpt_hello-conversation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

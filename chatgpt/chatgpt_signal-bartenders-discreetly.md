@@ -110,3 +110,11 @@ Bartenders are generally supportive of patrons who know their limits or choose n
 - U.S. Army – *Designated drivers get wristbands for free soft drinks*【35†L73-L80】  
 - PushOperations – *Angel Shot Code for Bar Safety*【36†L181-L189】 (illustrates use of code words in bars)  
 - Noble App – *Mobile Drink Ordering Platform*【39†L21-L24】
+
+
+## See Also
+- [[chatgpt/chatgpt_bartenders-as-secret-service]]
+- [[chatgpt/chatgpt_bartenders-paloma-recipe]]
+- [[chatgpt/chatgpt_tips-legalities-for-bartenders]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

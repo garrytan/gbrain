@@ -126,3 +126,11 @@ Use **Hermes as the harvester**, **build a tiny internal ranking UI**, and use *
 Do **not** start with a full scraper product.  
 Do **not** start by training.  
 Start by building the taste engine.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-communication]]
+- [[chatgpt/chatgpt_hermes-agent-orchestration]]
+- [[chatgpt/chatgpt_hermes-agent-overview]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]

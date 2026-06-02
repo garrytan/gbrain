@@ -40,3 +40,11 @@ There is also **Parrot**, which looks unusually close to your exact ask: global 
 For **actual ElevenLabs-first-party** tooling, the current official path is **Scribe v2 / Scribe v2 Realtime via API**. ElevenLabs’ current official app page is for **iOS and Android**, and their speech-to-text docs position Scribe as an API capability for live transcription and apps. I am not seeing a first-party Mac-wide dictation app in their current official product pages. citeturn599152view0turn599152view1turn105530view0
 
 My recommendation: **install MacWhisper direct-download first**. That is the cleanest “accurate dictation everywhere on Mac” answer that is clearly Whisper-based and works system-wide today. Superwhisper is the second pick for overall UX.
+
+
+## See Also
+- [[chatgpt/chatgpt_eleven-labs-startup-grants]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]

@@ -246,3 +246,11 @@ If you follow the above from day one, the future steps are easy:
 - For now, let the bottom corner avatar be the **creator** (current context). Personal account avatar only matters later in account settings / team contexts.
 
 If you want, next step I can sketch the exact DB schema and a minimal React/API shape for the signup + claim flows so your devs can implement this without confusion.
+
+
+## See Also
+- [[chatgpt/chatgpt_user-typo-model-clarification]]
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]
+- [[chatgpt/chatgpt_authenticated-user-404-ux]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]

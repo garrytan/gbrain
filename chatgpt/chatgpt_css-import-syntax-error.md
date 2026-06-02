@@ -162,3 +162,11 @@ Please let me know if there is anything else you need help with.
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_fix-syntax-error-2]]
+- [[chatgpt/chatgpt_fix-syntax-error-3]]
+- [[chatgpt/chatgpt_fix-syntax-error]]
+- [[chatgpt/chatgpt_syntax-error-in-colordotvue]]
+- [[chatgpt/chatgpt_tailwind-css-syntax-error]]

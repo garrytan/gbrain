@@ -65,3 +65,11 @@ A bunch of the humor in entity["tv_show","Modern Family","ABC sitcom"] 
   - speed walking
 
 One of the smartest recurring structures in the show is that each family member has a trait everyone dismisses until an episode reveals they’re secretly elite at it. Alex singing is one of those payoffs.
+
+
+## See Also
+- [[chatgpt/chatgpt_alex-gaudino-song-summary]]
+- [[chatgpt/chatgpt_bretts-career-timeline]]
+- [[chatgpt/chatgpt_dalia-dippolito-case-timeline]]
+- [[chatgpt/chatgpt_fatness-and-singing-ability]]
+- [[chatgpt/chatgpt_gym-singing-explained]]

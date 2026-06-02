@@ -65,3 +65,11 @@ According to DJ industry standards, a mashup title should include all original a
 This format names both original tracks (“The Deep End” and “Deep End (Ghostbusterz Remix)”) along with their artists, uses "**vs.**" to denote a mashup, and adds "*Tim White Mashup*" at the end to show that Tim White is the mashup creator【32†L154-L158】. The terminology “Mashup” (rather than *Edit* or *Bootleg*) is used here to accurately describe a blend of two songs. Each artist and remixer is properly credited, and Tim White’s name appears at the end in the version label, as per industry convention. 
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_ai-3d-model-creation]]
+- [[chatgpt/chatgpt_ai-music-prompt-creation]]
+- [[chatgpt/chatgpt_anime-character-creation]]
+- [[chatgpt/chatgpt_artist-profile-image-creation]]

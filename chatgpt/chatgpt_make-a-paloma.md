@@ -62,3 +62,11 @@ How to make a paloma
 ## User
 
 How to make a paloma
+
+
+## See Also
+- [[chatgpt/chatgpt_make-a-paloma-cocktail]]
+- [[chatgpt/chatgpt_bartenders-paloma-recipe]]
+- [[chatgpt/chatgpt_paloma-cocktail-recipe]]
+- [[chatgpt/chatgpt_paloma-significados-y-usos]]
+- [[chatgpt/chatgpt_make-11-liters-lemonade]]

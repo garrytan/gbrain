@@ -158,3 +158,11 @@ With these changes, the element will slide down from the top when entering and s
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-elements]]
+- [[chatgpt/chatgpt_clerk-elements-discontinued]]
+- [[chatgpt/chatgpt_clerk-elements-replacement-guidance]]
+- [[chatgpt/chatgpt_clerk-elements]]

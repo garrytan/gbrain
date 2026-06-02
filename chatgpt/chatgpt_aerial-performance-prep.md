@@ -87,3 +87,11 @@ Got it, Mr. White — that’s a killer concept, and the structure is already ti
 ---
 
 Would you like me to draft you a **daily prep routine (warm-up, pump, stretch, and recovery)** optimized for this specific show schedule? It’d make sure you look and feel consistent for every performance.
+
+
+## See Also
+- [[chatgpt/chatgpt_immersive-eleven-aerial-ideas]]
+- [[chatgpt/chatgpt_pnks-aerial-singing-technique]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]

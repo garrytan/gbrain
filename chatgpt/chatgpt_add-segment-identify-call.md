@@ -317,3 +317,11 @@ To reset your local branch and delete all changes, you can use the following ste
    Be cautious when using the force push option (`-f`), as it overwrites the remote branch with your local branch. Make sure you understand the implications of force pushing and only do it if necessary.
 
 After following these steps, your local branch will be reset to the desired commit, and all changes after that commit will be deleted. If you have already pushed the branch to a remote repository, keep in mind that force pushing will overwrite the remote branch with your local branch, so make sure you communicate any changes to collaborators if necessary.
+
+
+## See Also
+- [[chatgpt/chatgpt_call-management-setup]]
+- [[chatgpt/chatgpt_call-times-calculation]]
+- [[chatgpt/chatgpt_fundraising-call-script]]
+- [[chatgpt/chatgpt_identify-lock-brand-2]]
+- [[chatgpt/chatgpt_identify-lock-brand]]

@@ -32,3 +32,11 @@ Mr. White, if you park at a metered space and the meter itself has no power or d
 - **Check signage:** The street signs still control other restrictions (street sweeping, loading zones, etc.). You must still obey those.
 
 Bottom line: in Los Angeles you can park for the signed time limit without paying when the meter is dark, but document it and follow all other posted rules.
+
+
+## See Also
+- [[chatgpt/chatgpt_parking-meter-legality]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_flight-and-parking-options]]
+- [[chatgpt/chatgpt_legalities-of-charging-for-parking]]

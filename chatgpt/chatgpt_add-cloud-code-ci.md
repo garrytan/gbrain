@@ -71,3 +71,11 @@ Sounds like your new repo doesn’t have **Cloud Code** set up yet. To fix that,
 ---
 
 Mr. White, do you want me to pull the exact config from your old repo and rewrite a workflow snippet you can drop into the new one, so it’s a copy-paste fix?
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-cloud-limitation]]
+- [[chatgpt/chatgpt_cloud-code-in-worktress]]
+- [[chatgpt/chatgpt_cloud-code-node-modules]]
+- [[chatgpt/chatgpt_agent-skills-vs-code-cli]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]

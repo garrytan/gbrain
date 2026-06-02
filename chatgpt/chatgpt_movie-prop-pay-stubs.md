@@ -98,3 +98,11 @@ Each page shows:
 - **YTD:** auto‑rolling to $2,400 → $5,050 → $7,950  
 
 Let me know if you need different dollar amounts or any tweaks to the layout. citeturn0file0
+
+
+## See Also
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_elio-movie-details]]
+- [[chatgpt/chatgpt_famous-movie-hackers]]
+- [[chatgpt/chatgpt_her-hologram-love-movie]]

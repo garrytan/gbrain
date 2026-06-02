@@ -38,3 +38,11 @@ Yes, so I want to make this a little bit of a show to show that the group has ha
 ## Assistant
 
 Got it. You want to highlight the group's past successes and aim for broader exposure without committing to touring extensively. Are you looking for specific strategies to achieve this goal, or do you have certain aspects you'd like to focus on in your promotion?
+
+
+## See Also
+- [[chatgpt/chatgpt_request-for-assistance]]
+- [[chatgpt/chatgpt_timeline-request-assistance-needed]]
+- [[chatgpt/chatgpt_add-songs-tim-white]]
+- [[chatgpt/chatgpt_bio-for-tim-white]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]

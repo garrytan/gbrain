@@ -203,3 +203,11 @@ rules: {
 ❌ Your commit message violates enforced policy  
 
 If you want, paste your **commitlint config** and I’ll tell you exactly how strict your repo is and whether it matches your workflow.
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_age-range-breakdown]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]

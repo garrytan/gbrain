@@ -82,3 +82,11 @@ Actually life-changing. I used to roll into restaurants like a sad, jacked greml
 ## Assistant
 
 Actually life-altering. I used to scan a restaurant menu like a hostage negotiating macros—now I just whip out a Genius Shot like it’s dietary pepper spray and suddenly half the menu’s back on the table. No more begging the waiter to turn filet mignon into a sad gym bro Tupperware meal.
+
+
+## See Also
+- [[chatgpt/chatgpt_jacket-needed-evening-sunny]]
+- [[chatgpt/chatgpt_jijo-sunny-profile]]
+- [[chatgpt/chatgpt_american-conspiracy-theories-summarized]]
+- [[chatgpt/chatgpt_american-conspiracy-theories]]
+- [[chatgpt/chatgpt_conspiracy-theories-in-america]]

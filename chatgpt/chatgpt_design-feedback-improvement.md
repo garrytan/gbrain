@@ -87,3 +87,11 @@ Mr. White, send this as one consolidated message:
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ui-design-feedback]]
+- [[chatgpt/chatgpt_design-improvement-guidelines]]
+- [[chatgpt/chatgpt_design-improvement-mockup]]
+- [[chatgpt/chatgpt_design-improvement-prompt]]
+- [[chatgpt/chatgpt_design-improvement-suggestions-2]]

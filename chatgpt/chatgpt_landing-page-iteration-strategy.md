@@ -311,3 +311,11 @@ PPR is meant to combine static shell + dynamic islands. Keep “flag/personaliza
 - **Client SDK:** keep it for analytics and non-critical client-only tweaks.
 
 If you want the *absolute* minimum complexity: adopt **Flags SDK + Statsig provider** for marketing gating + Toolbar overrides, and keep Statsig as the system of record for rollouts. That’s the highest-leverage path in your exact stack.
+
+
+## See Also
+- [[chatgpt/chatgpt_landing-page-strategy]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part1]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part2]]

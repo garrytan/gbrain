@@ -537,3 +537,11 @@ Remove leg to body
   }
 }
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_waist-to-hip-ratio-request]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_attractiveness-and-objectivity-debate]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_bulk-phase-muscle-fat-ratio]]

@@ -97,3 +97,11 @@ Here’s the quick calculation:
    \]
 
 Rounding slightly, that puts you in the **215–220 lb** range at 10% body fat for an FFMI near 23.7.
+
+
+## See Also
+- [[chatgpt/chatgpt_fix-ffmi-calculation-issue]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_attractive-ffmi-values]]

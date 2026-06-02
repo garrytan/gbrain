@@ -30,3 +30,11 @@ Mr. White, scale it linearly:
 - 18 L uses **16 fl oz**.  
 - For **4 L**: \(4/18 \times 16 = 3.56\) fl oz ≈ **3.6 fl oz**.  
 - That’s about **105 mL**, or **22% of the bottle** (roughly **1/4 bottle**).
+
+
+## See Also
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_agentic-building-and-scaling]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]

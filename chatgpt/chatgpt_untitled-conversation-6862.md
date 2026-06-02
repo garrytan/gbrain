@@ -86,3 +86,11 @@ Here's how to do it:
 4. If you want to subtract the first shape from the second instead, you can use the "Reverse" option in the "Boolean" section to swap the order of the selected shapes.
 
 I hope that helps! Let me know if you have any other questions.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

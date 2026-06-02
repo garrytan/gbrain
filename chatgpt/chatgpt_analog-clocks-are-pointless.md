@@ -39,3 +39,11 @@ Yeah, come up with a better analogy that makes more sense.
 ## Assistant
 
 Mr. White, here’s a sharper one: it’s like forcing students to learn a slide-rule just to pass one math test—when every other device in their lives (phones, computers, even microwave ovens) gives them the answer instantly. Pointless relic training.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

@@ -525,3 +525,11 @@ I have no entity legally yet but well form a c corp.
 
 Movie quote "This is your life and its ending one minute at a time"
 - **Non-obvious skill:** - learning on the fly incredibly quickly
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-questions-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part3]]

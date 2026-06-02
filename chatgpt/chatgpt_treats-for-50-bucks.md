@@ -40,3 +40,11 @@ x = 10,000 / 7
 x ≈ 1428.57
 
 Therefore, you can buy approximately 1428 treats for 50 bucks. Keep in mind that this is an estimate and the actual number of treats may vary slightly depending on the cost per treat.
+
+
+## See Also
+- [[chatgpt/chatgpt_imodium-treats-diarrhea]]
+- [[chatgpt/chatgpt_treats-to-fill-pool-3456000]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

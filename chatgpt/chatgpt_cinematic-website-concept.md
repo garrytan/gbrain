@@ -561,3 +561,11 @@ give it to me as just a section. make it feel more modern blue and purple on the
 
 {'asset_pointer': 'sediment://file_00000000e24c722fa892c1ab6a6cd90a', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1330, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 889629, 'width': 2048}
 it needs to blemd in with this aesthetic
+
+
+## See Also
+- [[chatgpt/chatgpt_cinematic-website-footer-design]]
+- [[chatgpt/chatgpt_copyright-notice-on-website]]
+- [[chatgpt/chatgpt_high-end-website-mockup]]
+- [[chatgpt/chatgpt_import-website-to-figma]]
+- [[chatgpt/chatgpt_website-business-philosophy]]

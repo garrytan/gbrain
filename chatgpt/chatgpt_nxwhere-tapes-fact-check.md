@@ -27,3 +27,11 @@ Fact check
 ## Assistant
 
 Mr. White, there’s no evidence that “NXWHERE TAPES VOL 3” was a hit in the sense of chart success or wide acclaim. What you’re looking at is a two-day boutique music festival hosted by Sophie Cooper at Nxwhere Social Club on May 20–21, 2025. Event listings (Eventbrite; AllEvents) show it drew attendees at USD 45 a ticket citeturn0search0turn0search2, and an Instagram post praised its energy citeturn0search6, but there are no independent reviews, attendance figures, or chart data to substantiate the claim that it “was a hit.”
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

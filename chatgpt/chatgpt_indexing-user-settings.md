@@ -37,3 +37,11 @@ It depends on how you use the settings:
   - If settings are JSON and only read by `user_id`, keep it simple: `PRIMARY KEY (user_id)` is enough.  
 
 Want me to sketch an optimal schema pattern for user settings (relational vs JSON) depending on whether you mostly **read single users** or **analyze settings across users**?
+
+
+## See Also
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]
+- [[chatgpt/chatgpt_authenticated-user-404-ux]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part2]]

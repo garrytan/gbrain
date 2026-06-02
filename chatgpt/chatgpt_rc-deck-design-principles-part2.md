@@ -564,3 +564,11 @@ The pricing should follow the labor and revenue Jovie replaces.
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_rc-deck-design-principles-part1]]
+- [[chatgpt/chatgpt_best-design-deck-tools]]
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part2]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part2]]
+- [[chatgpt/chatgpt_ingest-claim-system-design-part2]]

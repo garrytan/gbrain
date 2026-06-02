@@ -774,3 +774,11 @@ Your thesis—that Tesla’s Robotaxi ambitions are now under both **legal scrut
 - **Recommended Action:** With widespread awareness of these challenges, it's prudent to **scale out or hedge exposure** to near‑term expectations around Tesla’s Robotaxi launch. Unless new, non‑consensus developments arise, speculative upside is materially limited.
 
 Let me know if you'd like ongoing tracking of related litigation or regulatory shifts.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

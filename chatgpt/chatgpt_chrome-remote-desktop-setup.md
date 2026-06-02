@@ -84,3 +84,11 @@ Since you’re a startup founder (with likely mixed devices/no doubt some remote
 ---
 
 If you like, I can walk you through a **step-by-step guide with screenshots** for your macOS or Windows host device (whichever you use). Which host OS are you working with?
+
+
+## See Also
+- [[chatgpt/chatgpt_google-chrome-desktop-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]

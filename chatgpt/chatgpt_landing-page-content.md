@@ -711,3 +711,11 @@ Here’s a **world-class design audit** for dev.jov.ie, focused on fast wins. I 
 10. Audit light mode contrast (especially buttons) and fix tokens.
 
 Want me to output a **paste-ready Cursor prompt** that implements all of this (Tailwind classes + a `FeaturedArtists` component + PreFooter + Footer updates) in one PR?
+
+
+## See Also
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part1]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part2]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part3]]

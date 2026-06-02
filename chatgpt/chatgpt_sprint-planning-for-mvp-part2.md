@@ -911,3 +911,11 @@ Got it, Mr. White. With **Verified replacing Founding Member badge** and the new
 ---
 
 Do you want me to also **redraft the Linear UX issues** with full titles + acceptance criteria (ready to paste), or keep them in this list format?
+
+
+## See Also
+- [[chatgpt/chatgpt_ideal-lifestyle-planning-part2]]
+- [[chatgpt/chatgpt_michael-seibel-sprint-planning]]
+- [[chatgpt/chatgpt_sprint-planning-for-mvp-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part2]]

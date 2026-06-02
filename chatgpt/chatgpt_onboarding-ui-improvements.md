@@ -979,3 +979,11 @@ Want help scripting a semi-automated folder reorganization based on AI recommend
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_onboarding-improvements-guide]]
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_best-onboarding-ux]]
+- [[chatgpt/chatgpt_debug-onboarding-issue]]
+- [[chatgpt/chatgpt_linear-onboarding-explained-2]]

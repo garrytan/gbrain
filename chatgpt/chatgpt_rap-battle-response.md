@@ -237,3 +237,11 @@ Sam’s shell game stripped your stash—pockets perforated
 He’s popping bottles—profit pumped and celebrated  
 You’re slapping fries in panic—paper apron’s pathetic  
 She’s ghosted in his Lambo—love’s luggage ejected  
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

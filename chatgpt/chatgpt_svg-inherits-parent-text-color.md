@@ -45,3 +45,11 @@ Note that the `currentColor` keyword only works for properties that accept color
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_background-color-description]]
+- [[chatgpt/chatgpt_bleaching-hair-color-tips]]
+- [[chatgpt/chatgpt_button-text-update]]
+- [[chatgpt/chatgpt_buy-color-contacts-la]]
+- [[chatgpt/chatgpt_cant-hear-ai-text]]

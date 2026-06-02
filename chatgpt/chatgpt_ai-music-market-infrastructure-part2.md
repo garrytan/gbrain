@@ -165,3 +165,11 @@ Music creation is easier than ever, but attention and monetization are harder th
 Jovie recognizes subscribers and anonymous visitors. Anonymous fans become retargetable audiences and get prompted to subscribe at the right moment, like for tour drops or a flash merch offer. If someone clicks Spotify, we can follow up minutes later with a personalized playlist to turn one stream into many. Behind the scenes, Jovie automatically tests, learns, and segments by intent to run 1 to 1 marketing at scale with no setup.
 
 I’ve driven 90M plus streams to my own music, was signed to Armada and Universal, and spent three years at Bravo building marketing experiences for major artists and brands. In the last month I built the MVP, and today we incorporated and raised a $25K angel check.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-music-market-infrastructure-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_branch-music-creators-yc-pitch-part2]]
+- [[chatgpt/chatgpt_music-album-json-update-part2]]
+- [[chatgpt/chatgpt_music-remix-identification-part2]]

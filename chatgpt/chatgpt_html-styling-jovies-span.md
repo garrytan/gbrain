@@ -47,3 +47,11 @@ Overall, this code is used to style the text "Jovie" in a specific way within an
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_discography-table-styling]]
+- [[chatgpt/chatgpt_masculine-abs-styling]]
+- [[chatgpt/chatgpt_styling-refactor-for-ui]]
+- [[chatgpt/chatgpt_styling-selected-contacts-rows]]
+- [[chatgpt/chatgpt_ui-styling-refactor]]

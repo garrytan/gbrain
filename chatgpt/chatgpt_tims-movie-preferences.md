@@ -202,3 +202,11 @@ Mr. White, here are a few more movie suggestions that balance sci-fi/action with
    - **Why**: Action-comedy romance set in an adventure setting—lighthearted, playful, and might fill that rom-com plus fun vibe for both.
 
 Enjoy exploring these picks—let me know if you want more specifics!
+
+
+## See Also
+- [[chatgpt/chatgpt_finchers-coffee-preferences-starbucks]]
+- [[chatgpt/chatgpt_preferences-screen-improvements]]
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_elio-movie-details]]

@@ -30,3 +30,11 @@ liquid glass slider
 For developers interested in implementing Liquid Glass sliders, the GitHub repository "awesome-liquid-glass" offers SwiftUI code samples and animations demonstrating various Liquid Glass components, including sliders citeturn0search14.
 
 To utilize Liquid Glass features, ensure your development environment is updated to the latest versions of Apple's operating systems and development tools. 
+
+
+## See Also
+- [[chatgpt/chatgpt_ios-26-liquid-glass-integration]]
+- [[chatgpt/chatgpt_linear-app-liquid-glass]]
+- [[chatgpt/chatgpt_liquid-glass-implementation]]
+- [[chatgpt/chatgpt_liquid-glass-tab-bar]]
+- [[chatgpt/chatgpt_liquid-glass-ux-improvements]]

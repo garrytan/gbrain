@@ -161,3 +161,11 @@ With the revised information for Mel's Diner Sunrise Breakfast, let's update the
 | **Fat (g)**      | 75       | 149          | +74            |
 
 This table reflects your updated intake compared to your macro goals, showing you're over in calories, carbs, and fats, and slightly under in protein. Adjustments in future meals can help align better with your targets.
+
+
+## See Also
+- [[chatgpt/chatgpt_panda-express-meal-macros]]
+- [[chatgpt/chatgpt_macro-breakdown-panda-express]]
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_apartment-decision-analysis]]
+- [[chatgpt/chatgpt_baguette-macros-50g]]

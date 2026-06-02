@@ -828,3 +828,11 @@ what do we charge? are we staying usage based on counting both ai and messages t
 ## User
 
 jovie alerts should not be customizable and sent only on verified releases hitting streaming and actuall tourdataes. and music videos with a released isrc hitting youtube from a verified channel. theyre inteneded not to be spammy and not the artist see the users number or email unless they opt in to sharing. they have toggles for music, merch, tour datas, and then a seperate share my info with artist toggle. so i dont think this plan is completely accurate
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part3]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part2]]

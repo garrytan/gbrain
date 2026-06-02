@@ -55,3 +55,11 @@ Better options:
 - **Straps** once grip limits the load
 - **Hook grip** if you tolerate it
 - If you *must* use mixed grip: keep **arms straight**, bar tight to thighs, and **swap which hand is underhand every set** (not every rep).
+
+
+## See Also
+- [[chatgpt/chatgpt_hyperbelt-for-barbell-curls]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]

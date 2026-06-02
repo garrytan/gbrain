@@ -51,3 +51,11 @@ Mr. White: “Nice calendar—but hit it with drumsticks and you’ll just get 1
 ## Assistant
 
 Mr. White: “Sold-out 70mm IMAX? Watching showtimes like a hawk? At this point I’ll just hire an actual hawk—cheaper than therapy.”
+
+
+## See Also
+- [[chatgpt/chatgpt_add-events-to-calendar]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]
+- [[chatgpt/chatgpt_calendar-request]]
+- [[chatgpt/chatgpt_create-calendar-event]]
+- [[chatgpt/chatgpt_create-calendar-events]]

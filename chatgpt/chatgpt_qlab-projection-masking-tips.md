@@ -185,3 +185,11 @@ Here’s what I found for **MadMapper licensing costs** (as of the latest public
 So in USD equivalency, the perpetual license tends to hover around **$400–450 USD** depending on taxes and region.
 
 If you like, I can check the current price for the U.S. region (with tax) and send you links where you can purchase — would you prefer I do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_connect-qlab-to-nextjs]]
+- [[chatgpt/chatgpt_synced-paparazzi-effect-with-qlab]]
+- [[chatgpt/chatgpt_companies-doing-projection-mapping]]
+- [[chatgpt/chatgpt_nfl-smart-glass-projection]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]

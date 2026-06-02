@@ -91,3 +91,11 @@ In summary, **Dr. Mike Israetel’s stance** on fat loss with GLP-1 agonists is 
 - *RP Blog – “Slimming Down with Semaglutide (Wegovy)”* (pros, cons, and recommendations for using GLP-1 drugs)【2†L167-L175】【54†L188-L192】.  
 - Reddit summary of Mike Israetel’s comments on GLP-1 (new lifters gaining muscle, trained lifters minimizing muscle loss with training)【10†L1405-L1413】.  
 - Dr. Mike Israetel – various interviews (Gabrielle Lyon show, Peter Attia, etc.) on preserving muscle during fat loss and integrating new weight-loss medications【29†L287-L295】【7†L273-L281】.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_alcohols-effect-on-fat-loss]]
+- [[chatgpt/chatgpt_applecare-theft-loss-coverage]]
+- [[chatgpt/chatgpt_arguing-with-facts]]

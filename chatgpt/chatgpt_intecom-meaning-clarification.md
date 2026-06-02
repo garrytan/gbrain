@@ -38,3 +38,11 @@ If you meant a **specific business called “Intecom,”** let me know what indu
 If you meant *intercom* (one letter difference), that is a **communication system/device** used for talking between rooms or internal points — e.g., in buildings, planes, offices. citeturn0search3turn0search6  
 
 Let me know which one you were asking about (the company vs. the communication device), and I’ll give details.
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_clarification-of-ns-meaning]]
+- [[chatgpt/chatgpt_linear-meaning-clarification]]
+- [[chatgpt/chatgpt_beta-issue-clarification]]
+- [[chatgpt/chatgpt_clarification-on-handle]]

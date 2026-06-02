@@ -47,3 +47,11 @@ If you can accept non-Amazon, these are the cheapest verified-fit picks:
 ---
 
 If **Amazon-only and <$50** is a hard requirement, there isn’t a trustworthy match today. Want me to widen to **Amazon up to ~$80** (still cheaper than new OEM) or keep it **<$50** but include **non-Amazon** only?
+
+
+## See Also
+- [[chatgpt/chatgpt_mazda-cx-5-sun-visor-issue]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-liftgate]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-wipers]]
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_cloning-mazda-key-fob]]

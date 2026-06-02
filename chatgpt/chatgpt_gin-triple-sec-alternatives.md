@@ -71,3 +71,11 @@ For non-alcoholic options, you could use:
 3. **Orange zest**: Soak it in a base spirit like vodka to infuse the orange flavor.
 
 The choice of alternative may affect the flavor and strength of your cocktail, so you might need to adjust other ingredients accordingly.
+
+
+## See Also
+- [[chatgpt/chatgpt_affordable-sunglasses-alternatives]]
+- [[chatgpt/chatgpt_alternatives-to-genius-shots]]
+- [[chatgpt/chatgpt_better-alternatives-to-fastlane]]
+- [[chatgpt/chatgpt_better-key-organizer-alternatives]]
+- [[chatgpt/chatgpt_birthday-cake-alternatives]]

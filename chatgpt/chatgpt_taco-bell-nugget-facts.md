@@ -27,3 +27,11 @@ Fact chexk
 ## Assistant
 
 Mr. White, here’s the breakdown: a 10-piece order of Taco Bell’s Crispy Chicken Nuggets actually contains about 670 kcal (not 620) and roughly 72 g of protein (some databases list 68 g) per serving citeturn0search2turn0search3turn0search8.
+
+
+## See Also
+- [[chatgpt/chatgpt_green-taco-bell-fire-extinguisher]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_hailey-bieber-deal-facts]]
+- [[chatgpt/chatgpt_salt-lake-city-facts]]
+- [[chatgpt/chatgpt_slammed-with-tax-facts]]

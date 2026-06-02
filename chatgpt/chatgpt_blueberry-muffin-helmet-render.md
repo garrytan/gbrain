@@ -236,3 +236,11 @@ Here’s the helmet with blue blueberries on top, preserving the all-white marsh
 ## Assistant
 
 Here’s the final version with bright blue blueberries on top, the full ribbed texture on the bottom, and the friendly mesh eyes spanning both sections. Let me know if this nails it!
+
+
+## See Also
+- [[chatgpt/chatgpt_muffin-helmet-render]]
+- [[chatgpt/chatgpt_dj-muffin-helmet-build]]
+- [[chatgpt/chatgpt_edm-muffin-helmet-design]]
+- [[chatgpt/chatgpt_muffin-helmet-design-prompt]]
+- [[chatgpt/chatgpt_muffin-helmet-design]]

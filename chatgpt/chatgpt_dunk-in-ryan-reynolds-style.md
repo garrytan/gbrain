@@ -45,3 +45,11 @@ Mr. White, use one of these:
 
 ### Most Ryan-adjacent snark
 **I’d follow, but my phone has a strict policy against financial advice from accounts that look like they were named during a CAPTCHA test.**
+
+
+## See Also
+- [[chatgpt/chatgpt_airbnb-review-ryan-style]]
+- [[chatgpt/chatgpt_ryan-reynolds-fact-check]]
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comeback]]
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comment]]
+- [[chatgpt/chatgpt_super-cocky-ryan-reynolds]]

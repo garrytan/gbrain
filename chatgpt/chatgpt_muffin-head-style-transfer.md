@@ -40,3 +40,11 @@ Cool, you did the opposite of what I want. I want the logo, but with the eyes an
 ## Assistant
 
 Here’s the Marshmello-style mask with your muffin’s circular eyes and curved smile, Mr. White. Let me know if you want any further adjustments.
+
+
+## See Also
+- [[chatgpt/chatgpt_shhh-style-transfer]]
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_muffin-head-logo-design]]
+- [[chatgpt/chatgpt_applecare-transfer-options]]
+- [[chatgpt/chatgpt_car-and-motorcycle-transfer]]

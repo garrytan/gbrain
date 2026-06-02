@@ -407,3 +407,11 @@ With Planning Mode ON and your Rule active, open `plan.md`, then in Cascade just
 If you want it to watch/merge Linear issues/PRs while running, add the **Linear MCP server** in *Settings → Cascade → MCP Servers* (or via the Linear integration quick setup). citeturn0search0turn0search6
 
 That’s it. Turn on Planning Mode + Auto-Continue, save the big instructions as a Rule once, whitelist commands, then start the plan with a two-word prompt. After that, it should run unattended and keep chewing through `plan.md`.
+
+
+## See Also
+- [[chatgpt/chatgpt_windsurf-autopilot-setup-part1]]
+- [[chatgpt/chatgpt_windsurf-autopilot-setup-part2]]
+- [[chatgpt/chatgpt_autopilot-test-suite-run]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]

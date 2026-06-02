@@ -338,3 +338,11 @@ Order these exactly:
 10. Only escalate hard problems to GPT-5.5/Opus
 
 That likely cuts burn 60–85% while increasing velocity.
+
+
+## See Also
+- [[chatgpt/chatgpt_avoid-razor-burn]]
+- [[chatgpt/chatgpt_codex-vs-hermes-strategy]]
+- [[chatgpt/chatgpt_cold-increases-calorie-burn]]
+- [[chatgpt/chatgpt_github-hermes-overview]]
+- [[chatgpt/chatgpt_hermes-agent-communication]]

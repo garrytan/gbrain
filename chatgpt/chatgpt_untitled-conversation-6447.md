@@ -79,3 +79,11 @@ document.addEventListener('DOMContentLoaded', function() {
 ```
 
 This code adds an event listener for the `DOMContentLoaded` event. When this event is triggered, it means that the page has finished loading and all of the elements on the page are available. You can then run your code to loop through the links and add their inner text to an array.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

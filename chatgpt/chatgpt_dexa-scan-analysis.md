@@ -167,3 +167,11 @@ So the move is:
 If you want, next we can:
 - Sketch an exact weekly training split that matches this priority list.  
 - Or map calories and macros for a lean gain phase based on this DEXA and your activity level.
+
+
+## See Also
+- [[chatgpt/chatgpt_dexa-scan-results-analysis]]
+- [[chatgpt/chatgpt_dexa-scan-affected-by-water-weight]]
+- [[chatgpt/chatgpt_dexa-scan-and-water-weight]]
+- [[chatgpt/chatgpt_dexa-scan-budget-update]]
+- [[chatgpt/chatgpt_dexa-scan-explanation]]

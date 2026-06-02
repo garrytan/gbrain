@@ -44,3 +44,11 @@ Here's a summary of the bleaching instructions based on the conversation:
    - Text or DM Kara Jo if you have any questions during the process.
 
 Feel free to reach out for any clarification or assistance.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_batching-instructions-and-supplies]]
+- [[chatgpt/chatgpt_bleach-developer-comparison]]
+- [[chatgpt/chatgpt_bleach-solution-calculation]]
+- [[chatgpt/chatgpt_clawd-project-instructions]]

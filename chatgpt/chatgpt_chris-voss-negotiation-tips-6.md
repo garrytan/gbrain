@@ -73,3 +73,11 @@ Mr. White — perfect. That’s your leverage: **“$200 retail, already cut to 
 - “If $50 works, when can you come by?”
 
 If you want it gone fast, use the $45-for-today line. If you’re fine waiting, be firm at $50 and ask pickup time.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-5]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-7]]

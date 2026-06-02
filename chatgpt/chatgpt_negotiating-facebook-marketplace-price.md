@@ -46,3 +46,11 @@ Here’s a blunt but still polite message you can send:
 > “It’s $15 if you pick it up now. I haven’t inspected it and don’t plan to—it’s exactly what’s in the photos. If you want a detailed condition report, this isn’t the right listing. You’re welcome to come see it in person and decide.”
 
 It makes the point that the price is low, you’re not offering a full inspection, and they can either show up or pass.
+
+
+## See Also
+- [[chatgpt/chatgpt_facebook-marketplace-description]]
+- [[chatgpt/chatgpt_facebook-marketplace-guide]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-2]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-3]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-tips]]

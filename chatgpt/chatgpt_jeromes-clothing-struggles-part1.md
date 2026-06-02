@@ -551,3 +551,11 @@ Stacey left trash in the hall. Assuming she didn’t realize the trash room was 
 
 
 IF THERE IS 1 SHOW THEN SERVERS ARE EFFECTIVELY ON A 4 HOUR SHIFT AND SHOULDNT NEED A 30 MINUTE BREAK OR MEAL. THEY SHOULD JUST GET THIER 10.
+
+
+## See Also
+- [[chatgpt/chatgpt_jeromes-clothing-struggles-part2]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]

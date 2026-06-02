@@ -643,3 +643,11 @@ In this update, I've added the `hover:opacity-100 transform transition-transform
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_html-template-creation-tutorial]]
+- [[chatgpt/chatgpt_html-webpage-template]]
+- [[chatgpt/chatgpt_vuejs-html-page-template]]
+- [[chatgpt/chatgpt_creating-instagram-deep-link]]
+- [[chatgpt/chatgpt_grabbing-instagram-link]]

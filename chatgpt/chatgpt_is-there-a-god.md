@@ -71,3 +71,11 @@ A personal, interventionist God who answers prayers, judges people, and backs on
 A more abstract creator, first cause, or intelligence behind reality is harder to rule out.
 
 So: **maybe. But nobody knows.**
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

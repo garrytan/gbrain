@@ -657,3 +657,11 @@ Your internal thesis—that Tesla **does not hold regulatory approval in Califor
 Let me know if you'd like monitoring of subsequent CPUC filings, formal permit applications, or credible public first-ride reports.
 
 navlistTesla California Robotaxi Regulatory Coverageturn0news21,turn0news20,turn0news23
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

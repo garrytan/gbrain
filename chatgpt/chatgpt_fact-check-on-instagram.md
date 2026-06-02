@@ -47,3 +47,11 @@ For Jovie/artists, the better principle is:
 > Bad audience data creates bad growth signals. Prioritize real fans, high-intent opt-ins, saves, shares, comments, watch time, and repeat engagement over vanity follower count.
 
 I would treat Social Audit Pro as potentially useful only if it identifies **obvious bots/spam accounts**, gives transparent criteria, and avoids mass unfollow/removal tactics that could look automated or risky.
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

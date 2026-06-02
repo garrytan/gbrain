@@ -190,3 +190,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'It might be a good idea to give them a quick call before you head over, just to make sure they can fit you in right away. That way, you won’t have to wait around if they’re busy. But hopefully, they can accommodate you pretty quickly!'}
 {'asset_pointer': 'sediment://file_000000000d9861f6b6908ce0e1947dee', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-14T21:08:32.901845+00:00', 'format': 'wav', 'metadata': {'end': 13.85, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 664878, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_oil-change-discussion-part2]]
+- [[chatgpt/chatgpt_oil-change-discussion-part3]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_8-pack-abs-discussion]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]

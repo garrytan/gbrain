@@ -235,3 +235,11 @@ If you want, once they reply, paste it here and I’ll translate what they’re 
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_geniusshot-reformulation-update]]
+- [[chatgpt/chatgpt_arlo-brand-explanation]]
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-comp-changes-summary]]
+- [[chatgpt/chatgpt_body-composition-changes]]

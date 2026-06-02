@@ -75,3 +75,11 @@ For Jovie today, I would route:
 - 5–10% → Composer 2.5 for planning, architecture, and difficult debugging
 
 That is likely the lowest-cost setup that still feels close to frontier performance.
+
+
+## See Also
+- [[chatgpt/chatgpt_cursor-vs-deepseek-comparison]]
+- [[chatgpt/chatgpt_deepseek-ai-models]]
+- [[chatgpt/chatgpt_deepseek-flash-v4]]
+- [[chatgpt/chatgpt_deepseek-v4-requirements]]
+- [[chatgpt/chatgpt_gemini-vs-deepseek-flash]]

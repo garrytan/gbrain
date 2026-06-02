@@ -67,3 +67,11 @@ Here’s your table of ingredients for a 10-liter batch of the cocktail:
 | Triple Sec        | 24                       | 0.71                         |
 
 You’ll have 48 full drinks in your 10-liter batch of the cocktail.
+
+
+## See Also
+- [[chatgpt/chatgpt_batch-cocktail-calculation]]
+- [[chatgpt/chatgpt_batch-quantity-calculation]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]

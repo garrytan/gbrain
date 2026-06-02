@@ -48,3 +48,11 @@ Estimate the mafros of this Mediterranean toast
 Use the totals above for Macro Factor.  If you need to tweak:  
 - **More protein** – add another egg or 30 g grilled chicken.  
 - **Fewer carbs** – sub half‑slice or low‑cal wrap.
+
+
+## See Also
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_baguette-macros-50g]]
+- [[chatgpt/chatgpt_bird-man-macros]]
+- [[chatgpt/chatgpt_calculate-macros-food-consumed]]
+- [[chatgpt/chatgpt_chicken-salad-macros-221cal-37gpro-43gfat-63gcarb]]

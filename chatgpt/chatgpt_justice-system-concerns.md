@@ -26,3 +26,11 @@ Concisely express concern foe the dact that our justice system relies on a jury 
 ## Assistant
 
 If a jury of our peers decides justice—and most “peers” cheer on premeditated murder in Instagram comments—that’s not just a broken system. That’s a broken society.
+
+
+## See Also
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_building-jovie-knowledge-system]]
+- [[chatgpt/chatgpt_bulk-cut-cycle-system]]
+- [[chatgpt/chatgpt_code-review-system-design]]
+- [[chatgpt/chatgpt_comp-and-discount-system]]

@@ -38,3 +38,11 @@ Yes
 ## Assistant
 
 Currently, 600 euros is equivalent to approximately 639.52 USD, based on an exchange rate of 1.06587 USD per euro【9†source】【10†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_air-fryer-conversion]]
+- [[chatgpt/chatgpt_batch-conversion-recipe]]
+- [[chatgpt/chatgpt_batch-recipe-conversion]]
+- [[chatgpt/chatgpt_best-ux-and-conversion]]
+- [[chatgpt/chatgpt_changelog-conversion-to-markup]]

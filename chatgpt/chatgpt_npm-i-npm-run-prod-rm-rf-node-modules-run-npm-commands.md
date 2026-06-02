@@ -257,3 +257,11 @@ new Vue({
 In this example, `App.vue` is a component used by your main app, and `MarketingHeader.vue` is a component used by your marketing pages. By importing both components into the same entry point, you can share code between the two apps.
 
 Similarly, you can share styles between the two apps using a shared CSS file. For example, you can create a `shared.css` file in your `resources/css` directory, and import it into both entry points using `import './shared.css'`.
+
+
+## See Also
+- [[chatgpt/chatgpt_cloud-code-node-modules]]
+- [[chatgpt/chatgpt_node-22-overview]]
+- [[chatgpt/chatgpt_node-22-vs-node-24]]
+- [[chatgpt/chatgpt_node-version-conflict-fix]]
+- [[chatgpt/chatgpt_set-node-version-cascade]]

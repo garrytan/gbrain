@@ -282,3 +282,11 @@ no use the data i provided from github to populate a NEW entry in the format of 
 ### Improvement: Design for Calendar Settings
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_qr-screen-enhancements]]
+- [[chatgpt/chatgpt_ui-enhancements-features]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

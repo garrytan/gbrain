@@ -69,3 +69,11 @@ CREATE TABLE IF NOT EXISTS users (
 ```
 
 By adding `UNIQUE` after the `objectID` column definition, you ensure that each entry in the table must have a unique `objectID`, which prevents duplicate entries for this specific identifier.
+
+
+## See Also
+- [[chatgpt/chatgpt_pop-song-with-unique-drop]]
+- [[chatgpt/chatgpt_unique-futuristic-company-names]]
+- [[chatgpt/chatgpt_unique-name-suggestions]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

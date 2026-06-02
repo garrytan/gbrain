@@ -94,3 +94,11 @@ Assuming 30% taxes:
 You need to make **at least $85K/year W2** (or **$5K/month cash if untaxed**) to sustain your current lifestyle *without reducing quality of life*.
 
 Want me to build a version of this as a printable PDF or budget tracker you can update?
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-business-manager-overview]]
+- [[chatgpt/chatgpt_bar-manager-negotiation-advice]]
+- [[chatgpt/chatgpt_bar-manager-resume-rewrite]]
+- [[chatgpt/chatgpt_flags-manager-design]]
+- [[chatgpt/chatgpt_gobar-manager-jobs-search]]

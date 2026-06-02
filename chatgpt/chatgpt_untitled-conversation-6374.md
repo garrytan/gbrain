@@ -68,3 +68,11 @@ chrome.contextMenus.onClicked.addListener(function(info, tab) {
 In this code, the `onClicked` event listener checks the `menuItemId` property of the `info` object to determine which menu item was clicked. Based on the `menuItemId`, it either handles the "Save" menu item or the "Open" menu item.
 
 I hope this helps! Let me know if you have any other questions.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

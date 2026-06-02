@@ -39,3 +39,11 @@ create it same structure as others
 ## Assistant
 
 Mr. White, the form is ready to submit: **Jovie Founding Member** with a **$12.00 USD recurring monthly** price (preset tax category: General – Electronically Supplied Services). Confirm and I’ll click **Add product** to create it.
+
+
+## See Also
+- [[chatgpt/chatgpt_accessory-mode-activation]]
+- [[chatgpt/chatgpt_add-dark-mode]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-agent-test-strategies]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]

@@ -34,3 +34,11 @@ higgsfield
 - Particles that do **not interact with the Higgs field**, like photons, remain massless. citeturn0search4  
 - The **Higgs boson** is the **quantum excitation** (particle manifestation) of the Higgs field; its discovery in 2012 at the Large Hadron Collider provided experimental evidence that the Higgs field exists. citeturn0search4  
 - The mechanism by which the Higgs field gives mass is part of the **Brout-Englert-Higgs mechanism** within the Standard Model of particle physics. citeturn0search5
+
+
+## See Also
+- [[chatgpt/chatgpt_higgs-field-explanation-2]]
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]

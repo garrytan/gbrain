@@ -965,3 +965,11 @@ double latestHeight = heightData.isNotEmpty
 In this updated code, I've set the start date for querying height data to a much earlier date. This increases the likelihood of finding a recorded height value if one exists.
 
 If you're still getting zero for height, it's worth confirming if there's any height data recorded in the health app for the user. Additionally, reviewing the documentation or API of the `health` package to understand how height data is stored and retrieved might provide more insights into handling this data type correctly.
+
+
+## See Also
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part1]]
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part3]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part2]]

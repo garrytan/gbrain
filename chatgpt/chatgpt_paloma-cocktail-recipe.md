@@ -108,3 +108,11 @@ These sodas have a sweet but tart grapefruit flavor that complements the tequila
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartenders-paloma-recipe]]
+- [[chatgpt/chatgpt_make-a-paloma-cocktail]]
+- [[chatgpt/chatgpt_cosmopolitan-cocktail-recipe]]
+- [[chatgpt/chatgpt_gin-cocktail-recipe]]
+- [[chatgpt/chatgpt_gin-elderflower-cocktail-recipe]]

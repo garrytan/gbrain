@@ -54,3 +54,11 @@ In short, “Claude Code Figma” is about **turning AI-generated or coded UIs i
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_figma-claude-code-integration-2]]
+- [[chatgpt/chatgpt_figma-claude-code-integration]]
+- [[chatgpt/chatgpt_claude-code-to-figma]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_claude-agent-teams-integration]]

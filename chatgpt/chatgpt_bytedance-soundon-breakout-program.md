@@ -44,3 +44,11 @@ can i distribute back cataloge with the unique Breakthrough Program
 ## Assistant
 
 I couldn't find specific information regarding the distribution of back catalog music through ByteDance's SoundOn Breakout Artist Program. For the most accurate and detailed guidance, it would be best to directly contact SoundOn's support or refer to their official resources【13†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_a16z-start-program]]
+- [[chatgpt/chatgpt_apple-developer-program]]
+- [[chatgpt/chatgpt_apple-music-affiliate-program]]
+- [[chatgpt/chatgpt_apple-upgrade-program-details]]
+- [[chatgpt/chatgpt_hf0-accelerator-program]]

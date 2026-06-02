@@ -69,3 +69,11 @@ Use **“Northern European features”** instead of ancestry percentages. The vi
 Use **“near-monochrome through set design and wardrobe”** because you specifically want the colorlessness to feel physically designed, rather than applied afterward as a filter.
 
 Use **“subject on left third line, right two-thirds negative space, column around right third line”** to force the layout more explicitly.
+
+
+## See Also
+- [[chatgpt/chatgpt_cinematic-subway-performance-2]]
+- [[chatgpt/chatgpt_subway-vs-mcdonalds-comparison]]
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]

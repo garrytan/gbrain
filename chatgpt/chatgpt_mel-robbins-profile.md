@@ -55,3 +55,11 @@ She’s been married to businessman **Chris Robbins** since 1996 and they have *
 - Recently launched a consumer product (a protein shot) tied to her wellness brand. citeturn0news30
 
 If you want a summary of her *5 Second Rule* concept or her main motivational principles, just say so.
+
+
+## See Also
+- [[chatgpt/chatgpt_amaz-twitch-gamer-profile]]
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]

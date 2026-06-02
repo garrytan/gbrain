@@ -32,3 +32,11 @@ For beginners, who are more likely to gain muscle quickly, the ratio can be more
 Dr. Mike Isratel suggests that individuals should aim for gaining no more than 0.25-0.5% of their body weight per week to minimize fat gain while bulking. He also stresses the importance of adjusting calorie intake based on progress and body composition changes, rather than sticking to a fixed number.
 
 For a more tailored approach, individuals often benefit from a personalized assessment and program, which can be found through RP Strength's services or by consulting with a qualified coach who can provide customized recommendations.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-composition-phase-plan]]
+- [[chatgpt/chatgpt_calculate-diet-phase-stats]]
+- [[chatgpt/chatgpt_cutting-phase-meal-plan]]
+- [[chatgpt/chatgpt_diet-phase-grid-modification]]
+- [[chatgpt/chatgpt_mini-cut-to-mass-phase]]

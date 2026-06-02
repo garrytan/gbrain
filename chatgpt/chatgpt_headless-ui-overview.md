@@ -107,3 +107,11 @@ Tack an `api/` folder onto the current repo and deploy to Vercel. Treat those fu
 3. **Auth** – validate an `Authorization: Bearer <token>` header and issue tokens from Supabase or Auth0.
 
 So yes, Vercel alone can give you an API without spinning up a traditional server, but some backend code (even if serverless) is unavoidable.
+
+
+## See Also
+- [[chatgpt/chatgpt_headless-ui-modal-deployment]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]

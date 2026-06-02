@@ -26,3 +26,11 @@ I have this platform bed, and it has the wooden slats that go across. On the end
 ## Assistant
 
 It sounds like you're describing "bed slat holders" or "bed slat caps." These are the plastic pieces used to secure the slats of a platform bed to the frame. They typically have protrusions that fit into corresponding holes or notches in the bed frame. You can search for these parts online using terms like "bed slat holders," "bed slat caps," or "replacement bed slat holders." You might also need to know the dimensions of your slats and the size of the notches on your bed frame to ensure you get the right fit.
+
+
+## See Also
+- [[chatgpt/chatgpt_replace-airpods-pro-tips]]
+- [[chatgpt/chatgpt_replace-ca-id-at-kiosk]]
+- [[chatgpt/chatgpt_replace-dall-e-face]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

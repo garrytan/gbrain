@@ -133,3 +133,11 @@ Once that’s done, *every* client can call the same tools and you have **one ca
 - You **do** have to **register the same MCP server in each client’s config** once.
 
 If you tell me your stack (Node/TS vs Python), I can sketch a minimal MCP server file that wires up one of those APIs (e.g., Stripe + Neon) as a starting point.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

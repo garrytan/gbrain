@@ -132,3 +132,11 @@ Here's the newly designed app icon for "Superhero Mode," featuring an ultra-simp
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_superhero-mode-logo-design-2]]
+- [[chatgpt/chatgpt_geometric-superhero-mode-logo]]
+- [[chatgpt/chatgpt_superhero-mode-concepts]]
+- [[chatgpt/chatgpt_bubblegum-factory-logo-design]]
+- [[chatgpt/chatgpt_bubblegum-logo-design]]

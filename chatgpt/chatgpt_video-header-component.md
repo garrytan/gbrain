@@ -204,3 +204,11 @@ With these classes, the header component will be displayed on top of the video, 
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_header-component-review]]
+- [[chatgpt/chatgpt_video-grid-component-template]]
+- [[chatgpt/chatgpt_vue-component-with-video]]
+- [[chatgpt/chatgpt_vue-video-component]]
+- [[chatgpt/chatgpt_vuejs-component-for-video-selection]]

@@ -370,3 +370,11 @@ _All targets follow Dr Mike Israetel’s most recent guidance on rate-of-loss (0
 * Ready to launch a lean bulk with fresh nutrient sensitivity and training momentum.
 
 Stay ruthless on consistency and the numbers will follow.
+
+
+## See Also
+- [[chatgpt/chatgpt_smartscale-to-dexa-prediction]]
+- [[chatgpt/chatgpt_severance-ending-prediction-part1]]
+- [[chatgpt/chatgpt_severance-ending-prediction-part2]]
+- [[chatgpt/chatgpt_weight-and-bf-prediction]]
+- [[chatgpt/chatgpt_analyze-and-compare-dexa]]

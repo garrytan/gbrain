@@ -126,3 +126,11 @@ In conclusion, the likely ending of *Severance* will be **uplifting in a hard-wo
 - Cinemablend – *“What’s Up With the Goats? Theories”*【16†L131-L139】【16†L135-L143】  
 - FandomWire – *“Craziest Severance Theory – Lumon as a Cult”*【23†L131-L139】  
 - StackExchange (Movies) – Discussion of Lumon’s number sorting and four tempers【17†L9-L17】【18†L95-L104】
+
+
+## See Also
+- [[chatgpt/chatgpt_severance-ending-prediction-part1]]
+- [[chatgpt/chatgpt_bf-prediction-based-on-dexa]]
+- [[chatgpt/chatgpt_smartscale-to-dexa-prediction]]
+- [[chatgpt/chatgpt_weight-and-bf-prediction]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

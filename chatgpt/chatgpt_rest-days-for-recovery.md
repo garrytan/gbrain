@@ -42,3 +42,11 @@ Dr. Mike Israetel discusses the importance of managing training volume and recov
 He recommends using a 4-5 day workout split during cutting phases to help maintain muscle mass while still allowing for adequate recovery. This approach often involves strategic rest days, which could effectively be placed on weekends if it fits your schedule. This setup can help maximize recovery and maintain training intensity throughout the week【11†source】.
 
 For detailed insights into structuring workouts and understanding volume landmarks during cutting, you might find this video helpful where Dr. Israetel shares his strategies: [Preventing Muscle Loss On A Cut: Training Strategies](https://www.youtube.com/watch?v=dXVFzcQYj3w).
+
+
+## See Also
+- [[chatgpt/chatgpt_athlete-recovery-and-science]]
+- [[chatgpt/chatgpt_coachella-decline-or-recovery]]
+- [[chatgpt/chatgpt_rest-day-advice]]
+- [[chatgpt/chatgpt_stolen-phone-recovery-guide]]
+- [[chatgpt/chatgpt_yc-a16z-demo-days]]

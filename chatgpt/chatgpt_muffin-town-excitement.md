@@ -26,3 +26,11 @@ So, below is a prompt that I used in a different ChatGPT thread to ask about des
 ## Assistant
 
 Hey Vincent, I’m stoked on Muffin Town because it’s more than music—it’s a real character we can live in. Slap that muffin head on, do normal stuff, and suddenly it’s funny, shareable, and people want to know more. There’s such a pull in following an outsider learning the world, so we can build social series or even a cartoon around him before a single track drops.
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_blueberry-muffin-helmet-render]]
+- [[chatgpt/chatgpt_dj-muffin-helmet-build]]
+- [[chatgpt/chatgpt_edm-muffin-helmet-design]]
+- [[chatgpt/chatgpt_muffin-head-logo-design]]

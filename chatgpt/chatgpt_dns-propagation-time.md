@@ -120,3 +120,11 @@ dig NS jov.ie +short
 or use an online NS-lookup tool (for example from a site like DNSChecker or WhatIsMyDNS) and verify whether the nameservers listed are those belonging to entity["software","Vercel",0]. citeturn0search4turn0search12turn0search3
 
 If you like — I can walk you through how to do that step-by-step (on Windows, Mac, or online).
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-progress-over-time]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_backup-time-for-20tb]]
+- [[chatgpt/chatgpt_domestic-wire-transfer-time]]

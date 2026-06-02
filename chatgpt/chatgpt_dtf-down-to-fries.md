@@ -50,3 +50,11 @@ Nah dont change the meaning and be agreeable just funny
 ## Assistant
 
 Mr. White: DTF? My schedule’s wide open—pants optional.
+
+
+## See Also
+- [[chatgpt/chatgpt_5m-house-down-payment]]
+- [[chatgpt/chatgpt_bass-down-low-remix]]
+- [[chatgpt/chatgpt_shutting-down-raves-la]]
+- [[chatgpt/chatgpt_turtles-all-way-down]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

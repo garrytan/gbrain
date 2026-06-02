@@ -63,3 +63,11 @@ Thanks for the options, but I don’t want to use the substitutes listed. Please
 
 Best,  
 Mr. White
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

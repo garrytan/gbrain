@@ -697,3 +697,11 @@ So: with this new data, I’d **still order the same tirzepatide dose**, commit 
 
 {'asset_pointer': 'sediment://file_00000000f7f871f5901853fdc2250866', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1536, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 107001, 'width': 708}
 How about this
+
+
+## See Also
+- [[chatgpt/chatgpt_compounding-options-explained-part2]]
+- [[chatgpt/chatgpt_compounding-options-explained-part3]]
+- [[chatgpt/chatgpt_compounding-options-explained-part4]]
+- [[chatgpt/chatgpt_elvis-costello-controversy-explained-part1]]
+- [[chatgpt/chatgpt_gym-options-near-bronson-part1]]

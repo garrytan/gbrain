@@ -32,3 +32,11 @@ Examples of tools you can use:
 • ipchicken.com – simple, fast public IP lookup citeturn0search3
 
 If you want me to fetch it for you, say so and I’ll attempt to run the lookup again.
+
+
+## See Also
+- [[chatgpt/chatgpt_career-path-guidance]]
+- [[chatgpt/chatgpt_clerk-elements-replacement-guidance]]
+- [[chatgpt/chatgpt_component-naming-guidance]]
+- [[chatgpt/chatgpt_fundraising-strategy-guidance]]
+- [[chatgpt/chatgpt_holiday-drink-menu-guidance]]

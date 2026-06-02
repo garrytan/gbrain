@@ -27,3 +27,11 @@ This is Madison aka Madi. She’s fictional. She runs the bubble gum factory con
 ## User
 
 Make her skin look real. Eyes blue
+
+
+## See Also
+- [[chatgpt/chatgpt_anime-character-creation]]
+- [[chatgpt/chatgpt_largest-fictional-ipo]]
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_ai-3d-model-creation]]
+- [[chatgpt/chatgpt_ai-character-web-interaction]]

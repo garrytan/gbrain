@@ -323,3 +323,11 @@ One important correction from your wording: for Claude Code, **`CLAUDE.md` is th
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ci-unit-test-strategy]]
+- [[chatgpt/chatgpt_unit-test-optimization-prompt]]
+- [[chatgpt/chatgpt_unit-test-speed-tips]]
+- [[chatgpt/chatgpt_ci-with-ai-in-fast-companies]]
+- [[chatgpt/chatgpt_fast-20k-to-1m]]

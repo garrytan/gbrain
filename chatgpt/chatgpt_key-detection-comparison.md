@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 https://www.openkeyscan.com/api this looks really cool. It's from Lexicon DJ, which is what I use and a lot of big DJs use for managing the music libraries. Are we able to use this to add key detection to our system? Is it better or worse than using, like, an 11 Labs type thing? And is this just 11 Labs? 
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_best-deal-comparison]]
+- [[chatgpt/chatgpt_bleach-developer-comparison]]

@@ -28,3 +28,11 @@ No, I'm specifically interested in understanding if there would be a different e
 Got it. I’ll look into how GLP-1 receptor agonists like tirzepatide and semaglutide may affect the absorption, metabolism, and duration of effects for various recreational drugs. Specifically, I’ll analyze how slowed gastric emptying could impact each substance individually and present the findings in a structured table.
 
 I’ll update you when I have the details.
+
+
+## See Also
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part2]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part3]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part1]]
+- [[chatgpt/chatgpt_cats-and-mdma-effects]]
+- [[chatgpt/chatgpt_cell-phone-radiation-effects]]

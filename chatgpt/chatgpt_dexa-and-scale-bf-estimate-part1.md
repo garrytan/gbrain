@@ -349,3 +349,11 @@ Once you hit **~157–160 lb**, start a **slow lean gain**:
 Ok now. I had a large gap of no training and on my big cut last year down to 157 I lost lean mass. You can see that in my dexas. Do you think there’s still recomp room? I only got back to serious training in September/October ish. 
 
 Should we consider a recomp instead of cutting?
+
+
+## See Also
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part2]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part3]]
+- [[chatgpt/chatgpt_compare-scale-and-dexa-data]]
+- [[chatgpt/chatgpt_compare-scale-data-and-dexa]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

@@ -217,3 +217,11 @@ If you’re unsure about using that many, or prefer a specific flavour, you migh
 ---
 
 If you like, Mr. White, I can check **recent price trends** for both Costco and Amazon for Celsius in your ZIP (90048) to see if the Costco price is unusually good or if Amazon may have promos coming.
+
+
+## See Also
+- [[chatgpt/chatgpt_costco-vs-amazon-batteries]]
+- [[chatgpt/chatgpt_allan-keys-amazon]]
+- [[chatgpt/chatgpt_amazon-account-phone-number-issue]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]

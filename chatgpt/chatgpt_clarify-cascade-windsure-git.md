@@ -201,3 +201,11 @@ I can generate:
 - Conflict-free sync strategy from `main` to each agent branch  
 
 Just tell me how the agents behave (periodic? event-triggered?).
+
+
+## See Also
+- [[chatgpt/chatgpt_cascade-background-agents-explanation]]
+- [[chatgpt/chatgpt_cascade-in-xcode]]
+- [[chatgpt/chatgpt_clarify-arlo-meaning]]
+- [[chatgpt/chatgpt_clarify-bronson-depot-query]]
+- [[chatgpt/chatgpt_clarify-claude-reference]]

@@ -27,3 +27,11 @@ What is this
 ## Assistant
 
 This is a Rabbid, a character from Ubisoft's "Raving Rabbids" video game series. They are known for their silly appearance, large eyes, and quirky, mischievous behavior.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-character-web-interaction]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]

@@ -63,3 +63,11 @@ Here’s a quick Chris Voss–style follow-up you can send:
 > *“Great—anytime after 5 PM tomorrow works. $40 is already a solid deal, so let’s lock it in. What time after 5 works best for you?”*
 
 Keeps the anchor at $40, sounds cooperative, and pushes them to commit to a pickup slot.
+
+
+## See Also
+- [[chatgpt/chatgpt_price-negotiation-script]]
+- [[chatgpt/chatgpt_2020-harley-flhtk-price]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bar-manager-negotiation-advice]]
+- [[chatgpt/chatgpt_bidet-price-range]]

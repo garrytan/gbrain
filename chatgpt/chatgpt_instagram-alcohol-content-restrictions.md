@@ -58,3 +58,11 @@ On Instagram, content featuring a model drinking alcohol is generally allowed, b
 4. **Context Matters**: The context in which the alcohol is being consumed can be important. Content that is educational, artistic, or satirical in nature might be treated differently than content that is purely promotional.
 
 Despite these general guidelines, the acceptability of content on Instagram can be subjective and contingent on the platform's current policies and community standards. It's advisable to review Instagram's latest community guidelines or seek professional advice if you're unsure about specific content involving alcohol.
+
+
+## See Also
+- [[chatgpt/chatgpt_instagram-content-strategy]]
+- [[chatgpt/chatgpt_accessing-faq-content-issue]]
+- [[chatgpt/chatgpt_ad-campaign-instagram-for-females]]
+- [[chatgpt/chatgpt_alcohol-catering-license-posting]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]

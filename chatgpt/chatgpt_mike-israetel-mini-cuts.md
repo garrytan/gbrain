@@ -109,3 +109,11 @@ In conclusion, **Dr. Mike Israetel’s stance** on using semaglutide or tirzepat
 - Aesthetic Skin Chicago – *Insights on GLP-1 Agonists in Bodybuilding* (citing Israetel on testosterone/libido)【14†L287-L295】  
 - Renaissance Periodization – “Slimming Down with Semaglutide (Wegovy)” (article on pros/cons and advice)【26†L155-L163】【26†L167-L175】【26†L172-L179】  
 - Reddit r/naturalbodybuilding – User experiences on Ozempic/Tirzepatide in mini cuts【23†L1218-L1226】
+
+
+## See Also
+- [[chatgpt/chatgpt_dr-mike-israetel-bio]]
+- [[chatgpt/chatgpt_mike-israetel-content-search]]
+- [[chatgpt/chatgpt_mike-israetel-cuff-recommendation]]
+- [[chatgpt/chatgpt_mike-israetel-genius-explained]]
+- [[chatgpt/chatgpt_mike-israetel-maintenance-trazepatide]]

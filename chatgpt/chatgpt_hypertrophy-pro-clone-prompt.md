@@ -288,3 +288,11 @@ You are a senior full-stack engineer. Build **Hypertrophy Pro**: a hypertrophy t
 ---
 
 If you want, I can output the **initial repo structure + Tailwind v4 config + Clerk wiring + Supabase schema/RLS** in one go.
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part3]]

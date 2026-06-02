@@ -1037,3 +1037,11 @@ Now we might want to call this profiles artists or creators or something. Becaus
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part1]]
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part2]]
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part1]]
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part2]]
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part3]]

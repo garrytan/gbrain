@@ -65,3 +65,11 @@ Mr. White — here’s the straight dope, with receipts.
 - **What RP Strength is saying right now:** Even they note typical **~5 g/day** likely **doesn’t meaningfully raise brain creatine**, so brain-targeted effects may require **higher doses**—with the trade-off of more GI annoyance and cost. Sensible, but it’s an evidence-in-progress area. citeturn4search16
 
 If you want, I can sketch a simple **n=1 protocol** (how to split doses, timing around training, how to test any cognitive effect without nuking your stomach).
+
+
+## See Also
+- [[chatgpt/chatgpt_50-off-creatine-sale]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_creatine-for-workouts]]
+- [[chatgpt/chatgpt_creatine-keywords-generated]]
+- [[chatgpt/chatgpt_creatine-subscription-frequency]]

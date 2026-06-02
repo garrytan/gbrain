@@ -1509,3 +1509,11 @@ Jovie helps artists build a direct fan list and notify fans when they release mu
 
 **Support line:**  
 No app required for fans. Built for artists, managers, and labels.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-landing-page-spec-2]]
+- [[chatgpt/chatgpt_jovie-landing-page-spec]]
+- [[chatgpt/chatgpt_landing-page-design-spec]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]

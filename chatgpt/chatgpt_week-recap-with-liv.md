@@ -112,3 +112,11 @@ Here’s the updated six-panel comic in a cool, modern style with consistent blo
 6. **Hiking Joshua Tree** – Backpacks on, sharing a sandwich under the desert sky.  
 
 Enjoy!
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_2-week-scheduling-law]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]

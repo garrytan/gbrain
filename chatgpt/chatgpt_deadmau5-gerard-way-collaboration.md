@@ -35,3 +35,11 @@ Joel *deadmau5* Zimmerman (Canadian electronic music producer) and **Gerard Way*
 - The collaboration also led to a **high-production music video** with a video game-inspired theme featuring both artists. citeturn0search8
 
 In short: they worked together on that one song and its video, blending deadmau5’s electronic style with Way’s vocals from his rock background. citeturn0search8
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-collaboration-opportunity]]
+- [[chatgpt/chatgpt_best-ai-tools-for-collaboration]]
+- [[chatgpt/chatgpt_collaboration-pitch-message]]
+- [[chatgpt/chatgpt_content-collaboration-decline]]
+- [[chatgpt/chatgpt_dynamic-remix-collaboration]]

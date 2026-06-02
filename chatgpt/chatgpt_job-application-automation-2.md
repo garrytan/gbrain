@@ -481,3 +481,11 @@ Want me to also generate a polished 1-page PDF resume for uploads?
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_job-application-automation]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]
+- [[chatgpt/chatgpt_ai-agent-automation-part2]]

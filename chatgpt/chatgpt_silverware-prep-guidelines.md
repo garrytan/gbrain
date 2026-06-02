@@ -124,3 +124,11 @@ Got it. Here’s how that directive can be built into your ops database notes:
 ---
 
 Mr. White, do you want me to **combine this BevNap rule into the larger silverware/napkin SOP checklist** I outlined earlier, so it’s one streamlined training doc?
+
+
+## See Also
+- [[chatgpt/chatgpt_pet-scan-prep-guidelines]]
+- [[chatgpt/chatgpt_a7x3-guidelines-for-influencers]]
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_design-improvement-guidelines]]
+- [[chatgpt/chatgpt_food-service-guidelines]]

@@ -1946,3 +1946,11 @@ If you want, I can recommend the **exact top-of-screen hierarchy** (spacing, tex
 
 
 how to improve waitlist creen
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part2]]
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part2]]
+- [[chatgpt/chatgpt_frameio-homepage-for-jovie-part2]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part2]]
+- [[chatgpt/chatgpt_yc-application-audit-part2]]

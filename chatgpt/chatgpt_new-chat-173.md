@@ -168,3 +168,11 @@ Here is the updated version of your batched cocktails list and details, includin
 - Long Boston Iced Tea
 
 This updated list includes the new variations of the "Ruth Bader Gin-sburg" drink and maintains the overall organization and clarity.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

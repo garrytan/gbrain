@@ -98,3 +98,11 @@ The application process has reached a section that asks for voluntary self‑ide
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_yc-application-optimization]]
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]

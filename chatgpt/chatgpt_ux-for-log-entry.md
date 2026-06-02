@@ -49,3 +49,11 @@ Mr. White, swap your single “Log” button for a universal “Add” action th
 - On desktop, CSV import only appears where it’s useful.  
 
 This keeps your main screen clean while surfacing every upload path in a single, consistent UI.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-entry]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

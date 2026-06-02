@@ -53,3 +53,11 @@ This gives you maximum control, but you own more UI/state handling.
 (So far, nothing public beyond the warning.)
 
 If you paste (or summarize) **which Elements components/flows you implemented** (email+password, magic link, OAuth, MFA, orgs, etc.), I’ll tell you which of the two paths above is lowest-risk and outline the specific Clerk docs/pages you’ll map each screen to.
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-elements-discontinued]]
+- [[chatgpt/chatgpt_clerk-elements]]
+- [[chatgpt/chatgpt_clerk-role-elements]]
+- [[chatgpt/chatgpt_career-path-guidance]]
+- [[chatgpt/chatgpt_component-naming-guidance]]

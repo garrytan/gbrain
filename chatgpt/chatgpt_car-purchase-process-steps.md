@@ -99,3 +99,11 @@ Let me know if you want a reminder list or quick template text to update your in
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]

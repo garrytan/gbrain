@@ -84,3 +84,11 @@ How can a service bartender be tipped, or do they get tipped at all?
 Service bartenders can receive tips, but it's handled differently than with regular bartenders. In many establishments, they share in the tips that the waitstaff receive. This is often managed through a tip pooling system, where a portion of the tips collected by the service staff (waiters and waitresses) is shared with the back-of-house staff, including the service bartender.
 
 In some cases, service bartenders might also receive a higher hourly wage to compensate for the less direct access to tips compared to front-of-house staff. The exact method of tipping can vary depending on the restaurant's policies and the tipping culture of the area.
+
+
+## See Also
+- [[chatgpt/chatgpt_billboard-1-songs-ranking]]
+- [[chatgpt/chatgpt_billboard-contents-unknown]]
+- [[chatgpt/chatgpt_cost-of-sunset-strip-billboard]]
+- [[chatgpt/chatgpt_fashion-billboard-promotion]]
+- [[chatgpt/chatgpt_music-ar-contacts-2023]]

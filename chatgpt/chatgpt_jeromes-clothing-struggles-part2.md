@@ -213,3 +213,11 @@ Shrimp needs to come in a smaller plate or have more shrimp.
 30. **I think we should take the password off the menu because it's not selling now that it doesn't have Russian in the title. We made a grand total of three over the last two shows and it's the most pain in the ass because the heavy cream goes bad so quickly.**
 31. **Need to go over how to serve caviar with the servers.**
 32. **Shrimp needs to come in a smaller plate or have more shrimp.**
+
+
+## See Also
+- [[chatgpt/chatgpt_jeromes-clothing-struggles-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part2]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part2]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]

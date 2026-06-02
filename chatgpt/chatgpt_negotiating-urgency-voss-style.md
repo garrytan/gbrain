@@ -89,3 +89,11 @@ Best overall message:
 > Totally fair. I have active interest for pickup today, but I’d prefer to sell at asking if your timing works. What’s the soonest next week you could pick them up?
 
 That protects the price and forces the timing issue.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-style-reply]]
+- [[chatgpt/chatgpt_chris-voss-style-request]]
+- [[chatgpt/chatgpt_polish-response-chris-voss-style]]
+- [[chatgpt/chatgpt_voss-style-reply-draft]]
+- [[chatgpt/chatgpt_voss-style-reply-example]]

@@ -51,3 +51,11 @@ Got it. Here’s a short, confident script she can use in situations where she n
 Keep it calm, polite, and matter-of-fact. Tone matters as much as the words—confident but cooperative.  
 
 Want me to also draft a backup version that sounds a little more formal in case she runs into a stricter official?
+
+
+## See Also
+- [[chatgpt/chatgpt_best-alternative-greek-yogurt]]
+- [[chatgpt/chatgpt_animation-script-expression]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_brief-summary-script-request]]

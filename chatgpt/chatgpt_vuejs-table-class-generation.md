@@ -168,3 +168,11 @@ The improved code uses the existing classes in Tailwind CSS to style the `td` el
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_vuejs-class-binding]]
+- [[chatgpt/chatgpt_vuejs-table-header-component]]
+- [[chatgpt/chatgpt_vuejs-table-performance-tips]]
+- [[chatgpt/chatgpt_add-prop-to-vuejs-component]]
+- [[chatgpt/chatgpt_ai-video-generation-stack]]

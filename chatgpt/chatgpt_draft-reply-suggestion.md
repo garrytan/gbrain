@@ -657,3 +657,11 @@ Understood, Mr. White. Here’s the **refined list** — Tier 1–3 networks plu
 ---
 
 Do you want me to **rank the music/creator list by importance for you as a DJ/producer**, or keep it flat?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_voss-style-reply-draft]]
+- [[chatgpt/chatgpt_anagram-name-suggestion]]
+- [[chatgpt/chatgpt_apology-letter-draft]]
+- [[chatgpt/chatgpt_ar-post-draft]]

@@ -32,3 +32,11 @@ He began acting as a teenager, first gaining attention in the 2006 television fi
 Beyond acting, Jogia has written poetry and published works exploring his experiences in the entertainment industry, including *Autopsy (of an Ex-Teen Heartthrob)*. He’s also involved in activism and co-founded the online organization Straight But Not Narrow to influence young people’s views on LGBTQ+ issues. citeturn0search1turn0search16
 
 In his personal life he has been in a relationship with singer Halsey; as of recent reports they are engaged. citeturn0news40
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

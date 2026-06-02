@@ -102,3 +102,11 @@ Here’s an overview of how to use the chart components in entity["softwar
 ---
 
 If you like, Mr. White, I can pull in **code snippets** for different chart types (bar, line, pie, radar) using shadcn/ui so you can pick one and adapt it in your project. Would that be helpful?
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

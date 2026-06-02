@@ -32,3 +32,11 @@ Estimating body fat percentage from images is not very precise, but I can provid
 From the images provided, it appears you have visible muscle definition and a low level of subcutaneous fat, especially around the abdomen, which might suggest a body fat percentage closer to the athletic range. This typically falls between 14-17% for men, but could be lower if you have a higher muscle mass or higher if there is more visceral fat that is not visible externally.
 
 For an accurate measurement, it's best to consult with a health professional who can use methods like calipers, DEXA scans, or bioelectrical impedance analysis.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-female]]
+- [[chatgpt/chatgpt_body-fat-estimate]]
+- [[chatgpt/chatgpt_body-fat-percentage-images]]
+- [[chatgpt/chatgpt_estimate-body-fat]]

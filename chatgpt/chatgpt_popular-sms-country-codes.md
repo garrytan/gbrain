@@ -1270,3 +1270,11 @@ Based on the code snippet you provided, it appears to be correct syntactically. 
 The provided code defines a dynamic class binding using Vue.js's `:class` directive, which allows you to conditionally apply classes based on the truthiness of certain variables or expressions. The classes being applied will depend on the values of `active` and `selected` variables.
 
 Please note that the code you provided is only a partial snippet and doesn't include the complete Vue.js component or template. To better understand the functionality and purpose of the code, it would be helpful to see how this `div` element is being used within the larger context of the Vue component or template.
+
+
+## See Also
+- [[chatgpt/chatgpt_modern-family-country-club]]
+- [[chatgpt/chatgpt_wine-country-mix-up]]
+- [[chatgpt/chatgpt_alteryx-filter-zip-codes]]
+- [[chatgpt/chatgpt_bodyspec-discount-codes]]
+- [[chatgpt/chatgpt_clear-discount-codes]]

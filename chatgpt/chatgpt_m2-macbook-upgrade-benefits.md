@@ -79,3 +79,11 @@ Mr. White — **yes, you can run Minecraft on a Mac.**
 - MacBook Air can run it fine, but **MacBook Pro sustains higher FPS** due to better cooling.
 
 Bottom line: **Minecraft Java runs well on Mac.** If you care about heavy mods or shaders, stronger hardware helps, but it’s not required.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-upgrade-program-details]]
+- [[chatgpt/chatgpt_design-upgrade-suggestions]]
+- [[chatgpt/chatgpt_iphone-upgrade-credit-score]]
+- [[chatgpt/chatgpt_iphone-upgrade-decision-15-16-17]]
+- [[chatgpt/chatgpt_iphone-upgrade-plan-carrier]]

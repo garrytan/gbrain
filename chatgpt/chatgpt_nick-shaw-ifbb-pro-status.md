@@ -89,3 +89,11 @@ What I could verify:
 - His bio lists “IFBB Pro,” and IFBB Pro League is generally untested—so Pro status ≠ proof of being natural. citeturn0search2
 
 Bottom line: confirmed IFBB Pro; no authoritative public statement confirming “natural” or not. If you want, I can set up alerts to ping you if he ever addresses it directly.
+
+
+## See Also
+- [[chatgpt/chatgpt_angellist-stack-status]]
+- [[chatgpt/chatgpt_case-status-update]]
+- [[chatgpt/chatgpt_codex-status-inquiry]]
+- [[chatgpt/chatgpt_columbia-square-studios-status]]
+- [[chatgpt/chatgpt_copyright-status-not-public]]

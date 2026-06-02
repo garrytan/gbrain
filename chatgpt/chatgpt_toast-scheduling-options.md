@@ -72,3 +72,11 @@ Given your desire to enforce performance‐based scheduling and control costs, h
 - Before fully committing to Toast’s scheduling/payroll add-on, get a quote from Toast based on your current & expected headcount. Compare that to Sling’s per-user cost + your internal dev time.
 
 If you like, I can build a simple cost‐projection model (for, say, 50–100 staff) comparing Toast’s add-on vs Sling’s paid tiers vs building your own. Want me to run that for you?
+
+
+## See Also
+- [[chatgpt/chatgpt_toast-tip-pooling-options]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_2-week-scheduling-law]]
+- [[chatgpt/chatgpt_ai-tools-for-scheduling]]
+- [[chatgpt/chatgpt_airpods-pro-3-options]]

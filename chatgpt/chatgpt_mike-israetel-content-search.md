@@ -49,3 +49,11 @@ So:
 - **Content where he talks about the same anatomical / aesthetic goal (V-line / Adonis belt / obliques)?** Those videos above are the strongest hits.
 
 If you want, I can also lay out a Israetel-style plan specifically for getting that V-line look (sets, reps, fat-loss targets, oblique work) based on his RP guidelines.
+
+
+## See Also
+- [[chatgpt/chatgpt_dr-mike-israetel-bio]]
+- [[chatgpt/chatgpt_mike-israetel-cuff-recommendation]]
+- [[chatgpt/chatgpt_mike-israetel-genius-explained]]
+- [[chatgpt/chatgpt_mike-israetel-maintenance-trazepatide]]
+- [[chatgpt/chatgpt_mike-israetel-mini-cuts]]

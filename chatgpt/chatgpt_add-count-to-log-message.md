@@ -105,3 +105,11 @@ router.addDefaultHandler(async ({ enqueueLinks, log }) => {
 This will log any errors that occur when calling `enqueueLinks`, which should help you debug the issue.
 
 If there are no errors and `enqueueLinks` is still not returning the expected object, it could be because the object has a different structure than what you're expecting. In that case, you may need to check the documentation or the implementation of the `enqueueLinks` function to understand the structure of the object it returns.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-count-bpm]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]
+- [[chatgpt/chatgpt_count-customers-by-city]]
+- [[chatgpt/chatgpt_count-green-cells-excel]]
+- [[chatgpt/chatgpt_count-saturday-number]]

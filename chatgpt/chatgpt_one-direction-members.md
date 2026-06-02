@@ -87,3 +87,11 @@ Here’s a summary of what is publicly known about the **criminal negligence** (
 ---
 
 If you like, I can break down the legal standards in Argentine law for negligent homicide (culposo) vs. other homicide types, and analyze whether the dropped charges make sense under those standards. Do you want me to do that, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_ac-air-direction-solutions]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

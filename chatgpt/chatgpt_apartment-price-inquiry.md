@@ -38,3 +38,11 @@ And what would be the most expensive one-bedroom?
 ## Assistant
 
 The most expensive one-bedroom apartment at the Ten Thousand building on Santa Monica Boulevard in Beverly Hills can go up to approximately $15,000 per month【13†source】【14†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]
+- [[chatgpt/chatgpt_codex-status-inquiry]]

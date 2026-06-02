@@ -87,3 +87,11 @@ Mr. White — here’s the tight list. Integration tests = verify our modules ta
 - Plan gating enforced server-side (API rejects) and client-side (UI hides).
 
 If you want, I’ll stub these test files with MSW handlers and a test DB harness next.
+
+
+## See Also
+- [[chatgpt/chatgpt_test-coverage-for-atoms]]
+- [[chatgpt/chatgpt_test-coverage-goal-design]]
+- [[chatgpt/chatgpt_test-coverage-strategy]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part1]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part2]]

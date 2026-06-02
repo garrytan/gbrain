@@ -103,3 +103,11 @@ If you just want to *legit* fly helicopters, not necessarily for a job:
 3. Aim to fly **2–3x per week** to keep your total hours closer to the low end and save money.
 
 If you tell me whether you’re thinking **hobby only** or **eventual pro/commercial**, I can sketch a tighter cost/time plan tailored to that goal.
+
+
+## See Also
+- [[chatgpt/chatgpt_hello-alice-pilot-fund]]
+- [[chatgpt/chatgpt_alcohol-catering-license-posting]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_license-plate-delay-resolution]]

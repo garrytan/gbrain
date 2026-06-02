@@ -36,3 +36,11 @@ clerk mcp
 “Clerk MCP” means using **Clerk’s authentication/user management with MCP** so AI systems can, with explicit consent, interact with your app’s data or services through a standardized AI integration layer. citeturn0search1
 
 If you were asking about a **job title** called “Clerk MCP,” there isn’t a recognized position by that exact name in standard job taxonomies — it’s a **technical integration term** in modern AI development, not a municipal clerk or office role. citeturn0search29
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-account-management-features]]
+- [[chatgpt/chatgpt_clerk-allowlist-feature]]
+- [[chatgpt/chatgpt_clerk-apple-integration-setup]]
+- [[chatgpt/chatgpt_clerk-apple-sign-in-issue]]
+- [[chatgpt/chatgpt_clerk-auth-vercel-preview]]

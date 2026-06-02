@@ -39,3 +39,11 @@ Where did he inuerit his koney
 ## Assistant
 
 Greg O'Gallagher, the creator of Kinobody, has mentioned in various interviews and videos that he inherited some money from his late father, Michael O'Gallagher, who passed away when Greg was a teenager. This inheritance allowed him some financial freedom to start and grow his fitness business, Kinobody.
+
+
+## See Also
+- [[chatgpt/chatgpt_instagram-private-account-info]]
+- [[chatgpt/chatgpt_private-gyms-hollywood]]
+- [[chatgpt/chatgpt_private-mode-explanation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

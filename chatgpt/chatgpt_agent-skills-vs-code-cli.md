@@ -84,3 +84,11 @@ Here’s a clear comparison of **“agent skills” in Claude.ai / the Claude ec
 ---
 
 If you want, I can break down example workflows showing how Skills get *invoked* inside a Claude Code agent step-by-step.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-entry]]
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]
+- [[chatgpt/chatgpt_agent-skills-overview-2]]
+- [[chatgpt/chatgpt_agent-skills-overview]]
+- [[chatgpt/chatgpt_claude-code-agent-teams-2]]

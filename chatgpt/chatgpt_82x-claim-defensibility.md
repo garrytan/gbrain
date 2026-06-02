@@ -42,3 +42,11 @@ My bottom line: **they may have data that supports some narrower statement, but 
 A second issue exists with **“Top artists choose un:hurd”**. If that is meant literally, it reads like an objective market or endorsement claim and would also need substantiation. citeturn938699view0
 
 Send the full paywall flow or their Terms/footnote page and I’ll mark up the exact litigation/regulatory weak points.
+
+
+## See Also
+- [[chatgpt/chatgpt_airbnb-damage-claim-issues]]
+- [[chatgpt/chatgpt_declining-airbnb-claim]]
+- [[chatgpt/chatgpt_dispute-over-compensation-claim]]
+- [[chatgpt/chatgpt_fact-check-crypto-claim]]
+- [[chatgpt/chatgpt_geico-third-party-claim]]

@@ -64,3 +64,11 @@ open each pr and click create pr then go back and loop til all are open
 ## Assistant
 
 Mr. White, I opened the tasks and clicked **Create PR** where available (e.g., **Linear Mention: JOV-1588**). The remaining items currently show “Open/Merged/Working on your task” views without a “Create PR” button, so there’s nothing else to create right now.
+
+
+## See Also
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_clerk-definition]]
+- [[chatgpt/chatgpt_css-class-definition-overview]]
+- [[chatgpt/chatgpt_enhancing-ab-definition-photoshoot]]
+- [[chatgpt/chatgpt_instantly-definition-or-tool]]

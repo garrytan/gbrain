@@ -41,3 +41,11 @@ Practical answer: before they’re accepted, they can usually see your **profile
 They should not be able to see your actual private posts or stories. For the **actual follower/following lists**, Instagram’s current public help explicitly lists the **counts** as public; older Instagram help said the **lists themselves** were limited on private accounts. Safest assumption: **counts are public, lists are treated as private on a private account**. citeturn985360search0turn985360search14turn353703search9
 
 If privacy is the goal, remove anything sensitive from your **bio** and **link in bio**, because those are visible even when your account is private. citeturn985360search0turn736031search1
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-business-account-info]]
+- [[chatgpt/chatgpt_33-taps-restaurant-info]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_account-search-assistance]]
+- [[chatgpt/chatgpt_ad-campaign-instagram-for-females]]

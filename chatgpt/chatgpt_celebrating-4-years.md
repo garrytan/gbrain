@@ -55,3 +55,11 @@ start with what's up sexy people. and say i not we
 ## Assistant
 
 What's up, sexy people? I'm thrilled to have you here. How are you feeling today? Drop an emoji to share your vibe! Let's make this a fantastic day. 🙌🎈
+
+
+## See Also
+- [[chatgpt/chatgpt_celebrating-failure-argument]]
+- [[chatgpt/chatgpt_college-years-2009-2013]]
+- [[chatgpt/chatgpt_muscle-gain-in-2-years]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

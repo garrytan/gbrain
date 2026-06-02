@@ -400,3 +400,11 @@ For your immediate case, the first P0 batch should probably be:
 3. Remove the duplicate page-level search button and keep nav search canonical.
 4. Prevent missing-artwork tracks from appearing in demo/marketing flows, plus add a proper fallback state.
 5. Add screenshot/Playwright regression coverage for the main demo route so these failures get caught before merge.
+
+
+## See Also
+- [[chatgpt/chatgpt_ux-audit-request]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]

@@ -30,3 +30,11 @@ what's the hourly rate for this job and how much would you be making in your wee
 Mr. White, on a base salary of \$44,700 per year, you’re effectively looking at around \$21–22 per hour if you assume a 40-hour workweek (that’s \$44,700 ÷ 2,080 hours = roughly \$21.49/hour). Weekly pay at that base salary would come out to about \$860 (\$44,700 ÷ 52).
 
 As for competitiveness, entry-level personal trainer roles often fall anywhere in the mid-\$30k to mid-\$50k range nationwide, so \$44.7k as a starting point is on the higher end of “average.” Factoring in the potential on-target earnings of up to \$62,800 would push total compensation comfortably above typical junior-level trainer wages. However, in Los Angeles (with a higher cost of living), this may feel more “competitive-average” than outright high-end.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_bartender-vs-manager-salary]]

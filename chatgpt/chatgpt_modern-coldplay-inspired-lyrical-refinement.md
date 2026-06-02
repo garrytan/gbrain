@@ -192,3 +192,11 @@ The rules we live by, just shadows in digital light,
 Flickers from screens, not quite right.
 
 This version uses contemporary imagery, evoking a sense of the modern world's virtual, often ephemeral nature, which aligns well with the style of Coldplay's recent works.
+
+
+## See Also
+- [[chatgpt/chatgpt_actor-in-modern-family]]
+- [[chatgpt/chatgpt_clowning-before-modern-family]]
+- [[chatgpt/chatgpt_commentary-on-modern-poetry]]
+- [[chatgpt/chatgpt_harold-grossman-modern-family]]
+- [[chatgpt/chatgpt_modern-family-country-club]]

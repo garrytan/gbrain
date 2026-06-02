@@ -136,3 +136,11 @@ I got it all
 ```
 
 This format maintains the structure of the song, separating verses, choruses, and other parts, while ensuring clarity and ease of reading.
+
+
+## See Also
+- [[chatgpt/chatgpt_format-lyrics-apple-style]]
+- [[chatgpt/chatgpt_apple-music-affiliate-program]]
+- [[chatgpt/chatgpt_apple-music-overview]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]

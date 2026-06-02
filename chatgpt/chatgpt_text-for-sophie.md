@@ -100,3 +100,11 @@ Here’s a warmer, more upbeat version that keeps it positive and light:
 **“Thanks for the update, Sophie! We’ll pre-shift at 5:30. When you get in, priorities are wiping down tables, stuffing menus, and setting out the lamps. Everyone’s all hands getting ready, and Meg should be there to help you by then. Gonna be a great show tonight!”**  
 
 Do you want me to add a touch of playful energy (like “we’re in show mode!”) to make it even more fun?
+
+
+## See Also
+- [[chatgpt/chatgpt_send-text-to-sophie]]
+- [[chatgpt/chatgpt_button-text-update]]
+- [[chatgpt/chatgpt_cant-hear-ai-text]]
+- [[chatgpt/chatgpt_clean-up-text-2]]
+- [[chatgpt/chatgpt_clean-up-text-options]]

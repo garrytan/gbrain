@@ -126,3 +126,11 @@ One caveat
 - If your fallback is expensive (e.g., recomputing heavy results), you can shift cost rather than reduce it—so pair breakers with **cheap fallbacks** (cache, stale data, “try again,” queue).
 
 If you tell me your stack (Node/Go/Java/.NET/Python) and whether it’s serverless or containerized, I can suggest sensible default thresholds that balance reliability and cost.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_coding-on-mushrooms-pros-and-cons]]
+- [[chatgpt/chatgpt_cost-comparison-coding-models]]

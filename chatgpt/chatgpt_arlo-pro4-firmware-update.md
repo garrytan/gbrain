@@ -74,3 +74,11 @@ Quick check:
 Devices → (gear) → **Device Info → Firmware**. If an update exists, you’ll see **Update**; otherwise you’re current. citeturn2search21
 
 If you want, tell me whether you’re the owner or a shared user, and if the camera is on Wi-Fi or a SmartHub—I’ll tailor exact steps.
+
+
+## See Also
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]
+- [[chatgpt/chatgpt_auto-close-modal-on-update]]

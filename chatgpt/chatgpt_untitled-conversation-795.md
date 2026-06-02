@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 THIS IS THE PATH TO AN ELEMENT I WANT TO GET document.evaluate('//div[contains(@role,"dialog")]/div/div[2]/div/div/div[3]/div/div/div[INEDEX]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue.innerText; where INDEX should be replaced with the number of the item.  How can i look at the document for this element, and increment index, stop when out of results, and add everything to an array
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

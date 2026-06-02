@@ -37,3 +37,11 @@ gp
 - **Games Played** (sports statistics)
 
 The specific meaning depends on the context in which it's used. 
+
+
+## See Also
+- [[chatgpt/chatgpt_gp-meaning-explanation-2]]
+- [[chatgpt/chatgpt_jove-meaning-explanation]]
+- [[chatgpt/chatgpt_linear-meaning-explanation]]
+- [[chatgpt/chatgpt_loom-meaning-explanation]]
+- [[chatgpt/chatgpt_resend-meaning-explanation]]

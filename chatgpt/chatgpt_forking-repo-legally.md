@@ -252,3 +252,11 @@ done
 ## Assistant
 
 Mr. White, Doppler shows two unsaved changes in `stg` (site key + secret key). Please click **Save** in the staging config to persist them.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-integration-with-repo]]
+- [[chatgpt/chatgpt_create-readme-for-repo]]
+- [[chatgpt/chatgpt_extract-design-system-repo]]
+- [[chatgpt/chatgpt_fetch-and-reset-repo-part1]]
+- [[chatgpt/chatgpt_fetch-and-reset-repo-part2]]

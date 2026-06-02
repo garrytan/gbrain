@@ -306,3 +306,11 @@ Explanation of the classes used:
 - `items-center`: Aligns items vertically to the center.
 - `text-2xl font-bold text-gray-800`: Styles the main header with larger, bold, dark gray text.
 - `text-lg font-medium text-gray-600`: Styles the secondary text with medium-sized, medium-weight, lighter gray text.
+
+
+## See Also
+- [[chatgpt/chatgpt_hide-album-art-image]]
+- [[chatgpt/chatgpt_hide-div-with-custom-css]]
+- [[chatgpt/chatgpt_hide-screenshots-in-photos]]
+- [[chatgpt/chatgpt_hide-seasonal-items-toast]]
+- [[chatgpt/chatgpt_hide-time-from-datepicker]]

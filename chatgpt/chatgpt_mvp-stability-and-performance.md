@@ -134,3 +134,11 @@ Silent failures usually come from missing:
 ---
 
 If you want, paste the **current middleware/proxy.ts auth flow** (just the relevant parts) and one example of an **Edge route that hits DB**, and I’ll rewrite them into the Node/bootstrap + cached user-state pattern without changing behavior.
+
+
+## See Also
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_cinematic-subway-performance-2]]

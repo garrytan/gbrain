@@ -33,3 +33,11 @@ Do you mean **Voss Events**? If so, here’s a quick summary:
 - The founder is Brandon Voss. citeturn0search4  
 
 If “vossevernts” was something else (typo, different spelling, different context) — clarify and I’ll dig into that.
+
+
+## See Also
+- [[chatgpt/chatgpt_voss-events-contact-info]]
+- [[chatgpt/chatgpt_chris-voss-counter-tips]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]

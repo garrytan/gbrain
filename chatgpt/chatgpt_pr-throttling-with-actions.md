@@ -78,3 +78,11 @@ This is great if the real pain is *review bandwidth*, not just runner capacity.
 3) If PR volume is the bigger problem, add **Option C** (cap open PRs + scheduled “drain the queue”).
 
 If you tell me where the PR creation happens (GitHub Action using `gh pr create`? a custom script? a GitHub App?), I can sketch the exact guard checks (PR-exists detection + branch naming + lane sharding) in the style you’re already using.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_allowing-actions-to-create-prs]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]

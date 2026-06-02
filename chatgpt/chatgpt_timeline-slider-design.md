@@ -310,3 +310,11 @@ General rules:
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_timeline-slider-optimization]]
+- [[chatgpt/chatgpt_timeline-aggregation-design-ideas]]
+- [[chatgpt/chatgpt_liquid-glass-slider-ui]]
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_admin-workflow-design]]

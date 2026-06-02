@@ -77,3 +77,11 @@ To add the updated data back to a Google Sheet, follow these steps:
    - Choose the appropriate import options. For instance, you may want to replace the current sheet or append to the existing one.
 
 This process will import the updated singles data into your Google Sheet. If you need any further assistance or have specific preferences for the import settings, please let me know!
+
+
+## See Also
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]
+- [[chatgpt/chatgpt_balance-sheet-unavailable]]
+- [[chatgpt/chatgpt_email-form-to-google-sheet]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

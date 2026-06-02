@@ -26,3 +26,11 @@ if i choose to use login with apple id on my ios app am i required to provide an
 ## Assistant
 
 Yes, Mr. White. If you choose to implement "Sign in with Apple" in your iOS app, you are required to offer at least one other method of account creation and sign-in, such as a different third-party sign-in service, or the option to create an account with an email address and password. This requirement ensures that users have multiple options for account creation and access.
+
+
+## See Also
+- [[chatgpt/chatgpt_alexa-control-for-apple-tv]]
+- [[chatgpt/chatgpt_apple-airpods-options]]
+- [[chatgpt/chatgpt_apple-app-store-rejection]]
+- [[chatgpt/chatgpt_apple-business-account-info]]
+- [[chatgpt/chatgpt_apple-business-manager-overview]]

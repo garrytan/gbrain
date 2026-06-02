@@ -73,3 +73,11 @@ It won’t push directly, but you can use a workflow triggered on those comments
 ---
 
 Mr. White, do you want Claude itself (via API) to push commits directly, or do you want a GitHub Action workflow that takes its edits and commits them automatically?
+
+
+## See Also
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_elevenlabs-voice-ai-grant]]
+- [[chatgpt/chatgpt_extension-permissions-requested]]
+- [[chatgpt/chatgpt_force-commit-after-job]]
+- [[chatgpt/chatgpt_git-commit-and-push-2]]

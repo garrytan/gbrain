@@ -82,3 +82,11 @@ Here’s a **world-class UX audit** of your dashboard screen:
 ---
 
 Mr. White — do you want me to **re-design this in a clean Figma/Tailwind mockup** showing exactly how it should look, or just keep this as a written audit?
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-holdings-name-suggestions]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_app-name-suggestions]]
+- [[chatgpt/chatgpt_artist-profile-suggestions]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]

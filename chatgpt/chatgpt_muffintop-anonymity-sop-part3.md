@@ -78,3 +78,11 @@ Mr. White, here are two exact‐anagram aliases—each drawn from one of those s
 ---
 
 If either of these resonates—or if you’d like to try another phrase (“You can call me Muffintop,” “The one and only Muffintop,” etc.)—we can roll with that and refine the spelling, accents, or even add a middle initial to polish it out. Let me know which you prefer!
+
+
+## See Also
+- [[chatgpt/chatgpt_muffintop-anonymity-sop-part1]]
+- [[chatgpt/chatgpt_muffintop-anonymity-sop-part2]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part3]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part3]]
+- [[chatgpt/chatgpt_agentic-os-for-artists-part3]]

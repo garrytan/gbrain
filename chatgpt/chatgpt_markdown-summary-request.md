@@ -576,3 +576,11 @@ The page’s final output is a strong Loom demo package for Jovie:
 The strongest version is the one that frames Jovie as:
 
 > **the AI manager who watches the world, finds the moment, and ships the campaign.**
+
+
+## See Also
+- [[chatgpt/chatgpt_brief-summary-script-request]]
+- [[chatgpt/chatgpt_flyer-summary-request]]
+- [[chatgpt/chatgpt_inventory-summary-request]]
+- [[chatgpt/chatgpt_segment-summary-request]]
+- [[chatgpt/chatgpt_summary-request]]

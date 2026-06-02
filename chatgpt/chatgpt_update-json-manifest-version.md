@@ -73,3 +73,11 @@ json -I -f data.json -e 'this.age = 31'
 ```
 
 This command uses the `json` utility to update the `age` field to `31` in the `data.json` file. The `-I` flag tells `json` to update the file in place, and the `-e` flag specifies the JSON expression to use for the update.
+
+
+## See Also
+- [[chatgpt/chatgpt_music-album-json-update-part1]]
+- [[chatgpt/chatgpt_music-album-json-update-part2]]
+- [[chatgpt/chatgpt_music-album-json-update-part3]]
+- [[chatgpt/chatgpt_music-album-json-update-part4]]
+- [[chatgpt/chatgpt_music-album-json-update-part5]]

@@ -77,3 +77,11 @@ git add -A
 ```
 
 If you want, tell me your stack (**pnpm/yarn/npm/bun**, monorepo or not, TS/JS) and I’ll tailor a *battle-tested* `biome.json` + hook setup (including per-folder overrides for `tests/**`, generated code, etc.).
+
+
+## See Also
+- [[chatgpt/chatgpt_airbnb-ai-usage]]
+- [[chatgpt/chatgpt_api-usage-and-plan-optimization]]
+- [[chatgpt/chatgpt_backslash-usage-overview]]
+- [[chatgpt/chatgpt_capture-one-usage]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]

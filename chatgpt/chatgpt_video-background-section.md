@@ -114,3 +114,11 @@ Sure, here's the cleaned-up version of the HTML code:
 ```
 
 I've cleaned up the formatting and removed some unnecessary attributes and styles to make the code more concise and easier to read.
+
+
+## See Also
+- [[chatgpt/chatgpt_vue-fullscreen-video-background]]
+- [[chatgpt/chatgpt_ai-tools-for-background-placement]]
+- [[chatgpt/chatgpt_background-color-description]]
+- [[chatgpt/chatgpt_background-image-integration]]
+- [[chatgpt/chatgpt_background-job-setup]]

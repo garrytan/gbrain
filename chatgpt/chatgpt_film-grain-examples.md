@@ -95,3 +95,11 @@ show me exmaples
 ---
 
 If useful, I can also show **side-by-side grain crops from real film scans** so you can see the **grain structure differences clearly (Portra vs CineStill vs Fuji)**.
+
+
+## See Also
+- [[chatgpt/chatgpt_fashion-film-shot-list]]
+- [[chatgpt/chatgpt_film-productions-returning-to-california]]
+- [[chatgpt/chatgpt_film-title-clarification-needed]]
+- [[chatgpt/chatgpt_film-vs-memory-debate]]
+- [[chatgpt/chatgpt_kirk-baxters-film-work]]

@@ -67,3 +67,11 @@ To reset the password for the user account on WSL2 Ubuntu-20.04, you can use the
 5. You will be prompted to re-enter the new password to confirm it. Enter the new password again and press Enter.
 
 Once you have completed these steps, your user account password in WSL2 Ubuntu-20.04 will be reset to the new password you provided.
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part3]]

@@ -313,3 +313,11 @@ If you want, I can:
 - Wire this into **GitHub Actions / GitLab CI**
 
 Say the word and your stack.
+
+
+## See Also
+- [[chatgpt/chatgpt_nosonar-in-sonarqube]]
+- [[chatgpt/chatgpt_sonarqube-code-analysis]]
+- [[chatgpt/chatgpt_sonarqube-mcp-overview]]
+- [[chatgpt/chatgpt_sonarqube-overview-2]]
+- [[chatgpt/chatgpt_sonarqube-overview]]

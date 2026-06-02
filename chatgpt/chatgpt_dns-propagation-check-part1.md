@@ -938,3 +938,11 @@ Automation Turn 4 executed at **2025‑08‑22 12:00:09 ‑0700**
 **Conclusion:** WHOIS now reflects Vercel’s nameservers. Nevertheless, propagation may still be ongoing across the DNS infrastructure. I will continue hourly checks and notify you once authoritative DNS queries consistently return Vercel's nameservers.
 
 —Automation Turn 4 complete.
+
+
+## See Also
+- [[chatgpt/chatgpt_dns-propagation-check-part2]]
+- [[chatgpt/chatgpt_dns-propagation-check-part3]]
+- [[chatgpt/chatgpt_dns-propagation-check-part4]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]
+- [[chatgpt/chatgpt_dns-propagation-time]]

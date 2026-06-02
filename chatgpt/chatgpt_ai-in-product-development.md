@@ -114,3 +114,11 @@ And if you need both, the winning architecture is usually:
 ---
 
 If you want, I can turn this into a quick decision checklist you can apply to any feature (“AI-in-loop”, “AI-at-dev-time only”, or “hybrid fallback”) and map it to costs/latency/reliability tradeoffs.
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part2]]

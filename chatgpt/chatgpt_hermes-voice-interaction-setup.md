@@ -469,3 +469,11 @@ Codex:
 ```
 
 That is likely the highest ROI architecture for Jovie right now.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-gmail-access-setup]]
+- [[chatgpt/chatgpt_hermes-orchestrator-model-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]

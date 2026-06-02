@@ -98,3 +98,11 @@ Perfect but make sure the text says "the bubble gum factory"
 ## Assistant
 
 Here's the image of the futuristic lobby with the wide blast door, now ensuring that the text "The Bubble Gum Factory" is clearly visible.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

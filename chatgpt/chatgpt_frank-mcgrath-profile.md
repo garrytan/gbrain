@@ -79,3 +79,11 @@ liam priest
 I wasn’t able to locate detailed info on someone named **entity["people", "Liam Priest", 0]** in the bodybuilding/fitness world.  
 
 Would you like me to dig further (including social media or niche Communities) to check if it’s a lesser-known athlete, influencer, or perhaps a misspelling of someone else?
+
+
+## See Also
+- [[chatgpt/chatgpt_amaz-twitch-gamer-profile]]
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]

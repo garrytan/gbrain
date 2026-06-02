@@ -48,3 +48,11 @@ Here’s a concise summary of Dr. Mike Israetel:
 - If you’re in a bulking or cutting phase, his frameworks (volume, intensity, frequency, recovery) may help shape how you train.
 
 If you like, I can pull up **5-10 of his most recommended training nutrition guidelines** (and where bars/snacks fit in) for your height/size context. Would you like that, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_mike-israetel-content-search]]
+- [[chatgpt/chatgpt_mike-israetel-cuff-recommendation]]
+- [[chatgpt/chatgpt_mike-israetel-genius-explained]]
+- [[chatgpt/chatgpt_mike-israetel-maintenance-trazepatide]]
+- [[chatgpt/chatgpt_mike-israetel-mini-cuts]]

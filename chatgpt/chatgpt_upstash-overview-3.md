@@ -218,3 +218,11 @@ Short answer: **don’t migrate to Next.js 16 yet; do migrate your linting now.*
 4. **Stay on Next 15.x** (latest 15.5.x) until 16 ships and has a clean upgrade guide. citeturn0search14
 
 **Bottom line:** migrate your **linting immediately** to avoid breakage when 16 lands; **hold** framework migration until Next.js 16 is actually released with docs. citeturn0search0turn0search16turn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_upstash-overview-2]]
+- [[chatgpt/chatgpt_upstash-overview-4]]
+- [[chatgpt/chatgpt_upstash-overview]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]

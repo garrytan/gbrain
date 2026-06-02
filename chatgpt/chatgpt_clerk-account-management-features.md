@@ -1076,3 +1076,11 @@ Commit message: "theme(dark): align Jovie dashboard colors with Linear-style dar
 ---
 
 Would you like me to also draft the **Tailwind `theme.extend` config block** with the exact hex values + opacity tokens so you can drop it into your Jovie setup immediately?
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-beta-features]]
+- [[chatgpt/chatgpt_csp-management-with-clerk]]
+- [[chatgpt/chatgpt_add-button-features-vlink]]
+- [[chatgpt/chatgpt_atc-scm25a-features]]
+- [[chatgpt/chatgpt_atem-iso-features]]

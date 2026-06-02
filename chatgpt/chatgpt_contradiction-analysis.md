@@ -53,3 +53,11 @@ Here are punchy, Ryan-Reynolds-ish IG comment options:
 6) “This is both a work ethic and a logic error.”  
 7) “Pick a fighter: ‘no days off’ vs. ‘on my day off.’”  
 8) “Plot twist worthy of a sequel: the day off that isn’t.”
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-decision-analysis]]
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]

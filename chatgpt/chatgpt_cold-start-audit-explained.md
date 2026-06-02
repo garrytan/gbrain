@@ -53,3 +53,11 @@ A **cold start audit** isn’t a standard term with a single formal definition l
 - **Often technical & performance oriented** — especially in computing or AI contexts, instead of purely compliance-based. citeturn0search2
 
 If you want, I can tailor this to a **specific domain** (e.g., software launch, AI project, or business process).
+
+
+## See Also
+- [[chatgpt/chatgpt_cold-start-crashes-nextjs]]
+- [[chatgpt/chatgpt_cold-start-on-vercel]]
+- [[chatgpt/chatgpt_cold-start-vercel-issues]]
+- [[chatgpt/chatgpt_vercel-cold-start-error]]
+- [[chatgpt/chatgpt_vercel-cold-starts-explained]]

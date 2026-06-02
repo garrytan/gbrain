@@ -40,3 +40,11 @@ sonner
    Notable individuals include **Danny Sonner**, an English-born Northern Ireland former professional footballer. citeturn0search19
 
 If you meant the **French verb** specifically, it’s most often translated as *to ring* or *to sound*. citeturn0search3
+
+
+## See Also
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained-2]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained]]
+- [[chatgpt/chatgpt_codex-meaning-explained]]
+- [[chatgpt/chatgpt_dopl-meaning-explained]]

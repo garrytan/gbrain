@@ -607,3 +607,11 @@ MacBook Air
 Build **one Inbox Ops agent** around Beeper MCP.
 
 Do not start with separate Hermes adapters. Start with Beeper as the universal chat bus, then patch only the gaps.
+
+
+## See Also
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]

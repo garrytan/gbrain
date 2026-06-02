@@ -38,3 +38,11 @@ Keira Knightley was cast in **Star Wars: Episode I – The Phantom Menace** unde
 Daisy Ridley was cast in **Star Wars: The Force Awakens** under a casting team credited as **Nina Gold, April Webster, and Alyssa Weisberg**. Nina Gold is widely identified as the casting director who discovered Ridley for the new trilogy. citeturn479561search1turn479561search3turn479561search5
 
 So the best direct answer is: **Keira Knightley — Robin Gurland; Daisy Ridley — Nina Gold’s casting team (with April Webster and Alyssa Weisberg credited on the film).**
+
+
+## See Also
+- [[chatgpt/chatgpt_engaging-tiktok-concept-controversial-jeffree-star]]
+- [[chatgpt/chatgpt_jeffree-star-pool-bar]]
+- [[chatgpt/chatgpt_android-tv-not-casting]]
+- [[chatgpt/chatgpt_casting-agency-competitors-la]]
+- [[chatgpt/chatgpt_casting-board-grid]]

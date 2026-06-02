@@ -172,3 +172,11 @@ Here’s a concise text you can send Jay:
 Hey Jay — thanks for the lineup. Have you already reviewed the calendar with Verónica, Victor, and Paulina, and can they do all dates? Also, please send me Verónica’s phone number. Lastly, will they be able to come with you Tuesday morning? It’d be great to have the whole team together at once.  
 
 —Tim
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-response-draft]]
+- [[chatgpt/chatgpt_email-response-draft]]
+- [[chatgpt/chatgpt_message-response-draft]]
+- [[chatgpt/chatgpt_polite-response-summary]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

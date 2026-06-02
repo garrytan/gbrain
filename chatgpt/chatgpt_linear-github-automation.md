@@ -141,3 +141,11 @@ If you tell me:
 - What your Linear states are named?
 
 I’ll design the exact production-ready automation setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_automation-in-linear]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_linear-github-integration]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]

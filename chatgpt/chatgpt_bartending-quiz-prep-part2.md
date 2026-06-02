@@ -93,3 +93,11 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "You've got a solid handle on these recipes. You'll be ready to rock those bartending shifts in no time! If you need a refresher on anything else or have more questions, just let me know."}
 {'asset_pointer': 'sediment://file_00000000c050622f8930f674bb23426b', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-11-05T04:22:47.427956+00:00', 'format': 'wav', 'metadata': {'end': 10.15, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 487278, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_bartending-quiz-prep-part1]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part2]]
+- [[chatgpt/chatgpt_equinox-trainer-quiz-prep]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part1]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part10]]

@@ -245,3 +245,11 @@ Here’s your **updated weekly order + operations note**:
 ---
 
 Would you like me to add a small **“Maintenance & Ops” section** to your printable sheet so items like this are tracked alongside orders?
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-supply-order-list]]
+- [[chatgpt/chatgpt_liquor-order-list-started]]
+- [[chatgpt/chatgpt_liquor-order-list]]
+- [[chatgpt/chatgpt_order-list-compilation]]
+- [[chatgpt/chatgpt_order-list-summary]]

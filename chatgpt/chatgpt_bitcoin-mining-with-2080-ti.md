@@ -179,3 +179,11 @@ With free electricity and BTC at $80,000+, investing in a high-efficiency ASIC m
 ---
 
 If you'd like — I can **pull up 3 real ASIC-miner examples (as of 2025)** and project their monthly and yearly returns for you assuming *free electricity & BTC = $80 000*. Could help you get a sense of which machines make sense. Want me to build that table now, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

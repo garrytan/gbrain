@@ -59,3 +59,11 @@ A practical stack would be:
 - **Either** stay on **Windsurf Pro + auto-refills** **or** switch to **Cursor Pro/Pro+ with on-demand spend enabled**. citeturn10view4turn15view2turn10view0turn11search3
 
 If you want, I can turn this into a concrete monthly budget stack like “best setup at $100 / $200 / $400 total.”
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]
+- [[chatgpt/chatgpt_airbnb-ai-usage]]
+- [[chatgpt/chatgpt_backslash-usage-overview]]
+- [[chatgpt/chatgpt_capture-one-usage]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]

@@ -121,3 +121,11 @@ Reply with:
 - Extra features (e.g., steamer, timer, multicooker)
 
 I’ll refine it to the best 3–5 picks for you, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_banana-vs-rice-carbs]]
+- [[chatgpt/chatgpt_rice-cake-macronutrients-summary]]
+- [[chatgpt/chatgpt_rice-cooker-tutorial]]
+- [[chatgpt/chatgpt_rice-microwave-instructions]]
+- [[chatgpt/chatgpt_rice-without-saran-wrap]]

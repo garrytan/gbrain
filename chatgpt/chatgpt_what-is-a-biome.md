@@ -40,3 +40,11 @@ A **biome** is a **large ecological region** on Earth defined by its **climate, 
 - **Aquatic biomes** (freshwater and marine) citeturn0search2turn0search23
 
 In short, a biome groups many ecosystems that share similar climate and life-form characteristics. citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_horn-arrangements-look-what-i-found]]
+- [[chatgpt/chatgpt_what-is-codecov]]
+- [[chatgpt/chatgpt_what-is-jovie]]
+- [[chatgpt/chatgpt_what-is-localhost]]
+- [[chatgpt/chatgpt_what-is-nostr]]

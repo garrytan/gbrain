@@ -130,3 +130,11 @@ Since you (as a startup founder) may want stability:
 ---
 
 If you like, I can check **Clerk’s release timeline** (changelog) and see if there's any upcoming beta or pre-release branch claiming Next.js 16 compatibility—so we can estimate how far away “full support” is.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-highlight-next-show]]
+- [[chatgpt/chatgpt_next-gen-dj-character]]
+- [[chatgpt/chatgpt_next-gen-tirzepatide-successors]]
+- [[chatgpt/chatgpt_next-steps-for-logyourbody]]
+- [[chatgpt/chatgpt_next-version-clarification]]

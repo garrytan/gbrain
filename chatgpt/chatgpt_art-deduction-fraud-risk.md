@@ -37,3 +37,11 @@ That meme is satire—here’s why it wouldn’t actually work:
 • Even if you could sneak an inflated appraisal past the appraiser rules, charitable deduction limits cap art donations at 30 % of your AGI in the year of the gift (with a five-year carryforward). A \$20 M write-off against \$20 M income isn’t allowed—at best you could deduct \$6 M that year and carry forward the rest, assuming the valuation were legitimate.
 
 In short: you can’t legally buy a \$20 M deduction by paying \$25 K for a canvas stripe. Inflated appraisals are disallowed, and the IRS audits large noncash gifts very closely.
+
+
+## See Also
+- [[chatgpt/chatgpt_daycare-fraud-overview]]
+- [[chatgpt/chatgpt_iv-bag-spillage-risk]]
+- [[chatgpt/chatgpt_parking-ticket-jail-risk]]
+- [[chatgpt/chatgpt_wedding-fail-risk-analysis]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

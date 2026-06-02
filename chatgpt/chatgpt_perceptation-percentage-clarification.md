@@ -38,3 +38,11 @@ It does **not** mean 40% of the area will get rain, and it does **not** mean it 
 One nuance: forecasters can derive that number using confidence × expected area coverage, but the percentage shown to you is still interpreted as the **probability of rain at your location**, not area coverage. citeturn676854search1turn676854search0
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_beta-issue-clarification]]
+- [[chatgpt/chatgpt_clarification-of-ns-meaning]]
+- [[chatgpt/chatgpt_clarification-on-handle]]
+- [[chatgpt/chatgpt_clarification-request-2]]

@@ -52,3 +52,11 @@ Fact-based reasons someone could rationally hold a negative view:
 - **Abrasive public conduct:** After advertisers left X over antisemitic-content concerns, Musk publicly told them to “go fuck yourself,” which is a factual basis for viewing him as unnecessarily hostile or poor at stakeholder management. citeturn665092search0
 
 Core logic: the negative view is largely about **trust, judgment, and power** — market-moving claims, product-safety claims, moderation decisions, political extremism, workplace culture, and an unusually concentrated mix of money, media control, companies, and government influence.
+
+
+## See Also
+- [[chatgpt/chatgpt_merge-block-reasons]]
+- [[chatgpt/chatgpt_reasons-not-to-store]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

@@ -60,3 +60,11 @@ From the sleek and sexy to the outright audacious, watch as I navigate the treac
 But wait, there's more - amidst the fabric frenzy, you'll catch glimpses of my day-to-day: espresso-powered studio sessions, late-night lyric crafting, and, of course, the glamorous life of being perpetually photobombed by the most beautiful beings on the planet (and yes, that includes Cosmo). ☕️📸
 
 So, let's make this 'Try-On Haul' a memorable one, not just for the fashion faux pas that will inevitably occur, but for the sheer irony that
+
+
+## See Also
+- [[chatgpt/chatgpt_tims-fabulous-fashion-reel]]
+- [[chatgpt/chatgpt_fashion-billboard-promotion]]
+- [[chatgpt/chatgpt_fashion-film-shot-list]]
+- [[chatgpt/chatgpt_fashion-moodboard-inspiration]]
+- [[chatgpt/chatgpt_fashion-show-extravaganza]]

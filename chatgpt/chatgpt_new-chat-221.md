@@ -39,3 +39,11 @@ Let's proceed with creating the spreadsheet.
 ## Assistant
 
 It appears there is a persistent issue with the syntax in the request for creating the spreadsheet. I will attempt to correct this and ensure the JSON is properly formatted. Please bear with me as I make another attempt.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

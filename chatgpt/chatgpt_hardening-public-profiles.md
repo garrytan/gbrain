@@ -532,3 +532,11 @@ For mobile polish, make safe areas and overflow explicit acceptance criteria. CS
 For performance, use Core Web Vitals as the budget language: LCP 2.5s, INP 200ms, CLS 0.1, measured at the 75th percentile across mobile and desktop. citeturn976997view0
 
 For accessibility, make every tap target and form control pass basic mobile standards. WCAG 2.2’s minimum pointer target size is 24×24 CSS pixels with documented exceptions, and profile tabs/forms/links should comfortably exceed that in practice. citeturn486512view8
+
+
+## See Also
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_uiux-hardening-guidelines]]
+- [[chatgpt/chatgpt_ai-driven-artist-profiles]]
+- [[chatgpt/chatgpt_artist-profiles-carousel-seo]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]

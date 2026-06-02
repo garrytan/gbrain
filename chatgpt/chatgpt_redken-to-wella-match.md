@@ -40,3 +40,11 @@ Heads-up
 - Shinefinity/CT give the closest gloss & pH feel; Color Charm is a budget fallback but permanent, so keep an eye on it.
 
 Grab 09/81 if it’s on the shelf; 9/16 is plan B; T10/T18 are the drug-store safety net.
+
+
+## See Also
+- [[chatgpt/chatgpt_fastlane-match-cloning-error]]
+- [[chatgpt/chatgpt_fastlane-match-dev-setup]]
+- [[chatgpt/chatgpt_fastlane-match-github-token]]
+- [[chatgpt/chatgpt_fastlane-match-setup-2]]
+- [[chatgpt/chatgpt_fastlane-match-setup]]

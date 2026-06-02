@@ -63,3 +63,11 @@ Here’s what we *do know* from public sources about how changelogs around Linea
 - Third-party tools and integrations (e.g., Productlane, ReleaseKit) exist that can auto-generate changelog drafts from Linear issue data — but those are external third-party workflows, not Linear’s own published automation. citeturn0search10turn0search9
 
 **Summary:** Linear’s public changelog appears to be manually maintained by their product team. They do offer automation capabilities elsewhere (issue automation, AI triage tools), and external tools can automate changelog creation for users, but the company’s own changelog page isn’t known to be auto-generated.
+
+
+## See Also
+- [[chatgpt/chatgpt_automation-in-linear]]
+- [[chatgpt/chatgpt_linear-github-automation]]
+- [[chatgpt/chatgpt_ai-changelog-insights-for-jovie]]
+- [[chatgpt/chatgpt_changelog-aggregation-and-analysis]]
+- [[chatgpt/chatgpt_changelog-conversion-to-markup]]

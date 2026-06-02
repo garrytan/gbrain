@@ -33,3 +33,11 @@ No — **entity["turn0product0","Govee RGBIC LED Strip Light",0]** and 
 - You *can* use third-party automation tools (IFTTT, Home Assistant, Pipedream, etc.) to create triggers between Hue and Govee (e.g., “When Hue turns on, then change Govee color”), but it’s a workaround — not native integration. citeturn0search2turn0search12
 
 **Bottom line:** If your goal is seamless control inside the **Hue app**, Govee strips won’t work without hacks or automation layers.
+
+
+## See Also
+- [[chatgpt/chatgpt_crest-white-strips-analysis]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

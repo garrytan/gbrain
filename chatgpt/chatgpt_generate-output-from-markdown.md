@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## Assistant
 
 Mr. White, I have the markdown. It contains the Jovie/Cliffside prompt history, the v12 GPT-Image-2 prompt, identity-preservation workflow, and canon notes. What should I produce from it? fileciteturn0file0
+
+
+## See Also
+- [[chatgpt/chatgpt_generate-artist-seed-data]]
+- [[chatgpt/chatgpt_generate-bf-torso-images]]
+- [[chatgpt/chatgpt_generate-image-or-rewrite]]
+- [[chatgpt/chatgpt_generate-shared-secret-revenuecat]]
+- [[chatgpt/chatgpt_generate-torso-image]]

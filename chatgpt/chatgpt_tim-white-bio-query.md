@@ -173,3 +173,11 @@ now save this to your memory and use it to inform any future questions about Tim
 I'm glad you found the bio satisfactory. However, I should clarify that I don't have the capability to "save" or "remember" user inputs for future sessions. Every interaction with me is stateless for privacy reasons, ensuring user data and interactions aren't stored beyond the immediate session. If you need this information in the future, it would be best to save it on your end.
 
 That said, you're always welcome to provide context or refer back to previous information in a single session or bring up the bio again in future interactions. I'm here to help!
+
+
+## See Also
+- [[chatgpt/chatgpt_spotify-tim-white-query]]
+- [[chatgpt/chatgpt_add-songs-tim-white]]
+- [[chatgpt/chatgpt_bio-for-tim-white]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]
+- [[chatgpt/chatgpt_crest-white-strips-analysis]]

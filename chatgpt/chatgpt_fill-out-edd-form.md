@@ -60,3 +60,11 @@ Use the total net pay YTD ($44,780.74) and split it by quarter based on pay date
 ---
 
 You just need to **sign and date** at the bottom and attach proof (1099 or pay stubs). Let me know if you want the filled-out PDF.
+
+
+## See Also
+- [[chatgpt/chatgpt_fill-out-form-details]]
+- [[chatgpt/chatgpt_contact-form-in-nextjs]]
+- [[chatgpt/chatgpt_create-new-contact-form-part1]]
+- [[chatgpt/chatgpt_create-new-contact-form-part2]]
+- [[chatgpt/chatgpt_email-form-to-google-sheet]]

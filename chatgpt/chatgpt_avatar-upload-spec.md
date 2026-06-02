@@ -443,3 +443,11 @@ Got it, Mr. White. Here’s a **UX audit of your sidebar**, based on the screens
 2. **System/account**: Settings, Feedback & Support, Profile dropdown, Collapse.  
 
 Would you like me to turn this into a **ready-to-run Linear issue** (with tasks + acceptance criteria) so your AI agents can start iterating?
+
+
+## See Also
+- [[chatgpt/chatgpt_avatar-upload-optimization]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_chrome-extension-upload-error]]
+- [[chatgpt/chatgpt_direct-upload-to-cloudinary]]
+- [[chatgpt/chatgpt_file-upload-error-troubleshoot-part1]]

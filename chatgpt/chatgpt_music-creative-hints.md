@@ -132,3 +132,11 @@ Here’s why **it can’t be Tricky**, despite the initial fit:
 They often worked **together**, but the mythology in these hints — fast-writing bangers, in-person collabs, Atlanta base, multiple studios, industry tell-all style — is **very The-Dream**.
 
 So no — at this point, it’s **definitively The-Dream**, not Tricky.
+
+
+## See Also
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_ai-driven-music-bio]]
+- [[chatgpt/chatgpt_ai-for-music-catalogs]]
+- [[chatgpt/chatgpt_ai-growth-engine-for-music]]
+- [[chatgpt/chatgpt_ai-in-music-marketing]]

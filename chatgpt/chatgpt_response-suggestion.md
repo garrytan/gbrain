@@ -38,3 +38,11 @@ Tim
 ---  
 
 Do you want me to add a quick line about your group being mindful/respectful to quietly ease any “party” concerns, or keep it as is?
+
+
+## See Also
+- [[chatgpt/chatgpt_friendly-response-suggestion]]
+- [[chatgpt/chatgpt_polite-response-suggestion]]
+- [[chatgpt/chatgpt_response-suggestion-write]]
+- [[chatgpt/chatgpt_slam-response-suggestion]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

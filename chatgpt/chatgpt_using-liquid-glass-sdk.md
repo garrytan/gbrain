@@ -70,3 +70,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "To get the iOS 26 beta SDK, you'll need to make sure you're enrolled in Apple's Developer Program and have access to the latest developer betas. Once you're signed in, you can go to the Apple Developer website and download the latest Xcode beta, which will include the iOS 26 SDK. Once you install that beta version of Xcode, you'll be able to select iOS 26 as a deployment option and start using those new features. Just keep in mind that the beta versions can have some bugs, so it’s good to keep a stable version of Xcode around as well."}
 {'asset_pointer': 'sediment://file_000000000c6061f6b4df1811dd327fae', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-05T22:36:59.896818+00:00', 'format': 'wav', 'metadata': {'end': 34.05, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1634478, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_ios-26-liquid-glass-integration]]
+- [[chatgpt/chatgpt_linear-app-liquid-glass]]
+- [[chatgpt/chatgpt_liquid-glass-implementation]]
+- [[chatgpt/chatgpt_liquid-glass-slider-ui]]
+- [[chatgpt/chatgpt_liquid-glass-tab-bar]]

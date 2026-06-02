@@ -78,3 +78,11 @@ Absolutely:
 Hey there! We’re all about a relaxed vibe, inviting someone over to hang out and see if we click. It’s all easygoing, with no pressure. My girlfriend enjoys being close with women but prefers to keep things above the waist. With me, there are no restrictions. We love being involved together, ensuring everything is safe and open for discussion.
 
 Curious? Let’s chat about boundaries and see if we’re a match.
+
+
+## See Also
+- [[chatgpt/chatgpt_late-night-hangout]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]

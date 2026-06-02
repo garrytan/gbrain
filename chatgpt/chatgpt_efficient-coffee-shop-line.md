@@ -31,3 +31,11 @@ Help me write this by coming up with thebworst typenof person you stand behind i
 Mr. White, try this:
 
 > “I see one really efficient coffee shop — and one where I have to wait forever behind the guy who quizzes the barista on single-origin micro-lot roast dates, grind coarseness and extraction temperature for ten minutes…then grudgingly orders a plain black coffee.”
+
+
+## See Also
+- [[chatgpt/chatgpt_la-coffee-shop-identification]]
+- [[chatgpt/chatgpt_bad-iced-coffee-vibes]]
+- [[chatgpt/chatgpt_coffee-ad-creation]]
+- [[chatgpt/chatgpt_coffee-and-coke-combo]]
+- [[chatgpt/chatgpt_coffee-art-plus-price]]

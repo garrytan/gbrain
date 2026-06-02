@@ -50,3 +50,11 @@ Mr. White, I’ve filled everything I can from your files and the form defaults.
 3) Confirmation that you’re OK submitting the form with your prefilled email and phone number (tim@jov.ie / 7326682148)
 
 Once you send that, I’ll complete the remaining fields and proceed.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-conversation-summary]]
+- [[chatgpt/chatgpt_migraine-conversation-recap]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]

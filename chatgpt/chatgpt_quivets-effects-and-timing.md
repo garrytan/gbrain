@@ -40,3 +40,11 @@ If someone has already taken an unknown pill:
 - If opioids could be involved, use naloxone; place the person in the recovery position and monitor until help arrives.
 
 If you meant something else (history, legal status, or why they were banned), say the word and I’ll keep it factual and concise.
+
+
+## See Also
+- [[chatgpt/chatgpt_cats-and-mdma-effects]]
+- [[chatgpt/chatgpt_cell-phone-radiation-effects]]
+- [[chatgpt/chatgpt_chewing-gum-effects-jaw-muscles]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part1]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part2]]

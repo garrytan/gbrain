@@ -26,3 +26,11 @@ i live in california im calling someone in nyc. what are the laws regarding lega
 ## Assistant
 
 In California, both parties must consent to the recording of a conversation, making it a "two-party consent" state. In contrast, New York is a "one-party consent" state, where only one party needs to agree to the recording. However, since you are in California, you must comply with California's stricter two-party consent law. This means you need to obtain the consent of the person in New York before recording the call.
+
+
+## See Also
+- [[chatgpt/chatgpt_legalities-of-charging-for-parking]]
+- [[chatgpt/chatgpt_legalities-of-misleading-sign]]
+- [[chatgpt/chatgpt_legalities-of-turo-deposit]]
+- [[chatgpt/chatgpt_manager-tip-jar-legalities]]
+- [[chatgpt/chatgpt_parking-garage-exit-legalities]]

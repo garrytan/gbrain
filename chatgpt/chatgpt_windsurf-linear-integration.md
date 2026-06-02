@@ -221,3 +221,11 @@ Have Windsurf poll PRs (or listen via a webhook) and mark the plan step “done�
 - Windsurf creates GH issues → assign `copilot-swe-agent` → Copilot opens PRs → CI runs → workflow auto-merges when green → Windsurf marks tasks complete.  
 
 Want me to drop these files into your repo with your owner/repo wired and a Windsurf plan stub that batches a list of tasks?
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]
+- [[chatgpt/chatgpt_claude-in-linear-integration]]
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_linear-github-integration]]
+- [[chatgpt/chatgpt_sentry-linear-integration-issues]]

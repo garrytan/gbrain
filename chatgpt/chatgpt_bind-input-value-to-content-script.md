@@ -110,3 +110,11 @@ document.getElementById("sendWelcomeMessage").addEventListener("click", function
 ```
 
 In this example, we retrieve the values of the `swipeRightCount` and `welcomeMessage` inputs using `document.getElementById()`, and then pass the values along with the message when the `sendWelcomeMessage` button is clicked. In the content script, you can access these values by receiving the message and accessing the `swipeRightCount` and `welcomeMessage` properties.
+
+
+## See Also
+- [[chatgpt/chatgpt_animation-script-expression]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_brief-summary-script-request]]
+- [[chatgpt/chatgpt_chrome-extension-popup-script]]
+- [[chatgpt/chatgpt_cinematic-demo-script]]

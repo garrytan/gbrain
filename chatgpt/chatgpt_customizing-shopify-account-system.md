@@ -38,3 +38,11 @@ It is possible that Gymshark.com has implemented a custom account system using t
 If you're looking for a more robust account system, you could consider using a third-party app like Customer Account Page by HulkApps or Account Login & Account Registration by Secomapp. These apps offer more customization options and additional features such as social login, custom registration fields, and more.
 
 Ultimately, the best approach will depend on your specific requirements and budget. If you have the resources, developing a custom solution using Shopify's API or a third-party authentication provider may be the way to go. However, if you're looking for a quick and affordable solution, using a third-party app could be a good option.
+
+
+## See Also
+- [[chatgpt/chatgpt_customizing-coderabbit-workflow]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_account-search-assistance]]
+- [[chatgpt/chatgpt_adobe-account-change-fix]]
+- [[chatgpt/chatgpt_amazon-account-phone-number-issue]]

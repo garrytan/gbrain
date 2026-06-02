@@ -40,3 +40,11 @@ Here’s the quick money checklist, Mr. White:
 - **Car insurance**: due this week—check amount and auto-pay status
 
 That’s your short-term hit list so nothing slips through.
+
+
+## See Also
+- [[chatgpt/chatgpt_pre-shift-checklist-summary]]
+- [[chatgpt/chatgpt_marriage-for-money-alimony]]
+- [[chatgpt/chatgpt_money-order-vs-cashiers-check]]
+- [[chatgpt/chatgpt_zelle-from-envelope-money]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]

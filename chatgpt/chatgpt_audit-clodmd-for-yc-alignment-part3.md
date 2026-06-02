@@ -800,3 +800,11 @@ Create a **single, centralized keyboard shortcut system** that powers all naviga
 ---
 
 Mr. White, do you want me to also write the **follow-up Linear issue for the cheat-sheet modal (⌘/Ctrl + /)** now, so you can drop it in right after this one?
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part1]]
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part2]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part3]]
+- [[chatgpt/chatgpt_yc-homepage-audit-part3]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part3]]

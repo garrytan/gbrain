@@ -320,3 +320,11 @@ If the above solution does not work, you can try upgrading or downgrading the co
 'NODE_ENV' is not recognized as an internal or external command,
 operable program or batch file.
 PS C:\Users\Tim White\Documents\GitHub\Jovie_Chrome_Extension>
+
+
+## See Also
+- [[chatgpt/chatgpt_update-chrome-extension-3]]
+- [[chatgpt/chatgpt_update-chrome-extension]]
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_chrome-extension-interaction]]
+- [[chatgpt/chatgpt_chrome-extension-popup-script]]

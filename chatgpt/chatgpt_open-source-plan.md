@@ -605,3 +605,11 @@ You only need to:
 - not punish PR churn
 
 That is enough for a wedge.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-and-open-source]]
+- [[chatgpt/chatgpt_successful-open-source-companies]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_html-source-code-request]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]

@@ -53,3 +53,11 @@ Mr. White,
 
 **Rule of thumb:**  
 A test that never fails is either **excellent** (guarding stable, high-value invariants) or **useless**. Prove which one.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-agent-test-strategies]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]
+- [[chatgpt/chatgpt_avoiding-alcohol-service-strategies]]
+- [[chatgpt/chatgpt_debate-strategies-overview]]
+- [[chatgpt/chatgpt_development-velocity-strategies]]

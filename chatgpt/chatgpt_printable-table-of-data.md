@@ -137,3 +137,11 @@ Here's the inferred table with complete dates:
 | Cut   | 7    | Apr 22, 2024| 173.461 | -1.865            | -13.839                       | 17.21%         | 10.12%         |
 | Cut   | 8    | Apr 29, 2024| 171.596 | -1.865            | -15.704                       | 17.00%         | 9.91%          |
 +-------+------+-------------+---------+-------------------+-------------------------------+
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-release-data-table]]
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]

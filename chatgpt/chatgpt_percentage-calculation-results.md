@@ -56,3 +56,11 @@ Give me back a concise list with just the percetages
 - Affordable: **43.8 %**  
 - Healthcare: **2.2 %**  
 - Housing: **1.3 %**  
+
+
+## See Also
+- [[chatgpt/chatgpt_percentage-calculation-example]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]

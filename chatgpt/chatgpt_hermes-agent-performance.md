@@ -152,3 +152,11 @@ For Jovie, the fastest setup is:
 Do **not** run a permanent swarm. Run a **router with workers**.
 
 The bottleneck is usually not agent count. It is bad scoping, context bloat, duplicated work, and agents editing overlapping surfaces. Keep the center tight, then parallelize only cleanly separated work.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part4]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part5]]

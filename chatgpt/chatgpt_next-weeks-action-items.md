@@ -154,3 +154,11 @@ Here's the fully updated bullet point list:
   - Do a rough calculation of how many drinks can be made from a liter of batched cocktail.
   - Estimate the total number of drinks that can be made based on current inventory.
   - Use these estimates for effective inventory management.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-highlight-next-show]]
+- [[chatgpt/chatgpt_next-16-and-clerk]]
+- [[chatgpt/chatgpt_next-gen-dj-character]]
+- [[chatgpt/chatgpt_next-gen-tirzepatide-successors]]
+- [[chatgpt/chatgpt_next-steps-for-logyourbody]]

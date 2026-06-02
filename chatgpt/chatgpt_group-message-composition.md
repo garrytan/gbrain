@@ -106,3 +106,11 @@ Thanks everyone for another super smooth week of shows. Have a great week ahead!
 ---
 
 Would you like me to make a shorter, chat-style version of this too (for a quick group message)?
+
+
+## See Also
+- [[chatgpt/chatgpt_compose-group-chat-message]]
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_anniversary-trip-message]]
+- [[chatgpt/chatgpt_aviation-mysteries-stendec-message]]
+- [[chatgpt/chatgpt_blue-man-group-shows]]

@@ -30,3 +30,11 @@ I mean, it kinda becomes less interesting if I can't dump everything in and sort
 What practical examples that I gave you or that you can think of could we do and could we not do? Break it down based on that. Would you use Composio, or is it not worth it? If Composio just buys you like two hours of Claude code, I'd rather just spend two hours of Claude code, own the thing, and then not have to pull it out later and not have to deal with the vendor and another expense, right? If it's two weeks of Claude code and four days of manual testing and shit, yeah, then I'd rather just use Composio. And I don't even know if Composio is the other thing. The other thing is, I guess I don't totally understand how to build AI agents here. I've built this whole fucking thing, but I'm realizing now that I don't even understand hermes and all this shit. Should we be using Anthropic's SDK or OpenAI's SDK instead of building Bursal workflows and stuff? When we say hermes, is that just my code, or are there official hermes? You know what I mean? Should we be adopting things? I mean, I guess we're using AI SDK, so was that our hermes? Help me, help me understand, and also they're not open source versions of this shit. I know that air me's agent and open claw are already open source. Are the connectors not already open source, or are the prompts not already open source? I'm questioning if there's even anything that we need to build ourselves.
 
 Can we not just go and find, like, "Okay, I want to be able to find what," so what's a good example here? Okay, I want to do merch generation, right? Well, there should be, theoretically, I don't know, are there not prompts already out there to make good band tees that we can just grab? I guess this is all stuff that I just research as in building each feature, but I don't know. I'm just trying to move fast. 
+
+
+## See Also
+- [[chatgpt/chatgpt_clean-40gb-gmail]]
+- [[chatgpt/chatgpt_clean-gmail-guide]]
+- [[chatgpt/chatgpt_clear-gmail-username-options]]
+- [[chatgpt/chatgpt_free-up-gmail-storage]]
+- [[chatgpt/chatgpt_gmail-app-password-setup]]

@@ -26,3 +26,11 @@ Yo, so Lolo gets half a cup of food a day, and we're looking at a cat, automatic
 ## Assistant
 
 About 33–34 days — just over a month of feeds at ½-cup per day.
+
+
+## See Also
+- [[chatgpt/chatgpt_conversation-duration-breakdown]]
+- [[chatgpt/chatgpt_u2-vegas-sphere-concert-duration]]
+- [[chatgpt/chatgpt_annual-driving-estimate]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-female]]

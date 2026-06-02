@@ -77,3 +77,11 @@ Mr. White — short, sharp, IG-ready:
 > “Secret clause” lol. Live Nation owns the venues, Ticketmaster sells the tickets. That’s been public for years.  
 >  
 > Also: vertical integration ≠ monopoly. It *can* be anticompetitive, but it’s not illegal by default. Antitrust law runs on evidence, not dramatic captions.
+
+
+## See Also
+- [[chatgpt/chatgpt_clapback-with-proof]]
+- [[chatgpt/chatgpt_monopoly-jail-rent-rules]]
+- [[chatgpt/chatgpt_savvy-clapback-fact-check]]
+- [[chatgpt/chatgpt_science-clapback-with-humor]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

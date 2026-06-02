@@ -101,3 +101,11 @@ Answer in numbered bullets. Fragments are fine.
 20. What is one principle in the v0 file that feels wrong, overstated, or too generic?
 
 Your answers become v0.2.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]
+- [[chatgpt/chatgpt_cohost-company-overview]]
+- [[chatgpt/chatgpt_combinator-company-technical-flow]]
+- [[chatgpt/chatgpt_fastly-company-overview]]

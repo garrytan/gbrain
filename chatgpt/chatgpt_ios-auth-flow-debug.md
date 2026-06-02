@@ -296,3 +296,11 @@ The key instruction for Codex is: **do not debug the provider login; debug the c
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_auth-provider-for-chatgpt]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_auth-ux-audit]]
+- [[chatgpt/chatgpt_basic-auth-in-nextjs]]
+- [[chatgpt/chatgpt_best-auth-providers-2025]]

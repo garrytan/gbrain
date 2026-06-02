@@ -357,3 +357,11 @@ Find and send friend requests to photographers whose work fits a targeted modeli
 ---
 
 Let me know if you want this adapted for a browser automation tool like Puppeteer, Selenium, or Playwright.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_android-tv-not-casting]]
+- [[chatgpt/chatgpt_application-completion-assistance]]
+- [[chatgpt/chatgpt_application-drafting-request]]
+- [[chatgpt/chatgpt_application-revision-feedback]]

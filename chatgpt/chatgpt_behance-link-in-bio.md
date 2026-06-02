@@ -39,3 +39,11 @@ Here’s what that involves:
 3. Paste that Behance URL in the website/bio field. That’s your “link in bio.” citeturn0search1
 
 It’s a common tactic to drive traffic from social media directly to your portfolio. citeturn0search14
+
+
+## See Also
+- [[chatgpt/chatgpt_best-link-in-bio-tools]]
+- [[chatgpt/chatgpt_bio-link-explanation]]
+- [[chatgpt/chatgpt_bio-link-strategy-part1]]
+- [[chatgpt/chatgpt_bio-link-strategy-part2]]
+- [[chatgpt/chatgpt_bio-link-strategy-part3]]

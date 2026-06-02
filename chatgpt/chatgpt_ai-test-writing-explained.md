@@ -42,3 +42,11 @@ In educational measurement, algorithms can automatically generate test items (qu
 - For code testing, use AI drafts but always validate thoroughly.
 
 If you meant something specific (e.g., how to write test prompts for AI, or generate educational test questions), clarify and I’ll tailor it.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-agent-test-strategies]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]

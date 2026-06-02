@@ -92,3 +92,11 @@ sharp(buffer)
   .webp({ quality:80 });
 ```  
 Then serve `.webp` variants from your CDN. Just be sure to provide a JPEG fallback (or use Accept-header negotiation) for any older clients.
+
+
+## See Also
+- [[chatgpt/chatgpt_avatar-upload-optimization]]
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]

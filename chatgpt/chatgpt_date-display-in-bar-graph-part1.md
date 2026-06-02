@@ -1009,3 +1009,11 @@ In the code above, `textHeight` is added to ensure there's space for the text, a
 
 
 ok that moved the height numbers to the bottom too, those should stay on top, and it also broke the goal line
+
+
+## See Also
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part2]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part3]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part4]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part5]]
+- [[chatgpt/chatgpt_google-sheets-current-date-part1]]

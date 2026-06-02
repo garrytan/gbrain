@@ -616,3 +616,11 @@ WhatsApp, SMS/Twilio
 ```
 
 The best first version is **Slack API, not opening Slack UI**. It gives you the voice workflow you want without extra infrastructure, and it keeps the entire Hermes conversation inside the tool Hermes already listens to.
+
+
+## See Also
+- [[chatgpt/chatgpt_voice-based-brainstorming-workflow]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_admin-workflow-design]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]

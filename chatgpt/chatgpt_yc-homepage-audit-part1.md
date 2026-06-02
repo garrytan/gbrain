@@ -1638,3 +1638,11 @@ If you want, I can:
 - Build a **30-day pre-launch IG plan** that won’t get you flagged
 
 This is a good instinct — it just needs restraint.
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part1]]
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part1]]
+- [[chatgpt/chatgpt_frameio-homepage-for-jovie-part1]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part1]]
+- [[chatgpt/chatgpt_yc-application-audit-part1]]

@@ -193,3 +193,11 @@
 
 {'audio_asset_pointer': {'asset_pointer': 'sediment://file_00000000f82c61f6a6e3a863deeba051', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-14T21:23:07.554036+00:00', 'format': 'wav', 'metadata': {'end': 0.45, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 21678, 'tool_audio_direction': None}, 'audio_start_timestamp': 1654.9517910688883, 'content_type': 'real_time_user_audio_video_asset_pointer', 'expiry_datetime': '2025-12-14T21:23:07.554036+00:00', 'frames_asset_pointers': [], 'video_container_asset_pointer': None}
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'in', 'text': ''}
+
+
+## See Also
+- [[chatgpt/chatgpt_oil-change-discussion-part1]]
+- [[chatgpt/chatgpt_oil-change-discussion-part3]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_8-pack-abs-discussion]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part2]]

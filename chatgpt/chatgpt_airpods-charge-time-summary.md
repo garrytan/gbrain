@@ -62,3 +62,11 @@ Oh maybe they’re first then
 ## Assistant
 
 For the first generation AirPods Pro, you can expect around 4.5 hours of listening time or up to 3.5 hours of talk time on a single charge. If Active Noise Cancellation or Transparency mode is enabled, these features slightly reduce the battery life. The charging case provides multiple charges, totaling more than 24 hours of listening time or over 18 hours of talk time.
+
+
+## See Also
+- [[chatgpt/chatgpt_wrinkle-in-time-summary]]
+- [[chatgpt/chatgpt_ai-progress-over-time]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_backup-time-for-20tb]]
+- [[chatgpt/chatgpt_dns-propagation-time]]

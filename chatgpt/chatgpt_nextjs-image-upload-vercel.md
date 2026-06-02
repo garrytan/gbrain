@@ -82,3 +82,11 @@ If you want, I can sketch the minimal Next.js page + API route wired for client-
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_nextjs-cold-starts-vercel]]
+- [[chatgpt/chatgpt_nextjs-vercel-coverage-tools]]
+- [[chatgpt/chatgpt_vercel-image-optimization]]
+- [[chatgpt/chatgpt_vercel-nextjs-vs-laravel-vapor]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

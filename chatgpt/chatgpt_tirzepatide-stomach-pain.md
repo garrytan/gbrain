@@ -119,3 +119,11 @@ While gastrointestinal side effects with tirzepatide are common, it’s importan
 - Genesis Lifestyle Medicine – *Common Tirzepatide Side Effects and How to Combat Them* (tips like slow dose titration, simethicone for gas, etc., and frequency of diarrhea ~17%)【12†L219-L227】【12†L270-L278】  
 - Statcare & Ben’s Natural Health – *Managing Mounjaro side effects* (dietary tips for bloating and diarrhea; when to see a doctor for persistent symptoms)【8†L59-L66】【9†L196-L204】  
 - MedShadow – *Rare but serious side effects* (pancreatitis <1%, gallbladder issues ~0.6%; advising immediate care for severe pain/bloating)【20†L222-L229】【20†L242-L250】【20†L268-L271】.
+
+
+## See Also
+- [[chatgpt/chatgpt_back-pain-relief-tips]]
+- [[chatgpt/chatgpt_lower-back-pain-cause]]
+- [[chatgpt/chatgpt_lower-back-pain-relief]]
+- [[chatgpt/chatgpt_flying-with-tirzepatide]]
+- [[chatgpt/chatgpt_maintenance-after-tirzepatide-use]]

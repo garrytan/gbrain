@@ -54,3 +54,11 @@ laravel mix ssg
 Laravel Mix is a tool for building web applications using Laravel, a popular PHP framework. It is built on top of webpack, and provides a simplified, fluent interface for defining webpack build steps for your Laravel applications. Laravel Mix does not natively support static site generation (SSG), but it can be used in combination with other tools to build a static site. For example, you could use Laravel Mix to compile your assets (such as CSS and JavaScript files), and then use a tool like Jigsaw or Gridsome to generate the static HTML pages for your site.
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

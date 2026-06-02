@@ -495,3 +495,11 @@ Mr. White —
 - 17×16×14 ⇒ **27.4 lb billable**; 19×16×15 ⇒ **32.8 lb billable** — so pricing will rate off dimensional, not scale weight. Consider **local pickup** if possible. (Calculation from standard carriers’ 139 in³/lb divisor.) 
 
 Want me to generate a UPS/FedEx cost compare using those figures and your ZIP 90069?
+
+
+## See Also
+- [[chatgpt/chatgpt_selling-nas-drives-fast]]
+- [[chatgpt/chatgpt_qnap-issue-troubleshooting]]
+- [[chatgpt/chatgpt_qnap-shutdown-issues-troubleshooting]]
+- [[chatgpt/chatgpt_qnap-tvs-872xt-update-error]]
+- [[chatgpt/chatgpt_ssh-into-qnap-mac]]

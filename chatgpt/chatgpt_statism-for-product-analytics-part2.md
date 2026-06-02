@@ -1491,3 +1491,11 @@ If you want, I can sketch the exact `pnpm-workspace.yaml`, `turbo.json`, and roo
 
 
 Give me a prompt for an ai agent to do all the pnpm and turbo repo and workspaces set up you just explained
+
+
+## See Also
+- [[chatgpt/chatgpt_statism-for-product-analytics-part1]]
+- [[chatgpt/chatgpt_statism-for-product-analytics-part3]]
+- [[chatgpt/chatgpt_statism-for-product-analytics-part4]]
+- [[chatgpt/chatgpt_product-analytics-strategy]]
+- [[chatgpt/chatgpt_product-feedback-and-issues-part2]]

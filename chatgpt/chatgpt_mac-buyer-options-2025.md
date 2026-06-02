@@ -62,3 +62,11 @@ Here are solid **Mac options to consider** if you’re shopping in 2025/2026 —
 - **Timing:** Apple updates Mac lines periodically (buyers guides track refresh cycles to avoid buying right before a new model). citeturn0search0  
 
 If you tell me your *budget and main use (e.g., school, video editing, code)*, I can narrow this to the best specific choice.
+
+
+## See Also
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_ai-resume-builders-2025]]
+- [[chatgpt/chatgpt_airpods-pro-3-options]]
+- [[chatgpt/chatgpt_airpods-replacement-options]]
+- [[chatgpt/chatgpt_apartment-hunt-options-la]]

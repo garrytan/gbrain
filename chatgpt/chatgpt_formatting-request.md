@@ -82,3 +82,11 @@ So I built for it. Voice-memo pipeline with AI: record a thought, it gets transc
 Nico built a cafe because nothing was open at 3am. I built a voice-memo pipeline because the best thinking happens outside the office.
 
 The flex isn’t hours worked. The flex is decisions per hour. Better decisions come from the toggle.
+
+
+## See Also
+- [[chatgpt/chatgpt_contact-information-formatting]]
+- [[chatgpt/chatgpt_email-formatting-and-signup]]
+- [[chatgpt/chatgpt_inventory-summary-formatting]]
+- [[chatgpt/chatgpt_lyrics-formatting-guidelines]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]

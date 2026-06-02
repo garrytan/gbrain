@@ -59,3 +59,11 @@ Costs vary by model and usage patterns (batching can reduce effective cost). 
 Anthropic offers documentation, guides, and best practices to help you set up API access and build with Claude, including examples and prompt engineering advice. citeturn0search2
 
 If you want, I can show example code (Python/JavaScript) for a basic API call.
+
+
+## See Also
+- [[chatgpt/chatgpt_anthropic-cli-overview]]
+- [[chatgpt/chatgpt_anthropic-meaning-and-context]]
+- [[chatgpt/chatgpt_ci-at-anthropic]]
+- [[chatgpt/chatgpt_claw-plan-vs-anthropic-api]]
+- [[chatgpt/chatgpt_fact-check-anthropic-deal]]

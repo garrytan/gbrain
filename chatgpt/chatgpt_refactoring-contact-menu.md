@@ -77,3 +77,11 @@ These changes make the code more concise and easier to understand.
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_contact-menu-management]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_refactoring-tests-guidelines]]

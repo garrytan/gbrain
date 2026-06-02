@@ -65,3 +65,11 @@ From there, the company expanded strategically around college towns, building a 
 ---
 
 Want to see how they expanded or curious about menu evolution? Happy to dive deeper!
+
+
+## See Also
+- [[chatgpt/chatgpt_7shifts-overview]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]

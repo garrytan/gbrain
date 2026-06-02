@@ -26,3 +26,11 @@ Translate Realmente que céu lindo atrás de você, como nosso Deus é maravilho
 ## Assistant
 
 "Really, what a beautiful sky behind you, how wonderful our God is!"
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

@@ -163,3 +163,11 @@ open this as a linear issue actually for us to implement
 ## Assistant
 
 I navigated to Linear, but it appears that you are not currently logged in. To create an issue in your Linear workspace, please log in with your account. Once you’ve logged in, let me know and I’ll proceed with creating the issue using the experiment definition we discussed.
+
+
+## See Also
+- [[chatgpt/chatgpt_evolutionary-relaxation-hypothesis]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

@@ -38,3 +38,11 @@ cmdk
 - As an acronym, CMDK can have unrelated definitions (e.g., *Charles Medley Distillers Kentucky* in abbreviation dictionaries), but these are niche. citeturn0search0
 
 **Summary:** In most modern tech contexts, *CM​DK* refers to a **command palette UI component/library** used to build quick search/command menus in apps, with ties to the common *Cmd/Ctrl + K* keyboard shortcut pattern. citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

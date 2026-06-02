@@ -65,3 +65,11 @@ Explanation:
   - If the `currentContact.id` is not equal to `contact.id`, it means it is not the current contact. In this case, the class will be `'bg-slate-50 dark:bg-jovieDark-700'`.
 
 Please note that this assumes you have defined the CSS classes `bg-blue-100`, `bg-blue-50`, `bg-slate-100`, `bg-slate-50`, `dark:bg-indigo-800`, `dark:bg-indigo-950`, and `dark:bg-jovieDark-700` with the desired background colors in your CSS or styling file.
+
+
+## See Also
+- [[chatgpt/chatgpt_discography-table-styling]]
+- [[chatgpt/chatgpt_html-styling-jovies-span]]
+- [[chatgpt/chatgpt_masculine-abs-styling]]
+- [[chatgpt/chatgpt_styling-refactor-for-ui]]
+- [[chatgpt/chatgpt_ui-styling-refactor]]

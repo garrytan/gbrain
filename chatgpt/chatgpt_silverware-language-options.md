@@ -35,3 +35,11 @@ Mr. White, could you clarify what kind of “language” you’re looking for wi
 Once I know the context, I can draft precise language for you.  
 
 Do you want me to create elegant product descriptions, formal contractual wording, or something else?
+
+
+## See Also
+- [[chatgpt/chatgpt_body-language-song]]
+- [[chatgpt/chatgpt_inappropriate-language-detected]]
+- [[chatgpt/chatgpt_math-language-for-jovie]]
+- [[chatgpt/chatgpt_rave-language-evolution]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

@@ -60,3 +60,11 @@ Do this:
 4. Give it a minute or two for the indoor unit to start blowing warm air.
 
 If you can’t ever get a sun icon, that particular system is cool-only and can’t heat.
+
+
+## See Also
+- [[chatgpt/chatgpt_make-11-liters-lemonade]]
+- [[chatgpt/chatgpt_make-a-cosmopolitan-and-negroni]]
+- [[chatgpt/chatgpt_make-a-paloma-cocktail]]
+- [[chatgpt/chatgpt_make-a-paloma]]
+- [[chatgpt/chatgpt_make-black-and-white-image]]

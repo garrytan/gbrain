@@ -82,3 +82,11 @@ That does not make the other driver clean. California treats turn signals as saf
 And on the traffic-design point, you are describing a real bottleneck pattern. FHWA specifically notes that at some signalized intersections, left-turn queues spill over into adjacent through lanes during peak periods, and that dedicated turn lanes are used to physically separate stopped turners from through traffic and provide storage for waiting vehicles. That is exactly the kind of spillback you are describing on corridors like Santa Monica. citeturn535475view0turn535475view1
 
 So the clean answer is: your frustration makes sense, but the law still expects the left-turning driver to protect himself against the possibility that the other driver is signaling wrong. The other driver can still share fault. The left-turner usually remains exposed unless the evidence strongly shows the straight-going driver created the trap.
+
+
+## See Also
+- [[chatgpt/chatgpt_turn-on-console]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part2]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part3]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part4]]

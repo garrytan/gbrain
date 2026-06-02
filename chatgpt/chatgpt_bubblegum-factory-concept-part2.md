@@ -489,3 +489,11 @@ This is better than a permanent Bubblegum Factory wall logo because the room can
 So, imagining you have those acoustic panels on the wall. I'm imagining a world in which it's actually like the panels on the wall, or there's one row on top and one row on the bottom. They can slide apart in the middle to reveal a camera hole behind glass or something, so that you could effectively have camera angles from all the way around the room. At any point, just shut it, and now there's no camera angle. It has that flexibility to become like a nice set.
 
 I'd have the room be almost entirely circular, except for where the doors would be, which in these shots is where the camera is. They should be blast doors. Every single studio in this place would have blast doors that open it, so you're not going to see them in this shot, but there would be blast doors behind you. Also might be helpful for you to generate a diagram for Google. 
+
+
+## See Also
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part1]]
+- [[chatgpt/chatgpt_podcast-and-reality-show-concept-part2]]
+- [[chatgpt/chatgpt_bubblegum-factory-app-icon]]
+- [[chatgpt/chatgpt_bubblegum-factory-logo-2]]
+- [[chatgpt/chatgpt_bubblegum-factory-logo-3]]

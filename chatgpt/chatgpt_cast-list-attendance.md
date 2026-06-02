@@ -30,3 +30,11 @@ Mr. White, **11 people** total (including guests) are on the Cast List for **Sat
 
 - **7:00 PM:** **2** — Carol Tagawa +1  
 - **9:30 PM:** **9** — Grace Tenorio Lerma (2 total), Tania Braun (1), David Contreras + Anthony Gonzalez + Paul Tenneri (3), Brenda Beals +2 (3)
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_ai-optimizes-to-do-list]]
+- [[chatgpt/chatgpt_airbnb-essentials-list]]
+- [[chatgpt/chatgpt_amazon-shopping-list]]
+- [[chatgpt/chatgpt_apocalyptic-movies-list]]

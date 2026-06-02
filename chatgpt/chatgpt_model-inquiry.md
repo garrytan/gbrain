@@ -28,3 +28,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Hey Mr. White! Sure thing. I'm currently running on GPT-4o, the advanced voice mode version, so I can chat with you naturally."}
 {'asset_pointer': 'sediment://file_000000003db071f59eb5c08b38d556cc', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-08-06T17:33:55.413083+00:00', 'format': 'wav', 'metadata': {'end': 6.8, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 326478, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_model-selection-inquiry]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]

@@ -26,3 +26,11 @@ Compose a message to Sara who worked for us during christmas the last 2 years an
 ## Assistant
 
 Hi Sara—hope you’re well! Our Halloween show opens this week and we’d love to have you back. Do you have any availability to work? I’ll include a calendar in this text—please grab any shifts that fit. Thanks! —Mr. White
+
+
+## See Also
+- [[chatgpt/chatgpt_compose-group-chat-message]]
+- [[chatgpt/chatgpt_compose-policy-refusal-message]]
+- [[chatgpt/chatgpt_compose-text-message]]
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_anniversary-trip-message]]

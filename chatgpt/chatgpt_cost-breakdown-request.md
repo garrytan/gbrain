@@ -57,3 +57,11 @@ Mr. White, here’s the split:
 - 1 × Mushroom Chocolate @ $50  
 - 1 g Ketamine (S – psychoactive) @ $100  
 - 2 × Orange Ecstasy Tesla @ $25 each = $50  
+
+
+## See Also
+- [[chatgpt/chatgpt_macro-breakdown-request]]
+- [[chatgpt/chatgpt_pay-and-tip-breakdown-request]]
+- [[chatgpt/chatgpt_patent-cost-breakdown]]
+- [[chatgpt/chatgpt_service-cost-breakdown]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]

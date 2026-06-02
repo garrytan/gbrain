@@ -32,3 +32,11 @@ If you want to check DNS propagation, here are some reliable tools you can use:
 - entity["software", "MXToolbox DNS Propagation", 0] — useful if you want to spot propagation issues and diagnostics. citeturn0search2  
 
 If you provide a specific domain and record type (A, MX, CNAME etc.), I can help walk you through what to look for and interpret some results.
+
+
+## See Also
+- [[chatgpt/chatgpt_dns-propagation-check-part1]]
+- [[chatgpt/chatgpt_dns-propagation-check-part2]]
+- [[chatgpt/chatgpt_dns-propagation-check-part3]]
+- [[chatgpt/chatgpt_dns-propagation-check-part4]]
+- [[chatgpt/chatgpt_dns-propagation-time]]

@@ -102,3 +102,11 @@ Thanks for helping keep things running smoothly!
 ---
 
 Want me to make this more like a super quick text you can fire off in one breath, or keep the slightly detailed reminder style?
+
+
+## See Also
+- [[chatgpt/chatgpt_bullet-point-list-for-vincent]]
+- [[chatgpt/chatgpt_button-text-update]]
+- [[chatgpt/chatgpt_cant-hear-ai-text]]
+- [[chatgpt/chatgpt_clean-up-text-2]]
+- [[chatgpt/chatgpt_clean-up-text-options]]

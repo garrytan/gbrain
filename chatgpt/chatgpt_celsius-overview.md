@@ -48,3 +48,11 @@ Examples:
 For quick mental estimates, multiply the Celsius temperature by 2 and add 30. This gives a rough approximation of the Fahrenheit value. citeturn0search7
 
 The Celsius scale is widely used globally and is part of the International System of Units (SI). It is commonly used in scientific contexts and everyday temperature measurements. 
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

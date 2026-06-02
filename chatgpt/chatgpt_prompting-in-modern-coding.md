@@ -250,3 +250,11 @@ This produces sharper output than greenfield generation.
 **Move fast, give real context, state constraints, iterate aggressively, and use models as critics and thinking partners—not magic generators.**
 
 If you want, I can condense this into a **one-page operating system for using AI in startups**.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-52-prompting-guide]]
+- [[chatgpt/chatgpt_actor-in-modern-family]]
+- [[chatgpt/chatgpt_clowning-before-modern-family]]
+- [[chatgpt/chatgpt_commentary-on-modern-poetry]]
+- [[chatgpt/chatgpt_harold-grossman-modern-family]]

@@ -575,3 +575,11 @@ That is the clean setup.
 If you want, I can sketch the exact GitHub Actions split for:
 - PR: CodeRabbit + fast checks
 - merge_group: full tests only
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]

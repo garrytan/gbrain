@@ -53,3 +53,11 @@ Mr. White, **there’s no official “RAM requirement” for end-to-end (E2E) te
 - Consider lightweight test stages (API-only E2E) where possible to reduce browser footprint.
 
 **Bottom line:** If you want smooth local E2E runs, shoot for **≥16 GB RAM**. For CI with parallel execution and heavier stacks, **32 GB+** is a sensible target. E2E testing doesn’t have fixed system specs, but your hardware needs grow with test suite size and concurrency. citeturn0search1turn0search11
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]
+- [[chatgpt/chatgpt_cookie-banner-requirements-2]]
+- [[chatgpt/chatgpt_cookie-banner-requirements-3]]
+- [[chatgpt/chatgpt_cookie-banner-requirements]]
+- [[chatgpt/chatgpt_deepseek-v4-requirements]]

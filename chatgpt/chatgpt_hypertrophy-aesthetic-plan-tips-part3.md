@@ -122,3 +122,11 @@ Mr. White, here’s an updated approach, factoring in the revised priority (ches
 - **Deload**: Every 4–6 weeks, cut volume/weight ~50% or take a week off.
 
 This plan, prioritizing chest over back, uses Myo‐Reps effectively on isolation/machine lifts to pack in high‐quality volume without adding excessive sets. Follow progressive overload principles, recover properly, and you’ll see improved aesthetics per Israetel’s hierarchy.
+
+
+## See Also
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part1]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part2]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part3]]
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part3]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part3]]

@@ -74,3 +74,11 @@ I’ve been working on transferring the Statsig API keys into Doppler for each e
 While pasting values, the staging `NEXT_PUBLIC_STATSIG_CLIENT_KEY` field currently contains the staging server key (starting with `secret-w6wLSvQ9…`), which is not correct for a client key. It appears that the staging-specific client key isn’t visible in the Statsig interface, so I couldn’t copy it. The `STATSIG_SERVER_API_KEY` field in staging still needs the proper server key value.
 
 Due to these issues and limited time, I was not able to complete all environment updates accurately. I recommend reviewing and verifying the keys manually in Doppler and Statsig to ensure the correct client and server keys are set for each environment.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

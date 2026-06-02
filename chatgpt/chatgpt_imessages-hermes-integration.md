@@ -53,3 +53,11 @@ The caveats:
 4. **The iMessage transport can be free, but the model may still cost money.** If Hermes is calling OpenAI, OpenRouter, Nous Portal, etc., you still pay those inference/API costs. If you run the model locally, then the marginal cost is basically electricity, Mac uptime, and internet.
 
 My recommendation: use **BlueBubbles for receiving/sending iMessages through Hermes**, configure Hermes to only answer approved users, and force iMessage/blue-bubble behavior where possible. That gives you the closest version of “my agent lives in Messages and costs me nothing per message.”
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-command-palettes-integration]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]
+- [[chatgpt/chatgpt_background-image-integration]]
+- [[chatgpt/chatgpt_beeper-imessages-setup]]
+- [[chatgpt/chatgpt_builderio-supabase-integration]]

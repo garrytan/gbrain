@@ -100,3 +100,11 @@ In the story "Fight Club" by Chuck Palahniuk, the eight rules of Fight Club are:
 6. No shirts, no shoes.
 7. Fights will go on as long as they have to.
 8. If this is your first night at Fight Club, you have to fight.
+
+
+## See Also
+- [[chatgpt/chatgpt_fight-club-4k-release]]
+- [[chatgpt/chatgpt_fight-club-overview]]
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]
+- [[chatgpt/chatgpt_bikini-rules-in-maldives]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]

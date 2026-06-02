@@ -37,3 +37,11 @@ The most cliché American drinks include:
 8. **Mint Julep** - Traditional Southern cocktail with bourbon and mint.
 9. **Bloody Mary** - Spicy vodka-based brunch cocktail.
 10. **American Pale Ale (APA)** - Craft beer staple.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-making-drinks-images]]
+- [[chatgpt/chatgpt_shopping-list-for-drinks]]
+- [[chatgpt/chatgpt_zero-cal-drinks-best-choices]]
+- [[chatgpt/chatgpt_american-conspiracy-theories-summarized]]
+- [[chatgpt/chatgpt_american-conspiracy-theories]]

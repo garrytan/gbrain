@@ -39,3 +39,11 @@ If by **“cursor support”** you mean **how to get help or support for the Cur
 - If “cursor support” meant support for things like **Remote SSH**, Cursor *does* have that functionality built in. citeturn0search10
 
 If you want **direct support contact info** (email/ticketing), let me know and I can look up the latest official channels.
+
+
+## See Also
+- [[chatgpt/chatgpt_cursor-support-email-contacts]]
+- [[chatgpt/chatgpt_ai-adk-heic-support]]
+- [[chatgpt/chatgpt_best-car-lumbar-support-2]]
+- [[chatgpt/chatgpt_best-car-lumbar-support-3]]
+- [[chatgpt/chatgpt_best-car-lumbar-support]]

@@ -175,3 +175,11 @@ That gives:
 - LLM observability tool = mandatory  
 
 The winning architecture is **trace-first (OpenTelemetry) + LLM-native layer**, not logs-first.
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]
+- [[chatgpt/chatgpt_ai-chord-progression-tools]]
+- [[chatgpt/chatgpt_ai-code-review-tools]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]

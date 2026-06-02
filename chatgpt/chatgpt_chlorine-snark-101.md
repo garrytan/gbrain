@@ -57,3 +57,11 @@ Got you. Here’s a sharper, snarkier version:
 **“Excessive amount of chlorine”? Just to clarify—what’s the *recommended serving* of chlorine in a Coke bottle? Asking for the CDC.** 
 
 Want it even more sarcastic?
+
+
+## See Also
+- [[chatgpt/chatgpt_chlorine-pool-sex-safety]]
+- [[chatgpt/chatgpt_comment-improvement-with-snark]]
+- [[chatgpt/chatgpt_restaurant-tax-snark]]
+- [[chatgpt/chatgpt_viral-protest-snark-response]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

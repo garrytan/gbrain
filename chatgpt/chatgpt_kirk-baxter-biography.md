@@ -36,3 +36,11 @@ kirk baxter
 - Expanded into non-Fincher work as well, including *Dumb Money* and other feature films. citeturn0search3
 
 Baxter’s editing is noted for its precision and rhythm, contributing significantly to the storytelling and pace of major Hollywood films. citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_alessandra-ambrosio-biography]]
+- [[chatgpt/chatgpt_chuck-feeney-biography]]
+- [[chatgpt/chatgpt_sam-kolder-biography]]
+- [[chatgpt/chatgpt_kirk-baxters-film-work]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

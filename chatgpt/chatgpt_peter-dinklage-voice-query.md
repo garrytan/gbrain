@@ -101,3 +101,11 @@ The most likely rank order:
 2. **Dinklage aligned to a guide read for timing/cadence** — plausible.  
 3. **Dinklage plus a buried Hemsworth layer** — plausible, especially if you’re hearing Thor-like resonance.  
 4. **Mostly Hemsworth pitch-shifted and disguised as Dinklage** — least likely.
+
+
+## See Also
+- [[chatgpt/chatgpt_peter-hollens]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]
+- [[chatgpt/chatgpt_2024-election-outcome-query]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ai-workflow-for-voice-dictation]]

@@ -38,3 +38,11 @@ For something like **curry/sauce**:
 - Start **low speed / pulse**, then increase.
 
 If it’s hotter than that and you *must* blend it right away, the safest move is usually an **immersion blender** (no sealed container, much less pressure risk).
+
+
+## See Also
+- [[chatgpt/chatgpt_blender-3d-features-overview]]
+- [[chatgpt/chatgpt_blender-humanoid-creation-help-part1]]
+- [[chatgpt/chatgpt_blender-humanoid-creation-help-part2]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part1]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part10]]

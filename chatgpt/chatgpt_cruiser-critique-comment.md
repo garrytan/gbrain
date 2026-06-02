@@ -27,3 +27,11 @@ Slamtastic comment on why cruisers are morons
 ## Assistant
 
 "Getting sick on a floating toilet bowl of buffet shrimp and bingo? Shocking. Cruisers really said, ‘Let me trap myself on a germ barge with 4,000 strangers and pray the outbreak is mild.’ Darwin would be proud." 🛳🤒
+
+
+## See Also
+- [[chatgpt/chatgpt_comment-critique-request]]
+- [[chatgpt/chatgpt_comment-suggestion-critique]]
+- [[chatgpt/chatgpt_arguing-to-convince-comment]]
+- [[chatgpt/chatgpt_comment-improvement-with-snark]]
+- [[chatgpt/chatgpt_comment-request-explanation]]

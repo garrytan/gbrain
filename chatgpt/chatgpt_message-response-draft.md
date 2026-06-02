@@ -29,3 +29,11 @@ Respond to this person and tell them that they have my attention for one more me
 Here’s a copy-paste reply, Mr. White:
 
 “Hey — you’ve got my attention for one more message. I only have time/bandwidth for a single concise note, so state exactly what you need. If it isn’t clear and to the point, I’m out.”
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-response-draft]]
+- [[chatgpt/chatgpt_email-response-draft]]
+- [[chatgpt/chatgpt_response-draft-summary]]
+- [[chatgpt/chatgpt_response-to-delay-message]]
+- [[chatgpt/chatgpt_draft-complaint-message]]

@@ -47,3 +47,11 @@ give me 10 options
 8. "North Bergen news, first and foremost."
 9. "All the news that's fit to print, from North Bergen First."
 10. "For news that matters to North Bergen, trust North Bergen First."
+
+
+## See Also
+- [[chatgpt/chatgpt_animated-news-headlines]]
+- [[chatgpt/chatgpt_fake-news-clarification]]
+- [[chatgpt/chatgpt_hacker-news-overview-2]]
+- [[chatgpt/chatgpt_hacker-news-overview-3]]
+- [[chatgpt/chatgpt_hacker-news-overview]]

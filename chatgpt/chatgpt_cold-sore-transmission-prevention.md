@@ -147,3 +147,11 @@ Yes, you can contract a cold sore without sexual interaction. Cold sores are cau
 3. **Parent to Child:** A parent with a cold sore can transmit the virus to their child through regular parental activities like kissing.
 
 The virus spreads more easily when cold sores are present, but it can also spread when no symptoms are visible due to asymptomatic viral shedding.
+
+
+## See Also
+- [[chatgpt/chatgpt_bathtub-cold-water-issue]]
+- [[chatgpt/chatgpt_car-vandalism-prevention-tips]]
+- [[chatgpt/chatgpt_cold-increases-calorie-burn]]
+- [[chatgpt/chatgpt_cold-pool-surface-question]]
+- [[chatgpt/chatgpt_cold-start-audit-explained]]

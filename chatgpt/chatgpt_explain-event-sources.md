@@ -149,3 +149,11 @@ This is **expected behavior** for:
 The data is **polluted, not dangerous**. Clean it before launch and your post-launch metrics will normalize immediately.
 
 If you want, I can give you a **precise Vercel + Next.js config** to zero this out in under 10 minutes.
+
+
+## See Also
+- [[chatgpt/chatgpt_convert-code-to-emit-event]]
+- [[chatgpt/chatgpt_create-calendar-event]]
+- [[chatgpt/chatgpt_event-prep-plan]]
+- [[chatgpt/chatgpt_event-setup-instructions]]
+- [[chatgpt/chatgpt_event-time-change-tracking]]

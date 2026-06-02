@@ -55,3 +55,11 @@ Chris Voss tactics used: clear value (high-end content + reach), precise dates, 
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_8-slide-yc-pitch-deck]]
+- [[chatgpt/chatgpt_amazon-music-remix-pitch]]
+- [[chatgpt/chatgpt_branch-music-creators-yc-pitch-part1]]
+- [[chatgpt/chatgpt_branch-music-creators-yc-pitch-part2]]
+- [[chatgpt/chatgpt_dove-mencare-partnership-pitch]]

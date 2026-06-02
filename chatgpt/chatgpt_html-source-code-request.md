@@ -119,3 +119,11 @@ You can call this function whenever you want to click on the first profile in th
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_html-code-explanation]]
+- [[chatgpt/chatgpt_html-ui-request]]
+- [[chatgpt/chatgpt_input-field-html-code]]
+- [[chatgpt/chatgpt_programming-code-request]]
+- [[chatgpt/chatgpt_ai-and-open-source]]

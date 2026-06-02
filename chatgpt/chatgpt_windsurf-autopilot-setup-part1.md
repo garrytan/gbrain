@@ -755,3 +755,11 @@ Then confirm in Issues that labels/assignee are correct and Copilot starts runs.
 
 
 Where does the plan.md file get stored by Windsurf by default?
+
+
+## See Also
+- [[chatgpt/chatgpt_windsurf-autopilot-setup-part2]]
+- [[chatgpt/chatgpt_windsurf-autopilot-prompt]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_create-account-page-setup-part1]]
+- [[chatgpt/chatgpt_setup-storybook-with-vue-part1]]

@@ -523,3 +523,11 @@ Sure, here's a shorter version of the code:
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_vuejs-pricing-template-2]]
+- [[chatgpt/chatgpt_vuejs-pricing-component]]
+- [[chatgpt/chatgpt_vuejs-button-template-2]]
+- [[chatgpt/chatgpt_vuejs-button-template]]
+- [[chatgpt/chatgpt_vuejs-component-template]]

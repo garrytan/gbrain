@@ -229,3 +229,11 @@ The second CSS rule applies to the `:before` pseudo-element of the button and cr
 The third CSS rule uses the `:not()` pseudo-class selector to target all buttons that are not the first child of their parent element (i.e., not the first button), as well as their `:before` pseudo-elements. It sets the background to black and the text color to white. 
 
 By doing this, both the button and its `:before` pseudo-element will have the same black background and white text if they are not the first element.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

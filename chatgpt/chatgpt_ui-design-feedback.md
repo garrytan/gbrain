@@ -76,3 +76,11 @@ Want a Figma mockup or SwiftUI refactor for this screen?
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_design-feedback-improvement]]
+- [[chatgpt/chatgpt_ai-feedback-prompt]]
+- [[chatgpt/chatgpt_app-ui-feedback]]
+- [[chatgpt/chatgpt_application-revision-feedback]]
+- [[chatgpt/chatgpt_buyer-feedback-visibility]]

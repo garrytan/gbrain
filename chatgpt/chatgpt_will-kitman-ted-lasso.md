@@ -65,3 +65,11 @@ The woman is **entity["fictional_character","Ms. Kakes","Ted Lasso charact
 - She often delivers Rupert’s instructions and manages logistics for Nate at the club.
 
 Actor: **entity["known_celebrity","Kiki May","British actress"]**.
+
+
+## See Also
+- [[chatgpt/chatgpt_origin-of-ted-lasso]]
+- [[chatgpt/chatgpt_stinkys-daughter-in-ted-lasso]]
+- [[chatgpt/chatgpt_ted-lasso-3-seasons]]
+- [[chatgpt/chatgpt_ted-lasso-filming-locations]]
+- [[chatgpt/chatgpt_ted-lasso-imdb]]

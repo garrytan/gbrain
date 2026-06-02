@@ -242,3 +242,11 @@ Here are some highlights and what they offer:
 ---
 
 If you like, I can narrow further to **“best for your car model (make/year)”**, cross-reference Reddit feedback specific to seats like yours, and recommend *one* “highest probability” winner. Do you want me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_best-car-lumbar-support-2]]
+- [[chatgpt/chatgpt_best-car-lumbar-support-3]]
+- [[chatgpt/chatgpt_best-car-lumbar-support]]
+- [[chatgpt/chatgpt_ai-adk-heic-support]]
+- [[chatgpt/chatgpt_carplay-support-for-chatgpt]]

@@ -279,3 +279,11 @@ New daily line: **187 P / 58 F / 52 C / ~1 480 kcal**
 - Optional: ramen bricks, queso, chips, seltzers for swaps  
 
 Stay loose, log in MacroFactor nightly, and you’ll land on target without gut-bombing yourself with bars. Enjoy the trip, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_cutting-phase-meal-plan]]
+- [[chatgpt/chatgpt_dairy-free-protein-meal-plan]]
+- [[chatgpt/chatgpt_diet-plan-meal-prep]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part1]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part2]]

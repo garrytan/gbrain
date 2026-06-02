@@ -666,3 +666,11 @@ The idea is worth trying because it has a clean hook, low production cost, stron
 The main risk is execution quality. A 30-minute raw browser recording will likely feel boring. A generic AI voice reading generic AI text will feel like spam. The winning version needs editing, character, recurring memory, and comment-to-canon payoff.
 
 My recommendation: ship the manual version immediately, make the daily Short the main product, and treat the full 30-minute session as behind-the-scenes source material. The 100x outcome comes from the comment loop, not the browsing itself.
+
+
+## See Also
+- [[chatgpt/chatgpt_anime-character-creation]]
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part1]]
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part2]]
+- [[chatgpt/chatgpt_character-clara-musso-on-lie-to-me]]
+- [[chatgpt/chatgpt_character-of-musician-in-image]]

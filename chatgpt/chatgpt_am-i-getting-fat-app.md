@@ -235,3 +235,11 @@ Mr. White—here’s how to keep it brutally simple but unbeatable at answering 
 
  — **Flow**:  
 Open app → see last weight + arrow → enter today’s weight (or auto-import) → get instant “lean”/“fat” verdict. No menus, no fluff.
+
+
+## See Also
+- [[chatgpt/chatgpt_cacheadvance-getting-started]]
+- [[chatgpt/chatgpt_getting-a-publishing-deal]]
+- [[chatgpt/chatgpt_getting-into-joker-character]]
+- [[chatgpt/chatgpt_getting-quarters-when-closed]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

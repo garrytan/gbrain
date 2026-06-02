@@ -186,3 +186,11 @@ Last DEXA: **16.8% body fat on May 17, 2025.** fileciteturn1file2L60-L6
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part2]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part3]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]
+- [[chatgpt/chatgpt_fitness-plan-with-phases]]
+- [[chatgpt/chatgpt_fitness-tracking-and-plan]]

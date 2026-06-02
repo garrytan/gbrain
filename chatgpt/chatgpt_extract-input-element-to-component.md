@@ -99,3 +99,11 @@ export default {
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-code-to-component-2]]
+- [[chatgpt/chatgpt_extract-code-to-component]]
+- [[chatgpt/chatgpt_vuejs-input-component]]
+- [[chatgpt/chatgpt_vuejs-otp-input-component-2]]
+- [[chatgpt/chatgpt_vuejs-otp-input-component-3]]

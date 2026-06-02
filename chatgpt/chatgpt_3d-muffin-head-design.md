@@ -48,3 +48,11 @@ Here’s a more friendly version of the muffin head, now worn by a character. Le
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_muffin-head-logo-design]]
+- [[chatgpt/chatgpt_edm-muffin-helmet-design]]
+- [[chatgpt/chatgpt_muffin-head-style-transfer]]
+- [[chatgpt/chatgpt_muffin-helmet-design-prompt]]
+- [[chatgpt/chatgpt_muffin-helmet-design]]

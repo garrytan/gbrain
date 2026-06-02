@@ -129,3 +129,11 @@ Produce **two artifacts**:
 ---
 
 If you’d like, I can also give you a one-liner follow-up prompt to have the agent **open Linear issues** per JSON finding, tagged by `MVP`, `BLOCKER/MAJOR`, and component owner.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_codex-audit-prompt]]
+- [[chatgpt/chatgpt_landing-page-audit-prompt]]
+- [[chatgpt/chatgpt_add-cloud-code-ci]]

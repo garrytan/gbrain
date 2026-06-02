@@ -46,3 +46,11 @@ Effective indirect strategies to avoid alcohol service might include:
 9. **Blending in with a group:** If you are in a social setting, observing others in your group who aren't drinking or ordering non-alcoholic drinks can make it easier for you to do the same.
 
 Remember, it's essential to be honest and respectful when using these strategies. If you choose not to consume alcohol, it's your personal decision, and you don't need to justify it to anyone. Servers and establishments should always respect your preferences.
+
+
+## See Also
+- [[chatgpt/chatgpt_excuses-for-avoiding-alcohol]]
+- [[chatgpt/chatgpt_ai-agent-test-strategies]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]
+- [[chatgpt/chatgpt_debate-strategies-overview]]
+- [[chatgpt/chatgpt_development-velocity-strategies]]

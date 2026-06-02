@@ -94,3 +94,11 @@ Before next **flight/descent** (after a doctor okays it):
 Go **immediately** if you get: thunderclap onset, new weakness/numbness, vision/speech trouble, unequal pupils, severe persistent eye pain/redness, fever/stiff neck, head/neck trauma, or it doesn’t improve.
 
 Want me to save a quick **travel-headache protocol** for you (triggers: altitude/descent, dehydration, sleep loss; meds to pack; pre-descent steps)?
+
+
+## See Also
+- [[chatgpt/chatgpt_conversation-recap-summary]]
+- [[chatgpt/chatgpt_casual-conversation-response]]
+- [[chatgpt/chatgpt_casual-conversation]]
+- [[chatgpt/chatgpt_conversation-duration-breakdown]]
+- [[chatgpt/chatgpt_hello-conversation]]

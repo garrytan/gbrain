@@ -53,3 +53,11 @@ Here are your real-world options:
 • Simple and cheap, but manual.
 
 Toast support will confirm there’s no hidden setting for “per-item runner prints” without separate routing. If you want true automation without menu duplication, option 3 (middleware using Toast API/webhooks) is the only clean technical fix.
+
+
+## See Also
+- [[chatgpt/chatgpt_automating-tixer-ticket-updates]]
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_drink-ticket-printing-tips]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_fixer-ticket-sales-setup]]

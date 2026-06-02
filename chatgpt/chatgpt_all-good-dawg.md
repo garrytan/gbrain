@@ -26,3 +26,11 @@ Yeah, dawg. So... It's fine, I'm good. We're all good.
 ## Assistant
 
 Heard. All good in the hood. Just say the word if you need anything, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_chaotic-good-strategy]]
+- [[chatgpt/chatgpt_visor-repair-options-dawg]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

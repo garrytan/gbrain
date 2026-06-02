@@ -125,3 +125,11 @@ Goal: **Apple-level polish + Linear-level design magic** while staying true to *
 Move all visual decisions into a **single source of truth** (tokens + shadcn primitives).  
 Enforce *one* dark scale, *one* border system, *one* type scale.  
 Add subtle motion and consistent spacing to reach that **Apple-meets-Linear** feel while staying YC-fast.
+
+
+## See Also
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part1]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part2]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part3]]
+- [[chatgpt/chatgpt_ux-audit-recommendations]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]

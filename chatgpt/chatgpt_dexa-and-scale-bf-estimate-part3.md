@@ -168,3 +168,11 @@ Cut cleanly for 4–6 weeks.
 Then reassess.
 
 If you want, I can tell you the exact weight/waist trigger where a DEXA becomes worth the money.
+
+
+## See Also
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part1]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part2]]
+- [[chatgpt/chatgpt_compare-scale-and-dexa-data]]
+- [[chatgpt/chatgpt_compare-scale-data-and-dexa]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part3]]

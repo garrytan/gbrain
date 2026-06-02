@@ -41,3 +41,11 @@ Chlorinated water can mess with the vaginal pH and microbiome, especially if you
 Technically possible, but **not recommended**. If you're gonna do it, rinse off well after, maybe use lube that’s safe in water, and don’t rely on a condom alone for protection in that setting.
 
 If you want a vibe without the risk? **Foreplay in the pool, real action after the shower.**
+
+
+## See Also
+- [[chatgpt/chatgpt_chlorine-snark-101]]
+- [[chatgpt/chatgpt_cold-pool-surface-question]]
+- [[chatgpt/chatgpt_db-pool-pressure]]
+- [[chatgpt/chatgpt_dry-ice-drink-safety]]
+- [[chatgpt/chatgpt_e-scooter-safety-data]]

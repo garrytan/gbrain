@@ -911,3 +911,11 @@ Using the formula:
 \[ FFMI = 17.76 \]
 
 So, with a body fat of 20%, your FFMI is approximately 17.76.
+
+
+## See Also
+- [[chatgpt/chatgpt_dexa-scan-analysis]]
+- [[chatgpt/chatgpt_dexa-scan-results-summary]]
+- [[chatgpt/chatgpt_dexa-scan-affected-by-water-weight]]
+- [[chatgpt/chatgpt_dexa-scan-and-water-weight]]
+- [[chatgpt/chatgpt_dexa-scan-budget-update]]

@@ -40,3 +40,11 @@ Here’s the list of things you need to order for the bar:
    - Replace the old, worn-out spouts
 
 Is there anything else you need to add or any specific preferences for these items?
+
+
+## See Also
+- [[chatgpt/chatgpt_liquor-order-list-started]]
+- [[chatgpt/chatgpt_liquor-order-list]]
+- [[chatgpt/chatgpt_order-list-compilation]]
+- [[chatgpt/chatgpt_order-list-for-the-week]]
+- [[chatgpt/chatgpt_order-list-summary]]

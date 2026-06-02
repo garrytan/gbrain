@@ -64,3 +64,11 @@ Here’s a summary of *Wings* (1927), Mr. White:
 ---
 
 If you meant a different “Wings film” (for example a more recent film titled *Wings* or spelled differently), I can look that up too. Would you like me to check any alternate “Wings” titles?
+
+
+## See Also
+- [[chatgpt/chatgpt_fashion-film-shot-list]]
+- [[chatgpt/chatgpt_film-grain-examples]]
+- [[chatgpt/chatgpt_film-productions-returning-to-california]]
+- [[chatgpt/chatgpt_film-title-clarification-needed]]
+- [[chatgpt/chatgpt_film-vs-memory-debate]]

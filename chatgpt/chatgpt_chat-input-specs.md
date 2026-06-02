@@ -167,3 +167,11 @@ For Jovie, I’d copy the pattern as:
 ```
 
 The key size constraints are `max-width: 720–768px`, `min-height: ~88px`, `36px` action buttons, `16px / 24px` text, and `28px` radius.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_extract-input-element-to-component]]
+- [[chatgpt/chatgpt_fix-invalid-input]]
+- [[chatgpt/chatgpt_format-currency-input-text]]

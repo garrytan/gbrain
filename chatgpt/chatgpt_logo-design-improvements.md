@@ -117,3 +117,11 @@ Notes:
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_profile-design-improvements-2]]
+- [[chatgpt/chatgpt_profile-design-improvements]]
+- [[chatgpt/chatgpt_screen-design-improvements-2]]
+- [[chatgpt/chatgpt_screen-design-improvements]]
+- [[chatgpt/chatgpt_table-design-improvements]]

@@ -578,3 +578,11 @@ The updated Excel file has been successfully created. You can download it using 
 
 
 i want to make 18L batches. for things where i dont the bottle size, just use the standard bottle size for that type of liquid
+
+
+## See Also
+- [[chatgpt/chatgpt_draft-cocktail-menu-part2]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part3]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part4]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part5]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part1]]

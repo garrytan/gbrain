@@ -56,3 +56,11 @@ class PhotoScanManager: ObservableObject {
 Optional: Use `onAppear` in SwiftUI or scene phase listeners to reset/trigger intelligently.
 
 Let me know if you want this tied into a `NavigationLink` or tab system specifically.
+
+
+## See Also
+- [[chatgpt/chatgpt_car-vandalism-prevention-tips]]
+- [[chatgpt/chatgpt_cold-sore-transmission-prevention]]
+- [[chatgpt/chatgpt_prevention-of-sickness-comparison]]
+- [[chatgpt/chatgpt_ct-scan-contrast-prep]]
+- [[chatgpt/chatgpt_dexa-scan-affected-by-water-weight]]

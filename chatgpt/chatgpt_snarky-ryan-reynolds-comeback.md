@@ -47,3 +47,11 @@ Here’s a sharp but still playful reply you could use:
 > “Well, considering you offered a trade without actually offering anything to trade… yeah, I feel *excellent* about sticking with cash. 👍”
 
 It highlights the flaw in their logic, keeps the humor, and makes their “feel good about that one?” line look empty without you sounding angry.
+
+
+## See Also
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comment]]
+- [[chatgpt/chatgpt_dunk-in-ryan-reynolds-style]]
+- [[chatgpt/chatgpt_ryan-reynolds-fact-check]]
+- [[chatgpt/chatgpt_super-cocky-ryan-reynolds]]
+- [[chatgpt/chatgpt_airbnb-review-ryan-style]]

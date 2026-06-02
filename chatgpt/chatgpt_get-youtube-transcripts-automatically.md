@@ -42,3 +42,11 @@ To get transcripts of all YouTube videos on a channel, you'll need to follow the
 Remember, when using the YouTube API or third-party tools, always adhere to YouTube's Terms of Service, especially regarding data usage and copyright.
 
 For large-scale or ongoing transcript retrieval, the YouTube Data API is the most robust and compliant method. It requires an API key, which you can get from the Google Developer Console, and a familiarity with programming, preferably in a language like Python.
+
+
+## See Also
+- [[chatgpt/chatgpt_app-automation-for-youtube]]
+- [[chatgpt/chatgpt_automate-youtube-shorts-urls]]
+- [[chatgpt/chatgpt_black-screen-youtube-fix]]
+- [[chatgpt/chatgpt_optimized-tags-for-youtube]]
+- [[chatgpt/chatgpt_reddit-youtube-pure-genius-rebrand]]

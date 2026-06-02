@@ -41,3 +41,11 @@ It’s recommended to maintain thorough records of all transactions, income rece
 
 
 **Topic:** [[chatgpt-clusters/personal_finance]]
+
+
+## See Also
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]

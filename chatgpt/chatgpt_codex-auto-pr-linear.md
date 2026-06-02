@@ -216,3 +216,11 @@ If you want, I can:
 - Show how to do this **entirely inside Linear automations** (limited but possible)
 
 Say the word.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-auto-pr-options]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_linear-auto-pr-setup]]
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]

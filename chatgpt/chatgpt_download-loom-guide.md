@@ -84,3 +84,11 @@ Mr. White,
 - Browser extensions claiming “Loom downloaders” are unreliable and risky.
 
 If you want, tell me whether **you own the video** or **received a shared link**, and what device you’re on (Mac/Windows).
+
+
+## See Also
+- [[chatgpt/chatgpt_loom-meaning-explanation]]
+- [[chatgpt/chatgpt_artifact-download-error]]
+- [[chatgpt/chatgpt_download-spotify-artist-images]]
+- [[chatgpt/chatgpt_download-video-audio-javascript]]
+- [[chatgpt/chatgpt_vercel-toolbar-download]]

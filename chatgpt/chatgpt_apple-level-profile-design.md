@@ -270,3 +270,11 @@ you did the invest of what i wanted.
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-level-design-tips]]
+- [[chatgpt/chatgpt_write-apple-level-prompt]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-page-design]]

@@ -45,3 +45,11 @@ Mr. White — **YC’s current software-engineering roles are listed at $185K–
 The strongest read: **a YC software engineer probably lands somewhere around $185K–$485K base**, with **total comp potentially higher** if the profit-sharing is meaningful. The broad band suggests YC is hiring both strong generalists and unusually high-end founder/early-engineer types.
 
 Salary aggregators are noisy here. Levels.fyi reports YC software engineer compensation around **$324K–$460K total comp**, with a general YC median around **$402K**, while Glassdoor and Indeed show much lower numbers based on tiny sample sizes or limited postings. I would trust **YC’s own current job postings** over the third-party estimates. citeturn393443view0turn393443view1turn393443view2turn393443view3
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]

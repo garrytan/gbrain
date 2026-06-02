@@ -38,3 +38,11 @@ Here’s a concise explanation of what your keywords relate to:
 - In NFL gameday shows, smart glass elements are installed above host desks or integrated into set pieces. They serve as both a clear view through the studio when inactive and as a vibrant, animated display when active, adding depth that flat screens can’t. citeturn0search2turn0search12
 
 If you want specifics on how the projection mapping is technically implemented or what manufacturers/systems are behind it, let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_companies-doing-projection-mapping]]
+- [[chatgpt/chatgpt_qlab-projection-masking-tips]]
+- [[chatgpt/chatgpt_champagne-glass-alternatives]]
+- [[chatgpt/chatgpt_description-of-glass-tables]]
+- [[chatgpt/chatgpt_glass-bottle-mark-meaning]]

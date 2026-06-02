@@ -45,3 +45,11 @@ ffantastic mr fox
 • It was praised for its visual style and humor and remains one of Anderson’s most distinctive works. citeturn0search2
 
 In short, *Fantastic Mr. Fox* blends wit, heart, and adventure in a story about outwitting adversity and valuing kinship and community over brute force. citeturn0search23
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_alex-gaudino-song-summary]]
+- [[chatgpt/chatgpt_ams-return-policy-summary]]

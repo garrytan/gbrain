@@ -44,3 +44,11 @@ Options you have:
 Most teams go with **#1** (separate Neon projects per environment), because it keeps secrets and traffic isolated, and works with Clerk’s separation.  
 
 Do you want me to show you how to set up the dual-project workflow in Neon so you can just point dev at one project and prod at another?
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]
+- [[chatgpt/chatgpt_neon-auth-and-clerk]]
+- [[chatgpt/chatgpt_allan-keys-amazon]]
+- [[chatgpt/chatgpt_javascript-switch-arrow-keys]]
+- [[chatgpt/chatgpt_set-google-cse-keys]]

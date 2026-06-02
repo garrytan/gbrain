@@ -579,3 +579,11 @@ END:VCALENDAR
 - Then to delete other stuff: switch to **Schedule view**, select unwanted events → **Delete** (or bulk-delete by searching and deleting).
 
 If you tell me **Google Calendar or Apple Calendar**, I’ll give you the quickest exact click-path for bulk deletion on that platform.
+
+
+## See Also
+- [[chatgpt/chatgpt_work-hours-calculation]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]

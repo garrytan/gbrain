@@ -215,3 +215,11 @@ To use the `"browserAction"` permission in your extension's manifest file, you s
 Once you have added this permission to your manifest file, you should be able to use the `chrome.browserAction` API in your extension code, including the `setIcon()` function to set the icon for the extension's browser action.
 
 I hope this helps! Let me know if you have any other questions.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

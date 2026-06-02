@@ -368,3 +368,11 @@ Use this split:
 Use singular if you use the category line at all. “Vertical AI agent” sounds like the worker. “Vertical AI agents” sounds like internal architecture.
 
 My recommendation is simple: keep **AI** in the line, drop **vertical AI agents** from the YC opener, and use the agent framing one layer down in the deck.
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_startup-application-strategy-part1]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part1]]
+- [[chatgpt/chatgpt_yc-application-audit-part2]]

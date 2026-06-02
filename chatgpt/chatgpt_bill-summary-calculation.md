@@ -45,3 +45,11 @@ Here’s what you ordered and what you owe based on the receipt:
 ### **Total You Owe** ≈ **$123.89**
 
 Let me know if you’re splitting it differently.
+
+
+## See Also
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]

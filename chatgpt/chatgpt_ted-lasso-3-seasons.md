@@ -74,3 +74,11 @@ How many seasons of Ted Lasso are there?
 ## Assistant
 
 As of now, there have been a total of 3 seasons of "Ted Lasso"【26†source】【27†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_origin-of-ted-lasso]]
+- [[chatgpt/chatgpt_stinkys-daughter-in-ted-lasso]]
+- [[chatgpt/chatgpt_ted-lasso-filming-locations]]
+- [[chatgpt/chatgpt_ted-lasso-imdb]]
+- [[chatgpt/chatgpt_ted-lasso-mental-health]]

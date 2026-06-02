@@ -92,3 +92,11 @@ Public info on him is thin, but here’s what’s clear from profiles on the Duf
   - Government-funded research contracts (US agencies, etc.)
 
 So: he wasn’t doing physics or monsters-in-a-lab stuff; he was in the **applied research / policy / social-science world**, the kind of place that runs large-scale studies and reports for governments and institutions. The exact **topic** of *his* projects isn’t publicly detailed anywhere, just his role and employer.
+
+
+## See Also
+- [[chatgpt/chatgpt_margaret-qualleys-parents]]
+- [[chatgpt/chatgpt_victoria-justice-parents]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

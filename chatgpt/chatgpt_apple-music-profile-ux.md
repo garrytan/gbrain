@@ -104,3 +104,11 @@ These suggestions reflect broader user expectations that Apple’s current desig
 ---
 
 If you want a **visual breakdown of the current profile interface flows** (e.g., screens and interactions), I can reconstruct them based on Apple Music’s UI patterns.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_apple-music-affiliate-program]]
+- [[chatgpt/chatgpt_apple-music-overview]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]

@@ -52,3 +52,11 @@ framer ai
 Framer AI uses a *freemium* model — free tier available with hosted sites, with paid plans for custom domains, CMS features, and advanced tools. citeturn0search18
 
 In short: **Framer AI combines AI-driven automation with visual site design**, letting you go from idea to a fully deployable website much faster than manual design. citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_framer-overview]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]

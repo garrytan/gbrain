@@ -50,3 +50,11 @@ I kept live traction numbers un-invented; slide 10 lists the metrics to drop in 
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_8-slide-yc-pitch-deck]]
+- [[chatgpt/chatgpt_marketing-highlights-pitch-deck]]
+- [[chatgpt/chatgpt_pitch-deck-enhancement]]
+- [[chatgpt/chatgpt_pitch-deck-idea]]
+- [[chatgpt/chatgpt_pitch-deck-integration-plan]]

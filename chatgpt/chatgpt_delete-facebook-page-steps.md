@@ -39,3 +39,11 @@ Notes:
 - If you want to keep the Page but hide it, choose **Deactivate** instead.
 
 That’s it—you don’t need to delete your personal profile to remove the Page.
+
+
+## See Also
+- [[chatgpt/chatgpt_facebook-acquired-tbh-trick]]
+- [[chatgpt/chatgpt_facebook-listing-creation]]
+- [[chatgpt/chatgpt_facebook-listing-request]]
+- [[chatgpt/chatgpt_facebook-marketplace-description]]
+- [[chatgpt/chatgpt_facebook-marketplace-guide]]

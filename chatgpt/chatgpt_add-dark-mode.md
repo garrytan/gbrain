@@ -41,3 +41,11 @@ To add a dark mode to the ChevronDownIcon component, you can modify the class at
 In the above code, the `dark:text-white` class is added to the component, assuming that it sets the text color to white in the dark mode. You may need to adjust the class name based on your CSS or utility class framework.
 
 Remember to make sure you have set up dark mode styles in your application and have a mechanism to toggle between light and dark themes. The above code assumes you have a `dark` CSS class or utility class that applies dark mode styles when active.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-prompt-for-dark-mode]]
+- [[chatgpt/chatgpt_dark-mode-change]]
+- [[chatgpt/chatgpt_dark-mode-linear-colors]]
+- [[chatgpt/chatgpt_mockup-request-dark-mode]]
+- [[chatgpt/chatgpt_pass-color-prop-based-on-dark-mode]]

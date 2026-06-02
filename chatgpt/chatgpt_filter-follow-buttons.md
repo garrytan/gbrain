@@ -900,3 +900,11 @@ Now, whenever you are on a page with "Follow" buttons, you can click the "Follow
 - If a button's text is "Follow", the `click()` method is called on it to simulate a click.
 
 This method is straightforward and should work well for your needs. If you need further customization or encounter any issues, feel free to ask!
+
+
+## See Also
+- [[chatgpt/chatgpt_click-all-follow-buttons]]
+- [[chatgpt/chatgpt_automate-follow-clicks]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part1]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part2]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part3]]

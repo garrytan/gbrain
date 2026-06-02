@@ -124,3 +124,11 @@ SonarCloud itself *no longer supports Node.js v16* in the **analysis environment
 - **Yes:** SonarCloud can analyze Next.js 16 projects.  
 - **Make sure:** Your **CI/analysis uses Node.js 20+** (Node 16 support is dropped).  
 - **SonarCloud scanning** itself doesn’t block Next.js 16 code — it’s just the runtime version for the scanner that matters.
+
+
+## See Also
+- [[chatgpt/chatgpt_cloud-code-node-modules]]
+- [[chatgpt/chatgpt_node-22-overview]]
+- [[chatgpt/chatgpt_node-22-vs-node-24]]
+- [[chatgpt/chatgpt_node-version-conflict-fix]]
+- [[chatgpt/chatgpt_npm-i-npm-run-prod-rm-rf-node-modules-run-npm-commands]]

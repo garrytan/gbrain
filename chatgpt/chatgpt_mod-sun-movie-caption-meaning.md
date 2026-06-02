@@ -90,3 +90,11 @@ Each of these interpretations isn’t mutually exclusive – in fact, the true m
 - Interview quotes and articles where Mod Sun discusses life as a “movie”【18†L52-L60】【10†L29-L36】  
 - Mod Sun’s album and creative references to **Movie**【38†L253-L259】  
 - Cultural references to “life is a movie” in music and slang【23†L68-L76】【23†L95-L100】【42†L1-L4】
+
+
+## See Also
+- [[chatgpt/chatgpt_explain-caption-meaning]]
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_elio-movie-details]]
+- [[chatgpt/chatgpt_famous-movie-hackers]]

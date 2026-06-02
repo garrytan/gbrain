@@ -41,3 +41,11 @@ Short answer, Mr. White — depends what’s locked.  Try these, in order:
 5. **If a password is lost or it’s a third-party desklock plugin** — some shops use plugins (e.g., Pro Desklock) to enforce password unlock; contact the show file author or MA Lighting support if you can’t obtain credentials. Don’t attempt hardware tampering. citeturn0search15turn0search5
 
 If you tell me which model/OS you’re on (grandMA2, grandMA3, dot2, onPC) and exactly what message you see (e.g., “Desk locked”, “Object locked”, “Login”), I’ll give the exact command or keystrokes — but the shortcuts above solve ~90% of cases.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-auth-console-overview]]
+- [[chatgpt/chatgpt_resale-value-of-console-1]]
+- [[chatgpt/chatgpt_turn-on-console]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

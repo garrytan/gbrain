@@ -70,3 +70,11 @@ Your share of the bill = **$32.98 ÷ 84.95 ≈ 38.8 %**
 - **25 % tip:** about **$41**  
 
 Hand over ~$40 and you’re covered.
+
+
+## See Also
+- [[chatgpt/chatgpt_calculate-owed-amount]]
+- [[chatgpt/chatgpt_bill-split-breakdown]]
+- [[chatgpt/chatgpt_bill-summary-calculation]]
+- [[chatgpt/chatgpt_calculate-diet-phase-stats]]
+- [[chatgpt/chatgpt_calculate-fat-weight-formula]]

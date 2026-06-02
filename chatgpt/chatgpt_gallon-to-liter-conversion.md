@@ -26,3 +26,11 @@ What is half a gallon in meters?
 ## Assistant
 
 Half a gallon is a measure of volume, not length, so it cannot be directly converted to meters, which measure length. However, if you're looking to convert half a gallon to a metric volume unit, half a gallon (US) is approximately 1.89 liters.
+
+
+## See Also
+- [[chatgpt/chatgpt_ounces-in-a-gallon]]
+- [[chatgpt/chatgpt_air-fryer-conversion]]
+- [[chatgpt/chatgpt_batch-conversion-recipe]]
+- [[chatgpt/chatgpt_batch-recipe-conversion]]
+- [[chatgpt/chatgpt_best-ux-and-conversion]]

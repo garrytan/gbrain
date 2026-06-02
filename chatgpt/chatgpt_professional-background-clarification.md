@@ -68,3 +68,11 @@ Here are several current projection‑mapping‑related roles in the Los Angeles
 | **Sales Representative – Barco (Los Angeles, CA)** | Barco develops projection and immersive‑display technologies.  The sales role (listed on ZipRecruiter) offers **≈ $77K‑$128K per year** and involves representing Barco’s projection and virtual‑reality products for live events, themed entertainment and **projection‑mapping** applications【182084570436623†L25-L28】.  Ideal for someone with technical knowledge of AV/projection systems and client‑relationship skills. | ZipRecruiter listing【182084570436623†L25-L28】 |
 
 **Next steps:** These postings suggest a handful of active projection‑mapping roles in the Los Angeles area. If any of these interests you, you can visit the company sites or job boards to apply. The “Museum Technology Specialist” job page is open in a new tab for you to explore further.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-tools-for-background-placement]]
+- [[chatgpt/chatgpt_background-color-description]]
+- [[chatgpt/chatgpt_background-image-integration]]
+- [[chatgpt/chatgpt_background-job-setup]]
+- [[chatgpt/chatgpt_cascade-background-agents-explanation]]

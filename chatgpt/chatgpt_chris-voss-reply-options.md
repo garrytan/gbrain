@@ -76,3 +76,11 @@ Got it, Mr. White. Here are Chris Voss–style price-only replies (no testing ta
 “I’m open to a reasonable offer. What do you think is fair?”
 
 If you want the cleanest Voss sequence: send **#1** or **#4** first, then when they answer, drop **#5 or #6**.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]
+- [[chatgpt/chatgpt_chris-voss-reply-template]]
+- [[chatgpt/chatgpt_chris-voss-style-reply]]

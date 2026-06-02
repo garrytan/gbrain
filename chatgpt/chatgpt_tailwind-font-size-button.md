@@ -98,3 +98,11 @@ If you want an exact clone including hover/active feel, I can break down the ful
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-tailwind-button-styles]]
+- [[chatgpt/chatgpt_font-and-tailwind-classes-part1]]
+- [[chatgpt/chatgpt_font-and-tailwind-classes-part2]]
+- [[chatgpt/chatgpt_style-sky-button-tailwind]]
+- [[chatgpt/chatgpt_tailwind-css-button-div]]

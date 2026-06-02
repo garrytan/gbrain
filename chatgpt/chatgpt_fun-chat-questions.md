@@ -39,3 +39,11 @@ Here are some unconventional ones, Mr. White—short, direct, and designed to sp
 - What’s a harmless conspiracy theory you’d *love* to be true?
 
 If you want, we can pick one and go down the rabbit hole. Which one grabs you?
+
+
+## See Also
+- [[chatgpt/chatgpt_answer-employer-questions]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part2]]

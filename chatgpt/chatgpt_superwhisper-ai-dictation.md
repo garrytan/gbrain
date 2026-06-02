@@ -54,3 +54,11 @@ If you're building Jovie and running Hermes agents all day, I'd put it in the sa
 Those three together remove a huge amount of typing friction. citeturn0search3turn0search1
 
 For an M-series MacBook Pro, run the local models whenever possible. The latency is low enough that it feels close to speaking directly into an AI agent. citeturn0search0turn0search3
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-workflow-for-voice-dictation]]
+- [[chatgpt/chatgpt_dictation-flow-optimization]]
+- [[chatgpt/chatgpt_mac-dictation-with-eleven-labs]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

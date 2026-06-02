@@ -413,3 +413,11 @@ But just the mouth bottom and eyes top
 ## Assistant
 
 Here’s a refined 3D jack-o’-lantern blueberry muffin helmet focused on just the triangular eyes carved into the top and the smiling mouth carved into the bottom half. Let me know if this is what you had in mind or if you’d like any tweaks!
+
+
+## See Also
+- [[chatgpt/chatgpt_diet-phase-grid-modification]]
+- [[chatgpt/chatgpt_muffin-texture-modification]]
+- [[chatgpt/chatgpt_tattoo-design-modification]]
+- [[chatgpt/chatgpt_relieve-dry-eyes]]
+- [[chatgpt/chatgpt_triangle-eyes-request]]

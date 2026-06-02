@@ -197,3 +197,11 @@ When you add non-founder engineers or open source anything, switch to:
 - **Merge commits or squash only on PR**
 
 If you want, I can give you a **`.gitconfig`** and **GitHub branch protection rules** tuned exactly for this setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_create-contact-import-merge]]
+- [[chatgpt/chatgpt_merge-block-reasons]]
+- [[chatgpt/chatgpt_merge-discography-with-component]]
+- [[chatgpt/chatgpt_merge-domains-google-workspace]]
+- [[chatgpt/chatgpt_merge-instructions]]

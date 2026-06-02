@@ -43,3 +43,11 @@ Always ensure that any method you use complies with food safety standards and do
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_fixing-bottom-nav-bar]]
+- [[chatgpt/chatgpt_fixing-chat-jank-issues]]
+- [[chatgpt/chatgpt_fixing-ci-workflow-part1]]
+- [[chatgpt/chatgpt_fixing-ci-workflow-part2]]
+- [[chatgpt/chatgpt_fixing-prisma-seed-error]]

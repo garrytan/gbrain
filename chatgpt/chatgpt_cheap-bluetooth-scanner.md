@@ -58,3 +58,11 @@ Use one of these:
 | BlueDriver scanner | BlueDriver app |
 
 For a cheap, practical buy: **Veepeak OBDCheck BLE**.
+
+
+## See Also
+- [[chatgpt/chatgpt_cheap-camera-gear-search]]
+- [[chatgpt/chatgpt_cheap-car-with-carplay]]
+- [[chatgpt/chatgpt_cheap-carfax-deal-analysis]]
+- [[chatgpt/chatgpt_cheap-flights-from-la]]
+- [[chatgpt/chatgpt_cheap-models-for-cos]]

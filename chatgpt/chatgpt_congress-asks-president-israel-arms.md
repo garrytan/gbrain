@@ -29,3 +29,11 @@ Congress Asks President to Stop Arms to Israel
 ## Assistant
 
 The correct form is "Congress Asks President to Stop Arms to Israel."
+
+
+## See Also
+- [[chatgpt/chatgpt_employer-asks-ssn-in-application]]
+- [[chatgpt/chatgpt_mike-israel-tirzepatide-advice]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

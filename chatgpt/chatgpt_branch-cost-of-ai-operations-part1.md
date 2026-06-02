@@ -534,3 +534,11 @@ For the next build sprint, I’d prioritize one outcome:
 **Every safe Linear issue auto-ships or produces a clear `needs-tim` reason with cost, failed gate, and next action.**
 
 That one loop moves product, stability, GTM infrastructure, and fundraising automation faster than any standalone cron.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part2]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part3]]
+- [[chatgpt/chatgpt_cost-of-ai-operations]]
+- [[chatgpt/chatgpt_gtm-operations-and-tools-part1]]
+- [[chatgpt/chatgpt_branch-agentic-building-and-scaling-part1]]

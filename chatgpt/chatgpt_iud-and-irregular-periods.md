@@ -38,3 +38,11 @@ can an iud cause breast pain
 ## Assistant
 
 Yes, an IUD can cause breast tenderness or pain in some individuals. Hormonal IUDs release a small amount of progestin, which can lead to breast tenderness as a side effect, similar to other forms of hormonal birth control. However, not everyone will experience this side effect, and it may diminish over time. If breast pain persists or is concerning, it’s important to consult with a healthcare provider to rule out other causes.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

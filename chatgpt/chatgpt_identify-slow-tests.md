@@ -629,3 +629,11 @@ Most of these are UI interaction tests — typical causes:
 - Overly complex providers/wrappers created for every test
 
 If you want, I can walk through how to refactor one of these (e.g. Popover or Tooltip) to cut the runtime down.
+
+
+## See Also
+- [[chatgpt/chatgpt_failing-and-slow-tests]]
+- [[chatgpt/chatgpt_add-segment-identify-call]]
+- [[chatgpt/chatgpt_ai-tests-reinforcing-bad-behavior]]
+- [[chatgpt/chatgpt_branch-setup-and-ede-tests]]
+- [[chatgpt/chatgpt_identify-lock-brand-2]]

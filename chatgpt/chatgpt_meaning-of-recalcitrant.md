@@ -26,3 +26,11 @@ What does recalcitrant mean?
 ## Assistant
 
 **Recalcitrant** means stubbornly resisting authority, control, or guidance. It usually describes someone who’s uncooperative or defiant. Example: *a recalcitrant employee who refuses to follow company policy.*
+
+
+## See Also
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_anthropic-meaning-and-context]]
+- [[chatgpt/chatgpt_bronson-meaning-and-references]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained-2]]

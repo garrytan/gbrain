@@ -49,3 +49,11 @@ Add extremely subtle Kodak Portra film grain.
 Sharpen slightly with emphasis on eyes.
 
 Output as a sharp Instagram-ready portrait.
+
+
+## See Also
+- [[chatgpt/chatgpt_grainy-portrait-editing-guide]]
+- [[chatgpt/chatgpt_popcorn-bath-model-portrait]]
+- [[chatgpt/chatgpt_portrait-grid-design]]
+- [[chatgpt/chatgpt_portrait-of-cavalier-dog]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]

@@ -58,3 +58,11 @@ That gives you a clean experiment instead of random chaos.
 If you start getting **persistent severe abdominal pain, repeated vomiting, or trouble keeping fluids down**, contact your prescriber promptly. Tirzepatide can cause dehydration-related kidney issues, and severe abdominal pain can be a warning sign that needs medical evaluation. citeturn6view0turn7search14
 
 I can turn this into a very tight 3-option breakfast template with exact macros and grocery items.
+
+
+## See Also
+- [[chatgpt/chatgpt_morning-tiktok-frustration]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_flying-with-tirzepatide]]
+- [[chatgpt/chatgpt_hygiene-routine-optimization]]
+- [[chatgpt/chatgpt_maintenance-after-tirzepatide-use]]

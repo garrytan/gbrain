@@ -26,3 +26,11 @@ Allen key for garbage disposal
 ## Assistant
 
 Mr. White, to fix a jammed garbage disposal, you typically need a hex key, also known as an Allen wrench. The size most commonly required is 1/4 inch. Check underneath the disposal for a small hexagonal hole; insert the hex key there and turn it back and forth to free the jam.
+
+
+## See Also
+- [[chatgpt/chatgpt_airport-gun-disposal-advice]]
+- [[chatgpt/chatgpt_allen-key-size-14-inch]]
+- [[chatgpt/chatgpt_dog-feces-disposal-laws]]
+- [[chatgpt/chatgpt_garbage-disposal-jam-fix]]
+- [[chatgpt/chatgpt_hoa-trash-disposal-options]]

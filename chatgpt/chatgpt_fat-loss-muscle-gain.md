@@ -521,3 +521,11 @@ I apologize for the ambiguity, Mr. White. The DEXA scan report categorizes muscl
    - Glutes and Hip Muscles: The 0.9 lbs increase in the Gynoid region could be associated with muscles in the hip and buttocks area.
 
 The report's broad categorizations make it challenging to pinpoint the exact muscle groups, but this breakdown should provide a general idea correlating to gym terminology.
+
+
+## See Also
+- [[chatgpt/chatgpt_muscle-gain-or-fat-loss]]
+- [[chatgpt/chatgpt_muscle-gain-in-2-years]]
+- [[chatgpt/chatgpt_muscle-gain-plan]]
+- [[chatgpt/chatgpt_muscle-gain-visualization]]
+- [[chatgpt/chatgpt_muscle-gain-with-surplus]]

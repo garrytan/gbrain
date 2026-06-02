@@ -376,3 +376,11 @@ If you want, tell me:
 - **Next.js or backend only**
 
 I’ll give you a **drop-in CI file that just works**.
+
+
+## See Also
+- [[chatgpt/chatgpt_github-actions-ci-pricing-2]]
+- [[chatgpt/chatgpt_github-actions-ci-pricing]]
+- [[chatgpt/chatgpt_github-actions-setup]]
+- [[chatgpt/chatgpt_openai-github-actions]]
+- [[chatgpt/chatgpt_slack-webhook-github-actions]]

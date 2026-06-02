@@ -91,3 +91,11 @@ ok more concise and less ridiculous
 ## Assistant
 
 1) At age eight, I swiped my sister's Britney Spears CD and got engrossed in the liner notes. That's when I stumbled upon the role of a "music producer." Since then, my journey has been about mastering the craft to become the best music producer I can be.
+
+
+## See Also
+- [[chatgpt/chatgpt_max-martin-demo-search]]
+- [[chatgpt/chatgpt_contract-review-request]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]
+- [[chatgpt/chatgpt_account-search-assistance]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]

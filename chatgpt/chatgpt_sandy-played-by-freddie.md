@@ -26,3 +26,11 @@ Is Sandy from Friends supposed to be someone we know? Do we know? Is the actor, 
 ## Assistant
 
 Yes, Sandy from "Friends" is played by Freddie Prinze Jr. He is known for his roles in movies like "I Know What You Did Last Summer" and "She's All That," as well as for being married to actress Sarah Michelle Gellar.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

@@ -252,3 +252,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Sure thing, Mr. White! In a nutshell, my suggestion was to keep that tipping feature as a subtle, optional element on the main profile. Basically, let artists turn it on or off as they like, so it stays clean and doesn't clutter their page. That way, you've got flexibility without messing up the overall look. And of course, we can brainstorm more whenever you want."}
 {'asset_pointer': 'sediment://file_00000000624061f6869009303a142455', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-02-06T18:06:35.605484+00:00', 'format': 'wav', 'metadata': {'end': 20.05, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 962478, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_app-ux-flow-improvement]]
+- [[chatgpt/chatgpt_cash-flow-plan-request]]
+- [[chatgpt/chatgpt_cash-flow-solutions-needed]]
+- [[chatgpt/chatgpt_chat-testing-flow]]
+- [[chatgpt/chatgpt_combinator-company-technical-flow]]

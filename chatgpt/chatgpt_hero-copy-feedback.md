@@ -239,3 +239,11 @@ Connect Spotify. Claim your handle.
 Footer CTAs should feel inevitable, not exploratory.
 
 If you tell me whether “handle scarcity” is actually strategic or just cosmetic, I’ll be even more ruthless.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-feedback-prompt]]
+- [[chatgpt/chatgpt_app-ui-feedback]]
+- [[chatgpt/chatgpt_application-revision-feedback]]
+- [[chatgpt/chatgpt_buyer-feedback-visibility]]
+- [[chatgpt/chatgpt_design-feedback-improvement]]

@@ -1050,3 +1050,11 @@ Add deterministic Playwright tests for:
 
 - JOV-1967 — update pill implementation.
 - JOV-2385 — Electron header and upgrade banner polish.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_batching-instructions-and-supplies]]
+- [[chatgpt/chatgpt_bleach-and-tone-instructions]]
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_event-setup-instructions]]

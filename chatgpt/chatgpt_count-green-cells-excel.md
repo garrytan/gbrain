@@ -107,3 +107,11 @@ If macros are allowed:
 ---
 
 Would you like me to tailor this for **conditional formatting colors** instead of manually colored cells? (It requires a different VBA approach.)
+
+
+## See Also
+- [[chatgpt/chatgpt_all-green-ci-strategy]]
+- [[chatgpt/chatgpt_green-taco-bell-fire-extinguisher]]
+- [[chatgpt/chatgpt_navigate-cells-in-vue-table]]
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_bartender-count-bpm]]

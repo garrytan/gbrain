@@ -629,3 +629,11 @@ Continue monitoring via pre‑news channels until a Tier‑1 article appears.
 ---
 
 navlistTier‑1 confirms Tesla lacks permits for autonomous, fare‑charging robotaxi service in California; current Bay Area rides remain chauffeur‑driven charter‑only operationsturn0news20,turn0news23,turn0news21,turn0news22
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part14]]

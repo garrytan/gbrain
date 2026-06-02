@@ -160,3 +160,11 @@ If you tell me which you meant—**Query** (data fetching), **Router** (routing/
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_entitlement-management-in-nextjs]]
+- [[chatgpt/chatgpt_nuqs-vs-tanstack-router-2]]
+- [[chatgpt/chatgpt_nuqs-vs-tanstack-router]]
+- [[chatgpt/chatgpt_react-nuqs-library]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]

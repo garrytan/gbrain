@@ -87,3 +87,11 @@ Update our meta data and everything on the layout page to replace placeholder co
 ## Assistant
 
 Metadata has been updated with the campaign title and description. Let me know if you want to add a campaign logo or set social sharing info (Open Graph, Twitter card, etc.).
+
+
+## See Also
+- [[chatgpt/chatgpt_email-campaign-totals-summary]]
+- [[chatgpt/chatgpt_email-request-no-disclosure]]
+- [[chatgpt/chatgpt_email-review-request]]
+- [[chatgpt/chatgpt_trap-bar-deadlifts-approval]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]

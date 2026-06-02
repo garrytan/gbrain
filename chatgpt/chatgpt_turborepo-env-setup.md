@@ -126,3 +126,11 @@ These change how Turborepo runs, not how your app reads env vars. citeturn
 ---
 
 If you want, I can give you a **concrete example `turbo.json`** and `.env` setup for a specific stack (Next.js, Vite, etc.).
+
+
+## See Also
+- [[chatgpt/chatgpt_electron-app-turborepo-setup]]
+- [[chatgpt/chatgpt_explain-turborepo]]
+- [[chatgpt/chatgpt_test-turborepo-locally]]
+- [[chatgpt/chatgpt_turborepo-changelog]]
+- [[chatgpt/chatgpt_turborepo-in-github-actions]]

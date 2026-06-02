@@ -99,3 +99,11 @@ Since women make up about half the population *and* have much higher body-fat di
 If you literally include **children/teens** (who can be naturally leaner), that might nudge you down slightly, but you’d still be in the **top ~1–2% leanest overall**.
 
 So: **about the 98th–99th percentile leanest across all humans**, with the uncertainty coming from lack of global DXA percentiles and inclusion of kids.
+
+
+## See Also
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_add-lean-body-mass]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]

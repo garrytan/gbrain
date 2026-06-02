@@ -243,3 +243,11 @@ If yes, it can survive “model prices go to zero.”
 ---
 
 If you want, tell me a couple industries you’re most interested in (or already have exposure to), and I’ll drill down into **specific post-AI-utility plays**, likely adoption order, and what the “ESPN/QVC/Amazon-equivalents” look like there.
+
+
+## See Also
+- [[chatgpt/chatgpt_tailwind-height-utility-classes]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_apple-business-account-info]]
+- [[chatgpt/chatgpt_apple-business-manager-overview]]

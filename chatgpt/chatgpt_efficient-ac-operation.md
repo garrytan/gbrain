@@ -36,3 +36,11 @@ Mr. White, for typical Southern California conditions and modern central A/C:
 - **Supportive steps:** close blinds during peak sun, seal leaks, and keep filters clean.
 
 Bottom line: don’t run it full-blast 24/7, but avoid complete shutdown. A consistent, slightly higher daytime set point with scheduled cooling is the most energy-efficient and comfortable approach.
+
+
+## See Also
+- [[chatgpt/chatgpt_efficient-bible-reading-tips]]
+- [[chatgpt/chatgpt_efficient-coffee-shop-line]]
+- [[chatgpt/chatgpt_efficient-image-processing-pipeline]]
+- [[chatgpt/chatgpt_sauna-operation-guide]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

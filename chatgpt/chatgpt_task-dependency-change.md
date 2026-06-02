@@ -48,3 +48,11 @@ This diff changes **what the task depends on**.
 
 **Bottom line:**  
 You traded dependency coverage for speed. Safe in isolated repos or when deps are already guaranteed built; risky in tightly coupled monorepos.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-task-automation-plan]]
+- [[chatgpt/chatgpt_ai-tool-reasoning-task]]
+- [[chatgpt/chatgpt_automation-task-setup]]
+- [[chatgpt/chatgpt_claude-code-task-management]]
+- [[chatgpt/chatgpt_claude-task-management-overview]]

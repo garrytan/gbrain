@@ -68,3 +68,11 @@ Here’s a concise practical guide to **drill settings (speed & torque)** and ho
 ---
 
 If you want **exact RPM/torque numbers** for specific materials or bits, tell me what you’re drilling (material, bit size), and I’ll give you precise recommended settings.
+
+
+## See Also
+- [[chatgpt/chatgpt_drill-settings-guide]]
+- [[chatgpt/chatgpt_mazda-cx-5-settings-guide]]
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]

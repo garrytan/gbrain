@@ -349,3 +349,11 @@ If you want, I can also rewrite the **entire full Claude Design prompt** with th
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-prompt-for-claude]]
+- [[chatgpt/chatgpt_app-icon-design-prompt]]
+- [[chatgpt/chatgpt_bubblegum-factory-logo-design]]
+- [[chatgpt/chatgpt_bubblegum-logo-design]]
+- [[chatgpt/chatgpt_bubblegym-factory-logo-design]]

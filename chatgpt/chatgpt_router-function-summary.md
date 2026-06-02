@@ -149,3 +149,11 @@ const socialLinks = utils.social.parseHandlesFromHtml($("ul.social-media-links")
 This uses the `$` function to select the `ul` element with a class of `social-media-links` and then calls the `html` method on it to get the HTML of the element. The resulting HTML is then passed as an argument to the `parseHandlesFromHtml` function. The function will return an array of social links that were extracted from the HTML.
 
 You can then use the `socialLinks` array to access the social links that were extracted from the HTML. The array will contain the values of the `href` attributes of the `a` elements.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_alex-gaudino-song-summary]]
+- [[chatgpt/chatgpt_ams-return-policy-summary]]

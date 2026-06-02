@@ -71,3 +71,11 @@ Here is the table with the single drink amounts in ounces based on 1.5 oz of teq
 | Watermelon Juice | 3.995                    |
 
 This table shows the amount needed for a single drink in ounces.
+
+
+## See Also
+- [[chatgpt/chatgpt_casamigos-tequila-request-summarized]]
+- [[chatgpt/chatgpt_tequila-lawsuit-credibility-check]]
+- [[chatgpt/chatgpt_tequila-pineapple-garnish-ideas]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_ai-optimizes-to-do-list]]

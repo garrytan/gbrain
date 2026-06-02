@@ -125,3 +125,11 @@ use: { storageState: 'auth.json' }
 ---
 
 If you want, I can give you a **starter Playwright + Clerk test template** you can drop into your project.
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-e2e-testing-setup]]
+- [[chatgpt/chatgpt_clerk-e2e-testing]]
+- [[chatgpt/chatgpt_e2e-testing-with-clerk-2]]
+- [[chatgpt/chatgpt_e2e-testing-with-clerk]]
+- [[chatgpt/chatgpt_playwright-e2e-testing-automation]]

@@ -50,3 +50,11 @@ That’s the gig.
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_psychology-of-restaurant-seating]]
+- [[chatgpt/chatgpt_experiential-producer-jobs-la]]
+- [[chatgpt/chatgpt_producer-life-struggles]]
+- [[chatgpt/chatgpt_short-form-pop-culture-producer]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

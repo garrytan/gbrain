@@ -658,3 +658,11 @@ Only alert if the following conditions are met:
 Exclude any signals already covered by Tier‑1 outlets in the past 90 minutes.
 
 Return only tickers that meet all criteria, including: thesis one-liner, supporting links/screens, sentiment estimate, spike magnitude vs baseline, float/liquidity context, and a suggested entry/exit window before parity.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

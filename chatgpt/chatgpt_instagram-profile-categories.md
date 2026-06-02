@@ -108,3 +108,11 @@ Here are **actual music-related Instagram profile categories** you can choose wh
 These show up in Instagram’s category search and can be set under **Edit Profile → Category** on a professional account. citeturn0search5
 
 If you need them sorted by best for your specific type of music account (solo artist vs. label vs. music business), tell me and I’ll organize them.
+
+
+## See Also
+- [[chatgpt/chatgpt_ad-campaign-instagram-for-females]]
+- [[chatgpt/chatgpt_amaz-twitch-gamer-profile]]
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]

@@ -132,3 +132,11 @@ If your address just changed within Hollywood:
 So: **address change + replacement = still online** if nothing else complicates it.  
 
 Want me to drop you the exact online link where you can both update your address and request the replacement in one go?
+
+
+## See Also
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_alcohol-catering-license-posting]]
+- [[chatgpt/chatgpt_helicopter-pilot-license-cost]]
+- [[chatgpt/chatgpt_license-plate-delay-resolution]]

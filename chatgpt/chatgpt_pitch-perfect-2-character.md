@@ -164,3 +164,11 @@ In short:
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_imdb-pitch-pitch-perfect-2]]
+- [[chatgpt/chatgpt_pitch-perfect-2-summary]]
+- [[chatgpt/chatgpt_pitch-perfect-3-summary]]
+- [[chatgpt/chatgpt_8-slide-yc-pitch-deck]]
+- [[chatgpt/chatgpt_amazon-music-remix-pitch]]

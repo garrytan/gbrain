@@ -56,3 +56,11 @@ More like take it off
 8. "Puzzle or Peel: The Strip-Down Showdown"
 9. "Riddle or Remove: The Stripping Stakes"
 10. "Inquire or Unattire: The Bold Quiz Challenge"
+
+
+## See Also
+- [[chatgpt/chatgpt_beatles-trivia-answers]]
+- [[chatgpt/chatgpt_challenge-citation-options]]
+- [[chatgpt/chatgpt_consent-in-strip-clubs]]
+- [[chatgpt/chatgpt_cost-of-sunset-strip-billboard]]
+- [[chatgpt/chatgpt_permit-needed-for-sunset-strip]]

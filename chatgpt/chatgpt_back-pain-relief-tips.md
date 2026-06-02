@@ -403,3 +403,11 @@ Mike: **train erectors and reintroduce controlled spinal/hinge exposure; start v
 Menno: **back pain rehab is about graded stress below recovery capacity; for erector growth, light 45-degree back extensions in 20–30 reps are a strong choice; you do not need heavy deadlifts unless powerlifting matters.**
 
 For you: **start with 45-degree back extensions + light cable flexion rows + supported hinge work.** That gives you the missing back/hinge exposure while respecting your preference to avoid heavy axial fatigue.
+
+
+## See Also
+- [[chatgpt/chatgpt_lower-back-pain-relief]]
+- [[chatgpt/chatgpt_lower-back-pain-cause]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]

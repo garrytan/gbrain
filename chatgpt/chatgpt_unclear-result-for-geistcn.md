@@ -41,3 +41,11 @@ Here’s what came up that’s related to *geist* and similar spellings:
 - There’s a design/typeface called *Geist* and a design studio with that name. citeturn0search3turn0search11
 
 If you meant something specific (a company, website, username, or product called **geistcn**), clarify what it is or where you saw it and I can look it up more precisely.
+
+
+## See Also
+- [[chatgpt/chatgpt_unclear-term-clarification]]
+- [[chatgpt/chatgpt_united-search-result]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

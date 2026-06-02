@@ -40,3 +40,11 @@ Here are some quick takeaways:
 5. **ALMI**: The decrease in ALMI suggests a potential reduction in muscle mass in your limbs, which might need attention if you're looking to improve overall muscle tone and strength.
 
 If you're currently cutting and aiming for further fat loss, you may need to reassess your caloric intake, macronutrient distribution, and workout intensity to preserve muscle mass while losing fat. Consider incorporating more strength training or adjusting your diet to support muscle retention.
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-dexa-summary]]
+- [[chatgpt/chatgpt_bodyspec-results-summary]]
+- [[chatgpt/chatgpt_audit-report-summary]]
+- [[chatgpt/chatgpt_inventory-summary-report]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-2]]

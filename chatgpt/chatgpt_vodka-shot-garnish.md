@@ -26,3 +26,11 @@ Vodka shot garnish
 ## Assistant
 
 Typical garnishes for a vodka shot include a slice of lemon or lime, a small skewer of olives, or a pickle. For a traditional Russian style, serve with a slice of rye bread or pickled herring.
+
+
+## See Also
+- [[chatgpt/chatgpt_bitters-soda-garnish-guide]]
+- [[chatgpt/chatgpt_cinnamon-stick-garnish-tips]]
+- [[chatgpt/chatgpt_drink-garnish-orange-cherry]]
+- [[chatgpt/chatgpt_orange-garnish-slicing-tips]]
+- [[chatgpt/chatgpt_tequila-pineapple-garnish-ideas]]

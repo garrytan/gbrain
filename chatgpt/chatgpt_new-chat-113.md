@@ -131,3 +131,11 @@ Jay
 Write the best arguing to convince respond directly to airbnb refuting all claims, complaining about his illegal surveailence and requesting the deletion of any footage of my naked guests and requesting a refund for the stay on top fo rejecting the fees because this hguy was spying on us (i have a seperate claim out about the unlisted camera). also cite my record and paint a picture of this guy as a karen that just wants money.
 
 Ive been on airbnb for 12 years, hes been hosting for 1 month. hes abusing the platform. ive never had a bad experience on airbnb but this experience makes me not trust the platform.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

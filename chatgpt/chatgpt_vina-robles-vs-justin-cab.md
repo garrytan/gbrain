@@ -35,3 +35,11 @@ Mr. White—short take:
 - **Food pairing:** Vina Robles pairs great with **steak or richer dishes** where grip helps; Justin is easy **by-the-glass** or with burgers/BBQ thanks to that ripe fruit and vanilla oak. citeturn7view0
 
 **Bottom line:** If you want **plush, polished, vanilla-kissed Paso Cab**, grab **Justin**. If you want **more structure and spice at a value**, go **Vina Robles**. citeturn7view0turn5view0turn3search5
+
+
+## See Also
+- [[chatgpt/chatgpt_justin-bieber-updates]]
+- [[chatgpt/chatgpt_justin-hailey-news-2025]]
+- [[chatgpt/chatgpt_justin-timberlake-co-wrote-selfish]]
+- [[chatgpt/chatgpt_your-move-with-justin-tranter]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

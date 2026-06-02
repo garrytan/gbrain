@@ -1057,3 +1057,11 @@ If you’d like, I can break this into a **ready-to-run shell command** that app
 
 
 We have some issues arising. One that I just saw was... One that I just saw come in was... We had an AI go out and build us a new landing page, and that landing page, when it came in, it was... One of the issues was that when the landing page came in, the landing page was... It had our Featured Creators section, and in our Featured Creators section, it did not respect... It basically built out a Featured Creators section with a bunch of mock data. That looked exactly like the Featured Creators section that we had on our previous landing page. Except the one we had on our previous landing page actually connected to the database and didn't use mock data. So in asking an AI to revamp our landing page, it basically undid this work of tying the Featured Creators section to the database and loading real data. Or, I guess, built a new component that matched the look of the old component but didn't bring over any of the backend logic to actually load real data. And so I want to address situations like that to make sure that the AI is actually not going to replace working things with broken things ever.
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part2]]
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part3]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part1]]
+- [[chatgpt/chatgpt_yc-application-audit-part1]]
+- [[chatgpt/chatgpt_yc-homepage-audit-part1]]

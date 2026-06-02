@@ -84,3 +84,11 @@ In California, the specific location requirements for sinks in a bar setting dep
    - For washing glassware, a dedicated sink with at least three compartments should be located within the bar area itself to ensure that glassware can be properly washed, rinsed, and sanitized without having to transport it to the kitchen.
 
 In summary, while certain sinks (e.g., handwashing sinks) need to be in close proximity to where the tasks are performed, other sinks (e.g., warewashing and mop sinks) can be located in the kitchen as long as they are readily accessible to bar staff. Local health department regulations should always be consulted to ensure compliance with all specific requirements.
+
+
+## See Also
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_california-king-on-king-bed]]
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_california-park-closure-update]]
+- [[chatgpt/chatgpt_california-unemployment-benefits]]

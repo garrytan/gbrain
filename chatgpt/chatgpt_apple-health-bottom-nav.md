@@ -217,3 +217,11 @@ Bottom line: **stop drawing the pill** and let iOS draw the tab bar for you. Tha
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-health-cards-swiftui]]
+- [[chatgpt/chatgpt_compare-app-to-apple-health]]
+- [[chatgpt/chatgpt_fixing-bottom-nav-bar]]
+- [[chatgpt/chatgpt_alexa-control-for-apple-tv]]
+- [[chatgpt/chatgpt_apple-airpods-options]]

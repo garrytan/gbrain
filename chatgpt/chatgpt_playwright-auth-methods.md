@@ -565,3 +565,11 @@ If you want next:
 - or generate a **Playwright baseline script** that this agent assumes exists
 
 Say the word.
+
+
+## See Also
+- [[chatgpt/chatgpt_auth-provider-for-chatgpt]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_auth-ux-audit]]
+- [[chatgpt/chatgpt_basic-auth-in-nextjs]]
+- [[chatgpt/chatgpt_best-auth-providers-2025]]

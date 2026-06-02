@@ -94,3 +94,11 @@ Think:
 For **incline**, overdoing the arch also makes the press effectively flatter, which recent Mike/RP social content has warned about. citeturn893992search2turn893992search10
 
 So yes, Mike does say to arch. He does **not** mean “force as much lumbar extension as possible no matter what your back says.” In your case, I would trim the arch, keep the scapular retraction, and make Sunday the lighter day.
+
+
+## See Also
+- [[chatgpt/chatgpt_lower-back-pain-relief]]
+- [[chatgpt/chatgpt_back-pain-relief-tips]]
+- [[chatgpt/chatgpt_actor-strikes-back-creator]]
+- [[chatgpt/chatgpt_clap-back-mastery]]
+- [[chatgpt/chatgpt_disable-swipe-back-vuejs]]

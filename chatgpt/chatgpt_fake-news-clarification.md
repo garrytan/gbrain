@@ -27,3 +27,11 @@ Real?
 ## Assistant
 
 Mr. White, this appears to be a satirical Instagram post by @komfortonset—no reputable news outlet has reported Warner Bros. or Ryan Reynolds converting sound stages into pickleball courts, so it isn’t real. citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_fake-einstein-letter-hoax]]
+- [[chatgpt/chatgpt_fake-ice-diy-guide]]
+- [[chatgpt/chatgpt_why-watch-fake-wrestling]]
+- [[chatgpt/chatgpt_animated-news-headlines]]
+- [[chatgpt/chatgpt_hacker-news-overview-2]]

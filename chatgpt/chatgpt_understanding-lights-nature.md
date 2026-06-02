@@ -26,3 +26,11 @@ What is light
 ## Assistant
 
 Light is electromagnetic radiation that is visible to the human eye, typically defined as wavelengths between approximately 380 and 750 nanometers. It is a form of energy that travels in waves and can exhibit properties of both particles and waves, known as wave-particle duality. Light enables vision, supports photosynthesis in plants, and can be manipulated for various technological applications, such as communication and medical imaging.
+
+
+## See Also
+- [[chatgpt/chatgpt_understanding-anthropomorphism]]
+- [[chatgpt/chatgpt_understanding-juneteenth-importance]]
+- [[chatgpt/chatgpt_understanding-label-usage]]
+- [[chatgpt/chatgpt_understanding-localhost3000]]
+- [[chatgpt/chatgpt_codex-traffic-lights-solution]]

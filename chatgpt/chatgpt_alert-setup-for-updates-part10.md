@@ -569,3 +569,11 @@ Here’s the **latest Windsurf changelog update with new model releases or promo
 ✔ **GPT‑5.2 — new in Windsurf with limited free access for paid users.** citeturn0search2
 
 No additional new models or newly announced promos/free usage beyond GPT‑5.2 were found in the changelog this run.
+
+
+## See Also
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part2]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part3]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part4]]

@@ -1150,3 +1150,11 @@ Goal:
 8. Sleep only after the application is in.
 
 The fastest path is: **submit the sharper story today, let agents audit the mess, then spend the next five days turning the existing product into a credible monetization demo.**
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-full-spec-request-part7]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part4]]

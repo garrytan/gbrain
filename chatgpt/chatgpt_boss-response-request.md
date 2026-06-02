@@ -56,3 +56,11 @@ Tighter version:
 > Agents change the slope.
 >
 > Physics, biotech, hardtech, atmospherics, materials — every brutal search-space frontier is now startup terrain. This is the end of the science drought.
+
+
+## See Also
+- [[chatgpt/chatgpt_quick-response-request]]
+- [[chatgpt/chatgpt_response-creation-request]]
+- [[chatgpt/chatgpt_response-request]]
+- [[chatgpt/chatgpt_stop-payment-request-response]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

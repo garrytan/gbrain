@@ -62,3 +62,11 @@ How many calories does 5k steps get me
 ## Assistant
 
 The number of calories burned by walking 5,000 steps depends on various factors such as your weight, walking pace, and terrain. Generally, a rough estimate is that a person burns about 0.04 calories per step. For someone who weighs around 180 pounds (about 82 kilograms), this would equate to roughly 200 calories for 5,000 steps. However, this is a very general estimate and can vary significantly based on individual factors. For a more accurate calculation tailored to your specific circumstances, you might consider using a fitness tracker or a specialized app.
+
+
+## See Also
+- [[chatgpt/chatgpt_advil-no-calories]]
+- [[chatgpt/chatgpt_calories-in-a-pan]]
+- [[chatgpt/chatgpt_calories-in-pussy-juice]]
+- [[chatgpt/chatgpt_calories-vs-chemicals-debate]]
+- [[chatgpt/chatgpt_estimate-maintenance-calories]]

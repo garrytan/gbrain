@@ -38,3 +38,11 @@ ally biome
 - A biome generally means a large ecological area with distinct plants and animals (e.g., desert, rainforest). In human-altered ecosystem classification “anthropogenic biomes” describe ecosystems shaped by humans. citeturn0search17
 
 If you meant something specific (a game feature, company name, or ecological term), clarify and I can refine.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]
+- [[chatgpt/chatgpt_biome-react-hooks-linter]]
+- [[chatgpt/chatgpt_biome-vs-eslint-nextjs]]
+- [[chatgpt/chatgpt_biome-vs-sonarcloud]]
+- [[chatgpt/chatgpt_enforcing-biome-rules]]

@@ -148,3 +148,11 @@ Twinklin' 82, I guess this is a growing up song.
 ## Assistant
 
 It seems like you're referring to the song "Dammit" by Blink-182, often interpreted as a song about growing up and dealing with the changes and challenges that come with it. The lyrics reflect on the feelings of frustration, confusion, and acceptance that often accompany transitions into adulthood.
+
+
+## See Also
+- [[chatgpt/chatgpt_sea-turtles-adventure]]
+- [[chatgpt/chatgpt_turtles-all-way-down]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

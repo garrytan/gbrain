@@ -64,3 +64,11 @@ If you'd like, tell me how your Sentry ↔ Linear integration is currently confi
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-issue-prioritization]]
+- [[chatgpt/chatgpt_sentry-linear-integration-issues]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_automation-in-linear]]

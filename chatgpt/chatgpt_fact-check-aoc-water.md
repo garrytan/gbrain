@@ -73,3 +73,11 @@ Mr. White, use this:
 More concise:
 
 > “Name one job we can’t imagine yet” is a self-defeating question. Once someone names it, it is by definition imaginable. The real question is whether AI is already creating new adjacent jobs, and the answer is yes.
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

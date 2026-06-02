@@ -109,3 +109,11 @@ To combine multiple CSV files with the same columns into one file using Alteryx 
 5. **Run the Workflow**: Click the run button to execute your workflow. Alteryx Cloud will process the data, combining all specified files into the output file you defined.
 
 This process will result in a single CSV file containing the combined data from all your specified files, assuming they have the same columns. Since you mentioned not needing deduplication, this straightforward approach should meet your requirements. If you encounter any specific Alteryx Cloud issues or limitations (like file path specifications or wildcard usage), I recommend consulting the Alteryx Community or the official documentation for the most current and detailed guidance.
+
+
+## See Also
+- [[chatgpt/chatgpt_beatport-streaming-vs-files-2]]
+- [[chatgpt/chatgpt_beatport-streaming-vs-files]]
+- [[chatgpt/chatgpt_cannot-access-master-files]]
+- [[chatgpt/chatgpt_extract-components-to-files-part1]]
+- [[chatgpt/chatgpt_extract-components-to-files-part2]]

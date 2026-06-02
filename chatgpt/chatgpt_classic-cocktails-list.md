@@ -523,3 +523,11 @@ Here’s a clean **classic mocktail list**, Mr. White — no alcohol, easy ingre
 ---
 
 Would you like me to trim this down to, say, the **10 best-tasting and easiest** mocktails for quick serving?
+
+
+## See Also
+- [[chatgpt/chatgpt_hot-bartender-w-incredible-cocktails]]
+- [[chatgpt/chatgpt_labeling-pre-batched-cocktails]]
+- [[chatgpt/chatgpt_renamed-menu-and-cocktails]]
+- [[chatgpt/chatgpt_shelf-life-of-cocktails]]
+- [[chatgpt/chatgpt_who-batches-cocktails]]

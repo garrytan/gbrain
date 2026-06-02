@@ -40,3 +40,11 @@ If you use Codex through a **ChatGPT plan**, your included usage is consumed fir
 Separate from reasoning effort, **Fast mode** is explicitly billed at **2x credits** in the Codex rate card. citeturn156928view0
 
 So the practical answer is: **yes, High and xHigh generally bill more in token-based Codex usage, because they tend to generate more billed reasoning/output tokens.**
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-billing-overview]]
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]

@@ -40,3 +40,11 @@ Then name the problem in one sentence:
 Stress feels infinite when it’s vague. It gets smaller when it has a name.
 
 Send me the one sentence.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

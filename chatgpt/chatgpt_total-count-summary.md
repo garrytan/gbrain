@@ -36,3 +36,11 @@ Here's the total count for each item:
 - **Gigawater:** 5
 
 Let me know if you need anything else.
+
+
+## See Also
+- [[chatgpt/chatgpt_inventory-count-summary]]
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_bartender-count-bpm]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]
+- [[chatgpt/chatgpt_count-customers-by-city]]

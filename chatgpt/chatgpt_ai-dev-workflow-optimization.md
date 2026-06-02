@@ -848,3 +848,11 @@ Run a fast, deterministic **smoke test** before opening a PR. **Always open the 
 - Treat this as the **org-wide** rule unless a repo overrides steps/commands.
 - Keep the smoke set fast (<2–3 min). If it drags, reduce Storybook and run only tagged unit tests.
 - The PR body’s checklist bakes in **YC best practices**, **Linear**-style clarity, and **Apple-level** polish/copy requirements.
+
+
+## See Also
+- [[chatgpt/chatgpt_ci-workflow-optimization]]
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]

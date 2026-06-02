@@ -733,3 +733,11 @@ and whats the advatage or cost diff if we put this on a vps or run it in aws or 
 
 
 I’ll compare three deployment options for Jovie’s coding agent: the always-on Mac, hosted API routing through OpenRouter, and VPS or AWS, focusing on cost, reliability, and fit.
+
+
+## See Also
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part3]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part1]]

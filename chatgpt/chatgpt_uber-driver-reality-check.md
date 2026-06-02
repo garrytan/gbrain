@@ -40,3 +40,11 @@ trusting your life to an Uber driver is insane. You’re handing your safety ove
 ## Assistant
 
 Mr. White, trusting your life to an Uber driver is downright reckless—you’re entrusting your safety to someone who can’t even clear $17/hr after gas, maintenance, bathroom breaks, and idle waiting. In California, you can flip burgers for $25/hr, so these “drivers” are either blissfully unaware they’re underpaid or too incompetent to land any other job. You’re basically hitching a ride with the bottom of the barrel. With Waymo, at least you don’t risk a driver playing Candy Crush or deciding to harass you mid-trip.
+
+
+## See Also
+- [[chatgpt/chatgpt_uber-driver-gender-impact]]
+- [[chatgpt/chatgpt_accessibility-contrast-check]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_auto-promote-blockers-check]]

@@ -38,3 +38,11 @@ Would you have a lead bartender at a large event?
 ## Assistant
 
 Yes, at a large event or venue with a substantial bar operation, it's common to have a lead bartender or bar manager overseeing the bar staff. Their role is essential in ensuring efficient service, maintaining quality, and handling any issues that may arise during the event.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_add-events-to-calendar]]
+- [[chatgpt/chatgpt_amc-large-popcorn-nutrients]]
+- [[chatgpt/chatgpt_anyma-music-and-events]]
+- [[chatgpt/chatgpt_bartender-application-email-2]]

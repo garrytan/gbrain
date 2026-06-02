@@ -196,3 +196,11 @@ Here are six new eye-style variations for the muffin-head logo—featuring star 
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bubblegum-factory-logo-design]]
+- [[chatgpt/chatgpt_bubblegum-logo-design]]
+- [[chatgpt/chatgpt_bubblegym-factory-logo-design]]
+- [[chatgpt/chatgpt_claude-design-logo-prompt]]
+- [[chatgpt/chatgpt_dj-logo-design-request]]

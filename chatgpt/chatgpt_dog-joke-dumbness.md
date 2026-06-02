@@ -44,3 +44,11 @@ Sure, here's another one:
 What's dumber than a doorknob?
 
 A broken doorknob!
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-joke-ideas]]
+- [[chatgpt/chatgpt_calendar-gig-joke]]
+- [[chatgpt/chatgpt_funny-positive-thoughts-joke]]
+- [[chatgpt/chatgpt_no-soap-radio-joke]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

@@ -675,3 +675,11 @@ Based on the files you shared earlier (`branch-protection.yml`, `auto-merge.yml`
 It’s there to keep your merge queue clean and automated (Dependabot, AI agents, your own commits) without human babysitting.  
 
 If you want, I can pull up your `branch-protection.yml` and show you the exact checks you’re enforcing under “PR Policy.” Would you like me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part1]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part2]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part3]]
+- [[chatgpt/chatgpt_merge-queue-explanation]]
+- [[chatgpt/chatgpt_merge-queue-throughput-explanation]]

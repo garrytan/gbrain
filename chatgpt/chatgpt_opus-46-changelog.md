@@ -45,3 +45,11 @@ Here’s what’s known about **Claude Opus 4.6’s changelog / notable updates*
 If you want the *official full line-by-line changelog* (e.g., complete commit-style release notes), there isn’t a detailed public diff yet — most updates are summarized in announcements and changelog summaries. citeturn0search4turn0search9
 
 Would you like a concise comparison table of **Opus 4.5 vs 4.6 differences**?
+
+
+## See Also
+- [[chatgpt/chatgpt_opus-vs-gpt-51-comparison]]
+- [[chatgpt/chatgpt_opus-vs-gpt-git-access]]
+- [[chatgpt/chatgpt_sonnet-vs-opus]]
+- [[chatgpt/chatgpt_ai-changelog-insights-for-jovie]]
+- [[chatgpt/chatgpt_changelog-aggregation-and-analysis]]

@@ -125,3 +125,11 @@ export default {
 ```
 
 In the example above, we are using the modified component `EmojiComponent` and passing the `emoji` prop with the desired emoji value.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-path-prop]]
+- [[chatgpt/chatgpt_add-prop-to-vue-component]]
+- [[chatgpt/chatgpt_add-prop-to-vuejs-component]]
+- [[chatgpt/chatgpt_emoji-friendly-changelog-conversion]]
+- [[chatgpt/chatgpt_movie-prop-pay-stubs]]

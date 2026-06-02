@@ -676,3 +676,11 @@ help me imaging this then. what does the flow look like. is this an ios app? is 
 
 
 Mr. White, I’d separate the eventual product surface from the YC-demo surface. The demo should be much narrower than the final app.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovi-sign-up-ideas]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part1]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part3]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part4]]
+- [[chatgpt/chatgpt_bootstrapping-app-ideas-part2]]

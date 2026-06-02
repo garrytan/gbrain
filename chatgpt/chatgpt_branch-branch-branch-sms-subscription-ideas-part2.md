@@ -1599,3 +1599,11 @@ But:
 - Do **not** make the business dependent on one unofficial transport.
 
 Build a provider-agnostic **native messaging layer**, test Sendblue/LoopMessage behind a flag, route iMessage-capable fans to blue bubble, fall back to SMS/RCS/email, and keep Jovie’s core value in the fan-demand graph and release OS.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part3]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part1]]

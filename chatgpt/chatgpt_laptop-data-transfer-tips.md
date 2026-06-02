@@ -51,3 +51,11 @@ Here’s a simple, low-drama way to handle it without needing to see her:
 - If she needs files uploaded, you can also transfer via cloud (Google Drive, Dropbox) instead of physically putting it on the laptop, if that simplifies things.  
 
 Do you want me to suggest the cheapest/easiest **courier option in LA** so you don’t even need to go near her place?
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]

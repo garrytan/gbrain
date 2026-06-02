@@ -79,3 +79,11 @@ Slamtastic comment please
 Here’s a concise, fact-based “slam” you can drop in that thread, Mr. White:  
 
 > Google didn’t “buy Phonebloks” or rebrand it to anything. Phonebloks was an *idea* by Dave Hakkens that inspired Project Ara, which Google actually prototyped. It died because modular hardware murdered signal integrity, battery life, durability, and certification logistics—not because of some conspiracy. Facts > fan fiction.
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

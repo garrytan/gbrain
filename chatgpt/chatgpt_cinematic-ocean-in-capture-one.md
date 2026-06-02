@@ -49,3 +49,11 @@ Fastest way in **Capture One** to make the ocean look cinematic blue:
 That combo (color picker → hue shift → saturation → color balance tweak) is the fastest way to get that cinematic ocean look.  
 
 Want me to give you a **one-minute workflow with exact slider ballparks** so you can just apply and adjust?
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_cinematic-audience-intelligence-design]]
+- [[chatgpt/chatgpt_cinematic-demo-script]]
+- [[chatgpt/chatgpt_cinematic-dj-demo-script]]
+- [[chatgpt/chatgpt_cinematic-instagram-portrait-edit]]

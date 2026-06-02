@@ -252,3 +252,11 @@ Kill seed user 1 -5
 ## Assistant
 
 Removed `seed_user_1` through `seed_user_5` from the `creator_profiles` seed data. Now the file starts seeding directly at `seed_user_6`.
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-subscription-copy]]
+- [[chatgpt/chatgpt_audit-developer-copy]]
+- [[chatgpt/chatgpt_hero-copy-feedback]]
+- [[chatgpt/chatgpt_jovie-homepage-copy-adaptation]]
+- [[chatgpt/chatgpt_landing-page-copy-ideas]]

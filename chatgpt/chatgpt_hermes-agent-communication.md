@@ -202,3 +202,11 @@ Then interactions become:
 **Hermes:** "Deploying now."
 
 Technically, that's only a few hundred lines of glue code. The hard part is the agent reasoning and permissions, not the audio. Audio is basically solved in 2026.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-for-scraping]]
+- [[chatgpt/chatgpt_hermes-agent-orchestration]]
+- [[chatgpt/chatgpt_hermes-agent-overview]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]

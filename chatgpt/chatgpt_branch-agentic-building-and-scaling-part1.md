@@ -414,3 +414,11 @@ Mr. White, I’ll ground this in the actual repo/Linear context where available,
 
 
 The current structure points to extending AgentOS: Vercel Workflow coordinates, GStack/GitHub Actions gate, AgentRunArtifact audits, and HUD/vBrain learn your decisions.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-agentic-building-and-scaling-part2]]
+- [[chatgpt/chatgpt_agentic-building-and-scaling]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part1]]

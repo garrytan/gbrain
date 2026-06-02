@@ -262,3 +262,11 @@ Do bartenders at stadiums in Los Angeles free-pour or use jiggers?
 The specific practice of free-pouring or using jiggers by bartenders at stadiums in Los Angeles can vary depending on the policies of the individual stadium and the management of the concessions or beverage service providers. In many stadium environments, bartenders may use jiggers to ensure precise measurements for alcoholic beverages, promoting responsible alcohol service and consistency in drink strength.
 
 However, practices can vary, and some venues may allow free-pouring for certain types of drinks or during periods of high demand. It's essential to note that regardless of the method used, bartenders are expected to follow responsible alcohol service guidelines, including not serving alcohol to visibly intoxicated patrons and complying with all relevant alcohol regulations and licensing requirements. If you're curious about the specific practices at a particular stadium, it's best to inquire with the venue or concessions staff directly.
+
+
+## See Also
+- [[chatgpt/chatgpt_gym-shirt-policies-summary]]
+- [[chatgpt/chatgpt_legal-policies-in-la-90028]]
+- [[chatgpt/chatgpt_avalon-nightclub-application-tips]]
+- [[chatgpt/chatgpt_bartending-jobs-in-los-angeles]]
+- [[chatgpt/chatgpt_dropdown-gender-selection]]

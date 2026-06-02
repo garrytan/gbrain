@@ -101,3 +101,11 @@ All employees are W-2. HR or payroll provider (e.g., Gusto, ADP) collects I-9, W
 ---
 
 Use this as the skeleton for your employee handbook and one-page SOP sheets.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-checklist-mixers-rimming-essentials]]
+- [[chatgpt/chatgpt_bar-setup-checklist]]
+- [[chatgpt/chatgpt_dishwasher-duties-checklist]]
+- [[chatgpt/chatgpt_documentation-update-checklist]]
+- [[chatgpt/chatgpt_foh-checklist-request-part1]]

@@ -75,3 +75,11 @@ Then update your “Rotate Poster” shortcut like this:
    – Shortcuts → **Automation** → **Create Personal Automation** → Trigger: Time of Day (hourly/daily) → **Add Action**: Run Shortcut “Rotate Poster” → Disable “Ask Before Running.”
 
 Each time it runs, it updates the index and sets your contact’s poster to the next image in the album. citeturn1view0
+
+
+## See Also
+- [[chatgpt/chatgpt_contact-apis-supported]]
+- [[chatgpt/chatgpt_contact-avatar-component-2]]
+- [[chatgpt/chatgpt_contact-avatar-component]]
+- [[chatgpt/chatgpt_contact-avatar-update]]
+- [[chatgpt/chatgpt_contact-form-in-nextjs]]

@@ -37,3 +37,11 @@ chromatic
 
 **Origins**  
 The word comes from Greek *chrōma* meaning “color,” which explains why both visual and musical uses evoke “colorfulness.” citeturn0search21
+
+
+## See Also
+- [[chatgpt/chatgpt_chromatic-meaning-explained]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_codex-meaning-explained]]
+- [[chatgpt/chatgpt_dopl-meaning-explained]]
+- [[chatgpt/chatgpt_llo-meaning-explained]]

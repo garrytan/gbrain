@@ -91,3 +91,11 @@ Based on your guidelines, here's the concise plan laid out in a table format. I 
 Please note that FFMI (Fat-Free Mass Index) calculations require additional data such as height and body fat percentage, which are not fully provided or calculable with the current data set. The BF% Dexa and BF% Scale are estimated based on the discrepancy ratio from your historical data, and the actual values may vary.
 
 Would you like to create a document with this plan?
+
+
+## See Also
+- [[chatgpt/chatgpt_bulk-and-cut-plan]]
+- [[chatgpt/chatgpt_cut-bulk-cut-plan-w-predictions]]
+- [[chatgpt/chatgpt_mini-cut-bulk-cut-plan]]
+- [[chatgpt/chatgpt_plan-diet-phases-cut-bulk]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]

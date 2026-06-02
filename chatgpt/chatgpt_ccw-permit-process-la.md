@@ -196,3 +196,11 @@ So what would i need to purchase one
 ---
 
 If you need assistance selecting a suitable handgun or locating a certified instructor in Los Angeles, feel free to ask. 
+
+
+## See Also
+- [[chatgpt/chatgpt_permit-needed-for-sunset-strip]]
+- [[chatgpt/chatgpt_tesla-robotaxi-permit-secured-part1]]
+- [[chatgpt/chatgpt_tesla-robotaxi-permit-secured-part10]]
+- [[chatgpt/chatgpt_tesla-robotaxi-permit-secured-part11]]
+- [[chatgpt/chatgpt_tesla-robotaxi-permit-secured-part12]]

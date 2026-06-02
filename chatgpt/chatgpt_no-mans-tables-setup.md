@@ -46,3 +46,11 @@ Here’s a clean action list you can hand to the team or drop into a shared doc:
 - Note any low-stock or out-of-stock items for immediate order.
 
 Concise, single owner per task, and you’re set.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

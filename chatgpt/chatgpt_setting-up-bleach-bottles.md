@@ -82,3 +82,11 @@ For a 16-ounce spray bottle using 8.25% sodium hypochlorite bleach:
 - **Mix 1.35 ounces (about 40 ml) of bleach with 14.65 ounces (about 430 ml) of water**.
 
 This dilution will provide the appropriate disinfectant strength for effective cleaning. Be sure to label the bottle and follow the same safety procedures as before.
+
+
+## See Also
+- [[chatgpt/chatgpt_marrying-bottles-legality]]
+- [[chatgpt/chatgpt_trapped-water-in-bottles]]
+- [[chatgpt/chatgpt_bleach-and-tone-instructions]]
+- [[chatgpt/chatgpt_bleach-developer-comparison]]
+- [[chatgpt/chatgpt_bleach-solution-calculation]]

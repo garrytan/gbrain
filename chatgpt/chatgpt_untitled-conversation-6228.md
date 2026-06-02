@@ -60,3 +60,11 @@ To create an app icon with a purple background and a rocketship made out of bits
 6. Use the brush tool to create the bits of data that make up the rocket ship. Experiment with different colors and brush settings to achieve the desired effect.
 
 7. Once you are satisfied with the overall look of the app icon, save the image and use it as the icon for your app.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

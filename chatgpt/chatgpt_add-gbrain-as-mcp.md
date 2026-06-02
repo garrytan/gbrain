@@ -87,3 +87,11 @@ GBrain’s docs recommend `read write` for ChatGPT and reserving `admin` for loc
 OpenAI’s Help Center says full MCP support with write/modify actions is currently rolling out for Business, Enterprise, and Edu plans, while Pro users can connect MCPs with read/fetch permissions in developer mode. citeturn338586view3 OpenAI’s developer docs also list Developer Mode eligibility across Pro, Plus, Business, Enterprise, and Education on the web, so the exact capabilities may depend on your plan and workspace settings. citeturn338586view5
 
 So: **yes for your ChatGPT account/workspace if Developer Mode/custom apps are available; no for me to install it into this current runtime directly.**
+
+
+## See Also
+- [[chatgpt/chatgpt_connect-gbrain-to-chatgpt]]
+- [[chatgpt/chatgpt_cost-for-gbrain]]
+- [[chatgpt/chatgpt_gbrain-embedding-explanation]]
+- [[chatgpt/chatgpt_gbrain-for-jovie-integration]]
+- [[chatgpt/chatgpt_gbrain-wikilink-query]]

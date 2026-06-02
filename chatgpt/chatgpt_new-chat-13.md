@@ -38,3 +38,11 @@ If that's true, then what purpose do talent releases serve?
 ## Assistant
 
 Talent releases serve to protect the rights of the person producing the content, especially for commercial use or distribution. They grant permission to use the individual's likeness and performance. While you may legally film someone in public, using that footage for commercial purposes without their consent can open you up to legal risks like defamation or invasion of privacy claims.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

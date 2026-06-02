@@ -152,3 +152,11 @@ Mr. White — if by “Claud code rule” you mean a **style rule or design toke
 ---
 
 Would you like me to provide a **SwiftUI version** of the same effect (the native “rule” in Apple’s own syntax)?
+
+
+## See Also
+- [[chatgpt/chatgpt_ios-26-liquid-glass-integration]]
+- [[chatgpt/chatgpt_linear-app-liquid-glass]]
+- [[chatgpt/chatgpt_liquid-glass-slider-ui]]
+- [[chatgpt/chatgpt_liquid-glass-tab-bar]]
+- [[chatgpt/chatgpt_liquid-glass-ux-improvements]]

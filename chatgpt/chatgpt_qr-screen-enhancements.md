@@ -194,3 +194,11 @@ Linktree + Venmo + artist card
 in one physical artifact.
 
 Very strong MVP feature.
+
+
+## See Also
+- [[chatgpt/chatgpt_adjust-off-screen-menu]]
+- [[chatgpt/chatgpt_automating-screen-clicks]]
+- [[chatgpt/chatgpt_black-screen-youtube-fix]]
+- [[chatgpt/chatgpt_crm-datagrid-enhancements]]
+- [[chatgpt/chatgpt_drag-and-drop-screen-design]]

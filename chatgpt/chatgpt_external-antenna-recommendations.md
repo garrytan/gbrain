@@ -68,3 +68,11 @@ Here are solid **external antenna options** you can use with your T-Mobile 5G mo
 ---
 
 If you tell me your **exact modem model** and where you’re located (approximate distance or direction to the nearest tower), I can suggest the *best specific antenna & placement strategy* for your situation.
+
+
+## See Also
+- [[chatgpt/chatgpt_apocalyptic-movies-recommendations]]
+- [[chatgpt/chatgpt_bulk-gain-recommendations-rp]]
+- [[chatgpt/chatgpt_christmas-dinner-restaurant-recommendations]]
+- [[chatgpt/chatgpt_get-recipe-recommendations]]
+- [[chatgpt/chatgpt_hotel-recommendations-summary]]

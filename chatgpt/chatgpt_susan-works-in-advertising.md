@@ -82,3 +82,11 @@ Have the writers or friends ever been asked about this and answered it? Can you 
 ## Assistant
 
 It seems there are no specific discussions or interviews available where the "Friends" writers addressed why Joey never asked Susan Bunch for help in landing acting gigs in commercials. The topic isn't covered in the information available about the show's plots or character interactions. This aspect of the show's dynamics, like many others, remains unexplored in interviews and discussions by the creators or writers.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

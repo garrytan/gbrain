@@ -32,3 +32,11 @@ davinci resolve
 DaVinci Resolve has been utilized in the post-production of numerous feature films, including "Deadpool 2," "Kingsman: The Golden Circle," "Star Wars: The Last Jedi," and "X-Men: Apocalypse." citeturn0search5
 
 For more information or to download DaVinci Resolve, visit Blackmagic Design's official website. citeturn0search0 
+
+
+## See Also
+- [[chatgpt/chatgpt_davinci-resolve-mcp]]
+- [[chatgpt/chatgpt_resolve-device-info-plus-module-error]]
+- [[chatgpt/chatgpt_resolve-layoutsapp-error]]
+- [[chatgpt/chatgpt_resolve-module-layoutsapp]]
+- [[chatgpt/chatgpt_vue-vite-resolve-error]]

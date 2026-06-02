@@ -26,3 +26,11 @@ Make a Coachella flyer but every band is nickleback
 ## User
 
 Yeah but do it with the same number of acts and format as the real flyer. And make it 2025
+
+
+## See Also
+- [[chatgpt/chatgpt_flyer-summary-request]]
+- [[chatgpt/chatgpt_coachella-decline-or-recovery]]
+- [[chatgpt/chatgpt_dj-coachella-headliner]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

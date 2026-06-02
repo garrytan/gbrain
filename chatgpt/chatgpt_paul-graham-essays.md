@@ -34,3 +34,11 @@ Yes, Mr. White. Recent PG essays:
 - # Founder Mode — September 2024. citeturn1view0
 
 Full list lives here: PG’s “Essays” index. citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_paul-graham-on-altman]]
+- [[chatgpt/chatgpt_paul-grahams-recent-thinking]]
+- [[chatgpt/chatgpt_supporting-emerging-paul]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

@@ -38,3 +38,11 @@ Mate er dee
 ## Assistant
 
 It sounds like you're phonetically spelling out "maître d'," which is short for *maître d'hôtel*. This is a French term that refers to the head waiter or the person in charge of the front-of-house staff in a restaurant. The maître d' is responsible for managing reservations, greeting guests, and ensuring that service runs smoothly.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

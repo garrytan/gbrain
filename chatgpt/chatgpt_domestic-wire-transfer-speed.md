@@ -55,3 +55,11 @@ A Capital One transfer to an **Envelope Money** account isn’t a true “wire,�
   Fedwire is same-day once initiated before Capital One’s cutoff (about 5 p.m. ET). Arrival in the Envelope Money account still depends on that bank’s posting schedule, but it’s usually same day.
 
 Bottom line: if it’s an internal Capital One move it’s immediate; if it’s ACH to the Envelope Money platform, expect 1–3 business days; a formal wire is same-day but you pay a wire fee.
+
+
+## See Also
+- [[chatgpt/chatgpt_domestic-wire-transfer-time]]
+- [[chatgpt/chatgpt_td-bank-wire-transfer]]
+- [[chatgpt/chatgpt_wire-transfer-for-car]]
+- [[chatgpt/chatgpt_applecare-transfer-options]]
+- [[chatgpt/chatgpt_car-and-motorcycle-transfer]]

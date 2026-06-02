@@ -108,3 +108,11 @@ AMC movie theaters typically offer popcorn in large and regular sizes. The calor
 - The calorie content for a **regular-sized AMC popcorn** isn't specified in the sources, but it can be inferred to be lower than the large size. Typically, the regular size would have fewer calories than the large, but still a significant amount.
 
 Remember, these figures are approximate and can vary depending on specific preparation methods and serving sizes. The calorie content increases considerably with the addition of butter or other toppings【23†source】【24†source】【25†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

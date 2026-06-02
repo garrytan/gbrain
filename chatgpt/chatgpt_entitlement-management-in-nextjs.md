@@ -873,3 +873,11 @@ If you want, I can map concrete starter code for combining **Stripe metadata + S
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_state-management-nuqs-nextjs]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part3]]

@@ -63,3 +63,11 @@ For two passengers flying **Los Angeles (LAX) to Portland (PDX)** round-trip (de
 All the above options fall in a similar price range (roughly **$330–$360 total for two people**), with minor variations based on return day and carrier. **American** has been offering round trips around **$169 per person**【44†L103-L110】, while **Delta** is about **$177 per person**【43†L139-L147】. **Alaska**’s fares can be extremely low (advertised from **$82 each way** in September【5†L15-L18】), making it competitive after adding seat-selection. Each of these options meets the requirements: **nonstop flight, guaranteed adjacent seats, one carry-on each, all fees included.**
 
 Sources: Nonstop airlines and typical fares【39†L653-L661】【43†L139-L147】【44†L103-L110】; flight schedules (evening departures/returns)【26†L636-L644】【15†L174-L183】. All prices are recent estimates including carry-on and seating, subject to change with availability.
+
+
+## See Also
+- [[chatgpt/chatgpt_airbnb-booking-issues]]
+- [[chatgpt/chatgpt_hotel-booking-help]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]

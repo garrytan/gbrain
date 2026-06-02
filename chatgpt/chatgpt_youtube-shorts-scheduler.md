@@ -128,3 +128,11 @@ To apply, please provide:
 - Your availability and expected flat rate for the one-month contract
 
 Thank you for your interest in this position!
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-youtube-shorts-urls]]
+- [[chatgpt/chatgpt_youtube-shorts-allow-links]]
+- [[chatgpt/chatgpt_youtube-shorts-vs-long-form]]
+- [[chatgpt/chatgpt_app-automation-for-youtube]]
+- [[chatgpt/chatgpt_black-screen-youtube-fix]]

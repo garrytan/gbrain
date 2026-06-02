@@ -148,3 +148,11 @@ If you tell me your stack (TS/Node + package manager + monorepo or not) I’ll p
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_cursor-agent-setup-fix]]
+- [[chatgpt/chatgpt_doppler-with-cursor-agent]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]

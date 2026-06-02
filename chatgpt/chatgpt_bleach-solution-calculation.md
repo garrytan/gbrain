@@ -63,3 +63,11 @@ To create a 0.5% bleach solution from 6% bleach in a 16-ounce spray bottle using
    - Fill the rest of the bottle with water (473 mL - 39.4 mL = 433.6 mL).
 
 This will give you a 0.5% bleach solution in the 16-ounce spray bottle.
+
+
+## See Also
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part2]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part3]]

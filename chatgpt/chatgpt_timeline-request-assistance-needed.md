@@ -192,3 +192,11 @@ To achieve 8%, what would I need to lose in weight, assuming no muscle loss?
 ## Assistant
 
 To achieve a body fat percentage of 8%, assuming no muscle loss, you would need to lose approximately 10.53 pounds.
+
+
+## See Also
+- [[chatgpt/chatgpt_mr-white-assistance-request]]
+- [[chatgpt/chatgpt_request-for-assistance]]
+- [[chatgpt/chatgpt_alex-singing-timeline]]
+- [[chatgpt/chatgpt_bretts-career-timeline]]
+- [[chatgpt/chatgpt_dalia-dippolito-case-timeline]]

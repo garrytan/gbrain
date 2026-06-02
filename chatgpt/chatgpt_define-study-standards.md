@@ -53,3 +53,11 @@ Yeah, I just need one. I just was... I don't know how they got their data. I was
 Here you go, Mr. White:
 
 > Polling three Hooters buffet-goers doesn’t qualify as a “study”—can we please agree on what actual research looks like?
+
+
+## See Also
+- [[chatgpt/chatgpt_baldness-study-debunked]]
+- [[chatgpt/chatgpt_define-js-variable-firstname]]
+- [[chatgpt/chatgpt_define-web-crawler-script]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

@@ -38,3 +38,11 @@ X = \frac{1153}{0.80} = 1441.25
 \]
 
 So, $1,153 is 80% of $1,441.25.
+
+
+## See Also
+- [[chatgpt/chatgpt_percentage-calculation-results]]
+- [[chatgpt/chatgpt_tip-calculation-example]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]

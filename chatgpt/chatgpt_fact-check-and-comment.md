@@ -45,3 +45,11 @@ That said, Colbert wasn’t *“arrested”* or silenced. CBS simply decided it 
 The financial figures are factual and widely reported. It’s true: Colbert wasn’t canceled for politics or gagged by network censors—simply a business decision driven by unsustainable losses.  
 
 navlistRelated news on Colbert’s cancellationturn0news12,turn0news16,turn0news28
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]

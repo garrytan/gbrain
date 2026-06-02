@@ -201,3 +201,11 @@ Keep a lean side-income, launch your MVP ASAP, prove 5–10 K MRR, then decide: 
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'No worries, we’ll find the perfect name! It can definitely be a challenge to get that ideal mix of sophistication and clarity.'}
 {'asset_pointer': 'sediment://file_00000000ac4461f6bd1d4a55549d5943', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-06T03:35:00.238736+00:00', 'format': 'wav', 'metadata': {'end': 4.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 216078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_add-path-prop]]
+- [[chatgpt/chatgpt_career-path-guidance]]
+- [[chatgpt/chatgpt_career-plan-for-startup-path]]
+- [[chatgpt/chatgpt_chingys-evolving-career-path]]
+- [[chatgpt/chatgpt_claude-cli-path-windows]]

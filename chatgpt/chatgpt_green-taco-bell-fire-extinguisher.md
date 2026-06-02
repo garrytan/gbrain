@@ -295,3 +295,11 @@ Here's the updated list:
 4. Add a high-top table and a gold tray in the cafe for the champagne toast.
 5. Add an extra high-top chair.
 6. Add white tablecloths for the cafe.
+
+
+## See Also
+- [[chatgpt/chatgpt_taco-bell-nugget-facts]]
+- [[chatgpt/chatgpt_all-green-ci-strategy]]
+- [[chatgpt/chatgpt_count-green-cells-excel]]
+- [[chatgpt/chatgpt_catching-fire-cut-issue]]
+- [[chatgpt/chatgpt_drake-bell-nickelodeon-experience]]

@@ -37,3 +37,11 @@ If it’s **Beverly Center in L.A.**:
 - It underwent a major renovation including adding a skylight, street-level dining, and façade updates. citeturn0search3turn0search6turn0search0  
 
 If you tell me your location, I can check how far it is and the best way to get there for you, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_beverly-center-details]]
+- [[chatgpt/chatgpt_center-container-in-red]]
+- [[chatgpt/chatgpt_data-center-debate]]
+- [[chatgpt/chatgpt_data-center-water-brown]]
+- [[chatgpt/chatgpt_fact-check-data-center-claims]]

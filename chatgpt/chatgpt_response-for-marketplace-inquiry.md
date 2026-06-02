@@ -83,3 +83,11 @@ The screenshot is showing a **GitHub Actions workflow permission issue**. Hereâ€
 ---
 
 Do you want me to draft the exact GitHub Actions YAML update for you, so you can just paste it into `.github/workflows/ci.yml`?
+
+
+## See Also
+- [[chatgpt/chatgpt_user-inquiry-response]]
+- [[chatgpt/chatgpt_marketplace-buyer-response]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]

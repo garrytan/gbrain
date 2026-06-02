@@ -134,3 +134,11 @@ In a link-in-bio app, Zod:
 - **Scales cleanly as features grow**
 
 If you want, I can sketch a **canonical Zod schema** for links, profiles, and themes that would scale to millions of users.
+
+
+## See Also
+- [[chatgpt/chatgpt_fix-schema-code-issues]]
+- [[chatgpt/chatgpt_person-identity-schema-setup]]
+- [[chatgpt/chatgpt_organizing-dj-library-2025]]
+- [[chatgpt/chatgpt_organizing-rekordbox-library]]
+- [[chatgpt/chatgpt_react-nuqs-library]]

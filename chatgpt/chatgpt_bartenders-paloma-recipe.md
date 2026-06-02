@@ -48,3 +48,11 @@ This recipe provides a balance of citrus and sweetness, typical of a classic Pal
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_paloma-cocktail-recipe]]
+- [[chatgpt/chatgpt_bartenders-as-secret-service]]
+- [[chatgpt/chatgpt_signal-bartenders-discreetly]]
+- [[chatgpt/chatgpt_tips-legalities-for-bartenders]]
+- [[chatgpt/chatgpt_adjusting-recipe-proportions]]

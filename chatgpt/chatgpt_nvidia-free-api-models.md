@@ -168,3 +168,11 @@ Fallback: minimaxai/minimax-m2.7 or z-ai/glm-4.7
 ```
 
 For ARAMIS, **Hermes Agent + NVIDIA DeepSeek V4 Pro** is the move. Hermes as the agent harness is useful. Hermes as the model is the wrong choice for this specific free NVIDIA setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_free-models-for-prs]]
+- [[chatgpt/chatgpt_leveraging-free-models]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_casting-brief-for-models]]
+- [[chatgpt/chatgpt_cheap-models-for-cos]]

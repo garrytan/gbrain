@@ -122,3 +122,11 @@ Let me know if you want to add anything about availability or style behind the b
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]
+- [[chatgpt/chatgpt_bartender-job-application-response]]
+- [[chatgpt/chatgpt_head-bartender-application-response]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

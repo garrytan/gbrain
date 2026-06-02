@@ -47,3 +47,11 @@ Spell for tay
 To spell the name "Tay":
 
 T-A-Y
+
+
+## See Also
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_bird-man-macros]]
+- [[chatgpt/chatgpt_calculate-macros-food-consumed]]
+- [[chatgpt/chatgpt_chicken-salad-macros-221cal-37gpro-43gfat-63gcarb]]
+- [[chatgpt/chatgpt_fat-loss-deloading-macros]]

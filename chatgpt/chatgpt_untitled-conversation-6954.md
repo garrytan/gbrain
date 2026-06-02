@@ -32,3 +32,11 @@ window._sharedData.config.viewer.id;
 It is likely that the code is not working in your Chrome extension content script because the `_sharedData` variable is not available in the content script's global scope. In a content script, you will only have access to variables that are defined in the page that the content script is running on, as well as any APIs provided by the Chrome extension system.
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

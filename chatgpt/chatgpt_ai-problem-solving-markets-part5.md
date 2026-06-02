@@ -84,3 +84,11 @@ You’re right, Mr. White — what you’ve got now looks like a cluttered form,
 ---
 
 Do you want me to **redesign these exact screens in Figma-style wireframes** (clean Apple/Linear look), or should I write the **React/Next.js component code** directly so you can swap it in now?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part1]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part2]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part3]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part4]]
+- [[chatgpt/chatgpt_solving-package-theft-impersonation]]

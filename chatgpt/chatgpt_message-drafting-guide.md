@@ -35,3 +35,11 @@ If he comes back with a lowball, follow up with:
 > That’s quite a bit lower than I was expecting. How am I supposed to do that?
 
 Then you can settle if he moves closer to your number.
+
+
+## See Also
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part3]]

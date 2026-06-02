@@ -38,3 +38,11 @@ Long terms effects of whip its
 **Mechanism recap:** N₂O irreversibly oxidizes the cobalt in vitamin B₁₂; even “normal” serum B₁₂ can be functionally inactive. Prompt, high-dose intramuscular B₁₂ can halt—and sometimes reverse—damage, but late treatment often leaves permanent deficits.citeturn0search0turn0search6
 
 **Takeaway:** Whippets are far from harmless. Chronic use risks lasting nerve damage, blood disorders, cognitive and psychiatric problems, thrombosis, and possible fertility issues—damage that may be only partially reversible even with aggressive B₁₂ therapy.
+
+
+## See Also
+- [[chatgpt/chatgpt_cats-and-mdma-effects]]
+- [[chatgpt/chatgpt_cell-phone-radiation-effects]]
+- [[chatgpt/chatgpt_chewing-gum-effects-jaw-muscles]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part1]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part2]]

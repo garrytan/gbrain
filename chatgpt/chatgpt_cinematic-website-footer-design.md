@@ -172,3 +172,11 @@ Important: the last frame must match the first frame exactly. The phone screen s
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_cinematic-audience-intelligence-design]]
+- [[chatgpt/chatgpt_cinematic-website-concept]]
+- [[chatgpt/chatgpt_footer-cta-design-system]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_cinematic-demo-script]]

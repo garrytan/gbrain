@@ -814,3 +814,11 @@ const printLabels = () => {
 - The first and third columns should touch the edges, with the middle column centered.
   
 Let me know if this works as expected!
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part2]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part3]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part4]]
+- [[chatgpt/chatgpt_automated-venue-scheduling-solution]]

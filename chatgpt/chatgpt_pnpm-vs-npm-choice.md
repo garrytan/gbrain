@@ -116,3 +116,11 @@ Here’s how **migrations in Drizzle** work, Mr. White:
 Yes — you **do have to generate and apply migrations**. Just changing `schema.ts` won’t update the DB until the migration runs.  
 
 Want me to draft a small **CI snippet for Vercel/Neon** so migrations run automatically when you promote `preview → production`?
+
+
+## See Also
+- [[chatgpt/chatgpt_corepack-pnpm-fixes]]
+- [[chatgpt/chatgpt_doppler-pnpm-setup]]
+- [[chatgpt/chatgpt_force-pnpm-on-vercel]]
+- [[chatgpt/chatgpt_npx-vs-pnpm-comparison]]
+- [[chatgpt/chatgpt_pnpm-in-ci]]

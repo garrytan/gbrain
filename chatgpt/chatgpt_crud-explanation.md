@@ -98,3 +98,11 @@ A **to-do app**:
 Almost every application that stores data (social media, e-commerce, CRMs) relies on these four operations to manage records. citeturn0search14  
 
 If useful, I can also show a **simple CRUD example in a backend framework (Node, Python, or SQL)**.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

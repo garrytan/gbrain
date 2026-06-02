@@ -351,3 +351,11 @@ In this example, the `permissions` property is set to an array with a single ele
 Note that the manifest file also needs to include other properties to specify the extension's name, version, and other details. This example is only showing the `permissions` property that is relevant to the `chrome.notifications` API.
 
 Overall, the `notifications` permission is still valid in manifest version 3 and can be used to allow your extension to create and display notifications to the user. This permission is necessary if you want to use the `chrome.notifications` API in your extension and provide feedback or alert the user to important information.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

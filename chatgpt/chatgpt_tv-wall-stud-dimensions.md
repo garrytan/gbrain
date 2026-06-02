@@ -416,3 +416,11 @@ This is **normal in 1920s construction**:
 ✅ **You can mount directly into the wood** as long as your lag screws go deep enough (3″ recommended). Just **pre-drill through the plaster/lath to avoid cracking**, then drive your lags clean into the stud.
 
 You’re good to proceed with your mount in that position.
+
+
+## See Also
+- [[chatgpt/chatgpt_neon-art-for-wall]]
+- [[chatgpt/chatgpt_tv-wall-mount-specs]]
+- [[chatgpt/chatgpt_whirlpool-gb2fhdxws-dimensions]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

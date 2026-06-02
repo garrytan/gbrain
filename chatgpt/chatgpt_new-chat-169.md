@@ -52,3 +52,11 @@ Estimate
 ## Assistant
 
 Based on standard packaging practices and the size of the container relative to the hand holding it, as seen in the first two images, it looks like the container might hold approximately 1 to 1.5 pounds of chicken. This estimation assumes that the package is similar in size to commonly available pre-packed chicken containers. For an accurate measurement, the chicken should ideally be weighed.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

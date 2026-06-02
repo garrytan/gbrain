@@ -131,3 +131,11 @@ Seal it. Keeps fresh in the fridge for up to 4–5 days.
 Rinse your jar. Repeat on Sundays. Done.
 
 Want me to make you a checklist in Reminders for this routine?
+
+
+## See Also
+- [[chatgpt/chatgpt_coffee-ad-creation]]
+- [[chatgpt/chatgpt_coffee-and-coke-combo]]
+- [[chatgpt/chatgpt_coffee-art-plus-price]]
+- [[chatgpt/chatgpt_coffee-break-hotspots-la]]
+- [[chatgpt/chatgpt_coffee-experience-explanation]]

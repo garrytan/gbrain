@@ -66,3 +66,11 @@ Etymology
 ## Assistant
 
 The term "nepotism" originates from the Italian word "nepotismo," derived from Latin "nepos," meaning "nephew." The term originally referred to the practice of popes and bishops in the Catholic Church, who, under vows of celibacy and thus without legitimate children, would often appoint their nephews (or other close relatives) to positions of authority within the church. This practice was a way to maintain influence and wealth within the family. Over time, the term evolved to encompass the favoritism shown to relatives and friends in various sectors beyond the church, including politics, business, and entertainment.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

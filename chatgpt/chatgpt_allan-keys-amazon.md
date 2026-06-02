@@ -45,3 +45,11 @@ Here are some **Allen keys (hex key) sets you can find on Amazon or similar mark
 Allen keys (hex keys) are used to tighten/loosen hex socket screws and bolts and come in SAE (inch) and metric sizes. A well-rounded set usually includes both to cover most furniture, bike, automotive, and DIY projectsciteturn0search0.
 
 Want *recommendations for specific use cases* (e.g., bike repair, furniture assembly, or automotive)?
+
+
+## See Also
+- [[chatgpt/chatgpt_javascript-switch-arrow-keys]]
+- [[chatgpt/chatgpt_neon-and-clerk-keys]]
+- [[chatgpt/chatgpt_set-google-cse-keys]]
+- [[chatgpt/chatgpt_stop-forgetting-keys-mazda]]
+- [[chatgpt/chatgpt_amazon-account-phone-number-issue]]

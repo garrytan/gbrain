@@ -95,3 +95,11 @@ Solve for \( n \):
 \[ n = 33 \]
 
 You would need to complete 33 more rides without any cancellations to bring your rate down to 4%.
+
+
+## See Also
+- [[chatgpt/chatgpt_car-insurance-rate-increase]]
+- [[chatgpt/chatgpt_equinox-membership-cancellation]]
+- [[chatgpt/chatgpt_golds-gym-cancellation-steps]]
+- [[chatgpt/chatgpt_gym-membership-cancellation-request]]
+- [[chatgpt/chatgpt_hourly-rate-calculation-2]]

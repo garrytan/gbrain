@@ -309,3 +309,11 @@ In the updated code, we have two new local data properties, `localX` and `localY
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_adjust-vocal-volume-rides]]
+- [[chatgpt/chatgpt_automating-screen-clicks]]
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_black-screen-youtube-fix]]
+- [[chatgpt/chatgpt_close-menu-on-click]]

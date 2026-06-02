@@ -42,3 +42,11 @@ Got you, Mr. White. Here are a few replies you can paste, depending on how direc
 
 **3. Very blunt**
 > No way I’m letting a 6TB enterprise drive go for $10. It’s $40 as-is, no tests. If you want it at that, cool. If not, I’ll sell it to someone else.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-tests-reinforcing-bad-behavior]]
+- [[chatgpt/chatgpt_branch-setup-and-ede-tests]]
+- [[chatgpt/chatgpt_failing-and-slow-tests]]
+- [[chatgpt/chatgpt_hotel-name-mentioned]]
+- [[chatgpt/chatgpt_identify-slow-tests]]

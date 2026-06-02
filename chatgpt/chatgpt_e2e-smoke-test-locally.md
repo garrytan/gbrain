@@ -97,3 +97,11 @@ If you want **exact commands**, tell me:
 - How smoke tests are tagged or named
 
 I’ll give you a copy-paste command tailored to your repo.
+
+
+## See Also
+- [[chatgpt/chatgpt_test-turborepo-locally]]
+- [[chatgpt/chatgpt_handling-multiple-agents-locally]]
+- [[chatgpt/chatgpt_ai-agent-test-strategies]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]

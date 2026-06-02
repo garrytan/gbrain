@@ -97,3 +97,11 @@ Now, when you arrive, your Grocery List will open automatically.
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_keyboard-shortcuts-in-dj-software]]
+- [[chatgpt/chatgpt_unify-notifications-and-shortcuts]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

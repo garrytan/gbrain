@@ -74,3 +74,11 @@ To change the font size to "text-2xs" when the height is less than 14, you can m
 In this updated template, we added a dynamic class binding for the `<span>` element using `:class`. The `['items-center', height < 14 ? 'text-2xs' : 'text-xs', 'text-white']` array syntax allows us to conditionally apply the `text-2xs` class when the `height` prop is less than 14. Otherwise, it applies the `text-xs` class. The `text-white` class is applied in both cases.
 
 By making this change, the font size will be "text-2xs" when the `height` prop is less than 14, and "text-xs" when it is 14 or greater.
+
+
+## See Also
+- [[chatgpt/chatgpt_tailwind-font-size-button]]
+- [[chatgpt/chatgpt_adobe-account-change-fix]]
+- [[chatgpt/chatgpt_allen-key-size-14-inch]]
+- [[chatgpt/chatgpt_arm-size-and-muscle-growth]]
+- [[chatgpt/chatgpt_arm-size-metrics]]

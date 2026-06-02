@@ -221,3 +221,11 @@ Once it’s reachable, I can run the Playwright-+GPT fuzz test, Lighthouse CI cr
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-in-linear-integration]]
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_linear-github-integration]]
+- [[chatgpt/chatgpt_sentry-linear-integration-issues]]
+- [[chatgpt/chatgpt_sonarcloud-to-linear-integration]]

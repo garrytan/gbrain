@@ -67,3 +67,11 @@ why is the element null in the last case if it was able to log to console?
 The element might have been present in the HTML when it was logged to the console, but by the time the code tried to set its value, the element might have been removed or changed in some way that made it no longer accessible by `document.querySelector`. 
 
 It's also possible that the element was dynamically added to the page after the initial loading, and the code did not wait for the element to be available before attempting to access it. In such cases, it's important to make sure that the elements are present in the HTML before trying to access them, for example by using a callback function that waits for the element to be available.
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_chrome-extension-interaction]]
+- [[chatgpt/chatgpt_chrome-extension-popup-script]]
+- [[chatgpt/chatgpt_chrome-extension-production-url]]
+- [[chatgpt/chatgpt_chrome-extension-upload-error]]

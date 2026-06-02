@@ -38,3 +38,11 @@ Okay, so he sends some messages, texts, and voicemails, and then what?
 ## Assistant
 
 She told Jets management—who quietly warned Favre but didn’t renew her contract in 2008—then stayed silent until 2010, when she gave her voicemails to Deadspin’s editor and they ran the story citeturn1news11turn0news10. The NFL launched an investigation, fined Favre $50 000 for failing to cooperate, but imposed no suspension citeturn1search2. In the fallout Sterger was vilified by fans and media, lost further on-air opportunities, and only now is reclaiming her narrative in the Netflix doc citeturn1news10.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

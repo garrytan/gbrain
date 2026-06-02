@@ -70,3 +70,11 @@ It would also be great to run comps through Tixr going forward. Tixr gives us ac
 
 Thanks,  
 [Your Name]  
+
+
+## See Also
+- [[chatgpt/chatgpt_send-note-to-sophie]]
+- [[chatgpt/chatgpt_auto-send-fan-drops]]
+- [[chatgpt/chatgpt_email-follow-up-note]]
+- [[chatgpt/chatgpt_make-note-pdf]]
+- [[chatgpt/chatgpt_note-to-ben]]

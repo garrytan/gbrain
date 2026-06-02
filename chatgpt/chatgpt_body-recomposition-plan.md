@@ -135,3 +135,11 @@ Assisted + high baseline muscle mass means realistic loss of ~1–1.25 lb/week.
 ---
 
 Would you like me to calculate your **exact macros and weekly caloric adjustments** using RP-style periodization (auto-adjusted for weight change each week)? I can lay it out in a week-by-week table through June 1.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-recomposition-plan-dexa]]
+- [[chatgpt/chatgpt_body-composition-phase-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-reduction-plan-2]]
+- [[chatgpt/chatgpt_body-fat-reduction-plan]]

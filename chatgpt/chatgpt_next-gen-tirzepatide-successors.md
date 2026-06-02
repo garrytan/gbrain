@@ -222,3 +222,11 @@ If you want, I can:
 - Lay out **how much muscle you can realistically preserve or gain** when cutting hard
 
 Just say which direction you want to go.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-highlight-next-show]]
+- [[chatgpt/chatgpt_next-16-and-clerk]]
+- [[chatgpt/chatgpt_next-gen-dj-character]]
+- [[chatgpt/chatgpt_next-steps-for-logyourbody]]
+- [[chatgpt/chatgpt_next-version-clarification]]

@@ -72,3 +72,11 @@ I wish I could change my voice to match Scarlett Johansson's, but I can only pro
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_beverly-center-details-2]]
+- [[chatgpt/chatgpt_beverly-center-details]]
+- [[chatgpt/chatgpt_center-container-in-red]]
+- [[chatgpt/chatgpt_data-center-debate]]
+- [[chatgpt/chatgpt_data-center-water-brown]]

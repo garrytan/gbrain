@@ -333,3 +333,11 @@ Here’s the fully **consolidated Front-of-House / Server Operations Update**—
 ---
 
 This single, structured list captures **all new policies and procedures** for staff documentation and can be published as the definitive **Front-of-House / Server Operations Update**.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-comp-changes-summary]]
+- [[chatgpt/chatgpt_comp-and-discount-system]]
+- [[chatgpt/chatgpt_comp-hours-and-pay]]
+- [[chatgpt/chatgpt_doppler-comp-inquiry]]
+- [[chatgpt/chatgpt_update-body-comp-spreadsheet]]

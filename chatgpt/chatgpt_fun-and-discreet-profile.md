@@ -26,3 +26,11 @@ Write a quick and concise dating profile bio that is like snarky and confident a
 ## Assistant
 
 Mr. White here. I lift heavy things most days, pretend spinach tastes good, and funnel enough coffee to power a small city. I’m single, but I prefer a plus-one who’s already spoken for—discretion guaranteed. A dash of creativity keeps life interesting, and I’m in it purely for the fun. Ready to break a sweat, share a laugh, and keep things deliciously uncomplicated? Let’s make some stories worth whispering about.
+
+
+## See Also
+- [[chatgpt/chatgpt_amaz-twitch-gamer-profile]]
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]

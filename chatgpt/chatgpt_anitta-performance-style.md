@@ -96,3 +96,11 @@ Nah
 ## Assistant
 
 Mr. White, you’re likely thinking of **Ludmilla**. Ludmilla is a Brazilian singer‐songwriter known for her funk‐influenced pop and R&B. She often takes the stage wearing bikini‐style tops paired with pants, showing off her sculpted abs, and it’s become part of her signature move to throw off a jacket as her performance kicks into high gear citeturn12search9turn12search7.
+
+
+## See Also
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_cinematic-subway-performance-2]]
+- [[chatgpt/chatgpt_cinematic-subway-performance]]

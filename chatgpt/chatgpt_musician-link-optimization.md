@@ -126,3 +126,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'No worries, Mr. White, I get what you’re aiming for. Basically, you’re looking to outdo something like Laylo by making notifications just as seamless and a lot more polished. So the angle is: you can build that universal notification layer but do it in a way that’s a lot more “Apple-like”—cleaner design, smarter targeting, and a way more intuitive feel. Instead of just blasting out a message, you’re delivering it at the perfect moment when fans are most likely to engage. Basically, you’re not just doing notifications—you’re doing “notifications with style” that actually help artists monetize better. Keep it that simple.'}
 {'asset_pointer': 'sediment://file_00000000cc4461f6ae8b01cdcfd0ed91', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-02-05T23:52:07.456885+00:00', 'format': 'wav', 'metadata': {'end': 32.65, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1567278, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]

@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 i have a vue.js app.  it has a table. the table is referencing a computed property "filteredCreators" which then displays a table full of creators based on the filters. the filters are set by menu items on the sidebar. when i change the filters by clicking a menu item, the whole table reloads. this happens  even when returning to the previous tab. how can i improve performance and minimize reloading
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

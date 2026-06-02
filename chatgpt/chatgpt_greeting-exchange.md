@@ -267,3 +267,11 @@ If you want, Mr. White, I can now:
 1) Rank which of these are most defensible,  
 2) Identify which deliver near-term revenue fastest,  
 3) Architect the model layers and data needed.
+
+
+## See Also
+- [[chatgpt/chatgpt_greeting-exchange-2]]
+- [[chatgpt/chatgpt_greeting-exchange-3]]
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_casual-greeting-2]]
+- [[chatgpt/chatgpt_casual-greeting]]

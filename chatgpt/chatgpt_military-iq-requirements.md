@@ -62,3 +62,11 @@ The classification for IQ scores typically looks like this:
 - **Profound intellectual disability**: IQ below 20
 
 It's important to recognize that an individual's abilities can't be fully measured by IQ alone, as adaptive behaviors and social functioning are also key factors in diagnosing intellectual disabilities.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]
+- [[chatgpt/chatgpt_cookie-banner-requirements-2]]
+- [[chatgpt/chatgpt_cookie-banner-requirements-3]]
+- [[chatgpt/chatgpt_cookie-banner-requirements]]
+- [[chatgpt/chatgpt_deepseek-v4-requirements]]

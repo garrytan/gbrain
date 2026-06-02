@@ -1001,3 +1001,11 @@ git push -u origin chore/hermes-agent-profile-context
 ```
 
 I also checked the corrected files for the specific bad framing from the earlier version: no “Hermes is internal infrastructure,” no “Jovie owns Hermes,” no “Hermes chief-of-staff router,” and no “standalone Hermes product” framing remains.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-agent-orchestration-summary]]
+- [[chatgpt/chatgpt_hermes-agent-orchestration]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]

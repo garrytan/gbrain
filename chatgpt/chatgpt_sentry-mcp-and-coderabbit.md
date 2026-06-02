@@ -42,3 +42,11 @@ Here’s the concise explanation you’re looking for, **Mr. White**:
 4. During reviews, CodeRabbit will fetch context (errors, performance insights, etc.) from Sentry via MCP and use it to generate richer, context-aware review feedback.
 
 If you need setup steps (e.g., sample config for Sentry MCP + CodeRabbit), tell me your environment (self-hosted vs SaaS) and I can provide config templates.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_auto-fix-sentry-crashes]]
+- [[chatgpt/chatgpt_automating-sentry-fixes]]
+- [[chatgpt/chatgpt_coderabbit-auto-fix-limitations]]

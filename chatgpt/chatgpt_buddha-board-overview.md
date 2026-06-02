@@ -92,3 +92,11 @@ A **Buddha Board** is a reusable “water painting” surface designed for mindf
 ---
 
 If you want, specify your use (desk, travel, gift, etc.), and I can narrow it to one exact pick.
+
+
+## See Also
+- [[chatgpt/chatgpt_casting-board-grid]]
+- [[chatgpt/chatgpt_sarcastic-mood-board-critique]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]

@@ -72,3 +72,11 @@ Or should I take 50 and then 75 the following Saturday
 Mr. White,
 
 Taking 50 units this Saturday and then bumping to 75 units the following Saturday is perfectly safe—it simply means you’ll stay on your current dose for one more week before escalating. Tirzepatide’s once-weekly kinetics tolerate that one-week delay, and you won’t stack doses too closely. If you’d rather start 75 units sooner, skip Saturday and inject 75 units on Monday (shifting your weekly schedule to Mondays). But if you want to keep dosing on Saturdays, go ahead with 50 this weekend and 75 next Saturday.
+
+
+## See Also
+- [[chatgpt/chatgpt_coke-zero-delivery-options]]
+- [[chatgpt/chatgpt_cost-of-delivery-math]]
+- [[chatgpt/chatgpt_costco-business-delivery-terms]]
+- [[chatgpt/chatgpt_costco-delivery-zone-issue]]
+- [[chatgpt/chatgpt_flower-delivery-on-friday]]

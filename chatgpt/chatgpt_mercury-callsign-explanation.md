@@ -150,3 +150,11 @@ If your priority is:
 You are past formation. Use **Mercury**.
 
 If you want, I can also tell you how VCs will view Mercury-issued SAFEs in diligence (short answer: they don’t care, as long as the doc is standard).
+
+
+## See Also
+- [[chatgpt/chatgpt_mercury-white-explanation]]
+- [[chatgpt/chatgpt_set-mercury-callsign]]
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]

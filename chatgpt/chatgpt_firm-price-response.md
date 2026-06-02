@@ -29,3 +29,11 @@ I'm selling this webcam that I found in my uncle's house who died, um, for $10, 
 Here you go, Mr. White:
 
 > It’s $15 firm. I found it at my uncle’s place and haven’t tested it, so I don’t know if it works—that’s why it’s this cheap. It’s Facebook Marketplace, so you’re getting a bargain in exchange for a bit of a gamble. If you’re cool with that, you can grab it near Sunset & Bronson today. If not, please just move on.
+
+
+## See Also
+- [[chatgpt/chatgpt_firm-apology-response]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]

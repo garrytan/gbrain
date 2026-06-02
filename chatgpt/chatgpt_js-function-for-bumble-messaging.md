@@ -190,3 +190,11 @@ fetch("https://api.example.com/data")
 ```
 
 In this example, `fetch` is used to make a GET request to the URL `https://api.example.com/data`. The response from the API is then passed to `response.json()` to parse the JSON data. The parsed data is then logged to the console and can be used as needed in your code. If there is an error with the request, the error is logged to the console using `console.error`.
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_fix-email-validation-function]]
+- [[chatgpt/chatgpt_fix-javascript-function]]
+- [[chatgpt/chatgpt_html-bumble-messages-unknown]]
+- [[chatgpt/chatgpt_improve-js-function]]

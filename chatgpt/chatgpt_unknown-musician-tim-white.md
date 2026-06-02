@@ -112,3 +112,11 @@ vigel?
 Yes, Tim White has also collaborated with the Russian electronic music duo Vigel. They released a track titled "Know You" in 2020, which features Tim White's vocals over Vigel's driving trance beats and pulsing synth lines. 
 
 Vigel is known for their high-energy trance and progressive house tracks, and they have collaborated with several other artists and producers in the electronic dance music (EDM) community. Their collaboration with Tim White on "Know You" showcases their knack for creating dancefloor-friendly anthems that combine catchy melodies with powerful, uplifting production.
+
+
+## See Also
+- [[chatgpt/chatgpt_tim-white-multifaceted-musician]]
+- [[chatgpt/chatgpt_add-songs-tim-white]]
+- [[chatgpt/chatgpt_bio-for-tim-white]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]
+- [[chatgpt/chatgpt_crest-white-strips-analysis]]

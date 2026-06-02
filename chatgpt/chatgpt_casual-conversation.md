@@ -98,3 +98,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Going below 6% is definitely possible, but it can be pretty challenging and tough to maintain. It can also come with some trade-offs, like lower energy levels or a bit more difficulty in your training. So unless you have a specific reason or event that you'd want to be super lean for, 6% is probably a good balance. It's lean enough to look great and give you that buffer without pushing your body too hard."}
 {'asset_pointer': 'sediment://file_0000000067386230b50c6c9ec6259646', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-22T04:03:07.081084+00:00', 'format': 'wav', 'metadata': {'end': 27.35, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1312878, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_casual-conversation-response]]
+- [[chatgpt/chatgpt_casual-greeting-2]]
+- [[chatgpt/chatgpt_casual-greeting]]
+- [[chatgpt/chatgpt_conversation-duration-breakdown]]
+- [[chatgpt/chatgpt_conversation-recap-summary]]

@@ -78,3 +78,11 @@ how much was the deal and what are the terms
 ## Assistant
 
 The acquisition of Team Coco by Sirius XM was valued at approximately $150 million. As part of the terms of the deal, Conan O'Brien signed a five-year contract with Sirius XM. Under this contract, O'Brien will continue to host the "Conan O'Brien Needs a Friend" podcast and will also create a new full-time Team Coco channel on Sirius XM's satellite and streaming platforms【10†source】【10†source】【10†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_ev-ownership-costs-comparison]]
+- [[chatgpt/chatgpt_fact-check-music-ownership]]
+- [[chatgpt/chatgpt_jovieai-ownership-inquiry]]
+- [[chatgpt/chatgpt_nyse-and-ice-ownership]]
+- [[chatgpt/chatgpt_podcast-and-reality-show-concept-part1]]

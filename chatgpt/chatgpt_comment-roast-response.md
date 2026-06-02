@@ -51,3 +51,11 @@ Again
 ## Assistant
 
 "Thanks for the wisdom, Rat Supply Co. Maybe I'll take advice from someone who isn't comparing the cost of my car to their toy collection."
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

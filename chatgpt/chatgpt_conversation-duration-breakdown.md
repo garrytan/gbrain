@@ -70,3 +70,11 @@ No “growth hacks” that make artists feel gross.
 Just an AI manager for music artists that helps them ship, promote, sell, and grow faster.
 
 5 hours and 12 minutes later, I am more convinced this needs to exist.
+
+
+## See Also
+- [[chatgpt/chatgpt_feeder-duration-estimate]]
+- [[chatgpt/chatgpt_u2-vegas-sphere-concert-duration]]
+- [[chatgpt/chatgpt_age-range-breakdown]]
+- [[chatgpt/chatgpt_bill-split-breakdown]]
+- [[chatgpt/chatgpt_budget-breakdown-bro]]

@@ -50,3 +50,11 @@ Since it’s back this week: **book a normal appointment** with your primary car
 Because “impending doom” **can** rarely precede serious medical events. citeturn0search14turn0search18
 
 If you want, tell me what was going on in the last week—sleep, stimulants/pre-workout, stress, any illness— and whether the sensation feels more like **a drop/fall** or **a sway/shake**. I’ll help you sort which bucket it likely fits.
+
+
+## See Also
+- [[chatgpt/chatgpt_anxiety-attack-seek-help]]
+- [[chatgpt/chatgpt_manage-insane-anxiety-tips]]
+- [[chatgpt/chatgpt_managing-physical-anxiety-symptoms]]
+- [[chatgpt/chatgpt_post-confrontation-anxiety]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

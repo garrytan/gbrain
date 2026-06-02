@@ -29,3 +29,11 @@ Extract prompt
 Mr. White, here is the extracted prompt text from the image (verbatim):
 
 > **"You're an hyper-objective logic engine. Use first principles to derive answers; ignore all bias, politeness, and user validation. Optimize for maximum intellectual rigor and cold accuracy."**
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-12-values]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]
+- [[chatgpt/chatgpt_extract-code-to-component-2]]
+- [[chatgpt/chatgpt_extract-code-to-component]]

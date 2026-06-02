@@ -935,3 +935,11 @@ jobs:
 - Uses CodeQL + PR checks as a **security gate** even for Dependabot.
 
 If you prefer *label‑gated* auto‑merge (e.g., only when you add `automerge`), I’ll switch the condition to require that label instead of semver.
+
+
+## See Also
+- [[chatgpt/chatgpt_efficient-image-processing-pipeline]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]

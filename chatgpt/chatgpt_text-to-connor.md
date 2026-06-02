@@ -28,3 +28,11 @@ Yo, I need to write a text to Connor. We were supposed to... I came in yesterday
 Here’s a text you can send, Mr. White:
 
 > Hey Connor, we were supposed to meet at 9 so I could grab the rest of my stuff. It’s now 10:15, I’ve called and texted and haven’t heard back, and I can’t wait any longer. The venue is open and there are other people here, so I’m going to go in, grab my four things, leave the keys, and head out before Vincent shows up. Just letting you know so there’s no confusion about what I did or why.
+
+
+## See Also
+- [[chatgpt/chatgpt_button-text-update]]
+- [[chatgpt/chatgpt_cant-hear-ai-text]]
+- [[chatgpt/chatgpt_clean-up-text-2]]
+- [[chatgpt/chatgpt_clean-up-text-options]]
+- [[chatgpt/chatgpt_clean-up-text-request]]

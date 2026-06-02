@@ -344,3 +344,11 @@ This is the “no babysitting” tier for your workload.
 Tell me what those three `node (vitest)` processes correspond to:
 - Are they from **multiple worktrees**, or does **one** worktree spawn multiple?
 If you answer that, I’ll tell you the exact config change to stop the vitest memory explosion (and you’ll likely get a big speedup even before you upgrade).
+
+
+## See Also
+- [[chatgpt/chatgpt_m2-bottleneck-diagnosis-part2]]
+- [[chatgpt/chatgpt_m2-bottleneck-diagnosis-part3]]
+- [[chatgpt/chatgpt_brake-noise-diagnosis-cx-5]]
+- [[chatgpt/chatgpt_cx-5-steering-noise-diagnosis]]
+- [[chatgpt/chatgpt_bottleneck-causes-and-solutions]]

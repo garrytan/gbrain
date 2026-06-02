@@ -38,3 +38,11 @@ Vodka soda garjish
 ## Assistant
 
 A vodka soda garnished with a lime wedge: a classic, refreshing drink with a zesty twist.
+
+
+## See Also
+- [[chatgpt/chatgpt_classic-cocktails-list]]
+- [[chatgpt/chatgpt_labeling-pre-batched-cocktails]]
+- [[chatgpt/chatgpt_renamed-menu-and-cocktails]]
+- [[chatgpt/chatgpt_shelf-life-of-cocktails]]
+- [[chatgpt/chatgpt_who-batches-cocktails]]

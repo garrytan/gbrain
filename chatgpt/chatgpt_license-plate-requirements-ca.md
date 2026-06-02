@@ -99,3 +99,11 @@ So the real answer:
 **DMV points:** **0** for this plate-display violation. citeturn561536view0
 
 LA Superior Court says correctable violations have to be handled **by mail or in person**, and proof of correction cannot be submitted online or by phone. citeturn788062view0
+
+
+## See Also
+- [[chatgpt/chatgpt_u-haul-license-requirements]]
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_license-plate-delay-resolution]]
+- [[chatgpt/chatgpt_steve-jobs-license-plate-loophole]]
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]

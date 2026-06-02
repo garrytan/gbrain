@@ -55,3 +55,11 @@ Typically SonarQube runs as part of a build pipeline:
 - **Community (free, open-source)** and paid **Enterprise** editions with expanded rules, scalability, and support. citeturn0search7
 
 In short, SonarQube is a foundational tool for enforcing consistent, measurable code quality and catching defects early in the software lifecycle. citeturn0search31
+
+
+## See Also
+- [[chatgpt/chatgpt_sonarqube-mcp-overview]]
+- [[chatgpt/chatgpt_sonarqube-overview]]
+- [[chatgpt/chatgpt_nosonar-in-sonarqube]]
+- [[chatgpt/chatgpt_sonarqube-ai-features]]
+- [[chatgpt/chatgpt_sonarqube-code-analysis]]

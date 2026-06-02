@@ -916,3 +916,11 @@ turn this into a prompt for claude code with the breand new figma mcp that sends
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part1]]
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part3]]
+- [[chatgpt/chatgpt_frameio-homepage-for-jovie-part2]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part2]]
+- [[chatgpt/chatgpt_ingest-claim-system-design-part2]]

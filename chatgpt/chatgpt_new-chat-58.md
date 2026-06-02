@@ -26,3 +26,11 @@ tags: [chatgpt, import]
 ## Assistant
 
 A size 45 in EU shoe sizing typically converts to a size 11.5 in US men's shoe sizing.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

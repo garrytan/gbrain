@@ -59,3 +59,11 @@ For **maximizing value**, the best build is an “eBay Operator” MCP with a hu
 Important constraint: eBay APIs require OAuth tokens, scopes, and a Developer Program account; user-specific actions require user authorization, and credentials/tokens must be stored securely. citeturn417093view0 eBay also enforces API call limits, though the default limits are high enough for most small/seller automation use cases. citeturn475405view0
 
 My recommendation: **do not look for a generic “AI agent that runs eBay.” Build a narrow MCP that wraps eBay’s official APIs and starts read-only.** Then graduate to approved write actions: price updates, ad bid updates, inventory updates, and fulfillment tracking. That gives you maximum value without handing an agent unchecked control over your seller account.
+
+
+## See Also
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_change-ebay-payout-account]]
+- [[chatgpt/chatgpt_custom-skill-optimization]]
+- [[chatgpt/chatgpt_ebay-auction-tips]]
+- [[chatgpt/chatgpt_ebay-listing-profit]]

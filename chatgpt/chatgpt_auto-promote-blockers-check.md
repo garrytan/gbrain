@@ -794,3 +794,11 @@ Goal: Speed-first pipeline. PRs only run **pr-policy** + **ci-fast**. Push to **
 3) **Final checklist**: “Ready for auto-promote: YES/NO” and any remaining manual toggles (e.g., enable repo setting **Allow auto-merge**).
 
 **Begin by loading the files and producing the PASS/FAIL report. If any FAIL, patch and include diffs.**
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_auto-body-shop-suggestion]]
+- [[chatgpt/chatgpt_auto-claude-overview]]

@@ -312,3 +312,11 @@ Sure! Here's an updated version of the template that shows an empty div with a g
 This code adds a new `div` element that shows an empty gray box with `animate-pulse` class if both the normal image and default image fail to load, and if `loading` is false. The `v-if` directive checks if `contact.profile_pic_url`, `defaultImage`, and `loading` are all falsy. If they are, the `div` element is displayed.
 
 Note that the `v-if` directive in the first `div` element checks for `loading` being false, so it will not display the image if `loading` is true, even if both the normal and default images have failed to load.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

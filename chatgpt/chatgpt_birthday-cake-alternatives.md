@@ -44,3 +44,11 @@ Play it off as intentional:
 - *“Cake is overrated, this year we’re going gourmet with ___.”*  
 
 Would you like me to also suggest some clever one-liners you could use to spin it into a charming “on-purpose” move?
+
+
+## See Also
+- [[chatgpt/chatgpt_affordable-sunglasses-alternatives]]
+- [[chatgpt/chatgpt_alternatives-to-genius-shots]]
+- [[chatgpt/chatgpt_bartender-for-birthday-party]]
+- [[chatgpt/chatgpt_better-alternatives-to-fastlane]]
+- [[chatgpt/chatgpt_better-key-organizer-alternatives]]

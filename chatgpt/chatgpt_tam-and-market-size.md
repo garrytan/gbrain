@@ -104,3 +104,11 @@ That is the core. TAM skeptics usually win if the debate stays inside the curren
 > “Jovie is a bet that music creation is moving from a professional workflow to a mass-market behavior, while music IP is moving from static catalog ownership to dynamic software-enabled monetization. Either trend creates a larger market than traditional music tech. If both happen, the market becomes substantially larger than people expect.”
 
 That is the line I would build around.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-music-market-infrastructure-part1]]
+- [[chatgpt/chatgpt_ai-music-market-infrastructure-part2]]
+- [[chatgpt/chatgpt_allen-key-size-14-inch]]
+- [[chatgpt/chatgpt_amc-rumors-and-market-chatter]]
+- [[chatgpt/chatgpt_arm-size-and-muscle-growth]]

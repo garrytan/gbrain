@@ -38,3 +38,11 @@ So the practical answer is:
 One more detail: for **Android chats**, Apple says **RCS** supports **high-resolution photos and videos**, which is a big improvement over MMS, but that still is not the same as AirDrop-style original-file transfer. citeturn2search16turn2search3
 
 Bottom line: **for a bunch of photos, AirDrop is still the move if you care about full fidelity.**
+
+
+## See Also
+- [[chatgpt/chatgpt_affinity-photo-overview]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ai-photo-editing-workflow-part1]]
+- [[chatgpt/chatgpt_ai-photo-editing-workflow-part2]]
+- [[chatgpt/chatgpt_best-fitness-photo-apps]]

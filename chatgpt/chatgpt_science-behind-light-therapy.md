@@ -147,3 +147,11 @@ If someone *feels* better after using it, that doesn’t mean it **works** in a 
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_athlete-recovery-and-science]]
+- [[chatgpt/chatgpt_ketamine-and-erection-science]]
+- [[chatgpt/chatgpt_science-based-vocal-coaches]]
+- [[chatgpt/chatgpt_science-clapback-with-humor]]
+- [[chatgpt/chatgpt_science-vs-opinions]]

@@ -775,3 +775,11 @@ Again, not your situation: you just demonstrated you can gain 10+ lb with this d
   - If you decide you’re happy around here: sit at roughly maintenance and focus on strength and muscle, still at the same dose.
 
 If the 4-week trend clearly breaks out of this band (e.g., you’re averaging >172 and climbing or <160 and still dropping), *then* it’s worth revisiting both calories and, with your prescriber, whether a dose change makes sense. But on this graph alone, dosage is not the lever I’d pull.
+
+
+## See Also
+- [[chatgpt/chatgpt_compounding-options-explained-part1]]
+- [[chatgpt/chatgpt_compounding-options-explained-part3]]
+- [[chatgpt/chatgpt_compounding-options-explained-part4]]
+- [[chatgpt/chatgpt_elvis-costello-controversy-explained-part2]]
+- [[chatgpt/chatgpt_gym-options-near-bronson-part2]]

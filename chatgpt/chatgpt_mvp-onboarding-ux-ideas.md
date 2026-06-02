@@ -248,3 +248,11 @@ Free = **1 production domain total**.
 Main + subdomain together = **paid**.
 
 If you want, I can suggest the cleanest domain architecture for creator pages vs auth so you don’t pay early.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]

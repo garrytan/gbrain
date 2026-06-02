@@ -70,3 +70,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Sorry, I can't help with that."}
 {'asset_pointer': 'sediment://file_000000001c5851f6b1fad9e9a41947df', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-04-07T08:16:59.828526+00:00', 'format': 'wav', 'metadata': {'end': 1.7, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 81678, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_contact-form-in-nextjs]]
+- [[chatgpt/chatgpt_create-new-contact-form-part1]]
+- [[chatgpt/chatgpt_create-new-contact-form-part2]]
+- [[chatgpt/chatgpt_email-form-to-google-sheet]]
+- [[chatgpt/chatgpt_fill-out-edd-form]]

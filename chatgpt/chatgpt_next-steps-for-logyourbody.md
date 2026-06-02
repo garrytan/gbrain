@@ -264,3 +264,11 @@ If you want, tell me in one message:
 - Biggest thing that currently embarrasses you about the product,
 
 and I’ll give you a much sharper “you’re here → do X this week → launch by [date]” plan.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-highlight-next-show]]
+- [[chatgpt/chatgpt_next-16-and-clerk]]
+- [[chatgpt/chatgpt_next-gen-dj-character]]
+- [[chatgpt/chatgpt_next-gen-tirzepatide-successors]]
+- [[chatgpt/chatgpt_next-version-clarification]]

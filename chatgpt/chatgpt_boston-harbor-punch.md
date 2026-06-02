@@ -212,3 +212,11 @@ Make up a drink special called the tea party
 5. Garnish with a lemon wheel and an edible flower.
 
 The Tea Party Special is a sophisticated and floral cocktail, marrying the rich flavors of Earl Grey-infused bourbon with the delicate notes of elderflower. It’s a perfect drink for commemorating the historic Boston Tea Party with a modern twist.
+
+
+## See Also
+- [[chatgpt/chatgpt_custard-in-boston-cream-donut]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

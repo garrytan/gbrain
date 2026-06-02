@@ -490,3 +490,11 @@ test("expired session redirects, preserves returnTo, restores draft", async ({ p
 - [ ] Playwright test above passes locally and in CI.
 
 If you want, I’ll tailor the draft-restore to your **Smart Link Create/Edit** forms and wire the interceptors into your existing fetch/E2E setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_meal-plan-with-genius-shots]]
+- [[chatgpt/chatgpt_product-shots-for-ebay]]
+- [[chatgpt/chatgpt_affordable-sunglasses-alternatives]]
+- [[chatgpt/chatgpt_better-alternatives-to-fastlane]]
+- [[chatgpt/chatgpt_better-key-organizer-alternatives]]

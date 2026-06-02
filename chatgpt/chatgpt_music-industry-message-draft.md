@@ -48,3 +48,11 @@ I know the world didn’t see what I saw, but you guys earned every second of th
 ```
 
 Cleaner, less apologetic, less “fan DM,” still personal.
+
+
+## See Also
+- [[chatgpt/chatgpt_drexel-music-industry-alumni]]
+- [[chatgpt/chatgpt_mcp-in-music-industry]]
+- [[chatgpt/chatgpt_draft-complaint-message]]
+- [[chatgpt/chatgpt_follow-up-message-draft]]
+- [[chatgpt/chatgpt_message-draft-assistance]]

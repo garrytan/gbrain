@@ -31,3 +31,11 @@ A lemon drop shot typically consists of vodka, lemon juice, and a sweetener like
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_laughing-gas-shot-recipe]]
+- [[chatgpt/chatgpt_midori-shot-recipe]]
+- [[chatgpt/chatgpt_drag-and-drop-screen-design]]
+- [[chatgpt/chatgpt_male-rivalries-mic-drop]]
+- [[chatgpt/chatgpt_no-drop-after-chorus]]

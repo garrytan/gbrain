@@ -256,3 +256,11 @@ This makes the stick boot straight into your page, no manual clicks.
 
 **Result:**  
 When the TV powers on and the stick gets power, it goes directly to your full-screen webpage and stays there. Total extra cost: $0 if you already have the sticks, maybe $15 if you add the optional Ethernet adapter.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_html-webpage-template]]
+- [[chatgpt/chatgpt_webpage-layout-and-appearance]]
+- [[chatgpt/chatgpt_ac-air-direction-solutions]]
+- [[chatgpt/chatgpt_blocked-sink-try-solutions]]

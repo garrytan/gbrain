@@ -71,3 +71,11 @@ Got it — **Haunted Hollywood** theme. Here are some refined, in-theme discount
 - **BEHINDTHESCREAM** – Perfect balance of pun and theme.  
 
 If you tell me how you’re using it (e.g. Eventbrite promo, merch discount, VIP pre-sale), I can narrow it down to the most fitting tone — classy, creepy, or playful. Which do you want the code to *feel* like?
+
+
+## See Also
+- [[chatgpt/chatgpt_chipotle-discount-code-search]]
+- [[chatgpt/chatgpt_mochi-health-discount-code]]
+- [[chatgpt/chatgpt_model-mayhem-discount-code]]
+- [[chatgpt/chatgpt_halloween-act-ideas]]
+- [[chatgpt/chatgpt_bodyspec-discount-codes]]

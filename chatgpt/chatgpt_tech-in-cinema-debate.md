@@ -93,3 +93,11 @@ This isn’t improving technology. It’s buying a very expensive carbon-fiber m
 Fincher actually changed the tools. *Zodiac* went digital so they could fix mics in frame and do hundreds of monitor comps. *The Social Network* editors said Fincher’s take volume made scenes better, digital let 4 or 5 people do what 25 or 30 film-era people used to do, and he was reviewing selects and edits the same day. *Gone Girl* pushed Team Fincher’s workflow hard enough to help drive Adobe features like Render & Replace; 80% of the final timeline was After Effects comps, and at least 1,000 shots used mocha AE. *Dragon Tattoo* had PIX dailies cutting within hours and notes coming back from 5,400 miles away. citeturn238522view1turn985595view0turn880439view1turn880439view0turn880439view6turn880439view5
 
 *The Killer* shot spherical on a V-Raptor small enough to go on bikes, cars, under seats, and in planes, then built the handheld feel and anamorphic characteristics in finishing, shot by shot, and finished at 2.39:1. *Mindhunter* was shot 6K 2:1 with a 5K center extraction and released at 2.2:1. Those are movie frames. The tall IMAX box is for rides. citeturn799461view0turn880439view4turn880439view3
+
+
+## See Also
+- [[chatgpt/chatgpt_attractiveness-and-objectivity-debate]]
+- [[chatgpt/chatgpt_calories-vs-chemicals-debate]]
+- [[chatgpt/chatgpt_charlie-jordan-dj-debate]]
+- [[chatgpt/chatgpt_cnn-outrage-framing-debate]]
+- [[chatgpt/chatgpt_data-center-debate]]

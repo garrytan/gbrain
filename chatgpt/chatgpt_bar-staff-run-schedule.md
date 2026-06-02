@@ -181,3 +181,11 @@ Here's the updated run-of-show table with the kitchen closing details included:
 | At Close | Closing Bartender Cut                                          |
 
 This schedule ensures all staff are aware of the kitchen closing procedure and the appropriate cues.
+
+
+## See Also
+- [[chatgpt/chatgpt_building-role-based-schedule]]
+- [[chatgpt/chatgpt_compose-team-schedule-text]]
+- [[chatgpt/chatgpt_job-schedule-advice]]
+- [[chatgpt/chatgpt_minimum-wage-for-wait-staff]]
+- [[chatgpt/chatgpt_optimal-gym-schedule-part1]]

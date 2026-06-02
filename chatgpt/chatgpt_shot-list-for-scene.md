@@ -106,3 +106,11 @@ make it into a table
 | 11          | Full                 | Both in frame, in underwear            | Dancing together                                  |
 | 12          | Tracking             | Camera follows Candra                  | Candra walking into the bedroom, looking at camera|
 | 13          | Low Angle            | Camera low on the ground, looking up   | Candra crawling into bed, another girl waiting    |
+
+
+## See Also
+- [[chatgpt/chatgpt_fashion-film-shot-list]]
+- [[chatgpt/chatgpt_shot-list-table]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_ai-optimizes-to-do-list]]
+- [[chatgpt/chatgpt_airbnb-essentials-list]]

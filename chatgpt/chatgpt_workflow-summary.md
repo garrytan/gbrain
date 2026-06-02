@@ -527,3 +527,11 @@ Begin now. Make changes and output code.
 :::
 
 If you want, paste (or link) your current blog layout files (e.g., `app/blog/[slug]/page.tsx`, Markdoc renderer, and your header/footer components) and I’ll tailor the prompt to your exact file paths and component names.
+
+
+## See Also
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_admin-workflow-design]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]

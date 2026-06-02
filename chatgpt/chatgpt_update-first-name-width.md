@@ -599,3 +599,11 @@ export default {
 In the code above, the `firstNameWidth` computed property calculates the width of the first name input based on the length of `contact.first_name`. The width is set to a minimum value of 10 pixels. The `:style` binding is used to dynamically update the width of the input element.
 
 Please note that I corrected a typo in the computed property name (`fistNameWidth` to `firstNameWidth`).
+
+
+## See Also
+- [[chatgpt/chatgpt_input-field-for-first-name]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]

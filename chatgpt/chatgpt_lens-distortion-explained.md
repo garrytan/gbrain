@@ -88,3 +88,11 @@ Lens distortion is a common optical effect. For best image fidelity:
 - For creative work, distortion may be a tool rather than a flaw.  
 
 If you like, Mr. White, I can pull up specific distortion numbers (e.g., distortion maps) for a particular lens you’re using (model & mount) so you know its distortion profile. Would that be useful?
+
+
+## See Also
+- [[chatgpt/chatgpt_capture-one-lens-flares]]
+- [[chatgpt/chatgpt_lens-cap-requirements]]
+- [[chatgpt/chatgpt_lens-flare-overlays-photoshop]]
+- [[chatgpt/chatgpt_overlay-lens-flare-image]]
+- [[chatgpt/chatgpt_ai-elements-explained]]

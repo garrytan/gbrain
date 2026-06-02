@@ -46,3 +46,11 @@ That report lists every individual menu item within the chosen category, with qu
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_sales-report-table]]
+- [[chatgpt/chatgpt_setting-item-cost-in-toast]]
+- [[chatgpt/chatgpt_album-sales-2024-12-artists]]
+- [[chatgpt/chatgpt_check-drink-sales-clover]]
+- [[chatgpt/chatgpt_cocktail-sales-distribution]]

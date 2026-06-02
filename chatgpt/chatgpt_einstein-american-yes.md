@@ -62,3 +62,11 @@ How old was Einstein when he became a Swiss citizen?
 ## Assistant
 
 Albert Einstein was 22 years old when he became a Swiss citizen.
+
+
+## See Also
+- [[chatgpt/chatgpt_american-conspiracy-theories-summarized]]
+- [[chatgpt/chatgpt_american-conspiracy-theories]]
+- [[chatgpt/chatgpt_american-drink-recipes]]
+- [[chatgpt/chatgpt_american-musical-supply-overview]]
+- [[chatgpt/chatgpt_cliché-american-drinks]]

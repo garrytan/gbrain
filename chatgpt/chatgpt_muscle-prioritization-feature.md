@@ -134,3 +134,11 @@ This avoids overreacting to one scan.
 ---
 
 **Bottom line:** the core idea is solid and **highly feasible** as a manual-input + ratio-based recommender. Automatic DEXA parsing is doable but a later milestone. The key product risk isn’t tech — it’s designing goal models and messaging uncertainty so users don’t take trunk numbers too literally.
+
+
+## See Also
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part1]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part2]]
+- [[chatgpt/chatgpt_arm-size-and-muscle-growth]]
+- [[chatgpt/chatgpt_automating-feature-design]]

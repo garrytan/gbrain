@@ -85,3 +85,11 @@ As for significant roles before "True Romance," Brad Pitt had a few notable appe
 3. **Kalifornia (1993)** - Released the same year as "True Romance," but it's worth noting since it was before "True Romance" and was a significant role.
 
 These are considered his major, significant roles before "True Romance," though he did have other smaller roles and television appearances before these.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

@@ -167,3 +167,11 @@ Does alightnment actually mean anything beneficial to the user?
 ### Bottom line for Mr. White
 
 “Alignment” is an **interesting neuro-signature** that correlates with sharper cognition and lower stress across several small studies, including a few TM RCTs.  But until larger, independent labs show that *changing* coherence directly improves concrete outcomes—and that TM does it better than cheaper mindfulness apps—treat it as a **tentative biomarker**, not a guaranteed performance upgrade.  Keep the skeptic hat on.
+
+
+## See Also
+- [[chatgpt/chatgpt_meditation-benefits-fitness]]
+- [[chatgpt/chatgpt_athlete-recovery-and-science]]
+- [[chatgpt/chatgpt_ketamine-and-erection-science]]
+- [[chatgpt/chatgpt_science-based-vocal-coaches]]
+- [[chatgpt/chatgpt_science-behind-light-therapy]]

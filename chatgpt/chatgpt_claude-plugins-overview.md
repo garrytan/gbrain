@@ -69,3 +69,11 @@ If you want specifics on *how to install* plugins or the *best ones for a given 
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-plugins-overview-2]]
+- [[chatgpt/chatgpt_ai-vocal-plugins-overview]]
+- [[chatgpt/chatgpt_auto-claude-overview]]
+- [[chatgpt/chatgpt_claude-ai-overview]]
+- [[chatgpt/chatgpt_claude-api-overview]]

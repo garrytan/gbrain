@@ -69,3 +69,11 @@ Given the takeover and the height of the smoke, that’s much more plausible tha
 - Don’t walk toward the sound to investigate.
 - If you smell chemical irritant, feel burning eyes/throat, or see smoke spreading at ground level, move upwind and indoors.
 - If you hear repeated sharper cracks with no aerial smoke, treat it as possible gunfire and leave immediately.
+
+
+## See Also
+- [[chatgpt/chatgpt_sort-csv-by-street]]
+- [[chatgpt/chatgpt_street-cleaning-capacity-issue]]
+- [[chatgpt/chatgpt_street-parking-efficiency]]
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]

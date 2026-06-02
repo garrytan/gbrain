@@ -82,3 +82,11 @@ Mr. White, most Infiniti key fobs can be re-paired (“programmed”) using the 
    - Step out and confirm lock/unlock functions work.
 
 If these steps don’t work (especially on newer push-button models), you’ll likely need professional/authorized assistance to reprogram the fob with specialized gear.
+
+
+## See Also
+- [[chatgpt/chatgpt_airtag-battery-type]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_change-arlo-battery]]
+- [[chatgpt/chatgpt_harley-dead-battery-options]]
+- [[chatgpt/chatgpt_airpods-replacement-options]]

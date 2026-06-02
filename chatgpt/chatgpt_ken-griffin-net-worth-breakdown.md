@@ -57,3 +57,11 @@ Break down Ken Griffith's net worth based on the segments of where that revenue 
 2. **Market-making growth** (Citadel Securities’ revenue growth to nearly $10 B)  
 3. **Strategic investments** (tech stakes; opportunistic Amaranth/Aragon acquisitions)  
 4. **Asset appreciation** (real estate & art collection gains)
+
+
+## See Also
+- [[chatgpt/chatgpt_buffett-vs-musk-net-worth]]
+- [[chatgpt/chatgpt_co-domain-worth-it]]
+- [[chatgpt/chatgpt_fast-check-worth-using]]
+- [[chatgpt/chatgpt_storybook-ai-worth]]
+- [[chatgpt/chatgpt_age-range-breakdown]]

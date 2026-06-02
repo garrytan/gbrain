@@ -58,3 +58,11 @@ If you want, **tell me whether this is for inspiration, cloning structure, or de
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_geist-design-system-overview-2]]
+- [[chatgpt/chatgpt_geist-design-system-overview]]
+- [[chatgpt/chatgpt_geist-design-system]]
+- [[chatgpt/chatgpt_vercel-geist-design-system]]
+- [[chatgpt/chatgpt_code-review-system-design]]

@@ -28,3 +28,11 @@ Why isn’t Jeff cronenworth a part of the new david fincher movie the killer?
 Jeff Cronenworth was not credited as a part of the crew in David Fincher's new movie "The Killer" based on the information available from various sources including IMDb and Wikipedia【6†(Wikipedia)】【7†(IMDb)】. Instead, Erik Messerschmidt was the cinematographer for this movie【14†(Wikipedia)】. It appears that Erik Messerschmidt has built a working relationship with David Fincher, having been hired as a gaffer on Fincher's "Gone Girl" by Jeff Cronenworth, and later recommended by Cronenworth to Fincher for the role of cinematographer on the Netflix series "Mindhunter"【18†(ASC)】. This relationship might have contributed to Messerschmidt being chosen as the cinematographer for "The Killer" over Cronenworth. 
 
 There isn't publicly available information explaining why Jeff Cronenworth wasn't involved in "The Killer", or whether he was considered for the role of cinematographer.
+
+
+## See Also
+- [[chatgpt/chatgpt_cx-5-door-plug-part]]
+- [[chatgpt/chatgpt_finchers-the-killer-quotes]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

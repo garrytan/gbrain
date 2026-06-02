@@ -44,3 +44,11 @@ Open a project ▸ click **Canvas** ▸ paste your draft ▸ start iterating. Si
 
 **TL;DR**  
 Spin up a *“YC App”* Canvas, share the link with Daniel, and iterate away. When you want a second pass from a different model, copy the same draft into a Claude Artifact and keep going—zero extra spend.
+
+
+## See Also
+- [[chatgpt/chatgpt_best-design-deck-tools]]
+- [[chatgpt/chatgpt_best-link-in-bio-tools]]
+- [[chatgpt/chatgpt_best-ux-ai-tools-2026]]
+- [[chatgpt/chatgpt_best-ai-for-landing-pages]]
+- [[chatgpt/chatgpt_best-alternative-greek-yogurt]]

@@ -37,3 +37,11 @@ It pretends the only two options are **(1) keep everyone employed no matter what
 
 A better critique would be: “Do layoffs with real severance, clear communication, job placement support, and leadership accountability.”  
 This comment instead says: “Protect me from reality or you’re responsible for the worst-case outcomes.” That’s not policy—it’s manipulation.
+
+
+## See Also
+- [[chatgpt/chatgpt_comment-request-explanation]]
+- [[chatgpt/chatgpt_comment-suggestion-critique]]
+- [[chatgpt/chatgpt_cruiser-critique-comment]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]

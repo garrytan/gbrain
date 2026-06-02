@@ -62,3 +62,11 @@ Mr. White — I searched and couldn’t find any strong, credible data that conc
 There *is* suggestive evidence — marketing case studies, community surveys, brand perception data — that lesbians are more likely than average to see Subarus favorably, or are more likely than some other groups to own them. But **no high-quality, large-scale, peer-reviewed study** I found confirms a statistically robust effect that lesbians drive Subarus significantly *above average*, controlling for all relevant variables.
 
 If you want, I can try digging into automotive purchase panel data or DMV registration data to see if there are any deeper quantitative studies.
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]

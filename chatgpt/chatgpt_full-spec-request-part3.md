@@ -455,3 +455,11 @@ I don't know. I just want to work backwards from actual ROI. I'm sure there's ot
 
 
 I’ll treat this as a revenue-prioritization problem, separating asymmetric upside from immediate cash needs, then use an interview framework to identify the MVP wedge.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part4]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part5]]

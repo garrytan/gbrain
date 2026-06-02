@@ -46,3 +46,11 @@ This gap is smaller than it used to be. AWS now has **Lambda durable functions**
 Use **cron** for simple scheduled commands on a box. Use **Lambda** when you want AWS-native event-driven compute. Use **Trigger.dev** when you want app-level background workflows with less orchestration glue and better built-in job ergonomics. citeturn600401view4turn600401view2turn600401view0turn600401view5
 
 If by “see less lambda” you meant a different product name, give me the exact name and I’ll compare the right thing.
+
+
+## See Also
+- [[chatgpt/chatgpt_create-cron-job-prompt]]
+- [[chatgpt/chatgpt_cron-job-cost-analysis]]
+- [[chatgpt/chatgpt_p0-watch-cron-output-spec]]
+- [[chatgpt/chatgpt_vercel-cron-job-costs]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

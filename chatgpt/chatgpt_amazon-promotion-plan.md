@@ -142,3 +142,11 @@ This version is crafted to appeal specifically to Spotify’s platform and its f
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]

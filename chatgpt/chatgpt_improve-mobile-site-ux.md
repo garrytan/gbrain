@@ -138,3 +138,11 @@ Just tell me which you prefer, Mr. White.
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_deteriorate-opposite-improve]]
+- [[chatgpt/chatgpt_fact-check-and-improve]]
+- [[chatgpt/chatgpt_help-improve-results]]
+- [[chatgpt/chatgpt_improve-and-fact-check-text]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part1]]

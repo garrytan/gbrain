@@ -296,3 +296,11 @@ The columns are used as follows:
 - Column J: LBM, where the calculation takes place.
 
 Remember to drag the formula down in column J for all the weeks you have data for. This will automatically update the LBM each week based on the changes in weight and the specified phase.
+
+
+## See Also
+- [[chatgpt/chatgpt_calculate-fat-weight-formula]]
+- [[chatgpt/chatgpt_fix-understaffed-formula]]
+- [[chatgpt/chatgpt_henselmans-natty-max-formula]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

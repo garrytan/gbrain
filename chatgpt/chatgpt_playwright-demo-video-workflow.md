@@ -212,3 +212,11 @@ Build a **repeatable but simple** setup:
 6. Keep the final YC demo short, with the phone screen large enough to read.
 
 The most reliable version is: **Playwright for deterministic raw captures, Remotion or Screen Studio for final presentation, manual editor only for last-mile polish.**
+
+
+## See Also
+- [[chatgpt/chatgpt_demo-video-planning]]
+- [[chatgpt/chatgpt_jovy-demo-video-creation]]
+- [[chatgpt/chatgpt_workflow-for-demo-production]]
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]

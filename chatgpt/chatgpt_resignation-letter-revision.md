@@ -205,3 +205,11 @@ What’s become unsustainable is Vincent’s pattern this year: extended absence
 If I can help in the future—dev/tech work or bar projects—please let me know.
 
 — [Your Name]
+
+
+## See Also
+- [[chatgpt/chatgpt_resignation-letter-draft]]
+- [[chatgpt/chatgpt_apology-letter-draft]]
+- [[chatgpt/chatgpt_application-revision-feedback]]
+- [[chatgpt/chatgpt_bartender-server-cover-letter]]
+- [[chatgpt/chatgpt_cease-and-desist-letter]]

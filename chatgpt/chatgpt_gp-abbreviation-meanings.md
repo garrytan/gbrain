@@ -40,3 +40,11 @@ gp
 In the U.S., "GP" typically refers to a General Practitioner, also known as a primary care physician. citeturn0search7
 
 If you had a specific context in mind, please let me know for a more tailored explanation. 
+
+
+## See Also
+- [[chatgpt/chatgpt_gp-abbreviation-meanings-2]]
+- [[chatgpt/chatgpt_wng-abbreviation-meanings]]
+- [[chatgpt/chatgpt_austere-music-meanings]]
+- [[chatgpt/chatgpt_click-five-meanings]]
+- [[chatgpt/chatgpt_clover-meanings-explained]]

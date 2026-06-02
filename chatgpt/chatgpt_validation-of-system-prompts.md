@@ -290,3 +290,11 @@ Suggested PR scope:
 6. Shrink root `AGENTS.md`.
 7. Move detailed domain rules into `docs/agents/*` and Jovie-specific skills.
 8. Add instruction authority, external-content safety, task routing, and final evidence templates.
+
+
+## See Also
+- [[chatgpt/chatgpt_combine-email-validation-methods]]
+- [[chatgpt/chatgpt_explain-email-validation-levels]]
+- [[chatgpt/chatgpt_fix-email-validation-function]]
+- [[chatgpt/chatgpt_modify-email-validation-function]]
+- [[chatgpt/chatgpt_vue-email-validation-component-2]]

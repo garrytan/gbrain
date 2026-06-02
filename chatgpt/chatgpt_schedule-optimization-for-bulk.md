@@ -281,3 +281,11 @@ You're right—that last draft violated your core constraint (lean by Black Frid
 ---
 
 Need calories/macros per phase or MEV→MRV volume tweaks per block? Say the word, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]

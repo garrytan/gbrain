@@ -57,3 +57,11 @@ If you mean a younger version of entity["people","Stanley Tucci","actor wh
 If you're thinking of the 2023 prequel entity["movie","The Hunger Games: The Ballad of Songbirds & Snakes","2023 film"], Caesar does not appear. Instead, his presumed father/ancestor Lucretius “Lucky” Flickerman is played by entity["known_celebrity","Jason Schwartzman","actor portraying Lucky Flickerman"]. The filmmakers explicitly treated entity["people","Stanley Tucci","actor who played Caesar Flickerman"]'s performance as the reference point for the character lineage. citeturn0search17turn0news26
 
 image_group{"layout":"carousel","query":["Kieran Culkin Caesar Flickerman Sunrise on the Reaping","Stanley Tucci Caesar Flickerman Hunger Games","Jason Schwartzman Lucky Flickerman Ballad of Songbirds and Snakes","Caesar Flickerman Hunger Games host"]}
+
+
+## See Also
+- [[chatgpt/chatgpt_kieran-culkin-hunger-games]]
+- [[chatgpt/chatgpt_casting-directors-for-star-wars]]
+- [[chatgpt/chatgpt_current-football-games]]
+- [[chatgpt/chatgpt_grizzlies-upcoming-games]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

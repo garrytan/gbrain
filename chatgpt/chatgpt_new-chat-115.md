@@ -73,3 +73,11 @@ now lets apply to this using my resume
 ## Assistant
 
 I’ve used your resume details to answer the employer’s screening questions. The next step is to continue with the application, which includes consenting to be contacted via text message by the hiring team. Would you like me to proceed with that?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

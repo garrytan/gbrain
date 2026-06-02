@@ -110,3 +110,11 @@ where should a cook store a towel he uses to wipe the counter?
 ## Assistant
 
 According to ServSafe guidelines, after using a towel to wipe counters or other surfaces, cooks should store it in a sanitizing solution. It's important to prevent cross-contamination and maintain a sanitary working environment. The sanitizing solution often consists of water and an appropriate amount of a specified sanitizer, following manufacturer's instructions or local health regulations. Towels should not be left on counters or hung over apron strings, as these practices can lead to cross-contamination. Instead, towels should be regularly replaced, cleaned, and returned to the sanitizing solution as needed.
+
+
+## See Also
+- [[chatgpt/chatgpt_25l-water-in-ice]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_bathtub-cold-water-issue]]
+- [[chatgpt/chatgpt_calculate-water-cases]]
+- [[chatgpt/chatgpt_data-center-water-brown]]

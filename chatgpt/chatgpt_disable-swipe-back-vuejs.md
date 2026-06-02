@@ -179,3 +179,11 @@ As a result, it is not possible to disable the swipe back gesture for your webap
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_automating-swipe-right-js]]
+- [[chatgpt/chatgpt_js-auto-swipe-function]]
+- [[chatgpt/chatgpt_js-function-swipe-right-2]]
+- [[chatgpt/chatgpt_js-function-swipe-right]]
+- [[chatgpt/chatgpt_js-swipe-right-function]]

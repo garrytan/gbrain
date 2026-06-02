@@ -70,3 +70,11 @@ how about mroe like illenium
 Mr. White, here’s a concise prompt you can copy into an AI music generator without using names:
 
 **“Create an emotional, melodic EDM track around 145 BPM. Blend ethereal pads, uplifting chord progressions, and future bass elements with cinematic rock undertones. Layer soaring supersaw leads, heartfelt vocals, and impactful percussion to convey an epic, introspective mood. Incorporate a dreamy breakdown, tension-building transitions, and a euphoric drop that emphasizes warm, full-bodied synths and resonant bass. Aim for an immersive, high-energy atmosphere that feels both intimate and festival-ready.”**
+
+
+## See Also
+- [[chatgpt/chatgpt_hardened-prompt-creation]]
+- [[chatgpt/chatgpt_mvp-prompt-creation]]
+- [[chatgpt/chatgpt_song-prompt-creation]]
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]

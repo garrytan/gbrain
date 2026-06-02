@@ -38,3 +38,11 @@ What software runs the show? Is it qlab or something else
 ## Assistant
 
 The U2:UV Achtung Baby Live at Sphere Las Vegas show is powered by Disguise's software platform. Disguise specializes in hardware and software platforms for high-end live productions. Their system goes beyond traditional playback software like QLab, offering more sophisticated capabilities necessary for managing the complex and high-resolution visuals of the Sphere. This includes handling the integration of live graphics and image magnification, essential for creating the immersive experience at the Sphere【6†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-powers-cloudflares-cybersecurity]]
+- [[chatgpt/chatgpt_auto-highlight-next-show]]
+- [[chatgpt/chatgpt_bodybuilding-show-nutrition-tips]]
+- [[chatgpt/chatgpt_dog-show-hollywood-bowl]]
+- [[chatgpt/chatgpt_echo-show-ad-removal]]

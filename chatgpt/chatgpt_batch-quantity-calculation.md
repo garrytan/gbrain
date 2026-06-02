@@ -41,3 +41,11 @@ Step-by-step:
    304 fl oz ÷ 32 fl oz ≈ **9.5 bottles**.
 
 You can’t buy half bottles, so **buy 10 bottles** to have at least 9 L for one batch.
+
+
+## See Also
+- [[chatgpt/chatgpt_batch-cocktail-calculation]]
+- [[chatgpt/chatgpt_cocktail-batch-calculation]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]

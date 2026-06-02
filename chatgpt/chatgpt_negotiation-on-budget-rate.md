@@ -74,3 +74,11 @@ I dug into Reddit and other forums. Here’s what I found:
 
 
 **Topic:** [[chatgpt-clusters/personal_finance]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-manager-negotiation-advice]]
+- [[chatgpt/chatgpt_budget-adjustment-contacts-cost]]
+- [[chatgpt/chatgpt_budget-breakdown-bro]]
+- [[chatgpt/chatgpt_budget-estimate-for-airbnb]]
+- [[chatgpt/chatgpt_budget-macro-friendly-meal-options]]

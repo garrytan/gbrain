@@ -32,3 +32,11 @@ elio
 "Elio" premiered at the El Capitan Theatre in Los Angeles on June 10, 2025, and was released in U.S. theaters on June 20,  ...  Despite positive reviews, the film underperformed at the box office, grossing approximately $152.2 million worldwide against a production budget estimated between $150 million and over $200 million. citeturn0search18
 
 The film became available for digital purchase on August 19, 2025, and is scheduled for release on 4K UHD, Blu-ray, and DVD on September 9, 2025. citeturn0search12 
+
+
+## See Also
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_famous-movie-hackers]]
+- [[chatgpt/chatgpt_her-hologram-love-movie]]
+- [[chatgpt/chatgpt_mod-sun-movie-caption-meaning]]

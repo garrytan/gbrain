@@ -32,3 +32,11 @@ For a 250 calorie surplus specifically, Dr. Isratel suggests that it could lead 
 For someone new to training or in the early stages, a 250 calorie surplus might result in more noticeable muscle gains compared to an experienced lifter, due to the phenomenon known as "newbie gains." In contrast, advanced lifters might see slower progress as their bodies are more accustomed to training stimuli.
 
 It's important to monitor body composition and adjust calorie intake as needed, since a surplus that is too large could lead to excess fat gain rather than lean muscle. Dr. Isratel usually advocates for a balanced approach, where the calorie surplus is enough to support muscle growth but not so large as to cause significant fat gain.
+
+
+## See Also
+- [[chatgpt/chatgpt_fat-loss-muscle-gain]]
+- [[chatgpt/chatgpt_lean-bulk-with-250-surplus]]
+- [[chatgpt/chatgpt_muscle-gain-in-2-years]]
+- [[chatgpt/chatgpt_muscle-gain-or-fat-loss]]
+- [[chatgpt/chatgpt_muscle-gain-plan]]

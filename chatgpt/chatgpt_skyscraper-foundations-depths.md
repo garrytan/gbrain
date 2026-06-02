@@ -173,3 +173,11 @@ However, it's important to note that the level of earthquake preparedness of a b
 In recent decades, awareness and understanding of seismic risks have improved, leading to stricter building codes and standards aimed at enhancing the earthquake resilience of both new and existing buildings. This includes retrofitting older buildings with modern technologies to improve their ability to withstand seismic forces, such as base isolators, shear walls, and bracing.
 
 While an earthquake of significant magnitude in New York City is unlikely based on current geological knowledge, the city has taken steps to assess and mitigate potential seismic risks. For iconic structures like the Empire State Building, continuous maintenance, inspection, and potential retrofitting efforts are crucial to ensuring their safety and structural integrity in the face of such events.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

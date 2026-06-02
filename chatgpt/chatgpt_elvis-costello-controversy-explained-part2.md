@@ -125,3 +125,11 @@
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Absolutely, Mr. White. Enjoy that track! It's definitely a good one to dive into, and I'm sure you'll have fun with those leaps and that hooky rhythm. Let me know if there's anything else you need!"}
 {'asset_pointer': 'sediment://file_00000000c54061f6a55a2c4edb384d53', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-03-04T13:15:11.942373+00:00', 'format': 'wav', 'metadata': {'end': 11.0, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 528078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_elvis-costello-controversy-explained-part1]]
+- [[chatgpt/chatgpt_compounding-options-explained-part2]]
+- [[chatgpt/chatgpt_niraj-controversy-summary]]
+- [[chatgpt/chatgpt_platonic-hug-controversy]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

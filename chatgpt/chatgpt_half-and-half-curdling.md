@@ -50,3 +50,11 @@ Tea (especially black tea) contains **tannins** — natural polyphenols that mak
 - But if it’s just **tiny flakes or separation** in the cup and still tastes fine — that’s just chemistry, not spoilage.
 
 So yeah, curdling in tea is **normal**, not dangerous — just ugly. Want me to explain why coffee doesn’t do it as much?
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

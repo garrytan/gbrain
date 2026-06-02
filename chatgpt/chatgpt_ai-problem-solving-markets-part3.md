@@ -885,3 +885,11 @@ If you want, I’ll hand you a **repo scaffold** (folders, env vars, minimal cod
 
 
 Jovie is on next.js. with supabase and clerk auth. On vercel. 
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part1]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part2]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part4]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part5]]
+- [[chatgpt/chatgpt_solving-package-theft-impersonation]]

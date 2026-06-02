@@ -114,3 +114,11 @@ Below are UX pain points I observed (or inferred) along with usability risks.
 ---
 
 If you like, I can produce a detailed redesign mockup or clickable prototype showing these fixes (desktop + mobile). Do you want me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-supply-order-list]]
+- [[chatgpt/chatgpt_coffee-order-summary]]
+- [[chatgpt/chatgpt_dexter-shows-in-order]]
+- [[chatgpt/chatgpt_fall-order-email-draft]]
+- [[chatgpt/chatgpt_group-order-tip-payment]]

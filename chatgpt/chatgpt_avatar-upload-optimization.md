@@ -317,3 +317,11 @@ Here you go, Mr. White — **a concise implementation prompt** you can hand to a
 ---
 
 If you need, I can also generate the exact `<picture>` + Next.js component code that satisfies this prompt.
+
+
+## See Also
+- [[chatgpt/chatgpt_photo-upload-optimization]]
+- [[chatgpt/chatgpt_avatar-upload-spec]]
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]

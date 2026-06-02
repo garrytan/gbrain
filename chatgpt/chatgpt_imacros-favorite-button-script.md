@@ -48,3 +48,11 @@ IF !VAR1 == "NO" GOTO END
 ```
 
 This script sets a timeout of 1 second for the first `TAG` command, which is used to extract the text of the first item with the specified class. The script then sets a timeout of 2 seconds for all subsequent `TAG` commands. If the extracted text is not "favorite", the script jumps to the `END` label, skipping the remaining commands.
+
+
+## See Also
+- [[chatgpt/chatgpt_material-icon-favorite-button]]
+- [[chatgpt/chatgpt_animation-script-expression]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_brief-summary-script-request]]

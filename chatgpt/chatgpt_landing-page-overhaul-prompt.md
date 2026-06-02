@@ -709,3 +709,11 @@ Focus on one PR per task; merge only when CI is 🟢.  That cadence will get you
 ---
 
 **Next step:** spin up **0-A** and **0-B** locally; once env & RLS are green, start on the auth tickets.
+
+
+## See Also
+- [[chatgpt/chatgpt_landing-page-audit-prompt]]
+- [[chatgpt/chatgpt_landing-page-design-prompt-2]]
+- [[chatgpt/chatgpt_landing-page-design-prompt]]
+- [[chatgpt/chatgpt_landing-page-redesign-prompt]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]

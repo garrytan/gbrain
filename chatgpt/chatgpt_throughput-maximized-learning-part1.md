@@ -608,3 +608,11 @@ Those require either:
 This keeps you fast without getting blindsided by “works on my machine” AI changes.
 
 If you tell me what you’re currently using for AI review (Claude? Copilot? CodeRabbit? etc.), I’ll tailor the prompt and the exact automation trigger to that tool.
+
+
+## See Also
+- [[chatgpt/chatgpt_throughput-maximized-learning-part2]]
+- [[chatgpt/chatgpt_merge-queue-throughput-explanation]]
+- [[chatgpt/chatgpt_release-throughput-optimization]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]

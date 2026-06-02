@@ -195,3 +195,11 @@ So the real pattern is:
 1. Classic Hollywood = controlled stages
 2. New Hollywood + digital revolution = locations
 3. Modern franchise era = hybrid virtualized stages + selective locations
+
+
+## See Also
+- [[chatgpt/chatgpt_albertsons-burrata-location]]
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_defibrillator-location-search]]
+- [[chatgpt/chatgpt_hollywood-arts-filming-location]]

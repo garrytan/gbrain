@@ -169,3 +169,11 @@ class User {
 ```
 
 In this modification, the `ffmi` field is set to `99.99` by default. When creating a `User` object from JSON data, if the FFMI is provided and can be parsed as a double, it will use that value; otherwise, it defaults to `99.99`. This approach ensures that `ffmi` is always a valid double and aligns with the existing design of your class for handling optional fields.
+
+
+## See Also
+- [[chatgpt/chatgpt_authed-user-404-handling]]
+- [[chatgpt/chatgpt_authenticated-user-404-ux]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part2]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part1]]

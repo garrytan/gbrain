@@ -35,3 +35,11 @@ What would you need to see in person to feel confident it works?
 I can power it on for you, show the boot/login, and you can inspect ports/drive bays. If it checks out, are you ready to pick up today?  
 
 What number did you have in mind that would make this a no-brainer for you?”
+
+
+## See Also
+- [[chatgpt/chatgpt_draft-complaint-message]]
+- [[chatgpt/chatgpt_follow-up-message-draft]]
+- [[chatgpt/chatgpt_message-draft-assistance]]
+- [[chatgpt/chatgpt_message-response-draft]]
+- [[chatgpt/chatgpt_music-industry-message-draft]]

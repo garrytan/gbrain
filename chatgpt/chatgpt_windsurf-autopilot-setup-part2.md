@@ -617,3 +617,11 @@ DoD: tests pass in CI." \
 > Each issue body must include a hidden `<!-- id:<slug> -->`, clear scope, files to touch, and a DoD. Label with `mvp`, `agent:copilot`, and a section label (`area:fix`, `area:diagnosis`, or `area:launch`). Assign to **github-copilot** and report a table of URLs.
 
 If you want me to tune the instruction file to your exact `package.json` scripts (pnpm vs npm) or add specific env keys from `lib/env.ts`, paste those and I’ll refine it.
+
+
+## See Also
+- [[chatgpt/chatgpt_windsurf-autopilot-setup-part1]]
+- [[chatgpt/chatgpt_windsurf-autopilot-prompt]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part2]]
+- [[chatgpt/chatgpt_create-account-page-setup-part2]]
+- [[chatgpt/chatgpt_setup-storybook-with-vue-part2]]

@@ -62,3 +62,11 @@ Here's a breakdown of how much each staff member would receive in different scen
 3. **Calculations**:
    - The amount per server/bartender is found by dividing $850 by the number of servers and bartenders.
    - In the case of 2 barbacks, each barback would get $75, and the servers/bartenders split the $850.
+
+
+## See Also
+- [[chatgpt/chatgpt_barback-tip-distribution]]
+- [[chatgpt/chatgpt_cocktail-sales-distribution]]
+- [[chatgpt/chatgpt_food-distribution-system]]
+- [[chatgpt/chatgpt_fuga-distribution-overview]]
+- [[chatgpt/chatgpt_music-distribution-challenges]]

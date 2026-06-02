@@ -39,3 +39,11 @@ So the practical answer is:
 - In a **shared-link copy**, the conversation lives under the account of whoever imported/replied to it. OpenAI’s memory docs say chat history and saved memory are used from that user’s own account when enabled, so Liv’s copy would be influenced by **Liv’s** memory settings, and yours by **yours**. That last sentence is an inference from the official docs. citeturn661129view1turn276192view2
 
 The cleanest mental model is: **shared conversation content can be shared; account memory stays private to each account**.
+
+
+## See Also
+- [[chatgpt/chatgpt_film-vs-memory-debate]]
+- [[chatgpt/chatgpt_honcho-memory-for-jovie]]
+- [[chatgpt/chatgpt_jovie-artist-memory-calendar]]
+- [[chatgpt/chatgpt_memory-activation-request]]
+- [[chatgpt/chatgpt_memory-and-agent-workflow]]

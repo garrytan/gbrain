@@ -685,3 +685,11 @@ fetch('https://example.com', {
 In this code, we use the `fetch()` method to send a request to the `https://example.com` website. We include the `credentials: 'include'` option in the request options to include the cookies for the current page in the request.
 
 Once the request has been sent, we use the `response.headers.get('set-cookie')` method to get the `set-cookie` header from the response, which contains the cookies for the website.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

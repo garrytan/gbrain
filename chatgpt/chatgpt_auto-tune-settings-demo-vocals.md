@@ -90,3 +90,11 @@ Crucially, **the retune settings might be relaxed slightly in the final mix comp
 In summary, the **demo vocal is essentially a blueprint** – tuned fairly strongly and processed to sound hit-ready – and the **final vocal is a polished monument**, where the same principles are applied with even more finesse. By the end, the listener just hears a seamlessly in-tune vocal with vibrant pop production around it, not aware of the behind-the-scenes retune speeds or plugin choices. As Max Martin’s team themselves put it, the tools like Auto-Tune or Melodyne are used only to ensure the vocal hits the right notes and shines, without ever stealing the spotlight【4†L595-L600】. The result is that characteristic Max Martin/Shellback vocal: effortlessly catchy, impeccably tuned, and emotionally impactful. 
 
 **Sources:** Shellback interview excerpts【10†L138-L144】; The F‐Rant (Max Martin analysis)【4†L595-L600】【4†L586-L593】; Sound On Sound engineer interviews【25†L37-L40】【25†L12-L17】; Gearspace forums (Max Martin & Dr. Luke discussions)【17†L299-L307】【10†L209-L214】; Black Ghost Audio (Auto-Tune usage guide)【42†L113-L121】【42†L158-L167】【43†L1-L9】.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part4]]

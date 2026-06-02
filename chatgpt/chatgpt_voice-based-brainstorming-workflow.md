@@ -94,3 +94,11 @@ Linear supports creating issues via its **GraphQL API** and has **API + webhooks
 - Put *all* extracted items into a dedicated Linear team/project like **“Jovi Inbox”** (or Triage), then do a **weekly 20-minute AI interview** to rank and promote.
 
 If you want, tell me which phone you’re on (iOS/Android) and whether you prefer **Zapier vs Make vs self-hosted n8n**, and I’ll give you a concrete, step-by-step build with the exact prompts + the issue schema (labels, priorities, templates) for Jovi.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-workflow-for-voice-dictation]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_admin-workflow-design]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]

@@ -39,3 +39,11 @@ Carbs: 70 grams x 4 calories/gram = 280 calories
 
 Add them up:
 720 calories (from protein) + 450 calories (from fat) + 280 calories (from carbs) = 1450 calories total.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

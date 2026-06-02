@@ -1400,3 +1400,11 @@ Now check out updateusermetrics and make sure we are able to edit the names and 
 ## Assistant
 
 I've updated the file to replace the static Personal Details block with an editable section inside the form. Now, the form includes input fields for first name, last name, and email address along with the user metrics. Let me know if you need further modifications!
+
+
+## See Also
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]
+- [[chatgpt/chatgpt_authenticated-user-404-ux]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part2]]

@@ -80,3 +80,11 @@ spicy emoji
 ## Assistant
 
 The "spicy" emoji is often represented by the hot pepper emoji: 🌶️. This emoji is used to denote something spicy, either in terms of food or to indicate that something is "hot" in a figurative sense, like a spicy topic or a hot take.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-songs-tim-white]]
+- [[chatgpt/chatgpt_bio-for-tim-white]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]
+- [[chatgpt/chatgpt_crest-white-strips-analysis]]
+- [[chatgpt/chatgpt_css-for-white-megamenu]]

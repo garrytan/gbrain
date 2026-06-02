@@ -911,3 +911,11 @@ This approach should provide a clean, maintainable way to retrieve and display t
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_refactoring-contact-menu]]
+- [[chatgpt/chatgpt_refactoring-tests-guidelines]]

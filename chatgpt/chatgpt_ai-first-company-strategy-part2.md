@@ -667,3 +667,11 @@ Every insight should end in an action.
 # 12. One-sentence vision
 
 > **Jovie Audience becomes the AI fan CRM that watches every fan signal, remembers every relationship, and helps artists engage one-on-one at scale.**
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_track-tsla-ca-robotaxi-permits-and-first-ride-evidence-part2]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part2]]
+- [[chatgpt/chatgpt_bio-link-strategy-part2]]

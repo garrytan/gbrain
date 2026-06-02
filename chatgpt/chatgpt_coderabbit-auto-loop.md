@@ -35,3 +35,11 @@ In practice this means:
 If you were referring to a specific CodeRabbit feature flag or config parameter named “auto loop,” there’s no obvious entry by that exact name in the documentation or blogs — the term appears conceptually in descriptions of continuous automated review loops rather than as a singular named setting. citeturn0search2
 
 If you want actionable steps to configure this in your workflow (e.g., with Cursor or the CLI), let me know your setup and I can map it out.
+
+
+## See Also
+- [[chatgpt/chatgpt_coderabbit-auto-fix-limitations]]
+- [[chatgpt/chatgpt_coderabbit-auto-fix]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]

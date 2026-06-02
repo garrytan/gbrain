@@ -179,3 +179,11 @@ Here’s how to make sure both items share the same inventory tracking:
 If you go with the **Employee Menu method**, just make sure to **link both the employee and regular items to the same inventory recipe**. That gives you clean stock control *and* clear employee purchase tracking.
 
 Would you like me to outline the exact steps in Toast’s back-end to link both items to the same inventory recipe?
+
+
+## See Also
+- [[chatgpt/chatgpt_happy-hour-discount-setup]]
+- [[chatgpt/chatgpt_toast-handheld-printing-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]

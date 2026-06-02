@@ -98,3 +98,11 @@ During a cut, the primary and secondary settings should focus on maintaining mus
 2. **Secondary Settings**: Set the remaining muscle groups to secondary. These will receive enough volume to maintain muscle mass but with lower intensity to prevent excessive fatigue and allow better recovery.
 
 Overall, during a cut, it's crucial to manage volume and intensity carefully to avoid overtraining and ensure you can recover well while in a calorie deficit.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_create-vue-settings-menu]]
+- [[chatgpt/chatgpt_drill-settings-guide-2]]
+- [[chatgpt/chatgpt_drill-settings-guide]]
+- [[chatgpt/chatgpt_dryer-settings-for-towels]]

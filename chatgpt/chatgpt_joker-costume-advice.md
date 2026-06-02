@@ -73,3 +73,11 @@ Since you’re only doing light Joker look tonight:
 ---
 
 If you tell me what lighting and distance the audience sees you from (e.g. 10 feet, 30 feet, etc.), I can fine-tune how bold or subtle the hair/makeup needs to be for stage visibility. Want me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_halloween-costume-idea]]
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_ai-migration-naming-advice]]
+- [[chatgpt/chatgpt_airport-gun-disposal-advice]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]

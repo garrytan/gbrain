@@ -49,3 +49,11 @@ I’d appreciate these details so we can keep things running smoothly. Thanks.
 If you prefer a text-length version:
 
 “Ben, I respect you seeking fair pay. Meanwhile I’m stuck handling day-to-day issues and need some basics: Philips Hue credentials + where bulbs/switches live; which laptop ran QLab + login; and how the venue internet is set up (SSIDs/passwords, ISP/equipment, any Cradlepoint config). Please share so we can keep things running. Thanks.”
+
+
+## See Also
+- [[chatgpt/chatgpt_email-follow-up-note]]
+- [[chatgpt/chatgpt_make-note-pdf]]
+- [[chatgpt/chatgpt_send-note-to-lexi]]
+- [[chatgpt/chatgpt_send-note-to-sophie]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

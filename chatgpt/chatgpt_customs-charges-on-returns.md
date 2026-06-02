@@ -60,3 +60,11 @@ In the scenario where a product purchased in the United States was shipped from 
 5. **Restocking Fees**: Be aware that some sellers may charge restocking fees for returns, which are separate from customs duties.
 
 In summary, no additional customs duties should be charged on the return of the item to Canada if it's properly documented as a return. However, it's important to follow the proper procedures and communicate with both the seller and customs authorities to avoid any complications.
+
+
+## See Also
+- [[chatgpt/chatgpt_jewish-dress-customs]]
+- [[chatgpt/chatgpt_portal-for-self-service-returns]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

@@ -94,3 +94,11 @@ Understood—​we’ll slot AWOL in as your distribution engine, but front-load
 - **Release & promote** as before—​with AWOL distribution running your back catalogue and any label-backed singles receiving priority marketing.
 
 Let me know if you’d like a draft EPK template or outbound email script.
+
+
+## See Also
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]

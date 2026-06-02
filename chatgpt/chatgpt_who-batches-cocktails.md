@@ -50,3 +50,11 @@ It depends on how the bar sets up its payroll, but common patterns are:
 - **Lead bartenders or bar managers** – Often salaried or hourly with a higher base rate. If they also serve guests during service, they get their normal share of tips for those hours. Pure management or prep hours outside of service are usually just hourly wage with no tips.
 
 So: batching during off-hours is almost always paid as regular hourly work; tip-pool eligibility kicks in only when they’re actually on the floor working a tipped service shift.
+
+
+## See Also
+- [[chatgpt/chatgpt_classic-cocktails-list]]
+- [[chatgpt/chatgpt_hot-bartender-w-incredible-cocktails]]
+- [[chatgpt/chatgpt_labeling-pre-batched-cocktails]]
+- [[chatgpt/chatgpt_renamed-menu-and-cocktails]]
+- [[chatgpt/chatgpt_shelf-life-of-cocktails]]

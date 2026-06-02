@@ -504,3 +504,11 @@ Your current slash command is interactive. For Actions, make **one** entrypoint 
 That’s it. GitHub handles the “keep going” loop via merges.
 
 If you paste what your slash command currently runs (high level steps/commands), I’ll translate it into a robust `autofix_once.sh` skeleton that’s idempotent and won’t open duplicate PRs.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-column-index-to-loop]]
+- [[chatgpt/chatgpt_claude-ralpha-loop]]
+- [[chatgpt/chatgpt_coderabbit-auto-loop]]
+- [[chatgpt/chatgpt_codex-loop-optimization]]
+- [[chatgpt/chatgpt_fix-ring-doorbell-boot-loop]]

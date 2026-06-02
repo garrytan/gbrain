@@ -84,3 +84,11 @@ Sure, here's the information extracted from the HTML snippet:
 - href: "https://www.wingsfilms.com/copy-of-mitsubishi-20"
 - target: "_self"
 - src: "https://static.wixstatic.com/media/58d60f_45a0b00ea1f2434e93902549d25812d0~mv2.jpg/v1/fill/w_366,h_214,al_c,q_80,usm_0.66_1.00_0.01,enc_auto/58d60f_45a0b00ea1f2434e93902549d25812d0~mv2.jpg"
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]

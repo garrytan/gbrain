@@ -42,3 +42,11 @@ write 10 headlines for a reddit ad. keep it in the style of reddit posts
 8. "Take your training to the next level with A7X3.com's Creatine promotion"
 9. "Achieve your fitness goals for half the price with A7X3.com's Creatine sale"
 10. "Bulk up and save big with A7X3.com's limited time offer on Creatine"
+
+
+## See Also
+- [[chatgpt/chatgpt_creatine-dosage-research]]
+- [[chatgpt/chatgpt_creatine-for-workouts]]
+- [[chatgpt/chatgpt_creatine-keywords-generated]]
+- [[chatgpt/chatgpt_creatine-subscription-frequency]]
+- [[chatgpt/chatgpt_estate-sale-and-inheritance-tax]]

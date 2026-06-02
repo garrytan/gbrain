@@ -98,3 +98,11 @@ Next
 ## Assistant
 
 "Watergate Pear Splash" - It blends the refreshing nature of a summer drink with the intrigue of the Watergate scandal.
+
+
+## See Also
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part1]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part2]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part3]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part4]]
+- [[chatgpt/chatgpt_halloween-drink-menu]]

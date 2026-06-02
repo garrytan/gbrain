@@ -38,3 +38,11 @@ Card 4 headline: “Sell Out”. Show a Jovie tour page with upcoming tour dates
 Card 5 headline: “Drop Music”. Show a Jovie release countdown page with cover art, countdown timer, pre-save button, and notify option. Use a purple and cyan glow.
 
 The design should be minimal, premium, high contrast, and product-focused. Do not add paragraphs inside the cards. Do not add badges, emojis, or extra marketing text. Make the product screenshots look realistic and readable.
+
+
+## See Also
+- [[chatgpt/chatgpt_high-end-website-mockup]]
+- [[chatgpt/chatgpt_website-to-figma-mockup]]
+- [[chatgpt/chatgpt_mockup-request-dark-mode]]
+- [[chatgpt/chatgpt_ui-mockup-design-request]]
+- [[chatgpt/chatgpt_cinematic-website-concept]]

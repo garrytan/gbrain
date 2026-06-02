@@ -80,3 +80,11 @@ Mr. White, the absolute cheapest way to hit Dr. Israetel’s basic multivitamin 
 **Monthly cost (~30 days):** ~$4.80  
 
 Take **one** Nature Made multi + **one** Mg citrate softgel each morning with food. This stack is fully peer-review–compatible, third-party tested, and the cheapest way to nail Mike Israetel’s minimal-effective multivitamin + Mg strategy.
+
+
+## See Also
+- [[chatgpt/chatgpt_movie-recommendations-based-on-favorites]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_apocalyptic-movies-recommendations]]
+- [[chatgpt/chatgpt_bf-prediction-based-on-dexa]]
+- [[chatgpt/chatgpt_building-role-based-schedule]]

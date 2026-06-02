@@ -74,3 +74,11 @@ You can scope it instead of repo-wide:
 - If you don’t see it taking effect, restart the Cascade run; some versions read the flag only at start.
 
 Want me to drop a minimal `repo-wide-refactor.cascade.json` with `writeScope` limited to `packages/ui/**`?
+
+
+## See Also
+- [[chatgpt/chatgpt_feature-flag-workflow-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]

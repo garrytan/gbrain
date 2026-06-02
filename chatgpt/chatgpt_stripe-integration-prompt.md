@@ -813,3 +813,11 @@ For local dev the fastest way is to **force a fresh state in one move** instead 
 - When you need a **cookie reset**, right-click tab → “Clear cookies for this site” (1 step).  
 
 Would you like me to give you a **tiny script/alias** (Mac terminal) that auto-launches Chrome in **dev mode with cache off** so you never touch this again?
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part3]]

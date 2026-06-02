@@ -119,3 +119,11 @@ Would you like SwiftUI snippet examples implementing this?
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-app-liquid-glass]]
+- [[chatgpt/chatgpt_liquid-glass-implementation]]
+- [[chatgpt/chatgpt_liquid-glass-slider-ui]]
+- [[chatgpt/chatgpt_liquid-glass-tab-bar]]
+- [[chatgpt/chatgpt_liquid-glass-ux-improvements]]

@@ -89,3 +89,11 @@ so you don’t create new certs, just pull existing ones. citeturn0search1
 ---
 
 If you like, Mr. White, I can **walk you through** setting this up for your exact project (with the repo, env-vars, Fastfile changes), or help you troubleshoot any specific error you’re seeing.
+
+
+## See Also
+- [[chatgpt/chatgpt_fastlane-match-setup-2]]
+- [[chatgpt/chatgpt_fastlane-match-setup]]
+- [[chatgpt/chatgpt_setup-fastlane-match]]
+- [[chatgpt/chatgpt_apple-id-fastlane-setup]]
+- [[chatgpt/chatgpt_audit-fastlane-setup]]

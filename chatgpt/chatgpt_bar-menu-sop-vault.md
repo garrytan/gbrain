@@ -175,3 +175,11 @@ Great now updte the SOP
    - **In Character**: Stay in character as secret service agents when interacting with customers.
 
 By following this SOP, you’ll ensure consistent, efficient service while guiding customers to drinks we can provide.
+
+
+## See Also
+- [[chatgpt/chatgpt_current-vault-menu]]
+- [[chatgpt/chatgpt_greeting-script-for-vault]]
+- [[chatgpt/chatgpt_vault-pre-shift-map]]
+- [[chatgpt/chatgpt_vault-speakeasy-review-highlights]]
+- [[chatgpt/chatgpt_vault-speakeasy-staff-update]]

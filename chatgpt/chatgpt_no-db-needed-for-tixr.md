@@ -228,3 +228,11 @@ I parsed your CSV and surfaced clean **Tixr Event IDs + times** so you can wire 
   - else → `ga`
 
 If you want, I’ll drop in the exact files (`/api/tixr/webhook`, `/api/shows/[id]/sales`, and a client component) using your event IDs from the seed.
+
+
+## See Also
+- [[chatgpt/chatgpt_calculate-needed-income]]
+- [[chatgpt/chatgpt_cash-flow-solutions-needed]]
+- [[chatgpt/chatgpt_ecomm-seo-writer-needed]]
+- [[chatgpt/chatgpt_film-title-clarification-needed]]
+- [[chatgpt/chatgpt_front-end-developer-needed]]

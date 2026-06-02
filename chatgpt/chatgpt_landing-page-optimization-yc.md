@@ -370,3 +370,11 @@ CREATE TRIGGER auth_sign_up
 ---
 
 Once your `profiles` trigger can successfully insert a row, Supabase’s “Create user” form will stop erroring.
+
+
+## See Also
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part1]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part2]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part3]]

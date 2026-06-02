@@ -882,3 +882,11 @@ Break down all the feats of smartlink.it and linkfire and lay out a plan for us 
 | 5 | QA, bug-burn, docs, go-live on `main` before YC submission |
 
 Result: **Jovie smart-link pages that outperform Linkfire & co. on speed, customization and data while looking 🔥.**
+
+
+## See Also
+- [[chatgpt/chatgpt_effective-automation-prompt]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]

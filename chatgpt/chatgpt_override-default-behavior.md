@@ -80,3 +80,11 @@ this.$mousetrap.bind('up', (event) => {
 
 This will bind a function to the "up" key that prevents the default behavior and allows you to specify your own custom behavior when the "up" key is pressed.
 
+
+
+## See Also
+- [[chatgpt/chatgpt_absence-of-behavior-concepts]]
+- [[chatgpt/chatgpt_ai-tests-reinforcing-bad-behavior]]
+- [[chatgpt/chatgpt_vue-dropdown-component-behavior]]
+- [[chatgpt/chatgpt_default-alive-for-artists]]
+- [[chatgpt/chatgpt_default-alive-meaning]]

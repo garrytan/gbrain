@@ -948,3 +948,11 @@ keep creating
 ```
 
 The original task context was to tighten the Jovie pitch, deck, demo Loom, Daniel package, and fundraising script today. fileciteturn0file0
+
+
+## See Also
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]

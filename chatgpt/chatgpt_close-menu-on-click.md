@@ -541,3 +541,11 @@ Replace `'dataGridRowComponent'` with the actual ref name used for the `DataGrid
 Remember to ensure that the other component (`DataGridRow.vue`) is already rendered in the component tree and has the corresponding ref assigned.
 
 However, keep in mind that accessing refs in different components in this way can lead to tight coupling and may not be the recommended approach. It's generally preferable to use props and events for communication between components.
+
+
+## See Also
+- [[chatgpt/chatgpt_vuejs-crm-right-click-menu]]
+- [[chatgpt/chatgpt_adjust-off-screen-menu]]
+- [[chatgpt/chatgpt_auto-close-modal-on-update]]
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_click-all-buttons-script]]

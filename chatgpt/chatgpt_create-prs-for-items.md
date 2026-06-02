@@ -26,3 +26,11 @@ go through the items that dont have prs open and click create pr
 ## Assistant
 
 I’ve gone through the tasks and created pull requests for the items that didn’t already have one.
+
+
+## See Also
+- [[chatgpt/chatgpt_create-pr-for-items]]
+- [[chatgpt/chatgpt_actionable-items-review]]
+- [[chatgpt/chatgpt_allowing-actions-to-create-prs]]
+- [[chatgpt/chatgpt_costco-items-list]]
+- [[chatgpt/chatgpt_create-account-page-setup-part1]]

@@ -428,3 +428,11 @@ The defensible claim is:
 > “We identified the most attractive face for a subject using repeated forced-choice preference testing, with optional pupillary response as a physiological correlate.”
 
 The strongest build is **pairwise forced-choice + Bradley-Terry model + randomized repeats + optional pupil tracking**. That is scientifically much cleaner than trying to infer attraction from pupil dilation alone.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

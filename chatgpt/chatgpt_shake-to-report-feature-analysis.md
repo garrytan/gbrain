@@ -202,3 +202,11 @@ If you want, I can sketch a short implementation plan:
 
 - iOS: data model for reports, endpoint schema, S3 layout, Slack message format.
 - Backend: one small service (can be just a new route in your existing API).
+
+
+## See Also
+- [[chatgpt/chatgpt_automating-feature-design]]
+- [[chatgpt/chatgpt_clerk-allowlist-feature]]
+- [[chatgpt/chatgpt_feature-comparison-request]]
+- [[chatgpt/chatgpt_feature-flag-workflow-setup]]
+- [[chatgpt/chatgpt_feature-flagging-in-ios]]

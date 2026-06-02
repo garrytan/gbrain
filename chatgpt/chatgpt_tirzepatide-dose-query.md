@@ -47,3 +47,11 @@ Quick rules:
 3. Keep protein/training constant; only carbs/fats rise.
 
 Ping your prescriber before changing the script, but that’s the practical play.
+
+
+## See Also
+- [[chatgpt/chatgpt_tirzepatide-dose-conversion]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]
+- [[chatgpt/chatgpt_2024-election-outcome-query]]
+- [[chatgpt/chatgpt_clarify-bronson-depot-query]]
+- [[chatgpt/chatgpt_flying-with-tirzepatide]]

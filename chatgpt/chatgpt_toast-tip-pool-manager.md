@@ -88,3 +88,11 @@ While I found no documented “yes” case of Toast fully waiving it, here are v
 - Recommendation for you (in LA/California) – pick up your account rep at Toast, present your facts: your business volume, your use of other Toast modules, your administrative cost savings expectation — then ask for either a waiver, a long-term discount, or inclusion as part of your base package.
 
 Would you like me to check for *recent case studies* (2024-2025) of restaurants that successfully negotiated free Tips Manager with Toast (maybe via forums, LinkedIn, industry groups)? I can dig that up if you like.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-business-manager-overview]]
+- [[chatgpt/chatgpt_bar-manager-negotiation-advice]]
+- [[chatgpt/chatgpt_bar-manager-resume-rewrite]]
+- [[chatgpt/chatgpt_bartender-vs-manager-salary]]
+- [[chatgpt/chatgpt_flags-manager-design]]

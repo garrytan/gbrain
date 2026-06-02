@@ -68,3 +68,11 @@ does this cover all? does it cover any outside those counties?
 ## Assistant
 
 The expression "Contains("077, 087", [Zip])" will match any zip code that starts with "077" or "087", which covers all zip codes for Monmouth County, NJ (starting with "077"), and Ocean County, NJ (starting with "087"). It will not match zip codes outside of these counties because it specifically looks for these prefixes.
+
+
+## See Also
+- [[chatgpt/chatgpt_monmouth-county-nj-zip-codes]]
+- [[chatgpt/chatgpt_alteryx-filter-zip-codes]]
+- [[chatgpt/chatgpt_bodyspec-discount-codes]]
+- [[chatgpt/chatgpt_cinematic-ocean-in-capture-one]]
+- [[chatgpt/chatgpt_clear-discount-codes]]

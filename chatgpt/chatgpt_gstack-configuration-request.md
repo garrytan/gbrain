@@ -115,3 +115,11 @@ Feature request: a simple defaults file for recurring quality decisions like mor
 Would love a simple YAML/defaults file for low-variance decisions: more tests, stronger error handling, edge-case hardening. I want the model spending its qualifying questions on choices that actually need founder context, not asking me the same quality tradeoff every run.
 
 The strongest phrase here is **“low-variance decisions”**. It makes the product point very legible.
+
+
+## See Also
+- [[chatgpt/chatgpt_check-email-configuration]]
+- [[chatgpt/chatgpt_configuration-check-summary]]
+- [[chatgpt/chatgpt_laravel-mix-configuration]]
+- [[chatgpt/chatgpt_nuxt-configuration-module-settings]]
+- [[chatgpt/chatgpt_sentry-replay-csp-configuration]]

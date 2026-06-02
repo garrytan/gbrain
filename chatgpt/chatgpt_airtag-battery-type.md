@@ -46,3 +46,11 @@ Correct, Mr. White — **CR2450 won’t work for an AirTag**.
 - AirTag is specifically designed for a **CR2032**.
 - A **CR2450 is larger and thicker**, so it **doesn’t fit properly** and isn’t recommended even though it’s also 3V.
 - Stick with a **plain (non-bitterant-coated) CR2032** for best reliability.
+
+
+## See Also
+- [[chatgpt/chatgpt_type-checker-speedup-options]]
+- [[chatgpt/chatgpt_airtag-chirp-issue-fix]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_change-arlo-battery]]
+- [[chatgpt/chatgpt_harley-dead-battery-options]]

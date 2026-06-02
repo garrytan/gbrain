@@ -70,3 +70,11 @@ Use this version:
 “$891M/day is a real estimate. The usual ‘that money should go to healthcare’ reaction still gets federal budgeting wrong. Ending a military operation does not automatically turn defense dollars into healthcare dollars. Transfers across appropriation accounts generally require legal authority, and any real shift in priorities would require Congress to enact it. Criticize the operation on cost, priorities, and strategy. Just don’t pretend canceling it automatically pays for anyone’s doctor visit.” citeturn970982search0turn197607search1turn197607search6
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_attractiveness-and-objectivity-debate]]
+- [[chatgpt/chatgpt_calories-vs-chemicals-debate]]
+- [[chatgpt/chatgpt_charlie-jordan-dj-debate]]
+- [[chatgpt/chatgpt_data-center-debate]]
+- [[chatgpt/chatgpt_debate-strategies-overview]]

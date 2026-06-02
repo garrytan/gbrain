@@ -32,3 +32,11 @@ draft it in my email and design it to convert and get me the job. give me a foll
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_email-application-draft]]
+- [[chatgpt/chatgpt_job-application-email-draft]]
+- [[chatgpt/chatgpt_soma-fellows-application-draft]]
+- [[chatgpt/chatgpt_apology-letter-draft]]
+- [[chatgpt/chatgpt_ar-post-draft]]

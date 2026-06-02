@@ -74,3 +74,11 @@ If Owl Alpha can complete 20–30% more tasks without hallucinating tool calls, 
 One thing that caught my attention is that OpenRouter has processed over a trillion tokens through Owl Alpha already, which suggests substantial adoption despite being only weeks old. citeturn0search5turn0search16
 
 For your specific setup (Hermes + GBrain + long-running company agents), I would start testing Owl Alpha immediately, but I would not replace DeepSeek V4 Flash as the default until you've run it for several days under real workloads. citeturn0search0turn0search5
+
+
+## See Also
+- [[chatgpt/chatgpt_owl-alpha-ranking]]
+- [[chatgpt/chatgpt_owl-alpha-vs-deepseek-flash]]
+- [[chatgpt/chatgpt_beachwood-canyon-rent-evaluation]]
+- [[chatgpt/chatgpt_fundraising-strategy-evaluation]]
+- [[chatgpt/chatgpt_graphql-use-case-evaluation]]

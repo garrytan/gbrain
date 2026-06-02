@@ -558,3 +558,11 @@ If you want, share:
 - Whether JS errors should auto-commit fixes or just report
 
 I’ll tailor this prompt for your exact app structure.
+
+
+## See Also
+- [[chatgpt/chatgpt_access-denied-openlaw-install]]
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_install-flutter-app-ios]]
+- [[chatgpt/chatgpt_install-nextjs-into-existing-project]]
+- [[chatgpt/chatgpt_install-nodejs-and-npm]]

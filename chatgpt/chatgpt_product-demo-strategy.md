@@ -77,3 +77,11 @@ For YC specifically, I’d use:
 **Investor follow-up:** same asset with traction numbers added.
 
 My recommendation: **make it.** Your creative ability is part of the founder-market fit here because Jovie is about consumer behavior, music, creators, and conversion. A great demo can make the product feel inevitable. Just keep the YC founder video plain and reserve the cinematic piece for the demo slot.
+
+
+## See Also
+- [[chatgpt/chatgpt_product-analytics-strategy]]
+- [[chatgpt/chatgpt_product-strategy-discussion]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]

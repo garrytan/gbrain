@@ -74,3 +74,11 @@ Tim White
 timwhitebartending@gmail.com  
 732.668.2148  
 @timwhite (175K+ followers)
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]
+- [[chatgpt/chatgpt_bartender-job-application-response]]
+- [[chatgpt/chatgpt_head-bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-response]]
+- [[chatgpt/chatgpt_job-application-response]]

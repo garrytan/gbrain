@@ -452,3 +452,11 @@ If any of those appear on the roadmap, add `STRIPE_SECRET_KEY` now so you don’
 ### TL;DR
 
 Keep the **publishable key** in `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` so Checkout loads; ignore the secret key until you need server-side Stripe calls. Clerk’s `cplan_…` ID is all the backend plumbing you need today.
+
+
+## See Also
+- [[chatgpt/chatgpt_integration-setup-guide]]
+- [[chatgpt/chatgpt_storybook-setup-guide]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]

@@ -87,3 +87,11 @@ Mr. White, here are recent (2024–2025) movies that fit your *Lost / Vanilla Sk
 - **O’Dessa (2025)** – 80s-styled sci-fi fever-dream with a heroine on a weird quest; stylish and off-kilter. citeturn2news27  
 
 If you want a “start this week” order: **Weapons → Mickey 17 → The Universal Theory → Alien: Romulus**.
+
+
+## See Also
+- [[chatgpt/chatgpt_movie-recommendations-for-couple]]
+- [[chatgpt/chatgpt_mvm-recommendations-based-on-research]]
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_elio-movie-details]]

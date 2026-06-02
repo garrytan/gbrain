@@ -185,3 +185,11 @@ Here are some replies you could use:
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_convenient-post-workout-meals]]
+- [[chatgpt/chatgpt_daily-calorie-calculation-maintenance-vs-workout]]
+- [[chatgpt/chatgpt_trap-bar-workout-plan]]
+- [[chatgpt/chatgpt_workout-schedule-adjustment]]
+- [[chatgpt/chatgpt_workout-shake-on-cut]]

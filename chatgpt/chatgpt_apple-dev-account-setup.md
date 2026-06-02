@@ -262,3 +262,11 @@ Mr. White, I’m unable to access Clerk’s dashboard from this environment (the
 - **Apple Private Key:** Copy and paste the entire contents of your `AuthKey_GB45NQHLZH.p8` file, including the “BEGIN PRIVATE KEY” and “END PRIVATE KEY” lines. You can open the file you just uploaded to get the text.
 
 After you save these fields, test Sign in with Apple through your app (or Clerk’s test portal) to confirm it works. Let me know if you need guidance on testing or anything else.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-id-fastlane-setup]]
+- [[chatgpt/chatgpt_clerk-apple-integration-setup]]
+- [[chatgpt/chatgpt_create-account-page-setup-part1]]
+- [[chatgpt/chatgpt_create-account-page-setup-part2]]
+- [[chatgpt/chatgpt_e2e-test-account-setup]]

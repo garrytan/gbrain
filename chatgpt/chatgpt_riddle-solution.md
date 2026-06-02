@@ -33,3 +33,11 @@ The riddle in the image says:
 **Answer:**  
 She was born in **room 1975** and died in **room 1975** — not the **year** 1975.  
 The number refers to a **room number**, not a date.
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part2]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part3]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part4]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part5]]

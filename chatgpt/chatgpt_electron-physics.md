@@ -39,3 +39,11 @@ Key facts:
 “Electron” also refers to a popular **software framework** for building **cross-platform desktop applications** using **JavaScript, HTML, and CSS**. It combines the **Chromium browser engine** with **Node.js** so developers can write apps that run on Windows, macOS, and Linux. Many widely used apps like **Visual Studio Code**, **Discord**, and **Slack** are built with Electron. citeturn0search32
 
 If you want the explanation tailored to one of these—physics or software—let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-mac-app-electron]]
+- [[chatgpt/chatgpt_electron-app-turborepo-setup]]
+- [[chatgpt/chatgpt_mac-electron-app-fixes]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

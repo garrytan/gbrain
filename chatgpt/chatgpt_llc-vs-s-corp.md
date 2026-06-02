@@ -52,3 +52,11 @@ No, forming an LLC in Delaware does not automatically make your business an S co
 To elect S corporation status, you need to file Form 2553 with the IRS and meet certain requirements, such as having fewer than 100 shareholders and only one class of stock. This election can be made within a certain timeframe after the LLC is formed, or it can be made in a subsequent tax year.
 
 It's important to note that the decision to elect S corporation status should be based on your specific business needs and goals, as well as tax considerations. It's always a good idea to consult with a tax professional or an attorney before making any major tax-related decisions.
+
+
+## See Also
+- [[chatgpt/chatgpt_delaware-c-corp-name-check]]
+- [[chatgpt/chatgpt_delaware-c-corp-name-search]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

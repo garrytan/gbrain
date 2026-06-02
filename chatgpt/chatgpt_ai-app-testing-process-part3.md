@@ -946,3 +946,11 @@ If you skip that step the first `gh` command will exit 127 and the job fails.
 
 
 All right, I've cleaned up the CI and removed unused workflows from it. I've also tried to make some of the improvements you recommended. Check it out and let me know how that's going in terms of our new recommended workflow of doing the Rapid Loop, the Nightly Confidence Loop, and the Promotion PR. And then, I'm sorry, the Rapid Loop, the Confidence Loop, and the Release Loop. And then how that goes. And then also, just a quick cue, if there's anything we could add into that to check on that would be a recommended addition. Based on what YC companies are doing, anything that would improve stability, improve security, eliminate issues with app store rejections, automate out anything else that might need to happen post-hitting the app store or as part of the app store approval process and all that. Just anything else that may or may not be considering to come back at me with what could be fixed and then also what could be improved and priorities and all that and stuff.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part3]]

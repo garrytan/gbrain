@@ -115,3 +115,11 @@ Bottom line: no hidden or elevated permissions from Claude itself. Just your API
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-prompt-for-claude]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_auto-claude-overview]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part1]]

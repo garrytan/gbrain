@@ -37,3 +37,11 @@ Common uses:
 - **General:** Something progressing in a straight, sequential way.
 
 If you meant something else (a specific term, concept, or context), clarify and I’ll explain.
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-linear-agent-explanation]]
+- [[chatgpt/chatgpt_linear-internal-toolbar-explanation]]
+- [[chatgpt/chatgpt_linear-meaning-clarification]]
+- [[chatgpt/chatgpt_linear-ux-explanation]]
+- [[chatgpt/chatgpt_gp-meaning-explanation-2]]

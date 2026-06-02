@@ -472,3 +472,11 @@ Top recurring performance pattern: X
 ---
 
 If useful, I can also provide a **second prompt that lets Codex automatically open PRs for the safe fixes after the Linear issues are created**, which is where the large performance gains usually come from.
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_nextjs-performance-audit]]
+- [[chatgpt/chatgpt_recursive-app-audit]]
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]

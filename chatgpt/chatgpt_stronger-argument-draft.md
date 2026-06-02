@@ -75,3 +75,11 @@ I get the frustration—machine camping and refusing work-ins is trash etiquette
 ## Assistant
 
 Not a harsh take, just wrong. Reach and weekly listening keep rising; ~47% of Americans listened in the last month in 2024. citeturn0search4turn0search7 Podcasts didn’t die—they matured and shifted to video/YouTube (1B monthly viewers). citeturn0news31 Ad revenue passed $2B in 2024 and is still climbing. citeturn0search2turn0search8turn0search11 The feed may be saturated, but the medium isn’t dead—bad shows are.
+
+
+## See Also
+- [[chatgpt/chatgpt_apology-letter-draft]]
+- [[chatgpt/chatgpt_ar-post-draft]]
+- [[chatgpt/chatgpt_celebrating-failure-argument]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-response-draft]]

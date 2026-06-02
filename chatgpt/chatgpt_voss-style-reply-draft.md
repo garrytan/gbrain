@@ -32,3 +32,11 @@ Here’s a Voss-style reply you can paste, Mr. White:
 > I usually have people pick up on my side so I’m not running all over the city.  
 > Would it be crazy for you to come my way if we put together a solid deal on multiple drives?  
 > How many were you thinking, and what did you have in mind for the lot?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-style-reply]]
+- [[chatgpt/chatgpt_voss-style-reply-example]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-options]]

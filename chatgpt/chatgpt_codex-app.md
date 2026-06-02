@@ -36,3 +36,11 @@ codex app
 - Access to the Codex app and Codex capabilities is included with many **ChatGPT paid plans** (Plus, Pro, Business, Edu, Enterprise). citeturn0search0
 
 In short: the Codex app gives you a **graphical interface to manage powerful AI coding agents**, letting you build and maintain software faster and with less manual effort. citeturn0search29
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]

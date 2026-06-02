@@ -33,3 +33,11 @@ the console should be 64 channel and the living room needs a conversation pitt. 
 ## User
 
 Remake this in 8k
+
+
+## See Also
+- [[chatgpt/chatgpt_living-room-redesign-list]]
+- [[chatgpt/chatgpt_branch-luxury-music-studio-scene]]
+- [[chatgpt/chatgpt_luxury-hotel-villa-chaos]]
+- [[chatgpt/chatgpt_luxury-music-studio-scene]]
+- [[chatgpt/chatgpt_luxury-recording-studio-malibu]]

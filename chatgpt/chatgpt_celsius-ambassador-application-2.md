@@ -39,3 +39,11 @@ Let's also just add in and note that it's completely replaced coffee as my morni
 ## Assistant
 
 I’d like to join the CELSIUS Ambassador Program because I already live the lifestyle your brand represents—high energy, performance-driven, and health-conscious—and I’m intentional about what I put into my body. CELSIUS has completely replaced coffee as my morning caffeine source because it gives me clean, steady energy without the crash, which makes it easy to authentically talk about and recommend. I’m the guy friends ask for advice on fitness, supplements, and routines, so featuring CELSIUS in my day-to-day content would be a natural extension of what I’m already doing, not a forced ad. I see CELSIUS as a tool for productivity, training, and staying sharp, and I’d enjoy turning that into content that actually drives conversions, not just likes. I want to grow with the brand long term, provide honest feedback from real-world use, and help make CELSIUS the default choice for people who take their performance seriously.
+
+
+## See Also
+- [[chatgpt/chatgpt_celsius-ambassador-application]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_application-completion-assistance]]
+- [[chatgpt/chatgpt_application-drafting-request]]
+- [[chatgpt/chatgpt_application-revision-feedback]]

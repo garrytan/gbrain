@@ -49,3 +49,11 @@ Here are the key details:
 ---
 
 If you like, I can pull up the specific API docs (endpoints, request formats) for Tixr so you can see exactly what’s available. Do you want me to fetch those?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-command-palettes-integration]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]
+- [[chatgpt/chatgpt_background-image-integration]]
+- [[chatgpt/chatgpt_builderio-supabase-integration]]
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]

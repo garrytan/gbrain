@@ -140,3 +140,11 @@ This will give you a total of approximately 18 liters before adding club soda.
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_cosmopolitan-cocktail-recipe]]
+- [[chatgpt/chatgpt_gin-elderflower-cocktail-recipe]]
+- [[chatgpt/chatgpt_manhattan-cocktail-recipe]]
+- [[chatgpt/chatgpt_mulé-cocktail-recipe-options]]
+- [[chatgpt/chatgpt_paloma-cocktail-recipe]]

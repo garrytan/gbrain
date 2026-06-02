@@ -616,3 +616,11 @@ Use this revised copy.
 > Jovie’s moat is the closed loop: artist context → revenue opportunity → merch on the Jovie profile → opted-in fan notification → Printful fulfillment → sales data → memory.
 
 That line should probably go in **Anything Else**, because it explains the company more crisply than “substrate moat.” The existing application notes already point to the same idea: Jovie owns the front data layer, uses an agentic stack, and closes the loop from signal to campaign to fan action. fileciteturn6file0
+
+
+## See Also
+- [[chatgpt/chatgpt_almost-exclusive-lost-to-amateurs]]
+- [[chatgpt/chatgpt_lost-city-filming-locations]]
+- [[chatgpt/chatgpt_lost-ending-explanation]]
+- [[chatgpt/chatgpt_lost-id-uber-vegas]]
+- [[chatgpt/chatgpt_lost-ticket-fee-legality-2]]

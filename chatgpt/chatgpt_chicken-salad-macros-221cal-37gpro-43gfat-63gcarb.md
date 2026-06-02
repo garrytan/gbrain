@@ -57,3 +57,11 @@ These values are approximate and can vary based on specific brands and preparati
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_macros-with-chicken-and-additions]]
+- [[chatgpt/chatgpt_plate-macros-teriyaki-chicken]]
+- [[chatgpt/chatgpt_cantina-chicken-chalupas-info]]
+- [[chatgpt/chatgpt_chicken-meal-cheaper]]
+- [[chatgpt/chatgpt_soup-packet-for-chicken-rice]]

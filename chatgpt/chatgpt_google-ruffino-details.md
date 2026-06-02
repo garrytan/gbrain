@@ -35,3 +35,11 @@ Here are some key facts:
 - They operate estates like *Poggio Casciano*. citeturn0search7turn0search1turn0search0  
 
 If you meant a different “Google Ruffino” (someone named Ruffino, or a different domain), I can pull that up too.
+
+
+## See Also
+- [[chatgpt/chatgpt_aaron-carter-voicemail-details]]
+- [[chatgpt/chatgpt_after-inc-game-details]]
+- [[chatgpt/chatgpt_apple-upgrade-program-details]]
+- [[chatgpt/chatgpt_beverly-center-details-2]]
+- [[chatgpt/chatgpt_beverly-center-details]]

@@ -38,3 +38,11 @@ What if I toned it too muxh
 ## Assistant
 
 If you've over-toned your hair, resulting in unwanted shades or overly dark tones, you can address it by washing your hair with a clarifying shampoo or a mild dish soap. These products can help to strip some of the toner from your hair. However, they can be drying, so it's important to follow up with a deep conditioner to restore moisture. If the issue is severe or you're unsure, it's best to consult a professional hairstylist.
+
+
+## See Also
+- [[chatgpt/chatgpt_bleaching-hair-color-tips]]
+- [[chatgpt/chatgpt_is-toning-scientifically-supported]]
+- [[chatgpt/chatgpt_hair-dye-product-check]]
+- [[chatgpt/chatgpt_hair-removal-options-compared]]
+- [[chatgpt/chatgpt_hair-removal-process-explained]]

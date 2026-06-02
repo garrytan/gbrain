@@ -647,3 +647,11 @@ In this update:
 - The `_onItemTapped` method is used to handle navigation item taps. When an item is tapped, this method updates the `_selectedIndex` and can be used to change the displayed content.
 
 Depending on how you want to manage different views or pages in your app (like displaying a settings page), you might need to expand the `_onItemTapped` method's logic. You can use this method to switch between different widgets or navigate to different routes in your app.
+
+
+## See Also
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part1]]
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]
+- [[chatgpt/chatgpt_demo-dashboard-analysis-part3]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part3]]

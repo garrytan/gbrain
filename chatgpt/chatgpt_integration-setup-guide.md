@@ -169,3 +169,11 @@ Key fixes:
 - Consolidated env vars per system.
 
 Want me to drop minimal starter files (`db/index.ts`, `lib/redis.ts`, PostHog provider, Stripe routes) next?
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-apple-integration-setup]]
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_pay-gating-setup-guide]]
+- [[chatgpt/chatgpt_storybook-setup-guide]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]

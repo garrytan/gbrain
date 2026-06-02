@@ -85,3 +85,11 @@ I will complete and return the W9 and Paychex forms promptly.
 
 Best regards,
 Mr. White
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-training-request]]
+- [[chatgpt/chatgpt_cutting-training-frequency]]
+- [[chatgpt/chatgpt_fasted-vs-fed-training]]
+- [[chatgpt/chatgpt_hypertrophy-training-gear]]
+- [[chatgpt/chatgpt_leg-training-impact-summary]]

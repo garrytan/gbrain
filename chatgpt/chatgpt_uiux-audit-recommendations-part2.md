@@ -697,3 +697,11 @@ So your implementation—in which the nav bar is a pure glass sheet over the app
 
 {'asset_pointer': 'file-service://file-H4vVDQo9apW7ezts4CijH8', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1278, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 478001, 'width': 589}
 {'asset_pointer': 'file-service://file-5YEKvnMhQFdbH5N3WzR6oC', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1278, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 1035140, 'width': 589}
+
+
+## See Also
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part1]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part3]]
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part2]]
+- [[chatgpt/chatgpt_ux-audit-recommendations-2]]
+- [[chatgpt/chatgpt_ux-audit-recommendations]]

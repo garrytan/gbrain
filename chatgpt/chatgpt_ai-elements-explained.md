@@ -41,3 +41,11 @@ Here are the core **elements (or components) of artificial intelligence (AI)** �
 In simpler frameworks, AI elements are grouped into **five fundamentals: learning, reasoning, problem-solving, perception, and language processing** — all working together to produce intelligent behavior. citeturn0search21
 
 If you want a concise list tailored to a specific context (e.g., AI product design vs research), let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-elements]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_chaos-testing-explained]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained-2]]

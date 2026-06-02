@@ -83,3 +83,11 @@ did u click thrtough?
 ## Assistant
 
 Yes, Mr. White—I clicked through Calendar, Tasks, Library, New chat, and the Search command palette in urlJoviehttps://jov.ie and gave you a generic hardening brief.
+
+
+## See Also
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_hardening-public-profiles]]
+- [[chatgpt/chatgpt_a7x3-guidelines-for-influencers]]
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_design-improvement-guidelines]]

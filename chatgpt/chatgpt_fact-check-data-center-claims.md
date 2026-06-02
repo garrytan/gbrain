@@ -143,3 +143,11 @@ In dry places, it can matter a lot. Texas researchers reportedly project data ce
 The honest position:
 
 > Data-center heat and water impacts are real, especially for hyperscale projects in dry regions. The bad science is jumping from “localized heat and water strain exist” to “48 data centers melted statewide snowpack early.” That claim skips about twelve variables and lands directly in Facebook University.
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-check-chipotle-claims]]
+- [[chatgpt/chatgpt_data-center-debate]]
+- [[chatgpt/chatgpt_data-center-water-brown]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]

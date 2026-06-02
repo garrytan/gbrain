@@ -50,3 +50,11 @@ Here’s a simplified, black-and-white version of your blueberry muffin face—t
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_muffin-top-logo-design]]
+- [[chatgpt/chatgpt_edm-muffin-helmet-design]]
+- [[chatgpt/chatgpt_muffin-head-style-transfer]]
+- [[chatgpt/chatgpt_muffin-helmet-design-prompt]]

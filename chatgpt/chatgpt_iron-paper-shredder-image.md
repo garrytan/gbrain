@@ -26,3 +26,11 @@ Generate an image of an iron that has gone through a paper shredder.
 ## User
 
 No, I need the iron itself to have gone through the paper shredder. So the iron is shredded into multiple strips.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-image-censorship-tools]]
+- [[chatgpt/chatgpt_artist-profile-image-creation]]
+- [[chatgpt/chatgpt_background-image-integration]]
+- [[chatgpt/chatgpt_character-of-musician-in-image]]
+- [[chatgpt/chatgpt_crop-circle-image-creation]]

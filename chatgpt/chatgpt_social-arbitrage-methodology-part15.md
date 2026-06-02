@@ -632,3 +632,11 @@ No Tier‑1 outlet (Reuters, Bloomberg, WSJ, FT, AP, CNBC, Barron’s, Bloomberg
 **Quick Consense Exit Guidance:**  
 — Your pre‑news thesis has not yet been picked up by mainstream Tier‑1 press today, so the opportunity window remains open.  
 — Continue watching for new Tier‑1 articles—once they appear, assume *PARITY REACHED* and consider scaling out unless a fresh, non‑consensus angle emerges.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

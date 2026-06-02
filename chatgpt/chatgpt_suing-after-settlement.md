@@ -139,3 +139,11 @@ Moving to California usually **does not magically reset everything to California
 But if they sue you in California, California courts often apply California procedural rules, and may also use California’s borrowing statute to prevent a creditor from using California when the claim is already too old elsewhere.
 
 In practice: compare **California’s limit**, **the state named in the card agreement**, and **the state where default happened**. The shortest/expired one may be your strongest defense.
+
+
+## See Also
+- [[chatgpt/chatgpt_after-inc-game-details]]
+- [[chatgpt/chatgpt_cache-clearing-after-update]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_force-commit-after-job]]
+- [[chatgpt/chatgpt_maintenance-after-tirzepatide-use]]

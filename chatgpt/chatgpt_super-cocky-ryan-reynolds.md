@@ -56,3 +56,11 @@ Dude, never call my music bangers. Or fucking talk about topping charts or hits 
 ## Assistant
 
 "Drop everything and go stream 'Never Say A Word' NOW! Don’t miss out on the best track of the summer. Hit that link in my bio and let’s get this trending! 🔥🎵 #NeverSayAWord #NewMusic #StreamNow"
+
+
+## See Also
+- [[chatgpt/chatgpt_dunk-in-ryan-reynolds-style]]
+- [[chatgpt/chatgpt_ryan-reynolds-fact-check]]
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comeback]]
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comment]]
+- [[chatgpt/chatgpt_airbnb-review-ryan-style]]

@@ -650,3 +650,11 @@ There were also earlier beta releases in late December (v2.7.2‑beta.12, v2.7.2
 **Notification:** *Wave 13 (“Merry Shipmas”) with SWE‑1.5 Free as a new model release has been published.*  
 
 If you want only future notifications when a **new model introduction or promo** occurs, I can continue checking on your schedule.
+
+
+## See Also
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part2]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part3]]

@@ -121,3 +121,11 @@ If you tell me:
 - How rough vs. comfy the setup is (tent vs. cabin, distance from car, etc.),  
 
 I can give you a more tailored “yes/no and under what conditions” recommendation.
+
+
+## See Also
+- [[chatgpt/chatgpt_camping-meal-plan]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]

@@ -114,3 +114,11 @@ I’m asking you to handle the bar ordering so Connor can stay focused on the ki
 ---
 
 It’s concise, polite, and keeps the boundaries clear.
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

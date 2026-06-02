@@ -447,3 +447,11 @@ Given your time and focus:
    - Possibly use AI to refactor / generate helper utilities, but not in the hot path of “does this icon show up.”
 
 If you want, next step I can help you design the exact token set + Tailwind/TS snippet so you can drop this into your icon component right away.
+
+
+## See Also
+- [[chatgpt/chatgpt_behance-link-in-bio]]
+- [[chatgpt/chatgpt_best-link-in-bio-tools]]
+- [[chatgpt/chatgpt_bio-link-explanation]]
+- [[chatgpt/chatgpt_bio-link-strategy-part1]]
+- [[chatgpt/chatgpt_bio-link-strategy-part2]]

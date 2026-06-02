@@ -66,3 +66,11 @@ Mr. White, no—any fluid you shift with lymphatic drainage is measured in milli
 - **Transient effect.** That slight thinning reflects fluid redistribution and rebounds within hours—MLD isn’t even considered essential for true volume reduction in therapeutic settings citeturn0search5.  
 
 **Bottom line:** A few millimeters of fluid shift can’t carve out your abs. Real definition comes from lowering body fat and building muscle, not lymphatic work.
+
+
+## See Also
+- [[chatgpt/chatgpt_lymphatic-drainage-explained]]
+- [[chatgpt/chatgpt_bus-bin-drainage-and-setup]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

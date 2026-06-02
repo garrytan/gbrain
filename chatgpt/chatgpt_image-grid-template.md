@@ -223,3 +223,11 @@ To use this updated template, you can pass the video ID and other information fo
 ```
 
 In this example, the template generates two instances of the video/image grid, each with different content and a Vimeo video background.
+
+
+## See Also
+- [[chatgpt/chatgpt_video-grid-component-template]]
+- [[chatgpt/chatgpt_image-import-for-template]]
+- [[chatgpt/chatgpt_16x16-grid-tailwind]]
+- [[chatgpt/chatgpt_casting-board-grid]]
+- [[chatgpt/chatgpt_casting-grid-brief]]

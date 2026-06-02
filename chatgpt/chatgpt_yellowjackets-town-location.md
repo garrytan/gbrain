@@ -26,3 +26,11 @@ Yo dawg, what's going on? I'm watching Yellow Jackets with my babycakes. What to
 ## Assistant
 
 The show places the team in **Wiskayok, New Jersey**—a totally fictional town invented for the story, not a real spot on the Garden State map. citeturn0search6
+
+
+## See Also
+- [[chatgpt/chatgpt_albertsons-burrata-location]]
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_defibrillator-location-search]]
+- [[chatgpt/chatgpt_hollywood-arts-filming-location]]

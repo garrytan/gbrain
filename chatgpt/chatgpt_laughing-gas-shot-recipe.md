@@ -74,3 +74,11 @@ This creates a tropical, sweet, and vibrant shot perfect for a fun event.
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_lemon-drop-shot-recipe]]
+- [[chatgpt/chatgpt_midori-shot-recipe]]
+- [[chatgpt/chatgpt_adjusting-recipe-proportions]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-2]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-3]]

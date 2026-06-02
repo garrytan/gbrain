@@ -237,3 +237,11 @@ Slam this for being fake cuz legal would never let marketing induce real fear an
 Let’s be real—there’s no way LG legal greenlit a stunt where unsuspecting civilians are tricked into thinking they’re about to *die* in a meteor strike. Inducing panic and trauma in job applicants? That’s a lawsuit, not a marketing win.  
 
 The only thing ultra HD here is the acting. Everyone in that room had a script and a waiver. It’s a viral ad, not a social experiment—Hollywood with a logo.
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

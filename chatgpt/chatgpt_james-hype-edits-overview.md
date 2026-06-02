@@ -38,3 +38,11 @@ james hype edits
 For a direct experience of his style, here's his edit of Eminem's "Lose Yourself":
 
 videoEminem - Lose Yourself (James Hype Edit)turn0search2 
+
+
+## See Also
+- [[chatgpt/chatgpt_james-hype-legal-sources]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]

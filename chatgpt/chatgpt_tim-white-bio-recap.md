@@ -34,3 +34,11 @@ In short?
 Just the way we like our villains.
 
 Want me to turn that into a bio, caption, or press kit opener?
+
+
+## See Also
+- [[chatgpt/chatgpt_add-songs-tim-white]]
+- [[chatgpt/chatgpt_bio-for-tim-white]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]
+- [[chatgpt/chatgpt_crest-white-strips-analysis]]
+- [[chatgpt/chatgpt_css-for-white-megamenu]]

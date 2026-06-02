@@ -82,3 +82,11 @@ setup('global setup', async () => {
 - Tests typically exercise real auth UI workflows and are run in CI/CD. citeturn0search0
 
 If you want, I can draft a sample Playwright test suite tailored to a specific stack (e.g., Next.js + Clerk).
+
+
+## See Also
+- [[chatgpt/chatgpt_e2e-testing-with-clerk]]
+- [[chatgpt/chatgpt_clerk-e2e-testing-setup]]
+- [[chatgpt/chatgpt_clerk-e2e-testing]]
+- [[chatgpt/chatgpt_clerk-playwright-testing]]
+- [[chatgpt/chatgpt_clerk-with-nextjs-react-e2e]]

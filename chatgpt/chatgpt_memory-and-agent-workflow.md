@@ -981,3 +981,11 @@ I also found a concrete repo blocker: connector tables and Google OAuth exist, b
 ## Assistant
 
 I created the Linear project, milestones, and parent issue, then canceled a duplicate schema issue from a retry. I’m filling the implementation queue and reconciling older Trigger/WDK issues into a clean Codex execution graph.
+
+
+## See Also
+- [[chatgpt/chatgpt_orchestrator-agent-workflow]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]

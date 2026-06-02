@@ -92,3 +92,11 @@ Before entering the bar and nightlife industry, Mark and Jonnie Houston built a 
 **Sources:** Mark & Jonnie Houston’s background and career details have been covered by *LA Weekly*【33†L219-L224】【33†L235-L240】, *Los Angeles Magazine*【27†L91-L94】, and other outlets. Notably, the brothers’ family story – Thai immigrant mother turned bar owner, and a father memorialized in one of their venues – is documented in profiles of the Houston Hospitality founders【33†L219-L223】【20†L219-L223】. Their transition from college dropouts to tech entrepreneurs and finally nightlife impresarios is described in interviews and articles in publications like *LA Weekly*【33†L235-L240】, *Whitewall*【8†L232-L239】, and the *New York Times*【16†L83-L87】. These sources collectively highlight how the Houstons’ family background gave them a foundation in hospitality, even as they built their business largely through their own entrepreneurial drive. 
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_first-bar-ancient-origins]]
+- [[chatgpt/chatgpt_strawberries-in-vegas-origins]]
+- [[chatgpt/chatgpt_applied-use-in-hospitality]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

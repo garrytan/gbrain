@@ -1229,3 +1229,11 @@ Then the supporting sentence:
 > Connect Spotify. Jovie ingests the catalog, finds what can make money, and ships the campaigns end to end.
 
 That is the cleanest version so far.
+
+
+## See Also
+- [[chatgpt/chatgpt_cinematic-website-concept]]
+- [[chatgpt/chatgpt_cinematic-website-footer-design]]
+- [[chatgpt/chatgpt_copyright-notice-on-website]]
+- [[chatgpt/chatgpt_high-end-website-mockup]]
+- [[chatgpt/chatgpt_import-website-to-figma]]

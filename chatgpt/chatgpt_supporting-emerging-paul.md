@@ -50,3 +50,11 @@ Better but roast him
 ## Assistant
 
 "Way to put that McCartney fellow on the map! With a little more practice, he might even hit the right notes someday. 🎤😂"
+
+
+## See Also
+- [[chatgpt/chatgpt_paul-graham-essays]]
+- [[chatgpt/chatgpt_paul-graham-on-altman]]
+- [[chatgpt/chatgpt_paul-grahams-recent-thinking]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

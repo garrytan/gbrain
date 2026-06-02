@@ -34,3 +34,11 @@ Mr. White, the most famous Nintendo-era cheat is the **Konami Code**:
 - **Origin:** First hidden in 1986’s *Gradius* (NES) by Konami.  
 - **Popularized:** Used in *Contra* (NES) to grant 30 extra lives.  
 - **Legacy:** Appears in dozens of games, websites and apps as an Easter egg.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-cloud-code-ci]]
+- [[chatgpt/chatgpt_agent-skills-vs-code-cli]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_ai-code-review-tools]]
+- [[chatgpt/chatgpt_ai-elements-explained]]

@@ -747,3 +747,11 @@ That’s just your old 10–15 model **shifted ~2% leaner**, and the current evi
 - Don’t let the pursuit of staying shredded wreck recovery.
 
 If you want, next step I can redo the multi-year timeline we sketched but using **9–13 as your working band** instead of 10–15, with rough dates/weights of when you’d be at the bottom vs top of the range.
+
+
+## See Also
+- [[chatgpt/chatgpt_compounding-options-explained-part1]]
+- [[chatgpt/chatgpt_compounding-options-explained-part2]]
+- [[chatgpt/chatgpt_compounding-options-explained-part3]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part4]]

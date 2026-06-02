@@ -34,3 +34,11 @@ Sanity
 - In legal contexts, *sanity* indicates someone is of **sound mind and legally responsible for their actions**. citeturn0search2
 
 In short: sane = mentally sound, rational, and capable of reasonable thought and behavior.
+
+
+## See Also
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_clerk-definition]]
+- [[chatgpt/chatgpt_conductor-definition-and-examples]]
+- [[chatgpt/chatgpt_css-class-definition-overview]]
+- [[chatgpt/chatgpt_enhancing-ab-definition-photoshoot]]

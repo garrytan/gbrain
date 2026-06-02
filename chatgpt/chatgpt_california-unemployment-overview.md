@@ -36,3 +36,11 @@ Mr. White,
 The Employment Development Department (EDD) administers these benefits and provides resources for job seekers. citeturn0search1
 
 navlistCalifornia's Unemployment Rate Among Highest in the Nationturn0news19,turn0news25,turn0news20 
+
+
+## See Also
+- [[chatgpt/chatgpt_california-unemployment-benefits]]
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_california-king-on-king-bed]]
+- [[chatgpt/chatgpt_california-license-plate-requirement]]

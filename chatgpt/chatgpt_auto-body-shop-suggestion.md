@@ -294,3 +294,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'That\'s a really interesting question! If we factor in all forms of media consumption—streaming, physical sales, radio play, and general cultural impact—some of the biggest contenders would likely be classics like The Beatles\' "Hey Jude," Michael Jackson\'s "Billie Jean," or even Queen\'s "Bohemian Rhapsody." These songs have had massive reach across multiple generations and formats, from vinyl and CDs to radio and now streaming. It\'s tough to pick just one, but those are definitely strong contenders for having the biggest overall reach!'}
 {'asset_pointer': 'sediment://file_0000000040b46230a33f2eb5c16ab827', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T17:58:37.376223+00:00', 'format': 'wav', 'metadata': {'end': 34.7, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1665678, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_efficient-coffee-shop-line]]
+- [[chatgpt/chatgpt_la-coffee-shop-identification]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]

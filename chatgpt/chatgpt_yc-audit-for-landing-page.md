@@ -77,3 +77,11 @@ Here are options depending on what Jovie *actually* does:
 If I cover your logo and ask “what do you do and for whom?” your current H1 doesn’t answer it.
 
 If you tell me in one line who the buyer is (indie artists vs labels) and the main measurable outcome (streams vs ROAS vs content volume), I’ll give you 5 final hero sets (H1 + subhead + CTA) tailored to that lane.
+
+
+## See Also
+- [[chatgpt/chatgpt_landing-page-audit-2]]
+- [[chatgpt/chatgpt_landing-page-audit-prompt]]
+- [[chatgpt/chatgpt_landing-page-audit]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]

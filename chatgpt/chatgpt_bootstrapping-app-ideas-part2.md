@@ -221,3 +221,11 @@ Create a dark-theme, mobile-first PWA called **BodyVue** in Vue/Nuxt, with these
 **Inspiration:** Equinox & Eight Sleep (minimal, modern, dark).  
 ```  
 Based on Stitch Prompt Guide citeturn0search2
+
+
+## See Also
+- [[chatgpt/chatgpt_bootstrapping-app-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part2]]

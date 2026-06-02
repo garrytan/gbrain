@@ -382,3 +382,11 @@ If you want, Mr. White, tell me:
 - how long recovery takes
 
 …and I’ll tell you whether you should **add sets, stay the same, or reduce**, and whether your shoulder work is appropriately intense for specialization.
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-decision-analysis]]
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]

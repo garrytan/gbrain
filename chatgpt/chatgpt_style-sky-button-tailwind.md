@@ -81,3 +81,11 @@ This code will create a button with a play icon to the left of the "Listen" text
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-tailwind-button-styles]]
+- [[chatgpt/chatgpt_tailwind-css-button-div]]
+- [[chatgpt/chatgpt_tailwind-font-size-button]]
+- [[chatgpt/chatgpt_tailwind-style-placeholder-text]]
+- [[chatgpt/chatgpt_apple-style-rsvp-button]]

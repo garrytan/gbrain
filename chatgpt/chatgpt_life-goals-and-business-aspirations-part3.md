@@ -516,3 +516,11 @@ No devtool launch.
 No fitness launch.
 
 One memo. One Loom. Twenty private messages. One outcome: committed cash.
+
+
+## See Also
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part1]]
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part2]]
+- [[chatgpt/chatgpt_life-lessons]]
+- [[chatgpt/chatgpt_producer-life-struggles]]
+- [[chatgpt/chatgpt_shelf-life-of-cocktails]]

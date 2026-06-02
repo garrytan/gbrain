@@ -26,3 +26,11 @@ tags: [chatgpt, import]
 ## Assistant
 
 1238 Tranquil Rain Ave is a single-family home in Henderson, NV 89012. Built in 2005, it features 5 bedrooms, 3 bathrooms, and approximately 3,030 square feet of living space. The property includes a heated pool, a 3-car garage, and a spacious loft. The primary bedroom offers a large balcony with city, mountain, and strip views. The home last sold on January 11, 2021, for $535,000. citeturn0search1 As of now, it is not listed for sale. citeturn0search0 
+
+
+## See Also
+- [[chatgpt/chatgpt_bronson-ave-property-info]]
+- [[chatgpt/chatgpt_clear-weather-no-rain]]
+- [[chatgpt/chatgpt_fix-vuejs-computed-property]]
+- [[chatgpt/chatgpt_improve-computed-property]]
+- [[chatgpt/chatgpt_property-details-1417-n-bronson]]

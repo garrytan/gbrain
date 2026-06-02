@@ -41,3 +41,11 @@ No credible evidence shows she ever did. citeturn0search1turn0search13�
 
 ### Bottom line
 “Let them eat cake” is a **symbolic quote**, not a historical one—used to represent elite detachment from real-world suffering.
+
+
+## See Also
+- [[chatgpt/chatgpt_birthday-cake-alternatives]]
+- [[chatgpt/chatgpt_cake-fridge-lifespan]]
+- [[chatgpt/chatgpt_make-chocolate-cake-shot]]
+- [[chatgpt/chatgpt_rice-cake-macronutrients-summary]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

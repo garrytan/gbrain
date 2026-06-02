@@ -38,3 +38,11 @@ So I'm making a finsta called this is not Tim White and I want you to take that 
 ## Assistant
 
 Here’s the stylized, comical “Clark Kent” profile pic—enough mystery to keep them guessing, but still you, Mr. White. Let me know if you need any tweaks!
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-luxury-music-studio-scene]]
+- [[chatgpt/chatgpt_consent-in-strip-clubs]]
+- [[chatgpt/chatgpt_cost-of-sunset-strip-billboard]]
+- [[chatgpt/chatgpt_dj-xs-las-vegas-path-part1]]
+- [[chatgpt/chatgpt_dj-xs-las-vegas-path-part2]]

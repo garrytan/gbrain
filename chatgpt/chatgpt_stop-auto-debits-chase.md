@@ -64,3 +64,11 @@ Mr. White — you’ve run into one of the most frustrating things about U.S. ba
 👉 If Chase resists, cite **Regulation E, 12 CFR § 1005.10(c)** — you have the right to stop preauthorized transfers. If they ignore your request, you can escalate to the CFPB (Consumer Financial Protection Bureau). That usually gets banks moving very quickly.  
 
 Do you want me to draft you a bulletproof message you can send Chase in the secure message center so they have it in writing?
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_auto-body-shop-suggestion]]
+- [[chatgpt/chatgpt_auto-claude-overview]]

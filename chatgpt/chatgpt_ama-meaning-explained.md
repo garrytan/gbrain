@@ -42,3 +42,11 @@ ama
 7. **Ama (Polynesian Canoe Part)**: In Polynesian terminology, the "ama" refers to the outrigger of a canoe, which provides stability to the vessel. citeturn0search35
 
 If you have a specific context in mind, please provide more details so I can offer a more targeted explanation. 
+
+
+## See Also
+- [[chatgpt/chatgpt_chromatic-meaning-explained-2]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained]]
+- [[chatgpt/chatgpt_codex-meaning-explained]]
+- [[chatgpt/chatgpt_dopl-meaning-explained]]
+- [[chatgpt/chatgpt_llo-meaning-explained]]

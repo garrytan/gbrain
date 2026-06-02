@@ -37,3 +37,11 @@ Some common reasons for being excused from jury duty include:
 The court may require documentation to support your excuse, such as a doctor's note or proof of travel plans. In some cases, you may need to appear before a judge or magistrate to explain your situation.
 
 It is important to note that simply not showing up for jury duty without an excuse can result in legal consequences, such as fines or even arrest. So, it is best to follow the proper procedures for getting excused if you are unable to serve.
+
+
+## See Also
+- [[chatgpt/chatgpt_3-months-from-today]]
+- [[chatgpt/chatgpt_avatar-generation-from-metrics]]
+- [[chatgpt/chatgpt_cheap-flights-from-la]]
+- [[chatgpt/chatgpt_generate-output-from-markdown]]
+- [[chatgpt/chatgpt_get-width-from-array]]

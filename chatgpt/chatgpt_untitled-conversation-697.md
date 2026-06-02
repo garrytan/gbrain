@@ -36,3 +36,11 @@ It sounds like you might be having an issue with the `manifest.json` file for yo
 ```
 
 Make sure that the paths to your icons are correct and that the icons themselves are valid image files. You can also try using the `chrome://extensions` page to verify that the icons are being correctly loaded for your extension. If you are still having trouble, you can try asking for help on the [Chrome Dev Forum](https://developer.chrome.com/extensions/forum) where there are many experienced developers who can offer advice and assistance.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

@@ -56,3 +56,11 @@ Because the LADBS permit portal is very JavaScript-heavy, the most reliable way 
 2) In the permit list, look for **Plumbing** entries mentioning **“grease interceptor”** or **“storm drain / infiltration / retention”** (that will tell you what the tank is).
 
 If you tell me **which direction you’re facing** (toward downtown/east or toward the hills/west) or the **nearest cross street for the lot entrance**, I can narrow whether it’s definitely **5920** vs another parcel in that 5914–5924 range.
+
+
+## See Also
+- [[chatgpt/chatgpt_equinox-sunset-blvd-expansion]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]
+- [[chatgpt/chatgpt_ai-in-product-development]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]

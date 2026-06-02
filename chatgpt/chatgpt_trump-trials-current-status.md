@@ -48,3 +48,11 @@ When can we expect the first verdict
 The first verdict in Donald Trump's current legal proceedings is expected soon. Specifically, the verdict in the $370 million civil fraud case in New York, where Trump is accused of inflating his business's net worth to secure favorable loans, is anticipated by the end of this week【16†source】【17†source】.
 
 In terms of the hush money trial related to payments made to Stormy Daniels, the trial began on March 25, 2024, and is expected to last approximately six weeks, potentially concluding in early June 2024【15†source】【17†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_angellist-stack-status]]
+- [[chatgpt/chatgpt_case-status-update]]
+- [[chatgpt/chatgpt_codex-status-inquiry]]
+- [[chatgpt/chatgpt_columbia-square-studios-status]]
+- [[chatgpt/chatgpt_copyright-status-not-public]]

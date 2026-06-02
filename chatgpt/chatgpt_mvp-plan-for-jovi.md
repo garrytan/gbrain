@@ -311,3 +311,11 @@ Below is a **Linear‑inspired, Apple‑level** overhaul plan you can implement 
 ---
 
 If you can expose a **public preview** or send **full‑page screenshots**, I’ll annotate section‑by‑section with exact keeps/cuts and component‑level diffs.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovi-ios-app-spec]]
+- [[chatgpt/chatgpt_jovi-logo-animation-concept]]
+- [[chatgpt/chatgpt_jovi-sign-up-ideas]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part1]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part2]]

@@ -40,3 +40,11 @@ In California, dealers are legally required to submit registration paperwork and
 
 If you want, I can write you a short, **dealer-scaring** email that will usually get plates in motion fast.  
 Do you want me to draft that?
+
+
+## See Also
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_license-plate-requirements-ca]]
+- [[chatgpt/chatgpt_steve-jobs-license-plate-loophole]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part1]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part2]]

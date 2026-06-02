@@ -154,3 +154,11 @@ Mr. White:
 **Bottom line**  
 – If you’re happy with Cloudinary’s CDN & transformations, do bg removal on-device and let Cloudinary handle the rest.  
 – If you need zero vendor fees, build a Sharp-based microservice in your edge function.
+
+
+## See Also
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_avatar-upload-optimization]]
+- [[chatgpt/chatgpt_avatar-upload-spec]]
+- [[chatgpt/chatgpt_chrome-extension-upload-error]]
+- [[chatgpt/chatgpt_file-upload-error-troubleshoot-part1]]

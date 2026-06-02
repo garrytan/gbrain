@@ -126,3 +126,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "I'm always evolving and trying to sound as natural and friendly as possible! It's great to hear that it comes across that way. If you like it, I'm happy to keep it up!"}
 {'asset_pointer': 'sediment://file_00000000e31861f68bffc161d9a66351', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-06T19:30:34.787332+00:00', 'format': 'wav', 'metadata': {'end': 9.8, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 470478, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_face-definitions-and-contexts]]
+- [[chatgpt/chatgpt_replace-dall-e-face]]
+- [[chatgpt/chatgpt_smiley-face-ascii-art]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

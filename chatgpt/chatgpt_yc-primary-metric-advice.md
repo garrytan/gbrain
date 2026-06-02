@@ -116,3 +116,11 @@ For investors, the sentence version is:
 **“Our core metric is weekly active link pages: pages that receive traffic and send users outbound. That measures enduring value better than creator logins, because this is a passive utility product.”**
 
 I can turn this into a one-line YC application answer for Jovie.
+
+
+## See Also
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_ai-migration-naming-advice]]
+- [[chatgpt/chatgpt_airport-gun-disposal-advice]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]
+- [[chatgpt/chatgpt_apartment-hunt-advice]]

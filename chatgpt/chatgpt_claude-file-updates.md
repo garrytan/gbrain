@@ -710,3 +710,11 @@ I added new sections for **Unit Test Performance Rules** (fast feedback, <200ms 
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-changelog-updates]]
+- [[chatgpt/chatgpt_company-ethos-md-file]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part1]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part2]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part3]]

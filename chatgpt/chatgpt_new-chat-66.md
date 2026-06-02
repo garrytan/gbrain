@@ -129,3 +129,11 @@ If you prefer a gin cocktail without vermouth or tonic, a **Gin Rickey** is a gr
 5. Garnish with a lime wedge or wheel.
 
 Enjoy your Gin Rickey, a straightforward and crisp cocktail!
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

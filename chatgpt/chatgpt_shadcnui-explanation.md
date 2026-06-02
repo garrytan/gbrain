@@ -36,3 +36,11 @@ If you meant **shadcn/ui**, here’s a quick summary:
 - It’s open source, MIT licensed. citeturn0search1turn0search4  
 
 If that’s what you were asking about, I can walk you through setup, usage, theming, or customizing a specific component. If you meant “shade cdnui” or something else, tell me and I’ll address that.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

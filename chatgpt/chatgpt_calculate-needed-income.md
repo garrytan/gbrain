@@ -249,3 +249,11 @@ Mr. White — here’s the clean, LA-friendly playbook for a **solo-founder C-co
 - Track mileage or use per-diem/GSA rates for travel. citeturn2search13
 
 If you want, I can model **two concrete comp mixes** (e.g., **$90k vs $120k W-2**) with your actual benefits and spit out net take-home vs. runway impact.
+
+
+## See Also
+- [[chatgpt/chatgpt_cash-flow-solutions-needed]]
+- [[chatgpt/chatgpt_ecomm-seo-writer-needed]]
+- [[chatgpt/chatgpt_film-title-clarification-needed]]
+- [[chatgpt/chatgpt_front-end-developer-needed]]
+- [[chatgpt/chatgpt_jacket-needed-evening-sunny]]

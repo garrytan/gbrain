@@ -41,3 +41,11 @@ Here’s why:
 You remain responsible for the ticket even after switching to your permanent plate. Unpaid parking tickets can lead to penalties, holds on registration renewal, or collections. To resolve it, either pay the citation or contest it with the issuing agency if you have a good factual basis (e.g., plate error). citeturn0search9
 
 If you want specifics on how this plays into registration renewals or holds in Los Angeles, let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_buying-plane-tickets]]
+- [[chatgpt/chatgpt_clover-print-tickets-setup]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_flight-and-parking-options]]

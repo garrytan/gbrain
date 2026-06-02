@@ -47,3 +47,11 @@ For the symptoms you're experiencing, over-the-counter (OTC) medications can pro
 4. **Throat lozenges** and **saline nasal sprays** can soothe a dry throat and moisten nasal passages.
 
 Remember, if you have any pre-existing health conditions or are on other medications, it’s wise to consult with a healthcare provider before starting any new medication to avoid interactions.
+
+
+## See Also
+- [[chatgpt/chatgpt_medicine-for-cold-symptoms]]
+- [[chatgpt/chatgpt_bathtub-cold-water-issue]]
+- [[chatgpt/chatgpt_cold-increases-calorie-burn]]
+- [[chatgpt/chatgpt_cold-pool-surface-question]]
+- [[chatgpt/chatgpt_cold-sore-transmission-prevention]]

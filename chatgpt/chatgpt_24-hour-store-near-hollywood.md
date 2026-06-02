@@ -38,3 +38,11 @@ I'm on I'm at the Hollywood Stadium
 ## Assistant
 
 The nearest 24-hour convenience store near Hollywood Stadium is likely a 7-Eleven. There's one at 1804 N Cahuenga Blvd, just a short drive from the stadium.
+
+
+## See Also
+- [[chatgpt/chatgpt_happy-hour-discount-setup]]
+- [[chatgpt/chatgpt_app-store-connect-api]]
+- [[chatgpt/chatgpt_apple-app-store-rejection]]
+- [[chatgpt/chatgpt_bartending-jobs-in-hollywood]]
+- [[chatgpt/chatgpt_cannabis-laws-in-hollywood]]

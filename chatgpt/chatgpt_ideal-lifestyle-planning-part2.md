@@ -745,3 +745,11 @@ Your stretch version is:
 Your rule should be:
 
 **Never sell more than 10%–12% before you have real traction unless the company is otherwise going to die.**
+
+
+## See Also
+- [[chatgpt/chatgpt_ideal-lifestyle-planning-part1]]
+- [[chatgpt/chatgpt_sprint-planning-for-mvp-part2]]
+- [[chatgpt/chatgpt_ideal-repo-settings]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_a7x3-blog-healthy-lifestyle]]

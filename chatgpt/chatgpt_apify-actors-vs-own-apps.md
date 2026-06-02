@@ -98,3 +98,11 @@ Bundle several into **vertical packs** (e.g., *Hospitality Prospecting Suite*), 
 ---
 
 **Recommendation:** Focus the next 90 days on **Apify actor portfolios** aimed at **agencies and scrappy operators**. Ship weekly, bundle vertically, and layer usage‑based pricing. Reassess at ~$7k MRR to decide whether to double down or rotate the cash flow into your highest‑conviction app.
+
+
+## See Also
+- [[chatgpt/chatgpt_apify-web-scraping-platform]]
+- [[chatgpt/chatgpt_actors-access-overview]]
+- [[chatgpt/chatgpt_friends-actors-dessert-ingredients]]
+- [[chatgpt/chatgpt_movies-with-top-actors]]
+- [[chatgpt/chatgpt_best-fitness-photo-apps]]

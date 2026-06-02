@@ -77,3 +77,11 @@ Mr. White, here’s a concise list of Max Martin’s production records by year:
  – “American Bitch” (Non-album single)
 
 These are the records credited to Max Martin for 2024 and 2025.
+
+
+## See Also
+- [[chatgpt/chatgpt_2024-election-outcome-query]]
+- [[chatgpt/chatgpt_album-sales-2024-12-artists]]
+- [[chatgpt/chatgpt_golden-globes-2024-time]]
+- [[chatgpt/chatgpt_google-maps-features-2024]]
+- [[chatgpt/chatgpt_income-summary-q1-2024]]

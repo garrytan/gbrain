@@ -133,3 +133,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'So as of right now in late 2025, it does look like tirzepatide, which is often called Zepbound, has gotten a bit more affordable and there have been some price reductions. Some insurance plans, especially Medicare, have a capped co-pay. And there’s also a program for uninsured people where the price might be lower than what you’re paying now, maybe around $245 a month eventually. So it might be worth checking with your insurance and seeing if you can get it through a regular pharmacy now at a lower cost.'}
 {'asset_pointer': 'sediment://file_000000009ee0723095f98e93c37f5649', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-05-07T01:03:46.874907+00:00', 'format': 'wav', 'metadata': {'end': 28.0, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1344078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part2]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part3]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part4]]

@@ -150,3 +150,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Sure. For the Yale Assure smart lock, the release button is usually that small black button on the side of the latch assembly. It’s typically near the middle or'}
 {'asset_pointer': 'sediment://file_00000000051c61f6a5e6011c6123fa43', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-11-22T19:49:23.629327+00:00', 'format': 'wav', 'metadata': {'end': 7.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 360078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_extending-deadlatch-mechanism-part2]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]

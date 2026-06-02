@@ -138,3 +138,11 @@ A **tiger team** is a **small, cross-functional strike team** assembled to solve
 ---
 
 If you want, I’ll draft a 4-sentence intro Kurt can forward to their **Program Delivery** and **EP** leads plus a tight bullets-resume tailored to **Director, Program Delivery** (that job is open and public). citeturn3view0
+
+
+## See Also
+- [[chatgpt/chatgpt_playlist-proposal-for-tim-white]]
+- [[chatgpt/chatgpt_ui-improvements-proposal]]
+- [[chatgpt/chatgpt_calm-work-pickup-protocol]]
+- [[chatgpt/chatgpt_creative-fishing-gift-ideas]]
+- [[chatgpt/chatgpt_experiential-creative-technologist]]

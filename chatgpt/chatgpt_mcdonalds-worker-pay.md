@@ -133,3 +133,11 @@ Managers on salary may earn more, but they’re also covered by wage-hour and ov
 ---
 
 Would you like me to outline which **positions** inside McDonald’s are covered (crew, shift manager, maintenance, etc.) and which might be exempt under the law?
+
+
+## See Also
+- [[chatgpt/chatgpt_mcdonalds-beeping-explained]]
+- [[chatgpt/chatgpt_mcdonalds-hot-coffee-lawsuit]]
+- [[chatgpt/chatgpt_mcdonalds-pay-in-la]]
+- [[chatgpt/chatgpt_subway-vs-mcdonalds-comparison]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

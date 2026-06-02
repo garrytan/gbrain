@@ -39,3 +39,11 @@ Identify the building
 ## Assistant
 
 The building in the image you've uploaded is the Taipei 101 in Taiwan. It was once the world's tallest building until the completion of the Burj Khalifa in Dubai. Taipei 101 is known for its distinctive postmodern architecture, with a series of eight segments that flare outward, resembling a pagoda, and for having one of the world's fastest elevators.
+
+
+## See Also
+- [[chatgpt/chatgpt_agentic-building-and-scaling]]
+- [[chatgpt/chatgpt_ai-music-for-audience-building]]
+- [[chatgpt/chatgpt_automated-audience-building]]
+- [[chatgpt/chatgpt_branch-agentic-building-and-scaling-part1]]
+- [[chatgpt/chatgpt_branch-agentic-building-and-scaling-part2]]

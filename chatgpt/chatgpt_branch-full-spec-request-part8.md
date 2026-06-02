@@ -684,3 +684,11 @@ That is the YC application.
 If YC ignores it, the work is still useful because the same video/story becomes the a16z Speedrun app, AI House pitch, investor update, landing page, and sales demo. But the key is keeping today’s scope surgical:
 
 **No code. Current app. Overlay the Opportunity Inbox. Submit.**
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part4]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part5]]

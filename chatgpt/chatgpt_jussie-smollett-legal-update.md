@@ -91,3 +91,11 @@ On the industry side:
 - But with no criminal record, studios aren’t legally barred from hiring him.  
 
 Hollywood’s “cancel culture” often hinges on public pressure rather than legal status—some actors have been blacklisted for a social misstep, others rebound once the uproar fades. In Smollett’s case, the courts and the industry have drawn different lines.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-crawl-idea-legal-issues]]
+- [[chatgpt/chatgpt_ca-rental-application-legal-check]]
+- [[chatgpt/chatgpt_corporation-vs-legal-reform]]
+- [[chatgpt/chatgpt_e-scooters-legal-in-west-hollywood]]
+- [[chatgpt/chatgpt_fathers-legal-responsibilities-established]]

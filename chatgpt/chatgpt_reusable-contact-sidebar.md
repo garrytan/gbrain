@@ -788,3 +788,11 @@ Below is an eval set you can plug into whatever system is generating/writing the
 ---
 
 If you’d like, Mr. White, I can condense this into a single JSON/YAML block formatted exactly for whatever eval runner you’re using (e.g., “name / description / acceptance_criteria” schema) without adding any implementation hints.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-contact-poster-rotation]]
+- [[chatgpt/chatgpt_contact-apis-supported]]
+- [[chatgpt/chatgpt_contact-avatar-component-2]]
+- [[chatgpt/chatgpt_contact-avatar-component]]
+- [[chatgpt/chatgpt_contact-avatar-update]]

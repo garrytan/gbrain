@@ -235,3 +235,11 @@ yes renae it
 I attempted to open the options for the `dev` configuration. Doppler does not provide a direct “rename” option, but it does allow you to **duplicate** an existing config, which can effectively create a new config named `local` with the same secrets as `dev`. Once that new config is created, we can update the Vercel “Development” sync to use `local` instead of `dev`, and then remove the old `dev` config if it’s no longer needed.
 
 Duplicating the config triggers a modal where you specify the new config name and slug. Since this requires entering the new config name (“local”), I’d need you to input that when prompted. Would you like me to proceed with duplicating the `dev` config to a new `local` config? If so, be ready to enter “local” as the name/slug when the modal appears.
+
+
+## See Also
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part3]]
+- [[chatgpt/chatgpt_artist-secrets-revealed]]
+- [[chatgpt/chatgpt_bar-inventory-management-table]]

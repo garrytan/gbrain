@@ -504,3 +504,11 @@ If any of those look good, I can pull up apply links and shift details.
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartending-job-alerts-part1]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part10]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part11]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part2]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part3]]

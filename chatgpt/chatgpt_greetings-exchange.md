@@ -26,3 +26,11 @@ hello
 ## Assistant
 
 Hello, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_farewell-exchange]]
+- [[chatgpt/chatgpt_greeting-exchange-2]]
+- [[chatgpt/chatgpt_greeting-exchange-3]]
+- [[chatgpt/chatgpt_greeting-exchange]]

@@ -642,3 +642,11 @@ Your thesis—that Tesla **currently lacks approval to operate autonomous, fare�
 - **Recommendation:** Unless you're privy to **non‑public CPUC or DMV filings** hinting at imminent autonomous permission, it’s prudent to **scale back exposure** tied to expectations of near‑term robotaxi deployment in California. The mainstream media and regulatory narrative now reflect your internal thesis, with no new non‑consensus angles appearing.
 
 navlistTesla California Robotaxi Regulatory Coverageturn0news18,turn0news23,turn0news21,turn0news26
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

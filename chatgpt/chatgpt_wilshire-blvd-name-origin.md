@@ -73,3 +73,11 @@ How’d chicago end up with one
 I wasn’t able to find credible evidence that entity["transport_system", "Wilshire Boulevard", 0] was named or established independently in entity["place", "Chicago", 0] based on the sources I searched. If you found a “Wilshire”-street in Chicago, it may simply share the name by coincidence or by local developer preference, rather than being a deliberate homage to LA’s Wilshire.  
 
 Would you like me to check local Chicago archival / historic street-naming records to see exactly where that street came from?
+
+
+## See Also
+- [[chatgpt/chatgpt_john-legend-name-origin]]
+- [[chatgpt/chatgpt_a7x3-holdings-name-suggestions]]
+- [[chatgpt/chatgpt_accessing-users-name-in-ios]]
+- [[chatgpt/chatgpt_anagram-name-suggestion]]
+- [[chatgpt/chatgpt_app-name-suggestions]]

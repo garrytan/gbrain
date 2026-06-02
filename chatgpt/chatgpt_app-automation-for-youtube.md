@@ -83,3 +83,11 @@ My recommendation:
 - Keep any tribute/fan channels clearly labeled if you ever go that route, because YouTube requires fan channels to make that obvious. citeturn356618view0
 
 Next useful step: a one-page MVP spec with the data model, worker pipeline, and minimum rights ledger.
+
+
+## See Also
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]
+- [[chatgpt/chatgpt_ai-agent-automation-part2]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]
+- [[chatgpt/chatgpt_automate-youtube-shorts-urls]]

@@ -490,3 +490,11 @@ Return: ticker, one‑liner thesis, links/screens, est. sentiment, spike magnitu
 ## Assistant
 
 This automation has been paused due to too many unread executions. You can resume it in automations settings or by asking ChatGPT.
+
+
+## See Also
+- [[chatgpt/chatgpt_animated-news-headlines]]
+- [[chatgpt/chatgpt_fake-news-clarification]]
+- [[chatgpt/chatgpt_hacker-news-overview-2]]
+- [[chatgpt/chatgpt_hacker-news-overview-3]]
+- [[chatgpt/chatgpt_hacker-news-overview]]

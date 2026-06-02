@@ -128,3 +128,11 @@ Max Martin has given very few in-depth interviews, so the vast majority of insig
 ---
 
 **No additional interpretation is provided here—only sourced quotes or factual statements from Martin and his collaborators.**
+
+
+## See Also
+- [[chatgpt/chatgpt_max-martin-songwriting-process]]
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_aaron-carter-voicemail-details]]
+- [[chatgpt/chatgpt_after-inc-game-details]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]

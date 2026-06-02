@@ -88,3 +88,11 @@ Key points:
 - **How to use:** Spray once in one nostril, **call 911**, and **repeat every 2–3 minutes** with new devices until breathing improves. Carry **two doses**. citeturn0search12turn0search2
 
 Also available OTC under other names (e.g., **RiVive** 3 mg). citeturn0search4
+
+
+## See Also
+- [[chatgpt/chatgpt_cats-and-mdma-effects]]
+- [[chatgpt/chatgpt_cell-phone-radiation-effects]]
+- [[chatgpt/chatgpt_chewing-gum-effects-jaw-muscles]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part1]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part2]]

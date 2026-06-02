@@ -161,3 +161,11 @@ Mr. White, here’s a concise rule you can drop into `agents.md`:
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-cleanup-best-practices]]
+- [[chatgpt/chatgpt_oauth-authentication-best-practices]]
+- [[chatgpt/chatgpt_redwoodjs-best-practices]]
+- [[chatgpt/chatgpt_tailwind-v4-best-practices]]
+- [[chatgpt/chatgpt_vue-improvements-best-practices]]

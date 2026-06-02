@@ -86,3 +86,11 @@ Got it, Mr. White. I added your details and built a **handbook-ready section** i
 - Fold the **CROW** definition into the employee handbook section (already done).
 
 If you want, I can export the handbook section as a printable one-pager.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_current-vault-menu]]
+- [[chatgpt/chatgpt_greeting-script-for-vault]]
+- [[chatgpt/chatgpt_vault-speakeasy-review-highlights]]
+- [[chatgpt/chatgpt_vault-speakeasy-staff-update]]

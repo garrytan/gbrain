@@ -59,3 +59,11 @@ The BodySpec results for Tim White, a male born on April 5, 1991, provide a deta
    - These sections detail the changes in fat and lean mass in different body regions over time.
 
 The report emphasizes that it is for informational purposes and not for medical diagnosis. Any concerns about the metrics should be discussed with a physician.
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-dexa-summary]]
+- [[chatgpt/chatgpt_bodyspec-report-summary]]
+- [[chatgpt/chatgpt_dexa-scan-results-summary]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-2]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-3]]

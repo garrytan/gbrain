@@ -31,3 +31,11 @@ Help me build this as a mockup for a world class expensive ui based on frame.io 
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_banner-design-request]]
+- [[chatgpt/chatgpt_design-canvas-request]]
+- [[chatgpt/chatgpt_design-improvement-mockup]]
+- [[chatgpt/chatgpt_dj-logo-design-request]]
+- [[chatgpt/chatgpt_logo-design-request]]

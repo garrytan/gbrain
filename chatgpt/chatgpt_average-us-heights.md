@@ -38,3 +38,11 @@ Now just give me people, don't separate by gender.
 ## Assistant
 
 The average height for people in the United States is about 5 feet 6 inches (167.6 cm).
+
+
+## See Also
+- [[chatgpt/chatgpt_average-birth-timing]]
+- [[chatgpt/chatgpt_average-height-median-vs-mean]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]
+- [[chatgpt/chatgpt_colin-farrell-britney-spears-heights]]

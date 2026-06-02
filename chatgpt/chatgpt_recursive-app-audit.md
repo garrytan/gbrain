@@ -126,3 +126,11 @@ If you want, I can:
 - Adapt it to **GitHub Issues instead of Linear**
 
 Say the word.
+
+
+## See Also
+- [[chatgpt/chatgpt_recursive-performance-audit]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_audit-and-recommend-drafts]]
+- [[chatgpt/chatgpt_audit-and-strategy-tips]]

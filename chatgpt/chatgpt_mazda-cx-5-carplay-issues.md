@@ -67,3 +67,11 @@ If any of these still misbehave, you may need a dealer-level Mazda Connect firmw
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_mazda-cx-5-carplay-issue]]
+- [[chatgpt/chatgpt_mazda-cx-5-carplay-upgrade]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-liftgate]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-wipers]]

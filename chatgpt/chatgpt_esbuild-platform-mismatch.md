@@ -388,3 +388,11 @@ If your `jsconfig.json` file is empty, it's possible that it got accidentally de
 The above content provides a basic configuration for a JavaScript project. If you need to customize the `jsconfig.json` file with additional compiler options or paths, you can refer to the TypeScript documentation for more information: https://www.typescriptlang.org/tsconfig
 
 By recreating the `jsconfig.json` file with the appropriate content, you should be able to resolve the "Unexpected end of file in JSON" error and successfully run the Vite development server.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-orchestration-platform]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_apify-web-scraping-platform]]
+- [[chatgpt/chatgpt_curacity-platform-overview]]
+- [[chatgpt/chatgpt_djoid-music-platform-review]]

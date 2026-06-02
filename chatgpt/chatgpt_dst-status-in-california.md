@@ -36,3 +36,11 @@ Daylight Saving Time (DST) continues to be observed in California as of 2023. He
 4. The U.S. Senate has passed the Sunshine Act, which is aimed at making DST permanent, which means it aims to eliminate the need for adjusting clocks twice a year. This would result in dark winter mornings from November to March, but the act would need to be accepted and implemented to see this change【9†(FOX 11 Los Angeles)】.
 
 This information demonstrates that while there are legislative efforts underway to make DST permanent, as of 2023, California continues to observe DST with the usual "spring forward, fall back" adjustments.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_california-king-on-king-bed]]
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_california-park-closure-update]]

@@ -90,3 +90,11 @@ make the pills more modern giest style pills each a differrent geist accent colo
 ## User
 
 I want the bottom buttons to appear as a single row of pill-shaped badges, each line-clamped to one line of text and accompanied by a small icon.They should be a carousel with left and right opacity fades, and they should be the same width as, or smaller than, the input above them.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-dark-mode]]
+- [[chatgpt/chatgpt_ai-prompt-for-dark-mode]]
+- [[chatgpt/chatgpt_dark-mode-change]]
+- [[chatgpt/chatgpt_dark-mode-linear-colors]]
+- [[chatgpt/chatgpt_pass-color-prop-based-on-dark-mode]]

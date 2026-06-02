@@ -29,3 +29,11 @@ lexocon basic plan wtih rekorbox
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_lexicon-vs-rekordbox-vs-mik]]
+- [[chatgpt/chatgpt_rekordbox-lexicon-features]]
+- [[chatgpt/chatgpt_rekordbox-vs-lexicon]]
+- [[chatgpt/chatgpt_beatgrid-editing-in-lexicon]]
+- [[chatgpt/chatgpt_lexicon-based-sentiment-analysis]]

@@ -29,3 +29,11 @@ Can you just respond to this quickly? I don't have time to answer fucking play 2
 Mr. White, send:
 
 “Honestly, I don’t know the full history. It was my late uncle’s and was stored in a soft cover. I don’t ride, so I’m selling it as-is based on the photos. You’re welcome to inspect it at pickup. Cash only, price firm, first pickup gets it.”
+
+
+## See Also
+- [[chatgpt/chatgpt_boss-response-request]]
+- [[chatgpt/chatgpt_response-creation-request]]
+- [[chatgpt/chatgpt_response-request]]
+- [[chatgpt/chatgpt_stop-payment-request-response]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

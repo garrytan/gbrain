@@ -214,3 +214,11 @@ Then pair it with:
 4. **Optional full Google synthetic login using a dedicated low-privilege test account**
 
 Clerk test tokens are your best coverage for “my app works once a user is authenticated.” They are not your best coverage for “Google OAuth is healthy.” The button-click canary is meaningful, and the missing final piece is production funnel monitoring for callback/token-exchange failures.
+
+
+## See Also
+- [[chatgpt/chatgpt_figma-seat-confusion]]
+- [[chatgpt/chatgpt_wolves-movie-confusion]]
+- [[chatgpt/chatgpt_auth-provider-for-chatgpt]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_auth-ux-audit]]

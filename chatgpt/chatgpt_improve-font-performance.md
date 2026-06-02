@@ -75,3 +75,11 @@ Bottom line: move to `next/font` and delete the external `<link>` — that’s t
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_improve-vue-table-performance]]
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]

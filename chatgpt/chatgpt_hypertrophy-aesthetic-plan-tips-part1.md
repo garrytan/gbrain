@@ -82,3 +82,11 @@ lets go up to 6
 
 
 Great, I'll optimize your program for a 6-day training split, emphasizing side delts, biceps, mid/upper back, upper chest, and forearms while keeping legs at a lower priority. I'll balance volume and frequency to ensure maximal hypertrophy for aesthetics. I'll get back to you with the updated plan shortly.
+
+
+## See Also
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part2]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part3]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part1]]
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part1]]

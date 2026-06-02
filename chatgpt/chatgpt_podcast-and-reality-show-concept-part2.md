@@ -1093,3 +1093,11 @@ this should exists in that it can be really built. but evertyhgin is utlitiarian
 - the floor sin corridors are removable panels for wiring, and ocassionaly we use a plexy panel so you can see the cables and this would be lit with white light. everything is allw hite.
 
 this should be like the creative factory of the future. but built on what exists today. and every room can be a set, but filming everyone pops cleanly because the bgs are all white.
+
+
+## See Also
+- [[chatgpt/chatgpt_podcast-and-reality-show-concept-part1]]
+- [[chatgpt/chatgpt_podcast-and-reality-show-concept-part3]]
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part2]]
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part1]]
+- [[chatgpt/chatgpt_cinematic-website-concept]]

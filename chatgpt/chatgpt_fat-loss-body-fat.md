@@ -46,3 +46,11 @@ If you are currently 175.2 lbs with 10.8% body fat and wish to reach 169 lbs wit
 ## Assistant
 
 Mr. White, if you reduce your weight to 169 lbs through fat loss only, your new body fat percentage will be approximately 7.53%.
+
+
+## See Also
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_add-lean-body-mass]]
+- [[chatgpt/chatgpt_alcohols-effect-on-fat-loss]]
+- [[chatgpt/chatgpt_app-design-for-body-tracking]]

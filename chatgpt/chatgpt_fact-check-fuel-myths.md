@@ -57,3 +57,11 @@ Slam this in a concise comment.
 ## Assistant
 
 Gas pumps measure by volume, not speed. You're not getting "more fuel"—just wasting time. This myth needs to die already.
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

@@ -155,3 +155,11 @@ Updated list for Vincent:
 - Kitchen and bathroom haven’t been cleaned in a long time—are we paying the mall for cleaning, and would it be cheaper to hire our own crew to cover bathrooms and the rest of the space?  
 - Can we pipe and drape the Ice Queen area to keep guests out, and do we already have enough material?  
 - For Halloween, can we also pipe and drape the kitchen to block it from public view?
+
+
+## See Also
+- [[chatgpt/chatgpt_answer-employer-questions]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part2]]

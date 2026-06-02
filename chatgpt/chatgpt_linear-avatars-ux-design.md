@@ -57,3 +57,11 @@ If you’d like, I can tailor this specifically to **Linear the product’s UI p
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_framer-to-linear-design]]
+- [[chatgpt/chatgpt_linear-design-system-breakdown]]
+- [[chatgpt/chatgpt_linear-design-system-clarification]]
+- [[chatgpt/chatgpt_linear-design-system-oklch]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]

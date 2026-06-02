@@ -59,3 +59,11 @@ Mr. White, **for paying strangers: Venmo is safer. For paying people you know: b
 Use **Zelle only for people you know and trust**.
 
 Use **Venmo Goods & Services** or a proper payment method with protection for strangers, marketplace deals, deposits, tickets, shipped goods, or anything where the other person can disappear.
+
+
+## See Also
+- [[chatgpt/chatgpt_chlorine-pool-sex-safety]]
+- [[chatgpt/chatgpt_dry-ice-drink-safety]]
+- [[chatgpt/chatgpt_e-scooter-safety-data]]
+- [[chatgpt/chatgpt_migration-safety-workflow-part1]]
+- [[chatgpt/chatgpt_migration-safety-workflow-part2]]

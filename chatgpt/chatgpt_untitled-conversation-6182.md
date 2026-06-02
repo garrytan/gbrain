@@ -135,3 +135,11 @@ export function saveURLToJovie(url) {
 ```
 
 In this fixed version, the `adapter` property of the `axios` instance is set correctly, and the `.post()` method is called on the instance rather than on the `fetchAdapter` object itself. I also added a semicolon after the `fetchAdapter` object in the `adapter` property assignment.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

@@ -589,3 +589,11 @@ Here’s the **automation Turn 2 report** on Windsurf changelog releases with 
 
 **Status:** Monitoring continues on the 6‑hour schedule.  
 You will be notified when a qualifying major change appears.
+
+
+## See Also
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part2]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part4]]

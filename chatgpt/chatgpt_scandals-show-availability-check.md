@@ -1035,3 +1035,11 @@ Here’s the revised schedule with meal prep and grocery shopping on Mondays and
 - **Grocery Shopping and Meal Prep:** Monday evenings during girlfriend's tap class and Thursday evenings
 
 This schedule ensures your activities are well-organized, with time for grocery shopping and meal prep, while maintaining consistency and balance in your daily routine.
+
+
+## See Also
+- [[chatgpt/chatgpt_domain-availability-check-options]]
+- [[chatgpt/chatgpt_domain-availability-check]]
+- [[chatgpt/chatgpt_fact-check-music-availability]]
+- [[chatgpt/chatgpt_accessibility-contrast-check]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]

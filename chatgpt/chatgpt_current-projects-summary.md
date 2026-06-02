@@ -161,3 +161,11 @@ Got it, here's a summary of your projects categorized under your different brand
   - Spending quality time with your girlfriend and your dog
 
 By categorizing your tasks and projects this way, you can effectively budget and allocate resources to each area. Let me know if you need more specific details or assistance with any particular project.
+
+
+## See Also
+- [[chatgpt/chatgpt_current-data-up-to-april]]
+- [[chatgpt/chatgpt_current-filming-on-sunset]]
+- [[chatgpt/chatgpt_current-football-games]]
+- [[chatgpt/chatgpt_current-vault-menu]]
+- [[chatgpt/chatgpt_current-weight-calculation-design]]

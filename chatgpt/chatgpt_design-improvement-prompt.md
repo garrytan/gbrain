@@ -144,3 +144,11 @@ One key direction: have Claude Code preserve the quote card and artist cards as 
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_app-icon-design-prompt]]
+- [[chatgpt/chatgpt_claude-design-logo-prompt]]
+- [[chatgpt/chatgpt_landing-page-design-prompt-2]]
+- [[chatgpt/chatgpt_landing-page-design-prompt]]
+- [[chatgpt/chatgpt_muffin-helmet-design-prompt]]

@@ -115,3 +115,11 @@ That puts too much risk/work on you for a controller you may have to resell slow
 ### Reply
 
 > I’d do **$350 cash plus the Console 1 Mk II**, picked up today. I’d just want to quickly test that it powers on. Otherwise I’d rather keep it cash.
+
+
+## See Also
+- [[chatgpt/chatgpt_resale-value-of-camera]]
+- [[chatgpt/chatgpt_furniture-resale-pricing]]
+- [[chatgpt/chatgpt_bike-value-and-info]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_cosine-value-clarification]]

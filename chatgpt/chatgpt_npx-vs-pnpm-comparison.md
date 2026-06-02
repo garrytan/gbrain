@@ -65,3 +65,11 @@ Yes, you *can* use `npx` in CI even if your project uses **pnpm**, but it’s no
 - Only use `npx` if the package explicitly requires npm (rare) or if you’re running a one-off script outside your pnpm-managed project.  
 
 Want me to show you how to swap `npx` → `pnpm dlx` in your workflow so you don’t risk cache pollution?
+
+
+## See Also
+- [[chatgpt/chatgpt_corepack-pnpm-fixes]]
+- [[chatgpt/chatgpt_doppler-pnpm-setup]]
+- [[chatgpt/chatgpt_force-pnpm-on-vercel]]
+- [[chatgpt/chatgpt_pnpm-in-ci]]
+- [[chatgpt/chatgpt_pnpm-vs-npm-choice]]

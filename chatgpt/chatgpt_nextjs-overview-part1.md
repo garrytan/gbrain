@@ -789,3 +789,11 @@ Claude's approach is safe for now, but yes — plan to **flatten the structure**
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_health-metrics-app-overview-part1]]
+- [[chatgpt/chatgpt_nextjs-overview-2]]
+- [[chatgpt/chatgpt_nextjs-overview-3]]
+- [[chatgpt/chatgpt_nextjs-overview-4]]
+- [[chatgpt/chatgpt_nextjs-overview-part2]]

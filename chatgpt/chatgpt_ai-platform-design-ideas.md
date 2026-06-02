@@ -872,3 +872,11 @@ When a user clicks a pill, the input is prefilled. When they press Enter, their 
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_music-interface-design-ideas]]
+- [[chatgpt/chatgpt_timeline-aggregation-design-ideas]]
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_admin-workflow-design]]

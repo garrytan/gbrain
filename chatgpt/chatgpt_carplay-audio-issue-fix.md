@@ -126,3 +126,11 @@ Want me to also give you a couple of **good charge-only cable** options in case 
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_mazda-cx-5-carplay-issue]]
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]
+- [[chatgpt/chatgpt_carplay-support-for-chatgpt]]
+- [[chatgpt/chatgpt_cheap-car-with-carplay]]

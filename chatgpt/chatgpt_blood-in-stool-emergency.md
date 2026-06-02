@@ -33,3 +33,11 @@ Passing a lot of blood in your stool for several days could mean a serious condi
 👉 Even if you feel stable, you still need to be evaluated right away — urgent care or ER, not just waiting for a clinic appointment.  
 
 Would you like me to list the closest ERs near West Hollywood so you can go now?
+
+
+## See Also
+- [[chatgpt/chatgpt_bright-red-blood-stool]]
+- [[chatgpt/chatgpt_emergency-vs-airborne-comparison]]
+- [[chatgpt/chatgpt_gas-leak-emergency-steps]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

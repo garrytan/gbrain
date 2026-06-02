@@ -36,3 +36,11 @@ For extra bite:
 > Also, “there are a lot of data centers” is not an argument against data centers. That’s like saying “there are a lot of hospitals” during a healthcare debate.
 
 Fact check: his rough count is plausible depending on definition. Cloudscene lists about **5,427 U.S. data centers**, and Brookings cites about **11,800 worldwide**. Counts vary because “data center” can mean anything from small colocation facilities to hyperscale AI campuses. citeturn968969search3 citeturn968969search10
+
+
+## See Also
+- [[chatgpt/chatgpt_data-center-water-brown]]
+- [[chatgpt/chatgpt_fact-check-data-center-claims]]
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]

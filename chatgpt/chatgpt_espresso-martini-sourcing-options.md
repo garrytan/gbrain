@@ -44,3 +44,11 @@ Since you want **Amazon delivery** and **bulk / cost-effective** for espresso ma
 Use **concentrate undiluted** in the shaker. A reliable bar spec per drink: **1.5 oz vodka + 1.0 oz coffee liqueur + 1.5 oz cold-brew concentrate + 0–0.5 oz simple syrup**; shake hard with ice. If you’re batching, keep the concentrate and booze cold and add water via shaking at service.
 
 If you want me to optimize a **cost-per-ounce** plan (e.g., how many bottles to hit $/drink targets for your event size), tell me your headcount and preferred brand and I’ll lay it out.
+
+
+## See Also
+- [[chatgpt/chatgpt_prepare-espresso-martini]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_airpods-pro-3-options]]
+- [[chatgpt/chatgpt_airpods-replacement-options]]
+- [[chatgpt/chatgpt_apartment-hunt-options-la]]

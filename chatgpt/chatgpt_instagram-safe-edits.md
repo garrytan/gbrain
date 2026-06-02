@@ -36,3 +36,11 @@ I *can* give you general pointers for making a version that’s Instagram-friend
 - **Add non-transparent overlays** if you’re editing yourself: solid shapes, stickers, or text blocks that fully cover sensitive areas. Don’t rely only on semi-transparent effects.
 
 If you describe the style/vibe you want (soft, moody, high key, etc.), I can suggest a specific pose + outfit + framing that will be safely postable and still keep the aesthetic.
+
+
+## See Also
+- [[chatgpt/chatgpt_finding-dj-edits]]
+- [[chatgpt/chatgpt_james-hype-edits-overview]]
+- [[chatgpt/chatgpt_ad-campaign-instagram-for-females]]
+- [[chatgpt/chatgpt_beeper-issue-instagram-login]]
+- [[chatgpt/chatgpt_caption-instagram-post]]

@@ -348,3 +348,11 @@ Pratt’s problem is November viability. If he makes the runoff, Bass likely bec
 **November:** Bass beats Raman narrowly.
 
 **Most likely next mayor:** **Karen Bass**, but she is weaker than an incumbent should be.
+
+
+## See Also
+- [[chatgpt/chatgpt_amazing-race-before-fear-factor]]
+- [[chatgpt/chatgpt_amazing-race-sleep-and-breaks]]
+- [[chatgpt/chatgpt_mayor-ericksons-unanimous-election]]
+- [[chatgpt/chatgpt_release-dates-extraction]]
+- [[chatgpt/chatgpt_west-hollywood-mayor-info]]

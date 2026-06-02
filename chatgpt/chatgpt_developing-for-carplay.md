@@ -243,3 +243,11 @@ tags: [chatgpt, import, long-form]
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_carplay-audio-issue-fix]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]
+- [[chatgpt/chatgpt_carplay-support-for-chatgpt]]
+- [[chatgpt/chatgpt_cheap-car-with-carplay]]

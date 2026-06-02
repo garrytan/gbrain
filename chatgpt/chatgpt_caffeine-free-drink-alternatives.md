@@ -258,3 +258,11 @@ At-home ritual, customizable flavor.
 ---
 
 If you want, I can give you **specific pack recommendations with current prices** (e.g., Amazon/Costco picks) that’ll keep you under a target budget.
+
+
+## See Also
+- [[chatgpt/chatgpt_caffeine-content-comparison-table]]
+- [[chatgpt/chatgpt_caffeine-in-starbucks-espresso]]
+- [[chatgpt/chatgpt_american-drink-recipes]]
+- [[chatgpt/chatgpt_batch-drink-recipe-scaling]]
+- [[chatgpt/chatgpt_check-drink-sales-clover]]

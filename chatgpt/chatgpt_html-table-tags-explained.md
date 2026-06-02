@@ -77,3 +77,11 @@ This code would create a table with two columns and three rows, with the text "C
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_html-meta-tags-summary]]
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_bar-inventory-management-table]]

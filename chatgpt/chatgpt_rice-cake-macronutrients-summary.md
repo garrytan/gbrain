@@ -33,3 +33,11 @@ For two rice cakes, the typical macronutrient content is approximately:
 - Fat: 0-1 grams
 
 These values can vary slightly based on the specific brand and type of rice cake.
+
+
+## See Also
+- [[chatgpt/chatgpt_birthday-cake-alternatives]]
+- [[chatgpt/chatgpt_cake-fridge-lifespan]]
+- [[chatgpt/chatgpt_let-them-eat-cake]]
+- [[chatgpt/chatgpt_make-chocolate-cake-shot]]
+- [[chatgpt/chatgpt_banana-vs-rice-carbs]]

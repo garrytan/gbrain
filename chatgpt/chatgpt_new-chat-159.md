@@ -130,3 +130,11 @@ The inclusion of your social media presence is a strategic move, especially if t
 Your resume should emphasize your hard skills, particularly your experience and proficiency with various POS systems and your knowledge of cocktail creation. Your soft skills like customer engagement and upselling are equally important, and these should be highlighted to show that you understand the importance of customer service and sales in the bartending profession.
 
 It might be beneficial to expand on specific achievements or milestones, such as any particularly successful events you've managed or instances where your social media presence has translated into increased business for your
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

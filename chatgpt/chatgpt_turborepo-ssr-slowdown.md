@@ -147,3 +147,11 @@ If you want, tell me:
 - whether SSR pages hit DB or APIs
 
 I’ll give you a **targeted fix list**, not guesses.
+
+
+## See Also
+- [[chatgpt/chatgpt_electron-app-turborepo-setup]]
+- [[chatgpt/chatgpt_explain-turborepo]]
+- [[chatgpt/chatgpt_test-turborepo-locally]]
+- [[chatgpt/chatgpt_turborepo-changelog]]
+- [[chatgpt/chatgpt_turborepo-env-setup]]

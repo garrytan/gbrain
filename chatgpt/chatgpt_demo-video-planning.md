@@ -342,3 +342,11 @@ That turns Jovie from “chatbot” into “manager.”
 - elaborate influencer/social variants
 
 The first target should be a **credible 30-second proof that looks like a film and behaves like real software**.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovy-demo-video-creation]]
+- [[chatgpt/chatgpt_playwright-demo-video-workflow]]
+- [[chatgpt/chatgpt_yc-demo-planning]]
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]

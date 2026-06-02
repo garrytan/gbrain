@@ -206,3 +206,11 @@ Actions: available, restrained
 5. Subtle hover/motion polish  
 
 The main principle: **make the audience list feel like the hero asset, and make everything else support faster decisions.**
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_cinematic-audience-intelligence-design]]
+- [[chatgpt/chatgpt_cinematic-demo-script]]
+- [[chatgpt/chatgpt_cinematic-dj-demo-script]]
+- [[chatgpt/chatgpt_cinematic-instagram-portrait-edit]]

@@ -39,3 +39,11 @@ Let's grab it, make the muffin less pointy, so it looks less penis-like and more
 ## User
 
 Maoe it more Marshmello ish. Lile better proportions
+
+
+## See Also
+- [[chatgpt/chatgpt_diet-phase-grid-modification]]
+- [[chatgpt/chatgpt_mouth-eyes-modification]]
+- [[chatgpt/chatgpt_tattoo-design-modification]]
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_blueberry-muffin-helmet-render]]

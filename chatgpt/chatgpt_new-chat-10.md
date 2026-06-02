@@ -175,3 +175,11 @@ SKILLS
 - Proficient in Dev-ops (Docker, Twilio, Mielisearch)
 - Experienced in analytics/marketing automation (Segment.io, Customer.io, Bigquery, Mixpanel)
 - Proficient in Stripe, Github, Slack, Linear, Notion
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

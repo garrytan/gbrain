@@ -88,3 +88,11 @@ If you want, tell me:
 - frontend stack  
 
 I’ll give you a binary yes/no call.
+
+
+## See Also
+- [[chatgpt/chatgpt_chromatic-storybook-integration]]
+- [[chatgpt/chatgpt_clerk-playwright-testing]]
+- [[chatgpt/chatgpt_configure-storybook-for-vue3]]
+- [[chatgpt/chatgpt_percy-vs-chromatic-vs-playwright]]
+- [[chatgpt/chatgpt_playwright-auth-methods]]

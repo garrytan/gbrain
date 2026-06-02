@@ -58,3 +58,11 @@ So if you want the most clinically “perfect” routine:
 3. Keep a mental (or physical) map so you’re not repeating the same point for several weeks.  
 
 If you want, I can make you a **4-week thigh-only rotation map** so you’re hitting each site with maximal spacing. That would be the gold-standard approach.
+
+
+## See Also
+- [[chatgpt/chatgpt_druze-epitide-delivery-and-injection]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

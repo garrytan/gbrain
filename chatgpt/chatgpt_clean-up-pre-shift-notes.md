@@ -237,3 +237,11 @@ Would you like me to format this into a printable **one-page PDF checklist** (e.
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_pre-shift-notes-for-staff]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_app-notes-cleanup]]
+- [[chatgpt/chatgpt_bartender-shift-request]]
+- [[chatgpt/chatgpt_bulk-clean-bookmarks-guide]]

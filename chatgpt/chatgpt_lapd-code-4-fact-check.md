@@ -46,3 +46,11 @@ Mr. White: At least Wednesday only made you wait 3 years. Try these:
 • Gilmore Girls – 9 years  
 • Arrested Development – 7 years  
 • Sherlock – ~3 years
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_check-vs-code-architecture]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]

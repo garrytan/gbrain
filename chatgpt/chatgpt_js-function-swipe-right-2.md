@@ -91,3 +91,11 @@ async function swipeRightMultiple(delay, numClicks) {
 ```
 
 This function calls the "swipeRight" function 10 times in a loop, incrementing the "numClicks" parameter each time. This way, the function will swipe right on 10 profiles, each time incrementing the number of clicks by 1.
+
+
+## See Also
+- [[chatgpt/chatgpt_js-function-swipe-right]]
+- [[chatgpt/chatgpt_js-swipe-right-function]]
+- [[chatgpt/chatgpt_swipe-right-function-analysis]]
+- [[chatgpt/chatgpt_swipe-right-javascript-function]]
+- [[chatgpt/chatgpt_automating-swipe-right-js]]

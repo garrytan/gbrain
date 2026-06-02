@@ -64,3 +64,11 @@ If you want details on setup steps or examples of commands, just ask.
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_ai-prompt-for-claude]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_auto-claude-overview]]

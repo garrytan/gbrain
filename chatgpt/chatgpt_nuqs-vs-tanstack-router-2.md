@@ -92,3 +92,11 @@ Here’s a **practical comparison** of **Nuqs** vs **TanStack Router** for manag
 **TanStack Router** = full routing + integrated type-safe URL/search support.
 
 Use Nuqs for simpler state logic, TanStack Router for serious routing with integrated URL state.
+
+
+## See Also
+- [[chatgpt/chatgpt_nuqs-vs-tanstack-router]]
+- [[chatgpt/chatgpt_pacer-vs-tanstack-query]]
+- [[chatgpt/chatgpt_tanstack-agent-skills]]
+- [[chatgpt/chatgpt_tanstack-and-sonarcloud]]
+- [[chatgpt/chatgpt_tanstack-overview]]

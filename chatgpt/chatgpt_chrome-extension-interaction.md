@@ -216,3 +216,11 @@ chrome.storage.sync.get("welcomeMessage", function (result) {
 ```
 
 This will log the current values stored in Chrome sync storage for the `swipeRightCount` and `welcomeMessage` keys. If the values are being stored correctly, you should see the corresponding values logged in the console.
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_chrome-extension-popup-script]]
+- [[chatgpt/chatgpt_chrome-extension-production-url]]
+- [[chatgpt/chatgpt_chrome-extension-upload-error]]
+- [[chatgpt/chatgpt_chrome-extension-webpack-config]]

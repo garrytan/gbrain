@@ -47,3 +47,11 @@ Disney green-lit a direct *Legacy* sequel (working title **Tron: Ascension**) in
 **Bottom line**
 
 *Tron Ares* is a legacy sequel that shifts the spotlight to Jared Leto’s Ares while keeping continuity with the earlier films via Kevin Flynn. As of today, neither Olivia Wilde nor Garrett Hedlund is involved, and the earlier *Ascension* sequel is off the grid for good.
+
+
+## See Also
+- [[chatgpt/chatgpt_angellist-stack-status]]
+- [[chatgpt/chatgpt_case-status-update]]
+- [[chatgpt/chatgpt_codex-status-inquiry]]
+- [[chatgpt/chatgpt_columbia-square-studios-status]]
+- [[chatgpt/chatgpt_copyright-status-not-public]]

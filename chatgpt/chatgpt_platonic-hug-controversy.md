@@ -39,3 +39,11 @@ Yeah, so, you don't need to- you can be more concise than that. You can literall
 ## Assistant
 
 Apparently a platonic interaction is pure sci-fi to tabloids. 🙄
+
+
+## See Also
+- [[chatgpt/chatgpt_elvis-costello-controversy-explained-part1]]
+- [[chatgpt/chatgpt_elvis-costello-controversy-explained-part2]]
+- [[chatgpt/chatgpt_niraj-controversy-summary]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

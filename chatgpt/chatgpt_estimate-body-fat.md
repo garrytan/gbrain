@@ -228,3 +228,11 @@ Repeat that **four-phase cycle**. Each lap should net ~2-2.5 lb new fat-free mas
 | **Metrics** | Daily weight, weekly waist, gym log; DEXA at end of mini-cut |
 
 Hit 8 %, lock it in for two weeks, then enjoy a productive 3-4-month lean bulk with a fresh metabolism and clear runway up to 12 %.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-female]]
+- [[chatgpt/chatgpt_body-fat-estimate]]
+- [[chatgpt/chatgpt_estimate-body-fat-percentage]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

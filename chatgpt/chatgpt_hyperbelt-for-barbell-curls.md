@@ -97,3 +97,11 @@ If the pain is **sharp**, **increasing set to set**, **lingers after training**,
 - If you still want to try a belt: any **real lifting belt** (nylon or leather) could work; you don’t *need* the special one for curls.
 
 If you tell me **your rep range + how close to failure (RIR)** on those 7–8 sets, I’ll suggest a quick tweak to keep progression while your low back calms down.
+
+
+## See Also
+- [[chatgpt/chatgpt_barbell-shrug-grip-tips]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

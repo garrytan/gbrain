@@ -28,3 +28,11 @@ adjust the spreadsheet attatched so that it starts on todays date and it starts 
 I have adjusted the spreadsheet to start from today's date, with an initial weight of 173.2 lbs and a body fat percentage of 10.6%. You can download the updated file from the following link:
 
 [Download Updated Body Composition Plan](sandbox:/mnt/data/Updated_Body_Compisition_Plan.xlsx)
+
+
+## See Also
+- [[chatgpt/chatgpt_body-comp-changes-summary]]
+- [[chatgpt/chatgpt_create-body-recomp-spreadsheet]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]

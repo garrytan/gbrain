@@ -99,3 +99,11 @@ Here’s how you can **book a field-trip program** at Joshua Tree National Park 
 ---
 
 If you like, I can **pull up available dates and a live-availability calendar** for ranger-led field-trips at the park (so you can pick a date). Would you like me to check that now, Mr White?
+
+
+## See Also
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_anniversary-trip-message]]
+- [[chatgpt/chatgpt_higgs-field-explanation-2]]
+- [[chatgpt/chatgpt_higgs-field-explanation]]

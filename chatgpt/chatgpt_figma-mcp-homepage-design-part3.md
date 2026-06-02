@@ -90,3 +90,11 @@ If useful, this can also be upgraded into a **fully autonomous Claude Code agent
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part1]]
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part2]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part3]]
+- [[chatgpt/chatgpt_ingest-claim-system-design-part3]]
+- [[chatgpt/chatgpt_yc-homepage-audit-part3]]

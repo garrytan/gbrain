@@ -27,3 +27,11 @@ Yo yo yo dawg what up what up what up so I got this bike that's my uncle's and I
 ## Assistant
 
 Mr. White, that’s a Fuji hard-tail mountain bike—an entry-level “Nevada”/Trail-series model from the mid-2010s, equipped with an SR Suntour XCT front fork, 26″ wheels and mechanical disc brakes. New it retailed for about \$450–550; in West Hollywood today a clean, tuned example will fetch roughly \$150–250. List it around \$200 on Craigslist/OfferUp and expect it to move in a week or two.
+
+
+## See Also
+- [[chatgpt/chatgpt_bike-information]]
+- [[chatgpt/chatgpt_fb-listing-for-bike]]
+- [[chatgpt/chatgpt_33-taps-restaurant-info]]
+- [[chatgpt/chatgpt_apple-business-account-info]]
+- [[chatgpt/chatgpt_apple-keynote-2026-info]]

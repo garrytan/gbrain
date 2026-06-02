@@ -54,3 +54,11 @@ Sure thing, Mr. White. Here’s the detailed list of duties for the porter:
    - Make sure all trash cans are emptied and new trash bags are placed in them.
 
 Make sure the porter understands these tasks clearly and follows them diligently.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-duties-list]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_ai-optimizes-to-do-list]]
+- [[chatgpt/chatgpt_airbnb-essentials-list]]
+- [[chatgpt/chatgpt_amazon-shopping-list]]

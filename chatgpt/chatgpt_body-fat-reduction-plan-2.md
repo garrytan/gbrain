@@ -207,3 +207,11 @@ FFMI = \frac{65.9}{1.93^2} = 17.7
 ---
 
 Would you like me to estimate **timeframes and macros for achieving that recomp** based on your training experience (novice / intermediate / advanced)?
+
+
+## See Also
+- [[chatgpt/chatgpt_body-fat-reduction-plan]]
+- [[chatgpt/chatgpt_body-composition-phase-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-reduction-scenarios]]
+- [[chatgpt/chatgpt_body-recomposition-plan-dexa]]

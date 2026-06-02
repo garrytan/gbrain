@@ -30,3 +30,11 @@ built rx
 If you meant **“RX”** more generally (outside Built Rx), in fitness that often means **“as prescribed”** — e.g., completing a workout exactly as it’s written (with no scaling). In medicine, **“Rx” is the standard abbreviation/symbol for a prescription**, originating from the Latin *recipe/recipere* meaning “take.” citeturn0search21
 
 If you were referring to something else by “built rx” (e.g., a software, product, or different gym), clarify and I can pinpoint it.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

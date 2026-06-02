@@ -110,3 +110,11 @@ Here are targeted UX improvements for your Jovie “Links” dashboard to reach 
 ---
 
 These changes keep the interface **fast, intuitive, and delightful**, aligning with your Apple-level polish goal while maintaining YC-style speed of iteration.
+
+
+## See Also
+- [[chatgpt/chatgpt_designing-world-class-landing-page]]
+- [[chatgpt/chatgpt_redesign-for-world-class-design]]
+- [[chatgpt/chatgpt_world-class-audio-plan]]
+- [[chatgpt/chatgpt_world-class-calendar-design]]
+- [[chatgpt/chatgpt_world-class-doc-automation]]

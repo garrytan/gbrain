@@ -294,3 +294,11 @@ If you want, I can:
 - tell you **exactly which transaction shapes break under Neon HTTP**
 
 Say which one.
+
+
+## See Also
+- [[chatgpt/chatgpt_chlorine-pool-sex-safety]]
+- [[chatgpt/chatgpt_cold-pool-surface-question]]
+- [[chatgpt/chatgpt_hyatt-regency-pool-hours]]
+- [[chatgpt/chatgpt_jeffree-star-pool-bar]]
+- [[chatgpt/chatgpt_luxury-rooftop-pool-background]]

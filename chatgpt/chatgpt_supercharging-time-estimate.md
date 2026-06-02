@@ -45,3 +45,11 @@ Assuming your Tesla Model 3 has a range of approximately 310 miles and you're at
 Under ideal conditions, it should take approximately 20 minutes to charge from 47% to 100%. However, as the battery gets closer to full, the charging speed typically slows down to protect the battery, so it might take a bit longer.
 
 A more conservative estimate would be around 30 minutes to 40 minutes to account for the slowdown as the battery approaches 100%.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-progress-over-time]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_backup-time-for-20tb]]
+- [[chatgpt/chatgpt_dns-propagation-time]]

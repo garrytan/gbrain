@@ -26,3 +26,11 @@ How current is your data set?
 ## Assistant
 
 My training data is current up to April twenty twenty-three. If there's something specific you're looking for or wondering about, let me know, and I'll do my best to help.
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]

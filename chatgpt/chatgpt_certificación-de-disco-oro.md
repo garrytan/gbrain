@@ -83,3 +83,11 @@ my song take me over has 1.5 million streams. does it qualify for certification 
 ## Assistant
 
 With 1.5 million streams, your song "Take Me Over" could qualify for Gold certification in several countries, as many have incorporated streaming into their certification criteria. For instance, in the United States, the RIAA counts 150 streams as equivalent to one sale, meaning 1.5 million streams would equal 10,000 units, falling short of the 500,000 units required for Gold certification. However, criteria vary by country and some may count streams differently or have lower thresholds for certification. It's important to check the specific certification requirements of each country's music industry body for precise qualifications.
+
+
+## See Also
+- [[chatgpt/chatgpt_disco-wax-explained]]
+- [[chatgpt/chatgpt_fashionably-late-to-disco]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

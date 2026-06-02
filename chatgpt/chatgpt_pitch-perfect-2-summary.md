@@ -58,3 +58,11 @@ If you want **where to watch it now** or have questions about specific scenes, c
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_pitch-perfect-3-summary]]
+- [[chatgpt/chatgpt_imdb-pitch-pitch-perfect-2]]
+- [[chatgpt/chatgpt_pitch-perfect-2-character]]
+- [[chatgpt/chatgpt_8-slide-yc-pitch-deck]]
+- [[chatgpt/chatgpt_amazon-music-remix-pitch]]

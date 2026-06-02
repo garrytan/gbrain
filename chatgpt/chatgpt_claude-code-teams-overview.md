@@ -73,3 +73,11 @@ If you want specific **code examples** for connecting Claude Code to Microsoft T
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-desktop-overview]]
+- [[chatgpt/chatgpt_claude-code-overview-2]]
+- [[chatgpt/chatgpt_claude-code-overview]]
+- [[chatgpt/chatgpt_claude-code-worktrees-overview]]
+- [[chatgpt/chatgpt_claude-code-agent-teams-2]]

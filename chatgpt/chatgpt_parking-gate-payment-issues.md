@@ -140,3 +140,11 @@ If you can get a photo of the exact “cash” wording on the sign/machine, I ca
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_parking-gate-issue-해결]]
+- [[chatgpt/chatgpt_parking-gate-security-bypass]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_flight-and-parking-options]]

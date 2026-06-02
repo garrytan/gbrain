@@ -62,3 +62,11 @@ great but im all about mixing things up to keep things sexy, whether its music o
 ## Assistant
 
 What's up, sexy people? Welcome to the official Kick profile of Tim White, aka me. Based in Los Angeles, I'm your go-to for a blend of tunes as a singer/songwriter, music producer, and DJ. I'm all about mixing things up to keep life and music sexy - whether it's dropping a fresh track or living life to the fullest. You'll often find me spinning decks with my lady friends by my side and a cup of coffee in hand, because let's face it, coffee fuels the creativity. Dive into this journey with me; it's where the magic happens.
+
+
+## See Also
+- [[chatgpt/chatgpt_unknown-musician-tim-white]]
+- [[chatgpt/chatgpt_add-songs-tim-white]]
+- [[chatgpt/chatgpt_bio-for-tim-white]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]
+- [[chatgpt/chatgpt_crest-white-strips-analysis]]

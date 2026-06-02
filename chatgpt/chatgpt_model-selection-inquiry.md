@@ -143,3 +143,11 @@ Bottom line:
 **OpenClaw + Qwen3.6-27B-OptiQ-4bit is the setup.**
 
 Gemma 4 is worth testing later, especially the `gemma-4-26B-A4B` or `gemma-4-31B` variants, but I would not make it the default over Qwen3.6 for coding agents right now.
+
+
+## See Also
+- [[chatgpt/chatgpt_model-inquiry]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]

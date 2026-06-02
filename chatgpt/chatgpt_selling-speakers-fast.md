@@ -90,3 +90,11 @@ And just so we’re aligned: are you proposing a straight trade, or mic + cash?
 
 If you send the model + a photo of the mic and what comes with it, I’ll tell you if it works. Otherwise, I’m at **$550 cash for quick pickup**.
 :::
+
+
+## See Also
+- [[chatgpt/chatgpt_selling-nas-drives-fast]]
+- [[chatgpt/chatgpt_fred-again-speakers-setup]]
+- [[chatgpt/chatgpt_ci-with-ai-in-fast-companies]]
+- [[chatgpt/chatgpt_fast-20k-to-1m]]
+- [[chatgpt/chatgpt_fast-check-overview]]

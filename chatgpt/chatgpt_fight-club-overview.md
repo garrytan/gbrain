@@ -60,3 +60,11 @@ If needed:
 - full plot explanation  
 - the ending and twist explained  
 - philosophical interpretation of Tyler Durden.
+
+
+## See Also
+- [[chatgpt/chatgpt_strip-club-regulations-overview]]
+- [[chatgpt/chatgpt_fight-club-4k-release]]
+- [[chatgpt/chatgpt_fight-club-rules]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]

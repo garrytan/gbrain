@@ -59,3 +59,11 @@ You can set up a GitHub Actions workflow that runs *after Codex commits changes*
 Right now, *Codex in Linear doesn’t auto-open PRs by itself*. You’ll need an external automation layer (e.g., GitHub Actions or custom webhook handler) to generate PRs automatically after Codex finishes tasks. citeturn0search3
 
 If you want, I can draft a sample GitHub Actions workflow that takes Codex commits and auto-opens a PR for you.
+
+
+## See Also
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-auto-pr-linear]]
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]

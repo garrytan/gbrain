@@ -179,3 +179,11 @@ Spawn a lightweight **Coordinator Agent**:
 ---
 
 If you want, this can be tightened further to match your exact stack (React, Tailwind, tokens, Storybook, etc.) for even higher-quality output.
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-plan-review]]
+- [[chatgpt/chatgpt_design-system-audit-plan]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]

@@ -32,3 +32,11 @@ agent skills entry
 • Agents load only the names and descriptions of available skills initially, then read full instructions *on demand* when a user request matches a skill’s purpose. This progressive loading keeps context efficient. citeturn0search10  
 • They differ from simple prompts or one-off configurations: skills are persistent, discoverable, and can be shared or reused across projects or teams. citeturn0search1  
 • Used by AI systems (e.g., GitHub Copilot coding agent, Claude, Spring AI), skills help specialize general-purpose models for task-specific workflows without hard-coding behaviors. citeturn0search2turn0search8
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]
+- [[chatgpt/chatgpt_agent-skills-overview-2]]
+- [[chatgpt/chatgpt_agent-skills-overview]]
+- [[chatgpt/chatgpt_agent-skills-vs-code-cli]]
+- [[chatgpt/chatgpt_slash-commands-vs-agent-skills]]

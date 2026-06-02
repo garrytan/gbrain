@@ -97,3 +97,11 @@ Mr. White — **late-night dinner** near K1 Burbank, best bets:
   - **Granville** — typically **to 10pm**. citeturn0search7  
 
 If you tell me what time it is **right now** (like “11:40pm”), I’ll pick the single best move that’s definitely still serving.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_chill-date-night-ideas]]
+- [[chatgpt/chatgpt_date-calculation]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part1]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part2]]

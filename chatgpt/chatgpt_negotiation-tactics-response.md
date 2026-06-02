@@ -48,3 +48,11 @@ Tim
 This puts the ball in their court, frames you as an experienced creator, and forces them to show numbers first (classic negotiation tactic).  
 
 Do you want me to also draft a follow-up strategy tree for how to respond depending on whether they come back low, mid, or high?
+
+
+## See Also
+- [[chatgpt/chatgpt_negotiation-response-tips]]
+- [[chatgpt/chatgpt_cia-negotiation-tactics]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]

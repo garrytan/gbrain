@@ -49,3 +49,11 @@ There is also a GitHub user/org called **getsentry-bot** linked to Sentry’s ec
 ---
 
 If you want, tell me what you’re trying to *do* (e.g., get errors from Sentry into GitHub issues, automate workflows, or build your own bot), and I’ll give precise setup steps for that.
+
+
+## See Also
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_auto-fix-sentry-crashes]]
+- [[chatgpt/chatgpt_automating-sentry-fixes]]
+- [[chatgpt/chatgpt_building-a-github-action]]

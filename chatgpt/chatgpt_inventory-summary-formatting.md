@@ -163,3 +163,11 @@ Evian: 8 cases
 Skewers for garnishes  
 1x Hand sanitizer (with built-in pump)  
 1 Case of whipped cream
+
+
+## See Also
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary]]
+- [[chatgpt/chatgpt_drink-inventory-summary]]

@@ -48,3 +48,11 @@ Here are some “Would You Rather” questions across different categories:
 - Would you rather have unlimited time or unlimited money?
 
 Want me to tailor them to a certain tone or theme?
+
+
+## See Also
+- [[chatgpt/chatgpt_answer-employer-questions]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part2]]

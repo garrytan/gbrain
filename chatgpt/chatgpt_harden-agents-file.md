@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 harden our agents.md file based on the best prompts from the best companies in the world like the leaked apple doc and anthropic files etc
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_harden-plan-modifications]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part1]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part2]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part3]]

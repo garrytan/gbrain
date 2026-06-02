@@ -114,3 +114,11 @@ If everything’s set up correctly, you’ll see ChatGPT’s reply printed below
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-resume-skills-update]]
+- [[chatgpt/chatgpt_resume-tips-for-bartender]]
+- [[chatgpt/chatgpt_resume-update-bartender-role]]
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]

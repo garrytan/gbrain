@@ -168,3 +168,11 @@ Tim
 
 Send this through the Resolution Center or by replying to the claims email.  
 Stay polite, keep everything documented, and attach screenshots of the host’s messages and the photos they provided to support your points.
+
+
+## See Also
+- [[chatgpt/chatgpt_accessing-airbnb-footage]]
+- [[chatgpt/chatgpt_airbnb-ai-usage]]
+- [[chatgpt/chatgpt_airbnb-booking-issues]]
+- [[chatgpt/chatgpt_airbnb-damage-claim-issues]]
+- [[chatgpt/chatgpt_airbnb-essentials-list]]

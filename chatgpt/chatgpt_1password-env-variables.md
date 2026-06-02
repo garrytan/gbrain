@@ -112,3 +112,11 @@ This lets you manually export a variable right now. citeturn0search27
 ---
 
 If you want, I can give real examples for your stack (Node, Python, Docker, etc.) — just tell me your environment.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_css-class-based-on-variables]]
+- [[chatgpt/chatgpt_setting-env-variables-ios]]
+- [[chatgpt/chatgpt_tie-inputs-to-variables-store-state]]
+- [[chatgpt/chatgpt_use-1password-otp-with-jarvee]]

@@ -38,3 +38,11 @@ yes
 ## Assistant
 
 I tried to open the bookmarks manager, but the browser environment available here restricts access to internal Chrome pages (like `chrome://bookmarks/`). Without that access, there isn’t a way for me to programmatically view or delete your bookmarks. You may need to delete those bookmarks directly in your browser’s bookmark manager outside of this session.
+
+
+## See Also
+- [[chatgpt/chatgpt_bulk-clean-bookmarks-guide]]
+- [[chatgpt/chatgpt_remove-background-tools]]
+- [[chatgpt/chatgpt_remove-image-background]]
+- [[chatgpt/chatgpt_vectorize-and-remove-background]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

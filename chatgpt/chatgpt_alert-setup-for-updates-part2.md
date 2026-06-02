@@ -617,3 +617,11 @@ As of this check, the **latest official release** in the **AndyMik90/Auto‑Clau
 ✔ **GPT‑5.2** live with 0‑credit promo for users
 
 No *newer* model introductions (beyond these) have appeared since the previous check.
+
+
+## See Also
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part3]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part4]]

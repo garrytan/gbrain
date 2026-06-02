@@ -81,3 +81,11 @@ Now you’re down to **165 lbs**. Assuming you maintained lean mass (best-case):
 - At this pace, you’re on track to hit sub-10% by your September 15 target.
 
 Let me know if you want a graph or forecast.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-female]]
+- [[chatgpt/chatgpt_estimate-body-fat-percentage]]
+- [[chatgpt/chatgpt_estimate-body-fat]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

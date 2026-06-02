@@ -54,3 +54,11 @@ Got it. Here are a couple more indoor ideas you and your girlfriend might enjoy:
 5. **Spa Day**: Treat yourselves to a relaxing day at a spa. You can both enjoy massages and other treatments in a cool, comfortable environment.
 
 Do any of these sound good?
+
+
+## See Also
+- [[chatgpt/chatgpt_heat-or-cold]]
+- [[chatgpt/chatgpt_mike-isratel-heat-exposure-videos]]
+- [[chatgpt/chatgpt_ai-vs-daily-activities]]
+- [[chatgpt/chatgpt_cliché-valentines-day-activities]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

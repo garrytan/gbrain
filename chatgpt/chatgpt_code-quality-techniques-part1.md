@@ -174,3 +174,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Yeah, totally. I mean, if you're thinking about that post"}
 {'asset_pointer': 'sediment://file_00000000766c71fda19cf5e27e9fb90b', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-06-27T20:37:54.578906+00:00', 'format': 'wav', 'metadata': {'end': 2.0, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 96078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_code-quality-techniques-part2]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part1]]
+- [[chatgpt/chatgpt_code-cleanup-strategy-part1]]
+- [[chatgpt/chatgpt_code-quality-tools-for-startups]]

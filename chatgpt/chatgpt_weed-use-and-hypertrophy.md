@@ -245,3 +245,11 @@ If progress stalls, this is one of the **first “nonessential” variables to r
 If you want, I can give you:
 - a **decision rule** for when to keep vs cut it  
 - or compare this to **CBD-only**, **NSAIDs**, or **alcohol** post-training in terms of recovery and growth impact
+
+
+## See Also
+- [[chatgpt/chatgpt_weed-legalization-stats]]
+- [[chatgpt/chatgpt_forearm-hypertrophy-approach]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part1]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part2]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part3]]

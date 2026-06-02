@@ -30,3 +30,11 @@ drawer inserts for kallax
 For assembly guidance, you can refer to the following video:
 
 videoIKEA KALLAX Insert with 2 Drawers Assembly Instructionsturn0search4 
+
+
+## See Also
+- [[chatgpt/chatgpt_drawer-organizer-setup]]
+- [[chatgpt/chatgpt_kallax-basket-options]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

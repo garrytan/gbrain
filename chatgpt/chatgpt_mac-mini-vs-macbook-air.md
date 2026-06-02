@@ -461,3 +461,11 @@ My blunt estimate for **your** machine today:
 What I would do while you’re walking into the store: get the **in-store Apple trade-in quote first**. If they come in anywhere near **$450+** and you want zero friction, take it. If they come in materially lower, I would buy the new Air and sell the old one on **Swappa**. That is the best odds of getting a meaningful chunk of cash back. citeturn751243view2turn414865search2turn305309search0
 
 If you want, I can give you the exact listing title and pricing strategy I’d use for Swappa so it moves fast.
+
+
+## See Also
+- [[chatgpt/chatgpt_ipad-mini-4-listing]]
+- [[chatgpt/chatgpt_mac-mini-pricing-overview]]
+- [[chatgpt/chatgpt_mike-israetel-mini-cuts]]
+- [[chatgpt/chatgpt_mini-cut-after-maintenance]]
+- [[chatgpt/chatgpt_mini-cut-bulk-cut-plan]]

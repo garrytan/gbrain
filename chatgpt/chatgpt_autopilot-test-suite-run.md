@@ -290,3 +290,11 @@ await setupClerkTestingToken({ page })
 - **Re-login every test** → you didn’t reuse `storageState`. Cache once. citeturn4view0
 
 If you want, I’ll turn this into a one-shot Windsurf task that adds the files, env reads, and a sample spec using your existing `.env.local` keys.
+
+
+## See Also
+- [[chatgpt/chatgpt_windsurf-autopilot-prompt]]
+- [[chatgpt/chatgpt_windsurf-autopilot-setup-part1]]
+- [[chatgpt/chatgpt_windsurf-autopilot-setup-part2]]
+- [[chatgpt/chatgpt_ai-agent-test-strategies]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]

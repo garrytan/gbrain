@@ -43,3 +43,11 @@ If it’s the Toast POS system, here’s the likely scenario:
 - Do the reverse — enable handheld routing for the bar printer.
 
 Would you like me to give exact step-by-step instructions for the current Toast interface (as of 2025)?
+
+
+## See Also
+- [[chatgpt/chatgpt_toast-pos-discount-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]

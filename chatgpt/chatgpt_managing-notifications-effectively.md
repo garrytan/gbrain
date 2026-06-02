@@ -149,3 +149,11 @@ Then prune or downgrade low-performing types.
 - **Web push**: important-only unless user explicitly expands.
 
 If you want, tell me what kind of app this is (social, fintech, productivity, etc.) and your main notification types, and I’ll sketch a concrete settings model + delivery rules for your case.
+
+
+## See Also
+- [[chatgpt/chatgpt_managing-features-nextjs]]
+- [[chatgpt/chatgpt_managing-physical-anxiety-symptoms]]
+- [[chatgpt/chatgpt_managing-sensory-overload-2]]
+- [[chatgpt/chatgpt_managing-sensory-overload]]
+- [[chatgpt/chatgpt_cancel-notifications-and-tasks]]

@@ -61,3 +61,11 @@ Yes, if you send email from Google Workspace (formerly known as G Suite), your D
 When you send an email from Google Workspace, the email is signed using DKIM and SPF, which are the authentication methods that DMARC relies on to determine the legitimacy of an email. As long as your DKIM and SPF records are correctly configured in your DNS, your email should pass the DMARC check and be delivered to the recipient's inbox.
 
 However, it's important to note that DMARC policies set to "reject" will cause messages that fail the DMARC check to be rejected, meaning they will not be delivered to the recipient's inbox. So if you have set your DMARC policy to "reject," make sure that your emails comply with DMARC guidelines to avoid delivery issues.
+
+
+## See Also
+- [[chatgpt/chatgpt_dmarc-record-for-a7x3com]]
+- [[chatgpt/chatgpt_dmarc-record-generation]]
+- [[chatgpt/chatgpt_add-record-to-vercel]]
+- [[chatgpt/chatgpt_dns-record-removal-request]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

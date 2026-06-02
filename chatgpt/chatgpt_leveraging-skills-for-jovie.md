@@ -15,6 +15,14 @@ updated: 2026-05-07
 
 # Leveraging Skills for Jovie
 
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_adopting-exaai-for-jovie]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_agent-skills-entry]]
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]
 **Related:** [[jovie_music]]
 
 > Conversation ID: 69fcd2e2-5dc4-83e8-9091-3ed65c8d51f1

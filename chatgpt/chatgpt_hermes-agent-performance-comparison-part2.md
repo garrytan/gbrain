@@ -1242,3 +1242,11 @@ Next I can give you the exact **MLX install + serve + Hermes config commands** f
 
 
 give me the mlx version
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part4]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part5]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part6]]

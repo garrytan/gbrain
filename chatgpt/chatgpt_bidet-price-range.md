@@ -42,3 +42,11 @@ Examples I found right now include a Brondell attachment at **$24.99**, Luxe at 
 products{"selections":[["turn733558product12","Brondell FreshSpa Thinline Precision Essential Bidet Attachment"],["turn733558product6","Luxe Bidet NEO 185"],["turn733558product17","Brondell Swash EcoSeat 101"],["turn733558product15","TUSHY Classic 3.0 Bidet"],["turn733558product1","BEMIS Renew Wash Electric Bidet Seat"],["turn733558product7","Bio Bidet BB-500 Series"],["turn733558product16","SmartBidet SB-1000"],["turn733558product10","TUSHY Ace Electric Bidet Seat"]],"tags":["Budget attachment","Popular attachment","Good non-electric","Midrange pick","Entry electric","Warm-water upgrade","Best value electric","Premium electric"]}
 
 If you want the best value, I’d target **$200–$300** and get an electric seat.
+
+
+## See Also
+- [[chatgpt/chatgpt_age-range-breakdown]]
+- [[chatgpt/chatgpt_gun-range-info-for-noobs]]
+- [[chatgpt/chatgpt_2020-harley-flhtk-price]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_coffee-art-plus-price]]

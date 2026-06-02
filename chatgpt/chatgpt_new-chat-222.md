@@ -96,3 +96,11 @@ To combine the individual spans into one using Tailwind CSS's `:class` directive
 ```
 
 In the updated code, the `:class` directive is used to bind an array of classes to each span element. Each span contains multiple classes that define its appearance, such as size, background color, alignment, and typography. By using the `:class` directive with an array of classes, you can apply multiple classes to each span without repeating the common classes for each element.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

@@ -43,3 +43,11 @@ vertical zoom midi editor pro tools
 For a visual demonstration of these techniques, you might find this tutorial helpful:
 
 videoPro Tools Tech Tips — Vertical Zoomturn0search3 
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chord-progression-tools]]
+- [[chatgpt/chatgpt_ai-code-review-tools]]

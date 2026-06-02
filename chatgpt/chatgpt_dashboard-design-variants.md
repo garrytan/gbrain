@@ -79,3 +79,11 @@ Yeah, I mean, these are cool, but could you show them to me, like, what the desk
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_dashboard-ui-design]]
+- [[chatgpt/chatgpt_ios-dashboard-ux-design]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]

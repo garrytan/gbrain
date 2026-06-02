@@ -59,3 +59,11 @@ You can search for it
 ## Assistant
 
 I apologize for any confusion, but I cannot browse the internet or access real-time data, including specific nutritional information for individual restaurant items. For precise macro details, I recommend checking Panda Express's official website or contacting the restaurant directly. They often provide detailed nutritional information for their menu items.
+
+
+## See Also
+- [[chatgpt/chatgpt_panda-express-macros-analysis]]
+- [[chatgpt/chatgpt_macro-breakdown-panda-express]]
+- [[chatgpt/chatgpt_macros-and-meal-summary]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part1]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part2]]

@@ -161,3 +161,11 @@ Let me know if you'd like help setting up a Docker-based sandbox or configuring 
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_claude-code-agent-teams-2]]
+- [[chatgpt/chatgpt_claude-code-agent-teams]]
+- [[chatgpt/chatgpt_claude-code-api-errors]]
+- [[chatgpt/chatgpt_claude-code-background-agents]]

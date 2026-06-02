@@ -48,3 +48,11 @@ Based on average values, the total macronutrients for your cinnamon bun and baco
 - Carbohydrates: 52.5 grams
 - Fat: 16 grams
 - Protein: 13.5 grams
+
+
+## See Also
+- [[chatgpt/chatgpt_cinnamon-stick-garnish-tips]]
+- [[chatgpt/chatgpt_budget-macro-friendly-meal-options]]
+- [[chatgpt/chatgpt_imacros-macro-command]]
+- [[chatgpt/chatgpt_mackenzies-macro-adjustments]]
+- [[chatgpt/chatgpt_macro-breakdown-panda-express]]

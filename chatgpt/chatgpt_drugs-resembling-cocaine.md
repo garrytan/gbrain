@@ -48,3 +48,11 @@ Mr. White, many powdered substances—legal and illegal—can resemble cocaine (
    - Cornstarch, baking powder, or talcum powder, although harmless, can look very similar to cocaine from a quick glance.
 
 Because so many substances can resemble cocaine visually, it’s impossible to identify a powder solely by appearance. Laboratory testing is the only reliable way to confirm a substance’s identity.
+
+
+## See Also
+- [[chatgpt/chatgpt_anti-inflammatory-drugs-aspirin-nsaids]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

@@ -437,3 +437,11 @@ Layout:
 ---
 
 If you want, I can write the exact JSX/HTML structure for this block with Tailwind classes so your dev can drop it straight in.
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part4]]

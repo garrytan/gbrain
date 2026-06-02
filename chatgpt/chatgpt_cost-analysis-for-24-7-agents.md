@@ -761,3 +761,11 @@ Hermes Agent
 ```
 
 OpenClaw/Hermes will feel fast once the user-facing loop is **streaming, short, cached, and asynchronous**. A single local 70B model trying to do every step inline will feel slower than ChatGPT even on good hardware.
+
+
+## See Also
+- [[chatgpt/chatgpt_cost-analysis-inquiry]]
+- [[chatgpt/chatgpt_cost-comparison-analysis]]
+- [[chatgpt/chatgpt_cron-job-cost-analysis]]
+- [[chatgpt/chatgpt_denormalization-and-cost-analysis]]
+- [[chatgpt/chatgpt_weekly-meal-cost-analysis]]

@@ -26,3 +26,11 @@ I'm trying to figure out if I need a chat kit. Let's be sure to include the wind
 ## Assistant
 
 To determine if you need a chat kit, considering the weather elements like wind chill, cloud cover, and temperature is crucial. If it's particularly cold, especially with significant wind chill, a chat kit could help protect your device and maintain its functionality. On sunny days, you might not need it as much, but if it's extremely hot, protecting your device from overheating could be beneficial. Generally, in cold, windy, or very sunny conditions, having a chat kit to protect and maintain your device's performance might be a good idea.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

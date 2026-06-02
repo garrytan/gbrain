@@ -44,3 +44,11 @@ Other names: *mediating variable*, *intermediate variable*. citeturn0searc
 If someone literally meant “intervariable” as one word, it can simply mean *between variables* (the prefix *inter-* means between), without technical statistical meaning. citeturn0search13
 
 If you meant something else (like *interaction between variables* or *correlation among variables*), clarify the context.
+
+
+## See Also
+- [[chatgpt/chatgpt_define-js-variable-firstname]]
+- [[chatgpt/chatgpt_store-json-in-variable]]
+- [[chatgpt/chatgpt_variable-change-explanation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

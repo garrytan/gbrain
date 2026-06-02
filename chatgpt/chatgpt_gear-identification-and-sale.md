@@ -93,3 +93,11 @@ Everything included as one bundle. Bring a truck/van—rack is large and heavy.
 ---
 
 Do you want me to draft **two versions of the ad**—one for **maximum dollar (closer to $400)** and one for **fire-sale pricing (closer to $250)** so you can decide how aggressive to go?
+
+
+## See Also
+- [[chatgpt/chatgpt_gear-sale-estimate]]
+- [[chatgpt/chatgpt_cheap-camera-gear-search]]
+- [[chatgpt/chatgpt_gear-listing-assistance]]
+- [[chatgpt/chatgpt_hypertrophy-training-gear]]
+- [[chatgpt/chatgpt_selling-a7-iii-gear]]

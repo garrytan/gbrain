@@ -230,3 +230,11 @@ const tiers = [
 ``` 
 
 Note that the `color` property from the original code has not been included in the new format, as it was not used in the original `tiers` array. If you need this property, you can add it to the new code as appropriate.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_phone-plan-options]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]

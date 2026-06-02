@@ -1003,3 +1003,11 @@ Remove unused paramets and rename things to make sense if needed. Also fix cente
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part5]]
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part1]]
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part2]]
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part1]]
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part2]]

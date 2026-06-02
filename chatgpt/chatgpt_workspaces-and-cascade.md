@@ -69,3 +69,11 @@ Here’s a minimal flow to get a repository running in Windsurf with Cascade:
 ---
 
 If you like, I can pull together **specific commands** and **folder/config examples** tailored for a Git project in Windsurf (including sample `.windsurf/rules.md`, `.windsurf/workflows/ci.md`, etc.). Would you like me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_cascade-background-agents-explanation]]
+- [[chatgpt/chatgpt_cascade-in-xcode]]
+- [[chatgpt/chatgpt_clarify-cascade-windsure-git]]
+- [[chatgpt/chatgpt_git-workspaces-in-windsurf-2]]
+- [[chatgpt/chatgpt_git-workspaces-in-windsurf]]

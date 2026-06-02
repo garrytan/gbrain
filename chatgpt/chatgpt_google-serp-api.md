@@ -99,3 +99,11 @@ If useful, Mr. White, I can also outline:
 - The **best SERP APIs for AI agents in 2026**
 - **The cheapest SERP APIs at scale**
 - Or **how to build your own SERP scraper** without using a paid API.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-google-oauth]]
+- [[chatgpt/chatgpt_advantages-of-google-shopping]]
+- [[chatgpt/chatgpt_airtable-vs-google-sheets]]
+- [[chatgpt/chatgpt_creating-google-web-stories]]
+- [[chatgpt/chatgpt_delete-google-photos-all]]

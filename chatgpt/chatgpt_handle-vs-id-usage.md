@@ -66,3 +66,11 @@ Migration plan (fast):
 4) In queries, key on IDs; only show handles in UI.
 
 Net: keep your own **handle** for `jov.ie/<handle>`, but **never** use it to talk to Apple/Spotify—use their IDs.
+
+
+## See Also
+- [[chatgpt/chatgpt_clarification-on-handle]]
+- [[chatgpt/chatgpt_handle-cell-navigation-event]]
+- [[chatgpt/chatgpt_handle-claim-strategy]]
+- [[chatgpt/chatgpt_handle-missing-backend-data]]
+- [[chatgpt/chatgpt_toilet-handle-issue-fix]]

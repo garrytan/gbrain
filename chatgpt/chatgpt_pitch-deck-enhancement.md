@@ -43,3 +43,11 @@ Every single deck should have one key sentence on it, and then some supporting v
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_8-slide-yc-pitch-deck]]
+- [[chatgpt/chatgpt_marketing-highlights-pitch-deck]]
+- [[chatgpt/chatgpt_pitch-deck-idea]]
+- [[chatgpt/chatgpt_pitch-deck-integration-plan]]
+- [[chatgpt/chatgpt_pitch-deck-strategy]]

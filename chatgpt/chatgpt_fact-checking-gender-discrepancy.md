@@ -87,3 +87,11 @@ The post mixes three different things:
 The cleanest fact-check is:
 
 **There is evidence that automated moderation and recommendation systems can treat women’s bodies and women-centered discourse more harshly or inconsistently. The Instagram slide overstates the evidence by presenting narrow audits, Reddit-report data, and recommender commentary as if they prove platform-wide ban/removal rates for women.**
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-checking-image-sources]]
+- [[chatgpt/chatgpt_fact-checking-video-request-part1]]
+- [[chatgpt/chatgpt_fact-checking-video-request-part2]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]

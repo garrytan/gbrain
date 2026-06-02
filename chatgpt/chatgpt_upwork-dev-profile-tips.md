@@ -226,3 +226,11 @@ For Upwork short-term dev gigs that are quick and easy, a **sweet spot hourly ra
 This puts you above the low-cost competition, signals professional quality, and still gets bites from small agencies and funded startups looking for speed and reliability without enterprise pricing.  
 
 You can raise this later once you build history or offer flat-rate packages for even faster turnover. Let me know if you want pricing for fixed bids too.
+
+
+## See Also
+- [[chatgpt/chatgpt_upwork-freelance-platform-overview]]
+- [[chatgpt/chatgpt_upwork-overview]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]

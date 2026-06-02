@@ -632,3 +632,11 @@ You specifically need:
 - conductor/orchestrator
 
 That stack makes sense for your company.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_automation-in-linear]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]

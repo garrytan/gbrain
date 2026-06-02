@@ -233,3 +233,11 @@ With the existing 25 % pool split between two bartenders vs. 75 % split amon
 ⟹ Guests > 175 (i.e. ≥176).
 
 So on show nights with **176+ guests**, bartending pays better; below that, you’re better off taking a server shift.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_current-vault-menu]]
+- [[chatgpt/chatgpt_greeting-script-for-vault]]
+- [[chatgpt/chatgpt_vault-pre-shift-map]]
+- [[chatgpt/chatgpt_vault-speakeasy-review-highlights]]

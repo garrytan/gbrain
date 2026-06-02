@@ -225,3 +225,11 @@ You will also need to configure the TypeScript compiler by creating a `tsconfig.
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_convert-vue-component-to-typescript]]
+- [[chatgpt/chatgpt_extract-components-to-files-part1]]
+- [[chatgpt/chatgpt_extract-components-to-files-part2]]
+- [[chatgpt/chatgpt_extract-components-to-files-part3]]
+- [[chatgpt/chatgpt_extract-components-to-files-part4]]

@@ -182,3 +182,11 @@ You can review and make any final tweaks in your Drafts folder. Let me know if y
 {'asset_pointer': 'sediment://file_0000000099a46230acc88fc88520b004', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 2048, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 328296, 'width': 944}
 {'asset_pointer': 'sediment://file_00000000d25462308f7b56d85b9c850e', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 2048, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 330786, 'width': 944}
 one replied with this email. answer it in the most compelling way that will get me a free stay. Im going to have 2 people total and one car. No crazy grip gear, electric or anything. just hanging bigning some netflix and shooting some pretty photos for the gram & portfolio. Will probably bring a low lift setup, Single photography based camera like a Sony a7 series and some prime lenses, a go pro for some timelapses and optionally a small lightweight drone for exterior shots if permitted (but fine if not).  No crazy electric or grip needs.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]
+- [[chatgpt/chatgpt_bartender-job-application-email-3]]
+- [[chatgpt/chatgpt_bartender-job-application-email]]

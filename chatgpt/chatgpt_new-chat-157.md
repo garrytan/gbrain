@@ -30,3 +30,11 @@ Can these be taken together
 The two products shown in the images are a bottle of CVS Health Tussin Cough Liquidgels and a box of Allegra Allergy 12 HR tablets. Tussin Cough Liquidgels contain dextromethorphan, which is a cough suppressant, and Allegra Allergy contains fexofenadine, an antihistamine for allergy relief. 
 
 Generally, there is no direct interaction between dextromethorphan and fexofenadine, so they can often be taken together. However, it's important to consider individual health factors and other medications you might be taking. It's always best to consult with a healthcare provider or pharmacist to ensure that it's safe for you to use both medications concurrently, especially if you have other medical conditions or are taking other medications.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

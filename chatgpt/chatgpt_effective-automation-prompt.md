@@ -178,3 +178,11 @@ If you want, I can also generate:
 ---
 
 Would you like one of those as well, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_ci-automation-prompt]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]

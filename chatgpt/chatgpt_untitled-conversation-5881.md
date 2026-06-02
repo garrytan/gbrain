@@ -30,3 +30,11 @@ list response is async () => {
 This code appears to be written in JavaScript or TypeScript, and it appears to be defining an async function named `response`. Inside the function, it sets the `accept` header of a `ky` request object to the `mimeType` variable, or to the current value of the `accept` header if that value is `nullish` (which means either `null` or `undefined`).
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

@@ -57,3 +57,11 @@ Try this order:
 Most likely fix: **turn off Dolby Vision/HDR or Match Frame Rate, then swap HDMI cable/port**.  
 
 Tell me what device you’re watching on — Apple TV, Roku TV, Fire Stick, PS5, Xbox, smart TV app, or browser — and I’ll give the exact setting path.
+
+
+## See Also
+- [[chatgpt/chatgpt_disney-plus-and-hulu-comparison]]
+- [[chatgpt/chatgpt_disney-plus-servers-operational]]
+- [[chatgpt/chatgpt_coffee-art-plus-price]]
+- [[chatgpt/chatgpt_disney-parks-sync-music]]
+- [[chatgpt/chatgpt_disney-world-existed]]

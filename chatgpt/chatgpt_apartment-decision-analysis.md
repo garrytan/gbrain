@@ -887,3 +887,11 @@ Your bigger concerns will actually be:
 - **noise transmitted to the unit below**
 
 Those occur far more often than structural problems with rooftop gym setups.
+
+
+## See Also
+- [[chatgpt/chatgpt_iphone-upgrade-decision-15-16-17]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_apartment-hunt-advice]]
+- [[chatgpt/chatgpt_apartment-hunt-options-la]]
+- [[chatgpt/chatgpt_apartment-hunting-and-gym-needs]]

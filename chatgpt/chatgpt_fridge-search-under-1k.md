@@ -81,3 +81,11 @@ Each of the above units satisfies the height constraint (≤67″) and has a **b
 All stainless steel models are prioritized as requested. (If needed, note that the Whirlpool model comes in **white** and **black** variants as well, and the Insignia is sometimes found in white via certain sellers – though those finishes weren’t readily seen under the $1K mark in-stock). Open-box and outlet options are highlighted for the Whirlpool, as it brings a reputable brand with an ice maker into your budget range. Each of these refrigerators should fit beneath a 67″ cabinet space while providing modern bottom-freezer convenience.
 
 **Sources:** Key specifications and pricing were verified from Best Buy【8†L100-L108】【28†L199-L207】, Home Depot【39†L198-L206】【4†L320-L328】, Costco/Reddit【41†L215-L223】, and manufacturer data. Please refer to the cited sources for further details on each model. Let us know if you need more information on any particular unit!
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]
+- [[chatgpt/chatgpt_account-search-assistance]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]
+- [[chatgpt/chatgpt_angel-investor-search]]
+- [[chatgpt/chatgpt_artist-api-search-issue]]

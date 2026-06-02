@@ -202,3 +202,11 @@ The goal: unify **DEXA scan results**, **body composition**, **bone density**, *
 ---
 
 Would you like me to generate a **TypeScript interface or schema** for this unified object next, so your app can type-check and validate API responses cleanly?
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-2]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-3]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans]]
+- [[chatgpt/chatgpt_bodyspec-dexa-summary]]
+- [[chatgpt/chatgpt_bodyspec-discount-codes]]

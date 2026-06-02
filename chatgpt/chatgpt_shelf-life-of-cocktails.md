@@ -67,3 +67,11 @@ If any of these use cream, dairy, egg, fresh herbs, or low-alcohol mixers/juices
 - Use “smell / taste / visual check” as your final gate.
 
 If you like, you can share the recipes (the full ingredient lists) and I can give you a more precise shelf‐life for each of the six. Do you want me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_simple-syrup-shelf-life]]
+- [[chatgpt/chatgpt_classic-cocktails-list]]
+- [[chatgpt/chatgpt_hot-bartender-w-incredible-cocktails]]
+- [[chatgpt/chatgpt_labeling-pre-batched-cocktails]]
+- [[chatgpt/chatgpt_renamed-menu-and-cocktails]]

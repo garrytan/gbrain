@@ -31,3 +31,11 @@ Mr. White, “Coffee Art Plus” usually refers to the **Schaerer Coffee Art Plu
 - **Used / refurbished:** commonly around **$3,900–$4,200** depending on condition and included accessories. citeturn0search9turn0search10turn0search12  
 
 Prices vary by configuration (touchscreen vs. other trims), vendor, and whether a milk system/fridge is bundled. If you meant a different “Coffee Art Plus” (like a specific café drink/menu item), tell me the shop or context and I’ll pin that down.
+
+
+## See Also
+- [[chatgpt/chatgpt_bad-iced-coffee-vibes]]
+- [[chatgpt/chatgpt_coffee-ad-creation]]
+- [[chatgpt/chatgpt_coffee-and-coke-combo]]
+- [[chatgpt/chatgpt_coffee-break-hotspots-la]]
+- [[chatgpt/chatgpt_coffee-experience-explanation]]

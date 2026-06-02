@@ -52,3 +52,11 @@ In short, worktrees in Claude Desktop provide a structured, parallel workflow fo
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-worktrees-git]]
+- [[chatgpt/chatgpt_claude-code-worktrees-overview]]
+- [[chatgpt/chatgpt_claude-code-worktrees-setup]]
+- [[chatgpt/chatgpt_claude-code-worktrees]]
+- [[chatgpt/chatgpt_claude-code-desktop-overview]]

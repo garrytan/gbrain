@@ -43,3 +43,11 @@ There is an **ambient/electronic music group** called Austere, active since the 
 There’s also an EP titled *Austere* by the band Sparta released in 2002, unrelated to Sony Music. citeturn0search20
 
 If you meant something specific (a track, artist, or a Sony Music release titled “Austere”), clarify and I can narrow it down.
+
+
+## See Also
+- [[chatgpt/chatgpt_salt-music-meanings]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_ai-driven-music-bio]]
+- [[chatgpt/chatgpt_ai-for-music-catalogs]]
+- [[chatgpt/chatgpt_ai-growth-engine-for-music]]

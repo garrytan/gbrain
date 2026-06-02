@@ -55,3 +55,11 @@ Over the last three years, Graham’s center of gravity moved from classic start
 - **2025:** *What to Do* (Mar), *Good Writing* (May), *The Shape of the Essay Field* (Jun), *The Origins of Wokeness* (Jan). citeturn0search0turn0search8turn0search4turn9view0
 
 If you want, I can extract his most actionable founder behaviors from “Founder Mode” into a short checklist for your team.
+
+
+## See Also
+- [[chatgpt/chatgpt_paul-graham-essays]]
+- [[chatgpt/chatgpt_paul-graham-on-altman]]
+- [[chatgpt/chatgpt_recent-netflix-movies]]
+- [[chatgpt/chatgpt_recent-west-hollywood-celebrity-sightings]]
+- [[chatgpt/chatgpt_supporting-emerging-paul]]

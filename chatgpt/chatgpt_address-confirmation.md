@@ -110,3 +110,11 @@ Hey Harrison — keep **Thursday, Friday, and Saturday** locked. We’re **close
 Role: **primarily bartending**, with flex to serve/barback as needed. We run a **full FOH tip pool** (no individual tips).  
 
 All good?
+
+
+## See Also
+- [[chatgpt/chatgpt_address-correction-request]]
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_change-address-then-registration]]
+- [[chatgpt/chatgpt_email-address-inquiry]]
+- [[chatgpt/chatgpt_fastlane-address-sanitizer-error]]

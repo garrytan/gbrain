@@ -351,3 +351,11 @@ Remember:
 ```
 
 If you tell me what framework / theme toggle you’re using (e.g. Tailwind `.dark`, Chakra, MUI, etc.), I can tighten a version specifically for that setup as well.
+
+
+## See Also
+- [[chatgpt/chatgpt_ct-scan-contrast-prep]]
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_auto-promote-blockers-check]]

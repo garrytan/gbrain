@@ -28,3 +28,11 @@ If you went to Neptune for a year. How much would you age?
 If you traveled to Neptune and stayed there for a year, you would age at the same rate as you would on Earth. However, because Neptune is so far from the sun, the length of a year on Neptune is much longer than a year on Earth. It takes Neptune about 164.8 Earth years to orbit the sun, so if you stayed on Neptune for one of its years, you would be there for about 164.8 Earth years.
 
 That being said, the concept of aging is tied to the passage of time, and time is a human construct. From the perspective of an observer on Earth, you would age much faster than someone who stayed on Earth, because the time it takes for Neptune to orbit the sun is much longer than the time it takes for Earth to orbit the sun. However, from your perspective on Neptune, you would not experience any difference in the passage of time, and you would age at the same rate as you would on Earth.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

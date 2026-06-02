@@ -84,3 +84,11 @@ Mr. White, my bad on the “beef” with Koreatown—misread you. Here’s how a
 
 **Recommendation:**  
 Keep a small one-bed in Hollywood as your anchor. For beach days, either sublet in Venice or find a place in Marina/Playa del Rey—you’ll get the surf lifestyle without the full Venice price tag or brutal commutes. That way you stay central for work and still get your “beach house” whenever Liv’s on shift.
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-hunt-options-la]]
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_ai-migration-naming-advice]]
+- [[chatgpt/chatgpt_airport-gun-disposal-advice]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]

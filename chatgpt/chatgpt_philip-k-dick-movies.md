@@ -46,3 +46,11 @@ Mr. White—here are the feature films based on (or directly inspired by) Philip
 - **Blade Runner 2049** (2017) — sequel set in the universe of *Do Androids Dream of Electric Sheep?*
 
 Want TV adaptations too (*The Man in the High Castle*, *Philip K. Dick’s Electric Dreams*, etc.)?
+
+
+## See Also
+- [[chatgpt/chatgpt_apocalyptic-movies-list]]
+- [[chatgpt/chatgpt_apocalyptic-movies-recommendations]]
+- [[chatgpt/chatgpt_movies-for-both-tastes]]
+- [[chatgpt/chatgpt_movies-with-top-actors]]
+- [[chatgpt/chatgpt_recent-netflix-movies]]

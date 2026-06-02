@@ -1021,3 +1021,11 @@ That works whether the catalog contains:
 - A fictional virtual artist
 
 And that's a much bigger company than "AI manager for artists."
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_cinematic-dj-demo-script]]
+- [[chatgpt/chatgpt_jovie-cinematic-demo]]
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]

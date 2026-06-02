@@ -683,3 +683,11 @@ That gives you a system with:
 - and a better path into your actual business.
 
 The next useful step is a concrete content architecture: one-page specs for **Jovie Runs**, **Jovie Cooks**, and **Bubble Factory**, including episode format, duration, CTA, rights workflow, and channel split rules.
+
+
+## See Also
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part2]]
+- [[chatgpt/chatgpt_bar-crawl-idea-legal-issues]]
+- [[chatgpt/chatgpt_buffy-livestream-name-idea]]
+- [[chatgpt/chatgpt_clone-310mhz-linear-transmitter]]

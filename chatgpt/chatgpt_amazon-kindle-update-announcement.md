@@ -48,3 +48,11 @@ Mr. White,
 **Useful context:** Amazon’s own Kindle security-updates help page says Kindle e-readers get software security updates for **at least four years** from when the device was bought new from Amazon, so these 2012-and-earlier models were supported well beyond Amazon’s published minimum. citeturn626731search0
 
 navlistRecent coverageturn589281news16,turn589281news17,turn589281news20
+
+
+## See Also
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_arlo-pro4-firmware-update]]
+- [[chatgpt/chatgpt_auto-close-modal-on-update]]

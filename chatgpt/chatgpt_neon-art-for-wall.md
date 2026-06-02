@@ -30,3 +30,11 @@ Have a lot neon sign that says “Cosmo’s”. The sign if for a bar. The sign 
 ## Assistant
 
 Here are two art pieces based on your description, Mr. White. You can choose the one that resonates most with your preferences for your wall. If you need any adjustments or further options, please let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]
+- [[chatgpt/chatgpt_cold-starts-neon-vercel]]
+- [[chatgpt/chatgpt_cold-starts-on-neon-part1]]
+- [[chatgpt/chatgpt_cold-starts-on-neon-part2]]
+- [[chatgpt/chatgpt_delete-neon-preview-branches]]

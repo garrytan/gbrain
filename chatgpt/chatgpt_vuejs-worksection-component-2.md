@@ -71,3 +71,11 @@ Overall, this code sets up a basic Vue.js component with a pre-defined list of i
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_vuejs-worksection-component]]
+- [[chatgpt/chatgpt_add-prop-to-vuejs-component]]
+- [[chatgpt/chatgpt_modify-vuejs-component-for-arrow-key-navigation]]
+- [[chatgpt/chatgpt_optimize-vuejs-component-part1]]
+- [[chatgpt/chatgpt_optimize-vuejs-component-part2]]

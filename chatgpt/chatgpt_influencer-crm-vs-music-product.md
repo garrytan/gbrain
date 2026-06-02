@@ -72,3 +72,11 @@ Keep building Jovie (music). Cannibalize the **useful** pieces of the old CRM as
 - If you can’t pre-sell, kill it (again) and refocus on Jovie.
 
 **Bottom line:** Your fastest path to traction with the least legal/tech drag is Jovie (music) with a built-in outreach mini-CRM. Use the old idea as a feature, not the company.
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_ai-driven-music-bio]]
+- [[chatgpt/chatgpt_ai-for-music-catalogs]]
+- [[chatgpt/chatgpt_ai-growth-engine-for-music]]

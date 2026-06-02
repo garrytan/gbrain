@@ -56,3 +56,11 @@ google oauth
 - **Access Google APIs** (Gmail, Drive, Calendar, etc.) on the user’s behalf. citeturn0search0
 
 If you want, I can give you **sample code** (Node, Python, or front-end) to implement Google OAuth for your specific use case.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-oauth-overview-2]]
+- [[chatgpt/chatgpt_google-oauth-overview-3]]
+- [[chatgpt/chatgpt_google-oauth-overview]]
+- [[chatgpt/chatgpt_google-admin-overview]]
+- [[chatgpt/chatgpt_google-auth-console-overview]]

@@ -30,3 +30,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "That looks like a box of Genius Shots. They're protein supplements with about 23 grams of protein per shot. You’ve got a whole box on your passenger seat. Pretty handy for hitting your daily protein goals!"}
 {'asset_pointer': 'sediment://file_00000000a60861f69de3eb4af896f5cd', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-11-06T21:00:46.227758+00:00', 'format': 'wav', 'metadata': {'end': 11.8, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 566478, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_agentic-os-for-artists-part1]]

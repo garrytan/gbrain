@@ -35,3 +35,11 @@ kaskade deadmau5 sound ableotn
 For a practical demonstration, here's a tutorial on recreating "I Remember" using Serum and Ableton:
 
 videodeadmau5 & Kaskade - I Remember Recreation | Serum & Abletonturn0search0 
+
+
+## See Also
+- [[chatgpt/chatgpt_deadmau5-au5-pluck-tips]]
+- [[chatgpt/chatgpt_deadmau5-cdj-transition]]
+- [[chatgpt/chatgpt_deadmau5-gerard-way-collaboration]]
+- [[chatgpt/chatgpt_deadmau5-mastering-chain]]
+- [[chatgpt/chatgpt_kaskade-artist-profile]]

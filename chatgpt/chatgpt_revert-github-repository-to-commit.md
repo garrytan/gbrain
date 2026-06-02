@@ -50,3 +50,11 @@ git push -f origin develop
 Note: The `-f` flag is necessary because you are "forcing" the push, effectively overwriting the history of the branch on the remote repository. Be cautious when using this flag, as it can permanently destroy data.
 
 After following these steps, your Github repository should be back to the state it was in at the specified commit.
+
+
+## See Also
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_building-a-github-action]]
+- [[chatgpt/chatgpt_fastlane-match-github-token]]
+- [[chatgpt/chatgpt_force-commit-after-job]]
+- [[chatgpt/chatgpt_git-commit-and-push-2]]

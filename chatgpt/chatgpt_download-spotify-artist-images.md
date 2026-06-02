@@ -115,3 +115,11 @@ Let me know if you'd like direct album or track links (e.g., for *Take Me Over* 
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_spotify-artist-detection-methods]]
+- [[chatgpt/chatgpt_ai-driven-artist-profiles]]
+- [[chatgpt/chatgpt_artist-api-search-issue]]
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_artist-dj-relations-jobs]]

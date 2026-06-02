@@ -39,3 +39,11 @@ Software like *Linear* (project management tool) uses an experience where new us
 If you meant *Linear the product* by name rather than the onboarding pattern, it’s a project/issue tracking tool whose onboarding helps users set up workspaces, join teams, and learn essential workflows. citeturn0search0
 
 Let me know if you need a visual example or how to design one for your product.
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-onboarding-explained]]
+- [[chatgpt/chatgpt_linear-color-palette-explained]]
+- [[chatgpt/chatgpt_linear-onboarding-overview]]
+- [[chatgpt/chatgpt_linear-redesign-explained]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]

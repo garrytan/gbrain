@@ -37,3 +37,11 @@ Mr. White, the quickest way is to hide your screenshots so they don’t clutter 
 If you’d rather have screenshots auto-moved out of Photos, you can build a Shortcut automation:
 - In **Shortcuts**, create a **Personal Automation** for **Screenshot** → **Add to Album** (e.g. “Screenshots”) → **Hide Photos**.  
 - That way every new screenshot is hidden immediately.
+
+
+## See Also
+- [[chatgpt/chatgpt_hide-album-art-image]]
+- [[chatgpt/chatgpt_hide-div-with-custom-css]]
+- [[chatgpt/chatgpt_hide-navbar-on-homepage]]
+- [[chatgpt/chatgpt_hide-seasonal-items-toast]]
+- [[chatgpt/chatgpt_hide-time-from-datepicker]]

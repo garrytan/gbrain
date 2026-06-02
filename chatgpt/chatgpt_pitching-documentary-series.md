@@ -254,3 +254,11 @@ Organized shorthand notes:
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_oddities-series-no-editing-part1]]
+- [[chatgpt/chatgpt_oddities-series-no-editing-part2]]
+- [[chatgpt/chatgpt_playlist-pitching-status]]
+- [[chatgpt/chatgpt_startup-pitching-tips]]
+- [[chatgpt/chatgpt_xdj-1000-series-overview]]

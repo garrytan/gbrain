@@ -40,3 +40,11 @@ Correct, Mr. White.
 - Existing projects should plan a **migration** to Clerk’s maintained components or another auth provider.
 
 If you want, I can outline **migration paths**, **replacement architectures**, or **alternative auth stacks** (e.g., headless-first vs. hosted UI).
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-elements-replacement-guidance]]
+- [[chatgpt/chatgpt_clerk-elements]]
+- [[chatgpt/chatgpt_clerk-role-elements]]
+- [[chatgpt/chatgpt_clerk-account-management-features]]
+- [[chatgpt/chatgpt_clerk-allowlist-feature]]

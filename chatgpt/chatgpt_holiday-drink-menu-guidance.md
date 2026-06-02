@@ -93,3 +93,11 @@ Absolutely, Mr. White. Let's break down each drink on your holiday-themed menu t
    - **Similar Cocktail**: This drink is a twist on a Moscow Mule, with the addition of spiced pear for a holiday flavor.
 
 Understanding these flavor profiles and comparisons will help you guide customers to a drink that suits their preferences, especially during the festive season.
+
+
+## See Also
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part1]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part2]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part3]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part4]]
+- [[chatgpt/chatgpt_halloween-drink-menu]]

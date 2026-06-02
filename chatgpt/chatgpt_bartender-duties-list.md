@@ -468,3 +468,11 @@ Incorporating the preparation of cutting fruit before the show and ensuring each
 |  | Replace with Clean Bar Mats |
 
 This schedule ensures a comprehensive approach to bar setup, operation, and cleanup, including all necessary equipment and preparation tasks to ensure a smooth service.
+
+
+## See Also
+- [[chatgpt/chatgpt_porter-duties-detailed-list]]
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-count-bpm]]

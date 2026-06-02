@@ -84,3 +84,11 @@ Is fantastical a word?
 ## Assistant
 
 Yes, "fantastical" is indeed a word. It is an adjective meaning of or relating to fantasy; characterized by or bearing the nature of fantasy; whimsical or capricious.
+
+
+## See Also
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part1]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part2]]
+- [[chatgpt/chatgpt_cell-phone-impact-on-flight]]
+- [[chatgpt/chatgpt_credit-card-impact]]
+- [[chatgpt/chatgpt_improve-clarity-and-impact]]

@@ -745,3 +745,11 @@ Here's how you can adjust the FFMI formula in your spreadsheet:
    - Drag this formula down from `G2` to the end of your FFMI column.
 
 By using this adjusted formula, your FFMI values should now reflect a more typical range. FFMI values generally fall between 17 and 25 for most individuals, with higher values indicating more muscle mass relative to height.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-sheets-current-date-part2]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part1]]
+- [[chatgpt/chatgpt_airtable-vs-google-sheets]]
+- [[chatgpt/chatgpt_visit-google-pages-rpa-part1]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]

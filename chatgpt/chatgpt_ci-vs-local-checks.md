@@ -826,3 +826,11 @@ rollback/forward-fix plan for risky changes
 ```
 
 The key decision: **commits are cheap checkpoints, pushes are targeted sanity checks, PRs are quality gates, and shipping is a separate controlled release step.**
+
+
+## See Also
+- [[chatgpt/chatgpt_ci-production-checks]]
+- [[chatgpt/chatgpt_grow-local-ig-weho]]
+- [[chatgpt/chatgpt_kpi-improvement-with-local-agent]]
+- [[chatgpt/chatgpt_local-dev-with-neon]]
+- [[chatgpt/chatgpt_neon-local-meanings]]

@@ -196,3 +196,11 @@ I refreshed the `jov.ie` domain page to see whether the DNS‑record entry field
 This confirms that Vercel’s DNS management remains inactive until their nameserver update fully propagates. As soon as Vercel becomes the authoritative DNS, the Name/Type/Value form will reappear, and we’ll be able to input your Stripe verification and DKIM records. Until then, adding them isn’t possible through the Vercel UI, even after refreshing.
 
 We’ll need to wait a bit longer for the nameserver propagation to complete before we can proceed.
+
+
+## See Also
+- [[chatgpt/chatgpt_issued-vs-reserved-shares]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

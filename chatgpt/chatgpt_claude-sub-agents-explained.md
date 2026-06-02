@@ -53,3 +53,11 @@ In short, sub-agents in Claude Code are **autonomous, purpose-built AI instances
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-background-agents]]
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-prompt-for-claude]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]

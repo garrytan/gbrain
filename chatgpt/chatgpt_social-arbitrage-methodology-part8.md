@@ -636,3 +636,11 @@ These uniformly confirm your robotaxi thesis: no driverless permits, crabbed to 
 ---
 
 navlistTier‑1 reporting confirming Tesla’s chauffeur‑only robotaxi rollout and regulatory status in Californiaturn0search0,turn0news21,turn0news20,turn0news24
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

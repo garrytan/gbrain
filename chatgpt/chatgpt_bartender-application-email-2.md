@@ -118,3 +118,11 @@ Tim “Mr. White” White
 West Hollywood, CA  
 📱 XXX‑XXX‑XXXX  
 ✉️ tim@thebubblegumfactory.com
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]
+- [[chatgpt/chatgpt_bartender-job-application-email-3]]
+- [[chatgpt/chatgpt_bartender-job-application-email]]
+- [[chatgpt/chatgpt_bartender-application-response]]

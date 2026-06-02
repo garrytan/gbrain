@@ -79,3 +79,11 @@ Certifications & Compliance: RBS Certified, Food Handler Card, well-versed in sa
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_resume-update-bartender-role]]
+- [[chatgpt/chatgpt_bartender-resume-summary]]
+- [[chatgpt/chatgpt_resume-tips-for-bartender]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]

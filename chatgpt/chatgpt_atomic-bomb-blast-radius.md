@@ -88,3 +88,11 @@ Modern nuclear weapons can also be designed to produce different types of effect
 The decision to detonate a nuclear weapon at a particular altitude is also influenced by a variety of factors, including the type of target, the desired level of destruction, and the potential for collateral damage. In some cases, a high-altitude detonation may be used to create an EMP or to minimize the fallout from the explosion, while in other cases a low-altitude detonation may be used to maximize the destructive power of the blast.
 
 Overall, modern nuclear weapons are far more powerful and sophisticated than the bombs dropped on Hiroshima and Nagasaki, and are capable of producing a wide range of effects depending on the intended military objective.
+
+
+## See Also
+- [[chatgpt/chatgpt_atomic-code-explanation]]
+- [[chatgpt/chatgpt_atomic-design-structure]]
+- [[chatgpt/chatgpt_linear-app-border-radius]]
+- [[chatgpt/chatgpt_love-bomb-tattoo-design]]
+- [[chatgpt/chatgpt_sex-bomb-tattoo-design]]

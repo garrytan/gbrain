@@ -55,3 +55,11 @@ Best move: **look at the dash during the three beeps.** If you see a **door/lift
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_mazda-cx-5-carplay-issue]]
+- [[chatgpt/chatgpt_mazda-cx-5-sun-visor-issue]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-liftgate]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-wipers]]
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]

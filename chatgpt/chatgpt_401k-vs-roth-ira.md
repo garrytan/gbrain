@@ -142,3 +142,11 @@ If you’re earning well and taxes are high now, you might **lean traditional** 
 ---
 
 If you’d like, I can model an example comparing **50/50 split vs all Roth 401(k)** over 25 years using Los Angeles tax rates — to show the real after-tax difference in retirement value. Would you like that?
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

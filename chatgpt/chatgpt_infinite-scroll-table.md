@@ -216,3 +216,11 @@ Official virtual/infinite scroll demos exist in the TanStack docs if you want a 
 ---
 
 If you tell me your framework (React, Vue, Angular, vanilla) and data size (e.g., tens of thousands vs millions of rows), I’ll recommend **specific library + example code**.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-inventory-management-table]]
+- [[chatgpt/chatgpt_caffeine-content-comparison-table]]
+- [[chatgpt/chatgpt_contacts-in-table]]
+- [[chatgpt/chatgpt_create-csv-table-document]]
+- [[chatgpt/chatgpt_crest-whitestrips-comparison-table]]

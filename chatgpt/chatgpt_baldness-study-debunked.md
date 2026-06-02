@@ -116,3 +116,11 @@ Put that into a snarky sarcastic and funny comment but be concise
 ## Assistant
 
 “Oh, look—your wristwatch just flagged bedtime fidgeting, not a covert ‘night-shift’ vigil. Those actigraphs only track movement, not your partner-spy fantasies citeturn1search0. And spoiler: if you swap out a snorer for, say, a purring kitten, her sleep fragmentation plummets—so it’s snoring, not some built-in gender alarm clock citeturn0search14.”
+
+
+## See Also
+- [[chatgpt/chatgpt_define-study-standards]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

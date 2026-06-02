@@ -45,3 +45,11 @@ Mr. White,
 - **No solid evidence** supports a fat-loss “trapped water” and “woosh” mechanism beyond anecdote.
 
 Hope that clears it up.
+
+
+## See Also
+- [[chatgpt/chatgpt_trapped-water-in-bottles]]
+- [[chatgpt/chatgpt_25l-water-in-ice]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_bathtub-cold-water-issue]]
+- [[chatgpt/chatgpt_calculate-water-cases]]

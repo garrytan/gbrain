@@ -293,3 +293,11 @@ By incorporating this logic into your component, the menu will be adjusted to en
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_close-menu-on-click]]
+- [[chatgpt/chatgpt_vuejs-menu-component]]
+- [[chatgpt/chatgpt_automating-swipe-right-js]]
+- [[chatgpt/chatgpt_js-function-swipe-right-2]]
+- [[chatgpt/chatgpt_js-function-swipe-right]]

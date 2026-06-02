@@ -350,3 +350,11 @@ No, say something like, I totally get it. Actually, in fact, most of my clients 
 ## Assistant
 
 “I totally get it—most of my clients have packed schedules too. Why don’t we set up a trial session so I can show you how we’ll hit your goals in quick, efficient workouts just twice a week?”
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-training-request]]
+- [[chatgpt/chatgpt_cutting-training-frequency]]
+- [[chatgpt/chatgpt_fasted-vs-fed-training]]
+- [[chatgpt/chatgpt_hypertrophy-training-gear]]
+- [[chatgpt/chatgpt_leg-training-impact-summary]]

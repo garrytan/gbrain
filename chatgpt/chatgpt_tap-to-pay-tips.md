@@ -87,3 +87,11 @@ So:
 - **PWA** can only handle tip flows that end in **Apple Pay / Google Pay** (user double-clicks their own phone), not receiving a tap from someone else’s card/phone.  
 
 Do you want me to outline a roadmap where you start with **web/PWA tip flows (Apple Pay/Google Pay)** and then upgrade to **native Tap to Pay** once you ship mobile apps? That way creators can at least start collecting in-person tips before Jovie has a native app.
+
+
+## See Also
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]
+- [[chatgpt/chatgpt_apple-level-design-tips]]

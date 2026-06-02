@@ -26,3 +26,11 @@ tags: [chatgpt, import]
 ## Assistant
 
 Mr. White, 10:00 AM PST = **7:00 PM CET (19:00)**.
+
+
+## See Also
+- [[chatgpt/chatgpt_time-zone-conversion-2]]
+- [[chatgpt/chatgpt_time-zone-conversion]]
+- [[chatgpt/chatgpt_time-conversion-inquiry]]
+- [[chatgpt/chatgpt_time-zone-issue-fix]]
+- [[chatgpt/chatgpt_ai-progress-over-time]]

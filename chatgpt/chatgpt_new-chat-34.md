@@ -104,3 +104,11 @@ Instructions:
 6. Enjoy your classic Margarita!
 
 This recipe provides a well-balanced and authentic Margarita, with the right combination of tequila, citrus, and sweetness. Adjust the sweetness to your preference by adding more or less agave syrup or simple syrup. Cheers!
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

@@ -80,3 +80,11 @@ Would that be 5'4?
 ## Assistant
 
 The median height for women in their 20s in the USA is not commonly specified in statistics, as most sources report the average (mean) height. However, it's reasonable to assume that the median height would be close to the average (mean) height, which is about 5 feet 4 inches. Without specific data, we can't confirm the exact median height, but it would likely be around this figure.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-evans-height-6ft]]
+- [[chatgpt/chatgpt_convert-height-to-feet]]
+- [[chatgpt/chatgpt_emily-ratajkowskis-height]]
+- [[chatgpt/chatgpt_form-fields-height-gender-weight]]
+- [[chatgpt/chatgpt_height-conversion-calculation]]

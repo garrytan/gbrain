@@ -413,3 +413,11 @@ Test **molecules, organisms, and pages**. Only test atoms when they contain cond
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-ux-refactor-plan]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-prompt-for-refactor]]

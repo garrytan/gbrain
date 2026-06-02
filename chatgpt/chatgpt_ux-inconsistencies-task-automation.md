@@ -209,3 +209,11 @@ SAFETY
 START NOW
 Begin with maximum-parallel discovery across all authenticated admin, dashboard, and internal app surfaces. Produce UX_CONSISTENCY_TASKS.md first. Then start the 5-minute autonomous PR production loop using parallel worktrees and sub-agents.
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-task-automation-plan]]
+- [[chatgpt/chatgpt_automation-task-setup]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]
+- [[chatgpt/chatgpt_ai-agent-automation-part2]]

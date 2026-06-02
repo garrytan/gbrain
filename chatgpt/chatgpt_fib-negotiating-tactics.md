@@ -50,3 +50,11 @@ If there’s room to play, I’m ready to sign this week. Otherwise I’ll pull 
 
 Let me know.  
 — Tim
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-improvement-tactics]]
+- [[chatgpt/chatgpt_cia-negotiation-tactics]]
+- [[chatgpt/chatgpt_negotiation-tactics-response]]
+- [[chatgpt/chatgpt_negotiating-facebook-marketplace-price]]
+- [[chatgpt/chatgpt_negotiating-urgency-voss-style]]

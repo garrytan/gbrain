@@ -89,3 +89,11 @@ Mr. White,
 👉 Add **regular AppleCare+** at checkout (or within 60 days).
 
 If you want, I can tell you **exactly when AppleCare+ is mathematically worth it** vs self-insuring.
+
+
+## See Also
+- [[chatgpt/chatgpt_charger-comparison-m2-macbook-air]]
+- [[chatgpt/chatgpt_cheapest-ai-in-ci]]
+- [[chatgpt/chatgpt_cheapest-cloud-backblaze-b2]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_cheapest-coke-zero-on-amazon]]

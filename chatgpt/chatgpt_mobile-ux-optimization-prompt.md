@@ -149,3 +149,11 @@ If you want, paste your actual ship command (some teams use `./ship`, `pnpm ship
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_codebase-optimization-prompt]]
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]
+- [[chatgpt/chatgpt_unit-test-optimization-prompt]]
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]

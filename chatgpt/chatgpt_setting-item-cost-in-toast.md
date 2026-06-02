@@ -56,3 +56,11 @@ Here are some of the ways:
 ---
 
 If you tell me **which “cost” you meant** (selling price vs internal cost) and **which Toast version you use** (Toast Basic, Premium, or with integrations), I can walk you step-by-step for your setup. Do you want me to guide you through that?
+
+
+## See Also
+- [[chatgpt/chatgpt_toast-item-sales-report]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part1]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part2]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part3]]

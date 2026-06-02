@@ -389,3 +389,11 @@ If you want revisions to the mocks (colors, radii, icon set), say the word and I
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-image-creation]]
+- [[chatgpt/chatgpt_artist-profile-page-design]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part1]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part2]]

@@ -34,3 +34,11 @@ Mr. White — **Charlie Amter** is a **music journalist and A&R professional**.
 - His bio notes he later worked in **media intelligence at Meltwater** and continued **freelance writing for Variety**. citeturn0search1turn1image0  
 
 If you meant a different “Charlie Amter” (or you’re citing a specific work), tell me the context and I’ll pin it down.
+
+
+## See Also
+- [[chatgpt/chatgpt_33-taps-restaurant-info]]
+- [[chatgpt/chatgpt_apple-business-account-info]]
+- [[chatgpt/chatgpt_apple-keynote-2026-info]]
+- [[chatgpt/chatgpt_apple-wallet-card-info]]
+- [[chatgpt/chatgpt_audit-new-hire-info]]

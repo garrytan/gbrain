@@ -117,3 +117,11 @@ Oversized L-shaped sectional couch in excellent condition. Easily fits 7+ people
 - If you want max cash and can wait a little, start at **$700–750** and expect buyers to negotiate down.  
 
 Would you like me to also create a **spreadsheet template** with all the Marketplace fields filled in (title, description, category, price, etc.) so you can bulk upload it directly?
+
+
+## See Also
+- [[chatgpt/chatgpt_facebook-listing-request]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-2]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-3]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-tips]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing]]

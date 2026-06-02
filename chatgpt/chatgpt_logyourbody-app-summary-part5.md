@@ -437,3 +437,11 @@ Here you go, Mr. White — two forwardable options Daniel can paste.
 > If consumer health / fitness / body-comp is in your wheelhouse, I think this is worth a conversation. Happy to connect you two.  
 
 If you want, tell me Daniel’s exact tone (more hype / more clinical / more YC-blunt) and I’ll tweak.
+
+
+## See Also
+- [[chatgpt/chatgpt_logyourbody-app-summary-part1]]
+- [[chatgpt/chatgpt_logyourbody-app-summary-part2]]
+- [[chatgpt/chatgpt_logyourbody-app-summary-part3]]
+- [[chatgpt/chatgpt_logyourbody-app-summary-part4]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]

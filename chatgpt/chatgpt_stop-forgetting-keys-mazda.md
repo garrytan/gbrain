@@ -73,3 +73,11 @@ Mr. White, iOS doesn’t give us a true “if phone moves and keys stay” trigg
    – If you want real “if phone and tracker separate” logic without workarounds, consider a Tile device instead of an AirTag. Tile’s iOS app lets you define your car as a Safe Zone and trigger true “left-behind” alerts only when both your phone and car are in different zones—and you can even hook that into Shortcuts.
 
 With CarPlay disconnect → ping-or-notify plus the built-in Notify-When-Left-Behind, you’ll catch almost every “I forgot my keys” scenario.
+
+
+## See Also
+- [[chatgpt/chatgpt_allan-keys-amazon]]
+- [[chatgpt/chatgpt_javascript-switch-arrow-keys]]
+- [[chatgpt/chatgpt_neon-and-clerk-keys]]
+- [[chatgpt/chatgpt_set-google-cse-keys]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-liftgate]]

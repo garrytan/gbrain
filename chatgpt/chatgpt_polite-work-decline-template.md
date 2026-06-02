@@ -174,3 +174,11 @@ Thanks for thinking of me! Unfortunately, I can’t cover Saturday on such short
 ---  
 
 Want me to make a **tight one-liner version** of that too, in case you want something faster to send?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]
+- [[chatgpt/chatgpt_chris-voss-reply-template]]
+- [[chatgpt/chatgpt_concise-jovie-template]]
+- [[chatgpt/chatgpt_contact-page-template]]
+- [[chatgpt/chatgpt_html-template-creation-tutorial]]

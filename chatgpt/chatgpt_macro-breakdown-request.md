@@ -254,3 +254,11 @@ At that size of deficit:
 If you repeat similar intakes most days, you’re effectively running a **slow, clean cut** — exactly what most physique athletes use for lean maintenance or body recomp phases.  
 
 Would you like me to show how to tweak that intake slightly for a *more efficient recomposition* (keep muscle, slowly drop fat)?
+
+
+## See Also
+- [[chatgpt/chatgpt_cost-breakdown-request]]
+- [[chatgpt/chatgpt_pay-and-tip-breakdown-request]]
+- [[chatgpt/chatgpt_macro-breakdown-panda-express]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]

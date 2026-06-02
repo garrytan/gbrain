@@ -99,3 +99,11 @@ Use case: coding assistant, agentic workflows, technical chat
 ```
 
 Bottom line: **Qwen3.6-35B-A3B-4bit is a good pick, but Qwen3.6-27B 4-bit is probably the first model I’d install on a 32GB M5 MacBook.** Gemma 4 is competitive and cleaner for some general-use cases, while Qwen currently looks stronger for local coding and agent work.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_gpt-model-comparison-coding]]
+- [[chatgpt/chatgpt_model-comparison-2025]]
+- [[chatgpt/chatgpt_model-performance-comparison]]
+- [[chatgpt/chatgpt_charger-comparison-m2-macbook-air]]

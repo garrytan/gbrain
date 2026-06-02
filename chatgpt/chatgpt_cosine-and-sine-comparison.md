@@ -83,3 +83,11 @@ I’m a music producer so to me it’s an out of phase sine wave. Add that in. B
 Here’s a refined reply that hits all the right notes:
 
 “Fair point! But since cosine is just a sine wave shifted out of phase — and as a music producer, that’s exactly how I think of it — I figured it still counts. Different starting point, same wave. 😉”
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_best-deal-comparison]]
+- [[chatgpt/chatgpt_bleach-developer-comparison]]

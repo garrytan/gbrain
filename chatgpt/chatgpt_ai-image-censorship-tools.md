@@ -66,3 +66,11 @@ Yes Mr. White — there *are* AI-powered tools you can use to add fake lens flar
 ---
 
 If you like, I can **pull together a short list** (5-10) of *free/paid* AI tools (with comparison of cost, features, ease-use) specifically for “light leak / lens flare / stylized censorship” so you can pick the best for your workflow. Would you like me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chord-progression-tools]]
+- [[chatgpt/chatgpt_ai-code-review-tools]]

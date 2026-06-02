@@ -535,3 +535,11 @@ If you’re already doing optimistic updates, the biggest next wins are usually:
 5) **SWR/streaming/skeletons to hide slow reads**
 
 If you tell me what you’re using for data (React Query, SWR, tRPC, Apollo, custom fetch + RSC), I’ll map these into concrete patterns + code for your stack.
+
+
+## See Also
+- [[chatgpt/chatgpt_memory-and-agent-workflow]]
+- [[chatgpt/chatgpt_hermes-orchestrator-model-setup]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_admin-workflow-design]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]

@@ -61,3 +61,11 @@ For your specific situation, I would prioritize:
 6. Build singing-voice datasets for future artist IP.
 
 The highest ROI use is probably demo content. You can make Jovie look dramatically larger and more polished to investors by generating professional voiceovers, onboarding flows, fake customer calls, artist agents, and product demos essentially for free under the grant. citeturn0search0turn0search3
+
+
+## See Also
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ai-workflow-for-voice-dictation]]
+- [[chatgpt/chatgpt_finding-voice-recordings]]
+- [[chatgpt/chatgpt_fiona-voice-cast]]

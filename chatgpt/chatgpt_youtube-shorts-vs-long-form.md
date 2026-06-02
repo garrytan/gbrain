@@ -43,3 +43,11 @@ For the most current data and insights, consider researching:
 - Surveys or reports from marketing research firms focusing on digital media trends.
 
 Given the dynamic nature of social media trends and algorithms, the effectiveness of Shorts versus long-form videos in driving subscriptions can vary over time and across different content niches.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-youtube-shorts-urls]]
+- [[chatgpt/chatgpt_youtube-shorts-allow-links]]
+- [[chatgpt/chatgpt_youtube-shorts-scheduler]]
+- [[chatgpt/chatgpt_contact-form-in-nextjs]]
+- [[chatgpt/chatgpt_create-new-contact-form-part1]]

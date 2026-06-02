@@ -78,3 +78,11 @@ icona a pop on a roll chords
 If you're interested in learning how to play "I Love It" by Icona Pop, here's a guitar lesson that covers the chords and strumming patterns:
 
 videoI Love It by Icona Pop Guitar Lessonturn0search1 
+
+
+## See Also
+- [[chatgpt/chatgpt_rock-n-roll-la]]
+- [[chatgpt/chatgpt_fred-again-speakers-setup]]
+- [[chatgpt/chatgpt_captain-chords-plugin-review]]
+- [[chatgpt/chatgpt_luxurious-la-rock-vibes]]
+- [[chatgpt/chatgpt_roll-rs-technique]]

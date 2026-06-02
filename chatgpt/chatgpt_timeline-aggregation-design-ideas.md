@@ -612,3 +612,11 @@ Let me know if you want me to refactor the whole screen layout based on this log
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_timeline-slider-design]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_music-interface-design-ideas]]
+- [[chatgpt/chatgpt_changelog-aggregation-and-analysis]]

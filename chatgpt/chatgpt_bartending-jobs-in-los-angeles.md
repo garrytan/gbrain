@@ -39,3 +39,11 @@ I've listed a mix of opportunities from different areas within Los Angeles, and 
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartending-jobs-in-hollywood]]
+- [[chatgpt/chatgpt_bartending-jobs-la-venues]]
+- [[chatgpt/chatgpt_artist-dj-relations-jobs]]
+- [[chatgpt/chatgpt_bartender-jobs-search-results]]
+- [[chatgpt/chatgpt_dean-kamen-steve-jobs-segway]]

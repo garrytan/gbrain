@@ -239,3 +239,11 @@ For the best first pass, attach current jov.ie screenshots or import the site UR
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_landing-page-design-prompt]]
+- [[chatgpt/chatgpt_jovie-landing-page-design]]
+- [[chatgpt/chatgpt_landing-page-audit-prompt]]
+- [[chatgpt/chatgpt_landing-page-design-options]]
+- [[chatgpt/chatgpt_landing-page-design-spec]]

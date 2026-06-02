@@ -73,3 +73,11 @@ These tend to sell well across demographics and have strong brand pull.
 ✅ **Summary**: The most profitable candy lineup blends **core bestsellers (M&Ms, Reese’s, Sour Patch Kids, Skittles)** with **rotating seasonal and premium items**. Margins are maximized through **upsizing, bundles, and strategic placement**.  
 
 Would you like me to put together a **recommended top 10 candy SKUs with price points** tailored for maximum profit in Los Angeles theaters?
+
+
+## See Also
+- [[chatgpt/chatgpt_candy-game-explanation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

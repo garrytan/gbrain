@@ -43,3 +43,11 @@ Mr. White, here are some foolproof, snarky go-to points you can drop the next ti
   Real genetic or endocrine pathologies are one-in-a-million; almost everyone else gains or loses exactly in line with their net caloric intake.
 
 **Pro tip:** Challenge her to track everything for a week. Data don’t lie—and neither does a food scale.
+
+
+## See Also
+- [[chatgpt/chatgpt_advil-no-calories]]
+- [[chatgpt/chatgpt_calories-burned-walking-5k]]
+- [[chatgpt/chatgpt_calories-in-a-pan]]
+- [[chatgpt/chatgpt_calories-in-pussy-juice]]
+- [[chatgpt/chatgpt_estimate-maintenance-calories]]

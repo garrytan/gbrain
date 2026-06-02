@@ -31,3 +31,11 @@ For the 2010 movie *Burlesque* (starring Christina Aguilera and Cher), the on-sc
 - **Interiors:** The club’s interior performance and backstage scenes were shot on a set constructed for the production, not inside the real theatre. citeturn0search10
 
 If you need the exact soundstage or studio where the set was built, I can look that up for you.
+
+
+## See Also
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_elio-movie-details]]
+- [[chatgpt/chatgpt_famous-movie-hackers]]
+- [[chatgpt/chatgpt_her-hologram-love-movie]]
+- [[chatgpt/chatgpt_mod-sun-movie-caption-meaning]]

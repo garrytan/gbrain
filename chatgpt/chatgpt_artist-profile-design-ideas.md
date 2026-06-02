@@ -188,3 +188,11 @@ kill the up next row and docl te menu at the bottom
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-profile-page-design]]
+- [[chatgpt/chatgpt_artist-profile-image-creation]]
+- [[chatgpt/chatgpt_artist-profile-suggestions]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part1]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part2]]

@@ -77,3 +77,11 @@ Here's a quick guide on how to make it:
 6. Serve with a slice of lemon. After taking the shot, you bite into the sugar-coated lemon slice, which creates the chocolate cake flavor sensation.
 
 For the complete method and additional tips, you can review the recipes on the websites of [The Spruce Eats](8), [Snappy Gourmet](9), and [Occasional Cocktails](11).
+
+
+## See Also
+- [[chatgpt/chatgpt_birthday-cake-alternatives]]
+- [[chatgpt/chatgpt_cake-fridge-lifespan]]
+- [[chatgpt/chatgpt_let-them-eat-cake]]
+- [[chatgpt/chatgpt_rice-cake-macronutrients-summary]]
+- [[chatgpt/chatgpt_fashion-film-shot-list]]

@@ -118,3 +118,11 @@ Mr. White,
   - Mock audio element events (`canplay`, `timeupdate`, `ended`, `error`) to avoid flaky tests.
 
 “What’s up” acknowledged.
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-role-submission]]
+- [[chatgpt/chatgpt_music-submission-email]]
+- [[chatgpt/chatgpt_playlist-submission-table]]
+- [[chatgpt/chatgpt_role-submission-automation]]
+- [[chatgpt/chatgpt_speedrun-application-submission]]

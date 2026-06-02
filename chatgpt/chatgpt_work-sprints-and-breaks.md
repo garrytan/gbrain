@@ -266,3 +266,11 @@ The flex isn’t hours worked.
 The flex is decisions per hour.
 
 And the best decisions come from the toggle.
+
+
+## See Also
+- [[chatgpt/chatgpt_amazing-race-sleep-and-breaks]]
+- [[chatgpt/chatgpt_calm-work-pickup-protocol]]
+- [[chatgpt/chatgpt_creative-work-proposal]]
+- [[chatgpt/chatgpt_format-post-with-breaks]]
+- [[chatgpt/chatgpt_how-holo-tiles-work]]

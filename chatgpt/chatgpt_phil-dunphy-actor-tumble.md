@@ -32,3 +32,11 @@ No — **Ty Burrell**, the actor who played *Phil Dunphy* on *Modern Family*, di
 • There are clips from filming where he’s caught tripping or falling while shooting a scene, and those moments were kept in because they fit the character’s physical humor.citeturn0search14
 
 There’s no credible record of any significant real-life tumble or injury outside of scripted scenes.citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_actor-in-modern-family]]
+- [[chatgpt/chatgpt_actor-strikes-back-creator]]
+- [[chatgpt/chatgpt_pb-voice-actor-roles]]
+- [[chatgpt/chatgpt_set-competitive-actor-rate]]

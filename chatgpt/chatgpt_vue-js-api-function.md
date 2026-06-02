@@ -113,3 +113,11 @@ Note that the `response.data` property holds the actual data returned by the API
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_fix-email-validation-function]]
+- [[chatgpt/chatgpt_fix-javascript-function]]
+- [[chatgpt/chatgpt_improve-js-function]]
+- [[chatgpt/chatgpt_javascript-function-fix]]

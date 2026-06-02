@@ -142,3 +142,11 @@ If you want, I can generate:
 - Recommended folder structure for 5–10 Cascade instances  
 
 Just tell me what you’d prefer, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_git-workspaces-in-windsurf-2]]
+- [[chatgpt/chatgpt_auto-continue-in-windsurf]]
+- [[chatgpt/chatgpt_devin-vs-windsurf]]
+- [[chatgpt/chatgpt_github-windsurf-repositories]]
+- [[chatgpt/chatgpt_mcp-troubleshooting-in-windsurf]]

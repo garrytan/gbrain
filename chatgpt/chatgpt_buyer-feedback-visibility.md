@@ -72,3 +72,11 @@ You're sure he won't see it?
 Correct — on Facebook Marketplace, only **sellers** get ratings and reviews that other people can see. Any feedback you leave about a buyer is private; it’s visible to Facebook only, not to the buyer or the public.  
 
 Would you like me to show you exactly how to leave that buyer feedback step by step, so you can be sure it stays private?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-feedback-prompt]]
+- [[chatgpt/chatgpt_app-ui-feedback]]
+- [[chatgpt/chatgpt_application-revision-feedback]]
+- [[chatgpt/chatgpt_design-feedback-improvement]]
+- [[chatgpt/chatgpt_feedback-message-integration]]

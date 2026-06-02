@@ -203,3 +203,11 @@ even if your waist circumference went up 0.5–1" from muscle over the next year
 No, you don’t meaningfully risk ruining your waist by training obliques/core intelligently. At your size, you should absolutely **build them up**. Keep volume reasonable, avoid insane ultra-heavy side-bend abuse, and focus on getting generally bigger and stronger. The V-cut will look sharper, not worse.
 
 If you want, drop your current weekly split + exercises, and I’ll show you *exactly* where and how many core sets to plug in so you get the aesthetic you want without overdoing it.
+
+
+## See Also
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_maximizing-muscle-definition-tips]]
+- [[chatgpt/chatgpt_clerk-definition]]
+- [[chatgpt/chatgpt_conductor-definition-and-examples]]
+- [[chatgpt/chatgpt_css-class-definition-overview]]

@@ -617,3 +617,11 @@ I’m grounding this in the live site, your docs, and current comps so I can sep
 
 
 I’ve got the synthesis now: one company, two layers. The homepage is still mixing three stories, but the clean move is to sell the simple public promise first and let the deeper automation engine sit underneath.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part2]]
+- [[chatgpt/chatgpt_bio-link-strategy-part1]]
+- [[chatgpt/chatgpt_bio-link-strategy-part3]]
+- [[chatgpt/chatgpt_code-cleanup-strategy-part2]]

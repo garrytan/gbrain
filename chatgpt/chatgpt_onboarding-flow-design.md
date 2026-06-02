@@ -498,3 +498,11 @@ Answer these and I’ll turn this into a tighter coding-agent spec:
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_onboarding-design-simplification]]
+- [[chatgpt/chatgpt_onboarding-flow-recommendation]]
+- [[chatgpt/chatgpt_onboarding-name-input-design-part1]]
+- [[chatgpt/chatgpt_onboarding-name-input-design-part2]]

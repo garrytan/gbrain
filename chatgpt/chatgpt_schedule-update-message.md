@@ -46,3 +46,11 @@ Mr. White, here’s the revised note:
 Subject: This Week’s Schedule + Quick Admin
 
 Hi Donnie — quick heads-up that there’s **no show on Thursday**. We’re excited to see you **Friday**. Call time is usually **6:00 pm**, but could you come a bit early so we can review some new things? **4:30 pm** would be great if that works for you. A full schedule is coming soon. Also, could you send your best **email address** so we can forward the new payroll paperwork? Just wanted to make sure you knew **not to come in on Thursday**. We’ll have shows **Friday, Saturday, and Sunday** this week. Thanks!
+
+
+## See Also
+- [[chatgpt/chatgpt_welcome-message-update]]
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]

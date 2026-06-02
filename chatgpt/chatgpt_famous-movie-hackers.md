@@ -84,3 +84,11 @@ Here are well-known fictional hackers from movies, grouped for clarity:
 ---
 
 If needed, specify a subcategory such as realistic hackers, villains only, or the most technically accurate portrayals.
+
+
+## See Also
+- [[chatgpt/chatgpt_famous-dj-riders]]
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_elio-movie-details]]
+- [[chatgpt/chatgpt_her-hologram-love-movie]]

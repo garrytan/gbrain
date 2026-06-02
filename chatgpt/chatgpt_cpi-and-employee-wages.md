@@ -114,3 +114,11 @@ So, do they want to pay employees more or less money?
 ## Assistant
 
 The West Hollywood Chamber of Commerce's proposal to suspend the CPI (Consumer Price Index) increase for 2024 suggests they want to keep wage increases at bay for that period. This means they're looking to not automatically increase wages in line with rising inflation, effectively paying employees the same rate as before, which, in real terms, could be less due to the increased cost of living. Their aim is likely to reduce financial strain on businesses, but it also means employees' wages would not increase to compensate for inflation.
+
+
+## See Also
+- [[chatgpt/chatgpt_employee-clock-in-solutions]]
+- [[chatgpt/chatgpt_employee-performance-dashboard-idea]]
+- [[chatgpt/chatgpt_employee-scheduling-app-plan]]
+- [[chatgpt/chatgpt_exporting-toast-employee-data]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

@@ -26,3 +26,11 @@ write a 250 character artist bio for tim white highlighting that he has collabor
 ## Assistant
 
 Tim White is a dynamic artist known for his collaborations with legends like Cosmic Gate. With viral hits amassing 70M UGC views, he's released music on top labels including Armada, Black Hole, and Sony Music, cementing his place in the electronic music scene.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

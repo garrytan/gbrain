@@ -32,3 +32,11 @@ Dr. Mike Isratel, a well-known figure in the fitness and nutrition world, differ
 - **Exotically Lean:** This term is often used to describe an extremely low level of body fat, often seen in bodybuilding during competition phases. For men, this might be below 10%, where muscle definition is very pronounced, with striations and vascularity clearly visible. This level is often not sustainable or healthy to maintain for long periods due to the extreme dieting and exercise required.
 
 It's important to note that maintaining an "exotically lean" physique can have health implications and should be approached with caution and ideally under professional guidance.
+
+
+## See Also
+- [[chatgpt/chatgpt_vue-router-defining-routes]]
+- [[chatgpt/chatgpt_add-lean-body-mass]]
+- [[chatgpt/chatgpt_calculating-lean-body-mass]]
+- [[chatgpt/chatgpt_lean-bulk-with-250-surplus]]
+- [[chatgpt/chatgpt_lean-mass-gains]]

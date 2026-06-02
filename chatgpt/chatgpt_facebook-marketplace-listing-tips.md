@@ -126,3 +126,11 @@ Fill in the template
 ## User
 
 How much should i list this for on fb marketplace? Make the listing for me
+
+
+## See Also
+- [[chatgpt/chatgpt_facebook-marketplace-listing-2]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-3]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing]]
+- [[chatgpt/chatgpt_facebook-listing-creation]]
+- [[chatgpt/chatgpt_facebook-listing-request]]

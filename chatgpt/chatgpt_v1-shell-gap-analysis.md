@@ -316,3 +316,11 @@ great now in this screenshot i want that menu items tooltip to start on the line
 Mr. White, use this prompt:
 
 **Fix sidebar thread tooltip positioning. The tooltip for each menu/thread item should open aligned to the same row as the hovered item, starting on that item’s horizontal line immediately to the right of the sidebar item. Use a `right-start` style placement instead of a centered vertical placement. The tooltip’s top edge should align with the top of the hovered row, with a small horizontal gap from the active pill, and it should not float above, below, or vertically center independently of the row. Apply this consistently to all sidebar thread/menu item tooltips, including active, hover, and focused states.**
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-decision-analysis]]
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]

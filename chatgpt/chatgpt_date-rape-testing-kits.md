@@ -66,3 +66,11 @@ Our bar has a temporary event permit. Do we need testing kits
 Yes, if your bar operates under a temporary event permit in California and is providing alcohol, it must comply with the same regulations that apply to bars and nightclubs with a Type 48 license regarding the provision of date rape testing kits. This includes offering drug testing kits to patrons and displaying appropriate signage to inform them of the availability of these kits【7†source】【8†source】【16†source】. 
 
 This requirement ensures that all venues serving alcohol, whether on a permanent or temporary basis, provide necessary safety measures to protect patrons from drink spiking incidents.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_chill-date-night-ideas]]
+- [[chatgpt/chatgpt_date-calculation]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part1]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part2]]

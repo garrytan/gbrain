@@ -27,3 +27,11 @@ Can you take this and make it 30% more simplified and remove excess chrome? Just
 ## User
 
 no kill the bg card just have the messages and no avatars and white bubbles rounded full and no bubble for the  jovie side.
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_age-calculation-request]]

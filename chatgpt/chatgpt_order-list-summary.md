@@ -38,3 +38,11 @@ I have calculated the amounts you need to order, and the list is displayed for y
 ## Assistant
 
 I have displayed the order list for you. Let me know if you need any adjustments or further information!
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-supply-order-list]]
+- [[chatgpt/chatgpt_bullet-point-list-summary]]
+- [[chatgpt/chatgpt_coffee-order-summary]]
+- [[chatgpt/chatgpt_liquor-order-list-started]]
+- [[chatgpt/chatgpt_liquor-order-list]]

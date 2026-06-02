@@ -55,3 +55,11 @@ To have a BMI of 30 at 6'4", the target weight would be approximately **246.5 lb
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bmi-weight-calculation-request]]
+- [[chatgpt/chatgpt_current-weight-calculation-design]]
+- [[chatgpt/chatgpt_macrofactor-trend-weight-calculation]]
+- [[chatgpt/chatgpt_target-weight-calculation]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

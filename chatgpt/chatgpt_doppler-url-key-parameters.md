@@ -51,3 +51,11 @@ Use this when your encryption library expects an **actual AES key** (not “a ra
 ---
 
 **Rule of thumb:** If the thing is called “URL encryption key” and is stored as a single env var/string, **Random Value → Base64 URL → 32 bytes entropy** is usually the safest compatibility choice (URL-safe characters, plenty of entropy). If your code explicitly wants “32-byte key” or “256-bit AES key,” use **Symmetric Key → 256-bit** instead.
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-cloud-doppler-access]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]
+- [[chatgpt/chatgpt_doppler-comp-inquiry]]
+- [[chatgpt/chatgpt_doppler-effect-explained]]
+- [[chatgpt/chatgpt_doppler-in-cloud-container]]

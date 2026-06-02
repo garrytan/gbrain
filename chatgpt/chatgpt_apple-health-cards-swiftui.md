@@ -400,3 +400,11 @@ You can now put this above your chart or cards exactly like in the Health app, r
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-health-bottom-nav]]
+- [[chatgpt/chatgpt_compare-app-to-apple-health]]
+- [[chatgpt/chatgpt_sentry-for-swiftui-app]]
+- [[chatgpt/chatgpt_swiftui-build-issues]]
+- [[chatgpt/chatgpt_swiftui-dark-mode-design]]

@@ -58,3 +58,11 @@ Yes, a shot and a beer combo is a popular offering at many bars, and it goes by 
 5. **Citywide Special**: As previously mentioned, this term is used particularly in Philadelphia, but might be recognized elsewhere.
 
 Each of these names may come with its own local variations or traditions, and individual bars may have their own unique names for this combo as well.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

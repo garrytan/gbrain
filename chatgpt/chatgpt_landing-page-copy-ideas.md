@@ -343,3 +343,11 @@ Final recommendation: use **“Connect once. Jovie keeps it current.”** as the
 
 Capture once. Reach again. ....Wouldnt forever be better. or connected forever. or something
 can you work on this copy go full apple level on it. make sure that all copy makes grammatic sense as well as psycological weight. every line must drive an actual emotion or it doestn earn its pixels. really go deap on jovie here and build us the best landing page copy spec in the world. make johnny ive proud. 
+
+
+## See Also
+- [[chatgpt/chatgpt_yc-landing-page-copy]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part1]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part2]]

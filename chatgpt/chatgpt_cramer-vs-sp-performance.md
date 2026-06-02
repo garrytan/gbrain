@@ -29,3 +29,11 @@ Give me a comment citing Jim Cranmer track record vs the s&p
 Comment:
 
 > Jim Cramer’s stock picks have underperformed the S&P 500 for years. In fact, multiple analyses show that an inverse Cramer ETF would outperform him. If he says Bitcoin is dead in 5 years, it might be the best long-term buy signal yet.📉➡️🚀
+
+
+## See Also
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_cinematic-subway-performance-2]]

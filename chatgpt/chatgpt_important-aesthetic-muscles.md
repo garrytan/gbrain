@@ -100,3 +100,11 @@ Mr. White, here’s a 3-day, full-body split to prioritize your lateral delts, u
 
 • On off days, add 10–15 min low-intensity cardio if needed for fat loss.  
 • Keep protein high (1 g/lb), hit your calories, stay hydrated.
+
+
+## See Also
+- [[chatgpt/chatgpt_chewing-gum-effects-jaw-muscles]]
+- [[chatgpt/chatgpt_leg-muscles-overview]]
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part1]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part2]]

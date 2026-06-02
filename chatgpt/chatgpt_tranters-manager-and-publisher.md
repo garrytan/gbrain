@@ -26,3 +26,11 @@ Who is Justin Tranter manager and publisher?
 ## Assistant
 
 Justin Tranter, an American songwriter, singer, and activist, has been associated with different entities in the music industry throughout his career. In 2012, while still part of the band Semi Precious Weapons, Tranter signed a publishing deal with Warner Chappell Music to write songs for other artists【12†(Wikipedia)】. As for managerial representation, a page on Booking Agent Info mentions a manager named Lauren representing Justin Tranter, with contact information listed in West Hollywood, CA【16†(Booking Agent Info)】. However, the details regarding the full name of the manager or the publishing entity's specifics weren't found in the sources accessed. For a more comprehensive understanding, you might consider reaching out to industry directories or professionals.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-business-manager-overview]]
+- [[chatgpt/chatgpt_bar-manager-negotiation-advice]]
+- [[chatgpt/chatgpt_bar-manager-resume-rewrite]]
+- [[chatgpt/chatgpt_bartender-vs-manager-salary]]
+- [[chatgpt/chatgpt_flags-manager-design]]

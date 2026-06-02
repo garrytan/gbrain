@@ -60,3 +60,11 @@ In **entity["company","Cursor","ai code editor"]**, here’s the clean 
 Once you **accept** a suggestion, it’s just normal code — Git does the rest.
 
 If you’re talking about **conflicts between two PR branches** instead of AI suggestions, say the word and I’ll give you that flow instead.
+
+
+## See Also
+- [[chatgpt/chatgpt_force-commit-after-job]]
+- [[chatgpt/chatgpt_git-commit-and-push-2]]
+- [[chatgpt/chatgpt_git-commit-and-push]]
+- [[chatgpt/chatgpt_grant-commit-permissions]]
+- [[chatgpt/chatgpt_nextjs-commit-hooks]]

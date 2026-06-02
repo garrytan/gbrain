@@ -208,3 +208,11 @@ Follow the same steps as before to use this script:
 4. Paste the entire JavaScript code into the console and press `Enter`.
 
 Ensure that the selector `.results-container` accurately reflects the actual structure of the modal's DOM. You may need to inspect the modal's HTML structure to find the correct class or id for the results container.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part1]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part2]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part3]]
+- [[chatgpt/chatgpt_automate-contact-poster-rotation]]
+- [[chatgpt/chatgpt_automate-lint-typecheck]]

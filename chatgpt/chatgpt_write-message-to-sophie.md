@@ -92,3 +92,11 @@ Mr. White, here’s the revised draft:
 Hi Sophie — could you share a clear overview of how the tip pool is calculated? Over the past week I’ve fielded a lot of questions from the bar team and servers, and I don’t have visibility into the current formula. A quick rundown of the inputs, percentages/weights, any adjustments or caps, and the calculation flow would help me keep the team informed and reduce errors.
 
 If it’s at all helpful, I’d be happy to ask Toast about a three-month trial of their Tip Pool Manager or help build a simple in-house tool with an audit trail to automate the calculations. In any case, some clarity and transparency on how the tip pool is calculated so I can keep the team informed would be great. Thanks!
+
+
+## See Also
+- [[chatgpt/chatgpt_write-response-to-sophie]]
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_anniversary-trip-message]]
+- [[chatgpt/chatgpt_aviation-mysteries-stendec-message]]
+- [[chatgpt/chatgpt_clean-up-message-2]]

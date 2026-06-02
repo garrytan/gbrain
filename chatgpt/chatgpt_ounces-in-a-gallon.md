@@ -34,3 +34,11 @@ Here’s the breakdown:
 → **4 × 2 × 16 = 128 ounces per gallon**  
 
 If you meant an **imperial (U.K.) gallon**, that equals **160 ounces**.
+
+
+## See Also
+- [[chatgpt/chatgpt_gallon-to-liter-conversion]]
+- [[chatgpt/chatgpt_convert-milliliters-to-ounces]]
+- [[chatgpt/chatgpt_convert-ounces-to-pounds]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

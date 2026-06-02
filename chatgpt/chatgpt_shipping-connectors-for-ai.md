@@ -62,3 +62,11 @@ The textarea appears capped at **1,000 characters**. Use this **594-character** 
 ```text
 Jovie is building a closed-loop operating system for music artists that turns releases into revenue. The product is based on 15 years of creating these workflows manually across marketing, fan engagement, content, CRM, outreach, and monetization. To make the AI agent useful, we need to connect quickly to the tools artists and teams already use, then read context, trigger actions, and keep work synced end to end. Composio would help us ship many reliable, authenticated connectors fast so we can focus engineering on the agent, workflows, and user experience instead of integration plumbing.
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_github-code-shipping-stats]]
+- [[chatgpt/chatgpt_sales-tax-on-shipping]]
+- [[chatgpt/chatgpt_shipping-promotion-for-e-commerce]]
+- [[chatgpt/chatgpt_shipping-sm7-with-usps]]
+- [[chatgpt/chatgpt_shipping-stable-products]]

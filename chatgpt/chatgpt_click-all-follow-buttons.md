@@ -245,3 +245,11 @@ setInterval(startProcess, 30000); // 30 seconds to account for the refresh and s
 This script will start clicking the buttons, and once it has clicked 12, it will wait 2 seconds before refreshing the page. After the page reloads, it waits an additional 30 seconds to allow for full loading and potential dynamic content before restarting the process.
 
 As always, be cautious with automation like this as it may violate the terms of service of the website, potentially leading to account limitations or bans.
+
+
+## See Also
+- [[chatgpt/chatgpt_click-all-buttons-script]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part1]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part2]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part3]]
+- [[chatgpt/chatgpt_filter-follow-buttons]]

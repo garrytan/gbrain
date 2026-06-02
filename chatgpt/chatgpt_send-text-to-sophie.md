@@ -117,3 +117,11 @@ The Amazon listing for **International Delight Cold Foam Coffee Creamer** doesn�
 - **After opening**: refrigerate and use within **14 days** for best quality.
 
 Always check the printed “Best By” or “Use By” date on the can itself—this is the most accurate indicator for the batch you purchase.
+
+
+## See Also
+- [[chatgpt/chatgpt_send-note-to-sophie]]
+- [[chatgpt/chatgpt_send-text-to-nick]]
+- [[chatgpt/chatgpt_text-for-sophie]]
+- [[chatgpt/chatgpt_auto-send-fan-drops]]
+- [[chatgpt/chatgpt_button-text-update]]

@@ -39,3 +39,11 @@ If you meant something else by “33taps,” clarify and I’ll dig deeper.
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]
+- [[chatgpt/chatgpt_christmas-dinner-restaurant-recommendations]]
+- [[chatgpt/chatgpt_psychology-of-restaurant-seating]]
+- [[chatgpt/chatgpt_restaurant-review-summary]]
+- [[chatgpt/chatgpt_restaurant-tax-snark]]

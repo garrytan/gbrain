@@ -267,3 +267,11 @@ What I want to see is the whole interaction of her busking in the subway, and yo
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_cinematic-website-footer-design]]
+- [[chatgpt/chatgpt_code-review-system-design]]
+- [[chatgpt/chatgpt_design-system-and-workflow]]
+- [[chatgpt/chatgpt_design-system-application]]
+- [[chatgpt/chatgpt_design-system-audit-2]]

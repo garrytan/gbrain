@@ -51,3 +51,11 @@ They retail for 399
 Got you, Mr. White. Send him:
 
 > Hey Fredy, appreciate the offer. These go for $399 plus tax new and they’re brand new. How am I supposed to drop all the way to 270 when I’m already at 340? If you can do 320 cash today, we’ve got a deal.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-5]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-6]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-7]]

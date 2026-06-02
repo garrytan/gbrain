@@ -216,3 +216,11 @@ If you want the highest-ROI starting point for this stack, build **Phase 1** as:
 - **OpenHands + Qodo Cover** only after a bug is confirmed citeturn288820search0turn288820search1turn288820search2turn288820search3turn334375search2turn764245search14turn764245search2turn764245search3turn764245search1
 
 I can turn this into a concrete starter repo for your stack with `proxy.ts`, Drizzle config, Neon env setup, Playwright config, and the chaos runner.
+
+
+## See Also
+- [[chatgpt/chatgpt_chaos-testing-explained]]
+- [[chatgpt/chatgpt_chaos-testing-nextjs]]
+- [[chatgpt/chatgpt_chaos-testing-prompt]]
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]

@@ -34,3 +34,11 @@ Mr. White — short answer: the **plane/manifest numbers are consistent**, but t
 - There are a few **continuity slips** cataloged by fans, but they’re minor and mostly about who’s visible in a given scene—not the manifest itself. citeturn1search5
 
 So: not random new passengers—just extras cycling in and out while the core numbers stay intact.
+
+
+## See Also
+- [[chatgpt/chatgpt_almost-exclusive-lost-to-amateurs]]
+- [[chatgpt/chatgpt_bodied-hume-dexa-accuracy]]
+- [[chatgpt/chatgpt_breast-milk-alcohol-test-accuracy]]
+- [[chatgpt/chatgpt_debunking-ai-scale-accuracy]]
+- [[chatgpt/chatgpt_lost-city-filming-locations]]

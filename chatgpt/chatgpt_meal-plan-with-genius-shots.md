@@ -185,3 +185,11 @@ Here’s a **3-day rotating meal plan** using Liv’s dishes, staying within you
 ---
 
 Would you like a printable chart or editable version of this?
+
+
+## See Also
+- [[chatgpt/chatgpt_alternatives-to-genius-shots]]
+- [[chatgpt/chatgpt_camping-meal-plan]]
+- [[chatgpt/chatgpt_cutting-phase-meal-plan]]
+- [[chatgpt/chatgpt_dairy-free-protein-meal-plan]]
+- [[chatgpt/chatgpt_diet-plan-meal-prep]]

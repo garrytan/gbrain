@@ -60,3 +60,11 @@ face
 ---
 
 If you have a specific context or additional questions about "face," feel free to ask. 
+
+
+## See Also
+- [[chatgpt/chatgpt_enterprise-definitions-and-context]]
+- [[chatgpt/chatgpt_face-id-in-pwa]]
+- [[chatgpt/chatgpt_replace-dall-e-face]]
+- [[chatgpt/chatgpt_smiley-face-ascii-art]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

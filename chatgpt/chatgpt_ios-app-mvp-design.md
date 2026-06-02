@@ -156,3 +156,11 @@ That gets you the wedge you want today without painting yourself into a corner.
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_admin-workflow-design]]
+- [[chatgpt/chatgpt_ai-design-review-tools]]
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]

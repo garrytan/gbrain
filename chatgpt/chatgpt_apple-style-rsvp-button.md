@@ -82,3 +82,11 @@ To achieve a minimal and Apple-like design for your website section, follow this
 ```
 
 This code snippet includes a styled button labeled "RSVP" that links to the specified URL. The button's style is straightforward, featuring a black background with white text, rounded corners, and a gentle hover effect to enhance user interaction, embodying the simplicity and elegance of Apple's design ethos.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part3]]
+- [[chatgpt/chatgpt_format-lyrics-apple-style]]
+- [[chatgpt/chatgpt_style-sky-button-tailwind]]

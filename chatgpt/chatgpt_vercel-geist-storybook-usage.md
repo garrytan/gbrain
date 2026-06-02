@@ -58,3 +58,11 @@ If you like, I can check deeper (e.g., Vercel’s internal‐components jobs, co
 
 
 **Topic:** [[chatgpt-clusters/coding_devops]]
+
+
+## See Also
+- [[chatgpt/chatgpt_vercel-geist-sans-usage]]
+- [[chatgpt/chatgpt_openai-and-vercel-usage]]
+- [[chatgpt/chatgpt_vercel-aws-usage]]
+- [[chatgpt/chatgpt_vercel-geist-design-system]]
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]

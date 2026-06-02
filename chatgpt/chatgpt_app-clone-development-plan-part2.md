@@ -142,3 +142,11 @@ Gym buddy or something
 - **IronAlly**  
 - **WorkoutWingman**  
 - **TrainMate**
+
+
+## See Also
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part2]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part2]]
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part2]]
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part2]]

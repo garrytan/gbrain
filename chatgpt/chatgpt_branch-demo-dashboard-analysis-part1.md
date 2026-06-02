@@ -536,3 +536,11 @@ In fact, I would leave it with that being part of the onboarding. You literally 
 
 
 Mr. White, I’ll build this as a cinematic, Playwright-friendly demo spec that leads with the agent magic, then expands into onboarding and the artist operating-system thesis.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part4]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part5]]
+- [[chatgpt/chatgpt_demo-dashboard-analysis-part1]]

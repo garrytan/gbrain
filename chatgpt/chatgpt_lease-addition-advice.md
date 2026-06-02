@@ -48,3 +48,11 @@ Not adding yourself: keeps things simple, carries very little downside in your c
 If your only concern is “rental history,” I’d say keep records of your rent contributions (bank transfers, receipts). That gives you something to show later without involving management now.  
 
 Do you want me to lay out a “what to say” script for your next rental application so you can bridge that history gap cleanly?
+
+
+## See Also
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_ai-migration-naming-advice]]
+- [[chatgpt/chatgpt_airport-gun-disposal-advice]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]
+- [[chatgpt/chatgpt_apartment-hunt-advice]]

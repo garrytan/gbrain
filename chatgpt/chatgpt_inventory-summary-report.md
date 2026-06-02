@@ -75,3 +75,11 @@ Here's the updated inventory count including the fridge items:
 - Watermelon (liters): 7
 
 Let me know if there's anything else you need!
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-report-summary]]
+- [[chatgpt/chatgpt_bodyspec-report-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]

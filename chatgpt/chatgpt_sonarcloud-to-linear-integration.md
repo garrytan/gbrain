@@ -442,3 +442,11 @@ If you want, tell me:
 - whether migrations are Prisma / Drizzle / raw SQL
 
 I’ll tighten this to a near-zero-noise config.
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]
+- [[chatgpt/chatgpt_claude-in-linear-integration]]
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_linear-github-integration]]
+- [[chatgpt/chatgpt_sentry-linear-integration-issues]]

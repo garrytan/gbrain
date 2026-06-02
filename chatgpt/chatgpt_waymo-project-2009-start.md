@@ -66,3 +66,11 @@ In West Hollywood, short-term rentals in apartments are subject to strict regula
 3. **Transient Occupancy Tax**: Hosts are required to pay a Transient Occupancy Tax (TOT) of 12.5%, which is due monthly. This tax applies to all short-term rentals in West Hollywood【19†source】.
 
 For more detailed information, you can visit the City of West Hollywood's official website on home sharing licenses and regulations.
+
+
+## See Also
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_david-finch-project-update]]
+- [[chatgpt/chatgpt_fastlane-project-automation]]
+- [[chatgpt/chatgpt_install-nextjs-into-existing-project]]
+- [[chatgpt/chatgpt_jovie-project-optimization]]

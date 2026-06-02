@@ -1061,3 +1061,11 @@ Mr. White, paste this into the already-running Hermes orchestrator as a dispatch
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part1]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part2]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part4]]
+- [[chatgpt/chatgpt_improve-prompt-request]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]

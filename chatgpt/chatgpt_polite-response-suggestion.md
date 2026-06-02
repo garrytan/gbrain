@@ -31,3 +31,11 @@ Here’s a firm but more civil version you could copy-paste:
 “Hey, it’s a $25 chair. I’m not sharing my number or playing 20 questions. If you want it, come pick it up. If not, no worries.”
 
 It keeps the boundaries clear without escalating.
+
+
+## See Also
+- [[chatgpt/chatgpt_friendly-response-suggestion]]
+- [[chatgpt/chatgpt_polite-response-summary]]
+- [[chatgpt/chatgpt_response-suggestion-write]]
+- [[chatgpt/chatgpt_response-suggestion]]
+- [[chatgpt/chatgpt_slam-response-suggestion]]

@@ -785,3 +785,11 @@ All three work at **both the product and personal growth levels**.
 
 
 Option c is the exact concept. Is there a sexier way to say it?
+
+
+## See Also
+- [[chatgpt/chatgpt_core-values-compilation-part2]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part1]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part2]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part3]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part4]]

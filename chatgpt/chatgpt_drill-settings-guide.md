@@ -65,3 +65,11 @@ At the end of the numbers you’ll have a **drill bit icon**:
   - Speed **1**, **drill icon**, light pressure, use cutting oil if you have it.
 
 If you tell me what you’re about to drill into (stud, concrete, furniture panels, etc.), I can give you exact numbers to start with.
+
+
+## See Also
+- [[chatgpt/chatgpt_drill-settings-guide-2]]
+- [[chatgpt/chatgpt_mazda-cx-5-settings-guide]]
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_create-vue-settings-menu]]
+- [[chatgpt/chatgpt_dryer-settings-for-towels]]

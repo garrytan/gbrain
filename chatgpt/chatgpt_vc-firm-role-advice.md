@@ -116,3 +116,11 @@ If you do it right, you won’t be asking VCs for a job — they’ll be asking 
 If you want, I can give you **three high-concept, VC-friendly podcast angles with show names and positioning** that would make firms want to sponsor from day one.  
 
 Want me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-role-submission]]
+- [[chatgpt/chatgpt_building-role-based-schedule]]
+- [[chatgpt/chatgpt_clerk-role-elements]]
+- [[chatgpt/chatgpt_job-role-analysis]]
+- [[chatgpt/chatgpt_resume-update-bartender-role]]

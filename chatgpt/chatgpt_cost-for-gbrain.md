@@ -93,3 +93,11 @@ For Gbrain’s near-term MVP:
 **Budget: $25–$45/mo.**
 
 I’d treat **$25/mo** as the base case and **$45/mo** as the clean dev/prod/staging setup. If Gbrain becomes storage-heavy with images/files, budget a buffer around **$75–$150/mo** before it becomes worth re-architecting storage/CDN separately.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-gbrain-as-mcp]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part1]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part2]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part3]]
+- [[chatgpt/chatgpt_budget-adjustment-contacts-cost]]

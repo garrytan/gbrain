@@ -34,3 +34,11 @@ Here’s a clean breakdown of age into 5 standard ranges:
 5. **61+**: Senior  
 
 Let me know if you want a different split (e.g. by hormonal shifts, aesthetics, or training response).
+
+
+## See Also
+- [[chatgpt/chatgpt_bidet-price-range]]
+- [[chatgpt/chatgpt_gun-range-info-for-noobs]]
+- [[chatgpt/chatgpt_bill-split-breakdown]]
+- [[chatgpt/chatgpt_budget-breakdown-bro]]
+- [[chatgpt/chatgpt_conversation-duration-breakdown]]

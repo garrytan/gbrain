@@ -213,3 +213,11 @@ I’ve successfully submitted 11 roles for you across 1 checkout batch. The cart
 None – all submissions processed successfully.
 
 After re‑running the filtered search, there were no remaining fit‑for‑you, paying roles available, so the queue is clear.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-task-automation-plan]]
+- [[chatgpt/chatgpt_ux-inconsistencies-task-automation]]
+- [[chatgpt/chatgpt_ai-tool-reasoning-task]]
+- [[chatgpt/chatgpt_claude-code-task-management]]
+- [[chatgpt/chatgpt_claude-task-management-overview]]

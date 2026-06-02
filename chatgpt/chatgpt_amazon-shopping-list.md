@@ -497,3 +497,11 @@ Added.
 19. Shower mirror
 
 Next item?
+
+
+## See Also
+- [[chatgpt/chatgpt_shopping-list-for-drinks]]
+- [[chatgpt/chatgpt_shopping-list-organization]]
+- [[chatgpt/chatgpt_shopping-list-summary]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_ai-optimizes-to-do-list]]

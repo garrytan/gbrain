@@ -35,3 +35,11 @@ Mr. White — current posted **starting pay** in Los Angeles:
 FYI, in California all covered fast-food restaurants (like McDonald’s) **must pay at least $20.00/hr**—nobody can legally start below that floor. citeturn0search0turn0search4
 
 *Notes:* Pay varies by franchise/restaurant and shift; always check the specific job ad for the exact starting rate.
+
+
+## See Also
+- [[chatgpt/chatgpt_mcdonalds-beeping-explained]]
+- [[chatgpt/chatgpt_mcdonalds-hot-coffee-lawsuit]]
+- [[chatgpt/chatgpt_mcdonalds-worker-pay]]
+- [[chatgpt/chatgpt_subway-vs-mcdonalds-comparison]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

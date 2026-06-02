@@ -175,3 +175,11 @@ You’re overqualified; aim at bar-manager roles ($80–100k is common in LA) or
 - Give them one clean chance to fix comp for the Christmas run. If they balk, execute Plan B (bartender-only) while you line up a real job.
 
 If you want, tell me your preferred numbers (hourly uplift, per-show stipend, or % of sales). I’ll fill the blanks and tighten the addendum into a printable one-pager you can hand over today.
+
+
+## See Also
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]

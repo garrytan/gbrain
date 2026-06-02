@@ -104,3 +104,11 @@ document.getElementById("swipeRight").addEventListener("click", function () {
 This is a JavaScript function that sets up a click event listener for an element with the id "swipeRight". When the element is clicked, the function retrieves the current active tab in the current window using the `chrome.tabs.query` method and sends a message to the content script of that tab using the `chrome.tabs.sendMessage` method. The message consists of an object with properties `type`, `numClicks`, `delay`, and `totalSwipes`. The values for `numClicks`, `delay`, and `totalSwipes` are set to `10`, `1000`, and `8`, respectively.
 
 This code is part of a Chrome extension, as it uses the `chrome` API provided by the Chrome browser. The message sent to the content script is used to trigger the `swipeRight` function, which performs the automated "swipe right" actions.
+
+
+## See Also
+- [[chatgpt/chatgpt_js-function-swipe-right-2]]
+- [[chatgpt/chatgpt_js-function-swipe-right]]
+- [[chatgpt/chatgpt_swipe-right-function-analysis]]
+- [[chatgpt/chatgpt_swipe-right-javascript-function]]
+- [[chatgpt/chatgpt_automating-swipe-right-js]]

@@ -717,3 +717,11 @@ blender -b -P render_avatars.py
 To do the actual rendering on your machine.
 
 Want me to give you the prompt for Claude to write everything directly inside VS Code now?
+
+
+## See Also
+- [[chatgpt/chatgpt_3-months-from-today]]
+- [[chatgpt/chatgpt_cheap-flights-from-la]]
+- [[chatgpt/chatgpt_excuse-from-jury-duty]]
+- [[chatgpt/chatgpt_generate-output-from-markdown]]
+- [[chatgpt/chatgpt_get-width-from-array]]

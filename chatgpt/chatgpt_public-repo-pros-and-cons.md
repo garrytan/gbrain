@@ -26,3 +26,11 @@ we have a public repo because it gives us free ci minutes. i want you to analyze
 ## User
 
 k 
+
+
+## See Also
+- [[chatgpt/chatgpt_coding-on-mushrooms-pros-and-cons]]
+- [[chatgpt/chatgpt_location-sharing-pros-and-cons]]
+- [[chatgpt/chatgpt_pros-cons-partnership-vs-marriage]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_codex-integration-with-repo]]

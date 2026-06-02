@@ -154,3 +154,11 @@ There’s no magic Linktree flag that turns the share card into the underlying p
 ---
 
 If you tell me which of those two you’re actually after (Linktree avatar vs IG/TikTok avatar), I can sketch the exact data path and a minimal TypeScript helper for your ingest pipeline.
+
+
+## See Also
+- [[chatgpt/chatgpt_drizzle-migrate-fresh-equivalent]]
+- [[chatgpt/chatgpt_drizzle-push-vs-migrate]]
+- [[chatgpt/chatgpt_migrate-neon-db-ci]]
+- [[chatgpt/chatgpt_drizzle-and-orm-comparison]]
+- [[chatgpt/chatgpt_drizzle-explanation]]

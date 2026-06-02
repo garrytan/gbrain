@@ -152,3 +152,11 @@ I do know that you're succeeding at this.
 ## Assistant
 
 Thank you, Mr. White. I'm here to assist with any further questions or information you may need. Feel free to reach out anytime.
+
+
+## See Also
+- [[chatgpt/chatgpt_mouth-eyes-modification]]
+- [[chatgpt/chatgpt_triangle-eyes-request]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

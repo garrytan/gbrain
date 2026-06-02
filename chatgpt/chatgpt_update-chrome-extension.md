@@ -365,3 +365,11 @@ No, you don't need to modify the JSON file itself or add any variable to it. The
 The `json` command-line tool uses the `-I` flag to modify the JSON file in place and the `-f` flag to specify the path to the JSON file. The `-e` flag is used to specify a JavaScript expression that will be executed to modify the JSON object. In this case, the expression sets the value of the `version` property to the tag name without the `v/` prefix. 
 
 The `${{ env.GITHUB_REF/refs/tags/v/ }}` syntax is a GitHub Actions expression that extracts the tag name from the `GITHUB_REF` environment variable and removes the `v/` prefix. The resulting value is used to update the `version` property in the JSON file.
+
+
+## See Also
+- [[chatgpt/chatgpt_update-chrome-extension-2]]
+- [[chatgpt/chatgpt_update-chrome-extension-3]]
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_chrome-extension-interaction]]
+- [[chatgpt/chatgpt_chrome-extension-popup-script]]

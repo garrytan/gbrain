@@ -78,3 +78,11 @@ For your stack, the practical positioning is probably:
 - DeepSeek V4 Flash = ultra-cheap bulk routing/planning
 
 A lot of serious agentic startups are converging on that hybrid architecture right now.
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

@@ -53,3 +53,11 @@ The community skews **technical and entrepreneurial**, often favoring deep debat
 - Developer API (public data): link_titleHN API on GitHubturn0search20
 
 If you want a **live snapshot of top posts or specific categories**, tell me what you’re most interested in (e.g., tech startups, AI, cybersecurity).
+
+
+## See Also
+- [[chatgpt/chatgpt_hacker-news-overview-3]]
+- [[chatgpt/chatgpt_hacker-news-overview]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]

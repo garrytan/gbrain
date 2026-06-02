@@ -35,3 +35,11 @@ Going forward:
 • If we want a perk, the only exception I’d support is cast gets one free shift meal on two-show days. If we do that, it must be in writing, limited to cast, ordered through the system (open tab is fine) so inventory stays accurate.
 
 If someone wants non-menu food, they bring their own or buy elsewhere. We all need to be aligned—me, you, Connor—so please don’t give Cassie💜 different guidance. Can you confirm you’re aligned and ask Jay to enforce this today?”
+
+
+## See Also
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_anniversary-trip-message]]
+- [[chatgpt/chatgpt_aviation-mysteries-stendec-message]]
+- [[chatgpt/chatgpt_bullet-point-list-for-vincent]]
+- [[chatgpt/chatgpt_clean-up-message-2]]

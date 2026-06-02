@@ -44,3 +44,11 @@ To create a reflection in Photoshop, follow these steps:
 8. **Final Adjustments**: You might want to fine-tune the effect by transforming the reflection layer to adjust its perspective or by applying a filter for added realism. To do this, go to Edit > Transform > Distort/Warp or Filter > Blur > Gaussian Blur, and adjust as necessary.
 
 These steps should give you a basic reflection effect. Feel free to experiment with layer masks, gradients, and opacity to achieve the desired result.
+
+
+## See Also
+- [[chatgpt/chatgpt_alcohols-effect-on-fat-loss]]
+- [[chatgpt/chatgpt_doppler-effect-explained]]
+- [[chatgpt/chatgpt_effect-of-alcohol-on-weight]]
+- [[chatgpt/chatgpt_floating-dust-effect-setup]]
+- [[chatgpt/chatgpt_lens-flare-overlays-photoshop]]

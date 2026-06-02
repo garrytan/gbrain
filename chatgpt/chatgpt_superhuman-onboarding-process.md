@@ -77,3 +77,11 @@ Here’s a rough template you could adapt:
 ---
 
 If you like, I can **pull together a full checklist** (with email/meeting templates, key metrics to track, and onboarding-flow design) based on Superhuman’s core principles. Would you like me to do that, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_superhuman-onboarding-process-2]]
+- [[chatgpt/chatgpt_superhuman-waitlist-process]]
+- [[chatgpt/chatgpt_superhuman-mode-app-icon]]
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_best-onboarding-ux]]

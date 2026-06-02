@@ -629,3 +629,11 @@ That captures the product, the habit loop, and the 52 Fridays thesis.
 
 > **Jovie turns music into a compounding release engine.**  
 > A song becomes a Friday. A Friday becomes content, fan capture, merch, and data. The data teaches Jovie what to ship next. Over time, every creator gets the operating system that only managed artists used to have.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

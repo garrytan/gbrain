@@ -183,3 +183,11 @@ I can't browse the internet, but I can tell you that several companies specializ
 5. Legends Hospitality
 
 It's worth looking into these companies and checking their job listings or contacting their HR departments to inquire about bartending opportunities in Los Angeles' high-volume venues.
+
+
+## See Also
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_add-lean-body-mass]]
+- [[chatgpt/chatgpt_app-design-for-body-tracking]]
+- [[chatgpt/chatgpt_auto-body-shop-suggestion]]

@@ -28,3 +28,11 @@ Can you write a text to nick asking him to let me know his availability for Octo
 Got it, Mr. White. Here’s a clean text you can send:
 
 “Hey Nick — I’m building the October schedule. What’s your availability, and are there any dates you can’t do? Please send me your blackout dates (and any preferred shifts) so I can lock it in.”
+
+
+## See Also
+- [[chatgpt/chatgpt_send-text-to-nick]]
+- [[chatgpt/chatgpt_button-text-update]]
+- [[chatgpt/chatgpt_cant-hear-ai-text]]
+- [[chatgpt/chatgpt_clean-up-text-2]]
+- [[chatgpt/chatgpt_clean-up-text-options]]

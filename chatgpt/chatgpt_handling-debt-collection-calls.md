@@ -67,3 +67,11 @@ Here’s a script you can use to handle debt collection phone calls without reve
 4. **End the Call:** If they continue to press, politely end the call.
 
 This script helps protect your identity and ensures that all communication is documented and traceable.
+
+
+## See Also
+- [[chatgpt/chatgpt_debt-collection-advice]]
+- [[chatgpt/chatgpt_tech-debt-agent-prompt]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]
+- [[chatgpt/chatgpt_creator-analytics-handling]]
+- [[chatgpt/chatgpt_data-collection-setup]]

@@ -58,3 +58,11 @@ On that Harley switch:
 ⚠️ If it feels stuck, don’t force it—make sure the handlebars aren’t turned hard against the fork lock, because that can bind the mechanism.  
 
 Do you want me to map out the exact order of positions around the dial so you know which way to turn for each?
+
+
+## See Also
+- [[chatgpt/chatgpt_add-dark-mode]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-prompt-for-dark-mode]]
+- [[chatgpt/chatgpt_dark-mode-change]]
+- [[chatgpt/chatgpt_dark-mode-linear-colors]]

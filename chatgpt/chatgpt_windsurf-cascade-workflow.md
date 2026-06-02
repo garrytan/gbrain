@@ -1852,3 +1852,11 @@ Determine the app URL, then use Puppeteer MCP to visually inspect and generate i
 ```
 
 If you want, I can also paste a **separate second Markdown prompt** that does only the **“take selected idea numbers → create Linear issues + subtasks”** step (clean split, as you mentioned).
+
+
+## See Also
+- [[chatgpt/chatgpt_improve-cascade-workflow]]
+- [[chatgpt/chatgpt_windsurf-cascade-guardrails]]
+- [[chatgpt/chatgpt_windsurf-cascade-tools-issue]]
+- [[chatgpt/chatgpt_windsurf-cascade-ui]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]

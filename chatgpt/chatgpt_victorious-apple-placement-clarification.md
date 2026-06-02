@@ -90,3 +90,11 @@ Here’s how it worked:
 - This let them **leverage Apple’s visual appeal** without it being formal product placement — no permission, no payment.
 
 So: **Nick paid for the products themselves**, but **there was no financial deal with Apple** either way.
+
+
+## See Also
+- [[chatgpt/chatgpt_victorious-beck-character]]
+- [[chatgpt/chatgpt_victorious-soundtrack-studios]]
+- [[chatgpt/chatgpt_ai-tools-for-background-placement]]
+- [[chatgpt/chatgpt_alexa-control-for-apple-tv]]
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]

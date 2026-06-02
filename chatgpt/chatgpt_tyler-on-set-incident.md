@@ -31,3 +31,11 @@ Tell this story concisely in a comment speaking to Tyler’s character but don�
 Here’s a concise, fact-based comment you can post:
 
 > I was once on set with Tyler. A wardrobe person handed him glasses just before makeup came for a touch-up. When the MUA asked him to take the glasses off, he turned and screamed at the wardrobe person—something like, “Then why the f*** did you put these on my face then?” Everyone on set looked uncomfortable. It was disrespectful and unnecessary. That moment really stuck with me.
+
+
+## See Also
+- [[chatgpt/chatgpt_janet-jackson-super-bowl-incident]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

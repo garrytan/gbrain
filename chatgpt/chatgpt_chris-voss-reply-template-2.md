@@ -38,3 +38,11 @@ This keeps it:
 - **Clear deadline** – must be out today.  
 - **Open-ended** – invites her to name a price first (“calibrated question”).  
 - **Collaborative tone** – no hard number yet, keeps leverage on your side.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-template]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-options]]
+- [[chatgpt/chatgpt_chris-voss-style-reply]]

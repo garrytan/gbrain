@@ -31,3 +31,11 @@ Mr. White, here’s a concise description of the flyer:
 - The text highlights that DEXA scans often measure body fat higher than some other methods but are considered the gold standard for body composition with about ±0.5% accuracy.  
 - The flyer encourages interpreting results in a “health hangout” session, with a link (https://www.bodyspec.com/health-hangout) to sign up and discuss the scan report in more detail.  
 - The flyer is branded with the BodySpec logo at the bottom.
+
+
+## See Also
+- [[chatgpt/chatgpt_brief-summary-script-request]]
+- [[chatgpt/chatgpt_inventory-summary-request]]
+- [[chatgpt/chatgpt_markdown-summary-request]]
+- [[chatgpt/chatgpt_segment-summary-request]]
+- [[chatgpt/chatgpt_summary-request]]

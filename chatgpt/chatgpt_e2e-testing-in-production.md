@@ -61,3 +61,11 @@ Keep it closer to synthetic monitoring than regression testing:
 - **A tiny set of production smoke/synthetic checks:** **good practice** *if engineered to be safe and non-destructive*.
 
 If you tell me what kind of site you’re talking about (SaaS app, e-commerce, fintech, etc.) and what your E2E tests actually do (read-only vs writes/transactions), I can recommend a safer setup and a minimal “prod smoke” checklist.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-in-music-production]]
+- [[chatgpt/chatgpt_aws-production-access-request]]
+- [[chatgpt/chatgpt_chrome-extension-production-url]]
+- [[chatgpt/chatgpt_ci-production-checks]]
+- [[chatgpt/chatgpt_luxury-travel-video-production]]

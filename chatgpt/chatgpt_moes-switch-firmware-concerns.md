@@ -149,3 +149,11 @@ Can you check the web to see if anyone has reported the switches going bad after
 ## Assistant
 
 I'm unable to browse the web, but it's not uncommon for electronic devices to encounter issues after firmware updates. If you're concerned, I'd recommend checking online forums, Moes' official website, or social media platforms for any reports of issues related to a recent firmware update. Would you like advice on what to do if you suspect a firmware issue, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_moes-smart-switch-connectivity-tips]]
+- [[chatgpt/chatgpt_moes-smart-switches-troubleshooting]]
+- [[chatgpt/chatgpt_arlo-pro4-firmware-update]]
+- [[chatgpt/chatgpt_cdj-firmware-updates]]
+- [[chatgpt/chatgpt_component-deduplication-concerns]]

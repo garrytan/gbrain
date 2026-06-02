@@ -71,3 +71,11 @@ Assume Postgres semantics unless stated otherwise.
 ---
 
 If you want, I can **tighten this further for CodeRabbit specifically** (e.g., biasing toward `describe_table_schema` over `run_sql`, or adding guardrails for migrations).
+
+
+## See Also
+- [[chatgpt/chatgpt_career-path-guidance]]
+- [[chatgpt/chatgpt_clerk-elements-replacement-guidance]]
+- [[chatgpt/chatgpt_component-naming-guidance]]
+- [[chatgpt/chatgpt_fundraising-strategy-guidance]]
+- [[chatgpt/chatgpt_holiday-drink-menu-guidance]]

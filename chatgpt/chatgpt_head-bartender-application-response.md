@@ -143,3 +143,11 @@ timwhitebartending@gmail.com
 ---
 
 Let me know if you want to add your Instagram or update the job details.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]
+- [[chatgpt/chatgpt_bartender-job-application-response]]
+- [[chatgpt/chatgpt_bartender-job-response]]
+- [[chatgpt/chatgpt_job-application-response]]

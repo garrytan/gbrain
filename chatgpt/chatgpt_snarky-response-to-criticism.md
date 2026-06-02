@@ -811,3 +811,11 @@ More clever
 ## Assistant
 
 "@benten4201 You don’t see it? Looks like it soared right over your head. 😏"
+
+
+## See Also
+- [[chatgpt/chatgpt_snarky-product-response]]
+- [[chatgpt/chatgpt_snarky-response-generated]]
+- [[chatgpt/chatgpt_snarky-response-help]]
+- [[chatgpt/chatgpt_pizza-order-snarky-support]]
+- [[chatgpt/chatgpt_snarky-andreesan-mocks-wedding]]

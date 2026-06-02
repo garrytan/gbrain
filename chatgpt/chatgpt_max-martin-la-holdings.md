@@ -79,3 +79,11 @@ In summary, **Max Martin’s Los Angeles real estate holdings** include two reno
 **Sources:** Real estate news reports and records – *The Real Deal* Los Angeles【61†L237-L244】【2†L148-L156】, American Luxury【26†L39-L47】, property transaction databases (Redfin, PropertyShark)【32†L1-L4】【62†L335-L343】, and legal filings – confirm these details of Max Martin’s LA real estate portfolio and recent activities. The information is current as of 2025 and based on reliable property records, permit filings, and press coverage.
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-holdings-name-suggestions]]
+- [[chatgpt/chatgpt_job-path-to-max-martin]]
+- [[chatgpt/chatgpt_max-martin-2024-2025-records]]
+- [[chatgpt/chatgpt_max-martin-construction-permits]]
+- [[chatgpt/chatgpt_max-martin-demo-search]]

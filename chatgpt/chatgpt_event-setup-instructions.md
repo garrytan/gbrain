@@ -34,3 +34,11 @@ It sounds like you're giving specific instructions for a setup or event. Here's 
 3. **Hide register on flex**: Conceal the cash register or payment area in a flexible or discreet way, possibly using a movable partition or strategic placement.
 
 Let me know if you need further adjustments or clarifications.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

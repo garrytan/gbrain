@@ -78,3 +78,11 @@ Jovie is the product I wish I had as an artist: an AI artist manager that turns 
 ## Coding agent upload
 
 Use a real raw transcript/export from Codex, Claude Code, or Cursor. Best choice: a session where the agent shipped a complete Jovie feature, fixed CI, migrated architecture, or resolved a hard production bug. Avoid uploading a generated summary.
+
+
+## See Also
+- [[chatgpt/chatgpt_mr-white-assistance-request]]
+- [[chatgpt/chatgpt_timeline-request-assistance-needed]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]

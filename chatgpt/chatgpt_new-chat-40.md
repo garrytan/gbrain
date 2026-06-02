@@ -44,3 +44,11 @@ Can I use the temporary driver's license to board a domestic flight?
 ## Assistant
 
 Yes, you can use a temporary driver's license to board a domestic flight as long as it's a valid, government-issued ID. The Transportation Security Administration (TSA) typically accepts temporary IDs if they have a photo, name, and other identifying information. However, it's a good idea to check with the TSA and your airline ahead of your travel date for their specific requirements. Also, it’s smart to carry secondary forms of identification just in case.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

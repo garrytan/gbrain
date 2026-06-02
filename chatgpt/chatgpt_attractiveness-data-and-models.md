@@ -108,3 +108,11 @@ That is the closest thing to a real evidence-based answer. citeturn681966s
 And your complaint about celebrity rankings is basically correct: celebrity lists are usually polluted by **fame, exposure, styling, and sampling bias**. A serious ranking would need **standardized photos**, **a broad non-celebrity sample**, **thousands of faces**, and **independent raters**. SCUT-FBP5500 is closer to that structure than magazine lists, but it still is not “all women ever.” citeturn588398view0turn538043search2
 
 I can also turn this into a **weighted scoring model** and show what traits would matter most in a practical ranking.
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]
+- [[chatgpt/chatgpt_cleaned-deduplicated-data]]

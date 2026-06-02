@@ -101,3 +101,11 @@ In the first example, the `return` statement is outside of the callback function
 In contrast, using a promise allows you to specify the code that should be executed when the `baseUrl` value is available, using the `then` method. This makes it easier to write asynchronous code that depends on the result of the `get` method, without having to worry about the order in which your code is executed.
 
 Additionally, using a promise allows you to handle errors that may occur during the execution of the `get` method, using the `catch` method. This makes it easier to write robust code that can handle unexpected errors and continue running without crashing.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

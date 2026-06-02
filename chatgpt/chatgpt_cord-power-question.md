@@ -38,3 +38,11 @@ A few caveats:
 - Never assume a cord is dead because a tester shows nothing. Verify with a known-working meter/tester and avoid touching any exposed metal conductors.
 
 If you mean a specific cord setup, the key question is: **which end is connected to the wall/power source?**
+
+
+## See Also
+- [[chatgpt/chatgpt_power-cord-reel-sale]]
+- [[chatgpt/chatgpt_bird-identification-question]]
+- [[chatgpt/chatgpt_cold-pool-surface-question]]
+- [[chatgpt/chatgpt_extract-question-and-answer]]
+- [[chatgpt/chatgpt_plate-number-question]]

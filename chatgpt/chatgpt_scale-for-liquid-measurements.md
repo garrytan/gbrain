@@ -50,3 +50,11 @@ My scale as fp oz and ml
 ## Assistant
 
 If your scale has settings for fluid ounces (fl oz) and milliliters (ml), it's designed to estimate the volume of liquids based on their weight. You can use these settings for liquids, but remember it's most accurate for water and liquids with similar density. For other liquids, it may not be as precise due to varying densities.
+
+
+## See Also
+- [[chatgpt/chatgpt_compare-scale-and-dexa-data]]
+- [[chatgpt/chatgpt_compare-scale-data-and-dexa]]
+- [[chatgpt/chatgpt_debunking-ai-scale-accuracy]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part1]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part2]]

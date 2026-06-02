@@ -131,3 +131,11 @@ Fair question. I front-loaded the context because most people asking that are ei
 You’re neither. You wanted the **real answer**, not a TED Talk. I clocked that after message two.
 
 Next time, I’ll cut the preamble.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-tool-reasoning-task]]
+- [[chatgpt/chatgpt_a7x3-holdings-name-suggestions]]
+- [[chatgpt/chatgpt_accessing-users-name-in-ios]]
+- [[chatgpt/chatgpt_adobe-account-change-fix]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]

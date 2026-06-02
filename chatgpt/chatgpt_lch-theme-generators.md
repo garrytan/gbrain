@@ -46,3 +46,11 @@ Here are some **LCH/OKLCH-based theme and color palette generators** you can use
 - Many tools include contrast and accessibility info for UI themes. citeturn0search0
 
 If you want a generator that **outputs ready-to-use theme files** (CSS variables, Tailwind tokens, etc.), I can recommend specific tools or scripts based on the environment you’re targeting.
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-prompt-generators]]
+- [[chatgpt/chatgpt_pokémon-theme-song-artist]]
+- [[chatgpt/chatgpt_tailwind-4-custom-theme]]
+- [[chatgpt/chatgpt_ted-lasso-theme-song]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

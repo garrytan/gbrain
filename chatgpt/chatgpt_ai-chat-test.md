@@ -26,3 +26,11 @@ testing for ai chat
 ## Assistant
 
 Hello Mr. White — I’m here and the AI chat is working. How can I assist you?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]
+- [[chatgpt/chatgpt_chat-interface-modal-discussion]]

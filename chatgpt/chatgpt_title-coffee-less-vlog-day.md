@@ -125,3 +125,11 @@ instead of the vlogger say Tim White
 ## Assistant
 
 Join Tim White on Day 9970 as he takes you on a journey through his day, which includes writing music, searching for coffee shops, eating delicious food, and braving the weather to fly a drone in Brooklyn. However, his night doesn't go as planned when his camera falls over and his drone crashes. Watch until the end to see the rough cut of his vlog.
+
+
+## See Also
+- [[chatgpt/chatgpt_bad-iced-coffee-vibes]]
+- [[chatgpt/chatgpt_coffee-ad-creation]]
+- [[chatgpt/chatgpt_coffee-and-coke-combo]]
+- [[chatgpt/chatgpt_coffee-art-plus-price]]
+- [[chatgpt/chatgpt_coffee-break-hotspots-la]]

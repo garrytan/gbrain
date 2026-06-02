@@ -158,3 +158,11 @@ A fair sentence:
 > “For one user action, I’m comparing allocated per-request serving cost. That includes model compute and real data-center overhead, while separating out generic cloud plumbing. If we want to debate industry-scale AI buildout, that’s a different category than pretending one text prompt is equivalent to a car trip.”
 
 That is the clean distinction. A lot of anti-AI environmental takes quietly jump from **per-prompt criticism** to **global data-center buildout criticism** without saying they changed accounting boundaries.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-song-uploads-daily]]
+- [[chatgpt/chatgpt_cliché-valentines-day-activities]]
+- [[chatgpt/chatgpt_daily-calorie-calculation-maintenance-vs-workout]]
+- [[chatgpt/chatgpt_daily-macronutrient-intake-estimate]]
+- [[chatgpt/chatgpt_daily-meal-summary]]

@@ -45,3 +45,11 @@ The best way to slice an orange for garnish depends on the look you want, but he
    - Zest is ideal for cocktails or to sprinkle over dishes.
 
 Each method gives a different aesthetic and flavor contribution to your dish or drink.
+
+
+## See Also
+- [[chatgpt/chatgpt_drink-garnish-orange-cherry]]
+- [[chatgpt/chatgpt_cinnamon-stick-garnish-tips]]
+- [[chatgpt/chatgpt_apple-vs-orange-cartoon]]
+- [[chatgpt/chatgpt_seville-orange-spritzer-recipe]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]

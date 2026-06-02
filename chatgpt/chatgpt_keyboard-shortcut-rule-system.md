@@ -32,3 +32,11 @@ I would generally do some research to figure out what are the world-class things
 I basically want you to go out and look at what are world-class applications that are keyboard-first and linear. Look at command center type apps, look at Power User apps, look at audio apps, look at Mac Native apps. Figure out how to do this. Figure out what shortcuts we should avoid because they're going to be overridden by the browser or the operating system is going to conflict with them or something like that. Figure out how we make it so that it's Mac-first, but if someone is on the PC, it's not a total pain in the ass. Try to avoid a shortcut that's easy on a Mac but really hard on a PC or something like that.
 Our customers are heavily Mac users. You make music, usually just on a Mac. It's your fucking audio driver bullshit and stuff, and all the audio applications just run better on Macs. They always have. Most studios are Mac-based.
 Help me build this as a rule, and then help me build self-healing for it too. Make a recommendation of how to do that to make it ever improving.
+
+
+## See Also
+- [[chatgpt/chatgpt_gym-essentials-shortcut-setup]]
+- [[chatgpt/chatgpt_airbnb-rule-violations]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_building-jovie-knowledge-system]]
+- [[chatgpt/chatgpt_bulk-cut-cycle-system]]

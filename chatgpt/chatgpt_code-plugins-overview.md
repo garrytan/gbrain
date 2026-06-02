@@ -51,3 +51,11 @@ In systems like **Claude Code**, plugins bundle slash commands, specialized agen
 ---
 
 In short, code plugins are modular add-ons that boost your editor or coding platform’s capabilities by packing in useful tools, utilities, and custom functionality you’d otherwise have to build yourself. citeturn0search2
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-vocal-plugins-overview]]
+- [[chatgpt/chatgpt_claude-code-desktop-overview]]
+- [[chatgpt/chatgpt_claude-code-overview-2]]
+- [[chatgpt/chatgpt_claude-code-overview]]
+- [[chatgpt/chatgpt_claude-code-teams-overview]]

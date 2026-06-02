@@ -119,3 +119,11 @@ Mr. White — set these **required status checks** for the **production** branch
 - `CodeQL Security Analysis / Analyze (actions)` fileciteturn0file5  
 
 Notes (YC-style minimalism): keep gates few but meaningful; the auto-merge and promotion flows already key off these exact CI names for prod PRs. fileciteturn0file0turn0file1
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-in-music-production]]
+- [[chatgpt/chatgpt_aws-production-access-request]]
+- [[chatgpt/chatgpt_chrome-extension-production-url]]
+- [[chatgpt/chatgpt_ci-vs-local-checks]]
+- [[chatgpt/chatgpt_e2e-testing-in-production]]

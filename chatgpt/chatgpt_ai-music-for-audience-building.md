@@ -75,3 +75,11 @@ Jovie’s role:
 **Jovie turns every track — human, AI-assisted, cover, remix, edit, or demo — into audience growth.**
 
 That is bigger than “smart links.” It is the operating system for turning music output into fan ownership.
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-audience-building]]
+- [[chatgpt/chatgpt_building-audience-with-ai]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_audience-and-releases-ux]]
+- [[chatgpt/chatgpt_audience-tab-roadmap-part1]]

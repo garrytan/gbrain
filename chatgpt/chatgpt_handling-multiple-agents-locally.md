@@ -265,3 +265,11 @@ For your situation, the pragmatic answer is:
 That keeps your **flow state for coding**, and compresses the entire **git/PR/admin overhead into one deterministic command** per branch.
 
 If you want, next step I can help you design a concrete `prepare-pr.sh` tailored to your actual stack (npm vs pnpm, Python vs TS, etc.) so you can just drop it in and point the agents at it.
+
+
+## See Also
+- [[chatgpt/chatgpt_running-multiple-codex-agents]]
+- [[chatgpt/chatgpt_e2e-smoke-test-locally]]
+- [[chatgpt/chatgpt_test-turborepo-locally]]
+- [[chatgpt/chatgpt_ci-for-multiple-prs]]
+- [[chatgpt/chatgpt_emitting-multiple-values]]

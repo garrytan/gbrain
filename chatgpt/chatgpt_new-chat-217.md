@@ -216,3 +216,11 @@ async function swipeRight(delay = 1000, numClicks = 20, totalSwipes = 5) {
 
               loopk: for (var k = 0; k < els[i].children[j].classList.length; k++) {
                 console.log(`Checking classList
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

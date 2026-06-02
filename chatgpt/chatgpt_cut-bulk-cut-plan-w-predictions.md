@@ -102,3 +102,11 @@ Based on the information and guidelines you've provided, here's a concise plan f
 Please note that the FFMI calculations and the exact body fat percentages on DEXA vs. scale are not included in this table due to the complexity of the calculations and the need for more specific data. The body fat percentages on the scale are assumed to follow the same trend as the DEXA for simplicity, but in reality, they may differ due to the discrepancy ratio you've provided.
 
 Would you like to proceed with creating a document for this plan?
+
+
+## See Also
+- [[chatgpt/chatgpt_bulk-and-cut-plan]]
+- [[chatgpt/chatgpt_mini-cut-bulk-cut-plan]]
+- [[chatgpt/chatgpt_plan-diet-phases-cut-bulk]]
+- [[chatgpt/chatgpt_plan-minicut-bulk-cut]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]

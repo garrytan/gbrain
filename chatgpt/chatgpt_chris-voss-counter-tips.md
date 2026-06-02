@@ -115,3 +115,11 @@ Here’s a Chris-Voss-style response you (or a bartender/server) can use when a 
 ---
 
 This keeps the vibe friendly, acknowledges the complaint, and steers the conversation toward options instead of a price fight—classic Voss “tactical empathy.”
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-5]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-6]]

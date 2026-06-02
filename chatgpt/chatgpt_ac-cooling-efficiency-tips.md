@@ -79,3 +79,11 @@ If it’s currently hot inside and the unit is weak:
 - Constantly changing it up/down usually makes comfort worse.
 
 If the system cannot reach 72°F after several hours, the issue is likely mechanical or airflow-related rather than thermostat strategy.
+
+
+## See Also
+- [[chatgpt/chatgpt_car-cooling-tips-cx-5]]
+- [[chatgpt/chatgpt_compare-efficiency-22-vs-25]]
+- [[chatgpt/chatgpt_louder-cars-and-efficiency]]
+- [[chatgpt/chatgpt_street-parking-efficiency]]
+- [[chatgpt/chatgpt_windsurf-credit-efficiency]]

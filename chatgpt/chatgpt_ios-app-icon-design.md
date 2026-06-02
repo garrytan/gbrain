@@ -220,3 +220,11 @@ Make it occupy more space to align with the iOS 26 standards
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_app-icon-design-prompt]]
+- [[chatgpt/chatgpt_improve-app-icon-design]]
+- [[chatgpt/chatgpt_16x16-icon-in-button]]
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_admin-workflow-design]]

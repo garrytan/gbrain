@@ -129,3 +129,11 @@ Note that this code assumes that you have already included the necessary CSS sty
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-tailwind-button-styles]]
+- [[chatgpt/chatgpt_style-sky-button-tailwind]]
+- [[chatgpt/chatgpt_tailwind-font-size-button]]
+- [[chatgpt/chatgpt_16x16-grid-tailwind]]
+- [[chatgpt/chatgpt_16x16-in-tailwind]]

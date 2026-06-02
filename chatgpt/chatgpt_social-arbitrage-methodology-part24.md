@@ -609,3 +609,11 @@ Tesla is **not permitted** to operate fare-paying autonomous robotaxi rides in C
 - **Recommendation:** Unless you have **non-consensus or proprietary intelligence** (e.g. pending CPUC filings or internal pilot data), it is prudent to **scale out exposure** tied to expectations of imminent autonomous robotaxi deployment.
 
 Let me know if you’d like this formatted for automated dashboards or contained alerts.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

@@ -65,3 +65,11 @@ Mr. White, if you mean **Justin Tranter** (hit pop songwriter; founder of Facet 
 - **No-attachment pitching**: short loglines, private links, stems on request.
 
 If by “Justin Trancher” you meant someone else, the same approach still works: **be brief, ask permission, follow up once**. And if you want, I’ll tighten your 20-sec intro and one-pager right now—paste your bio and 3 loglines.
+
+
+## See Also
+- [[chatgpt/chatgpt_justin-bieber-updates]]
+- [[chatgpt/chatgpt_justin-hailey-news-2025]]
+- [[chatgpt/chatgpt_justin-timberlake-co-wrote-selfish]]
+- [[chatgpt/chatgpt_vina-robles-vs-justin-cab]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]

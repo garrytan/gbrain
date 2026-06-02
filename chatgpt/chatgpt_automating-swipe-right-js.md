@@ -231,3 +231,11 @@ async function swipeRight(delay, numClicks) {
 ```
 
 The function now performs the swiping right, dismissing the popup if it exists, waiting 2 seconds, and repeating the loop 3 times. After each "like" click, the function calls the `handleMatchPopup()` function to dismiss the popup if it exists, and then waits 2 seconds using `sleep(2000)`.
+
+
+## See Also
+- [[chatgpt/chatgpt_js-function-swipe-right-2]]
+- [[chatgpt/chatgpt_js-function-swipe-right]]
+- [[chatgpt/chatgpt_js-swipe-right-function]]
+- [[chatgpt/chatgpt_swipe-right-function-analysis]]
+- [[chatgpt/chatgpt_swipe-right-javascript-function]]

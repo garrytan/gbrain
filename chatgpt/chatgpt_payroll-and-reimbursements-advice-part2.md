@@ -451,3 +451,11 @@ Later, with headcount, this gets much looser.
 - Protein shakes = don’t bother
 
 You’re not being moral here — you’re being **defensible**.
+
+
+## See Also
+- [[chatgpt/chatgpt_payroll-and-reimbursements-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part2]]

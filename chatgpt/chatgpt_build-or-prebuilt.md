@@ -68,3 +68,11 @@ It’s more likely a **custom-built product MVP** using standard building blocks
 | Core content methodology | Custom/productized | Based on ghostwriter systems, per their launch copy |
 
 My confidence: **75–85%**. The exact answer would require inspecting their frontend bundle/network calls or repo, but from the visible product and public launch info, this looks founder-built/product-built, not a turnkey template.
+
+
+## See Also
+- [[chatgpt/chatgpt_build-error-troubleshooting]]
+- [[chatgpt/chatgpt_build-for-jovie]]
+- [[chatgpt/chatgpt_build-laravel-vue-app-predict-metrics]]
+- [[chatgpt/chatgpt_build-out-wish-list-ideas]]
+- [[chatgpt/chatgpt_build-test-automation-tips]]

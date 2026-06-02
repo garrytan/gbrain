@@ -1484,3 +1484,11 @@ That’s where your leverage is.
 
 
 hermes seems to be pretty stupid on my pc. out of the box doesnt know its own capabilites. cant access the web. pretty dumb. cant fix its onw setup issues etc. i had to launch codex on it owns to set up hermes
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part5]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part6]]

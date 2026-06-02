@@ -94,3 +94,11 @@ I’d run hybrid workflows: e.g. prototyping and high-level planning via Windsur
 - Watch for emergent new players (especially in the “agentic coding” space) and flag disruptions.
 
 If you like, I can set up a rolling “AI coding tool scoreboard” for **your own stack / codebase** and send you a monthly summary. Want me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]
+- [[chatgpt/chatgpt_arlo-pro4-firmware-update]]
+- [[chatgpt/chatgpt_auto-close-modal-on-update]]

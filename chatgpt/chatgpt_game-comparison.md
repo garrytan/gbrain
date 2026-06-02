@@ -28,3 +28,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Hey there! So, Frogger actually came out way back in 1981, and Crossy Road is a lot more'}
 {'asset_pointer': 'sediment://file_0000000053b8622fb2d7aa1932986cb6', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-12T02:10:36.059130+00:00', 'format': 'wav', 'metadata': {'end': 4.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 216078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_after-inc-game-details]]
+- [[chatgpt/chatgpt_candy-game-explanation]]
+- [[chatgpt/chatgpt_ios-racing-game-hacks]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]

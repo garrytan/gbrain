@@ -73,3 +73,11 @@ Less good when:
 ---
 
 If you like, Mr White, I can pull up **sample term sheets**, **industry benchmarks** (size, investor count, typical valuation) for party rounds right now. Would you like that?
+
+
+## See Also
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]

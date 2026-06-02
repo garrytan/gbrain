@@ -46,3 +46,11 @@ You only *legally* need an “Accept-cookies” banner when either of these are 
 Because any public-facing site can get EU traffic and California regulators are suing over hidden trackers, most U.S. businesses just run a geo-aware consent banner by default. It’s cheap insurance.
 
 That’s it.
+
+
+## See Also
+- [[chatgpt/chatgpt_cookie-banner-requirements-2]]
+- [[chatgpt/chatgpt_cookie-banner-requirements-3]]
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]
+- [[chatgpt/chatgpt_deepseek-v4-requirements]]
+- [[chatgpt/chatgpt_id-requirements-domestic-flight]]

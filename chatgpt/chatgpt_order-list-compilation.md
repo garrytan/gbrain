@@ -1424,3 +1424,11 @@ Items removed due to missing quantity:
 10. Garnishes - Sour Patch Kids
 11. Garnishes - Watermelon Sour Patch
 12. Garnishes - Cinnamon Sticks
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-supply-order-list]]
+- [[chatgpt/chatgpt_inventory-list-compilation]]
+- [[chatgpt/chatgpt_liquor-order-list-started]]
+- [[chatgpt/chatgpt_liquor-order-list]]
+- [[chatgpt/chatgpt_order-list-for-the-week]]

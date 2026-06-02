@@ -45,3 +45,11 @@ Here’s a rough macro estimate for the **Salmon Arugula** dish based on typical
 - **Champagne vinaigrette (1 tbsp):** ~5g fat, ~50 kcal  
 
 Let me know if you'd like it adjusted for a cut or bulk.
+
+
+## See Also
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_annual-driving-estimate]]
+- [[chatgpt/chatgpt_baguette-macros-50g]]
+- [[chatgpt/chatgpt_bird-man-macros]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]

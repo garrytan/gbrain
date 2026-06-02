@@ -59,3 +59,11 @@ Here’s a concise checklist of **new items to add to the staff documentation** 
 - Never bring **Toast devices** into bathrooms.
 
 These points can be inserted as a new “Locker & Organization Policy” and “Cleanliness & Guest Etiquette” section in your operations manual.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-checklist-mixers-rimming-essentials]]
+- [[chatgpt/chatgpt_bar-setup-checklist]]
+- [[chatgpt/chatgpt_dishwasher-duties-checklist]]
+- [[chatgpt/chatgpt_foh-checklist-request-part1]]
+- [[chatgpt/chatgpt_foh-checklist-request-part2]]

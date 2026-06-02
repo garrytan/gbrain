@@ -59,3 +59,11 @@ Here’s what I found about the adapter for the INSE S9 (S9 Pro) cordless vacu
 
 **Bottom line for Mr. White:**
 The S9 Pro vacuum comes with a **31 V DC adapter**, suited for worldwide input (100–240 V AC). If you ever need a replacement, get the official 31 V model from INSE or an approved vendor.
+
+
+## See Also
+- [[chatgpt/chatgpt_cord-power-question]]
+- [[chatgpt/chatgpt_parking-meter-power-outage]]
+- [[chatgpt/chatgpt_power-cord-reel-sale]]
+- [[chatgpt/chatgpt_power-washer-price-negotiation]]
+- [[chatgpt/chatgpt_svg-power-button-design]]

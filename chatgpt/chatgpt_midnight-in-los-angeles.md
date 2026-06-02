@@ -34,3 +34,11 @@ He flipped the first page.
 The ink was still warm.
 
 And so his story began.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartending-jobs-in-los-angeles]]
+- [[chatgpt/chatgpt_idaho-to-los-angeles]]
+- [[chatgpt/chatgpt_izakaya-in-los-angeles]]
+- [[chatgpt/chatgpt_los-angeles-minimum-wage]]
+- [[chatgpt/chatgpt_los-angeles-neon-groove]]

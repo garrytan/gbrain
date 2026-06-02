@@ -58,3 +58,11 @@ If you want a brief setup guide or example prompts for using Claude with Linear,
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]
+- [[chatgpt/chatgpt_claude-linear-agent-explanation]]
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_linear-github-integration]]
+- [[chatgpt/chatgpt_sentry-linear-integration-issues]]

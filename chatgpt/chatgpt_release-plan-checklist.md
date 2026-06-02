@@ -78,3 +78,11 @@ can we turn this into a table/data set Explain each item with its source(s) and 
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-checklist-mixers-rimming-essentials]]
+- [[chatgpt/chatgpt_bar-setup-checklist]]
+- [[chatgpt/chatgpt_dishwasher-duties-checklist]]
+- [[chatgpt/chatgpt_documentation-update-checklist]]
+- [[chatgpt/chatgpt_foh-checklist-request-part1]]

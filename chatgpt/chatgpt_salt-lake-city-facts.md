@@ -32,3 +32,11 @@ Mr. White — yeah, there’s a real lake.
 - **The city name is literally from that lake.** The settlement was originally called **“Great Salt Lake City,”** and “Great” was dropped later. citeturn0search0turn0search3  
 - **The lake still exists today**, though it expands/contracts and has also been shrinking in recent years. citeturn0search4turn0news45  
 - There *are* other lakes in Utah, but **“Salt Lake City” specifically refers to the Great Salt Lake**, not multiple lakes. citeturn0search1turn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_hailey-bieber-deal-facts]]
+- [[chatgpt/chatgpt_slammed-with-tax-facts]]
+- [[chatgpt/chatgpt_taco-bell-nugget-facts]]
+- [[chatgpt/chatgpt_tasmanian-devil-facts]]

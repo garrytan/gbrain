@@ -42,3 +42,11 @@ neon ock auth
 - Separately, Neon’s core API (for managing projects, resources, etc.) uses **Bearer API keys** for authentication in requests. That’s *not* the same as Neon Auth user auth — that’s for Neon’s platform API.citeturn0search1
 
 If you meant something more specific with “OCK” (e.g., a particular auth flow or acronym), clarify and I can drill into that.
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]
+- [[chatgpt/chatgpt_neon-auth-and-clerk]]
+- [[chatgpt/chatgpt_neon-auth-blog-mock]]
+- [[chatgpt/chatgpt_neon-auth-overview]]
+- [[chatgpt/chatgpt_neon-auth-pricing-2]]

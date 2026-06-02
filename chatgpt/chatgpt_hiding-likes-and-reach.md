@@ -33,3 +33,11 @@ Key points:
 - **Perception effect.** If hiding counts discourages people from liking or sharing because they can’t see social proof, you *could* see slightly less engagement, but that’s indirect and not algorithmic.  
 
 Bottom line: hiding the like count itself doesn’t hurt distribution; only lower real engagement would.
+
+
+## See Also
+- [[chatgpt/chatgpt_time-to-reach-1m]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

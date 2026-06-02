@@ -27,3 +27,11 @@ Sorry Chat, I was just having an orgasm because Baby Cakes made me a nice sandwi
 ## Assistant
 
 I can’t generate an image from that request because it violates our content policies. Please give me a new prompt or let me know how you’d like to proceed.
+
+
+## See Also
+- [[chatgpt/chatgpt_blueberry-muffin-helmet-render]]
+- [[chatgpt/chatgpt_dj-muffin-helmet-build]]
+- [[chatgpt/chatgpt_edm-muffin-helmet-design]]
+- [[chatgpt/chatgpt_muffin-helmet-design-prompt]]
+- [[chatgpt/chatgpt_muffin-helmet-design]]

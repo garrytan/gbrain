@@ -26,3 +26,11 @@ I need a short and quick IG story caption. Shifty from crazy town died and I wan
 ## Assistant
 
 "RIP Shifty. I don't think you ever truly knew the impact you had on my life. You'll be missed."
+
+
+## See Also
+- [[chatgpt/chatgpt_cell-phone-impact-on-flight]]
+- [[chatgpt/chatgpt_cosmos-gravity-impact-analysis]]
+- [[chatgpt/chatgpt_credit-card-impact]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part1]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part2]]

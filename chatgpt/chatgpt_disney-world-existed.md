@@ -40,3 +40,11 @@ What did Disney World look like at that point in comparison to what it looks lik
 In 1973, two years after its opening, Walt Disney World Resort looked significantly different from how it does today. At that point, the resort consisted primarily of the Magic Kingdom, two hotels (the Contemporary Resort and the Polynesian Village Resort), and the Fort Wilderness Resort & Campground. The Magic Kingdom itself featured attractions that are still beloved today, such as Pirates of the Caribbean, the Haunted Mansion, and Space Mountain (which opened a bit later in 1975). The iconic Cinderella Castle was, as it is now, the centerpiece of the park.
 
 The layout of the park was simpler, with fewer lands and attractions compared to today. EPCOT, Disney's Hollywood Studios, and Disney's Animal Kingdom, which are major parts of the current Walt Disney
+
+
+## See Also
+- [[chatgpt/chatgpt_boy-meets-world-sets]]
+- [[chatgpt/chatgpt_designing-world-class-landing-page]]
+- [[chatgpt/chatgpt_disney-parks-sync-music]]
+- [[chatgpt/chatgpt_disney-plus-and-hulu-comparison]]
+- [[chatgpt/chatgpt_disney-plus-bug]]

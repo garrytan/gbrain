@@ -570,3 +570,11 @@ Mr. White, here are high-leverage Codex AI tasks to accelerate both your Swift i
     - Scan your Next.js code for repeated fetch patterns and generate a centralized data-fetching hook (e.g. `useBodyMetrics`).
 
 Feed these prompts into Codex and you’ll get boilerplate you can drop straight into your codebase—saving weeks of dev time.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-image-censorship-tools]]
+- [[chatgpt/chatgpt_artist-profile-image-creation]]
+- [[chatgpt/chatgpt_background-image-integration]]
+- [[chatgpt/chatgpt_character-of-musician-in-image]]
+- [[chatgpt/chatgpt_ci-pipeline-plan]]

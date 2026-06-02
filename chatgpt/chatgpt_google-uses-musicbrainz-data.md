@@ -38,3 +38,11 @@ does wikidata use music brainz
 ## Assistant
 
 Yes, Wikidata can incorporate data from MusicBrainz. Wikidata is a free and open knowledge base that acts as a central storage for the structured data of its Wikimedia sister projects like Wikipedia. It supports a wide variety of data, including information about music, such as recordings, artists, and albums. MusicBrainz identifiers are often used in Wikidata to link items to their corresponding MusicBrainz entries. This connection allows for a richer dataset in Wikidata, leveraging MusicBrainz's extensive database of music information. Contributors to Wikidata can add MusicBrainz identifiers to items to ensure accuracy and to provide a link between the two databases, facilitating data verification and enrichment.
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]

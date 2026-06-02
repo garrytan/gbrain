@@ -82,3 +82,11 @@ If you want, I can map this to a specific platform (Instagram, TikTok, X) or tra
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Yes, Mr. White? Just let me know what else you need.'}
 {'asset_pointer': 'sediment://file_00000000fe6471f899b9c19deffad986', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-06-12T02:51:35.551404+00:00', 'format': 'wav', 'metadata': {'end': 5.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 264078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_behance-link-in-bio]]
+- [[chatgpt/chatgpt_best-link-in-bio-tools]]
+- [[chatgpt/chatgpt_bio-link-explanation]]
+- [[chatgpt/chatgpt_bio-link-strategy-part1]]
+- [[chatgpt/chatgpt_bio-link-strategy-part2]]

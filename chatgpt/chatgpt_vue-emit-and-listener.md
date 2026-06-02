@@ -71,3 +71,11 @@ Now, when the child component's `@click` event is triggered, it will emit an `ar
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_convert-code-to-emit-event]]
+- [[chatgpt/chatgpt_modify-event-listener-condition]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

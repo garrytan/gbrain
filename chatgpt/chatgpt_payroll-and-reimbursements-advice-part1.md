@@ -1502,3 +1502,11 @@ If you want next, I can:
 
 
 But what about if we, like, bought, like, Nespresso pods and a Nespresso machine for the office?
+
+
+## See Also
+- [[chatgpt/chatgpt_payroll-and-reimbursements-advice-part2]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]

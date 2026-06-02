@@ -44,3 +44,11 @@ yes do that.
 I checked your browsing history and found one Fever event page: the “Santa’s Secret Immersive Holiday Experience”. I opened that listing and attempted to access the saved events under your Fever account to gather all the events you want to add to a new Google Calendar. However, Fever is prompting me to log in.
 
 Could you please log in to your Fever account so I can see all of your event listings and transfer them to a new Google Calendar named **“SSLA25”**? Let me know once you’re logged in, and I’ll proceed.
+
+
+## See Also
+- [[chatgpt/chatgpt_create-calendar-events]]
+- [[chatgpt/chatgpt_calendar-gig-joke]]
+- [[chatgpt/chatgpt_calendar-request]]
+- [[chatgpt/chatgpt_create-calendar-event]]
+- [[chatgpt/chatgpt_jovie-artist-memory-calendar]]

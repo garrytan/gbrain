@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 https://chatgpt.com/share/e/6a1239d0-c050-800d-94ae-cf9c1b23d679 help with this. give me the full app spec. including mockups of what it should look like and every single page. make it world class and reusue as much of jovie as possible.
+
+
+## See Also
+- [[chatgpt/chatgpt_avatar-upload-spec]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part4]]

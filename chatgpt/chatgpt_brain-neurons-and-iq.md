@@ -26,3 +26,11 @@ Do people with higher IQs have more neurons in their brain?
 ## Assistant
 
 Not necessarily. While there can be a correlation between IQ and certain brain characteristics, such as overall brain size or the density of certain brain regions, the relationship between IQ and the number of neurons in the brain is not straightforward. IQ is influenced by a combination of genetic factors, environmental factors, and various aspects of brain structure and function.
+
+
+## See Also
+- [[chatgpt/chatgpt_brain-dump-strategy]]
+- [[chatgpt/chatgpt_tiny-light-learning-brain]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

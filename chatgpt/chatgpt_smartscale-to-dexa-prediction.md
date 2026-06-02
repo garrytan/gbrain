@@ -294,3 +294,11 @@ Mr. White, assuming your lean mass stays at ≈167 lb × (1–0.135) ≈ 145 lb,
 - **12% BF** → 145 ÷ 0.88 ≈ **164 lb**  
 - **10% BF** → 145 ÷ 0.90 ≈ **161 lb**  
 - ** 8% BF** → 145 ÷ 0.92 ≈ **157 lb**
+
+
+## See Also
+- [[chatgpt/chatgpt_bf-prediction-based-on-dexa]]
+- [[chatgpt/chatgpt_severance-ending-prediction-part1]]
+- [[chatgpt/chatgpt_severance-ending-prediction-part2]]
+- [[chatgpt/chatgpt_weight-and-bf-prediction]]
+- [[chatgpt/chatgpt_analyze-and-compare-dexa]]

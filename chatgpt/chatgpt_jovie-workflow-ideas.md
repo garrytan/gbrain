@@ -831,3 +831,11 @@ The best near-term product is: **context-aware daily campaign execution for arti
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-desktop-mode-ideas]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]

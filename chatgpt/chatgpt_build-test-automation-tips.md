@@ -127,3 +127,11 @@ Use that as the *tail* of almost every “do some work” request.
 ---
 
 If you want, you can paste me a typical Windsurf / Claude prompt you’ve been using, and I’ll rewrite it into a stronger “do the work + build + fix-loop” version tailored to your exact stack.
+
+
+## See Also
+- [[chatgpt/chatgpt_overnight-test-automation]]
+- [[chatgpt/chatgpt_public-profile-test-automation]]
+- [[chatgpt/chatgpt_unit-test-speed-tips]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]

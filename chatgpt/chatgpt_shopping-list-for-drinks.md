@@ -60,3 +60,11 @@ Here's the updated list:
 - 1 case of Diet Coke
 - 1 case of cinnamon
 - Shakers for cinnamon
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-shopping-list]]
+- [[chatgpt/chatgpt_shopping-list-organization]]
+- [[chatgpt/chatgpt_shopping-list-summary]]
+- [[chatgpt/chatgpt_bartender-making-drinks-images]]
+- [[chatgpt/chatgpt_cliché-american-drinks]]

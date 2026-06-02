@@ -50,3 +50,11 @@ To find the cost per bag when there are 12 bags for 28 dollars, divide 28 dollar
 ## Assistant
 
 You are paying approximately $2.33 per bag.
+
+
+## See Also
+- [[chatgpt/chatgpt_ci-unit-test-strategy]]
+- [[chatgpt/chatgpt_fast-unit-test-rules]]
+- [[chatgpt/chatgpt_unit-test-optimization-prompt]]
+- [[chatgpt/chatgpt_unit-test-speed-tips]]
+- [[chatgpt/chatgpt_vue-js-unit-testing]]

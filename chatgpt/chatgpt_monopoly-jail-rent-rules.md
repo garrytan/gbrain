@@ -30,3 +30,11 @@ Yes, Mr. White — you still collect rent while you’re in Jail. Being in Jail 
 Two quick caveats:  
 - You **don’t** collect rent on **mortgaged** properties. citeturn0search0turn0search4  
 - Some groups use house rules that change Jail, but that’s not standard Monopoly. citeturn0search3
+
+
+## See Also
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]
+- [[chatgpt/chatgpt_bikini-rules-in-maldives]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]
+- [[chatgpt/chatgpt_enforcing-biome-rules]]

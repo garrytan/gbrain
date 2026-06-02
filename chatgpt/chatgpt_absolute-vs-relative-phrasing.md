@@ -35,3 +35,11 @@ In short:
 - **Absolute phrasing** (“Sept 10”) stays true no matter when it’s read.  
 
 Would you like me to give you a one-liner explanation you can use if someone asks why you phrase it that way?
+
+
+## See Also
+- [[chatgpt/chatgpt_relative-path-import-impact]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

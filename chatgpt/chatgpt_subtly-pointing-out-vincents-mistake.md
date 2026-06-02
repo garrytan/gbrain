@@ -44,3 +44,11 @@ Mr. White—here are tight, professional ways to signal “as suspected” and n
 - Creates a paper trail and invites a review/audit.
 
 If you want it sharper, swap “variances” → “recurring inconsistencies” and “sanity-check” → “audit.”
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

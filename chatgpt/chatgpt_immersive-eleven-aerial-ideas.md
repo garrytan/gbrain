@@ -218,3 +218,11 @@ Got it — you’re thinking in the **Stranger Things lane**: spooky, supernatur
 👉 If your show is leaning heavy on Eleven, the **core inspirations Stranger Things itself drew from** (Carrie, Firestarter, Akira, E.T., Poltergeist, The Goonies) might be the strongest material to echo.  
 
 Do you want me to sketch **direct set-piece gags** you could borrow from these (e.g., Carrie’s levitating objects, Poltergeist’s “stacked chairs,” Akira’s psychic meltdown) to drop into your number?
+
+
+## See Also
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_pnks-aerial-singing-technique]]
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]

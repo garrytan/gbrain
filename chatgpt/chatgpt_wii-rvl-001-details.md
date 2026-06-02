@@ -192,3 +192,11 @@ The TiVo adds **zero unique advantage**. At best it’s a redundant Android-TV s
 - **Only toss it** if it’s dead or missing the remote—otherwise list it as “tested, includes remote.”
 
 Bottom line: you already cover every ecosystem. The TiVo is pure clutter. Flip it for beer money and move on.
+
+
+## See Also
+- [[chatgpt/chatgpt_aaron-carter-voicemail-details]]
+- [[chatgpt/chatgpt_after-inc-game-details]]
+- [[chatgpt/chatgpt_apple-upgrade-program-details]]
+- [[chatgpt/chatgpt_beverly-center-details-2]]
+- [[chatgpt/chatgpt_beverly-center-details]]

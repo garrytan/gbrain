@@ -34,3 +34,11 @@ remove reoadmap too
 Mr. White — I’m in the Vercel DNS records for jov.ie and I see “changelog” as a CNAME to `cname.vercel-dns.com` and “roadmap” as a CNAME to `cname.canny.io`. I can delete those and look for/remove “support” if it exists.
 
 IMPORTANT: while navigating, Vercel showed a toast saying a DNS record was successfully deleted (`6lzzyv6jr4auo6degl56gaxndpgfsn7v._domainkey`). Do you want me to proceed with deleting `changelog`, `roadmap`, and `support` (and/or restore that deleted `_domainkey` record) before I make any further changes?
+
+
+## See Also
+- [[chatgpt/chatgpt_ded-body-removal-costs]]
+- [[chatgpt/chatgpt_echo-show-ad-removal]]
+- [[chatgpt/chatgpt_freckle-removal-options]]
+- [[chatgpt/chatgpt_hair-removal-options-compared]]
+- [[chatgpt/chatgpt_hair-removal-process-explained]]

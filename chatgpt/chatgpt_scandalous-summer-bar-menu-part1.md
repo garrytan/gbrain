@@ -537,3 +537,11 @@ the epstein drink will be a sea breeze type drink with sour patch kids on a toot
 
 
 That's not bad. Maybe let's hold that as an option, but give me a couple more.
+
+
+## See Also
+- [[chatgpt/chatgpt_scandalous-summer-bar-menu-part2]]
+- [[chatgpt/chatgpt_scandalous-summer-bar-menu-part3]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part1]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part1]]
+- [[chatgpt/chatgpt_luxurious-la-summer-nights]]

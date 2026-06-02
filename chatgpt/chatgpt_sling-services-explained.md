@@ -56,3 +56,11 @@ sling
 ---
 
 If you need more detailed information on either service or assistance with a specific aspect, feel free to ask. 
+
+
+## See Also
+- [[chatgpt/chatgpt_sling-vs-spreadsheet-scheduling]]
+- [[chatgpt/chatgpt_sync-sling-to-ical]]
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]

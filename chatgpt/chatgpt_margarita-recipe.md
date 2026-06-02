@@ -49,3 +49,11 @@ Enjoy your margarita!
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_margarita-recipe-guide]]
+- [[chatgpt/chatgpt_watermelon-margarita-recipe]]
+- [[chatgpt/chatgpt_adjusting-recipe-proportions]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-2]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-3]]

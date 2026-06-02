@@ -110,3 +110,11 @@ Optional stricter version:
 - **Rewrite any “not…but…” / “isn’t just…it’s…” phrasing into direct statements before sending.**
 
 If you want, I can also switch your personality preset to **Efficient** (best match for this style).
+
+
+## See Also
+- [[chatgpt/chatgpt_llm-contrastive-correction]]
+- [[chatgpt/chatgpt_cnn-outrage-framing-debate]]
+- [[chatgpt/chatgpt_framing-vs-pouring-concrete]]
+- [[chatgpt/chatgpt_yc-and-a16z-framing-part1]]
+- [[chatgpt/chatgpt_yc-and-a16z-framing-part2]]

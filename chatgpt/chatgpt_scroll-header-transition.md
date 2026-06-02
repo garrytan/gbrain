@@ -194,3 +194,11 @@ In this script:
 - The `transition-all duration-300 ease-in-out` classes ensure that the appearance changes smoothly.
 
 This approach uses Tailwind CSS for styling and Vue's reactivity system to dynamically apply styles based on the user's scroll position, combining both for a modern and efficient solution.
+
+
+## See Also
+- [[chatgpt/chatgpt_deadmau5-cdj-transition]]
+- [[chatgpt/chatgpt_header-component-review]]
+- [[chatgpt/chatgpt_header-disappearing-fix]]
+- [[chatgpt/chatgpt_header-improvement-suggestions]]
+- [[chatgpt/chatgpt_infinite-scroll-table]]

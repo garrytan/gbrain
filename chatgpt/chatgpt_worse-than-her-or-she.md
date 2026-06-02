@@ -36,3 +36,11 @@ Examples:
 If your sentence could be misread (e.g., *“I like him worse than her”*), rewrite:
 - *I like him less than she does.*  
 - *I like him less than I like her.*
+
+
+## See Also
+- [[chatgpt/chatgpt_30-heavier-than-145]]
+- [[chatgpt/chatgpt_more-than-vip-terms]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

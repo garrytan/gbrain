@@ -48,3 +48,11 @@ Got you, Mr. White. Here’s a simple one:
 > Hey, I’ve decided not to move forward with this sale. The drive’s no longer available. Best of luck finding another one.
 
 Short, clear, no drama.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]
+- [[chatgpt/chatgpt_chris-voss-reply-template]]
+- [[chatgpt/chatgpt_automated-reply-for-new-messages]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]

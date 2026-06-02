@@ -43,3 +43,11 @@ Giant distributors like **Driscoll’s**, **Naturipe**, or **California Giant** 
 Vegas is a desert. It’s too hot, dry, and soil-poor for large-scale strawberry farming. Importing is cheaper, faster, and way more reliable.
 
 TL;DR: You’re eating California sunshine trucked in on ice.
+
+
+## See Also
+- [[chatgpt/chatgpt_first-bar-ancient-origins]]
+- [[chatgpt/chatgpt_huston-hospitality-origins]]
+- [[chatgpt/chatgpt_dj-xs-las-vegas-path-part1]]
+- [[chatgpt/chatgpt_dj-xs-las-vegas-path-part2]]
+- [[chatgpt/chatgpt_foh-rules-for-vegas-show]]

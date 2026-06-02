@@ -29,3 +29,11 @@ Make it concise, um... Arguing to convince comment that won't piss off either po
 “Easy to assume motive, but we almost never know it.  
 Every time something tragic happens, both sides rush to claim it’s political when it’s just as often a single unstable person.  
 Jumping to conclusions only feeds the noise—better to wait for facts.”
+
+
+## See Also
+- [[chatgpt/chatgpt_arguing-against-selective-wage-hikes]]
+- [[chatgpt/chatgpt_arguing-to-convince-comment]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_slam-economic-assumptions]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

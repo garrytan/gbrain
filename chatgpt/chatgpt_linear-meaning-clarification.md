@@ -26,3 +26,11 @@ linear
 ## Assistant
 
 Do you mean **Linear**, the project management tool (like Jira/Trello, used for issues, sprints, and roadmaps), or are you referring to something else (like linear algebra, linear regression, or linear design systems)?
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-design-system-clarification]]
+- [[chatgpt/chatgpt_linear-meaning-explanation]]
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_clarification-of-ns-meaning]]
+- [[chatgpt/chatgpt_intecom-meaning-clarification]]

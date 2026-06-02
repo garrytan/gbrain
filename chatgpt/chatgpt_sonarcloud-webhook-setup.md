@@ -123,3 +123,11 @@ Also useful: **npm package `sonarqube-claude-tools`** for CLI interactions via C
 ---
 
 If you want a **specific CI example** (e.g., GitHub Actions YAML that sets up SonarCloud and webhook logic), just tell me your CI platform.
+
+
+## See Also
+- [[chatgpt/chatgpt_ci-webhook-automation]]
+- [[chatgpt/chatgpt_slack-webhook-github-actions]]
+- [[chatgpt/chatgpt_stripe-webhook]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]

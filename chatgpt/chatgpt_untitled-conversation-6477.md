@@ -28,3 +28,11 @@ Write this announcement more concisely and add emoji
 ## Assistant
 
 Introducing our newest feature: easily add social profile links to your Jovie CRM lists! Simply right click and select the appropriate list from the dropdown menu. Perfect for founders, sales teams, and more. 🚀 Try it out now!
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

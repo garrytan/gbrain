@@ -364,3 +364,11 @@ export default {
 In the example above, the `ReusableMenuItem` component is imported and used in place of the original `<MenuItem>`. The necessary props are passed to customize the label, count, active state, and the click event handler.
 
 By creating this reusable component, you can eliminate code duplication and easily customize the menu items throughout your application.
+
+
+## See Also
+- [[chatgpt/chatgpt_refactoring-contact-menu]]
+- [[chatgpt/chatgpt_adjust-off-screen-menu]]
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_close-menu-on-click]]
+- [[chatgpt/chatgpt_create-onlyfans-tip-menu]]

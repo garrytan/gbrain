@@ -36,3 +36,11 @@ Here you go, Mr. White—short and Voss-ish:
 
 **Option 3 (extra clear on condition):**  
 > Thanks for the offer, Robert. I’m good with $20 on the condition it’s cash and picked up today or tomorrow. How soon can you come by?
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

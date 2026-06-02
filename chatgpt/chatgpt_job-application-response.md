@@ -155,3 +155,11 @@ With 9 + years bartending, expert POS/cash-drawer/printer skills, Fri/Sat 5 PMâ€
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]
+- [[chatgpt/chatgpt_bartender-job-application-response]]
+- [[chatgpt/chatgpt_head-bartender-application-response]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

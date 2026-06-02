@@ -45,3 +45,11 @@ This uses the standard CSS `border-radius` property to control how round corners
 If you meant **Linear the app’s UI**, typical modern UI systems use small consistent radii like `4px` and `8px`, but Linear hasn’t publicly shared an exact token list. Designers often choose values based on component size (e.g., small elements get smaller radii). citeturn1search2
 
 Want me to give you a practical border-radius scale (e.g., px recommendations) for use in your own projects?
+
+
+## See Also
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_automation-in-linear]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]

@@ -43,3 +43,11 @@ In debate and argumentation, "red team," "steel man," and "straw man" represent 
    - **Consequence:** This tactic is intellectually dishonest and undermines productive debate. It often leads to misunderstandings, as it does not engage with the true substance of the opposing viewpoint.
 
 Understanding these concepts can significantly improve the quality of debates and discussions by promoting fair, thorough, and honest engagement with different perspectives.
+
+
+## See Also
+- [[chatgpt/chatgpt_attractiveness-and-objectivity-debate]]
+- [[chatgpt/chatgpt_calories-vs-chemicals-debate]]
+- [[chatgpt/chatgpt_charlie-jordan-dj-debate]]
+- [[chatgpt/chatgpt_cnn-outrage-framing-debate]]
+- [[chatgpt/chatgpt_data-center-debate]]

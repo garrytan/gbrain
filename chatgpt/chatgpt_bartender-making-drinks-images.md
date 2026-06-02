@@ -26,3 +26,11 @@ generate an image of a bartender making drinsk
 ## Assistant
 
 Here are the images of the bartender making drinks.
+
+
+## See Also
+- [[chatgpt/chatgpt_cliché-american-drinks]]
+- [[chatgpt/chatgpt_shopping-list-for-drinks]]
+- [[chatgpt/chatgpt_zero-cal-drinks-best-choices]]
+- [[chatgpt/chatgpt_body-fat-percentage-images]]
+- [[chatgpt/chatgpt_download-spotify-artist-images]]

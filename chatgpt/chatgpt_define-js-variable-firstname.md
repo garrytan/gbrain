@@ -55,3 +55,11 @@ chrome.tabs.sendMessage(tabs[0].id, { type: "sendWelcomeMessage", welcomeMessage
 ```
 
 In this example, the value of the `firstName` variable is concatenated with the rest of the message string, resulting in a personalized message being sent to the selected tab.
+
+
+## See Also
+- [[chatgpt/chatgpt_define-study-standards]]
+- [[chatgpt/chatgpt_define-web-crawler-script]]
+- [[chatgpt/chatgpt_inter-variable]]
+- [[chatgpt/chatgpt_store-json-in-variable]]
+- [[chatgpt/chatgpt_variable-change-explanation]]

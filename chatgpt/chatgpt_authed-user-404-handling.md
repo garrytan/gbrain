@@ -53,3 +53,11 @@ If the user isn’t logged in → **login**.
 If logged in but lacks access → **403**.
 
 If you want, I can give you a clean decision tree or copy for the authed 404 page.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authenticated-user-404-ux]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part2]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part1]]

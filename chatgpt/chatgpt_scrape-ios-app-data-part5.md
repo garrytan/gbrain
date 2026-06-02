@@ -676,3 +676,11 @@ This script defines `new_prefixes` within the global scope, so it's available wh
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_scrape-ios-app-data-part1]]
+- [[chatgpt/chatgpt_scrape-ios-app-data-part2]]
+- [[chatgpt/chatgpt_scrape-ios-app-data-part3]]
+- [[chatgpt/chatgpt_scrape-ios-app-data-part4]]
+- [[chatgpt/chatgpt_scrape-ios-app-data-part6]]

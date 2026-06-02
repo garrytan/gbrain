@@ -406,3 +406,11 @@ Here’s the refined script:
 2. **Explicit pause and load waits**: Ensuring the page fully loads before performing actions.
 
 This should now provide clear logging output to help identify any issues and ensure the script moves to the next profile correctly.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part1]]
+- [[chatgpt/chatgpt_create-account-page-setup-part2]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part2]]
+- [[chatgpt/chatgpt_landing-page-redesign-part2]]
+- [[chatgpt/chatgpt_login-page-flutter-code-part2]]

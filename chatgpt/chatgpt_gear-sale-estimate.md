@@ -320,3 +320,11 @@ Reject anything under **$1,100** unless rent timing forces it.
 Bring the body, lens, battery, charger, caps, hood, boxes if you have them, and ID. Clean the glass and body. Know the shutter count if possible. Make the kit look like “well-kept creator gear,” not “emergency liquidation.”
 
 Given the Jovie context, I’d sell the **camera/lens before the SM7B**. The mic bundle is easy to move later, and the camera/lens combo is the fastest way to create real breathing room without grinding through five small sales.
+
+
+## See Also
+- [[chatgpt/chatgpt_gear-identification-and-sale]]
+- [[chatgpt/chatgpt_50-off-creatine-sale]]
+- [[chatgpt/chatgpt_estate-sale-and-inheritance-tax]]
+- [[chatgpt/chatgpt_estate-sale-listing-draft]]
+- [[chatgpt/chatgpt_estate-sale-listing]]

@@ -58,3 +58,11 @@ And **entity["software", "Clerk MCP Server", 0]** is a product by en
 - You’ll need to implement the server or host it (Clerk’s toolkit gives you the package) and integrate with your auth/data infrastructure.
 
 If you like, I can pull up *step-by-step code examples* for how to set up Clerk MCP in a Next.js app or an Express app (for your scenario). Would you like that, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-account-management-features]]
+- [[chatgpt/chatgpt_clerk-allowlist-feature]]
+- [[chatgpt/chatgpt_clerk-apple-integration-setup]]
+- [[chatgpt/chatgpt_clerk-apple-sign-in-issue]]
+- [[chatgpt/chatgpt_clerk-auth-vercel-preview]]

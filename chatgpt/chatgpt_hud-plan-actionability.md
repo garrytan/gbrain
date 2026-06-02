@@ -297,3 +297,11 @@ For pre-launch hardening, the priority order is:
 7. Hermes summary
 
 That gets the HUD out of passive status mode and into the actual Jovie operating system.
+
+
+## See Also
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]

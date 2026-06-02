@@ -46,3 +46,11 @@ Now we can calculate the time it will take to backup 20,000GB (20TB):
 Time = 20,000GB / 0.024 GB/s = 833,333 seconds
 
 Therefore, it will take approximately 833,333 seconds to backup 20TB at the same backup speed as the initial backup, which is equivalent to approximately 9.6 days. Note that this is an estimate and the actual backup time may vary depending on various factors such as the speed of the storage medium, the transfer rate of the connection, etc.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-progress-over-time]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_dns-propagation-time]]
+- [[chatgpt/chatgpt_domestic-wire-transfer-time]]

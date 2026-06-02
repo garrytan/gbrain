@@ -124,3 +124,11 @@ if (carousel.length > 0) {
 ```
 
 This code includes error handling for cases where the carousel elements and the elements found using XPath are not found on the page. It also uses `textContent` instead of `innerText` to get the text content of elements, and the text content is cast to an integer before being compared to 4.
+
+
+## See Also
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]
+- [[chatgpt/chatgpt_ai-agent-automation-part2]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]
+- [[chatgpt/chatgpt_app-automation-for-youtube]]

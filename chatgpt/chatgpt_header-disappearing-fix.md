@@ -303,3 +303,11 @@ These adjustments should ensure that the header remains visible as you scroll do
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_header-component-review]]
+- [[chatgpt/chatgpt_header-improvement-suggestions]]
+- [[chatgpt/chatgpt_refactor-kode-navigasi-header]]
+- [[chatgpt/chatgpt_scroll-header-transition]]
+- [[chatgpt/chatgpt_tailwind-header-extraction]]

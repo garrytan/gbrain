@@ -40,3 +40,11 @@ input {
 ```
 
 In this example, the input element will have a minimum width of 100 pixels, a maximum width of 500 pixels, and will fill the width of its parent container. As the amount of text inside the input element increases, the width of the element will expand up to the maximum width specified.
+
+
+## See Also
+- [[chatgpt/chatgpt_65-inch-tv-width]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_chat-input-specs]]
+- [[chatgpt/chatgpt_extract-input-element-to-component]]

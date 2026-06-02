@@ -49,3 +49,11 @@ A neighbor smelled gas and the gas company is actively checking doors and stairw
 From outside, call **SoCalGas emergency: 1-800-427-2200** or **911** if you smell gas strongly, hear hissing, feel dizzy/headachy/nauseous, or the situation seems unmanaged. SoCalGas lists that emergency number for suspected natural gas leaks. citeturn758218search1
 
 The tools are likely gas-detection meters. Their presence is reassuring in the sense that the right people are checking, but it does **not** mean you should wait indoors while they locate the source.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-claudemd-leak]]
+- [[chatgpt/chatgpt_gas-leak-emergency-steps]]
+- [[chatgpt/chatgpt_light-leak-overlays-photoshop]]
+- [[chatgpt/chatgpt_password-leak-check]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

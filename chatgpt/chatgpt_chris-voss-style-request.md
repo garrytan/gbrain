@@ -29,3 +29,11 @@ I have the bandwidth for one more message before he tells me what the thing is a
 Mr. White, send:
 
 > Appreciate you reaching out. Sounds potentially relevant. Would it be unreasonable to send the full picture in one shot: what it is, how it works, who it’s for, proof/results, and pricing? I’m probably only good for one more message before my attention span quietly leaves the group chat.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-style-reply]]
+- [[chatgpt/chatgpt_polish-response-chris-voss-style]]
+- [[chatgpt/chatgpt_chris-voss-counter-tips]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]

@@ -75,3 +75,11 @@ If you want, I can give you a **drop-in Jest + Next.js + Vercel CI config** or a
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_nextjs-cold-starts-vercel]]
+- [[chatgpt/chatgpt_nextjs-image-upload-vercel]]
+- [[chatgpt/chatgpt_vercel-nextjs-vs-laravel-vapor]]
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]

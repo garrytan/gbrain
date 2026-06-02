@@ -48,3 +48,11 @@ Assuming you left at **10 PM**, that’s **4.5 hours** of work.
 
 **Total pay:**  
 $75.51 + $37.50 = **$113.01**
+
+
+## See Also
+- [[chatgpt/chatgpt_percentage-calculation-example]]
+- [[chatgpt/chatgpt_bodyspec-json-example]]
+- [[chatgpt/chatgpt_chris-voss-response-example]]
+- [[chatgpt/chatgpt_email-response-example]]
+- [[chatgpt/chatgpt_marketplace-listing-example]]

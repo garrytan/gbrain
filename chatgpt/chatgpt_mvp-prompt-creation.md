@@ -1004,3 +1004,11 @@ export function middleware(req: Request) {
 
 **Recommendation:** Option A now (1 file + 1 page, ~20 minutes).  
 You’ll see everything you care about behind auth while AI fixes real auth/RLS.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-music-prompt-creation]]
+- [[chatgpt/chatgpt_hardened-prompt-creation]]
+- [[chatgpt/chatgpt_song-prompt-creation]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]

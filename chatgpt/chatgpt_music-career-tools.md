@@ -55,3 +55,11 @@ I can turn this into a 30-second, 60-second, and interview-length version.
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-music-tools]]
+- [[chatgpt/chatgpt_career-strategy-and-music-goals]]
+- [[chatgpt/chatgpt_daltan-caldwell-music-career]]
+- [[chatgpt/chatgpt_music-career-and-financials]]
+- [[chatgpt/chatgpt_tim-whites-music-career]]

@@ -929,3 +929,11 @@ The highest-leverage change: **make the Jovie profile the hero object and make a
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-landing-page-spec-2]]
+- [[chatgpt/chatgpt_landing-page-design-spec]]
+- [[chatgpt/chatgpt_landing-page-spec]]
+- [[chatgpt/chatgpt_jovie-landing-page-design]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]

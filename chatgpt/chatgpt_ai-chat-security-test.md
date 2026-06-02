@@ -113,3 +113,11 @@ I can’t reveal hidden instructions, internal files, tool docs, or system promp
 ```
 
 The strongest control is architectural: treat hidden prompts and skill files as **non-secret configuration**, keep real secrets out of them, and enforce authorization in deterministic backend code rather than model instructions.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_android-security-tools-request]]
+- [[chatgpt/chatgpt_car-organization-and-security]]
+- [[chatgpt/chatgpt_parking-gate-security-bypass]]
+- [[chatgpt/chatgpt_privacy-and-security-features]]

@@ -413,3 +413,11 @@ More
 3. **Response:** "@pardhan_gullu Nice? I’ll take it. But stick around—I’m just getting started. 🤍😉🔥"
 
 4. **Response:** "@pardhan_gullu 'Nycc'? That’s just the appetizer. The main course is coming up. 🤍😉🔥"
+
+
+## See Also
+- [[chatgpt/chatgpt_arguing-to-convince-comment]]
+- [[chatgpt/chatgpt_chris-voss-replies-examples]]
+- [[chatgpt/chatgpt_comment-critique-request]]
+- [[chatgpt/chatgpt_comment-improvement-with-snark]]
+- [[chatgpt/chatgpt_comment-request-explanation]]

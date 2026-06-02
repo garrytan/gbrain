@@ -95,3 +95,11 @@ If you want, tell me what actions each row triggers (editable vs read-only, wher
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_profile-design-improvements]]
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-page-design]]
+- [[chatgpt/chatgpt_logo-design-improvements]]

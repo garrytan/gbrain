@@ -156,3 +156,11 @@ Apple fully supports this split. Zero downside.
 **No:** personal Apple ID for company assets
 
 If you want, I can give you a **5-minute checklist** to set this up cleanly without overengineering.
+
+
+## See Also
+- [[chatgpt/chatgpt_car-purchase-process-steps]]
+- [[chatgpt/chatgpt_charger-comparison-m2-macbook-air]]
+- [[chatgpt/chatgpt_cheapest-macbook-pro-config]]
+- [[chatgpt/chatgpt_cx-5-purchase-guide]]
+- [[chatgpt/chatgpt_hermes-on-macbook-air]]

@@ -1221,3 +1221,11 @@ The next step is separating user, demo surface, and payer: price against replace
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_rc-deck-design-principles-part2]]
+- [[chatgpt/chatgpt_best-design-deck-tools]]
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part1]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part1]]
+- [[chatgpt/chatgpt_ingest-claim-system-design-part1]]

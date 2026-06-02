@@ -40,3 +40,11 @@ I found several resources where Dr. Mike Isratel discusses topics related to sau
 3. Another YouTube video on the channel "Revive Stronger" where Dr. Isratel answers various questions. It's possible that topics like saunas or heat exposure are covered here.
 
 You can check these sources for the specific content you're looking for.
+
+
+## See Also
+- [[chatgpt/chatgpt_mike-isratel-creatine-comparison]]
+- [[chatgpt/chatgpt_mike-isratel-on-alcohol]]
+- [[chatgpt/chatgpt_fitness-experts-evidence-based-videos]]
+- [[chatgpt/chatgpt_ideas-for-mens-fashion-videos]]
+- [[chatgpt/chatgpt_vue-component-for-vimeo-videos]]

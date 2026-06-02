@@ -56,3 +56,11 @@ And balamory?
 The line "What's the story, Balamory?" is a reference to a children's television show called "Balamory," which was popular in the UK. The show was set in a colorful fictional island community called Balamory, and each episode began with the theme song that included the line, "What's the story in Balamory, wouldn't you like to know?" 
 
 In "Ted Lasso," this phrase is likely adapted to fit Ted's style of using playful and whimsical references to various aspects of culture, including children's shows. It's another example of how the character often uses familiar phrases but gives them a unique twist.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

@@ -26,3 +26,11 @@ tags: [chatgpt, import]
 ## Assistant
 
 The image you've uploaded indicates a "CALIBRATION ERROR" on a digital device, likely a smart lock or similar IoT device. It explains that the error occurred because the locked position was too close to the unlocked position and advises to restart calibration, ensuring each step is performed correctly. To resolve this, you should follow the instructions and attempt to recalibrate the device, making sure there's a clear distinction between the locked and unlocked positions. If the problem persists, consulting the device's manual or contacting customer support would be the next steps.
+
+
+## See Also
+- [[chatgpt/chatgpt_device-description-and-wiring]]
+- [[chatgpt/chatgpt_resolve-device-info-plus-module-error]]
+- [[chatgpt/chatgpt_skulpt-device-accuracy]]
+- [[chatgpt/chatgpt_switching-wi-fi-without-restart]]
+- [[chatgpt/chatgpt_tirzepatide-restart-after-break]]

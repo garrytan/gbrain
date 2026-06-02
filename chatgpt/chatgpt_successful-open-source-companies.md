@@ -123,3 +123,11 @@ Only if:
 * **You can’t articulate monetization.** YC is happy to fund open-source *companies*; they won’t fund open-source *charities*.
 
 If you have differentiated UX, network data, and a clear Cloud upsell, open-sourcing LogYourBody is aligned with YC’s playbook — just remember the revenue engine has to scale faster than the GitHub stars.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-and-open-source]]
+- [[chatgpt/chatgpt_open-source-plan]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_html-source-code-request]]
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]

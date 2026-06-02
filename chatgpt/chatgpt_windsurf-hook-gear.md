@@ -60,3 +60,11 @@ In windsurfing, a *hook* is the metal piece on your **harness spreader bar** tha
 - While many marine hooks like carabiners can work, dedicated **windsurf harness hooks** typically offer better ergonomics and durability in saltwater.
 
 If you want recommendations matched to your harness type (waist vs seat) or size preferences, let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-continue-in-windsurf]]
+- [[chatgpt/chatgpt_cheap-camera-gear-search]]
+- [[chatgpt/chatgpt_devin-vs-windsurf]]
+- [[chatgpt/chatgpt_gear-identification-and-sale]]
+- [[chatgpt/chatgpt_gear-listing-assistance]]

@@ -89,3 +89,11 @@ For you at 6'4", an **FFMI of 23 at 8% body fat** works out to roughly:
 - **Fat mass:** ~**16 lb**
 
 So basically: **around 205 at 8%** puts you at an FFMI of about **23**, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

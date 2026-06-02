@@ -199,3 +199,11 @@ You’re pointing out that **his stated hypothesis and his training advice are m
 If you want, I can:
 - Lay out what *true* minimum-effective-dose hypertrophy looks like  
 - Or show how to make deadlifts hypertrophy-productive **without** excess fatigue
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]

@@ -281,3 +281,11 @@ jobs:
 ---
 
 Put these in place and “shadow components” can’t slip through—AI will be forced to refactor the canonical file, tests will catch rewires, and CI will block duplicates.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-feedback-prompt]]
+- [[chatgpt/chatgpt_app-ui-feedback]]
+- [[chatgpt/chatgpt_application-revision-feedback]]
+- [[chatgpt/chatgpt_buyer-feedback-visibility]]
+- [[chatgpt/chatgpt_design-feedback-improvement]]

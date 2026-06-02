@@ -270,3 +270,11 @@ That will make the rail feel more like an operational control panel instead of a
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_design-feedback-improvement]]
+- [[chatgpt/chatgpt_design-improvement-guidelines]]
+- [[chatgpt/chatgpt_design-improvement-mockup]]
+- [[chatgpt/chatgpt_design-improvement-prompt]]
+- [[chatgpt/chatgpt_design-improvement-suggestions-2]]

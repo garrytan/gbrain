@@ -1205,3 +1205,11 @@ This should set the button backgrounds to white with dark borders and text, prov
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_refactor-vue-component-with-nuxt-part1]]
+- [[chatgpt/chatgpt_refactor-vue-component-with-nuxt-part10]]
+- [[chatgpt/chatgpt_refactor-vue-component-with-nuxt-part11]]
+- [[chatgpt/chatgpt_refactor-vue-component-with-nuxt-part2]]
+- [[chatgpt/chatgpt_refactor-vue-component-with-nuxt-part3]]

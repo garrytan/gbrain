@@ -82,3 +82,11 @@ Mr. White, set **Neon’s _default_ branch to production (main)**, not preview.
   - On merge to `main`, run on `main` (prod). If you branch-per-PR, delete the temp branch after deploy.
 
 **Net:** Keep Neon’s default = **prod** and route each Vercel/CI context to the correct Neon branch via env vars.
+
+
+## See Also
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_github-actions-ci-pricing-2]]
+- [[chatgpt/chatgpt_github-actions-ci-pricing]]
+- [[chatgpt/chatgpt_openai-github-actions]]
+- [[chatgpt/chatgpt_slack-webhook-github-actions]]

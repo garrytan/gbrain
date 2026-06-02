@@ -298,3 +298,11 @@ If you want, I can sketch a **folder structure + patterns** that keep this clean
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_add-emoji-prop]]
+- [[chatgpt/chatgpt_add-path-prop]]
+- [[chatgpt/chatgpt_add-prop-to-vue-component]]
+- [[chatgpt/chatgpt_add-prop-to-vuejs-component]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]

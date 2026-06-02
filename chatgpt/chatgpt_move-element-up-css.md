@@ -50,3 +50,11 @@ Note: This code assumes that the element with the class "bubble-icon" is already
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-input-element-to-component]]
+- [[chatgpt/chatgpt_focus-element-in-vuejs]]
+- [[chatgpt/chatgpt_html-contact-element-description]]
+- [[chatgpt/chatgpt_html-div-element-creation]]
+- [[chatgpt/chatgpt_js-html-element-access]]

@@ -113,3 +113,11 @@ If you want, tell me which change you made (npm→pnpm? added `packageManager`? 
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_david-finch-project-update]]
+- [[chatgpt/chatgpt_fastlane-project-automation]]
+- [[chatgpt/chatgpt_install-nextjs-into-existing-project]]
+- [[chatgpt/chatgpt_project-cancellation-response]]

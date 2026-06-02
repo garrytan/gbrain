@@ -798,3 +798,11 @@ The calculated FFMI of approximately 0.0019 seems incorrect. This suggests an is
 With the corrected height of 193 cm, the recalculated FFMI for a user weighing 80.38 kg and with a body fat percentage of 11% is approximately 19.21. 
 
 This value seems more reasonable and aligns with typical FFMI calculations. Please ensure the height and weight units are consistent and correct when using the function in your application.
+
+
+## See Also
+- [[chatgpt/chatgpt_iphone-upgrade-credit-score]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_add-lean-body-mass]]

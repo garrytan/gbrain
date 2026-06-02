@@ -32,3 +32,11 @@ we need to harden audio support as well.
 
 and we need more context so the chat is smarter.
 help me think about this in a plan where we ship small prs frequently to move towards all of this being rock solid.
+
+
+## See Also
+- [[chatgpt/chatgpt_merch-integration-strategy]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]

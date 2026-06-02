@@ -30,3 +30,11 @@ Mr. White, use this:
 > Accountability is fair, but “percentage of total revenue” is a bad standard. Penalties should be tied to consumer harm, unjust enrichment, and whether the company knowingly misled buyers. Total revenue includes unrelated products, services, and sales that had nothing to do with Siri.  
 >  
 > Also, this is a class-action settlement, not a regulator “fine.” The point is compensation for affected buyers, not a universal punishment mechanism. If Apple materially advertised a feature it didn’t ship, the remedy should be refunds, damages, and stronger disclosure rules tied to the actual iPhone sales affected. Revenue-based penalties sound satisfying, but they’re a blunt instrument.
+
+
+## See Also
+- [[chatgpt/chatgpt_boss-response-request]]
+- [[chatgpt/chatgpt_quick-response-request]]
+- [[chatgpt/chatgpt_response-creation-request]]
+- [[chatgpt/chatgpt_stop-payment-request-response]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

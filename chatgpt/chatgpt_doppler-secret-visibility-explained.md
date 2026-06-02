@@ -37,3 +37,11 @@ If your context is **GitHub Actions**:
 - If you use **`doppler run`**, you’re responsible for making sure nothing prints secrets; GitHub recommends masking anything sensitive that isn’t already a GitHub secret (via `::add-mask::`). citeturn2view0turn0search3
 
 So: **it only “matters” if you want to prevent humans from ever viewing certain values in Doppler’s UI and/or restrict retrieval to service tokens**. Otherwise, leave them Masked and focus on least-privilege access + log masking.
+
+
+## See Also
+- [[chatgpt/chatgpt_doppler-effect-explained]]
+- [[chatgpt/chatgpt_bartenders-as-secret-service]]
+- [[chatgpt/chatgpt_cinematic-victoria-secret-ad]]
+- [[chatgpt/chatgpt_generate-shared-secret-revenuecat]]
+- [[chatgpt/chatgpt_santas-secret-la-event]]

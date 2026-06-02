@@ -10,6 +10,14 @@ tags: [chatgpt, import]
 ---
 # Banana vs. Rice: Carbs.
 
+
+
+## See Also
+- [[chatgpt/chatgpt_strawberry-banana-blueberry-macros]]
+- [[chatgpt/chatgpt_rice-cake-macronutrients-summary]]
+- [[chatgpt/chatgpt_rice-cooker-tutorial]]
+- [[chatgpt/chatgpt_rice-maker]]
+- [[chatgpt/chatgpt_rice-microwave-instructions]]
 **Related:** [[personal_life]]
 
 > Conversation ID: 17e49099-36ab-4ffb-8d4f-f3cf82cce877

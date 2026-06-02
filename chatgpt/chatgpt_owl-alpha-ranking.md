@@ -1772,3 +1772,11 @@ Use the lowest-cost model that satisfies privacy, context, and task difficulty. 
 | Multimodal docs/media | Gemini 3.5 Flash | GPT-5.5 |
 
 The most important correction: **Owl should be the free giant-context sandbox, not the sensitive production Hermes brain. DeepSeek V4 Pro is now cheap enough to be the production default.**
+
+
+## See Also
+- [[chatgpt/chatgpt_owl-alpha-evaluation]]
+- [[chatgpt/chatgpt_owl-alpha-vs-deepseek-flash]]
+- [[chatgpt/chatgpt_billboard-1-songs-ranking]]
+- [[chatgpt/chatgpt_californias-independent-economy-ranking]]
+- [[chatgpt/chatgpt_earthquake-magnitude-ranking]]

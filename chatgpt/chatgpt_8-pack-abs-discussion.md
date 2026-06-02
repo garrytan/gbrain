@@ -256,3 +256,11 @@ So no—the lowest visible line of an 8-pack is **not at** the navel, it's **und
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "If you're currently at an **FFMI of 18.5** and aiming for 23, that's a significant increase. With consistent training, nutrition, and recovery, you might expect to add about **1-2 points** to your FFMI per year. So, reaching 23 could take around **2-4 years** if everything goes perfectly. Keep in mind, progress tends to slow as you approach your genetic potential."}
 {'asset_pointer': 'sediment://file_000000009d9461f6b121bc38279bdef6', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-05-12T20:24:26.781854+00:00', 'format': 'wav', 'metadata': {'end': 23.1, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1108878, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_chat-interface-modal-discussion]]
+- [[chatgpt/chatgpt_oil-change-discussion-part1]]
+- [[chatgpt/chatgpt_oil-change-discussion-part2]]
+- [[chatgpt/chatgpt_oil-change-discussion-part3]]
+- [[chatgpt/chatgpt_product-strategy-discussion]]

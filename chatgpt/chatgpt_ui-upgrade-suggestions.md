@@ -212,3 +212,11 @@ This ties the bar to the content without duplicating the score.
 - But the **app header still needs that sticky scrim + fixed bar height**, otherwise the big card behind it makes the top text feel unanchored.
 
 If you want, tell me what framework you’re using (SwiftUI/React Native/etc.) and I’ll drop a minimal sticky-bar + blur + scroll-linked animation snippet.
+
+
+## See Also
+- [[chatgpt/chatgpt_design-upgrade-suggestions]]
+- [[chatgpt/chatgpt_a7x3-holdings-name-suggestions]]
+- [[chatgpt/chatgpt_app-name-suggestions]]
+- [[chatgpt/chatgpt_apple-upgrade-program-details]]
+- [[chatgpt/chatgpt_artist-profile-suggestions]]

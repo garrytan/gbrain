@@ -41,3 +41,11 @@ Here you go, Mr. White:
 ## Assistant
 
 9 years’ bartending, 4 years bar manager, 1 year Head of Food & Beverage. High-volume operations, driving up to $25K/night in sales. Experienced with large events, VIPs and celebrity clientele; strong leadership and service focus.
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_age-calculation-request]]

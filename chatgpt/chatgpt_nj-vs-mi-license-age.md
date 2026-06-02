@@ -38,3 +38,11 @@ Here's a comparison of the learner's permit and driver's license age requirement
 - **New Jersey's law hasn't changed since 2005.** You still need to be **16** for a learner's permit and **17** for a probationary license.
 - **Michigan allows driving at a younger age.** The minimum age for a learner’s permit has been **14 years, 9 months** since at least 2005.
 - **Michigan has a Graduated Licensing System.** Drivers move from a Level 1 (learner) to Level 2 (intermediate) at **16**, and then to a full Level 3 license at **17**. New Jersey has a similar system but with a stricter starting age.
+
+
+## See Also
+- [[chatgpt/chatgpt_alcohol-catering-license-posting]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_helicopter-pilot-license-cost]]
+- [[chatgpt/chatgpt_license-plate-delay-resolution]]

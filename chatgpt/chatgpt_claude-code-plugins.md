@@ -233,3 +233,11 @@ And I’ll reply with: **(a)** the exact loop cause, **(b)** the single-line gua
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-plugins-overview-2]]
+- [[chatgpt/chatgpt_claude-plugins-overview]]
+- [[chatgpt/chatgpt_code-plugins-overview]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_claude-code-agent-teams-2]]

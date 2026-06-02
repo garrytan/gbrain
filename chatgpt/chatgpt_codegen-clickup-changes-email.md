@@ -119,3 +119,11 @@ So assuming it checks out: **SM7B + $250 cash** and I can do quick pickup (same 
 
 (Just to be safe—there are a lot of SM7B fakes floating around, so I’ll want clear pics + the serial/box if you’ve got it.)
 :::
+
+
+## See Also
+- [[chatgpt/chatgpt_clickup-codegen-acquisition-issues]]
+- [[chatgpt/chatgpt_clickup-codegen-overview]]
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]

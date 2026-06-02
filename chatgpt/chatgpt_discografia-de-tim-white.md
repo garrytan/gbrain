@@ -112,3 +112,11 @@ organize
 ## Assistant
 
 Tim White's discography is extensive, with a range of singles from 2014 to 2020 and EPs released in 2015. His work includes solo projects, collaborations, and remixes, highlighting his versatility and evolution in the music industry. For a detailed list and more information, you can visit the MusicBrainz website.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-songs-tim-white]]
+- [[chatgpt/chatgpt_bio-for-tim-white]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]
+- [[chatgpt/chatgpt_crest-white-strips-analysis]]
+- [[chatgpt/chatgpt_css-for-white-megamenu]]

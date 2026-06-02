@@ -38,3 +38,11 @@ Can you have a machiatto afagato
 ## Assistant
 
 Yes, you can combine the two concepts. A macchiato affogato would essentially be an espresso macchiato with a scoop of ice cream, typically vanilla, drowned (affogato) in the coffee. This isn't a traditional drink, but it's a creative mix of the espresso macchiato (espresso with a bit of milk) and the affogato (ice cream drowned in espresso).
+
+
+## See Also
+- [[chatgpt/chatgpt_coffee-and-coke-combo]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

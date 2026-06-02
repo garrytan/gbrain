@@ -104,3 +104,11 @@ Here’s a clear, technical comparison of **Clerk Auth** vs **Neon Auth** — wh
 - **Neon Auth** = auth service built around your database with automatic sync of user profiles into SQL tables.
 
 Your choice depends on architectural priorities: **developer speed & rich auth features (Clerk)** vs **database-centric identity management (Neon Auth)**.
+
+
+## See Also
+- [[chatgpt/chatgpt_neon-auth-and-clerk]]
+- [[chatgpt/chatgpt_neon-and-clerk-keys]]
+- [[chatgpt/chatgpt_neon-auth-blog-mock]]
+- [[chatgpt/chatgpt_neon-auth-explanation]]
+- [[chatgpt/chatgpt_neon-auth-overview]]

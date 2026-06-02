@@ -255,3 +255,11 @@ Certainly, Mr. White. Here is a summary of the rules and assumptions you have pr
    - The calculation for FFMI was based on the provided weight, body fat percentage from DEXA scans, and your height of 6'4".
 
 These are the guidelines and assumptions that have been used to shape the responses and calculations provided to you. If there are any additional rules or changes to the existing ones, please let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_create-document-outline-part1]]
+- [[chatgpt/chatgpt_create-document-outline-part2]]
+- [[chatgpt/chatgpt_allowing-actions-to-create-prs]]
+- [[chatgpt/chatgpt_bar-inventory-management-table]]
+- [[chatgpt/chatgpt_caffeine-content-comparison-table]]

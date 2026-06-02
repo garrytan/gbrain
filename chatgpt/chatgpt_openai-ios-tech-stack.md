@@ -132,3 +132,11 @@ If you want, I can break down how to mix both cleanly or recommend an architectu
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_openai-and-anthropic-tech]]
+- [[chatgpt/chatgpt_openai-frontend-stack]]
+- [[chatgpt/chatgpt_chatgpt-tech-stack]]
+- [[chatgpt/chatgpt_folkapp-tech-stack]]
+- [[chatgpt/chatgpt_tech-stack-advice]]

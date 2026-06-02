@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 Create an image of a photorealistic magazine cover for "CUTE ANIMALS," featuring three impossibly cute and stylishly accessorized pets, with realistic, catchy headlines and teaser text.
+
+
+## See Also
+- [[chatgpt/chatgpt_cute-futuristic-pet-names]]
+- [[chatgpt/chatgpt_bartender-server-cover-letter]]
+- [[chatgpt/chatgpt_steering-wheel-cover-tips]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

@@ -410,3 +410,11 @@ If you want next, I can:
 - design the **risk scoring heuristic**
 - sketch a **TurboRepo-aware test selection algorithm**
 - or map this into a **12-week rollout plan** for a real team
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-slash-commands]]
+- [[chatgpt/chatgpt_agent-skills-entry]]
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]
+- [[chatgpt/chatgpt_agent-skills-overview-2]]
+- [[chatgpt/chatgpt_agent-skills-overview]]

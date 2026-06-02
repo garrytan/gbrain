@@ -1378,3 +1378,11 @@ To ensure the navigation works correctly:
 2. The `gotoIf` condition checks if `profileId` is greater than 0 and loops back to the `start` label, forcing the script to navigate to the new URL.
 
 This should navigate to each profile in reverse order and handle each profile correctly before moving to the next.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part2]]
+- [[chatgpt/chatgpt_create-account-page-setup-part1]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part1]]
+- [[chatgpt/chatgpt_landing-page-redesign-part1]]
+- [[chatgpt/chatgpt_login-page-flutter-code-part1]]

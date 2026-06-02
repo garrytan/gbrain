@@ -47,3 +47,11 @@ Mr. White, short answer: not always.
 👉 For Jovie, given YC advice and your need to ship fast: **don’t block on TDD everywhere**. Write tests **after** for stability, but use TDD on flows that must never break (sign-up → handle claim → public profile).  
 
 Want me to sketch the exact flows in Jovie you should treat with TDD vs. test-after?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-driven-artist-profiles]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]
+- [[chatgpt/chatgpt_ai-driven-music-bio]]
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_cloudflare-ai-driven-cybersecurity]]

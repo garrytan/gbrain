@@ -110,3 +110,11 @@ If "STENDEC" was indeed a typo in Morse code, here are some possibilities for wh
 7. **ACCIDENT**: In a stressful situation, a hurried or incorrect transmission of "ACCIDENT" might have been sent as "STENDEC."
 
 These are speculative interpretations and there's no concrete evidence to support any particular theory. The true meaning of "STENDEC" remains one of aviation's enduring mysteries.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_anniversary-trip-message]]
+- [[chatgpt/chatgpt_clean-up-message-2]]
+- [[chatgpt/chatgpt_clean-up-message]]
+- [[chatgpt/chatgpt_collaboration-pitch-message]]

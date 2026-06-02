@@ -99,3 +99,11 @@ Each of these coaches/methods offers a practical, science-backed roadmap to impr
 - Estill Voice Training – Method overview and anatomical focus【33†L31-L39】【30†L278-L287】  
 - Estill Voice Training – Control of vocal structures and scientific foundation【30†L317-L326】【33†L58-L66】  
 - Expert/end-user endorsements of Estill (Ingo Titze and others)【32†L320-L328】【32†L299-L307】
+
+
+## See Also
+- [[chatgpt/chatgpt_athlete-recovery-and-science]]
+- [[chatgpt/chatgpt_ketamine-and-erection-science]]
+- [[chatgpt/chatgpt_science-behind-light-therapy]]
+- [[chatgpt/chatgpt_science-clapback-with-humor]]
+- [[chatgpt/chatgpt_science-vs-opinions]]

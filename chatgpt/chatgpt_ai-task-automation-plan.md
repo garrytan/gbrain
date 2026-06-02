@@ -721,3 +721,11 @@ Output rules:
 - Do not print secret values.
 - Do not modify the repository.
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_automation-task-setup]]
+- [[chatgpt/chatgpt_ux-inconsistencies-task-automation]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]

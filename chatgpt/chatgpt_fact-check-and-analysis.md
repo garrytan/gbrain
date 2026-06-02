@@ -118,3 +118,11 @@ Put it in a concise fool proof comment
 ## Assistant
 
 The “200 copies” story is pure nonsense. *Eyes Wide Open* sold around **10 k physical copies its first week** and over **40 k total**, so thousands were pressed. Labels never blindly crank out tens of thousands of vinyl for a brand-new artist—they do a small first run, watch orders, then repress. Acting like 200 copies means the label “didn’t care” is just a misunderstanding of how music manufacturing and demand forecasting work.
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]
+- [[chatgpt/chatgpt_fact-check-and-comment]]

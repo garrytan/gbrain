@@ -92,3 +92,11 @@ Anatomically, all of these glands sit just below and behind the clitoris:
   • The bladder sits well **above** the clitoris in the pelvis; urine passes down through the urethra, whose opening is **directly beneath** the clitoral glans.  
 
 In short: Bartholin’s are lower and lateral, Skene’s are immediately under the clitoris, and urine travels through the urethra right beneath it.
+
+
+## See Also
+- [[chatgpt/chatgpt_hows-it-going-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part2]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part2]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]

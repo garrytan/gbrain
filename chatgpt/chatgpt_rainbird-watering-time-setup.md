@@ -59,3 +59,11 @@ For a desert landscape with mostly rocks and a few plants, your irrigation shoul
 If you’re using a **drip system**, check if it’s emitting **½ gallon, 1 gallon, or 2 gallons per hour**—that affects how long to run it. You generally want **deep but infrequent watering** to mimic natural desert conditions.
 
 Check the plants—if they look stressed, adjust up slightly. If you see pooling or runoff, reduce the time.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-progress-over-time]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_backup-time-for-20tb]]
+- [[chatgpt/chatgpt_dns-propagation-time]]

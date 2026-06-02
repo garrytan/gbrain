@@ -410,3 +410,11 @@ Rework onboarding to match the **Founding Member / Waitlist funnel**. The goal: 
 ---
 
 Mr. White — want me to also break this into **Linear sub-issues** (frontend, backend, design, analytics) so it maps cleaner into your merge-queue flow?
+
+
+## See Also
+- [[chatgpt/chatgpt_price-recommendation-strategy-part1]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part2]]
+- [[chatgpt/chatgpt_bio-link-strategy-part2]]
+- [[chatgpt/chatgpt_code-cleanup-strategy-part2]]

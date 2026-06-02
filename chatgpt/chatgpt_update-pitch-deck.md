@@ -46,3 +46,11 @@ Send the deck plus any specific changes. If no notes, I’ll update it using tha
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_8-slide-yc-pitch-deck]]
+- [[chatgpt/chatgpt_marketing-highlights-pitch-deck]]
+- [[chatgpt/chatgpt_pitch-deck-enhancement]]
+- [[chatgpt/chatgpt_pitch-deck-idea]]
+- [[chatgpt/chatgpt_pitch-deck-integration-plan]]

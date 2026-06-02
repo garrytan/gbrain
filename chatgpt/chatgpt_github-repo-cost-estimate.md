@@ -210,3 +210,11 @@ Mr. White — this look is **not Cinema4D**. It’s basically **2D “glass” c
 Do the hero in **Figma** (cards + blur + shadow + noise overlay), export **WebP**, ship it. Then later replace with the CSS version if you want hover/parallax.
 
 If you tell me whether your landing page is **Next.js + Tailwind** (or plain HTML), I’ll convert the snippet into your exact stack.
+
+
+## See Also
+- [[chatgpt/chatgpt_gstack-github-repo]]
+- [[chatgpt/chatgpt_la-fitness-cost-estimate]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_annual-driving-estimate]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]

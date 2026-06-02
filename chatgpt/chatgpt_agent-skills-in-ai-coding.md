@@ -324,3 +324,11 @@ That pattern, instantiated with robust evaluators, is what frontier teams build.
 ---
 
 If you want, I can map these skills to **actual prompt templates/framework** (e.g., LangChain + eval loops) used by leading engineering teams.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-entry]]
+- [[chatgpt/chatgpt_agent-skills-overview-2]]
+- [[chatgpt/chatgpt_agent-skills-overview]]
+- [[chatgpt/chatgpt_agent-skills-vs-code-cli]]
+- [[chatgpt/chatgpt_slash-commands-vs-agent-skills]]

@@ -30,3 +30,11 @@ When applying for an EIN (Employer Identification Number) for your LLC, you are 
 If your LLC is registered in Delaware but you do not have a physical location there, you can use a registered agent's address or a third-party address service provider's address as your business address for EIN purposes. A registered agent is a person or a company authorized to receive legal documents and official correspondence on behalf of your LLC. You can hire a registered agent in Delaware to provide a physical address for your business and receive any mail or correspondence related to your LLC. Alternatively, there are many third-party address service providers that offer virtual mailbox services, where you can receive mail and have it scanned and forwarded to you electronically.
 
 It's important to note that using a registered agent's or third-party address service provider's address as your business address for EIN purposes does not necessarily mean that you have a physical presence in Delaware. However, it is a legal way to obtain an EIN for your LLC and comply with the IRS requirements.
+
+
+## See Also
+- [[chatgpt/chatgpt_address-confirmation]]
+- [[chatgpt/chatgpt_address-correction-request]]
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_change-address-then-registration]]
+- [[chatgpt/chatgpt_delaware-c-corp-name-check]]

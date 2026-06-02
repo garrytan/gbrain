@@ -26,3 +26,11 @@ Where is the turtles all the way down premiere
 ## Assistant
 
 The movie adaptation of "Turtles All the Way Down" is set to premiere on the streaming service Max on May 2, 2024. It does not appear to have a traditional theatrical premiere event, but rather will be available directly on the streaming platform.
+
+
+## See Also
+- [[chatgpt/chatgpt_max-premieres-turtles-may-2]]
+- [[chatgpt/chatgpt_sea-turtles-adventure]]
+- [[chatgpt/chatgpt_5m-house-down-payment]]
+- [[chatgpt/chatgpt_bass-down-low-remix]]
+- [[chatgpt/chatgpt_dtf-down-to-fries]]

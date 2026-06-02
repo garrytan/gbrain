@@ -115,3 +115,11 @@ Wasn’t her ul case based on evidence not submissable in the us
 - **But the verdict gap isn’t *only* about evidence.** The UK judge, applying a lower civil standard, believed Heard was abused; the US jury, under stricter evidentiary filters and a higher *actual-malice* bar, decided three specific sentences in her op-ed were false and malicious.
 
 In short: **Some proof that helped Heard in the UK was inadmissible in Virginia, but the two systems’ different burdens, fact-finders, and legal standards mattered just as much.**
+
+
+## See Also
+- [[chatgpt/chatgpt_amber-benson-howard-benson-relation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

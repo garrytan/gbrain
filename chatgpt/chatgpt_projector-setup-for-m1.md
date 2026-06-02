@@ -85,3 +85,11 @@ If I were doing projection mapping:
 ---
 
 If you tell me the **exact model of your MacBook**, and the **resolution & distance / resolution requirements** of the projectors (and which inputs they have: HDMI, DisplayPort, etc.), I can recommend a specific cable + adapter combo optimized for your setup. Want me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

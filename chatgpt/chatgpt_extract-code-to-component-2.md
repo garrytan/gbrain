@@ -150,3 +150,11 @@ export default {
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-code-to-component]]
+- [[chatgpt/chatgpt_extract-input-element-to-component]]
+- [[chatgpt/chatgpt_vue-component-code-review]]
+- [[chatgpt/chatgpt_vuejs-component-code]]
+- [[chatgpt/chatgpt_add-cloud-code-ci]]

@@ -67,3 +67,11 @@ The first object in the `items` array has an image of a Lamborghini and the seco
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_vuejs-worksection-component-2]]
+- [[chatgpt/chatgpt_add-prop-to-vuejs-component]]
+- [[chatgpt/chatgpt_modify-vuejs-component-for-arrow-key-navigation]]
+- [[chatgpt/chatgpt_optimize-vuejs-component-part1]]
+- [[chatgpt/chatgpt_optimize-vuejs-component-part2]]

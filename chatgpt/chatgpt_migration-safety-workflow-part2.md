@@ -696,3 +696,11 @@ Proceed to modify the repo now.
 ---
 
 If you want this to be even more “one-button”, tell the agent to also create `/db-reset-dev` and `/db-branch <name>` workflows (but you said you want minimal ceremony, so I kept it tight).
+
+
+## See Also
+- [[chatgpt/chatgpt_migration-safety-workflow-part1]]
+- [[chatgpt/chatgpt_ai-photo-editing-workflow-part2]]
+- [[chatgpt/chatgpt_fixing-ci-workflow-part2]]
+- [[chatgpt/chatgpt_supabase-migration-github-workflow]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

@@ -49,3 +49,11 @@ The public investigation side is government-funded. In Los Angeles County, the M
 County disposition can apply. LA County says if the deceased or legal next of kin lack funds for burial, “County disposition” may be available, but proof of indigence is required. The LA County Public Administrator can also make necessary funeral arrangements when handling an estate, especially when relatives are absent or at the family’s request. citeturn391218search14turn391218search0
 
 Bottom line: **government may remove/hold the body for investigation, especially in suspicious or unattended deaths. The individual/family/estate usually pays for funeral-home removal and final cremation or burial. In LA County, the Medical Examiner’s former $400 transport/storage fee is now waived, but private mortuary and disposition costs still usually fall on the family or estate.**
+
+
+## See Also
+- [[chatgpt/chatgpt_cloudflare-reduces-cloud-costs]]
+- [[chatgpt/chatgpt_ev-ownership-costs-comparison]]
+- [[chatgpt/chatgpt_expensive-chipotle-meal-costs]]
+- [[chatgpt/chatgpt_julia-garner-costs-coaching]]
+- [[chatgpt/chatgpt_sound-stage-rental-costs]]

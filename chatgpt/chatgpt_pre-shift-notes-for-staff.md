@@ -60,3 +60,11 @@ Then **keep moving**. Re-check the table in a few minutes. Escalate only after t
 # Why this matters
 - One table’s “missing drink” can snowball into **five, then twenty-five** if we stop the flow.
 - Keep the rail clear, keep lamps green, keep the room happy—and we all make more.
+
+
+## See Also
+- [[chatgpt/chatgpt_clean-up-pre-shift-notes]]
+- [[chatgpt/chatgpt_app-notes-cleanup]]
+- [[chatgpt/chatgpt_bar-staff-run-schedule]]
+- [[chatgpt/chatgpt_bartender-shift-request]]
+- [[chatgpt/chatgpt_minimum-wage-for-wait-staff]]

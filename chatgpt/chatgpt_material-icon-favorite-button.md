@@ -195,3 +195,11 @@ This code uses the `document.getElementsByClassName()` method to find all elemen
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_imacros-favorite-button-script]]
+- [[chatgpt/chatgpt_16x16-icon-in-button]]
+- [[chatgpt/chatgpt_add-button-features-vlink]]
+- [[chatgpt/chatgpt_app-icon-design-prompt]]
+- [[chatgpt/chatgpt_app-icon-redesign-brief]]

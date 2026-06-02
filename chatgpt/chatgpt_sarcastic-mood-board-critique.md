@@ -26,3 +26,11 @@ This dude is making some script, some commentary about mood boards. He's like, I
 ## Assistant
 
 “Ah yes, the sacred art of ‘vibe osmosis.’ Who needs a mood board when I can just *remember* my references and let the crew psychically download my vision? Wardrobe, lighting, set design—sure, they’ll all just read my mind. Because nothing says ‘master communicator’ like hiding every single visual cue and calling it mystique.”
+
+
+## See Also
+- [[chatgpt/chatgpt_buddha-board-overview]]
+- [[chatgpt/chatgpt_casting-board-grid]]
+- [[chatgpt/chatgpt_comment-critique-request]]
+- [[chatgpt/chatgpt_comment-suggestion-critique]]
+- [[chatgpt/chatgpt_cruiser-critique-comment]]

@@ -129,3 +129,11 @@ And just to add to that, that decision was based entirely on, and then just clar
 Mr. White, here’s the updated text for Donnie:
 
 “Hey Donnie — just wanted to let you know (as I’m sure you’ve heard) I’m no longer at Vault. It’s been an absolute pleasure working with you. You’re by far the best server I’ve worked with — you consistently drove revenue and your hospitality and personality are outstanding. You always brightened my day. For clarity: my decision was based entirely on Vincent’s behavior, not anyone else at Vault. I hope the last show went smoothly. Sorry we won’t be working together anymore — wishing you and Milo the very best. Let’s keep in touch.”
+
+
+## See Also
+- [[chatgpt/chatgpt_apology-letter-draft]]
+- [[chatgpt/chatgpt_resignation-letter-revision]]
+- [[chatgpt/chatgpt_ar-post-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-response-draft]]

@@ -28,3 +28,11 @@
 Finally, **therapeutic uses vs. recreational patterns**: When a substance shows therapeutic benefit (e.g. MDMA for PTSD, psilocybin for depression, ketamine for depression), that benefit typically comes with **controlled dosing and integration**. Recreational use in a party setting might not replicate those positive outcomes and can introduce other variables (like sleep deprivation or mixing substances). Where applicable, we highlighted how certain frequencies might approximate a therapeutic regimen (especially for psychedelics). In all cases, moderation and context matter greatly – the healthiest outcome for most of these substances (aside from nicotine and cocaine, where the advice is generally *no use is the safest*) is occasional, respectful use with attention to one’s set, setting, and overall lifestyle.
 
 **Sources:** The comparison draws on a range of high-quality studies and reviews: e.g. cardiovascular harms of cocaine【2†L438-L446】, cognitive effects of cocaine【5†L313-L321】, ketamine’s impact on the bladder【17†L19-L27】 and brain connectivity【20†L213-L221】, MDMA’s neurotoxicity and cognitive outcomes【22†L167-L175】【23†L1-L4】, long-term benefits of psilocybin and ayahuasca on depression/anxiety【29†L45-L53】【64†L225-L233】, cannabis’s association with mental illness and other health issues【38†L317-L323】, alcohol’s wide-ranging health impacts【47†L215-L223】【47†L225-L233】, smoking/vaping risks【39†L259-L268】【50†L179-L188】, and the rare incidence of persistent psychosis from psychedelics【32†L1-L4】. Each point above is grounded in such research to present a balanced, evidence-based overview.
+
+
+## See Also
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part1]]
+- [[chatgpt/chatgpt_cosmos-gravity-impact-analysis]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part2]]

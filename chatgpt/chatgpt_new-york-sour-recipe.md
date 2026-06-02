@@ -85,3 +85,11 @@ The Negroni is a strong, bold cocktail with a bittersweet profile, making it a f
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_prohibition-sour-recipe]]
+- [[chatgpt/chatgpt_adjusting-recipe-proportions]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-2]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-3]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe]]

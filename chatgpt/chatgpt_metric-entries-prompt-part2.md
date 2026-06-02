@@ -799,3 +799,11 @@ You want a sane, non-confusing shell before deeper features.
 6. Weight/BF% presets + Goals overview screen.
 
 Once those are in and stable, you’re in a legit MVP state where everything feels coherent; then we layer in Body Score + aesthetic ratios as the differentiator pass.
+
+
+## See Also
+- [[chatgpt/chatgpt_metric-entries-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part2]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part2]]

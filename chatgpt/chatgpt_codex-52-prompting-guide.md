@@ -152,3 +152,11 @@ Return:
 ---
 
 If you want, I can tailor sample Codex 5.2 prompts for specific languages or tasks (e.g., REST APIs, data pipelines, CLI tools).
+
+
+## See Also
+- [[chatgpt/chatgpt_prompting-in-modern-coding]]
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]

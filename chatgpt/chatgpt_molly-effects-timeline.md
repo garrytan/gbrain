@@ -34,3 +34,11 @@ Mr. White, if by “timeline on molly” you’re referring to MDMA’s duration
 4. **Come Down**: A gradual decline begins after 4–5 hours, but residual effects (fatigue, mood changes) can persist into the next day or two.
 
 These durations vary based on dose, individual metabolism, and other factors. If you need more specific guidance or are considering health risks, consult a qualified medical professional.
+
+
+## See Also
+- [[chatgpt/chatgpt_molly-timing-strategy]]
+- [[chatgpt/chatgpt_alex-singing-timeline]]
+- [[chatgpt/chatgpt_bretts-career-timeline]]
+- [[chatgpt/chatgpt_cats-and-mdma-effects]]
+- [[chatgpt/chatgpt_cell-phone-radiation-effects]]

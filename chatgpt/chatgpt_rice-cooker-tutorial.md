@@ -74,3 +74,11 @@ Rice cookers sense when water is absorbed and either switch to warm mode or turn
 ---
 
 If you want ratios for specific rice types (basmati, jasmine, sushi, brown, etc.), tell me what you’re cooking and I’ll tailor it.
+
+
+## See Also
+- [[chatgpt/chatgpt_html-template-creation-tutorial]]
+- [[chatgpt/chatgpt_make-virgin-mojito-tutorial]]
+- [[chatgpt/chatgpt_banana-vs-rice-carbs]]
+- [[chatgpt/chatgpt_rice-cake-macronutrients-summary]]
+- [[chatgpt/chatgpt_rice-maker]]

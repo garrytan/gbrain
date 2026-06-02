@@ -38,3 +38,11 @@ Mr. White, here are savage one-liners to drop:
 8) “It starts the moment your kick and snare make peace. Never, basically.”  
 9) “Rapture is just your USB corrupting mid-set.”  
 10) “On will-call under ‘Mau5 +3 (archangels).’”
+
+
+## See Also
+- [[chatgpt/chatgpt_no-response-given-part1]]
+- [[chatgpt/chatgpt_no-response-given-part2]]
+- [[chatgpt/chatgpt_no-response-given-part3]]
+- [[chatgpt/chatgpt_savage-logic-challenge]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

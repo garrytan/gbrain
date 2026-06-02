@@ -64,3 +64,11 @@ Monorepo with multiple apps/packages (e.g., a frontend, backend, and shared libr
 - **Better CI performance** through shared caching. citeturn0search19
 
 If you want a starter or example repos and templates, the official Turborepo docs maintain various scenarios (Next.js, shared libs, etc.). citeturn0search14
+
+
+## See Also
+- [[chatgpt/chatgpt_turborepo-overview]]
+- [[chatgpt/chatgpt_electron-app-turborepo-setup]]
+- [[chatgpt/chatgpt_explain-turborepo]]
+- [[chatgpt/chatgpt_test-turborepo-locally]]
+- [[chatgpt/chatgpt_turborepo-changelog]]

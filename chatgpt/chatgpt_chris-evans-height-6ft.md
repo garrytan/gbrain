@@ -56,3 +56,11 @@ How tall is Chris Evans?
 ## Assistant
 
 Chris Evans, the actor known for playing Captain America, is approximately six feet tall.
+
+
+## See Also
+- [[chatgpt/chatgpt_average-height-median-vs-mean]]
+- [[chatgpt/chatgpt_convert-height-to-feet]]
+- [[chatgpt/chatgpt_emily-ratajkowskis-height]]
+- [[chatgpt/chatgpt_form-fields-height-gender-weight]]
+- [[chatgpt/chatgpt_height-conversion-calculation]]

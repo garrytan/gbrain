@@ -69,3 +69,11 @@ more like Seeking Guidance
 ## Assistant
 
 Subject: Seeking Guidance: Management & Publishing in LA
+
+
+## See Also
+- [[chatgpt/chatgpt_apocalyptic-movies-recommendations]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part3]]
+- [[chatgpt/chatgpt_bar-inventory-management-table]]

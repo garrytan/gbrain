@@ -61,3 +61,11 @@ Identify yourself as ChatGPT. Texting on behalf of me. No pleasantries, just get
 
 
 ChatGPT: Quick question: Is building a progress-tracker app for RP coaches (HealthKit sync, daily weight/BF logs, photo slider + coach dashboard) at ~$99/mo per seat (MVP in 2–3 weeks, pre-sell 20 seats→$10K/mo) worth spending the next few weeks on, or should I pivot?
+
+
+## See Also
+- [[chatgpt/chatgpt_bootstrapping-app-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part1]]

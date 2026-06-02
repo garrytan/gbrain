@@ -136,3 +136,11 @@ If you want, we can also draft:
 
 - A short **email to LA Fitness corporate** stating exactly what happened and what you want them to do about it.  
 - Or a **bullet-point script** you can use when you talk to staff or the police so you don’t have to improvise it.
+
+
+## See Also
+- [[chatgpt/chatgpt_cancelation-policy-legality]]
+- [[chatgpt/chatgpt_childrens-walkthrough-legality]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_lifetime-saas-licenses-legality]]
+- [[chatgpt/chatgpt_limescooters-legality-issue]]

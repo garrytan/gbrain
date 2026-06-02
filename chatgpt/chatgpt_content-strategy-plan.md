@@ -296,3 +296,11 @@ Then your DM to future hosts is just:
 If you want, next we can turn this into:  
 - a one-page “media kit” outline, and  
 - exact VO script templates you can reuse for multiple properties.
+
+
+## See Also
+- [[chatgpt/chatgpt_dj-gig-strategy-plan]]
+- [[chatgpt/chatgpt_income-strategy-budgeting-plan]]
+- [[chatgpt/chatgpt_instagram-content-strategy]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]

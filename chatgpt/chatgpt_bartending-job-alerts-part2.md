@@ -84,3 +84,11 @@
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartending-job-alerts-part1]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part10]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part11]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part3]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part4]]

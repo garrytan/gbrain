@@ -38,3 +38,11 @@ For batched cocktails do you use tap water
 ## Assistant
 
 For batched cocktails, it's generally recommended to use filtered or bottled water instead of tap water. The quality of tap water can vary, and impurities or flavors in tap water might affect the taste of the cocktails. Using filtered or bottled water ensures a more consistent and neutral base.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-and-open-source]]
+- [[chatgpt/chatgpt_html-source-code-request]]
+- [[chatgpt/chatgpt_open-source-plan]]
+- [[chatgpt/chatgpt_successful-open-source-companies]]
+- [[chatgpt/chatgpt_25l-water-in-ice]]

@@ -26,3 +26,11 @@ im mkaing minute rice and im out of serain wrap what do i do
 ## Assistant
 
 You can cover the bowl with a lid or a plate instead of using plastic wrap. If those aren't available, you can also use a damp towel to cover the bowl during cooking. This will help keep the steam in and cook the rice properly.
+
+
+## See Also
+- [[chatgpt/chatgpt_banana-vs-rice-carbs]]
+- [[chatgpt/chatgpt_rice-cake-macronutrients-summary]]
+- [[chatgpt/chatgpt_rice-cooker-tutorial]]
+- [[chatgpt/chatgpt_rice-maker]]
+- [[chatgpt/chatgpt_rice-microwave-instructions]]

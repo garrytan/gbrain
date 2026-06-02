@@ -29,3 +29,11 @@ Hey DALL·E, concisely explain to me the capabilities of this device and then li
 Mr. White, the Sky Lite Evolve is a USB-powered, spherical galaxy projector that casts ultra-sharp laser stars and a swirling, multicolor nebula (reds, blues, pinks, purples) across your walls and ceiling. You can adjust brightness, rotation speed and color blends via the built-in controls, the BlissHome app or even voice commands (Google Home/Alexa).  
 
 Link: https://blisslights.com/products/sky-lite-evolve citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_add-button-features-vlink]]
+- [[chatgpt/chatgpt_atc-scm25a-features]]
+- [[chatgpt/chatgpt_atem-iso-features]]
+- [[chatgpt/chatgpt_blender-3d-features-overview]]
+- [[chatgpt/chatgpt_canva-features-overview]]

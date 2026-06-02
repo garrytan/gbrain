@@ -242,3 +242,11 @@ The AI passes only if it:
 - Produces a plan that fits $750 and 5 hours/week.
 
 This is a better test because it pressures the model on **business judgment, data realism, and product-awareness**, instead of letting it produce a slick campaign memo.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-stitch-ai-tool]]
+- [[chatgpt/chatgpt_instantly-definition-or-tool]]
+- [[chatgpt/chatgpt_match-look-tool-location]]
+- [[chatgpt/chatgpt_merch-design-tool]]
+- [[chatgpt/chatgpt_sign-generator-tool]]

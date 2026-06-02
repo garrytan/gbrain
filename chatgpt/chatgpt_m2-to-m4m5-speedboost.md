@@ -71,3 +71,11 @@ If build speed is a priority:
 3. Pair with fast storage and latest Node/Next/Turbo versions.
 
 If you want to quantify expected gains on your exact repo, I can help with benchmark strategies.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

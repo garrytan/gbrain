@@ -122,3 +122,11 @@ stay in develop mode
 This shit is like magic in a bottle. It'll help you pack on muscle mass faster than you can say "bro, do you even lift?" And trust me, when you're jacked as hell, the ladies will be all over you like white on rice.
 
 So quit slacking off and start chugging that creatine. Your gains (and your love life) will thank you later.
+
+
+## See Also
+- [[chatgpt/chatgpt_accessory-mode-activation]]
+- [[chatgpt/chatgpt_add-dark-mode]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-prompt-for-dark-mode]]
+- [[chatgpt/chatgpt_dark-mode-change]]

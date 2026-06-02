@@ -208,3 +208,11 @@ If you’d like, I can outline a minimal-hassle routine tailored to your habits 
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_cell-phone-impact-on-flight]]
+- [[chatgpt/chatgpt_cats-and-mdma-effects]]
+- [[chatgpt/chatgpt_chewing-gum-effects-jaw-muscles]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part1]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part2]]

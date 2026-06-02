@@ -26,3 +26,11 @@ the roxy
 ## Assistant
 
 ​iturn0image0turn0image1turn0image6turn0image7The Roxy Theatre is a renowned nightclub located at 9009 Sunset Boulevard in West Hollywood, California. Established in 1973, it has hosted legendary performances by artists such as Neil Young, Bob Marley, and Bruce Springsteen. The venue accommodates approximately 500 standing guests and continues to feature a diverse lineup of both emerging and established musicians. citeturn0search1 For current event information and ticket purchases, visit their official website. citeturn0search0 
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

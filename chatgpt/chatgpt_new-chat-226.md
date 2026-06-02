@@ -44,3 +44,11 @@ How many carbs in 350 grams of rice?
 ## Assistant
 
 In 350 grams of cooked white rice, there are approximately 28 grams of carbohydrates per 100 grams. Therefore, in 350 grams, it would contain around 98 grams of carbohydrates.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

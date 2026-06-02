@@ -65,3 +65,11 @@ where can i get a permit pricing info
 For commercial photography shoots on the Sunset Strip in West Hollywood, you'll need to obtain a permit, and the costs will vary depending on various factors such as the location, type of production, and the impact and duration of your proposed filming activity. FilmLA manages the permit process for the City of Los Angeles and surrounding areas, including West Hollywood. They outline that the permit application fee for up to 5 locations over 7 consecutive days is $895. Additionally, there are specific fees for drone administration, special effects, and other conditional activities that could be relevant depending on the specifics of your shoot. Insurance is also a requisite, with coverage limits varying based on the activity and location.
 
 Given these variables, it's advisable to contact FilmLA directly for the most accurate and tailored information regarding your specific commercial photography shoot needs. They can provide detailed pricing information, including any government-required fees and charges such as permit application fees, notification fees, and monitoring fees. For a detailed breakdown of fees and additional requirements, visiting FilmLA's official website or contacting their Solution Services could offer the most direct and comprehensive assistance【11†source】【11†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_cost-of-sunset-strip-billboard]]
+- [[chatgpt/chatgpt_ccw-permit-process-la]]
+- [[chatgpt/chatgpt_tesla-robotaxi-permit-secured-part1]]
+- [[chatgpt/chatgpt_tesla-robotaxi-permit-secured-part10]]
+- [[chatgpt/chatgpt_tesla-robotaxi-permit-secured-part11]]

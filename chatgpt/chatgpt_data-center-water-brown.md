@@ -50,3 +50,11 @@ The safe statement is:
 > Residents near Meta’s Stanton Springs data center in Georgia have reported brown, muddy well water, and EPA officials are gathering information after AOC raised the issue in a hearing. There is currently no public proof that the data center caused the brown water. Meta denies the link.
 
 The viral framing “AI data centers are turning drinking water brown” is **too strong** based on available evidence. The better criticism is: **data centers can stress local water infrastructure, and this Georgia case deserves independent water testing and public records review.**
+
+
+## See Also
+- [[chatgpt/chatgpt_data-center-debate]]
+- [[chatgpt/chatgpt_fact-check-data-center-claims]]
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]

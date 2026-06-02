@@ -48,3 +48,11 @@ I agree that **“AI manager”** works as the long-term category. For the curre
 > An AI manager for independent artists that helps with release planning, marketing execution, fan engagement, and tracking what is working.
 
 Paste the current numbered draft here and I’ll turn these notes into a clean final version.
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]
+- [[chatgpt/chatgpt_account-search-assistance]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]
+- [[chatgpt/chatgpt_angel-investor-search]]
+- [[chatgpt/chatgpt_artist-api-search-issue]]

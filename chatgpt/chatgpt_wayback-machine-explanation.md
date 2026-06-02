@@ -48,3 +48,11 @@ If so — here’s a quick rundown:
 ---
 
 If you meant something else by “waybackmachine” (a plugin, a metaphor, or a different tool), tell me and I’ll explain that instead.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

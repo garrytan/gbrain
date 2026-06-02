@@ -59,3 +59,11 @@ If you need recipients to pick multiple options, the only reliable way is:
 * Use a strong call-to-action button in the email (“Choose Your Preferences”) that opens the survey page.
 
 You can include simple one-click polls inside some email platforms, but those only allow a single response per click—not true multi-select.
+
+
+## See Also
+- [[chatgpt/chatgpt_survey-response-data]]
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]
+- [[chatgpt/chatgpt_bartender-job-application-email-3]]

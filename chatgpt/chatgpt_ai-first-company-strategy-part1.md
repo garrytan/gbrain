@@ -1351,3 +1351,11 @@ Think about how else we can make this useful: web polling and data from Twitter,
 
 
 I’ll separate this into product capabilities, data sources, polling mechanics, and what should become actual user-facing Jovie features.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_track-tsla-ca-robotaxi-permits-and-first-ride-evidence-part1]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part1]]
+- [[chatgpt/chatgpt_bio-link-strategy-part1]]

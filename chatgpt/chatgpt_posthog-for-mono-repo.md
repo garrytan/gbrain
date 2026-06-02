@@ -281,3 +281,11 @@ Given that YC backs PostHog and that more than half of a recent batch uses it, t
   - Defining a small, clean event schema (activation, workout start/finish, subscription events, retention-relevant stuff).
 
 If you want, I can propose an explicit, minimal event schema (10–15 events) and a simple wrapper interface for both iOS and web so you’re tool-agnostic but can still start with PostHog today.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-integration-with-repo]]
+- [[chatgpt/chatgpt_create-readme-for-repo]]
+- [[chatgpt/chatgpt_extract-design-system-repo]]
+- [[chatgpt/chatgpt_fetch-and-reset-repo-part1]]
+- [[chatgpt/chatgpt_fetch-and-reset-repo-part2]]

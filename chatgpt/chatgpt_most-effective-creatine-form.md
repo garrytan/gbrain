@@ -66,3 +66,11 @@ Both pills (capsules/tablets) and powder deliver the identical molecule—creati
   - **Cons:** you may need 5–10 capsules/day for an effective 3–5 g dose, higher cost per gram
 
 **Bottom line:** if you value precision and economy, go with **micronized creatine monohydrate powder**; if you prioritize sheer convenience—even at a premium—capsules are a fine alternative.
+
+
+## See Also
+- [[chatgpt/chatgpt_contact-form-in-nextjs]]
+- [[chatgpt/chatgpt_create-new-contact-form-part1]]
+- [[chatgpt/chatgpt_create-new-contact-form-part2]]
+- [[chatgpt/chatgpt_email-form-to-google-sheet]]
+- [[chatgpt/chatgpt_fill-out-edd-form]]

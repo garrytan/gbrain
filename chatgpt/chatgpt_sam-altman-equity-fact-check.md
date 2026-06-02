@@ -106,3 +106,11 @@ Did altman know he was fonna change it at the time of the senate hearing
 ## Assistant
 
 Mr. White, yes—he did. OpenAI publicly posted its “plan for evolving our structure” on May 5, 2025, and Altman then testified before the Senate Commerce Committee on May 8, 2025—so he was speaking fully in the context of that impending recapitalization citeturn1search0turn2view0.
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

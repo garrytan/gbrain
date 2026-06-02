@@ -168,3 +168,11 @@ Here’s a professional, appreciative, and balanced reply you can send Meg:
 ---
 
 Would you like me to make it sound **a bit warmer** (more personable and encouraging) or keep it **neutral and managerial**?
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

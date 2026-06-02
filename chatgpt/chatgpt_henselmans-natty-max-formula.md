@@ -87,3 +87,11 @@ That’s assuming elite genetics, 10+ years of optimized training, and consisten
 ---
 
 Would you like me to give you a **Menno-style natty potential table** (by height and body fat levels) so you can compare your current stats?
+
+
+## See Also
+- [[chatgpt/chatgpt_natty-or-not-results]]
+- [[chatgpt/chatgpt_calculate-fat-weight-formula]]
+- [[chatgpt/chatgpt_fix-understaffed-formula]]
+- [[chatgpt/chatgpt_lbm-formula]]
+- [[chatgpt/chatgpt_menno-henselmans-fitness-views]]

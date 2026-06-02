@@ -52,3 +52,11 @@ Key pilot locations:
 - **Waikīkī and downtown Honolulu** — served as stand-ins for Los Angeles and Sydney flashbacks.  
 
 Fun fact: the *Lost* pilot (filmed in 2003) was one of the most expensive TV pilots ever made at the time, costing around **$10–14 million**, largely due to the real Boeing 777 fuselage used for the crash site.
+
+
+## See Also
+- [[chatgpt/chatgpt_almost-exclusive-lost-to-amateurs]]
+- [[chatgpt/chatgpt_lost-city-filming-locations]]
+- [[chatgpt/chatgpt_lost-ending-explanation]]
+- [[chatgpt/chatgpt_lost-id-uber-vegas]]
+- [[chatgpt/chatgpt_lost-the-plot]]

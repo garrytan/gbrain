@@ -1020,3 +1020,11 @@ Now, when you print, the input and print button will not appear on the print pre
 
 
 Boring Rita is watermelon so make it pink. Razz me up is raspberry so purple. Old sport orange. Kisser red and giggle water green
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-label-printing-solution-part2]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part3]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part4]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part5]]
+- [[chatgpt/chatgpt_automated-venue-scheduling-solution]]

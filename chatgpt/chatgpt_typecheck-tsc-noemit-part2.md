@@ -346,3 +346,11 @@ Yes — **parking costs push Soho’s effective monthly spend into the same neig
 But if you *intend to use the workspace and amenities enough to replace other expenses (coworking, casual food, sauna/pool time)* then Soho Warehouse might still feel like **better lifestyle value**, even if raw dollars trend higher.
 
 If you want, I can model the **“per visit all-in cost”** for 1, 2, or 3 visits/week including parking — so you see the actual cost per session.
+
+
+## See Also
+- [[chatgpt/chatgpt_typecheck-tsc-noemit-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part2]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part2]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]

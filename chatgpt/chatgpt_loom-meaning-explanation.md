@@ -36,3 +36,11 @@ loom
 There are also less common meanings, such as **“loom”** as a verb meaning to appear ominously or take shape on the horizon, and various cultural uses (band names, album titles). citeturn0search2
 
 If you meant one of these specifically (e.g., Loom video recorder), let me know and I can explain or compare features.
+
+
+## See Also
+- [[chatgpt/chatgpt_gp-meaning-explanation-2]]
+- [[chatgpt/chatgpt_gp-meaning-explanation]]
+- [[chatgpt/chatgpt_jove-meaning-explanation]]
+- [[chatgpt/chatgpt_linear-meaning-explanation]]
+- [[chatgpt/chatgpt_resend-meaning-explanation]]

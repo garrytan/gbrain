@@ -35,3 +35,11 @@ All we can say from what’s shown:
 - The extra symbols (“X,” backslash, zero, asterisk) might be there to hint at “cross,” “slash,” “O,” “star,” etc., or they might be instructions to cross out certain names—but by themselves they do not form a clear cipher key or puzzle mechanic.
 
 In other words, without any further clue about *which* letters in each name are singled out or *why* those symbols appear, there’s no straightforward solution.  If the puzzle originally relied on highlighted letters or some rule you don’t see here (e.g. “take the second letter of each name,” or “fix the misspellings”), you would need those details to decode the final message.  As presented, it’s not solvable.
+
+
+## See Also
+- [[chatgpt/chatgpt_infusing-mezcal-without-seeds]]
+- [[chatgpt/chatgpt_job-options-without-degree]]
+- [[chatgpt/chatgpt_rice-without-saran-wrap]]
+- [[chatgpt/chatgpt_switching-wi-fi-without-restart]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

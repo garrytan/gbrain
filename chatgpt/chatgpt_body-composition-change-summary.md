@@ -336,3 +336,11 @@ Mr. White, to see a full, razor-sharp 8-pack you’ll need to drive your total B
 – Some can reveal all eight abs as “high” as 9–10 % if they store almost zero subQ fat over their abs, but 8 % is the reliable target for truly carved lower abs.  
 
 In short: **aim for 8 % BF (or lower) to unlock that 8-pack**.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-comp-changes-summary]]
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_body-composition-changes]]
+- [[chatgpt/chatgpt_body-composition-phase-plan]]

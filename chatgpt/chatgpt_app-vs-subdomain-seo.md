@@ -384,3 +384,11 @@ Next will route `/app/...` to the static segment before it ever considers `[user
 Use **`/app`** for the authenticated product. Keep **`/:username`** for profiles. Don’t introduce `/u/` unless you *can’t* do root usernames.
 
 If you want, tell me your current top-level marketing routes (pricing/blog/docs/etc.) and I’ll give you a hardened reserved-slug list that won’t bite you later.
+
+
+## See Also
+- [[chatgpt/chatgpt_subdomain-suggestions-for-posthog]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

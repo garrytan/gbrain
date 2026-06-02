@@ -34,3 +34,11 @@ speedtest
 - **Google Fiber Speed Test**: Offered by Google, this test evaluates your broadband speed. You can access it at citeturn0search3.
 
 These tools will help you determine your current internet connection performance. 
+
+
+## See Also
+- [[chatgpt/chatgpt_internet-speed-test-tools-2]]
+- [[chatgpt/chatgpt_internet-speed-test-tools-3]]
+- [[chatgpt/chatgpt_page-speed-test-tools]]
+- [[chatgpt/chatgpt_gtmetrix-speed-test]]
+- [[chatgpt/chatgpt_unit-test-speed-tips]]

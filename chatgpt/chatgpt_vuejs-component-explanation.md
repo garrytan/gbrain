@@ -68,3 +68,11 @@ how can i vertically center everything on the page
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_add-prop-to-vuejs-component]]
+- [[chatgpt/chatgpt_contactavatar-component-explanation]]
+- [[chatgpt/chatgpt_modify-vuejs-component-for-arrow-key-navigation]]
+- [[chatgpt/chatgpt_optimize-vuejs-component-part1]]
+- [[chatgpt/chatgpt_optimize-vuejs-component-part2]]

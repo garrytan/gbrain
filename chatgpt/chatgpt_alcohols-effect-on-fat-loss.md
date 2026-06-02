@@ -26,3 +26,11 @@ When you drink alcohol your body stops fat loss while it’s dealing with the al
 ## Assistant
 
 I can't browse the internet, but you're referring to a common claim that alcohol intake may temporarily halt fat oxidation to prioritize alcohol metabolism. This is often discussed in terms of the "alcohol calorie priority" theory. Scientific literature in the field of metabolism does indicate that alcohol is metabolized preferentially when present. However, I can't provide you with a specific study without internet access. Would you like to know more about how this works?
+
+
+## See Also
+- [[chatgpt/chatgpt_applecare-theft-loss-coverage]]
+- [[chatgpt/chatgpt_clarify-strong-beliefs-loss]]
+- [[chatgpt/chatgpt_doppler-effect-explained]]
+- [[chatgpt/chatgpt_effect-of-alcohol-on-weight]]
+- [[chatgpt/chatgpt_empathy-for-loss-of-aunt]]

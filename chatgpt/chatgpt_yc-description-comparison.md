@@ -952,3 +952,11 @@ I’d answer:
 > Major artists have teams for this. Most artists and small labels have tabs, spreadsheets, and missed opportunities.  
 >   
 > Jovie automates that layer. We detect a new release when its ISRC — the unique ID for a recording — appears on music platforms, then trigger the fan-facing workflows around it. That’s the part most people outside the industry never see, and it’s the part that determines whether a release compounds or disappears.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_background-color-description]]
+- [[chatgpt/chatgpt_best-deal-comparison]]

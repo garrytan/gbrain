@@ -26,3 +26,11 @@ what model sunglass is bradley cooper wearing in the hangover
 ## Assistant
 
 The sunglasses Bradley Cooper wears in "The Hangover" are the Ray-Ban 3025 Aviator sunglasses.
+
+
+## See Also
+- [[chatgpt/chatgpt_phils-wife-in-hangover]]
+- [[chatgpt/chatgpt_affordable-sunglasses-alternatives]]
+- [[chatgpt/chatgpt_dog-with-sunglasses]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

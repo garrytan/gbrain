@@ -79,3 +79,11 @@ all right this is fun I'm out of coffee I got to go leave a comment
 ## Assistant
 
 Glad you enjoyed our conversation! Feel free to come back anytime. Don't forget to grab yourself another cup of coffee before diving back into your tasks. Have a great day!
+
+
+## See Also
+- [[chatgpt/chatgpt_advantages-of-google-shopping]]
+- [[chatgpt/chatgpt_amazon-shopping-list]]
+- [[chatgpt/chatgpt_rufus-ai-shopping-assistant]]
+- [[chatgpt/chatgpt_shopping-list-for-drinks]]
+- [[chatgpt/chatgpt_shopping-list-organization]]

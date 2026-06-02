@@ -123,3 +123,11 @@ I hope this helps! Let me know if you have any other questions.
 ## User
 
 do this again but use many symbols comined for each letter so they appear much larger
+
+
+## See Also
+- [[chatgpt/chatgpt_face-definitions-and-contexts]]
+- [[chatgpt/chatgpt_face-id-in-pwa]]
+- [[chatgpt/chatgpt_replace-dall-e-face]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

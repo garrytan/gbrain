@@ -27,3 +27,11 @@ What is this referring to
 ## Assistant
 
 iturn0image0The phrase "May be an image of..." on Instagram is automatically generated alt text for accessibility. It provides descriptions of images for users who rely on screen readers. Instagram uses AI to analyze and describe the content of photos when no custom alt text is provided by the user. This feature enhances the platform's accessibility for visually impaired users. citeturn0search0 
+
+
+## See Also
+- [[chatgpt/chatgpt_ad-campaign-instagram-for-females]]
+- [[chatgpt/chatgpt_beeper-issue-instagram-login]]
+- [[chatgpt/chatgpt_button-text-update]]
+- [[chatgpt/chatgpt_cant-hear-ai-text]]
+- [[chatgpt/chatgpt_caption-instagram-post]]

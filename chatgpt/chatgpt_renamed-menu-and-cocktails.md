@@ -1509,3 +1509,11 @@ Ruth Bader Gin-sburg: Gin, elderflower liqueur. Topped with tonic or club soda. 
 2. **Sanitation**: Use sanitized containers and utensils.
 3. **Acidity**: Higher acidity can extend shelf life.
 4. **Labeling**: Label with preparation and expiration dates.
+
+
+## See Also
+- [[chatgpt/chatgpt_classic-cocktails-list]]
+- [[chatgpt/chatgpt_hot-bartender-w-incredible-cocktails]]
+- [[chatgpt/chatgpt_labeling-pre-batched-cocktails]]
+- [[chatgpt/chatgpt_shelf-life-of-cocktails]]
+- [[chatgpt/chatgpt_who-batches-cocktails]]

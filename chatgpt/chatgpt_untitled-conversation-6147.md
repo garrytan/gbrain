@@ -26,3 +26,11 @@ is graphql still the best way to setup an API?
 ## Assistant
 
 Yes, GraphQL is still a great way to set up an API. It offers several benefits over traditional REST APIs, such as allowing clients to request only the data they need and making it easy to aggregate data from multiple sources. Additionally, GraphQL has a strong ecosystem of tools and libraries that make it easier to use.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

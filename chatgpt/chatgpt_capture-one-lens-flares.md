@@ -50,3 +50,11 @@ If you want to stay non-destructive:
 3. Add effects in Photoshop (using layers or overlays).  
 
 Would you like me to outline the best way to match the flare color and direction to the existing lighting in your Capture One image?
+
+
+## See Also
+- [[chatgpt/chatgpt_lens-cap-requirements]]
+- [[chatgpt/chatgpt_lens-distortion-explained]]
+- [[chatgpt/chatgpt_lens-flare-overlays-photoshop]]
+- [[chatgpt/chatgpt_overlay-lens-flare-image]]
+- [[chatgpt/chatgpt_capture-email-addresses-sql]]

@@ -704,3 +704,11 @@ Yeah, this is good, and I'm down for, I mean, I kind of agree with you, that's w
 
 
 Mr. White, the constraint is clear: one person, almost no cash, limited AI credits, and no six-month build. This needs to become one immediate cash sprint, sellable before a product exists.
+
+
+## See Also
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part1]]
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part3]]
+- [[chatgpt/chatgpt_life-lessons]]
+- [[chatgpt/chatgpt_producer-life-struggles]]
+- [[chatgpt/chatgpt_shelf-life-of-cocktails]]

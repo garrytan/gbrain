@@ -49,3 +49,11 @@ If you want more control, you can create a Shortcuts Automation:
 2. Add actions: “Get Current Location” → “Save to Notes” (or Reminders, or log in a chosen app).  
 
 That gives you a timestamped record every time you leave your car.
+
+
+## See Also
+- [[chatgpt/chatgpt_parking-fee-legality]]
+- [[chatgpt/chatgpt_parking-meter-legality]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_flight-and-parking-options]]

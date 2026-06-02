@@ -94,3 +94,11 @@ Whole thing takes ~2–3 minutes. Zero mechanical teardown beyond the seat.
 If you don’t have a jump pack, even a set of jumper cables to a car battery (car *off*) will do the same.  
 
 Want me to spell out the exact steps with your Touring battery location so you can be in and out fast?
+
+
+## See Also
+- [[chatgpt/chatgpt_airtag-battery-type]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_change-arlo-battery]]
+- [[chatgpt/chatgpt_infiniti-fob-battery-replacement]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

@@ -66,3 +66,11 @@ Here’s a structured approach based on those principles:
 5. **Prioritize Nutrition and Training**: Throughout both phases, prioritize nutrition—especially protein intake—and maintain a consistent training routine focused on progressive overload to support muscle growth and maintenance.
 
 Dr. Isratel emphasizes the importance of individualization in any diet or training program. Your specific needs, goals, and responses to diet and training will dictate the exact structure of your mini cut and subsequent bulking phase. Listening to your body and adjusting based on your progress is key to effective body composition management. If you're unsure about how to structure your mini cut or bulking phase, consulting with a nutrition or fitness professional familiar with these principles can be very helpful.
+
+
+## See Also
+- [[chatgpt/chatgpt_maintenance-after-tirzepatide-use]]
+- [[chatgpt/chatgpt_ipad-mini-4-listing]]
+- [[chatgpt/chatgpt_mac-mini-pricing-overview]]
+- [[chatgpt/chatgpt_mac-mini-vs-macbook-air]]
+- [[chatgpt/chatgpt_mike-israetel-mini-cuts]]

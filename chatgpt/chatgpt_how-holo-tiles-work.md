@@ -352,3 +352,11 @@ That $3 k / 4×4 ft panel spec equates to a **2.5 mm pixel pitch**, which works 
 If you wanted a lower-res, more cost-efficient pitch:  
 - **P3.9 mm** → ~313×313 px (≈ 6.5 ppi)  
 - **P4.8 mm** → ~256×256 px (≈ 5.3 ppi)
+
+
+## See Also
+- [[chatgpt/chatgpt_calm-work-pickup-protocol]]
+- [[chatgpt/chatgpt_creative-work-proposal]]
+- [[chatgpt/chatgpt_kirk-baxters-film-work]]
+- [[chatgpt/chatgpt_polite-work-decline-template]]
+- [[chatgpt/chatgpt_production-work-hours-logged]]

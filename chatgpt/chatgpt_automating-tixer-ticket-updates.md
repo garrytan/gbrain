@@ -313,3 +313,11 @@ const SHEET_ID = '13z_9a4QLXoR-wiwoCQYPZK_nI8GC6-gSFVpTNUCPPu4';
 ```
 
 That’s the unique identifier Google uses for all API and Apps Script operations related to your spreadsheet.
+
+
+## See Also
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_drink-ticket-printing-tips]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_fixer-ticket-sales-setup]]
+- [[chatgpt/chatgpt_lost-ticket-fee-legality-2]]

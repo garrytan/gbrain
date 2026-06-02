@@ -26,3 +26,11 @@ the first
 
 
 I'll analyze the current plot details and theories surrounding *Severance* to predict potential endings. I'll consider character arcs, unresolved mysteries, and thematic elements to form a plausible conclusion. I'll update you once I have a well-supported prediction.
+
+
+## See Also
+- [[chatgpt/chatgpt_severance-ending-prediction-part2]]
+- [[chatgpt/chatgpt_bf-prediction-based-on-dexa]]
+- [[chatgpt/chatgpt_smartscale-to-dexa-prediction]]
+- [[chatgpt/chatgpt_weight-and-bf-prediction]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

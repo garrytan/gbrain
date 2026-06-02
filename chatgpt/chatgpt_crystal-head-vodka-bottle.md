@@ -27,3 +27,11 @@ Hey Dogg, can you tell me what this is?
 ## Assistant
 
 Mr. White, this looks like the distinctive skull-shaped bottle from Crystal Head Vodka. It’s known for that clear glass skull design with a wooden cap.
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_head-bartender-application-response]]
+- [[chatgpt/chatgpt_muffin-head-logo-design]]
+- [[chatgpt/chatgpt_muffin-head-style-transfer]]
+- [[chatgpt/chatgpt_bottle-calculation-for-juice]]

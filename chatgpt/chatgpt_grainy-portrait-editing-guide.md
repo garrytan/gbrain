@@ -42,3 +42,11 @@ To achieve a film grain effect reminiscent of Victor Robertof's style in your po
 Remember, the key to successfully emulating a film grain look is subtlety, especially with portraits. You want to enhance the photo without overwhelming the subject. It might also be helpful to look at some of Victor Robertof's work as a reference while you adjust your settings to better match his style.
 
 Lastly, since each photo is unique, consider these settings as a starting point and adjust according to the specific lighting, texture, and mood of your portraits.
+
+
+## See Also
+- [[chatgpt/chatgpt_cinematic-instagram-portrait-edit]]
+- [[chatgpt/chatgpt_popcorn-bath-model-portrait]]
+- [[chatgpt/chatgpt_portrait-grid-design]]
+- [[chatgpt/chatgpt_portrait-of-cavalier-dog]]
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]

@@ -26,3 +26,11 @@ upwork
 ## Assistant
 
 ​Upwork is a prominent online freelancing platform that connects businesses with independent professionals and agencies worldwide. It offers a marketplace where clients can post job listings across various categories, including development, design, marketing, writing, and more. Freelancers can then bid on these projects, providing proposals for clients to review. The platform facilitates collaboration through tools for communication, file sharing, and project tracking, ensuring a streamlined workflow between clients and freelancers. Payments are managed securely within Upwork, with options for hourly or fixed-price contracts. Additionally, Upwork offers mobile applications for both clients and freelancers, enhancing accessibility and project management on the go. citeturn0search0turn0search2turn0search5 
+
+
+## See Also
+- [[chatgpt/chatgpt_curacity-platform-overview]]
+- [[chatgpt/chatgpt_ollama-platform-overview]]
+- [[chatgpt/chatgpt_stayamo-platform-overview]]
+- [[chatgpt/chatgpt_upwork-overview]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]

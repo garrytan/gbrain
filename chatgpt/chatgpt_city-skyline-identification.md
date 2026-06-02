@@ -68,3 +68,11 @@ That’s almost certainly entity["city","Los Angeles","California, USA"]�
 The skyline matches downtown LA, and the mountain shape behind it is the entity["mountain_range","San Gabriel Mountains","California, USA"]. You can also make out the cluster layout that includes the Wilshire Grand/U.S. Bank Tower area.
 
 Denny’s probably picked it because it looks dramatic and hyper-“California” in wide format.
+
+
+## See Also
+- [[chatgpt/chatgpt_city-identification-request]]
+- [[chatgpt/chatgpt_beverly-hills-city-hall]]
+- [[chatgpt/chatgpt_cathedral-city-stream-mystery]]
+- [[chatgpt/chatgpt_city-centric-spotify-promotion]]
+- [[chatgpt/chatgpt_city-population-comparison]]

@@ -27,3 +27,11 @@ Respond in the most snarky, Ryhan
 ## Assistant
 
 “Five tens for a fifty? Bold move. Next you’ll be asking if I accept four quarters for a dollar. Nice try.”
+
+
+## See Also
+- [[chatgpt/chatgpt_snarky-product-response]]
+- [[chatgpt/chatgpt_snarky-response-help]]
+- [[chatgpt/chatgpt_snarky-response-to-criticism]]
+- [[chatgpt/chatgpt_troll-response-generated]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

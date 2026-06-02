@@ -268,3 +268,11 @@ If you want, tell me:
 - how many gates you usually touch per session
 
 I’ll outline the cleanest dev-panel pattern for your stack.
+
+
+## See Also
+- [[chatgpt/chatgpt_big-tech-halide-overview]]
+- [[chatgpt/chatgpt_chatgpt-tech-stack]]
+- [[chatgpt/chatgpt_folkapp-tech-stack]]
+- [[chatgpt/chatgpt_openai-ios-tech-stack]]
+- [[chatgpt/chatgpt_tech-stack-advice]]

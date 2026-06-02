@@ -450,3 +450,11 @@ https://github.com/tailwindlabs/heroicons
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_music-remix-identification-part1]]
+- [[chatgpt/chatgpt_music-remix-identification-part3]]
+- [[chatgpt/chatgpt_ai-music-market-infrastructure-part2]]
+- [[chatgpt/chatgpt_amazon-music-remix-pitch]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]

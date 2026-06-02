@@ -36,3 +36,11 @@ Here’s the math (assuming standard 750 mL bottles and a champagne flute):
   30 × 89 mL = **~2,660 mL** → **~3.6 bottles** → buy **4**.
 
 To be safe: **get 4 bottles**.
+
+
+## See Also
+- [[chatgpt/chatgpt_bottle-calculation-for-juice]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]

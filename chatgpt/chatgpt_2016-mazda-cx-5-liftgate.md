@@ -26,3 +26,11 @@ Does the 2016 Mazda CX-5 have an electric liftgate?
 ## Assistant
 
 Yes, the 2016 Mazda CX-5 offers a power liftgate, but only on certain trims. Specifically, the Grand Touring trim includes this feature, allowing the liftgate to open and close electrically via interior switches or the key fob citeturn0search2. Lower trims like the Sport and Touring do not come with a power liftgate as standard. 
+
+
+## See Also
+- [[chatgpt/chatgpt_2016-mazda-cx-5-wipers]]
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_cloning-mazda-key-fob]]
+- [[chatgpt/chatgpt_kia-soul-vs-mazda-cx-5]]
+- [[chatgpt/chatgpt_mazda-cx-5-beep-issue]]

@@ -30,3 +30,11 @@ In California, the law mandates that tips left for employees on credit cards mus
 However, the distribution of these tips among staff, including bartenders, can be influenced by the establishment's tip pooling arrangements. In a traditional restaurant setting, the California Department of Labor Standards Enforcement found a distribution of 80% to wait staff, 15% to bussers, and 5% to bartenders to be legal【8†source】.
 
 Therefore, if a restaurant is not paying out credit card tips to bartenders, it may be in violation of California law, unless it falls under some specific arrangement within legal tip pooling practices. Nonetheless, it's advisable to consult with a legal professional to understand the nuances of the law and how it applies to specific circumstances.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

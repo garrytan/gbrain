@@ -402,3 +402,11 @@ The highest-leverage next move is to have it inspect your current Linear backlog
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_doppler-with-cursor-agent]]
+- [[chatgpt/chatgpt_nightly-test-improvement-agent]]
+- [[chatgpt/chatgpt_comment-improvement-with-snark]]
+- [[chatgpt/chatgpt_local-dev-with-neon]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]

@@ -134,3 +134,11 @@ Romantic feelings are cute. **Consumer behavior pays the bills.**
 --- 
 
 If you want, I can make it sharper or more comedic.
+
+
+## See Also
+- [[chatgpt/chatgpt_slammed-with-tax-facts]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-against-selective-wage-hikes]]
+- [[chatgpt/chatgpt_arguing-assumptions-of-motive]]

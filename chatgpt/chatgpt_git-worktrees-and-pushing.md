@@ -157,3 +157,11 @@ If you reply with:
 - CI provider
 
 …I’ll tell you exactly what to turn on and what directories to cache, and what kind of speedup you should expect.
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-worktrees-git]]
+- [[chatgpt/chatgpt_claude-code-worktrees-overview]]
+- [[chatgpt/chatgpt_claude-code-worktrees-setup]]
+- [[chatgpt/chatgpt_claude-code-worktrees]]
+- [[chatgpt/chatgpt_claude-desktop-worktrees]]

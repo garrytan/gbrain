@@ -65,3 +65,11 @@ This version keeps the focus on a more relaxed and authentic approach, aligning 
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_google-photos-capcut-partnership]]
+- [[chatgpt/chatgpt_pros-cons-partnership-vs-marriage]]
+- [[chatgpt/chatgpt_8-slide-yc-pitch-deck]]
+- [[chatgpt/chatgpt_amazon-music-remix-pitch]]
+- [[chatgpt/chatgpt_branch-music-creators-yc-pitch-part1]]

@@ -82,3 +82,11 @@ Playwright Codegen flows → record raw video → optional polish in Arcade/Scre
 For your goal, I would ship with this rule: **80% real UI, 20% AI motion graphics.** That ratio usually looks slick and still trustworthy.  
 
 If you want, I can turn this into a concrete shot pipeline with exact tools, export settings, and prompts for the AI motion passes.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovy-demo-video-creation]]
+- [[chatgpt/chatgpt_ai-video-generation-stack]]
+- [[chatgpt/chatgpt_ai-video-tools-available]]
+- [[chatgpt/chatgpt_demo-video-planning]]
+- [[chatgpt/chatgpt_download-video-audio-javascript]]

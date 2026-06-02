@@ -394,3 +394,11 @@ In that panel you want to populate the **“Path to MPFB user data”** field wi
 5. In the 3D Viewport hit **Shift A → MPFB → Create Human**.  
 
 If that spawns a mesh at the origin, your headless script will finally produce a real wireframe human.
+
+
+## See Also
+- [[chatgpt/chatgpt_blender-humanoid-creation-help-part1]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part2]]
+- [[chatgpt/chatgpt_blender-3d-features-overview]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part1]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part10]]

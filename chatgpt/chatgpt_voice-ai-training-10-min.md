@@ -107,3 +107,11 @@ Certainly! Here are some sample phrases and sentences that you can use to train 
 It's important to speak each phrase or sentence in a natural and conversational tone, as if you were speaking to someone in person. Make sure to record the audio sample in a quiet environment using high-quality recording equipment, and to enunciate clearly and consistently throughout the recording.
 
 Once you have the recorded audio, you can use automated transcription software to convert it into text that can be used to train your AI audio model to replicate your voice. Good luck with your training!
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-training-request]]
+- [[chatgpt/chatgpt_cutting-training-frequency]]
+- [[chatgpt/chatgpt_fasted-vs-fed-training]]
+- [[chatgpt/chatgpt_hypertrophy-training-gear]]
+- [[chatgpt/chatgpt_leg-training-impact-summary]]

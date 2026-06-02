@@ -434,3 +434,11 @@ This framing matters.
 > Notes should explain the system, not sell the artist.
 
 If you want, I can define **exact note types + copy rules** so this never becomes a moderation or trust problem later.
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part3]]
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part3]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part3]]
+- [[chatgpt/chatgpt_yc-homepage-audit-part1]]
+- [[chatgpt/chatgpt_yc-homepage-audit-part2]]

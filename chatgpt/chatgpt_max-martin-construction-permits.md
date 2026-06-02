@@ -132,3 +132,11 @@ I was unable to retrieve the construction permits for 882 N Doheny Dr, West Holl
 For a more detailed investigation, you may consider visiting or contacting local government offices. It's also possible that a local property records office or the County Recorder's office may have information on construction permits.
 
 Would you like assistance with anything else, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_check-permits-for-882-doheny]]
+- [[chatgpt/chatgpt_innovation-in-construction-noise]]
+- [[chatgpt/chatgpt_job-path-to-max-martin]]
+- [[chatgpt/chatgpt_max-martin-2024-2025-records]]
+- [[chatgpt/chatgpt_max-martin-demo-search]]

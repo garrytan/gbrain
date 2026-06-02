@@ -34,3 +34,11 @@ I couldn’t find an app called **“hilldae”**, but there *are* similarly nam
 **3. My Hillsdale app** – A city/community app that delivers local alerts, advisories, events, and resource links. citeturn0search5
 
 If you provide more context — like what the app does or where you saw the name — I can narrow it down.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]

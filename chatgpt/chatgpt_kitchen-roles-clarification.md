@@ -36,3 +36,11 @@ For the two cooking roles:
 - **Prep Cook / Commis / Assistant Line Cook** – supports the lead by prepping ingredients, assembling sides, or finishing dishes.
 
 If you want classic brigade terms: *chef de partie* (station chef) with a *commis* (junior) assisting. In a casual U.S. restaurant, “lead line cook” and “prep cook” (or “line cook” and “kitchen assistant”) are the standard concise titles.
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_beta-issue-clarification]]
+- [[chatgpt/chatgpt_clarification-of-ns-meaning]]
+- [[chatgpt/chatgpt_clarification-on-handle]]
+- [[chatgpt/chatgpt_clarification-request-2]]

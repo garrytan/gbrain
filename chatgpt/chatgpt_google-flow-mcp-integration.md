@@ -80,3 +80,11 @@ render_merch_ad()
 Then Hermes/Jovie agents could call those tools directly through MCP without caring whether the backend is Flow, Veo, Runway, Higgsfield, Kling, or OpenAI video.
 
 That abstraction layer is probably more valuable than binding directly to Flow because video vendors are changing every few months. MCP gives you a stable interface while the rendering backend can swap underneath. citeturn0search3turn0search20turn0search36
+
+
+## See Also
+- [[chatgpt/chatgpt_google-flow-ai-filmmaking-2]]
+- [[chatgpt/chatgpt_google-flow-ai-filmmaking]]
+- [[chatgpt/chatgpt_google-flow-filmmaking-ai]]
+- [[chatgpt/chatgpt_google-flow-overview-2]]
+- [[chatgpt/chatgpt_google-flow-overview]]

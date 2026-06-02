@@ -40,3 +40,11 @@ Yes, Mr. White — totally real.
 - Curious? Measure with a thermometer at the surface, 1 ft, and 3 ft — you’ll see the spread.
 
 Science says your feet are in a bath and your skin’s in a tiny cold lake.
+
+
+## See Also
+- [[chatgpt/chatgpt_bathtub-cold-water-issue]]
+- [[chatgpt/chatgpt_bird-identification-question]]
+- [[chatgpt/chatgpt_chlorine-pool-sex-safety]]
+- [[chatgpt/chatgpt_cold-increases-calorie-burn]]
+- [[chatgpt/chatgpt_cold-sore-transmission-prevention]]

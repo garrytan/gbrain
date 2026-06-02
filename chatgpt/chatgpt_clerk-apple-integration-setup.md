@@ -114,3 +114,11 @@ Mr. White, Apple OAuth is now configured and enabled on Clerk:
 - Private key added (including header/footer)
 
 Apple OAuth shows **Enabled** and users can authenticate with it.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-dev-account-setup]]
+- [[chatgpt/chatgpt_apple-id-fastlane-setup]]
+- [[chatgpt/chatgpt_clerk-e2e-testing-setup]]
+- [[chatgpt/chatgpt_clerk-ios-native-setup]]
+- [[chatgpt/chatgpt_clerk-otp-test-setup]]

@@ -84,3 +84,11 @@ If you want a script for more advanced usage or automation beyond this simple fo
 4. Now, you can run this macro by going to **Extensions > Macros** and selecting `appendShorts`.
 
 This script will modify the URLs in place, appending `/shorts` to any URL that doesn't already end with it.
+
+
+## See Also
+- [[chatgpt/chatgpt_youtube-shorts-allow-links]]
+- [[chatgpt/chatgpt_youtube-shorts-scheduler]]
+- [[chatgpt/chatgpt_youtube-shorts-vs-long-form]]
+- [[chatgpt/chatgpt_generate-urls-with-loop]]
+- [[chatgpt/chatgpt_app-automation-for-youtube]]

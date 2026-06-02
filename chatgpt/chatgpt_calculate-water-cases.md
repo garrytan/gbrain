@@ -380,3 +380,11 @@ Surplus (no buy): Coke, Sprite, Diet Coke (if no planned use), tonic water, suga
 - **Regular Red Bull 16 oz:** 2 cases (12-can)
 
 This reflects the higher per-show sales pace you’ve observed and should comfortably cover all 20 October shows.
+
+
+## See Also
+- [[chatgpt/chatgpt_25l-water-in-ice]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_bathtub-cold-water-issue]]
+- [[chatgpt/chatgpt_data-center-water-brown]]
+- [[chatgpt/chatgpt_dexa-scan-affected-by-water-weight]]

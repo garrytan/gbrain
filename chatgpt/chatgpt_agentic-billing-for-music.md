@@ -79,3 +79,11 @@ Artist
 ```
 
 For your exact question: **there is no mature universal agentic billing standard that makes this automatic today.** There are early pieces: OpenAI Apps monetization, ACP, MCP, Stripe Connect, usage billing. For your platform, the shippable path is to become the merchant of record, bill the artist, call Higgsfield via API, and treat Higgsfield as either a vendor or connected marketplace seller depending on the commercial relationship.
+
+
+## See Also
+- [[chatgpt/chatgpt_agentic-building-and-scaling]]
+- [[chatgpt/chatgpt_agentic-os-for-artists-part1]]
+- [[chatgpt/chatgpt_agentic-os-for-artists-part2]]
+- [[chatgpt/chatgpt_agentic-os-for-artists-part3]]
+- [[chatgpt/chatgpt_ai-driven-music-bio]]

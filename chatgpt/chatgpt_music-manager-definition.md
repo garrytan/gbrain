@@ -44,3 +44,11 @@ How they get paid:
 - Most commonly **10–20% of the artist’s gross entertainment income** (percentage varies by leverage/region).
 
 If you tell me whether you mean “for a new artist” or “for someone already touring/earning,” I can outline what a good manager should deliver at that stage.
+
+
+## See Also
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_clerk-definition]]
+- [[chatgpt/chatgpt_conductor-definition-and-examples]]
+- [[chatgpt/chatgpt_css-class-definition-overview]]
+- [[chatgpt/chatgpt_enhancing-ab-definition-photoshoot]]

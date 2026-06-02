@@ -70,3 +70,11 @@ Short answer: **Yes — the battery version has a slightly worse camera experien
 - **Wake-up latency & responsiveness:** Battery models can take a moment to wake when triggered, which can miss early movement. citeturn0search12
 
 **Bottom line:** The battery Nest doorbell is great for flexibility and wireless installs. The wired 3rd Gen is objectively better for **video quality and continuous monitoring**. If camera performance is your top priority, go wired.
+
+
+## See Also
+- [[chatgpt/chatgpt_4th-gen-nest-doorbell]]
+- [[chatgpt/chatgpt_best-doorbell-cameras-2026]]
+- [[chatgpt/chatgpt_fix-ring-doorbell-boot-loop]]
+- [[chatgpt/chatgpt_google-doorbell-options]]
+- [[chatgpt/chatgpt_nest-aware-overview]]

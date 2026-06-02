@@ -106,3 +106,11 @@ Ziv—kept these pristine white XDJ-1000 MK2s on ice for you, but that shot of t
 **Deal stands:** $2 k cash for the pair, or $2.5 k with the DJM-450. First person who shows up with cash—could still be you—takes them.
 
 Let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_friendly-response-suggestion]]
+- [[chatgpt/chatgpt_polite-response-suggestion]]
+- [[chatgpt/chatgpt_response-suggestion-write]]
+- [[chatgpt/chatgpt_response-suggestion]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

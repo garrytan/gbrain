@@ -206,3 +206,11 @@ GitHub only “picks it up” automatically if:
 ---
 
 If you tell me what kind of rules you're trying to enforce (CI? branch restrictions? code quality? permissions?), I’ll tell you the correct GitHub-native approach.
+
+
+## See Also
+- [[chatgpt/chatgpt_coderabbit-yaml-generator]]
+- [[chatgpt/chatgpt_check-email-configuration]]
+- [[chatgpt/chatgpt_configuration-check-summary]]
+- [[chatgpt/chatgpt_gstack-configuration-request]]
+- [[chatgpt/chatgpt_laravel-mix-configuration]]

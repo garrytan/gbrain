@@ -40,3 +40,11 @@ That said, OpenAI is clearly optimizing it heavily for agent workflows:
 - native-ish mac integrations
 
 So it’s Electron, but closer to VS Code / Cursor quality than a typical thin web wrapper.
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]

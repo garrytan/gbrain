@@ -261,3 +261,11 @@ Divided by 8
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_drink-recipe-and-batch-prep]]
+- [[chatgpt/chatgpt_batch-conversion-recipe]]
+- [[chatgpt/chatgpt_batch-recipe-conversion]]
+- [[chatgpt/chatgpt_adjusting-recipe-proportions]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-2]]

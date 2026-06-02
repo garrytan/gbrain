@@ -30,3 +30,11 @@ I can’t send texts directly, Mr. White — but here’s a message you can copy
 **“Hey Nick, we’re doing the Halloween show again. Want to work it?”**
 
 Do you want me to help you draft a more formal version or keep it casual like this?
+
+
+## See Also
+- [[chatgpt/chatgpt_send-text-to-sophie]]
+- [[chatgpt/chatgpt_write-text-to-nick]]
+- [[chatgpt/chatgpt_auto-send-fan-drops]]
+- [[chatgpt/chatgpt_button-text-update]]
+- [[chatgpt/chatgpt_cant-hear-ai-text]]

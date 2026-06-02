@@ -125,3 +125,11 @@ for (const id of stories) {
 > **“Scan all Button-like components (Button, LoadingButton, IconButton) and refactor to a single Button with a `loading` prop. Enforce a strict layout contract: `inline-flex`, `items-center`, `justify-center`, fixed spinner box (`w-4 h-4`), `gap-2`, `leading-none`, `whitespace-nowrap`, `truncate`, size tokens for `min-h`/`px`. Use `data-[state=loading]` and `aria-busy`. Remove any absolute/floating spinner styles that can escape the button. Add Storybook stories that cover: short/long labels, ‘Processing…’, ‘Please wait’, emoji/CJK, constrained widths, icon-only, xs/sm/md/lg, disabled+loading. Add Playwright tests with @storybook/test-runner: (1) `toHaveScreenshot` per story; (2) programmatic overflow/clip checks comparing bounding boxes and scroll vs client sizes; (3) axe a11y checks. Fail PR on any diff or overflow. Document the contract in the Button README and migrate all call sites.”**
 
 Run this once; from then on, PRs fail the moment a spinner or text spills off the button.
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-audience-building]]
+- [[chatgpt/chatgpt_automated-job-application-setup]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part2]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part3]]

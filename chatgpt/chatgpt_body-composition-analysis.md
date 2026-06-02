@@ -35,3 +35,11 @@ If you meant:
 - **“What’s my ideal weight for bodybuilding/aesthetic goals?”** — at 6’4”, a lean, muscular physique (10–12 % BF) would usually sit around **205–215 lb**, depending on genetics and training experience.
 
 Would you like me to estimate your target weight or macronutrient needs for a muscle-gain phase based on RP Strength guidelines?
+
+
+## See Also
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-composition-change-summary]]
+- [[chatgpt/chatgpt_body-composition-changes]]
+- [[chatgpt/chatgpt_body-composition-phase-plan]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

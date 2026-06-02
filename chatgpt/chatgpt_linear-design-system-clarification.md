@@ -52,3 +52,11 @@ If you specifically meant UI design methodologies or toolkit elements from Linea
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-design-system-breakdown]]
+- [[chatgpt/chatgpt_linear-design-system-oklch]]
+- [[chatgpt/chatgpt_framer-to-linear-design]]
+- [[chatgpt/chatgpt_linear-avatars-ux-design]]
+- [[chatgpt/chatgpt_linear-meaning-clarification]]

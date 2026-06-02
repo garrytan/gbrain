@@ -55,3 +55,11 @@ To get particles that *hang* like dust:
 👉 If you want the *real cinematic Upside Down vibe*: **hazers + lightweight confetti swirl fans + lighting**. Foam/snow machines alone won’t cut it.  
 
 Do you want me to spec you an exact rental package (model names, count, and costs) for a 250-seat theatre setup?
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

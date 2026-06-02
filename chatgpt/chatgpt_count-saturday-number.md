@@ -28,3 +28,11 @@ Count Saturday number
 ## Assistant
 
 6, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_bartender-count-bpm]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]
+- [[chatgpt/chatgpt_count-customers-by-city]]
+- [[chatgpt/chatgpt_count-green-cells-excel]]

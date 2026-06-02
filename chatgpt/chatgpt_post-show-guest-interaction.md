@@ -61,3 +61,11 @@ Here’s an updated section you can paste into your operations documentation:
 ---
 
 *(Note: I left out the “professional ChatGPT user” lines since they don’t relate to venue operations. Add them only if you need them for an internal joke or specific context.)*
+
+
+## See Also
+- [[chatgpt/chatgpt_equinox-guest-passes-info]]
+- [[chatgpt/chatgpt_free-guest-list-comedy]]
+- [[chatgpt/chatgpt_guest-count-inquiry]]
+- [[chatgpt/chatgpt_guest-count-per-date]]
+- [[chatgpt/chatgpt_guest-count-violation-advice]]

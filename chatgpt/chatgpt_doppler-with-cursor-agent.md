@@ -90,3 +90,11 @@ This is the correct approach for non-interactive agents.
 ### Bottom line
 Doppler is the secrets layer; Cursor just runs commands.  
 If you want, tell me **which agent flow** you’re using (local, CI, cloud runner), and I’ll tailor the exact command.
+
+
+## See Also
+- [[chatgpt/chatgpt_cursor-agent-flow-issues]]
+- [[chatgpt/chatgpt_cursor-agent-setup-fix]]
+- [[chatgpt/chatgpt_kpi-improvement-with-local-agent]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]

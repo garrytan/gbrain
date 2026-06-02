@@ -55,3 +55,11 @@ Mr. White, at 6′4″ (1.93 m), 175 lb (79.4 kg) and ~16 % BF, your fat-free ma
   • At 16 % BF, bulking first means you’ll add extra fat (Mike Israetel: avoid a bulk above ~12 % BF). You’d then need a longer cut, so net timeline is longer.  
 
 **Bottom line**: Cut to ~10–12 % BF first (4–6 weeks of a moderate deficit), then switch to a lean bulk. Recomposition is viable but significantly slower than “cut then lean-bulk.”
+
+
+## See Also
+- [[chatgpt/chatgpt_menno-henselmans-genetic-potential]]
+- [[chatgpt/chatgpt_potential-scam-number]]
+- [[chatgpt/chatgpt_suno-user-conversion-potential]]
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_attractive-ffmi-values]]

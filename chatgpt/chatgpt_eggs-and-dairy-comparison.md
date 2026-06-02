@@ -109,3 +109,11 @@ so what is the differen between vegan and vegetarian
 Vegetarians avoid killing animals; vegans avoid **using** animals.
 
 If you want the health or protein implications laid out quantitatively, Mr. White, say the word.
+
+
+## See Also
+- [[chatgpt/chatgpt_dairy-free-high-protein-snacks]]
+- [[chatgpt/chatgpt_dairy-free-protein-meal-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]

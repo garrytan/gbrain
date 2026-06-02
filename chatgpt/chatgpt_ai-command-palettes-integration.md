@@ -200,3 +200,11 @@ Externally:
 That is a sharper wedge than “AI assistant for music.”
 
 The persistent persona should be present, but the core product promise should be speed, recall, and action. A creator should feel like Jovie remembers their catalog better than they do.
+
+
+## See Also
+- [[chatgpt/chatgpt_analytics-integration-advice]]
+- [[chatgpt/chatgpt_background-image-integration]]
+- [[chatgpt/chatgpt_builderio-supabase-integration]]
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]
+- [[chatgpt/chatgpt_chromatic-storybook-integration]]

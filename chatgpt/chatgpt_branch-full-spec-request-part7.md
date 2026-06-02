@@ -1153,3 +1153,11 @@ The fastest path is: **submit the sharper story today, let agents audit the mess
 
 
 write the yc application base it on the current yc questions. have an answer for everything including the founder profile questions. look at our ops repo for our previous answers and udpate everything. harden it against what we know will get us in vs what is weak or defensive. use specific examples when possible so that its abundantly clear and they can understand the concept in detail. dont say an artist say....World Famous DJ David Guetta....or Brooklyn house artist neon Gararge. or whatever. use be specific in a way that theyll get it. like michael seibel pushes for in his how to pitch videos and talks.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part4]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part5]]

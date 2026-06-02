@@ -45,3 +45,11 @@ gitleaks
 Hard-coded secrets committed to Git are effectively public forever — attackers can exploit them if exposed. Secret scanning tools like Gitleaks help catch these before they reach production or external repositories. citeturn0search1
 
 If you want, I can show example commands and config file snippets.
+
+
+## See Also
+- [[chatgpt/chatgpt_gitleaks-overview]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]

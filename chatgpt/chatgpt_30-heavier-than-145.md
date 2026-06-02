@@ -31,3 +31,11 @@ Mr. White, 30% heavier than 145 is:
 **145 × 1.3 = 188.5**
 
 So the answer is **188.5**.
+
+
+## See Also
+- [[chatgpt/chatgpt_more-than-vip-terms]]
+- [[chatgpt/chatgpt_worse-than-her-or-she]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

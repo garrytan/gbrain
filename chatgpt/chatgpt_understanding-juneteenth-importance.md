@@ -45,3 +45,11 @@ Was this holiday actually ever celebrated until five years ago?
 ## Assistant
 
 Yes, Juneteenth has been celebrated for over 150 years, especially in African American communities, primarily in Texas. The holiday has seen celebrations in the form of parades, festivals, family gatherings, and educational events. However, it gained much broader national recognition and awareness in recent years, particularly following the increased focus on racial justice and equality movements around 2020. This heightened attention led to Juneteenth being declared a federal holiday in 2021.
+
+
+## See Also
+- [[chatgpt/chatgpt_understanding-anthropomorphism]]
+- [[chatgpt/chatgpt_understanding-label-usage]]
+- [[chatgpt/chatgpt_understanding-lights-nature]]
+- [[chatgpt/chatgpt_understanding-localhost3000]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

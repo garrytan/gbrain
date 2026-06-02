@@ -34,3 +34,11 @@ Yep. A good rule of thumb is:
 So: **400°F, 12–15 min, shake once.**  
 
 Want me to also tell you how to adjust if you like them *super crispy*?
+
+
+## See Also
+- [[chatgpt/chatgpt_batch-conversion-recipe]]
+- [[chatgpt/chatgpt_batch-recipe-conversion]]
+- [[chatgpt/chatgpt_best-ux-and-conversion]]
+- [[chatgpt/chatgpt_changelog-conversion-to-markup]]
+- [[chatgpt/chatgpt_css-conversion-px-8]]

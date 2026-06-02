@@ -189,3 +189,11 @@ Pick **one**. Park the others. Use a strict kill-switch.
 5) If you want the fun outlet, run the **30-video Muffin Top** sprint as a timed experiment with the kill rule.
 
 You’re not “ADD”; you’re a multi-hyphenate without a forcing function. This plan creates cash **and** a forcing function: one flagship bet, defined kill rules, and a productized consulting offer that pays you to do the exact diagnostic/ops work you enjoy.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-business-manager-overview]]
+- [[chatgpt/chatgpt_bar-manager-resume-rewrite]]
+- [[chatgpt/chatgpt_bartender-vs-manager-salary]]
+- [[chatgpt/chatgpt_flags-manager-design]]
+- [[chatgpt/chatgpt_gobar-manager-jobs-search]]

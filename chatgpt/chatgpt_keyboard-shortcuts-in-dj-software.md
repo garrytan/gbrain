@@ -857,3 +857,11 @@ The north-star standard:
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_building-software-revenue-part1]]
+- [[chatgpt/chatgpt_building-software-revenue-part2]]
+- [[chatgpt/chatgpt_gimp-software-overview]]
+- [[chatgpt/chatgpt_piracy-alternatives-legal-software]]
+- [[chatgpt/chatgpt_serato-dj-software-overview]]

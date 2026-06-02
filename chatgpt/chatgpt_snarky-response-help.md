@@ -30,3 +30,11 @@ Hit her with:
 **"Physically? California. Mentally? Somewhere between unbothered and unhinged. Spiritually? On my third iced coffee trying not to spiral. You good?"**
 
 Want it sassier? More poetic? Dry as hell?
+
+
+## See Also
+- [[chatgpt/chatgpt_job-interview-response-help]]
+- [[chatgpt/chatgpt_snarky-product-response]]
+- [[chatgpt/chatgpt_snarky-response-generated]]
+- [[chatgpt/chatgpt_snarky-response-to-criticism]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

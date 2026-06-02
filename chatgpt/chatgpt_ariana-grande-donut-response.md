@@ -58,3 +58,11 @@ In essence, she expressed regret, acknowledged how offensive her behavior was, a
 Let me know if you want to dive into any follow-ups or reactions from other media outlets 📺
 
 navlistRelevant news on Ariana’s donut‑licking responseturn0news20turn0news24
+
+
+## See Also
+- [[chatgpt/chatgpt_custard-in-boston-cream-donut]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

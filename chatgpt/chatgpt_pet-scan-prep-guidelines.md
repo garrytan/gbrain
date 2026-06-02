@@ -61,3 +61,11 @@ Mr. White—here’s how those prep steps stack up against published guidelines:
   To reduce bowel tracer uptake, many protocols say to omit metformin on the day of the scan (some extend this hold to 24–48 hours) citeturn0search9.  
 
 All major sources align: your facility’s instructions are appropriate. If you have any remaining uncertainties—especially around diabetes meds—confirm with your referring physician.
+
+
+## See Also
+- [[chatgpt/chatgpt_silverware-prep-guidelines]]
+- [[chatgpt/chatgpt_ct-scan-contrast-prep]]
+- [[chatgpt/chatgpt_a7x3-guidelines-for-influencers]]
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_design-improvement-guidelines]]

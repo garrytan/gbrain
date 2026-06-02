@@ -452,3 +452,11 @@ lets do the economics. and do we pivot away from automating the other stuff arou
 
 analyze the repo and build the plan to intergrate this as a product so we can start assigning work to agents. upon approval you can open linear issues and scope them well.
 make this world class while following our rules/ethos.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part3]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part2]]

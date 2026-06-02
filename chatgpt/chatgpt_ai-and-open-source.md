@@ -796,3 +796,11 @@ The real opportunity lies in **identity resolution across platforms** and **real
 
 ### Bottom line
 Building a modern successor to entity["software","MusicBrainz"] can be strategically useful if it serves as the open infrastructure layer for a larger creator marketing or fan-data platform. As a standalone product, it is unlikely to produce meaningful economic value.
+
+
+## See Also
+- [[chatgpt/chatgpt_open-source-plan]]
+- [[chatgpt/chatgpt_successful-open-source-companies]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_html-source-code-request]]
+- [[chatgpt/chatgpt_open-auto-claude-cli]]

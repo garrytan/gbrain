@@ -26,3 +26,11 @@ I need to hear demos of songs written by Max Martin before the actual artists th
 ## Assistant
 
 I can't browse the internet, so I can't provide you with specific YouTube links. However, demos by Max Martin before they were recorded by the actual artists are sometimes circulated online. You can try searching on YouTube or other platforms using keywords like "Max Martin demos" to find what you're looking for.
+
+
+## See Also
+- [[chatgpt/chatgpt_search-for-max-martin-contract]]
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]

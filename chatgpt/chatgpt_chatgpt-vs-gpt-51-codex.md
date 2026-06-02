@@ -166,3 +166,11 @@ If you want, I can sketch exactly how to restructure that config to be safer.
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]
+- [[chatgpt/chatgpt_codex-52-prompting-guide]]

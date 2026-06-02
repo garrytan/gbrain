@@ -38,3 +38,11 @@ In California, employers are required to provide detailed pay stubs or wage stat
 9. **All applicable hourly rates in effect during the pay period and the corresponding number of hours worked at each hourly rate by the employee**
 
 If your employer is not providing this information, they may be in violation of state labor laws. You are entitled to this information, and you can request it from your employer. If they fail to provide it, you may consider filing a complaint with the California Labor Commissioner’s Office or seeking legal advice to ensure your rights are protected.
+
+
+## See Also
+- [[chatgpt/chatgpt_pay-stub-analysis]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

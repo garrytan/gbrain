@@ -91,3 +91,11 @@ Redken Shades EQ works fast — 5 to 20 mins — and you’re used to pulling it
 So if you’re using it, **commit to the full 30**, even if it looks dark or scary while processing — that purple/blue is neutralizing.
 
 If you want to stick to short timing like you do with Redken, **use Wella with 10 volume**, or better yet, just wait and get your usual Redken setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-developer-assistance]]
+- [[chatgpt/chatgpt_apple-developer-overview]]
+- [[chatgpt/chatgpt_apple-developer-program]]
+- [[chatgpt/chatgpt_audit-developer-copy]]
+- [[chatgpt/chatgpt_bleach-developer-comparison]]

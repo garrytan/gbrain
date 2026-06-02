@@ -34,3 +34,11 @@ Hi Sophie—just a heads up that rehearsals are starting, and there are still a 
 —[Your Name]
 
 Want me to tailor this for SMS or add any specifics?
+
+
+## See Also
+- [[chatgpt/chatgpt_send-note-to-lexi]]
+- [[chatgpt/chatgpt_send-text-to-sophie]]
+- [[chatgpt/chatgpt_auto-send-fan-drops]]
+- [[chatgpt/chatgpt_email-follow-up-note]]
+- [[chatgpt/chatgpt_make-note-pdf]]

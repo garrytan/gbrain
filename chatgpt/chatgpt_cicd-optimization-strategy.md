@@ -175,3 +175,11 @@ For Jovie, the optimal operating model is:
 That keeps the app solid and preserves speed because the friction is tiered by branch and risk.
 
 Send the current `.github/workflows/*.yml` files and I’ll mark the exact edits line by line.
+
+
+## See Also
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]

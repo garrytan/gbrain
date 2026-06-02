@@ -396,3 +396,11 @@ You are not there.
 For your stage, **minimum balance is a negative**, not a feature.
 
 If you want, I can quantify exactly **how much runway flexibility** that $20k constraint costs you at different burn rates.
+
+
+## See Also
+- [[chatgpt/chatgpt_analyze-and-compare-dexa]]
+- [[chatgpt/chatgpt_compare-app-to-apple-health]]
+- [[chatgpt/chatgpt_compare-efficiency-22-vs-25]]
+- [[chatgpt/chatgpt_compare-jovie-and-linear]]
+- [[chatgpt/chatgpt_compare-scale-and-dexa-data]]

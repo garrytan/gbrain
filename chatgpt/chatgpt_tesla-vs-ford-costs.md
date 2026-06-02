@@ -306,3 +306,11 @@ Where is the hint on GPT?
 ## Assistant
 
 The film "In the Hand of Dante" has been shooting in various locations across Italy. Scenes have been filmed on a rooftop in Venice as of October 2023, and Gerard Butler was spotted filming in Rome【65†source】【67†source】. Gal Gadot was also recently seen filming in Venice for this movie【68†source】. The film is currently in the production phase in Italy【66†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_cloudflare-reduces-cloud-costs]]
+- [[chatgpt/chatgpt_ded-body-removal-costs]]
+- [[chatgpt/chatgpt_ev-ownership-costs-comparison]]
+- [[chatgpt/chatgpt_expensive-chipotle-meal-costs]]
+- [[chatgpt/chatgpt_julia-garner-costs-coaching]]

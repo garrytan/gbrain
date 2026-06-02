@@ -96,3 +96,11 @@ Given your current weight and body fat percentage, here's a predicted plan:
 | Start Cut  | Start Week     | 1            | Cut          | Calculated Value    | Calculated Value        | Calculated Value     | Calculated Value | Calculated Value | Calculated Value |
 | ...        | ...            | ...          | ...          | ...                 | ...                     | ...                  | ...        | ...         | ...  |
 | End Cut    | End Week       | End Phase    | Cut
+
+
+## See Also
+- [[chatgpt/chatgpt_cut-bulk-cut-plan-w-predictions]]
+- [[chatgpt/chatgpt_mini-cut-bulk-cut-plan]]
+- [[chatgpt/chatgpt_plan-diet-phases-cut-bulk]]
+- [[chatgpt/chatgpt_plan-minicut-bulk-cut]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]

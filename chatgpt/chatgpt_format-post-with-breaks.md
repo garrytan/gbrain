@@ -212,3 +212,11 @@ The game is increasing signal, not maximizing chair time.
 :::
 
 The second one is probably the strongest reply under your original post because it reinforces the core thesis instead of arguing with anyone.
+
+
+## See Also
+- [[chatgpt/chatgpt_format-currency-input-text]]
+- [[chatgpt/chatgpt_format-lyrics-apple-style]]
+- [[chatgpt/chatgpt_format-lyrics-for-apple-music]]
+- [[chatgpt/chatgpt_korean-phone-number-format]]
+- [[chatgpt/chatgpt_product-code-format-twl]]

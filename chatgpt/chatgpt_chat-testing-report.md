@@ -73,3 +73,11 @@ When answering the 10x prompts, the assistant should:
 - **Be tight and actionable**: no fluff; every paragraph should end with “do this next.”
 
 If you want, I can continue by pushing the assistant with this 10x test suite and summarizing failures by category (reliability, hallucinations, missing context, weak deliverables).
+
+
+## See Also
+- [[chatgpt/chatgpt_chat-testing-flow]]
+- [[chatgpt/chatgpt_app-test-report]]
+- [[chatgpt/chatgpt_audit-report-summary]]
+- [[chatgpt/chatgpt_bodyspec-report-summary]]
+- [[chatgpt/chatgpt_de-annual-report-filing]]

@@ -327,3 +327,11 @@ Mr. White — here are the **compressed, one-line DALL·E prompts** for each BF%
 - [Download the JSONL](sandbox:/mnt/data/torso_prompts.jsonl)
 
 If you want, I can also generate a **version with explicit “Use the uploaded base image; identical composition”** phrasing for DALL·E’s *Edit image* flow, or a **Stable Diffusion batch** with seed/CFG/denoise settings embedded.
+
+
+## See Also
+- [[chatgpt/chatgpt_generate-torso-image]]
+- [[chatgpt/chatgpt_generate-artist-seed-data]]
+- [[chatgpt/chatgpt_generate-image-or-rewrite]]
+- [[chatgpt/chatgpt_generate-output-from-markdown]]
+- [[chatgpt/chatgpt_generate-shared-secret-revenuecat]]

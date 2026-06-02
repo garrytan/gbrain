@@ -26,3 +26,11 @@ Hey Doc, how's it going? So can you tell me the Ides of March? When is that, and
 ## Assistant
 
 The Ides of March falls on March 15. In ancient Roman times, the Ides were generally the 13th or 15th day of the month, depending on the month’s length. It originally marked the day of the full moon and was later associated with various public and religious events. Most famously, the Ides of March is known as the date when Julius Caesar was assassinated in 44 BCE.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

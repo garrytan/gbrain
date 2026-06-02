@@ -650,3 +650,11 @@ Got it, Mr. White — here’s your **final, updated Amazon order list** with th
 - 1 × Bar Rag Pack  
 
 Would you like me to now format your **Costco, Cisco, and Total Wine lists** the same way (quantity-first, link or note ready to text)?
+
+
+## See Also
+- [[chatgpt/chatgpt_calculate-macros-food-consumed]]
+- [[chatgpt/chatgpt_make-11-liters-lemonade]]
+- [[chatgpt/chatgpt_calculate-bill-amount]]
+- [[chatgpt/chatgpt_calculate-diet-phase-stats]]
+- [[chatgpt/chatgpt_calculate-fat-weight-formula]]

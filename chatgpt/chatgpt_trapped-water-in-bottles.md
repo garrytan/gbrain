@@ -92,3 +92,11 @@ Mr. White, in everyday terms here’s how “trapped” bottle-water can ripple 
 - **Environmental stress.** Wetlands and streams downstream get less recharge, harming fisheries and wildlife that local communities rely on for food and recreation.
 
 Bottom line: while one bottle seems small, collectively it’s real water cost, real health risk, and real ecosystem strain—touching everyone from your wallet to your local park.
+
+
+## See Also
+- [[chatgpt/chatgpt_trapped-water-myth]]
+- [[chatgpt/chatgpt_marrying-bottles-legality]]
+- [[chatgpt/chatgpt_setting-up-bleach-bottles]]
+- [[chatgpt/chatgpt_25l-water-in-ice]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]

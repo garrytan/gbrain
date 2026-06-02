@@ -43,3 +43,11 @@ Let's calculate the required width when the height is kept at 3780px.
 ## Assistant
 
 To match the aspect ratio of 2660px by 1140px with your current image height of 3780px, you should extend the canvas to a width of 8820px. This will allow you to fill in the extended spaces while maintaining the correct aspect ratio for the header image.
+
+
+## See Also
+- [[chatgpt/chatgpt_canvas-cmyk-8-bit]]
+- [[chatgpt/chatgpt_chatgpt-canvas-overview]]
+- [[chatgpt/chatgpt_design-canvas-request]]
+- [[chatgpt/chatgpt_help-with-spotify-canvas]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

@@ -122,3 +122,11 @@ If you’re worried about this specific incident and they can identify you, the 
 pay what you owe if they ask, don’t argue over a dollar, and don’t repeat the behavior.
 
 I’m not your lawyer, and this isn’t legal advice, but that’s the honest outline of the “worst case” versus what usually happens.
+
+
+## See Also
+- [[chatgpt/chatgpt_worst-small-talk-questions]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_flight-and-parking-options]]
+- [[chatgpt/chatgpt_legalities-of-charging-for-parking]]

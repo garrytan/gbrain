@@ -59,3 +59,11 @@ It crawled slower than dial-up – I finished my coffee waiting for the drama.
 
 
 **Topic:** [[chatgpt-clusters/personal_finance]]
+
+
+## See Also
+- [[chatgpt/chatgpt_33-taps-restaurant-info]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]
+- [[chatgpt/chatgpt_chlorine-snark-101]]
+- [[chatgpt/chatgpt_christmas-dinner-restaurant-recommendations]]
+- [[chatgpt/chatgpt_comment-improvement-with-snark]]

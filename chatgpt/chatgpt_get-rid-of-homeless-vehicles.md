@@ -116,3 +116,11 @@ Mr. White, **maybe—depending on facts and proof.**
 4) **Keep working the 72-hour tow** on each plate in parallel. Different remedy, faster bite. citeturn0search2
 
 If you want, I’ll draft a tight CHRO declaration framing these two cut-offs as (a) a credible threat of vehicle violence and (b) a course of conduct, plus the exact TRO asks.
+
+
+## See Also
+- [[chatgpt/chatgpt_report-homeless-in-weho]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

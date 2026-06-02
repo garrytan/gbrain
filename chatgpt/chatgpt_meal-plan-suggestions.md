@@ -134,3 +134,11 @@ Given your preference for at least four meals a day, here's how you can structur
 - **Raw veggies** like cucumber, celery, or bell peppers with a low-calorie dip
 
 This setup allows you to distribute your macros across four meals, keeping your protein intake consistent throughout the day and hitting your calorie targets. Adjust portion sizes if needed to better match your specific goals.
+
+
+## See Also
+- [[chatgpt/chatgpt_camping-meal-plan]]
+- [[chatgpt/chatgpt_cutting-phase-meal-plan]]
+- [[chatgpt/chatgpt_dairy-free-protein-meal-plan]]
+- [[chatgpt/chatgpt_diet-plan-meal-prep]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part1]]

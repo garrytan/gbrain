@@ -203,3 +203,11 @@ SKIPS_BASE=$(git show $BASE:tests | true)
 - Nightly/preview lane: **full suite** incl. `@slow`, retries on known-flaky while you fix root causes.
 
 If you want, I’ll write the tiny Node script to compare “skip counts vs main” and open a Linear ticket automatically when it increases.
+
+
+## See Also
+- [[chatgpt/chatgpt_cell-phone-impact-on-flight]]
+- [[chatgpt/chatgpt_cheapest-nonstop-flight]]
+- [[chatgpt/chatgpt_flight-and-parking-options]]
+- [[chatgpt/chatgpt_flight-booking-request]]
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]

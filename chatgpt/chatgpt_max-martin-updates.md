@@ -54,3 +54,11 @@ I’ll let you know once I’ve gathered the latest updates for this week.
 - **June 17, 2024** – Coldplay announced their tenth album *Moon Music* (released Oct 4, 2024), confirming the record was produced by Max Martin【57†L69-L73】.  
 - **Jan 31, 2025** – The Weeknd released his sixth studio album *Hurry Up Tomorrow*, featuring multiple tracks co-written and produced by Max Martin【19†L251-L258】【23†L1058-L1066】.  
 - **Mar 28, 2025** – Ariana Grande released *Eternal Sunshine Deluxe: Brighter Days Ahead*, a deluxe edition of her Max Martin–produced album *Eternal Sunshine* with six new tracks added【47†L117-L125】【47†L139-L142】.
+
+
+## See Also
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part2]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part3]]

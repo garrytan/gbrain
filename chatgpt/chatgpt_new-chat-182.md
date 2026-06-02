@@ -80,3 +80,11 @@ Then you can use the computed property in the template:
 
 This will make the template cleaner and easier to read, and you can easily add more colors by modifying the computed property rather than adding more `v-else-if` conditions.
 
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

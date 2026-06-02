@@ -422,3 +422,11 @@ Would you like me to **assemble a 6–8 song “Halloween Skyfall” setlist** t
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_halloween-act-ideas]]
+- [[chatgpt/chatgpt_halloween-costume-idea]]
+- [[chatgpt/chatgpt_halloween-discount-code-ideas]]
+- [[chatgpt/chatgpt_halloween-drink-menu]]
+- [[chatgpt/chatgpt_joker-halloween-show-script]]

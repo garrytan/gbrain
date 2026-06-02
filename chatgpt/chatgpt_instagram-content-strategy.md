@@ -1470,3 +1470,11 @@ For the first 30 days, the job is not to fully launch the Bubblegum Factory.
 The job is to prove:
 
 > **Can one room, one protagonist, one phrase, and one visual system make people want to follow the show?**
+
+
+## See Also
+- [[chatgpt/chatgpt_content-strategy-plan]]
+- [[chatgpt/chatgpt_instagram-followers-ads-strategy]]
+- [[chatgpt/chatgpt_instagram-alcohol-content-restrictions]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]

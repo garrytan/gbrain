@@ -747,3 +747,11 @@ Below is the patch to import the profile image and use it in your heads page. Th
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_bmi-calculation-for-weight]]
+- [[chatgpt/chatgpt_bmi-weight-calculation-request]]
+- [[chatgpt/chatgpt_body-fat-target-weight]]

@@ -111,3 +111,11 @@ Tim White
 ---
 
 Ensure to replace [Insert the Soundcloud/Beatport link to your music] with the actual link to your music and add your contact information at the bottom before sending it off.
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-role-submission]]
+- [[chatgpt/chatgpt_feedback-submission-workflow]]
+- [[chatgpt/chatgpt_playlist-submission-table]]
+- [[chatgpt/chatgpt_role-submission-automation]]
+- [[chatgpt/chatgpt_speedrun-application-submission]]

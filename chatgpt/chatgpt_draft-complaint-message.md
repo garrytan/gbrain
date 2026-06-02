@@ -144,3 +144,11 @@ Hi — my card stopped working about 3 weeks ago. Visa said no fraud holds, but 
 ---
 
 Would you like me to make it **slightly firmer**, so it pushes for faster action without sounding rude?
+
+
+## See Also
+- [[chatgpt/chatgpt_follow-up-message-draft]]
+- [[chatgpt/chatgpt_message-draft-assistance]]
+- [[chatgpt/chatgpt_message-response-draft]]
+- [[chatgpt/chatgpt_music-industry-message-draft]]
+- [[chatgpt/chatgpt_negotiation-message-draft]]

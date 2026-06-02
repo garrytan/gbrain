@@ -30,3 +30,11 @@ I just need you to read back to me this entire message
 Sure — here’s your full message exactly as written:
 
 > Hey hey, I see I'm on call tomorrow. Not sure if ya need me yet obvi but I totally forgot that my wed class this week got moved to a field trip tomorrow at the Norton Simon museum at 3pm. So I don't think there's anyway I'd make that first show so if you need me I could totally make the second show, assuming it's like at 9ish. Just a heads up. Slipped my mind till this very minute it's a double show tomorrow.
+
+
+## See Also
+- [[chatgpt/chatgpt_sonarr-read-only-props]]
+- [[chatgpt/chatgpt_actor-strikes-back-creator]]
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_anniversary-trip-message]]
+- [[chatgpt/chatgpt_aviation-mysteries-stendec-message]]

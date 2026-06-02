@@ -121,3 +121,11 @@ That wipes user data but not Google FRP (Factory Reset Protection). If someone�
 
 ### Bottom Line  
 Not junk—it’s a handy kitchen display or kids’ tablet, but not a hot seller. If you don’t need an extra smart screen, wipe it and list it around **$50** with “includes stand/charger” to move it quickly.
+
+
+## See Also
+- [[chatgpt/chatgpt_bike-value-and-info]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_cosine-value-clarification]]
+- [[chatgpt/chatgpt_cufflink-value-check]]
+- [[chatgpt/chatgpt_display-cabinet-value-estimate]]

@@ -42,3 +42,11 @@ In the meantime, here’s a generic but often compatible option:
 (These work with most corner wire shower caddies that use wall-mount adhesive clips.)
 
 Let me know if you want me to confirm compatibility before you buy—photo upload would be best.
+
+
+## See Also
+- [[chatgpt/chatgpt_airpods-replacement-options]]
+- [[chatgpt/chatgpt_clerk-elements-replacement-guidance]]
+- [[chatgpt/chatgpt_find-replacement-filter]]
+- [[chatgpt/chatgpt_infiniti-fob-battery-replacement]]
+- [[chatgpt/chatgpt_led-controller-replacement-options]]

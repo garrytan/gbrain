@@ -683,3 +683,11 @@ if (!enabled) { /* render without survey */ }
 ```
 
 **TL;DR:** Define flags in PostHog (UI or API). Code only **consumes** them.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-feedback-prompt]]
+- [[chatgpt/chatgpt_app-ui-feedback]]
+- [[chatgpt/chatgpt_application-revision-feedback]]
+- [[chatgpt/chatgpt_buyer-feedback-visibility]]
+- [[chatgpt/chatgpt_design-feedback-improvement]]

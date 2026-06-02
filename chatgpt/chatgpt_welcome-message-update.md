@@ -158,3 +158,11 @@ Change the toggle to use a hero icons v2 sun and moon
 ## Assistant
 
 Mr. White, I've updated the toggle button to use Heroicons v2 for the sun and moon icons. When dark mode is active, a sun icon will appear, and when light mode is active, a moon icon will be shown.
+
+
+## See Also
+- [[chatgpt/chatgpt_js-chrome-extension-welcome-message]]
+- [[chatgpt/chatgpt_js-welcome-message-sender]]
+- [[chatgpt/chatgpt_schedule-update-message]]
+- [[chatgpt/chatgpt_estrogen-extravaganza-welcome]]
+- [[chatgpt/chatgpt_welcome-email-strategy]]

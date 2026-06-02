@@ -89,3 +89,11 @@ Here is the current Header component code and any relevant styles/theme tokens:
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_video-header-component]]
+- [[chatgpt/chatgpt_vue-component-code-review]]
+- [[chatgpt/chatgpt_vuejs-table-header-component]]
+- [[chatgpt/chatgpt_add-prop-to-vue-component]]
+- [[chatgpt/chatgpt_add-prop-to-vuejs-component]]

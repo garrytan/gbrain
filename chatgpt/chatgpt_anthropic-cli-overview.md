@@ -46,3 +46,11 @@ There’s also a community/open-source CLI wrapper for Anthropic’s API (e.g., 
 - **Anthropic-CLI (community projects)** are tools to interact with Anthropic APIs from a terminal environment. citeturn0search0
 
 If you want, I can show sample commands or setup steps for using the Anthropic CLI in your terminal.
+
+
+## See Also
+- [[chatgpt/chatgpt_anthropic-api-overview]]
+- [[chatgpt/chatgpt_anthropic-meaning-and-context]]
+- [[chatgpt/chatgpt_ci-at-anthropic]]
+- [[chatgpt/chatgpt_claw-plan-vs-anthropic-api]]
+- [[chatgpt/chatgpt_fact-check-anthropic-deal]]

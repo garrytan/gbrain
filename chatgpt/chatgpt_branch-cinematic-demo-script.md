@@ -1152,3 +1152,11 @@ Right now the highest ROI path is:
 2. Build Jovie.
 3. Use those to create the AI House demo.
 4. Build singing Tim afterward using the studio acapellas.
+
+
+## See Also
+- [[chatgpt/chatgpt_cinematic-demo-script]]
+- [[chatgpt/chatgpt_cinematic-dj-demo-script]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]

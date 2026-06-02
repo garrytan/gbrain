@@ -98,3 +98,11 @@ I'm going to give you a list of things that I want you to put together into a bu
 - Card is actively editable at top  
 - If canceled, card disappears without saving  
 - If confirmed (enter), card saves and remains in grid
+
+
+## See Also
+- [[chatgpt/chatgpt_bullet-point-list-for-vincent]]
+- [[chatgpt/chatgpt_bullet-point-list-summary]]
+- [[chatgpt/chatgpt_organize-bullet-points]]
+- [[chatgpt/chatgpt_lexicon-cue-point-generation]]
+- [[chatgpt/chatgpt_nick-missed-the-point]]

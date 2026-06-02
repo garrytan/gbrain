@@ -39,3 +39,11 @@ Yo, can you check Isabelle and see if there's anything that my vegan friend can 
 - No obvious vegan dessert on the printed list, but they’ll usually rustle up a seasonal sorbet if you ask.  
 
 That should keep your vegan buddy fed without drama.
+
+
+## See Also
+- [[chatgpt/chatgpt_ysabel-reservation-options]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_airpods-pro-3-options]]
+- [[chatgpt/chatgpt_airpods-replacement-options]]
+- [[chatgpt/chatgpt_apartment-hunt-options-la]]

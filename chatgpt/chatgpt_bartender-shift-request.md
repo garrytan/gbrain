@@ -47,3 +47,11 @@ Here's a go-to drink order that makes you sound sharp and industry-savvy:
 **“Mezcal Negroni—balanced, bold, and always gets the job done.”**
 
 Let me know if you’d rather go with something more playful or approachable.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-count-bpm]]
+- [[chatgpt/chatgpt_bartender-duties-list]]

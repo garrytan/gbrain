@@ -197,3 +197,11 @@ Here are 20 1920s-themed drink names for a sour cocktail featuring Sour Patch Ki
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_new-york-sour-recipe]]
+- [[chatgpt/chatgpt_adjusting-recipe-proportions]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-2]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-3]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe]]

@@ -69,3 +69,11 @@ Mr. White, for **non-human / animal / robot-adjacent fictional companies**, the 
 **Cleanest robot answer:** **Sirius Cybernetics Corporation** from *The Hitchhiker’s Guide to the Galaxy*, estimated at **$327.2B revenue** and specifically tied to robots/android products. citeturn944120search5
 
 Still: these are **largest fictional companies**, not fictional IPOs. I don’t see a reliable example where a non-human/robot/animal fictional company has an explicitly stated IPO size.
+
+
+## See Also
+- [[chatgpt/chatgpt_largest-independent-music-label]]
+- [[chatgpt/chatgpt_search-largest-email-file]]
+- [[chatgpt/chatgpt_fictional-character-creation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

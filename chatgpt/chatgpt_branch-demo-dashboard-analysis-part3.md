@@ -1360,3 +1360,11 @@ This is why we go to the first 60 seconds of onboarding. To Jovie, the artist's 
 
 
 Mr. White, I’ll tighten this into a founder-led 90-second demo that opens with Jovie’s proactive opportunity, then uses the final stretch to explain the onboarding and data-layer thesis.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part4]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part5]]
+- [[chatgpt/chatgpt_demo-dashboard-analysis-part3]]

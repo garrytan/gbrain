@@ -26,3 +26,11 @@ next version
 ## Assistant
 
 Mr. White, could you clarify what you mean by **“next version”**? What specifically are you asking about (software, hardware, app, model, product, etc.)?
+
+
+## See Also
+- [[chatgpt/chatgpt_version-request-clarification]]
+- [[chatgpt/chatgpt_auto-highlight-next-show]]
+- [[chatgpt/chatgpt_next-16-and-clerk]]
+- [[chatgpt/chatgpt_next-gen-dj-character]]
+- [[chatgpt/chatgpt_next-gen-tirzepatide-successors]]

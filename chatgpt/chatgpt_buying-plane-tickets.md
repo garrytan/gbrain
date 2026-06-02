@@ -32,3 +32,11 @@ Mr. White — to buy plane tickets you can use sites like:
 - entity["brand","Google Flights",0] — track fares and get alerts for price changes. citeturn0search5  
 
 If you tell me your origin, destination, travel dates and budget — I can help you find some good options.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-powered-ad-buying]]
+- [[chatgpt/chatgpt_buying-a-gold-necklace]]
+- [[chatgpt/chatgpt_buying-fireworks-in-nv]]
+- [[chatgpt/chatgpt_clover-print-tickets-setup]]
+- [[chatgpt/chatgpt_parking-tickets-and-plates]]

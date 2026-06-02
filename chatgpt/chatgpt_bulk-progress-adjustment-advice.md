@@ -68,3 +68,11 @@ These resources will offer you a more nuanced understanding of how to adapt your
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_budget-adjustment-contacts-cost]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part1]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part2]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part3]]
+- [[chatgpt/chatgpt_meal-planning-macros-adjustment]]

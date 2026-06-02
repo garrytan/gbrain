@@ -577,3 +577,11 @@ Your strongest neutral position is:
 
 {'asset_pointer': 'sediment://file_00000000f22071fbbf046fd5929bb162', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1536, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 307136, 'width': 709}
 So how do I respond to this with all of this in here?
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-checking-video-request-part2]]
+- [[chatgpt/chatgpt_summarize-youtube-video-request-part1]]
+- [[chatgpt/chatgpt_summarize-youtube-video-request-part2]]
+- [[chatgpt/chatgpt_summarize-youtube-video-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]

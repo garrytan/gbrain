@@ -182,3 +182,11 @@ driver.quit()
 - **Monitor the automation** to ensure it behaves as expected and doesn't hit any unexpected errors.
 
 This script should help you automate the process and achieve the desired task count with the specified rest periods.
+
+
+## See Also
+- [[chatgpt/chatgpt_automating-screen-clicks]]
+- [[chatgpt/chatgpt_automate-follow-clicks]]
+- [[chatgpt/chatgpt_automating-feature-design]]
+- [[chatgpt/chatgpt_automating-lint-fixes]]
+- [[chatgpt/chatgpt_automating-meetme-action]]

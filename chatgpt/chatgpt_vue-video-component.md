@@ -85,3 +85,11 @@ This code adds a `ref` attribute to the `video` element to access it using the `
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_video-grid-component-template]]
+- [[chatgpt/chatgpt_video-header-component]]
+- [[chatgpt/chatgpt_vue-component-with-video]]
+- [[chatgpt/chatgpt_vuejs-component-for-video-selection]]
+- [[chatgpt/chatgpt_vuejs-component-with-video]]

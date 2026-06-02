@@ -69,3 +69,11 @@ export default {
 In this example, we're using the `drag` event to modify the `clientY` property of the event object to keep the cursor locked to the Y position of the element being dragged. This means that the cursor will only move along the X-axis while the element is being dragged. 
 
 Note that we're calculating the Y position of the element using `getBoundingClientRect()` and `window.pageYOffset` to account for any scrolling that may have occurred. Also, we're setting the `cursor` property of the element to `move` in the CSS to indicate to the user that the element is draggable.
+
+
+## See Also
+- [[chatgpt/chatgpt_fingerprint-limit-yale-lock]]
+- [[chatgpt/chatgpt_glove-box-lock-feature]]
+- [[chatgpt/chatgpt_identify-lock-brand-2]]
+- [[chatgpt/chatgpt_identify-lock-brand]]
+- [[chatgpt/chatgpt_yale-assure-lock-issue]]

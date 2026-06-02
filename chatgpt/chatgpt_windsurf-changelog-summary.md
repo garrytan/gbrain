@@ -52,3 +52,11 @@ Here’s a summary of the most recent changelog highlights for entity["sof
 ---
 
 If you like, Mr. White, I can pull together *all* changelog entries (with date-by-date breakdown) in a table (e.g., v1.x.x → v1.x+1) for your version-history reference.
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-changelog-summary]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_ai-changelog-insights-for-jovie]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]

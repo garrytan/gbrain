@@ -1241,3 +1241,11 @@ Make a generic landing page that is full screen height with a simple copyright o
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part1]]
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part1]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part1]]
+- [[chatgpt/chatgpt_frameio-homepage-for-jovie-part1]]

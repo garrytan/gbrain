@@ -26,3 +26,11 @@ Is it harder for tall people to bench press
 ## Assistant
 
 Yes, taller individuals may find it harder to bench press compared to shorter individuals, primarily due to biomechanics and leverage. Taller people generally have longer arms, which means they have to push the weight a greater distance. This increased range of motion can make the exercise more challenging, as it requires more work (force x distance) to complete each repetition. Additionally, the longer limb length can affect leverage negatively, making it harder to exert force efficiently compared to someone with shorter arms.
+
+
+## See Also
+- [[chatgpt/chatgpt_embargoed-press-release-strategy]]
+- [[chatgpt/chatgpt_estimating-blue-eyed-tall-women]]
+- [[chatgpt/chatgpt_hammer-strength-incline-press]]
+- [[chatgpt/chatgpt_smith-machine-vs-incline-press]]
+- [[chatgpt/chatgpt_tall-building-unidentified]]

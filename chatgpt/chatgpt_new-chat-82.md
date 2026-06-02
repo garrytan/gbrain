@@ -170,3 +170,11 @@ export default {
 
 Either way, the default value for the `color` prop will be determined based on the current theme. You can override this value by passing in a different value for the `color` prop when you use the component.
 
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

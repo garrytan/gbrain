@@ -329,3 +329,11 @@ Notes:
 my post workout meal should be the most carb heavy.
 
 Also feel free to use exact numbers (like 188g of chicken instead of a rounded number like 190g) if it helps us get closer to targets.
+
+
+## See Also
+- [[chatgpt/chatgpt_meal-plan-for-macros-part2]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part3]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part4]]
+- [[chatgpt/chatgpt_meal-plan-new-macros]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]

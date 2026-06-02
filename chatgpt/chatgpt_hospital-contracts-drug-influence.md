@@ -30,3 +30,11 @@ When you sign a contract, such as a guarantor form in a hospital, the key legal 
 In a hospital setting, the situation can be complex because patients often receive medications that could potentially impair their judgment. However, the legality of signing a contract under these circumstances generally holds if the patient is deemed competent at the time of signing. Hospitals typically have protocols to assess a patient's competency, and it's assumed that medical professionals act in good faith to ensure that a patient is capable of understanding their actions when signing.
 
 If a person believes they were not competent to consent due to the influence of drugs or for any other reason, they might challenge the contract's validity in court. The court would then consider evidence regarding the person's mental state at the time of signing and the fairness and circumstances under which the agreement was made.
+
+
+## See Also
+- [[chatgpt/chatgpt_laurel-pet-hospital-info]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part1]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part2]]
+- [[chatgpt/chatgpt_evening-out-drug-use]]
+- [[chatgpt/chatgpt_fbi-drug-testing-info]]

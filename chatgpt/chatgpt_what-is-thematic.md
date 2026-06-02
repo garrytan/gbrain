@@ -56,3 +56,11 @@ Here’s a brief overview for you, Mr. White:
 ---
 
 If you'd like, I can pull up **the current pricing tiers**, **a sample license agreement**, and **user reviews** for Thematic so you can decide if it’s a good fit. Would you like me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part1]]
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part2]]
+- [[chatgpt/chatgpt_horn-arrangements-look-what-i-found]]
+- [[chatgpt/chatgpt_what-is-a-biome]]
+- [[chatgpt/chatgpt_what-is-codecov]]

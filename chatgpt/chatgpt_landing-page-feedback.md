@@ -48,3 +48,11 @@ Mr. White, the biggest issue is focus: the page mixes a marketing landing page w
 - **Clarify the “trusted by” claim:** Replace with “Used by artists signed to…” or list recognizable artist names (with permission), or remove it.
 
 If you want, paste the exact hero copy you’re using (headline + subhead + CTA labels) and I’ll rewrite it into 2–3 higher-clarity variants tailored to musicians.
+
+
+## See Also
+- [[chatgpt/chatgpt_landing-page-feedback-2]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part1]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part2]]

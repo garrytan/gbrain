@@ -91,3 +91,11 @@ If you want to go even tighter (open mic version), you could strip it to this:
 ---
 
 Would you like me to add a short **tag line** after the closer (something that brings it full circle or adds a secondary laugh)?
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-count-bpm]]
+- [[chatgpt/chatgpt_bartender-duties-list]]

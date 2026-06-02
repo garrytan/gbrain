@@ -28,3 +28,11 @@ Hey, what's going on my dad is like really obese and he can walk But he has shit
 You can write a special request like this:
 
 "Please note that one of our guests has significant mobility issues and cannot sit at high or bar chairs. He requires a standard dining chair and needs easy access to the table. Thank you for accommodating his needs."
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_age-calculation-request]]

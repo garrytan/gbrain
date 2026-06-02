@@ -137,3 +137,11 @@ Mr. White, here’s how to adapt the comp/discount system to your **per-check cl
 ---
 
 This setup preserves the fast, per-check closeout you already use while keeping every comp tied to a reason, an employee, and a manager approval trail.
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-discount-codes]]
+- [[chatgpt/chatgpt_chipotle-discount-code-search]]
+- [[chatgpt/chatgpt_clear-discount-codes]]
+- [[chatgpt/chatgpt_dj-skins-discount-codes]]
+- [[chatgpt/chatgpt_halloween-discount-code-ideas]]

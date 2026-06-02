@@ -28,3 +28,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'No, you don’t owe me anything. If you meant to share a file or link, let me know what you need to do,'}
 {'asset_pointer': 'sediment://file_00000000008471f8bac19c038c35d50a', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-06-12T01:12:27.403990+00:00', 'format': 'wav', 'metadata': {'end': 3.0, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 144078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_beta-issue-clarification]]
+- [[chatgpt/chatgpt_clarification-of-ns-meaning]]
+- [[chatgpt/chatgpt_clarification-on-handle]]
+- [[chatgpt/chatgpt_clarification-request-2]]

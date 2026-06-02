@@ -40,3 +40,11 @@ Why these fit your face:
 - Clifton’s **lens height is 45 mm** — taller lenses start looking off on you, so keep targets at **43–45 mm**. Randolph **55 mm = 45 mm height**; AO **55 mm ≈ 45 mm**; Ray-Ban Cockpit **~43–45 mm**. citeturn0search4turn0search9turn0search6turn1search14
 
 If you want me to narrow to **just one** buy-now pick under $300, I’d say: **Randolph Aviator, Matte Chrome, 55 mm, Cobalt** (hunt sales) — closest look + glass lenses + right proportions.
+
+
+## See Also
+- [[chatgpt/chatgpt_alternatives-to-genius-shots]]
+- [[chatgpt/chatgpt_better-alternatives-to-fastlane]]
+- [[chatgpt/chatgpt_better-key-organizer-alternatives]]
+- [[chatgpt/chatgpt_birthday-cake-alternatives]]
+- [[chatgpt/chatgpt_bradley-coopers-hangover-sunglasses-ray-ban-3025]]

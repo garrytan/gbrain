@@ -331,3 +331,11 @@ The provided code snippet is written in JSX, a syntax extension for JavaScript c
    - The `NotifierProvider` wraps the `<App />` component, indicating that it likely provides a notification context to the entire app, allowing any component within the app to access notification state and logic.
 
 This code is a typical example of setting up a React application's entry point, emphasizing best practices like strict mode usage and centralized state management through context providers.
+
+
+## See Also
+- [[chatgpt/chatgpt_configurações-do-aplicativo-de-treinamento-part2]]
+- [[chatgpt/chatgpt_configurações-do-aplicativo-de-treinamento-part3]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part1]]

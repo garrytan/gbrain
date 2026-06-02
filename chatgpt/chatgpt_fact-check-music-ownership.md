@@ -36,3 +36,11 @@ This post is misleading.
 **Accurate comment:**
 
 > Owning the masters doesn't mean “all the money goes to him.” There are still splits with producers, writers, mixers, and publishers. This post is just pop fan fiction.
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-check-music-availability]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]

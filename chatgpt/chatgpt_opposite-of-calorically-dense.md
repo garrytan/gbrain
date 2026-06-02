@@ -99,3 +99,11 @@ If you need something a little more formal or scientific:
 But if you want to say it like a human, not a textbook:  
 > “It’s calorically lean.”  
 That’s the move.
+
+
+## See Also
+- [[chatgpt/chatgpt_deteriorate-opposite-improve]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

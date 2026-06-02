@@ -100,3 +100,11 @@ It may be disabled if:
 - **Merge conflicts** may be resolved automatically or block the update; if blocked, you’ll need to fix locally (or via the web conflict editor if offered).
 
 If you tell me whether you’re on **GitHub** and whether your repo uses **“Require branches to be up to date before merging”** (and whether you see a merge commit or rewritten commits after clicking), I can tell you which of the two it’s doing in your case, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-update-branch-preview]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]

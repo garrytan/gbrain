@@ -87,3 +87,11 @@ Geist’s official color docs organize the system around backgrounds plus scales
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_banner-design-request]]
+- [[chatgpt/chatgpt_dj-logo-design-request]]
+- [[chatgpt/chatgpt_logo-design-request]]
+- [[chatgpt/chatgpt_ui-mockup-design-request]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]

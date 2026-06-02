@@ -29,3 +29,11 @@ Can you write a slam-tastic, but concise, snarky, Ryan Reynolds-esque comment ex
 Sure, Mr. White. Here’s a snarky line you can drop in:
 
 > Honestly, it’s a $30 UHD Samsung monitor, not a delivery service. My price doesn’t change based on your GPS coordinates—if an hour-and-a-half drive is too much for thirty bucks, totally fine to pass.
+
+
+## See Also
+- [[chatgpt/chatgpt_competing-product-response]]
+- [[chatgpt/chatgpt_snarky-response-generated]]
+- [[chatgpt/chatgpt_snarky-response-help]]
+- [[chatgpt/chatgpt_snarky-response-to-criticism]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

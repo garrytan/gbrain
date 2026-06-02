@@ -42,3 +42,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Sure, Mr. White. Just turn the dial on that Harvia heater to your desired time or temperature. That should start heating it up.'}
 {'asset_pointer': 'sediment://file_00000000bd2461f6ba24db833635ebe3', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-03-10T01:53:48.115563+00:00', 'format': 'wav', 'metadata': {'end': 7.45, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 357678, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_sauna-and-muscle-hypertrophy]]
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]

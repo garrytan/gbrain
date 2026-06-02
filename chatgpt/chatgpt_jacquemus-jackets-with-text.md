@@ -38,3 +38,11 @@ No
 ## Assistant
 
 I couldn't find a designer by the name of Jacky Novak who makes jackets with writing on the back. It's possible the name might be slightly off or that the designer is less widely recognized under this specific name. If you have any more details or a different spelling of the name, that might help narrow down the search.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

@@ -37,3 +37,11 @@ Mr. White — **No, it is not considered safe to use psilocybin (“shrooms”) 
 If breastfeeding is ongoing, the evidence-based recommendation is **do not use psilocybin**. If someone chooses to use it anyway, the safest option is to **pause breastfeeding and use previously stored milk or formula**, but the exact duration required is **unknown** and could be **multiple days**.
 
 If you want, I can summarize what’s known about drug transfer into breast milk in general, or outline safer alternatives for mental health support during breastfeeding.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

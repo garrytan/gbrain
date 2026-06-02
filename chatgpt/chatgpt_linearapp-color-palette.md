@@ -47,3 +47,11 @@ This matches Linear’s brand hue and contrast ratios closely.
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-color-palette-explained]]
+- [[chatgpt/chatgpt_background-color-description]]
+- [[chatgpt/chatgpt_bleaching-hair-color-tips]]
+- [[chatgpt/chatgpt_buy-color-contacts-la]]
+- [[chatgpt/chatgpt_color-picker-tools]]

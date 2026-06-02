@@ -216,3 +216,11 @@ Mr. White — here’s the merged value, tight and operational.
 - **Do:** Pick one meaningful problem; ask a naive question first; 2h deep work **before inbox**; ship one artifact.  
 - **Don’t:** Coast on past wins; chase vanity metrics; defend ideas out of ego.  
 - **Metric:** ≥120 min deep work pre-comm; ≥1 shipped/day; daily reset note (1 thing learned, 1 belief updated); weekly post-mortem.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_alex-gaudino-song-summary]]
+- [[chatgpt/chatgpt_ams-return-policy-summary]]

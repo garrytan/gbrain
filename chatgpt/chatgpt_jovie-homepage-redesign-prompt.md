@@ -300,3 +300,11 @@ Best practice: paste the long prompt first, then in a second Stitch pass add, â€
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-homepage-redesign-prompt]]
+- [[chatgpt/chatgpt_landing-page-redesign-prompt]]
+- [[chatgpt/chatgpt_ux-redesign-prompt]]
+- [[chatgpt/chatgpt_frameio-homepage-for-jovie-part1]]
+- [[chatgpt/chatgpt_frameio-homepage-for-jovie-part2]]

@@ -154,3 +154,11 @@ A Long Island Iced Tea is the chaotic neutral of cocktails — it pretends to be
 
 ### Reality:
 It’s a frat party in a highball — designed to get you buzzed fast and pretend it’s not happening.
+
+
+## See Also
+- [[chatgpt/chatgpt_espresso-martini-sourcing-options]]
+- [[chatgpt/chatgpt_fallout-tv-character-glasses]]
+- [[chatgpt/chatgpt_olive-juice-in-martini]]
+- [[chatgpt/chatgpt_prepare-espresso-martini]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

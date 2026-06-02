@@ -63,3 +63,11 @@ Mr. White — yes, you *can* use entity["software", "Drizzle ORM", 0] t
 ---
 
 If you like, I can pull together a **starter template** file for Drizzle+Neon with proper pooling and transactions (for a serverless or backend environment) so you can drop it into your startup. Do you want that?
+
+
+## See Also
+- [[chatgpt/chatgpt_neon-ai-drizzle-prompt]]
+- [[chatgpt/chatgpt_neon-drizzle-comparison]]
+- [[chatgpt/chatgpt_neon-drizzle-migrations-fix]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]

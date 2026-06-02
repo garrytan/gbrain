@@ -190,3 +190,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Definitely, Mr. White. Elvis Costello had a few songs that sparked some buzz. For instance, "Tramp the Dirt Down" from the late \'80s was controversial because it took aim at Margaret Thatcher. He didn\'t really shy away from political or social critique, so naturally a few of his tracks stirred things up. But those are probably the big ones.'}
 {'asset_pointer': 'sediment://file_00000000ef4061f688314445003bd9e4', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-03-04T13:04:26.048582+00:00', 'format': 'wav', 'metadata': {'end': 20.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 984078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_elvis-costello-controversy-explained-part2]]
+- [[chatgpt/chatgpt_compounding-options-explained-part1]]
+- [[chatgpt/chatgpt_niraj-controversy-summary]]
+- [[chatgpt/chatgpt_platonic-hug-controversy]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

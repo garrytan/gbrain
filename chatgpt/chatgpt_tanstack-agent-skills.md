@@ -51,3 +51,11 @@ Agent skills are not plugins you manually run. Instead they act like *expert pro
 - This lets agents be more effective without flooding their context with all possible instructions. citeturn0search2
 
 In essence, TanStack agent skills embed **domain-specific expertise for the TanStack ecosystem** into AI agents so they can suggest better code, spot applicable libraries, and apply patterns automatically. citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-entry]]
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]
+- [[chatgpt/chatgpt_agent-skills-overview-2]]
+- [[chatgpt/chatgpt_agent-skills-overview]]
+- [[chatgpt/chatgpt_agent-skills-vs-code-cli]]

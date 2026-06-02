@@ -1693,3 +1693,11 @@ UX rules:
 Deliverable:
 A single polished design board with labeled groups, mobile and desktop frames, A/B variants clearly marked, and enough detail for engineering to implement the flow.
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part3]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part2]]

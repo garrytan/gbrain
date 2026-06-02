@@ -776,3 +776,11 @@ Ship in this order:
 5. **Creative/media placeholder**
 
 This gives you a reusable system and a shippable demo. Calendar/Gmail prove the “Jovie knows your music life” thesis. Media/merch becomes much stronger once the same harness already exists.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-music-market-infrastructure-part1]]
+- [[chatgpt/chatgpt_ai-music-market-infrastructure-part2]]
+- [[chatgpt/chatgpt_shipping-connectors-for-ai]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

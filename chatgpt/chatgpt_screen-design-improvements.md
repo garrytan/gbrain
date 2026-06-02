@@ -215,3 +215,11 @@ If you want, I can draft exact pixel specs for iOS (spacing, font sizes, compone
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_screen-design-improvements-2]]
+- [[chatgpt/chatgpt_logo-design-improvements]]
+- [[chatgpt/chatgpt_preferences-screen-improvements]]
+- [[chatgpt/chatgpt_profile-design-improvements-2]]
+- [[chatgpt/chatgpt_profile-design-improvements]]

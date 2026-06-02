@@ -185,3 +185,11 @@ If you tell me roughly:
 - How many pairs of socks and underwear you want in that drawer
 
 I can lay out an exact grid (e.g. “8×5 for socks, 4×3 for underwear”) so every slot is accounted for.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

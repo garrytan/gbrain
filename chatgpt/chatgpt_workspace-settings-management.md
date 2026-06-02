@@ -258,3 +258,11 @@ Note that you can also use `v-if` and `v-else` together without checking for an 
 ```
 
 This code will check if `teamsetting` is truthy or falsy. If `teamsetting` is truthy (i.e., it has a value), the first `div` will be rendered, and if it is falsy (i.e., it is undefined, null, or an empty array), the second `div` will be rendered.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_create-vue-settings-menu]]
+- [[chatgpt/chatgpt_drill-settings-guide-2]]
+- [[chatgpt/chatgpt_drill-settings-guide]]
+- [[chatgpt/chatgpt_dryer-settings-for-towels]]

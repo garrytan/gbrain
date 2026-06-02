@@ -70,3 +70,11 @@ That tracks with what you’re seeing — upper body reading *leaner* than the D
 ---
 
 If you want, I can give you a **Mon–Thu “shoot morning” micro-checklist** so you just follow it and look as sharp as possible every time. Would you like that?
+
+
+## See Also
+- [[chatgpt/chatgpt_body-composition-phase-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-female]]
+- [[chatgpt/chatgpt_body-fat-estimate]]
+- [[chatgpt/chatgpt_body-fat-reduction-plan-2]]
+- [[chatgpt/chatgpt_body-fat-reduction-plan]]

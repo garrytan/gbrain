@@ -491,3 +491,11 @@ The public marketing auth flow has several UX issues:
 ```
 
 Priority order: fix modal size/title first, normalize signin/signup behavior second, make header auth-aware third, then harden close/focus/hash/captcha behavior.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-developer-overview]]
+- [[chatgpt/chatgpt_apple-developer-program]]
+- [[chatgpt/chatgpt_account-search-assistance]]
+- [[chatgpt/chatgpt_amex-lawsuit-assistance]]
+- [[chatgpt/chatgpt_application-completion-assistance]]

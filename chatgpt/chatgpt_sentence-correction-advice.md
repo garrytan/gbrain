@@ -139,3 +139,11 @@ However, it's a bit vague or dramatic without context. It's better suited when t
   **"Following that plan was detrimental to my progress."**
 
 Used alone, **"That was detrimental!"** is technically correct, but you’ll usually want to follow it with **what it was detrimental *to*** for clarity.
+
+
+## See Also
+- [[chatgpt/chatgpt_url-correction-advice]]
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_ai-migration-naming-advice]]
+- [[chatgpt/chatgpt_airport-gun-disposal-advice]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]

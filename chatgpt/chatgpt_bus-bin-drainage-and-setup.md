@@ -58,3 +58,11 @@ Next item we need a modifier for giggle water topper
 2. Vincent's notes for pre-shift
 3. Figure out Sophie's setup for busing and when she gets cut from serving
 4. Modifier for giggle water topper
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

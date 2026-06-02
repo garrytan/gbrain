@@ -28,3 +28,11 @@ bodyspec
 ​BodySpec offers affordable DEXA scans, providing precise measurements of body fat, muscle composition, and bone density. Their scans are quick, typically completed in under 15 minutes, and are available at various locations, including Orange County and Culver City. Prices start at $39.95 per scan. citeturn0search0
 
 For more information or to book a scan, visit their website. citeturn0search0 
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-3]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans]]
+- [[chatgpt/chatgpt_bodyspec-dexa-summary]]
+- [[chatgpt/chatgpt_bodyspec-discount-codes]]
+- [[chatgpt/chatgpt_bodyspec-json-example]]

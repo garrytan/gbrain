@@ -72,3 +72,11 @@ Please slam this guy talking about fucking this being the first Capricorn full m
 Here’s a slam that’s sharp, sarcastic, and science-backed:
 
 >Ah yes, the *Capricorn full moon*—finally, the planets have aligned to give you “permission” to stop being fake. Because nothing says “authentic self” like outsourcing your identity to celestial gas balls trillions of miles away. Spoiler: it’s not the moon changing your life, it’s just your dopamine reacting to a well-timed placebo wrapped in ✨aesthetic nonsense✨.
+
+
+## See Also
+- [[chatgpt/chatgpt_calories-vs-chemicals-debate]]
+- [[chatgpt/chatgpt_charlie-jordan-dj-debate]]
+- [[chatgpt/chatgpt_cnn-outrage-framing-debate]]
+- [[chatgpt/chatgpt_data-center-debate]]
+- [[chatgpt/chatgpt_debate-strategies-overview]]

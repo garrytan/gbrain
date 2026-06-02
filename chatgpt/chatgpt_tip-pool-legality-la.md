@@ -84,3 +84,11 @@ If all those roles are truly non‐supervisory and part of the chain of service,
 ---
 
 If you like, I can check your specific roles vs. California case law or help you adjust the system to be compliant.
+
+
+## See Also
+- [[chatgpt/chatgpt_cancelation-policy-legality]]
+- [[chatgpt/chatgpt_childrens-walkthrough-legality]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_lifetime-saas-licenses-legality]]
+- [[chatgpt/chatgpt_limescooters-legality-issue]]

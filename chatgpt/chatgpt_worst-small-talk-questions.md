@@ -39,3 +39,11 @@ Here's a list of small talk questions that are generally considered poor choices
 10. **"What religion do you practice?"** – Religion can be a very private and personal topic.
 
 These questions are generally best avoided in casual conversation, especially with people you don't know well.
+
+
+## See Also
+- [[chatgpt/chatgpt_worst-case-scenario-parking]]
+- [[chatgpt/chatgpt_talk-to-non-coders]]
+- [[chatgpt/chatgpt_answer-employer-questions]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]

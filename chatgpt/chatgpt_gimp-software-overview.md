@@ -59,3 +59,11 @@ It is a free, open-source raster-graphics editor available for Windows, macOS an
 6. Save your working files in the native `.XCF` format so you keep layer info, then export to PNG/JPEG when done. citeturn0news20  
 
 If you like, I can pull up **top beginner tutorials** for GIMP or list **recommended plugins** for photo editing. Would you like that?
+
+
+## See Also
+- [[chatgpt/chatgpt_serato-dj-software-overview]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]

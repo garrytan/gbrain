@@ -45,3 +45,11 @@ If by **“SSG with Clerk”** you mean using **SSG (Static Site Generation)** *
 3. For pages requiring authenticated data at request time, shift those pages to **SSR or API requests** instead of pure SSG. That’s standard because static builds can’t know who the user is at build time. citeturn0search1
 
 If you meant something else by *“SSG with clerk”*, clarify the context (e.g., a specific framework or domain).
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-apple-integration-setup]]
+- [[chatgpt/chatgpt_clerk-supabase-integration-audit]]
+- [[chatgpt/chatgpt_clerk-supabase-integration]]
+- [[chatgpt/chatgpt_clerk-with-nextjs-react-e2e]]
+- [[chatgpt/chatgpt_codex-integration-with-repo]]

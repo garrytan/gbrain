@@ -92,3 +92,11 @@ So:
 \]
 
 Important distinction: **\(0.9 \neq 1\)**. Only **\(0.999\ldots\)** with infinitely many 9s equals 1.
+
+
+## See Also
+- [[chatgpt/chatgpt_clapback-with-proof]]
+- [[chatgpt/chatgpt_investor-proof-narrative-framework]]
+- [[chatgpt/chatgpt_quentin-wrote-death-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

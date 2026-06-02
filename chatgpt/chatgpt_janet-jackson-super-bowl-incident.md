@@ -200,3 +200,11 @@ Taylor founded **13 Management**, a privately owned firm, in the mid‑2000s. 
 - **Legal & financial**: Passman, Kingsley, Baldridge ensure business optimization.
 
 This team enables Swift’s famous autonomy—she owns her masters, directs album rollout secrecy, and commands her public image. It’s a vertically integrated, artist-first structure. Let me know if you want in‑depth on any member or how this differs from typical industry setups.
+
+
+## See Also
+- [[chatgpt/chatgpt_dog-show-hollywood-bowl]]
+- [[chatgpt/chatgpt_dei-views-of-freeman-jackson]]
+- [[chatgpt/chatgpt_squashing-super-based-migrations]]
+- [[chatgpt/chatgpt_super-cocky-ryan-reynolds]]
+- [[chatgpt/chatgpt_tyler-on-set-incident]]

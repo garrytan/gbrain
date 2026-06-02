@@ -68,3 +68,11 @@ Using the current world population of about **8.3 billion** as a rough base: 
 | 195 | ~99.99999999th percentile | ~1 in 8.3B | ~1 above |
 
 Above roughly **160**, the numbers become mostly statistical extrapolation. Most real IQ tests have ceilings and wider error bars at the extremes. So “IQ 150” is a meaningful high-tail comparison; “IQ 190+” is usually a model-based estimate rather than a cleanly measured human score.
+
+
+## See Also
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_casting-brief-for-models]]
+- [[chatgpt/chatgpt_cheap-models-for-cos]]
+- [[chatgpt/chatgpt_cinema-4d-supplement-models]]
+- [[chatgpt/chatgpt_cost-comparison-coding-models]]

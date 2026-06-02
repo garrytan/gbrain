@@ -214,3 +214,11 @@ If you want, I’ll hand you a ready-to-run `package.json` script + `.env.exampl
 
 
 **Topic:** [[chatgpt-clusters/coding_devops]]
+
+
+## See Also
+- [[chatgpt/chatgpt_builderio-supabase-integration]]
+- [[chatgpt/chatgpt_clerk-supabase-integration-audit]]
+- [[chatgpt/chatgpt_clerk-supabase-integration]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part1]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part2]]

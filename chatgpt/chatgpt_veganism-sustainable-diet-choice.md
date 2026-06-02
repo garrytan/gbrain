@@ -67,3 +67,11 @@ In summary, while veganism has the potential to be more sustainable, its practic
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_barcode-scanners-for-diet]]
+- [[chatgpt/chatgpt_calculate-diet-phase-stats]]
+- [[chatgpt/chatgpt_design-diet-plan]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]
+- [[chatgpt/chatgpt_diet-fatigue-and-maintenance]]

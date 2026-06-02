@@ -28,3 +28,11 @@ Tengo una grave enfermedad e no creo vivir mucho, tu estás más cerca de Messi 
 ## Assistant
 
 "I have a serious illness and I don't think I will live long. You are closer to Messi; I live in Bologna, Italy, and I will never be able to meet him. You have a better chance of seeing him. When you see him, tell him that he has always been my great idol and I would have liked to meet him. I no longer think that will be possible. Thank you."
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

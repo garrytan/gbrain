@@ -62,3 +62,11 @@ Mr. White, at roughly $1,248.09 per week, your gross monthly take-home works out
 \]  
 
 So you’d bring in about **\$5.4 K** each month before taxes.
+
+
+## See Also
+- [[chatgpt/chatgpt_earnings-pre-post-tax]]
+- [[chatgpt/chatgpt_love-island-cast-earnings]]
+- [[chatgpt/chatgpt_macro-estimation-for-cinnamon-bun]]
+- [[chatgpt/chatgpt_maximizing-bartender-earnings]]
+- [[chatgpt/chatgpt_tesla-model-3-earnings]]

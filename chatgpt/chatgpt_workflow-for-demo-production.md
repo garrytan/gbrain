@@ -1241,3 +1241,11 @@ Build the first version as:
 > **A batch AI demo restorer that turns crude songwriter MP3s into DJ-pitchable productions by extracting the song’s intent, reconstructing the vocal with a private studio voice model, replacing drums/bass/guitar/keys with clean rendered parts, and exporting a clean pitch pack.**
 
 That is a real product. The key moat is the **intent extraction and re-rendering layer**, not generic music generation. Generic models make new music. Your product needs to preserve the song that already exists and make it sound like a competent demo producer spent a day on it.
+
+
+## See Also
+- [[chatgpt/chatgpt_playwright-demo-video-workflow]]
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]

@@ -42,3 +42,11 @@ Mr. White — the legality of “lost ticket fees” (when you lose your parking
 - Charges from private garages typically do **not** result in criminal fines or DMV actions like official parking citations do. citeturn0search16turn0search18  
 
 If you want — I can check **recent California case-law (2023–2025)** to see if any new rulings changed how “lost-ticket fees” are treated. Do you want me to do that now?
+
+
+## See Also
+- [[chatgpt/chatgpt_lost-ticket-fee-legality-2]]
+- [[chatgpt/chatgpt_cancelation-policy-legality]]
+- [[chatgpt/chatgpt_childrens-walkthrough-legality]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_lifetime-saas-licenses-legality]]

@@ -136,3 +136,11 @@ If yes → **move a rest day earlier** (midweek) and avoid 4–5 hard days in a 
 ---
 
 If you tell me **what your current split looks like** (which muscles on which days, how hard you’re pushing), I can lay out a “very RP” 5-day template for you, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_ai-migration-naming-advice]]
+- [[chatgpt/chatgpt_airport-gun-disposal-advice]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]
+- [[chatgpt/chatgpt_apartment-hunt-advice]]

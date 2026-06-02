@@ -1000,3 +1000,11 @@ If you want, I can turn this into an exact MBP config with:
 
 
 what about open router for hemeres? give me the full plan here and price compare them. i have a codex and a claude subs cription 200/mo plan for each. but i routinely max them out. 
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part4]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part5]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part6]]

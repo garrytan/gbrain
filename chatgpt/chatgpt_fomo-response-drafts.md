@@ -35,3 +35,11 @@ Softer version:
 :::writing{variant="chat_message" id="18428"}
 Checking in one last time — I’ve had other interest on the monitors. If you want them, send me a pickup time today. If I don’t hear back, I’m going to sell them to someone else.
 :::
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

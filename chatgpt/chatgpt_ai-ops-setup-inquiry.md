@@ -681,3 +681,11 @@ AI-OPS-009: Add dashboard/log view for jobs
 ```
 
 The right build strategy is: **Codex builds each issue as a PR; Hermes later coordinates those issues automatically.**
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]

@@ -595,3 +595,11 @@ git config --global core.editor "code --wait"
 - Hit `:wq` and press **Enter** → cherry-pick will finish and commit.  
 
 Do you want me to also give you a one-liner to re-run the whole cherry-pick continuation without touching Vim?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-tool-reasoning-task]]
+- [[chatgpt/chatgpt_google-stitch-ai-tool]]
+- [[chatgpt/chatgpt_instantly-definition-or-tool]]
+- [[chatgpt/chatgpt_merch-design-tool]]
+- [[chatgpt/chatgpt_sign-generator-tool]]

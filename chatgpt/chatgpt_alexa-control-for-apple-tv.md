@@ -69,3 +69,11 @@ Use a universal remote hub to bridge commands:
 So, Mr. White — if you want **full Alexa control**, you're looking at setting up Homebridge or a Harmony Hub. If you're fine with **just audio control**, Bluetooth is the simplest.
 
 Need step‑by‑step for one of these setups?
+
+
+## See Also
+- [[chatgpt/chatgpt_alexa-spotify-queue-command]]
+- [[chatgpt/chatgpt_apple-airpods-options]]
+- [[chatgpt/chatgpt_apple-app-store-rejection]]
+- [[chatgpt/chatgpt_apple-business-account-info]]
+- [[chatgpt/chatgpt_apple-business-manager-overview]]

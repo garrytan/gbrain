@@ -289,3 +289,11 @@ Deadlifts ≠ wrist curls. And noobs ≠ athletes.
 Bottom line: the test isn’t built to measure mastery — it’s built to **screen for basic literacy** in the Equinox system. If you’re smarter than the question, that’s a good sign. You’re not failing the test — the test is failing to keep up with you.
 
 Want the rest of the quiz?
+
+
+## See Also
+- [[chatgpt/chatgpt_personal-trainer-application-equinox]]
+- [[chatgpt/chatgpt_bartending-quiz-prep-part1]]
+- [[chatgpt/chatgpt_bartending-quiz-prep-part2]]
+- [[chatgpt/chatgpt_equinox-guest-passes-info]]
+- [[chatgpt/chatgpt_equinox-hollywood-membership-deal]]

@@ -46,3 +46,11 @@ It’s being made under **Netflix Sunset LLC**, and the project appears on the C
 - **Star/producer:** Kim Kardashian citeturn1search0  
 - **Director:** Eva Longoria citeturn2search3  
 - **Writers:** Paula Pell & Janine Brito citeturn2search3
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]

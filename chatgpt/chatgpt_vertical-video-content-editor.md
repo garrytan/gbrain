@@ -81,3 +81,11 @@ Requirements:
 - Good communication skills
 
 Please provide a quote for the price per 10 minutes of editing, and examples of previous work that showcases your skills in adding stickers/animations, b-roll/memes/movie clips to a video file. We are looking for someone to work on an ongoing basis, so we will prioritize candidates who are interested in a long-term collaboration.
+
+
+## See Also
+- [[chatgpt/chatgpt_instagram-reels-video-editor]]
+- [[chatgpt/chatgpt_t-mobile-video-editor-application]]
+- [[chatgpt/chatgpt_video-content-automation]]
+- [[chatgpt/chatgpt_video-editor-for-youtube]]
+- [[chatgpt/chatgpt_3d-product-video-creation]]

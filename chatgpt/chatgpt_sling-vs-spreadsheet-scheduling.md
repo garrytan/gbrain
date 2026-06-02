@@ -110,3 +110,11 @@ Mr. White, here’s a breakdown of **Sling’s free plan vs using a spreadsheet*
 Start with Sling’s free plan to test whether its scheduling structure meets your operations. If you see immediate time saved, fewer errors, better communication, you’ll probably justify the upgrade later. Use a spreadsheet only as fallback or for supplementary tracking (e.g. high-level summary, what-if planning).  
 
 If you like, I can run a side-by-side comparison using your FOH staff size and shift patterns and simulate how each would hold up. Do you want me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_2-week-scheduling-law]]
+- [[chatgpt/chatgpt_add-releases-to-spreadsheet]]
+- [[chatgpt/chatgpt_ai-tools-for-scheduling]]
+- [[chatgpt/chatgpt_automated-venue-scheduling-solution]]
+- [[chatgpt/chatgpt_create-body-recomp-spreadsheet]]

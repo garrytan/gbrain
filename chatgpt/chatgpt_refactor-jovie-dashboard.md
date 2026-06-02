@@ -320,3 +320,11 @@ Expose canonical components via `/packages/ui`.
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_refactor-dashboard-components]]
+- [[chatgpt/chatgpt_jovie-ux-refactor-plan]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]

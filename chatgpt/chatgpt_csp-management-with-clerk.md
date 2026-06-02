@@ -634,3 +634,11 @@ This version forces Claude to:
 - Verify Neon is not mistakenly client-exposed
 
 If you want, I can also give you a version that makes it simulate an attacker and attempt to find a bypass.
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-account-management-features]]
+- [[chatgpt/chatgpt_clerk-with-nextjs-react-e2e]]
+- [[chatgpt/chatgpt_e2e-testing-with-clerk-2]]
+- [[chatgpt/chatgpt_e2e-testing-with-clerk]]
+- [[chatgpt/chatgpt_ssg-with-clerk-integration]]

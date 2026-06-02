@@ -50,3 +50,11 @@ So is the calorie count wrong on the translated label?
 
 No – it’s just a rounding/legal thing.  
 The Korean panel says 16 kcal per 100 g, which works out to about 2.4 kcal for a 15 g serving. Under FDA rules you can round any value under 5 calories down to 0, so the U.S. label lists 0 calories per serving.
+
+
+## See Also
+- [[chatgpt/chatgpt_macros-and-meal-summary]]
+- [[chatgpt/chatgpt_retail-breakdown-summary]]
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_baguette-macros-50g]]
+- [[chatgpt/chatgpt_bird-man-macros]]

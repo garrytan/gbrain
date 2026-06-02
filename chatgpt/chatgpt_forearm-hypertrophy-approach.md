@@ -395,3 +395,11 @@ Why:
 - Grip-heavy compounds are **fatigue traps** for specialization phases
 
 If you want, I can map this into a **minimum-fatigue forearm specialization mesocycle** using RP volume landmarks.
+
+
+## See Also
+- [[chatgpt/chatgpt_lean-ux-design-approach]]
+- [[chatgpt/chatgpt_ssr-hybrid-approach-in-nextjs]]
+- [[chatgpt/chatgpt_forearm-sets-per-week]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part1]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part2]]

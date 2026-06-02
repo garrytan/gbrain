@@ -447,3 +447,11 @@ Task:
 ```
 
 Most productive setup: launch **5 Kimi worktrees**, one task each, with the first five above. That gives you parallel PRs with low collision risk.
+
+
+## See Also
+- [[chatgpt/chatgpt_kimi-26-overview]]
+- [[chatgpt/chatgpt_kimi-26-vs-deepseek-v4-pro]]
+- [[chatgpt/chatgpt_cancel-notifications-and-tasks]]
+- [[chatgpt/chatgpt_cloud-tasks-in-claude]]
+- [[chatgpt/chatgpt_github-pr-tasks-explained]]

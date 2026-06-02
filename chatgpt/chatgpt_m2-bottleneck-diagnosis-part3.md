@@ -113,3 +113,11 @@ Also, Apple’s **base M5 14" MacBook Pro** (the one Apple already refreshed) st
 - If you *need* **>128GB**, waiting for M5 Max to hit 256GB is an even **worse bet**—that kind of jump is more plausible with a later generation or different tiering.
 
 If you tell me the **RAM you actually need (64/96/128/192+)** and what you’re doing (LLM local, AE, Xcode, etc.), I’ll give you the clean “buy now vs wait” call.
+
+
+## See Also
+- [[chatgpt/chatgpt_m2-bottleneck-diagnosis-part1]]
+- [[chatgpt/chatgpt_m2-bottleneck-diagnosis-part2]]
+- [[chatgpt/chatgpt_brake-noise-diagnosis-cx-5]]
+- [[chatgpt/chatgpt_cx-5-steering-noise-diagnosis]]
+- [[chatgpt/chatgpt_bottleneck-causes-and-solutions]]

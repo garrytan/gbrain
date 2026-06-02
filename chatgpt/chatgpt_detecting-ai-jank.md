@@ -607,3 +607,11 @@ Final response should include:
 ```
 
 I’d make Claude implement this as an MVP before deeper observability. The first win is proving whether messages are being removed/recreated, duplicated during reconciliation, or overwritten by stale refetches.
+
+
+## See Also
+- [[chatgpt/chatgpt_fixing-chat-jank-issues]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

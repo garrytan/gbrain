@@ -142,3 +142,11 @@ If you want, tell me **which editor** you’re using (VS Code / Cursor / CLI Cla
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-slash-command-automation]]
+- [[chatgpt/chatgpt_biome-react-hooks-linter]]
+- [[chatgpt/chatgpt_react-hooks-error-2]]
+- [[chatgpt/chatgpt_react-hooks-error]]
+- [[chatgpt/chatgpt_claude-code-slash-commands]]

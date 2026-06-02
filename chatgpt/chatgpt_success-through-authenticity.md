@@ -29,3 +29,11 @@ Explain how this is video is exactly why kids became successful. They were just 
 This is exactly why *Kids* blew up — MGMT weren’t chasing a hit, they were just in their element, having fun, and giving zero fucks about “making it.” No polished image, no overthinking, just raw energy and weirdness that people could feel was real. That authenticity is magnetic — it makes listeners feel like they’re in on a secret before the rest of the world catches on. 
 
 When artists stop trying to “be” something and just *are*, the right people notice — and *Kids* became a generational anthem because of that.
+
+
+## See Also
+- [[chatgpt/chatgpt_button-success-animation]]
+- [[chatgpt/chatgpt_discover-users-through-browsing]]
+- [[chatgpt/chatgpt_rentmen-success-and-income]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

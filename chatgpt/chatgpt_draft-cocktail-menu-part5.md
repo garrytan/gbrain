@@ -568,3 +568,11 @@ To replace the premade lemonade with fresh lemon juice, water, and sugar, we can
 3. **Cool**: Allow the simple syrup to cool before adding it to the lemonade mixture.
 
 This recipe will yield approximately 120 drinks when using a standard serving size of 150 ml (5 oz) per drink, and it utilizes fresh lemon juice, water, and homemade simple syrup instead of premade lemonade.
+
+
+## See Also
+- [[chatgpt/chatgpt_draft-cocktail-menu-part1]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part2]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part3]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part4]]
+- [[chatgpt/chatgpt_apology-letter-draft]]

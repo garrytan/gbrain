@@ -106,3 +106,11 @@ If you paste your current Log Your Body spec or code, I can:
 - Give you a ready-to-paste “do not add features” prompt tailored to that codebase.  
 
 You can then reuse that with Claude (or with me) and keep the project tight.
+
+
+## See Also
+- [[chatgpt/chatgpt_la-traffic-stop-trends]]
+- [[chatgpt/chatgpt_stop-auto-debits-chase]]
+- [[chatgpt/chatgpt_stop-forgetting-keys-mazda]]
+- [[chatgpt/chatgpt_stop-payment-request-response]]
+- [[chatgpt/chatgpt_stop-prop-drilling-nextjs]]

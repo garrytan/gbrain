@@ -142,3 +142,11 @@ no
 If it's not Kelly AuCoin, another possibility could be **Corey Stoll**, who played Michael Prince, a hedge fund manager in *Billions*. He's younger than some of the other names mentioned, typically well-dressed in business attire, and has been in various supporting roles across TV and movies. While he doesn't have salt-and-pepper hair, sometimes memory of a person's look can blur slightly.
 
 If it's still not the right person, feel free to add any more details that come to mind!
+
+
+## See Also
+- [[chatgpt/chatgpt_celebrity-look-alike-help]]
+- [[chatgpt/chatgpt_diddy-case-celebrity-involvement]]
+- [[chatgpt/chatgpt_recent-west-hollywood-celebrity-sightings]]
+- [[chatgpt/chatgpt_finding-charles-lucas-obituary]]
+- [[chatgpt/chatgpt_finding-dj-edits]]

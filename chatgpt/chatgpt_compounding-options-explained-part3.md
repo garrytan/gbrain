@@ -921,3 +921,11 @@ What is the fastest path towards 8% at 23 FFMI.
 Obviously this is multiple phases to get there. But we want to maximize each phase and do the phases in orders that make sense.
 So what is the most optimal plan.
 
+
+
+## See Also
+- [[chatgpt/chatgpt_compounding-options-explained-part1]]
+- [[chatgpt/chatgpt_compounding-options-explained-part2]]
+- [[chatgpt/chatgpt_compounding-options-explained-part4]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part3]]

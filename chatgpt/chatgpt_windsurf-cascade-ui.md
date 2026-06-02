@@ -34,3 +34,11 @@ Here’s what that means in practice:
 - **Modes & controls:** You interact with Cascade through standard IDE elements — a conversation/chat input box, model selector, quick-action buttons, and tool icons — all styled to match the Windsurf Editor’s native interface. citeturn0search0
 
 So it’s effectively **native to the Windsurf IDE UI**, not a separately branded UI library you’d otherwise recognize outside of that context. citeturn0search12
+
+
+## See Also
+- [[chatgpt/chatgpt_windsurf-cascade-guardrails]]
+- [[chatgpt/chatgpt_windsurf-cascade-tools-issue]]
+- [[chatgpt/chatgpt_windsurf-cascade-workflow]]
+- [[chatgpt/chatgpt_auto-continue-in-windsurf]]
+- [[chatgpt/chatgpt_cascade-background-agents-explanation]]

@@ -76,3 +76,11 @@ Here’s a concise and professional reply you could send:
 > I don’t know anyone coming from your area.  
 
 Would you like me to make it sound a bit more casual or keep it straightforward like this?
+
+
+## See Also
+- [[chatgpt/chatgpt_response-suggestion-write]]
+- [[chatgpt/chatgpt_write-message-to-sophie]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]

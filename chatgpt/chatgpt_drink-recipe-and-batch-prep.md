@@ -587,3 +587,11 @@ Pairing knives and cutting board
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_batch-drink-recipe-scaling]]
+- [[chatgpt/chatgpt_batch-conversion-recipe]]
+- [[chatgpt/chatgpt_batch-recipe-conversion]]
+- [[chatgpt/chatgpt_adjusting-recipe-proportions]]
+- [[chatgpt/chatgpt_aperol-spritz-recipe-2]]

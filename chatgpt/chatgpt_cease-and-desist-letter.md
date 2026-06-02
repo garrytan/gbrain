@@ -52,3 +52,11 @@ Tim White
 ---
 
 Keep the tone factual and non-emotional. Save screenshots of the review and all communication for evidence, and consult a California defamation attorney before sending.
+
+
+## See Also
+- [[chatgpt/chatgpt_apology-letter-draft]]
+- [[chatgpt/chatgpt_bartender-server-cover-letter]]
+- [[chatgpt/chatgpt_fake-einstein-letter-hoax]]
+- [[chatgpt/chatgpt_opposition-letter-trademark-application]]
+- [[chatgpt/chatgpt_resignation-letter-draft]]

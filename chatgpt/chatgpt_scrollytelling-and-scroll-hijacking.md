@@ -83,3 +83,11 @@ Designers often simply say:
 > “An Apple-style **scrollytelling product page** with **scroll-scrubbed animation and pinned sections**.”
 
 If useful, I can also outline the **exact front-end architecture Apple-style pages use** (image sequence + scroll scrub + pinned container) and the **GSAP implementation pattern** most teams replicate.
+
+
+## See Also
+- [[chatgpt/chatgpt_scroll-hijacking-explained]]
+- [[chatgpt/chatgpt_infinite-scroll-table]]
+- [[chatgpt/chatgpt_scroll-header-transition]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

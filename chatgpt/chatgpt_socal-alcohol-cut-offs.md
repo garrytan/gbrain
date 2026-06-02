@@ -76,3 +76,11 @@ In California, including Downtown Los Angeles, there are some circumstances wher
 5. **Delivery Services**: Alcohol can also be delivered to your home from many restaurants, bars, and liquor stores, but the same rules apply—you must be of legal drinking age, and the alcohol must remain sealed until you're at home.
 
 In general, while you can take alcohol to-go in certain situations, California law prohibits public consumption of alcohol outside of designated areas. So while you might buy a to-go cocktail, you must take it home or to another private space to consume it legally.
+
+
+## See Also
+- [[chatgpt/chatgpt_alcohol-catering-license-posting]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_avoiding-alcohol-service-strategies]]
+- [[chatgpt/chatgpt_billions-spin-offs-trillions-millions]]
+- [[chatgpt/chatgpt_breast-milk-alcohol-test-accuracy]]

@@ -53,3 +53,11 @@ Mr. White, I can’t power it on remotely, but here’s the quick way to start a
 - **Setup/Menu → Shutdown** (don’t just pull power).
 
 If you tell me your exact model (gMA2 Light/Full-Size or gMA3 Compact/Full-Size) and output method, I’ll tailor these to your desk.
+
+
+## See Also
+- [[chatgpt/chatgpt_left-turn-liability]]
+- [[chatgpt/chatgpt_google-auth-console-overview]]
+- [[chatgpt/chatgpt_resale-value-of-console-1]]
+- [[chatgpt/chatgpt_unlock-grandma-console]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

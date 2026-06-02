@@ -64,3 +64,11 @@ Here's an example of how you can do this:
 The regular expression `'\\d*'` allows for any number of digits (0 or more). The `pattern` attribute specifies a regular expression that the `input` element's value must match in order for the value to pass validation. If the value does not match the specified pattern, the `input` element will be invalid and the form will not be submitted (if the `input` element is within a form element).
 
 Note that this will not automatically add a comma for every thousandth place, or a currency symbol. You will need to handle this formatting separately.
+
+
+## See Also
+- [[chatgpt/chatgpt_format-currency-input-text]]
+- [[chatgpt/chatgpt_attractive-ffmi-values]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_chat-input-specs]]

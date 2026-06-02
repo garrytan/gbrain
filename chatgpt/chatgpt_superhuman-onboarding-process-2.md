@@ -48,3 +48,11 @@ Here’s what **Superhuman onboarding** looks like and what to expect if you’r
 - Superhuman treats onboarding as part of its retention and brand experience — not just a mechanical setup step. citeturn0search3
 
 If you’re going through it soon, expect a **live coaching call focused on real usage**, a strong emphasis on **keyboard mastery**, and continued follow-up to help you stick with the new workflow.
+
+
+## See Also
+- [[chatgpt/chatgpt_superhuman-onboarding-process]]
+- [[chatgpt/chatgpt_superhuman-waitlist-process]]
+- [[chatgpt/chatgpt_superhuman-mode-app-icon]]
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]

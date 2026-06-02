@@ -34,3 +34,11 @@ Mr. White, here’s a snarky reply you could drop:
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_wedding-fail-risk-analysis]]
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_bartending-quiz-prep-part1]]
+- [[chatgpt/chatgpt_bartending-quiz-prep-part2]]
+- [[chatgpt/chatgpt_chipotle-catering-for-meal-prep]]

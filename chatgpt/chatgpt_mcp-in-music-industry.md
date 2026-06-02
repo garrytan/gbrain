@@ -317,3 +317,11 @@ Not from majors, but useful:
 ---
 
 If you want, I can map **endpoint-level calls** you’d use for specific Jovie features (e.g., artist discovery, playlist generation, analytics dashboards) with example payloads.
+
+
+## See Also
+- [[chatgpt/chatgpt_drexel-music-industry-alumni]]
+- [[chatgpt/chatgpt_music-industry-message-draft]]
+- [[chatgpt/chatgpt_la-film-industry-jobs]]
+- [[chatgpt/chatgpt_minimum-wage-industry-issues]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]

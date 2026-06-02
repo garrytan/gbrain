@@ -130,3 +130,11 @@ export default {
 This example uses the `ref` function to create reactive variables that can be used in the template, and the `computed` function to create a computed value that is derived from other reactive variables.
 
 Note that this is just one way to refactor the code to use the Composition API, and there may be other approaches that could work as well.
+
+
+## See Also
+- [[chatgpt/chatgpt_convert-component-to-composition-api]]
+- [[chatgpt/chatgpt_convert-to-composition-api-2]]
+- [[chatgpt/chatgpt_convert-code-to-emit-event]]
+- [[chatgpt/chatgpt_convert-heic-to-jpg]]
+- [[chatgpt/chatgpt_convert-height-to-feet]]

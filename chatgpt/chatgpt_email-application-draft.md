@@ -140,3 +140,11 @@ Want me to:
 • shorten it for texting,  
 • make it more confident/aggressive, or  
 • write a **follow-up message** if they don’t reply?
+
+
+## See Also
+- [[chatgpt/chatgpt_job-application-email-draft]]
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]
+- [[chatgpt/chatgpt_bartender-job-application-email-3]]

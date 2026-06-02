@@ -98,3 +98,11 @@ If you tell me **what your current Framer structure is** (hero, features, testim
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-avatars-ux-design]]
+- [[chatgpt/chatgpt_linear-design-system-breakdown]]
+- [[chatgpt/chatgpt_linear-design-system-clarification]]
+- [[chatgpt/chatgpt_linear-design-system-oklch]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]

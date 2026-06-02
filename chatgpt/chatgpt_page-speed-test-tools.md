@@ -32,3 +32,11 @@ Mr. White — here are some reliable tools to run a page speed test on your site
 - entity["software","DebugBear",0] — focuses on Core Web Vitals, real-user data plus lab testing from many locations. citeturn0search5  
 
 If you give me the URL of your website I can walk you through interpreting the results.
+
+
+## See Also
+- [[chatgpt/chatgpt_internet-speed-test-tools-2]]
+- [[chatgpt/chatgpt_internet-speed-test-tools-3]]
+- [[chatgpt/chatgpt_internet-speed-test-tools]]
+- [[chatgpt/chatgpt_ci-profile-page-test]]
+- [[chatgpt/chatgpt_gtmetrix-speed-test]]

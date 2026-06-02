@@ -1133,3 +1133,11 @@ Mr. White, this changes the homepage thesis: Jovie becomes always-on marketing i
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_frameio-homepage-for-jovie-part2]]
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part1]]
+- [[chatgpt/chatgpt_gtm-strategy-for-jovie-part1]]
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part1]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part1]]

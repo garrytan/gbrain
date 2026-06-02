@@ -148,3 +148,11 @@ If you want, I can sketch a rewritten layout (component tree + exact spacing/typ
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_design-cleanup-suggestions]]
+- [[chatgpt/chatgpt_design-improvement-suggestions-2]]
+- [[chatgpt/chatgpt_design-improvement-suggestions-3]]
+- [[chatgpt/chatgpt_design-improvement-suggestions]]
+- [[chatgpt/chatgpt_ui-upgrade-suggestions]]

@@ -73,3 +73,11 @@ That means it’s almost certainly a **smart button** or **trigger puck** — so
 - Or a **smart home accessory** (e.g., Apple HomeKit trigger, though those usually use Bluetooth)
 
 If you can give me markings on the circuit board or show the IR emitter side, I can tell you exactly.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_batching-instructions-and-supplies]]
+- [[chatgpt/chatgpt_bleach-and-tone-instructions]]
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_event-setup-instructions]]

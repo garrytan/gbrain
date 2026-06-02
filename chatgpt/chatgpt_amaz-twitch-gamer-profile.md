@@ -26,3 +26,11 @@ amaz
 ## Assistant
 
 Jason Chan, known online as Amaz, is a Hong Kong-Canadian Twitch streamer and professional gamer born on April 12, 1991. He gained prominence for his Hearthstone gameplay and was the first Hearthstone streamer for Team Liquid. In 2014, he founded Team Archon and later joined NRG Esports in 2016. Beyond Hearthstone, Amaz has competed in Magic: The Gathering, including Pro Tour events, and streams games like Slay the Spire and Teamfight Tactics. His Twitch channel has over 821,000 followers, and his YouTube channel, @amazhs, has more than 363,000 subscribers. citeturn0search0turn0search1turn0search4 
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part3]]

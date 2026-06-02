@@ -395,3 +395,11 @@ class SettingsPage extends StatelessWidget {
 ```
 
 In this example, we're applying a dark theme with blue-grey primary color and customizing the input fields to have rounded corners and a subtle outline. The `ElevatedButton` is styled to match the color scheme of the app bar and input fields. Modify the `primarySwatch` and other theme properties to closely match the screenshot's aesthetic.
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-profile-page-design]]
+- [[chatgpt/chatgpt_ci-profile-page-test]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part1]]

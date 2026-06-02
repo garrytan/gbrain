@@ -167,3 +167,11 @@ It's important to also update references to `people` in the rest of the code to 
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-json-example]]
+- [[chatgpt/chatgpt_chris-voss-response-example]]
+- [[chatgpt/chatgpt_email-response-example]]
+- [[chatgpt/chatgpt_marketplace-listing-example]]
+- [[chatgpt/chatgpt_percentage-calculation-example]]

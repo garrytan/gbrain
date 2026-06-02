@@ -130,3 +130,11 @@ No, Mr. White — **you can’t conditionally freeze columns or rows in Google S
    This script automatically freezes up to the current week’s column when you open the Sheet.
 
 Would you like me to format that Apps Script for your exact column layout (so it works directly)?
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_auto-body-shop-suggestion]]
+- [[chatgpt/chatgpt_auto-claude-overview]]

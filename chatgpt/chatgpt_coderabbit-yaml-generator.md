@@ -121,3 +121,11 @@ knowledge_base:
 ---
 
 If you want a **generator script (Python/JS)** that creates a YAML based on prompts you answer, tell me your config goals and I’ll produce that for you.
+
+
+## See Also
+- [[chatgpt/chatgpt_yaml-ruleset-configuration]]
+- [[chatgpt/chatgpt_band-t-shirt-generator]]
+- [[chatgpt/chatgpt_favicon-generator-tools]]
+- [[chatgpt/chatgpt_sign-generator-tool]]
+- [[chatgpt/chatgpt_ux-audit-of-order-generator]]

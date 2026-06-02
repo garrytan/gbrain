@@ -30,3 +30,11 @@ If all my macros come from genius shots, white rice, and nuts will I have issues
 Mr. White, here’s a punchier, more Ryan-Reynolds-meets-Dr.-Mike spin:
 
 > If I fuel myself entirely on “genius shots,” white rice, and nuts, am I doomed? I mean, besides the inevitable global takeover powered by my unmatched intellect, will my biceps shrivel into sad spaghetti noodles? Because I’d like to keep solving life’s mysteries *and* still lift heavy things. Let me know if this genius plan gets me ripped—or just ripped off.
+
+
+## See Also
+- [[chatgpt/chatgpt_lean-mass-gains]]
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_alternatives-to-genius-shots]]
+- [[chatgpt/chatgpt_baguette-macros-50g]]
+- [[chatgpt/chatgpt_bird-man-macros]]

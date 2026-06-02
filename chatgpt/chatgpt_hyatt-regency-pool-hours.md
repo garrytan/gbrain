@@ -57,3 +57,11 @@ Here are the **pool details** for **entity["turn0business0","Sonesta Irvin
 • Year-round **indoor heated pool** and **whirlpool spa**, with a sunning deck outside. citeturn0search1
 
 If you want exact current times for your stay or membership plan, the front desk can confirm on arrival.
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_comp-hours-and-pay]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_production-work-hours-logged]]
+- [[chatgpt/chatgpt_total-hours-calculation]]

@@ -86,3 +86,11 @@ now link me to a high quality image
 ## Assistant
 
 I'm sorry, as an AI language model, I do not have the capability to browse the internet and provide images. However, I suggest using a stock image website such as Unsplash or Pexels to find high-quality images related to the topic.
+
+
+## See Also
+- [[chatgpt/chatgpt_career-strategy-and-music-goals]]
+- [[chatgpt/chatgpt_codex-goals-for-jovie]]
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part1]]
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part2]]
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part3]]

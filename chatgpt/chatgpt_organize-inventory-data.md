@@ -214,3 +214,11 @@ Here’s your **updated organized inventory report** with **Toast + Printed Tick
 - The **largest discrepancies** are in sliders (+23) and shrimp (+16).
 
 Would you like me to calculate **variance percentages** (how far off each count is from expected)?
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]

@@ -113,3 +113,11 @@ No, within the same fire department, each engine and ladder will have a unique n
 - **Ladder 7**: A single ladder unit designated as Ladder 7.
 
 If the station houses more than one engine or ladder, each additional unit would have a different number or designation to differentiate it from others, such as Engine 71 or Ladder 72, indicating they are also part of Station 7 but are distinct apparatus. The specific numbering conventions can vary by department, but the principle of unique identifiers for each piece of equipment remains consistent to avoid confusion during emergency operations.
+
+
+## See Also
+- [[chatgpt/chatgpt_ci-for-multiple-prs]]
+- [[chatgpt/chatgpt_emitting-multiple-values]]
+- [[chatgpt/chatgpt_gui-for-multiple-terminals]]
+- [[chatgpt/chatgpt_handling-multiple-agents-locally]]
+- [[chatgpt/chatgpt_running-multiple-codex-agents]]

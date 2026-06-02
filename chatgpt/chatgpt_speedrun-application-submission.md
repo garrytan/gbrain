@@ -28,3 +28,11 @@ heres our final speedrun applucation which has now been submitted for your memor
 ## Assistant
 
 Saved. I’ll use this framing and positioning as the canonical Speedrun application context going forward. fileciteturn0file0L1-L206
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-role-submission]]
+- [[chatgpt/chatgpt_feedback-submission-workflow]]
+- [[chatgpt/chatgpt_music-submission-email]]
+- [[chatgpt/chatgpt_playlist-submission-table]]
+- [[chatgpt/chatgpt_role-submission-automation]]

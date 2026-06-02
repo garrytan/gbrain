@@ -83,3 +83,11 @@ If after a DFU restore the viewfinder stays black, it’s virtually certain to b
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part1]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part2]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part3]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part4]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part5]]

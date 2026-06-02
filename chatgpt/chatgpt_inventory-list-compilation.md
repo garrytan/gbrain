@@ -152,3 +152,11 @@ Here’s a **consolidated inventory count**, grouped for quick reference.
 
 **Summary:**  
 All alcoholic and non-alcoholic stock is now tallied with units noted. Action items highlight expired product removal and supply restocks.
+
+
+## See Also
+- [[chatgpt/chatgpt_inventory-list-cleaned]]
+- [[chatgpt/chatgpt_order-list-compilation]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_bar-inventory-management-table]]
+- [[chatgpt/chatgpt_camera-kit-inventory-review]]

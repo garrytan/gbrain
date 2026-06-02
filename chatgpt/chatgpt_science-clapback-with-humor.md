@@ -41,3 +41,11 @@ Quick science detour: the gravitational pull of the doctor giving you an MRI is 
 ---
 
 Want me to add a visual or a meme to go with it?
+
+
+## See Also
+- [[chatgpt/chatgpt_clapback-with-proof]]
+- [[chatgpt/chatgpt_athlete-recovery-and-science]]
+- [[chatgpt/chatgpt_ketamine-and-erection-science]]
+- [[chatgpt/chatgpt_science-based-vocal-coaches]]
+- [[chatgpt/chatgpt_science-behind-light-therapy]]

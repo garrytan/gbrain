@@ -76,3 +76,11 @@ Tim
 ---
 
 Would you like me to make it sound a bit more casual or keep it professional like this?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-response-draft]]
+- [[chatgpt/chatgpt_email-response-example]]
+- [[chatgpt/chatgpt_message-response-draft]]
+- [[chatgpt/chatgpt_response-draft-summary]]
+- [[chatgpt/chatgpt_email-application-draft]]

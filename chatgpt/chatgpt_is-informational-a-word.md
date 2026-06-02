@@ -59,3 +59,11 @@ Use it when describing something whose **function is to provide information**, w
 - **Informational = purpose/category**
 
 That’s why you’d call a **pamphlet informational**, but a **well-written article informative**.
+
+
+## See Also
+- [[chatgpt/chatgpt_hot-people-love-never-say-a-word]]
+- [[chatgpt/chatgpt_influencers-of-never-say-word]]
+- [[chatgpt/chatgpt_llms-and-word-clouds]]
+- [[chatgpt/chatgpt_never-say-a-word-2]]
+- [[chatgpt/chatgpt_never-say-a-word-3]]

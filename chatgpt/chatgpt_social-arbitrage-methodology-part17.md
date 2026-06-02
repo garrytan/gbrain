@@ -733,3 +733,11 @@ Your thesis—that Tesla **lacks regulatory clearance** for autonomous robotaxi 
 - Consider **scaling out** exposure tied to autonomy expectations in California unless you possess **fresh, non-consensus intelligence** (e.g. internal permitting updates, insider filings, or evidence of unauthorized deployment).
 
 Let me know if you'd like continuous monitoring for new CPUC/DMV filings or emerging developments in other jurisdictions.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

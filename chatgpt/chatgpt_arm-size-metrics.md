@@ -96,3 +96,11 @@ I can:
 - Give you a **short plan** to close the gap.
 
 But conceptually: think **“balanced with frame and shoulders”**, not a magical number. For a tall guy, **lean 15–17" arms** are already extremely aesthetic to most people, especially if waist is tight and delts are capped.
+
+
+## See Also
+- [[chatgpt/chatgpt_allen-key-size-14-inch]]
+- [[chatgpt/chatgpt_arm-size-and-muscle-growth]]
+- [[chatgpt/chatgpt_avatar-generation-from-metrics]]
+- [[chatgpt/chatgpt_body-metrics-tracking-app]]
+- [[chatgpt/chatgpt_build-laravel-vue-app-predict-metrics]]

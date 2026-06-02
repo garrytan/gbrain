@@ -44,3 +44,11 @@ Certainly, Mr. White. Here is a table format of the shots described:
 | Kenzie walks in and joins in bed      |                                    |
 
 Please adjust the details column as needed for your specific requirements.
+
+
+## See Also
+- [[chatgpt/chatgpt_fashion-film-shot-list]]
+- [[chatgpt/chatgpt_shot-list-for-scene]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_ai-optimizes-to-do-list]]
+- [[chatgpt/chatgpt_airbnb-essentials-list]]

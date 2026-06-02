@@ -59,3 +59,11 @@ In short:
 **Official Chipotle catering won’t stretch to a week’s worth of high-protein meals on $50 alone.** You’re realistically looking at $8–$12 per person served — so $50 buys 4–6 portion equivalents at most. citeturn0search1
 
 If you need help estimating macros or a cheaper meal-prep alternative, I can break that down too.
+
+
+## See Also
+- [[chatgpt/chatgpt_expensive-chipotle-meal-costs]]
+- [[chatgpt/chatgpt_diet-plan-meal-prep]]
+- [[chatgpt/chatgpt_chipotle-discount-code-search]]
+- [[chatgpt/chatgpt_fact-check-chipotle-claims]]
+- [[chatgpt/chatgpt_aerial-performance-prep]]

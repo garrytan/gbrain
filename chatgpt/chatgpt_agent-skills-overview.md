@@ -66,3 +66,11 @@ Across industries, an *agent* (e.g., customer service agent, real estate agent, 
 - **Human agent skills** are both soft interpersonal abilities and hard technical competencies needed to perform effectively in roles like customer support, sales, real estate, or marketing. citeturn0search9
 
 If you want skills tailored to a specific agent role (e.g., real estate or AI agent development), tell me which one.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-overview-2]]
+- [[chatgpt/chatgpt_hermes-agent-overview]]
+- [[chatgpt/chatgpt_vercel-agent-overview]]
+- [[chatgpt/chatgpt_agent-skills-entry]]
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]

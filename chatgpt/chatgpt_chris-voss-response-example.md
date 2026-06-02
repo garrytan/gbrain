@@ -190,3 +190,11 @@ Then if she bites, you can mirror/label:
 You’ve shifted from *dropping price blindly* → to *making her name it*, while still steering toward urgency and a close.  
 
 Want me to give you a full **flow chart of responses** (like if she says 150, if she says 200, if she ghosts) so you don’t have to improvise?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-response-draft]]
+- [[chatgpt/chatgpt_polish-response-chris-voss-style]]
+- [[chatgpt/chatgpt_chris-voss-counter-tips]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]

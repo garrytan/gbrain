@@ -34,3 +34,11 @@ generative ai in pro tools
 For a visual overview of AI integration in Pro Tools, you might find the following video informative:
 
 videoPro Tools Scripting SDK and AI: Driving Workflows & In-App Helpturn0search2 
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chord-progression-tools]]
+- [[chatgpt/chatgpt_ai-code-review-tools]]

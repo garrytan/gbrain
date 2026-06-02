@@ -133,3 +133,11 @@ There’s no competitive advantage to offloading servers into racks of Mac Minis
 - Use cloud + existing hardware + maybe inexpensive edge nodes if justified.
 
 If you want, I can map out **practical ways to integrate an agent layer like OpenClaw into your music AI stack** in a revenue-focused way.
+
+
+## See Also
+- [[chatgpt/chatgpt_openclaw-overview]]
+- [[chatgpt/chatgpt_openclaw-vs-claude-cowork]]
+- [[chatgpt/chatgpt_openclaw-vs-claude]]
+- [[chatgpt/chatgpt_openclaw-vs-hermes-vs-cowork]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

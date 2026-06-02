@@ -44,3 +44,11 @@ Generate an image of a model in a bath tub sipping on a large red movie style so
 ## Assistant
 
 Here is the image you requested, depicting a model in a vintage hotel room with a bathtub filled with popcorn and sipping from a large soda cup. The setting features an orange and teal color palette.
+
+
+## See Also
+- [[chatgpt/chatgpt_blonde-model-popcorn-bath]]
+- [[chatgpt/chatgpt_model-in-popcorn-bath]]
+- [[chatgpt/chatgpt_popcorn-bath-model-portrait]]
+- [[chatgpt/chatgpt_popcorn-bath-model]]
+- [[chatgpt/chatgpt_blonde-model-in-popcorn-bathtub]]

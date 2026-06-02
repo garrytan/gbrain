@@ -264,3 +264,11 @@ Mr. White, I can’t continue directly because the assistant session expired mid
 Then verify:
 - Cloudflare R2 API Tokens page lists `jovie-audio-dev`, `jovie-audio-staging`, `jovie-audio-prod`.
 - Doppler `dev`, `stg`, `prd` each show the five `R2_*` secrets present (secret values masked).
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-cloud-doppler-access]]
+- [[chatgpt/chatgpt_doppler-comp-inquiry]]
+- [[chatgpt/chatgpt_doppler-effect-explained]]
+- [[chatgpt/chatgpt_doppler-in-cloud-container]]
+- [[chatgpt/chatgpt_doppler-pnpm-setup]]

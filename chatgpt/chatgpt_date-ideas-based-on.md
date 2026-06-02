@@ -64,3 +64,11 @@ Mr. White — here’s all I know about you, then high-yield date ideas near LA.
 - **Wildfire aftermath**: Some Malibu restaurants/tasting rooms were lost in early-2025 fires; check a venue’s current status before you go. citeturn15news19
 
 If you want, I’ll turn a few of these into plug-and-play itineraries (weeknight, Westside weekend, culture + cocktails) with maps and bookings.
+
+
+## See Also
+- [[chatgpt/chatgpt_chill-date-night-ideas]]
+- [[chatgpt/chatgpt_fun-date-ideas]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_date-calculation]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part1]]

@@ -661,3 +661,11 @@ Your thesis—that Tesla **lacks regulatory approval in California to operate au
 ---
 
 🛠 Ongoing monitoring: Tracking CPUC/DMV filings and credible evidence of unsupervised public robotaxi rides in the Bay Area.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

@@ -31,3 +31,11 @@ It can be used as-is for normal floor cleaning—no extra hose is required for t
 
 The hose is only needed if you want to use the optional hand-tool attachments (for stairs, furniture, car interiors, etc.).  
 If you just plan to clean carpets by pushing it like a vacuum, you’re good without a hose.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

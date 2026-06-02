@@ -149,3 +149,11 @@ Be nicer
 Here’s a kinder, still-firm text, Mr. White:
 
 > Thanks for the heads-up—Thursday is approved off. For Friday and Saturday, I need a **firm decision today** so I can lock staffing. Totally fine if you’d prefer to step off; I have coverage. Once the schedule’s posted, last-minute changes are tough on the team. Please reply today with either: **“IN for Fri & Sat”** or **“OUT—release me from Fri & Sat.”**
+
+
+## See Also
+- [[chatgpt/chatgpt_adobe-account-change-fix]]
+- [[chatgpt/chatgpt_bar-staff-run-schedule]]
+- [[chatgpt/chatgpt_body-composition-change-summary]]
+- [[chatgpt/chatgpt_building-role-based-schedule]]
+- [[chatgpt/chatgpt_change-address-then-registration]]

@@ -60,3 +60,11 @@ You already have a USPS Ground label. USPS is the safest place to get the first 
 ## Packing the SM7 + Cloudlifter
 
 Use a box around **12×9×6** or slightly bigger. Wrap the SM7 well; it is heavy enough to smash around inside a loose box. Put the Cloudlifter in its own padded layer. Shake test: nothing should move.
+
+
+## See Also
+- [[chatgpt/chatgpt_usps-informed-delivery-overview]]
+- [[chatgpt/chatgpt_usps-mail-forwarding-details]]
+- [[chatgpt/chatgpt_github-code-shipping-stats]]
+- [[chatgpt/chatgpt_sales-tax-on-shipping]]
+- [[chatgpt/chatgpt_shipping-connectors-for-ai]]

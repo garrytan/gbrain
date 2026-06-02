@@ -60,3 +60,11 @@ Want it snarkier, cleaner, or more professional?
 
 
 **Topic:** [[chatgpt-clusters/personal_finance]]
+
+
+## See Also
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_slammed-for-lack-of-logic]]
+- [[chatgpt/chatgpt_hailey-bieber-deal-facts]]
+- [[chatgpt/chatgpt_salt-lake-city-facts]]
+- [[chatgpt/chatgpt_taco-bell-nugget-facts]]

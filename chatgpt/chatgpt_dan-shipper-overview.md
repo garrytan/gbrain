@@ -36,3 +36,11 @@ Key points about him:
 - He has a strong following online and is seen as a voice on blending writing, entrepreneurship, and AI. citeturn0search6  
 
 In brief: Dan Shipper is a prominent founder at the intersection of media, AI product creation, and thought leadership in technology. citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

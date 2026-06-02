@@ -55,3 +55,11 @@ I’ve overhauled the layout to a punchy profile, quantified your impact with me
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-resume-skills-update]]
+- [[chatgpt/chatgpt_bartender-resume-summary]]
+- [[chatgpt/chatgpt_resume-tips-for-bartender]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]

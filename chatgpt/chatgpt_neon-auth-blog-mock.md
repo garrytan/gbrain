@@ -78,3 +78,11 @@ Mocks were a crutch. Neon Auth brings auth into your database workflows, letting
 ---
 
 If you want this **as a full markdown article** with sample images/code blocks ready to publish, tell me your tone (technical, marketing, tutorial) and target audience (frontend devs, engineering leads, CTOs).
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]
+- [[chatgpt/chatgpt_neon-auth-and-clerk]]
+- [[chatgpt/chatgpt_neon-auth-explanation]]
+- [[chatgpt/chatgpt_neon-auth-overview]]
+- [[chatgpt/chatgpt_neon-auth-pricing-2]]

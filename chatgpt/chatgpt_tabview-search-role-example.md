@@ -150,3 +150,11 @@ You have to write it at Cloud Code or GPT-5.1 so that I can have it execute.
 Mr. White, paste this into a Codex Cloud task or a GPT-5.1-Codex/Thinking run:
 
 “Implement an iOS 26 SwiftUI root navigation bar that matches Apple’s Liquid Glass tab style using **only system components**. Use `TabView` with the iOS 26 `Tab` API to create two leading floating tabs labeled **Home** and **Metrics**. Add a **separate trailing floating circular plus action** aligned on the same horizontal line as the left tab cluster, which presents a ‘New Entry’ flow. Prefer a role/accessory-based system placement (e.g., trailing role tab or `tabViewBottomAccessory`) so the plus renders as a right-side floating control without custom tab bars, GeometryReader layouts, or manual materials. Avoid overriding tab backgrounds so LiquidGlass/LiquidGlassEffect, minimization-on-scroll, spacing, and platform adaptivity are inherited automatically from the iOS 26 SDK. Return the minimal SwiftUI code and brief rationale for why the chosen system placement keeps the UI fully adaptive.” citeturn0search1turn0search2turn0search4
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-role-submission]]
+- [[chatgpt/chatgpt_building-role-based-schedule]]
+- [[chatgpt/chatgpt_clerk-role-elements]]
+- [[chatgpt/chatgpt_job-role-analysis]]
+- [[chatgpt/chatgpt_resume-update-bartender-role]]

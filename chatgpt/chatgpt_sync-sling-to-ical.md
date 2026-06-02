@@ -67,3 +67,11 @@ No—Sling’s iOS app doesn’t expose the ICS URL. You have to grab it from th
 3. Under **Export schedule**, copy the ICS feed URL.  
 
 Once you’ve copied that link you can subscribe to it in iOS Calendar (Settings → Calendar → Accounts → Add Account → Other → Add Subscribed Calendar). citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-data-sync]]
+- [[chatgpt/chatgpt_disney-parks-sync-music]]
+- [[chatgpt/chatgpt_ios-healthkit-sync-app-part1]]
+- [[chatgpt/chatgpt_ios-healthkit-sync-app-part2]]
+- [[chatgpt/chatgpt_ios-healthkit-sync-app-part3]]

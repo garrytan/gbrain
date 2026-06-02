@@ -88,3 +88,11 @@ make a table of the most expensive resorts in the world. in one column put the n
 | The Ritz-Carlton           | Bali, Indonesia            | $1,500+                        |
 | Rosewood Mayakoba          | Mexico                     | $1,500+                        |
 | Belmond La Residencia
+
+
+## See Also
+- [[chatgpt/chatgpt_common-last-names-worldwide]]
+- [[chatgpt/chatgpt_expensive-chipotle-meal-costs]]
+- [[chatgpt/chatgpt_expensive-tv-pilots]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

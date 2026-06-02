@@ -182,3 +182,11 @@ He also founded a startup that used computer vision to identify sponsored produc
 ---
 
 If you want, I can make it **even shorter** or **sound more like Daniel personally wrote it**.
+
+
+## See Also
+- [[chatgpt/chatgpt_daniel-kang-beacons-comparison]]
+- [[chatgpt/chatgpt_jovie-intro-blurb]]
+- [[chatgpt/chatgpt_marketplace-description-write]]
+- [[chatgpt/chatgpt_response-suggestion-write]]
+- [[chatgpt/chatgpt_write-apple-level-prompt]]

@@ -57,3 +57,11 @@ Mr. White — concise cost comparison for running AI in CI:
 - Cache/avoid repeated calls (embeddings especially).  
 - Batch requests in CI where possible.  
 - Set hard usage caps and monitor.
+
+
+## See Also
+- [[chatgpt/chatgpt_cheapest-cloud-backblaze-b2]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_cheapest-coke-zero-on-amazon]]
+- [[chatgpt/chatgpt_cheapest-macbook-pro-config]]
+- [[chatgpt/chatgpt_cheapest-nonstop-flight]]

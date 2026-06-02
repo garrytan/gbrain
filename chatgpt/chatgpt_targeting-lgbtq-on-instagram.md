@@ -138,3 +138,11 @@ Here are some specific interests you can target on Instagram to reach the LGBTQ+
     - Online LGBTQ+ forums and communities
 
 Using these interests in your ad targeting can help you reach individuals who are likely to identify with or support the LGBTQ+ community.
+
+
+## See Also
+- [[chatgpt/chatgpt_ad-targeting-lgbtq-proxies]]
+- [[chatgpt/chatgpt_instagram-engagement-targeting]]
+- [[chatgpt/chatgpt_targeting-music-artists-instagram]]
+- [[chatgpt/chatgpt_ad-campaign-instagram-for-females]]
+- [[chatgpt/chatgpt_beeper-issue-instagram-login]]

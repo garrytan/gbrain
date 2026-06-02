@@ -38,3 +38,11 @@ Need a jacket
 ## Assistant
 
 At 64°F indoors, a light jacket or a sweater should be sufficient to keep you comfortable. It's a moderately cool temperature, so layering can help.
+
+
+## See Also
+- [[chatgpt/chatgpt_jacket-needed-evening-sunny]]
+- [[chatgpt/chatgpt_jacket-needed-west-hollywood]]
+- [[chatgpt/chatgpt_octavia-blake-jacket-details]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

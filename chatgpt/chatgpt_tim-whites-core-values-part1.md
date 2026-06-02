@@ -535,3 +535,11 @@ Tim White's core values, reworded as commands for personal life:
 
 
 Now lets display them in a simple vue component with nuxt and tailwind css
+
+
+## See Also
+- [[chatgpt/chatgpt_core-values-compilation-part1]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part2]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part3]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part4]]
+- [[chatgpt/chatgpt_core-values-compilation-part2]]

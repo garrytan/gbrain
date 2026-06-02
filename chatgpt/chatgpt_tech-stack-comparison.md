@@ -80,3 +80,11 @@ laravel for the back end? Or supasbase and edge functions? Or something else?
 - **Expect hyper-growth?** Start Supabase, budget time to break out hot paths into standalone micro-services when RPS or vendor limits bite.
 
 Either route can scale to millions if engineered sensibly—you’re choosing your **ops burden vs. velocity** slider.
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-tech-stack]]
+- [[chatgpt/chatgpt_folkapp-tech-stack]]
+- [[chatgpt/chatgpt_openai-ios-tech-stack]]
+- [[chatgpt/chatgpt_tech-stack-advice]]
+- [[chatgpt/chatgpt_tech-stack-inquiry]]

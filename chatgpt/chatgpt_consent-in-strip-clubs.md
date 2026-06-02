@@ -64,3 +64,11 @@ In an immersive theater experience that includes burlesque performances, the pri
 6. **Production Policies**: Immersive theater productions often have their own policies and protocols to ensure that both performers and audience members are safe and comfortable. These might include guidelines for how performers interact with the audience, as well as clear mechanisms for addressing any concerns that arise during the show.
 
 In summary, in an immersive theater experience with burlesque elements, performers generally have consent to interact with the audience within the boundaries set by the production and communicated to the audience. Clear communication, respect for personal boundaries, and the ability to opt out of interactions are key components of maintaining a safe and enjoyable environment for everyone involved.
+
+
+## See Also
+- [[chatgpt/chatgpt_consent-in-drunken-sex]]
+- [[chatgpt/chatgpt_cost-of-sunset-strip-billboard]]
+- [[chatgpt/chatgpt_permit-needed-for-sunset-strip]]
+- [[chatgpt/chatgpt_strip-club-pink-cup]]
+- [[chatgpt/chatgpt_strip-club-regulations-overview]]

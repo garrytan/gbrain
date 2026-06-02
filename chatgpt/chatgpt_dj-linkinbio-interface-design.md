@@ -145,3 +145,11 @@ If you want, I can mock the exact component layout (mobile-first) with copy stri
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_interface-design-audit]]
+- [[chatgpt/chatgpt_music-interface-design-ideas]]
+- [[chatgpt/chatgpt_chat-interface-modal-discussion]]
+- [[chatgpt/chatgpt_improve-interface-flow]]
+- [[chatgpt/chatgpt_vue-js-tabbed-interface]]

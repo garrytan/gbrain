@@ -52,3 +52,11 @@ Here are some excellent free resources for **light leak overlays** you can use i
 ---
 
 If you like, Mr. White, I can pull together **a curated pack of 20+ light leak overlays** (free & commercial-safe) and share direct download links. Would you like me to grab that?
+
+
+## See Also
+- [[chatgpt/chatgpt_lens-flare-overlays-photoshop]]
+- [[chatgpt/chatgpt_apple-claudemd-leak]]
+- [[chatgpt/chatgpt_eight-sleep-red-light]]
+- [[chatgpt/chatgpt_flashing-blue-light-fix]]
+- [[chatgpt/chatgpt_gas-leak-concern]]

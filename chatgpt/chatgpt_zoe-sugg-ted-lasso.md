@@ -28,3 +28,11 @@ ted lasso zoe sugg
 There’s **no credible information** showing that entity["people","Zoe Sugg","English YouTuber and author"] appears in *Ted Lasso* as a cast member or cameo. She’s an English media personality and author but *Ted Lasso*’s official cast does **not** include her, and major databases like IMDb and Wikipedia list her filmography without any *Ted Lasso* credit. citeturn0search2turn1search1
 
 Rumors or fan comments online linking her to *Ted Lasso* are from unofficial social posts and are not supported by verified cast listings.
+
+
+## See Also
+- [[chatgpt/chatgpt_origin-of-ted-lasso]]
+- [[chatgpt/chatgpt_stinkys-daughter-in-ted-lasso]]
+- [[chatgpt/chatgpt_ted-lasso-3-seasons]]
+- [[chatgpt/chatgpt_ted-lasso-filming-locations]]
+- [[chatgpt/chatgpt_ted-lasso-imdb]]

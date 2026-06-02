@@ -32,3 +32,11 @@ you have access to the jovie repo and ops repo both which give you context. look
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part1]]
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part2]]
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_adopting-exaai-for-jovie]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]

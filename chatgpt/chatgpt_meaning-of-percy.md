@@ -104,3 +104,11 @@ If you want, I can give:
 - A **minimal Cypress or Playwright setup**
 - **Best-practice thresholds & masking rules**
 - A **cost/benefit comparison vs Applitools**
+
+
+## See Also
+- [[chatgpt/chatgpt_percy-visual-regression-testing]]
+- [[chatgpt/chatgpt_percy-vs-chromatic-vs-playwright]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_anthropic-meaning-and-context]]

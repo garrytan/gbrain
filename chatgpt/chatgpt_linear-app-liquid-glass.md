@@ -35,3 +35,11 @@ Here’s what *“Linear mobile app liquid glass”* refers to:
 
 **3) Linear app’s take on it:**  
 • The *Linear* team (maker of the Linear mobile app) took inspiration from Apple’s Liquid Glass UI and rebuilt their own glass-style effects in the app, tailoring translucency, blur and motion to fit Linear’s brand and navigation needs rather than using Apple’s default implementation. This gives their mobile UI a fluid, modern look that still supports their focus-oriented workflow. citeturn0search0turn0search5
+
+
+## See Also
+- [[chatgpt/chatgpt_ios-26-liquid-glass-integration]]
+- [[chatgpt/chatgpt_liquid-glass-implementation]]
+- [[chatgpt/chatgpt_liquid-glass-slider-ui]]
+- [[chatgpt/chatgpt_liquid-glass-tab-bar]]
+- [[chatgpt/chatgpt_liquid-glass-ux-improvements]]

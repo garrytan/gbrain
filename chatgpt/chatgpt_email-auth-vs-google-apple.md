@@ -83,3 +83,11 @@ Decision rule:
 | High-value workspaces | SAML/OIDC later, likely via WorkOS/Clerk/Auth0/Stytch/Supabase Auth |
 
 So: **yes, move toward Google/Apple-first. No, don’t go Google/Apple-only yet.** Kill passwords. Keep email magic link as a quiet fallback. Measure it. Then remove it only if the data says email fallback is adding more abuse/support cost than recovered signups.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-auth-console-overview]]
+- [[chatgpt/chatgpt_email-form-to-google-sheet]]
+- [[chatgpt/chatgpt_auth-provider-for-chatgpt]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_auth-ux-audit]]

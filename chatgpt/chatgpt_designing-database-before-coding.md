@@ -52,3 +52,11 @@ By following these steps, you can design a well-organized and efficient database
 
 
 **Topic:** [[chatgpt-clusters/coding_devops]]
+
+
+## See Also
+- [[chatgpt/chatgpt_amazing-race-before-fear-factor]]
+- [[chatgpt/chatgpt_clowning-before-modern-family]]
+- [[chatgpt/chatgpt_maintaining-diet-before-bulking]]
+- [[chatgpt/chatgpt_1001tracklists-database]]
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]

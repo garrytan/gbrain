@@ -46,3 +46,11 @@ gitleaks
 - Customizable with rules/config for specific patterns. citeturn0search1
 
 In short: Gitleaks is a lightweight, CLI-first secret scanner tailored for Git workflows that catches sensitive strings in code and history so you can remediate or block them before they’re exposed. citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_gitleaks-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]

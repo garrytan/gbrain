@@ -191,3 +191,11 @@ Bath window wins just tweak it by doing a design review on the image
 ## User
 
 Now harmonize the color and make it look like a high end retouch fashion edit without anything look edited. Real skin.
+
+
+## See Also
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]
+- [[chatgpt/chatgpt_focus-element-in-vuejs]]
+- [[chatgpt/chatgpt_focus-on-import-button]]
+- [[chatgpt/chatgpt_focus-ring-tattoo-meaning]]
+- [[chatgpt/chatgpt_focus-vs-focus-visible-in-tailwind]]

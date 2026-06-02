@@ -271,3 +271,11 @@ Then, in your popup.html file, you can attach the swipeRight function to the swi
 const swipeRightButton = document.getElementById("swipe-right");
 swipeRightButton.addEventListener("click", swipeRight);
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-extension-interaction]]
+- [[chatgpt/chatgpt_chrome-extension-popup-script]]
+- [[chatgpt/chatgpt_chrome-extension-production-url]]
+- [[chatgpt/chatgpt_chrome-extension-upload-error]]
+- [[chatgpt/chatgpt_chrome-extension-webpack-config]]

@@ -136,3 +136,11 @@ Governance: open API by default, write access role-scoped, strong auth, privacy 
 - **Non-AV TNC bans at LAX/stadiums:** Phase in as AV supply hits target wait times (e.g., ≤5 min P95).
 
 Bottom line: Your **API-first, AV-friendly** city is the brains. **Heavy rail + managed AV/Bus express lanes** are the muscle. Together they deliver equal-or-faster trips and kill recurring congestion—without telling people to walk.
+
+
+## See Also
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]

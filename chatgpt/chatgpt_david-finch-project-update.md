@@ -138,3 +138,11 @@ David Fincher is directing a **Netflix sequel** to Quentin Tarantino’s *Once U
 Let me know if you'd like to explore plot speculations, cast backgrounds, Tarantino’s shift in creative direction, or Netflix’s strategy behind streaming-first prestige films.
 
 navlistMore on this projectturn0news14,turn0news17,turn0news27
+
+
+## See Also
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_fastlane-project-automation]]
+- [[chatgpt/chatgpt_install-nextjs-into-existing-project]]
+- [[chatgpt/chatgpt_jovie-project-optimization]]
+- [[chatgpt/chatgpt_project-cancellation-response]]

@@ -77,3 +77,11 @@ If you do have the remote, add: “Includes original remote.” If not, add: “
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Understood, Mr. White. I kept it concise and to the point. Let me know if there's anything else you'd like to tweak or add."}
 {'asset_pointer': 'sediment://file_00000000adf4622fb2037bc07b165cb1', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-03-03T02:59:20.366979+00:00', 'format': 'wav', 'metadata': {'end': 7.15, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 343278, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_facebook-marketplace-listing-2]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-3]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-tips]]
+- [[chatgpt/chatgpt_facebook-listing-creation]]
+- [[chatgpt/chatgpt_facebook-listing-request]]

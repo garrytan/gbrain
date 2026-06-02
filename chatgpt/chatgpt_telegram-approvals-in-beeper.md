@@ -1786,3 +1786,11 @@ coder profile
 ```
 
 That split is one of the highest-leverage changes. It keeps cheap execution from making expensive strategic mistakes.
+
+
+## See Also
+- [[chatgpt/chatgpt_telegram-id-retrieval]]
+- [[chatgpt/chatgpt_beeper-imessages-setup]]
+- [[chatgpt/chatgpt_beeper-issue-instagram-login]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

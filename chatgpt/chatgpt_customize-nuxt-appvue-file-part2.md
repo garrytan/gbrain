@@ -1159,3 +1159,11 @@ the initials in this case should be the song title
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part1]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part3]]
+- [[chatgpt/chatgpt_file-upload-error-troubleshoot-part2]]
+- [[chatgpt/chatgpt_file-upload-issue-debugging-part2]]
+- [[chatgpt/chatgpt_refactor-vue-component-with-nuxt-part2]]

@@ -56,3 +56,11 @@ If you want a link to the official docs or installation steps for Geist UI, I ca
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_geist-design-system-overview]]
+- [[chatgpt/chatgpt_geist-design-system-pricing]]
+- [[chatgpt/chatgpt_geist-design-system]]
+- [[chatgpt/chatgpt_vercel-geist-design-system]]
+- [[chatgpt/chatgpt_code-review-system-design]]

@@ -323,3 +323,11 @@ Mr. White — given you’ve been **detrained most of the summer** and are resta
 - You likely reclaim **~6–8 lb** of your **~12 lb** memory window by spring, then begin “net-new” gains. Recomp-then-surplus gets you there **without** the training drag and psychological tax of getting extremely light first.
 
 If you want, I’ll pin exact weekly targets (scale range, macros, and volume) for **Oct → Dec** so you can just execute.
+
+
+## See Also
+- [[chatgpt/chatgpt_compare-scale-and-dexa-data]]
+- [[chatgpt/chatgpt_compare-scale-data-and-dexa]]
+- [[chatgpt/chatgpt_bf-prediction-based-on-dexa]]
+- [[chatgpt/chatgpt_bodied-hume-dexa-accuracy]]
+- [[chatgpt/chatgpt_body-recomposition-plan-dexa]]

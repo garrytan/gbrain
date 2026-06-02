@@ -555,3 +555,11 @@ scrollAndClick();
 3. Press `Enter` to execute the script.
 
 This script will initially click all the "Follow" buttons, then scroll five times, click the buttons again, and repeat the process indefinitely with random delays between each action.
+
+
+## See Also
+- [[chatgpt/chatgpt_click-buttons-with-delay-part1]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part2]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part3]]
+- [[chatgpt/chatgpt_click-all-buttons-script]]
+- [[chatgpt/chatgpt_click-all-follow-buttons]]

@@ -379,3 +379,11 @@ If you want, I’ll split this into two Linear tickets (“Stripe + Entitlement 
 
 
 So one question would be what value do they get for 25/yr. They skip the line sure, that's great for year 1. But then eventually we launch. What value does the renewal provide?
+
+
+## See Also
+- [[chatgpt/chatgpt_ideal-lifestyle-planning-part1]]
+- [[chatgpt/chatgpt_michael-seibel-sprint-planning]]
+- [[chatgpt/chatgpt_sprint-planning-for-mvp-part2]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]

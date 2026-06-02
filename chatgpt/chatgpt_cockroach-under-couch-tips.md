@@ -675,3 +675,11 @@ For a captured roach in a container:
 - Wait at least 1–2 minutes before disposing.
 
 This method is effective and does not leave pesticide residue in an apartment.
+
+
+## See Also
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]
+- [[chatgpt/chatgpt_apple-level-design-tips]]

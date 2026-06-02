@@ -158,3 +158,11 @@ If you want **concrete pipeline engineering patterns or YAML/CircleCI/GitHub Act
 ## User
 
 really dig and then give me strategies and tools in a concise format thats easy to read
+
+
+## See Also
+- [[chatgpt/chatgpt_fast-ux-iteration-with-ai]]
+- [[chatgpt/chatgpt_fast-20k-to-1m]]
+- [[chatgpt/chatgpt_fast-check-overview]]
+- [[chatgpt/chatgpt_fast-check-worth-using]]
+- [[chatgpt/chatgpt_fast-mode-in-claude]]

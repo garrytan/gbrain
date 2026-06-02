@@ -171,3 +171,11 @@ export default {
 In this example, the `menuOpen` array is used to store the open/close state of the menu for each row. The `v-for` directive is used to loop through the rows and render a `tr` element for each one. The `index` variable is used to access the correct element in the `menuOpen` array and bind it to the `:open` prop of the menu component. The `toggleMenu` method is used to toggle the open/close state of the menu when it is clicked.
 
 This will ensure that each menu component is independent and only affects its own open/close state.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

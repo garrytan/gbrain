@@ -682,3 +682,11 @@ Update everything from the Linear triage plan: create missing issues, attach the
 ```
 
 Once the Linear MCP call surface is actually available, I can execute it directly.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_ai-orchestration-platform]]
+- [[chatgpt/chatgpt_branch-agent-orchestration-summary]]
+- [[chatgpt/chatgpt_ci-orchestration-help]]
+- [[chatgpt/chatgpt_core-values-compilation-part1]]

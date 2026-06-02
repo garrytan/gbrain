@@ -86,3 +86,11 @@ Can you please explain the phrase, say less?
 ## Assistant
 
 The phrase "say less" is a modern colloquial expression often used to convey understanding, agreement, or assurance in a concise manner. When someone says "say less," they are typically communicating that they have understood the instructions or the message conveyed and that there's no need for further explanation. It's a way to acknowledge comprehension or approval in a succinct way. It can also imply that the individual is on board with the idea or plan that has been presented. This phrase is part of contemporary vernacular and is often seen in informal conversations or online interactions.
+
+
+## See Also
+- [[chatgpt/chatgpt_preferences-screen-improvements]]
+- [[chatgpt/chatgpt_tims-movie-preferences]]
+- [[chatgpt/chatgpt_bad-iced-coffee-vibes]]
+- [[chatgpt/chatgpt_coffee-ad-creation]]
+- [[chatgpt/chatgpt_coffee-and-coke-combo]]

@@ -54,3 +54,11 @@ Monorepos unify code for multiple apps and shared libraries (e.g., frontend, bac
 - Isn’t a full monorepo *framework* (like Nx), but a build orchestrator focused on speed and caching. citeturn0search13
 
 If you need a monorepo boost for JS/TS projects to cut CI time and dev iteration delays, TurboRepo is one of the top modern choices. citeturn0search24
+
+
+## See Also
+- [[chatgpt/chatgpt_turborepo-overview-2]]
+- [[chatgpt/chatgpt_electron-app-turborepo-setup]]
+- [[chatgpt/chatgpt_explain-turborepo]]
+- [[chatgpt/chatgpt_test-turborepo-locally]]
+- [[chatgpt/chatgpt_turborepo-changelog]]

@@ -348,3 +348,11 @@ If you want, paste your current SwiftUI code and I’ll refactor it into this st
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_screen-1-improvements]]
+- [[chatgpt/chatgpt_screen-design-improvements-2]]
+- [[chatgpt/chatgpt_screen-design-improvements]]
+- [[chatgpt/chatgpt_finchers-coffee-preferences-starbucks]]
+- [[chatgpt/chatgpt_tims-movie-preferences]]

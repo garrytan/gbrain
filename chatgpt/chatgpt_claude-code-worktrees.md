@@ -91,3 +91,11 @@ If you want, I can give you example shell scripts or Claude Code prompts to auto
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-worktrees-git]]
+- [[chatgpt/chatgpt_claude-code-worktrees-overview]]
+- [[chatgpt/chatgpt_claude-code-worktrees-setup]]
+- [[chatgpt/chatgpt_claude-desktop-worktrees]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]

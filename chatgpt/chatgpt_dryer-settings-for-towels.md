@@ -39,3 +39,11 @@ Use **High Temp** and **full cycle (Perm Press or similar)** to kill odor and ba
 3. **Dry thoroughly** to avoid mildew smell — may need 2 rounds if thick.
 
 Optional: Add dryer sheets to mask residual odor.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_create-vue-settings-menu]]
+- [[chatgpt/chatgpt_drill-settings-guide-2]]
+- [[chatgpt/chatgpt_drill-settings-guide]]
+- [[chatgpt/chatgpt_hypertrophy-focus-settings]]

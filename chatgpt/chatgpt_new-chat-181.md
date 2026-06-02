@@ -154,3 +154,11 @@ Yes, it is generally legal for gas stations to charge for air in California, alt
 However, this law does not prevent gas stations from installing coin-operated air vending machines for use by individuals who have not purchased gasoline or diesel fuel. So, if you purchase fuel, the air should be provided at no cost, but if you do not purchase fuel, they can charge for air.
 
 You may want to check with local regulations or contact local authorities if you have concerns about specific practices at a gas station in your area.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

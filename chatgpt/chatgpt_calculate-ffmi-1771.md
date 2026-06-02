@@ -490,3 +490,11 @@ Weight at 10% BF = 151.68 / 0.90
 Weight at 10% BF = 168.53 pounds
 
 To reach 10% body fat while maintaining the same LBM, you'd need to weigh approximately 168.53 pounds. This means you would need to lose roughly 23.47 pounds of fat without losing muscle.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_attractive-ffmi-values]]
+- [[chatgpt/chatgpt_calculate-bill-amount]]
+- [[chatgpt/chatgpt_calculate-diet-phase-stats]]
+- [[chatgpt/chatgpt_calculate-fat-weight-formula]]

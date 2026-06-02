@@ -167,3 +167,11 @@ Do not make it look like a chatbot toy. Make it look like an operating system fo
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_lyric-rewrite-request]]
+- [[chatgpt/chatgpt_cannot-assist-with-request]]
+- [[chatgpt/chatgpt_about-section-rewrite]]
+- [[chatgpt/chatgpt_bar-manager-resume-rewrite]]
+- [[chatgpt/chatgpt_closed-loops-brand-rewrite]]

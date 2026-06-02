@@ -2064,3 +2064,11 @@ A stronger play on that example would be to really show what kind of data you ca
 
 
 Mr. White, the stronger demo is trend-triggered: Jovie spots an external market signal, connects it to your catalog, and proposes a supported revenue move.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part4]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part5]]

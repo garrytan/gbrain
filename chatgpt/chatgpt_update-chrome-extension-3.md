@@ -245,3 +245,11 @@ Yes, there is an npm package called `json-cli` that you can install and use to u
    This command updates the `version` property in the `manifest.json` file to `/refs/tags/v/`.
 
 With these changes, your workflow should be able to update the `manifest.json` file using the `json` command provided by the `json-cli` package.
+
+
+## See Also
+- [[chatgpt/chatgpt_update-chrome-extension-2]]
+- [[chatgpt/chatgpt_update-chrome-extension]]
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_chrome-extension-interaction]]
+- [[chatgpt/chatgpt_chrome-extension-popup-script]]

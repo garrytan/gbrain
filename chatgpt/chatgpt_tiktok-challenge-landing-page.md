@@ -932,3 +932,11 @@ export default {
    - Added `style="filter: invert(1)"` to the `<img>` tag to invert the colors, making the icon white.
 
 This setup ensures the button is centered and the TikTok icon appears white while maintaining a clean and optimized design.
+
+
+## See Also
+- [[chatgpt/chatgpt_tiktok-challenge-data-analysis]]
+- [[chatgpt/chatgpt_tiktok-fashion-challenge-wanted]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part1]]

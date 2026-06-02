@@ -803,3 +803,11 @@ If you can share the specific code around line 76 of `lib/screens/home.dart`, I 
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_health-metrics-app-overview-part1]]
+- [[chatgpt/chatgpt_health-metrics-app-overview-part2]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_apple-health-bottom-nav]]

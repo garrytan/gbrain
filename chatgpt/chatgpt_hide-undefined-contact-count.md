@@ -148,3 +148,11 @@ contactCount() {
 ```
 
 With this change, the `contactCount` function will return `null` if `this.subheader.total` is undefined, and it will return the string with the contact count if `this.subheader.total` is defined.
+
+
+## See Also
+- [[chatgpt/chatgpt_vuejs-component-for-contact-count]]
+- [[chatgpt/chatgpt_automate-contact-poster-rotation]]
+- [[chatgpt/chatgpt_contact-apis-supported]]
+- [[chatgpt/chatgpt_contact-avatar-component-2]]
+- [[chatgpt/chatgpt_contact-avatar-component]]

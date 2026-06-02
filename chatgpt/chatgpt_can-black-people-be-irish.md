@@ -219,3 +219,11 @@ Key differences:
    The Notre Dame leprechaun is a stereotype, but it is not treated as a racial epithet.
 
 Some individuals view all ethnic mascots as problematic on principle. However, at the institutional and legal level, “Fighting Irish” is not categorized as racist in the way “Redskins” was.
+
+
+## See Also
+- [[chatgpt/chatgpt_black-backslash-logo]]
+- [[chatgpt/chatgpt_black-dress-shirt-options]]
+- [[chatgpt/chatgpt_black-friday-iphone-deals]]
+- [[chatgpt/chatgpt_black-hole-sonification]]
+- [[chatgpt/chatgpt_black-screen-youtube-fix]]

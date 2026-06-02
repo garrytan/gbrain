@@ -290,3 +290,11 @@ Jovie Chat Eval Runner + Op Screen Review UI
 Use a third-party eval platform for experiment tracking, dataset management, and comparisons. Build the Jovie-specific pieces into the op screen because your failures will often depend on internal product state, permissions, generated assets, and DB side effects.
 
 Do **not** make the main workflow “read the whole chat history and tell me what is right or wrong.” Use chat history to generate test cases, then run those cases repeatedly.
+
+
+## See Also
+- [[chatgpt/chatgpt_chat-testing-report]]
+- [[chatgpt/chatgpt_e2e-flow-testing]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]

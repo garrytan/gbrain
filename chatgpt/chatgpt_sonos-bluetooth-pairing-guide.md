@@ -80,3 +80,11 @@ If you really want to feed Bluetooth audio into Sonos, your options are basicall
 ---
 
 If you tell me the exact text/model name on the back label (e.g., “Play:1”, “Sonos One SL”, etc.), I can give you dead-specific instructions for how *that exact* box is supposed to be used. But based on your button layout: there is **no Bluetooth pairing combo** on that Sonos.
+
+
+## See Also
+- [[chatgpt/chatgpt_echo-show-bluetooth-pairing]]
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]

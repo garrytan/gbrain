@@ -30,3 +30,11 @@ A small open guitar case sits near her feet with a few folded bills and a blank 
 Cinematic 35mm film still, premium magazine-cover quality, cyberpunk noir mood, shallow depth of field, soft tungsten subway platform lights, anamorphic bokeh, subtle haze and steam, visible light beams, deep shadows, gentle vignette, realistic film grain, high dynamic range, intimate hopeful mood, believable NYC subway production design, photorealistic, natural skin texture, realistic guitar strings, realistic hands and fingers.
 
 No other people. No logos. No brand marks. No readable text. No AI artifacts. No distorted guitar strings. No malformed hands. No extra fingers. No oversaturated colors. No cartoon look. No glossy CGI look.
+
+
+## See Also
+- [[chatgpt/chatgpt_cinematic-subway-performance]]
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]

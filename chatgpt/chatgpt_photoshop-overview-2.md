@@ -68,3 +68,11 @@ Here’s a concise overview of Photoshop — what it is, what you can do with it
 ---
 
 If you like, Mr. White, I can **walk you through** a particular Photoshop operation (e.g., “remove background from a photo”, “blend two images seamlessly”, or “create a mock-up for social media”) and we can go step-by-step. Would you like that — and if so, what specific task?
+
+
+## See Also
+- [[chatgpt/chatgpt_photoshop-overview]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]

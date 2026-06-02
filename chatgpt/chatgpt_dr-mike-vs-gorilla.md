@@ -75,3 +75,11 @@ Again
 ## Assistant
 
 Gorilla loads plates. 100 Dr. Mikes load you with PDFs. I’ll take the plates.
+
+
+## See Also
+- [[chatgpt/chatgpt_dr-mike-israetel-bio]]
+- [[chatgpt/chatgpt_mike-israel-tirzepatide-advice]]
+- [[chatgpt/chatgpt_mike-israetel-content-search]]
+- [[chatgpt/chatgpt_mike-israetel-cuff-recommendation]]
+- [[chatgpt/chatgpt_mike-israetel-genius-explained]]

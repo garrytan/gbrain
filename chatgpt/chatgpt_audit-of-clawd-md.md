@@ -878,3 +878,11 @@ Revert pane-scoped animation; keep existing behavior.
 
 **Flag**  
 `feature_listen_transition_refine` (default OFF → internal only for QA).
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_audit-and-recommend-drafts]]
+- [[chatgpt/chatgpt_audit-and-strategy-tips]]
+- [[chatgpt/chatgpt_audit-app-layout-shifts]]

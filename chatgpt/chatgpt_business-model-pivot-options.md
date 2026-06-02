@@ -194,3 +194,11 @@ Make the pivot **category-level**, not product-abandonment.
 The version I would avoid is: “Jovie is an AI label that owns masters.”
 
 The version I would build is: **“Jovie is the autonomous growth and revenue layer for artists, with optional distribution and label economics attached.”**
+
+
+## See Also
+- [[chatgpt/chatgpt_business-model-and-ai]]
+- [[chatgpt/chatgpt_jovie-pivot-advice]]
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]
+- [[chatgpt/chatgpt_ai-3d-model-creation]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]

@@ -106,3 +106,11 @@ Mr. White, the cure for “perfect‐aim” worry is to make movement itself pul
 3. **Without releasing the trigger**, sweep the barrel in a steady line across every head.  
 
 Because the hammer’s cocked and the trigger’s held, the slightest bump (i.e. any man trying to duck or evade) will fire the shot **at point-blank contact**. Anyone who moves knows instantly that survival = 0, so no one dares.
+
+
+## See Also
+- [[chatgpt/chatgpt_early-check-out-logic]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_packaged-food-logic]]
+- [[chatgpt/chatgpt_savage-logic-challenge]]

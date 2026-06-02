@@ -79,3 +79,11 @@ Ah, the joys of celebrity life. As if Gaga needed another reason to avoid carbs.
 ## Assistant
 
 The American dream: where 'til death do us part' can be overridden by medical bills. It's like a Hallmark movie, but with way more bankruptcy.
+
+
+## See Also
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]
+- [[chatgpt/chatgpt_bathroom-odor-solution]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

@@ -482,3 +482,11 @@ router.addHandler("detail", async ({ request, $, log, utils }) => {
 
   //get the name from the h1 tag
   const name = $("h1").text
+
+
+## See Also
+- [[chatgpt/chatgpt_sonarqube-code-analysis]]
+- [[chatgpt/chatgpt_add-cloud-code-ci]]
+- [[chatgpt/chatgpt_agent-skills-vs-code-cli]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_ai-code-review-tools]]

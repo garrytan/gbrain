@@ -37,3 +37,11 @@ A bit of detail:
   - *Lost* was filmed almost entirely on **Oahu, Hawaii**; urban scenes (including police stations like LAPD or Honolulu PD) used buildings in and around Honolulu, such as the former Honolulu Police Station and Dole Cannery. citeturn2search3turn2search2turn2search16  
 
 Since *Psych*’s police station is a Vancouver-based set / location and *Lost*’s police stations were shot in Hawaii, they’re **different places** and not a shared “psych police station” set.
+
+
+## See Also
+- [[chatgpt/chatgpt_almost-exclusive-lost-to-amateurs]]
+- [[chatgpt/chatgpt_lost-city-filming-locations]]
+- [[chatgpt/chatgpt_lost-ending-explanation]]
+- [[chatgpt/chatgpt_lost-id-uber-vegas]]
+- [[chatgpt/chatgpt_lost-the-plot]]

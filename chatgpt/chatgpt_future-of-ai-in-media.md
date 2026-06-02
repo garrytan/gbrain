@@ -408,3 +408,11 @@ Yes, your instinct is right.
 “AI-made” labels become mostly useless once AI becomes the default production layer. The useful future labels are about **truth claims, consent, officialness, and rights**.
 
 For Jovie, that means the company should build less like a content tool and more like the **identity, campaign, provenance, and monetization system for AI-native creators**. The winning artist will not be the person who refuses AI. The winning artist will be the person whose AI output feels official, coherent, trusted, scarce, and economically connected to fans.
+
+
+## See Also
+- [[chatgpt/chatgpt_bright-future-for-north-bergen]]
+- [[chatgpt/chatgpt_cancelled-tech-and-media]]
+- [[chatgpt/chatgpt_engage-on-social-media]]
+- [[chatgpt/chatgpt_future-horoscopes-not-available]]
+- [[chatgpt/chatgpt_night-or-future]]

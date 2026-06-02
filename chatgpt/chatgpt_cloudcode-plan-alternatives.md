@@ -1092,3 +1092,11 @@ GitHub:
 ```
 
 The real answer: **Windsurf can keep going better with Auto-Continue, but Claude Code is the better cron/loop/watchdog tool.** For tonight, let Kimi crank through implementation and give Claude Code the boring “every 5 minutes, check, QA, fix, ship” supervisor role.
+
+
+## See Also
+- [[chatgpt/chatgpt_affordable-sunglasses-alternatives]]
+- [[chatgpt/chatgpt_alternatives-to-genius-shots]]
+- [[chatgpt/chatgpt_better-alternatives-to-fastlane]]
+- [[chatgpt/chatgpt_better-key-organizer-alternatives]]
+- [[chatgpt/chatgpt_birthday-cake-alternatives]]

@@ -414,3 +414,11 @@ If you've checked all these steps and are still encountering issues, please prov
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part1]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part2]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part3]]
+- [[chatgpt/chatgpt_move-element-up-css]]
+- [[chatgpt/chatgpt_move-focus-to-searchbox]]

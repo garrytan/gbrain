@@ -59,3 +59,11 @@ If you tell me **(a)** are you asking as the *founder/company* or the *angel*, a
 
 
 **Topic:** [[chatgpt-clusters/personal_finance]]
+
+
+## See Also
+- [[chatgpt/chatgpt_safe-investment-requirements]]
+- [[chatgpt/chatgpt_inheritance-tax-implications]]
+- [[chatgpt/chatgpt_instagram-safe-edits]]
+- [[chatgpt/chatgpt_investment-for-100k-salary]]
+- [[chatgpt/chatgpt_investment-trust-advice]]

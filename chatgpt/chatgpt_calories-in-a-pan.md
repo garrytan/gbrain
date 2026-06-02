@@ -30,3 +30,11 @@ Could you clarify what you mean by “a pan,” Mr. White?
 - If you literally mean **the cooking pan** itself (the metal cookware), then it contains **0 calories** — it’s not edible.  
 
 If you specify what kind of food or recipe you’re referring to, I can give you an accurate calorie estimate.
+
+
+## See Also
+- [[chatgpt/chatgpt_advil-no-calories]]
+- [[chatgpt/chatgpt_calories-burned-walking-5k]]
+- [[chatgpt/chatgpt_calories-in-pussy-juice]]
+- [[chatgpt/chatgpt_calories-vs-chemicals-debate]]
+- [[chatgpt/chatgpt_estimate-maintenance-calories]]

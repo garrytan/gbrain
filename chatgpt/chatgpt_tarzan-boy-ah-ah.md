@@ -26,3 +26,11 @@ Hey, what's that song that goes, O-I-E-R-O-O, Ah, ah, ah, ah, ah.
 ## Assistant
 
 The song you're thinking of is likely "Tarzan Boy" by Baltimora. The chorus has a distinctive melody and lyrics that match the pattern you described, with "Oh-oh-oh-oh-oh-oh-oh-oh-oh-oh-oh," followed by a series of "ah-ah-ah" sounds. It was a hit in the 1980s and remains popular for its catchy tune.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

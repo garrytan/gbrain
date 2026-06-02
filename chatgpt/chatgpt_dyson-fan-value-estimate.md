@@ -33,3 +33,11 @@ From the photo, that looks like a **Dyson Cool CF1 desk fan (white/silver)**.
 
 Given that, in **good used condition** with the remote and no issues, yours is probably **worth about $160–$220** on Facebook Marketplace / OfferUp / eBay in Los Angeles.  
 If it’s missing the remote, has cosmetic damage, or the filter area is beat up, think more like **$120–$150**.
+
+
+## See Also
+- [[chatgpt/chatgpt_display-cabinet-value-estimate]]
+- [[chatgpt/chatgpt_annual-driving-estimate]]
+- [[chatgpt/chatgpt_bike-value-and-info]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]

@@ -112,3 +112,11 @@ Sure, let's estimate the fat content based on available information and then pro
 - **Total Calories**: 2580
 
 The fat content for the Teriyaki Chicken and Fried Rice is inferred based on typical preparation methods and similar recipes. The exact numbers might vary, so it's advisable to check with Panda Express directly or use their nutrition calculator for precise information. This table provides a comprehensive view of your meal's macronutrient and caloric content.
+
+
+## See Also
+- [[chatgpt/chatgpt_macro-breakdown-request]]
+- [[chatgpt/chatgpt_panda-express-macros-analysis]]
+- [[chatgpt/chatgpt_panda-express-meal-macros]]
+- [[chatgpt/chatgpt_age-range-breakdown]]
+- [[chatgpt/chatgpt_bill-split-breakdown]]

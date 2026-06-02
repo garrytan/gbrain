@@ -310,3 +310,11 @@ Then install Hermes there. That gives you most of the benefit of wiping without 
 **Set it up as-is under a dedicated `hermes` user.**
 
 Wipe later only if the machine feels haunted. The key reliability difference comes from **process supervision, sleep settings, secrets hygiene, and reboot recovery**, not from a fresh macOS install.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-vs-hermes-strategy]]
+- [[chatgpt/chatgpt_github-hermes-overview]]
+- [[chatgpt/chatgpt_hermes-agent-communication]]
+- [[chatgpt/chatgpt_hermes-agent-for-scraping]]
+- [[chatgpt/chatgpt_hermes-agent-orchestration]]

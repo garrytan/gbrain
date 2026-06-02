@@ -41,3 +41,11 @@ Here's the breakdown:
 While *Boy Meets World* and *Victorious* did not share a direct set, both shows were part of an industry-wide trend of **repurposing popular sitcom sets**, especially school hallways, lockers, and apartments. Many of these standard pieces (doors, lockers, staircases, etc.) were moved or repainted across productions.
 
 If you’re seeing visual similarities (like staircases, brick walls, or hallway layouts), it's likely due to common production design elements or recycled set pieces — not a shared set between the two shows.
+
+
+## See Also
+- [[chatgpt/chatgpt_designing-world-class-landing-page]]
+- [[chatgpt/chatgpt_disney-world-existed]]
+- [[chatgpt/chatgpt_edit-for-world-class-ux]]
+- [[chatgpt/chatgpt_end-of-world-song-lyrics]]
+- [[chatgpt/chatgpt_forearm-sets-per-week]]

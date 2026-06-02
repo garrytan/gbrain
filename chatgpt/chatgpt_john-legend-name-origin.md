@@ -33,3 +33,11 @@ Mr. White, John Legend’s “Legend” isn’t a birth name.
 - **Legal status:** He eventually adopted “Legend” as his professional name, but his legal surname remains Stephens.
 
 So it’s a deliberate stage name, not a family name or anything fake beyond normal showbiz branding.
+
+
+## See Also
+- [[chatgpt/chatgpt_wilshire-blvd-name-origin]]
+- [[chatgpt/chatgpt_a7x3-holdings-name-suggestions]]
+- [[chatgpt/chatgpt_accessing-users-name-in-ios]]
+- [[chatgpt/chatgpt_anagram-name-suggestion]]
+- [[chatgpt/chatgpt_app-name-suggestions]]

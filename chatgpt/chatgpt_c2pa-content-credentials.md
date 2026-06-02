@@ -54,3 +54,11 @@ C2PA Content Credentials
 Major companies like Adobe, Microsoft, Google, and The New York Times support the C2PA standard. Adobe's Content Authenticity Initiative (CAI) offers tools to create, view, and verify Content Credentials. Additionally, platforms like LinkedIn and YouTube have begun implementing features to display Content Credentials, enhancing transparency for users.
 
 For more detailed information, you can visit the [C2PA official website](https://c2pa.org) or explore the [Content Credentials technical specification](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html). 
+
+
+## See Also
+- [[chatgpt/chatgpt_accessing-faq-content-issue]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_caffeine-content-comparison-table]]
+- [[chatgpt/chatgpt_conditional-content-rendering]]
+- [[chatgpt/chatgpt_content-collaboration-decline]]

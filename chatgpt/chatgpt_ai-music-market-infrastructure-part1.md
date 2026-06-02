@@ -938,3 +938,11 @@ Hey Pascal, I’d like to refer **Tim**, who’s building **Jovie (jov.ie)**. Wi
 
 
 You have a format that makes it easy. Building a career is hard. Covey's closing that gap. Tim has a history of success in driving traffic in the music industry in his own career, and for other artists, a history of executing quickly for projects for major brands. And then going to, um... I live the problem. Great problem solver. Moves quickly. Systems obsessed.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-music-market-infrastructure-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_branch-music-creators-yc-pitch-part1]]
+- [[chatgpt/chatgpt_music-album-json-update-part1]]
+- [[chatgpt/chatgpt_music-remix-identification-part1]]

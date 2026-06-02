@@ -286,3 +286,11 @@ List in the top 10 accelerator programs for startups based on founder friendly t
 - **Vertical fit matters.** IndieBio (biotech) and Alchemist (B2B) shine only if you’re in their lane.  
 
 Bookmark: it’s a quick gut-check when comparing offers—equity %, cash, and value in one view.
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part3]]

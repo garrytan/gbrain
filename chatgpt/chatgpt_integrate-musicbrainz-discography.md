@@ -877,3 +877,11 @@ This call searches for recordings associated with a given artist ID, formatted a
 ### Practical Use
 
 The `recording` endpoint is particularly useful when you're interested in finding all the different releases or versions of a specific track, understanding the composition of a song in terms of artist participation, or gathering metadata like duration and ISRCs. For example, if a song has been released in an album, as a single, and as part of a compilation, the `recording` endpoint can help identify all these instances.
+
+
+## See Also
+- [[chatgpt/chatgpt_clean-discography-streamlined-marketing]]
+- [[chatgpt/chatgpt_discography-table-styling]]
+- [[chatgpt/chatgpt_discography-year-sorting]]
+- [[chatgpt/chatgpt_merge-discography-with-component]]
+- [[chatgpt/chatgpt_the-1975-spotify-discography]]

@@ -29,3 +29,11 @@ We could just put up blockers for things like:
 - stability issues
 I mean, I walked by, like, stability issues or something for me from putting those applications and stuff.
 Give me the world-class version of that and figure out what the accelerators are that match Joby, put that whole list together, and compile that into a little package that you can hand off to Air me use and have it build all that.And keeping in mind for the Jovie context and stuff, what would make sense for accelerators for us and stuff? YC and Neo and pair BC and speedrun from a16z are all definitely on board, but then what else?  And really, we should just play the numbers game with this. If it doesn't take a lot of effort to just do it, because this is like survival, we get into one accelerator and everything changes for the company. Right now, we are going to die if we don't raise. 
+
+
+## See Also
+- [[chatgpt/chatgpt_startup-application-strategy-part1]]
+- [[chatgpt/chatgpt_startup-application-strategy-part2]]
+- [[chatgpt/chatgpt_yc-application-strategy-review]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]

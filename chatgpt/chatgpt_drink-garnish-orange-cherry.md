@@ -38,3 +38,11 @@ Show me a picture of a flute class and a coupe class.
 ## Assistant
 
 I
+
+
+## See Also
+- [[chatgpt/chatgpt_orange-garnish-slicing-tips]]
+- [[chatgpt/chatgpt_american-drink-recipes]]
+- [[chatgpt/chatgpt_batch-drink-recipe-scaling]]
+- [[chatgpt/chatgpt_caffeine-free-drink-alternatives]]
+- [[chatgpt/chatgpt_check-drink-sales-clover]]

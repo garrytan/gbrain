@@ -637,3 +637,11 @@ That line should be the spine of the whole piece.
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_cinematic-demo-script]]
+- [[chatgpt/chatgpt_cinematic-dj-demo-script]]
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]

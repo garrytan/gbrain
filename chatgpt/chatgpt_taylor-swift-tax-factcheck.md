@@ -60,3 +60,11 @@ The **strategy described** in the post (selling a company that owns IP instead o
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_max-martins-taylor-swift-collaboration]]
+- [[chatgpt/chatgpt_taylor-swift-album-announcement]]
+- [[chatgpt/chatgpt_fixing-swift-errors]]
+- [[chatgpt/chatgpt_ios-swift-dev-insights]]
+- [[chatgpt/chatgpt_logyourbody-swift-app]]

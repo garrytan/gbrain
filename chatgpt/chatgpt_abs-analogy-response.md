@@ -94,3 +94,11 @@ In most U.S. states (including California where you are), you need at least **20
 So yeah, 20/80 is a solid example to use for your analogy — it’s clearly in the “too bad to drive” range.  
 
 Want me to rewrite your analogy now with the correct numbers so it’s bulletproof?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]
+- [[chatgpt/chatgpt_bartender-job-application-response]]

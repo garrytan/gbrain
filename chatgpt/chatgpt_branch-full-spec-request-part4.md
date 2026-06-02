@@ -902,3 +902,11 @@ I could have a Jovie like timwhite.co or something and then have it connected th
 
 
 The sharper version is Jovie as an AI manager turning dormant songs into deals through trusted, approved outreach. I’ll frame the MVP around one high-quality opportunity loop.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part5]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part6]]

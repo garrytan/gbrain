@@ -27,3 +27,11 @@ Write a comprehensive intelligent comment on how this won’t work as even one p
 ## Assistant
 
 This sounds nice in theory, but a “global ban” on superintelligent AI has the same problem as a global ban on crime, Mr. White: it only restrains the people willing to follow rules. Cap the research in open, relatively accountable societies and you just guarantee that the most powerful systems get built in secret labs, authoritarian states, or by criminals who ignore the ban entirely. Instead of fantasy bans, we need hard-nosed strategies: verification, defensive AI, and strong oversight that assumes bad actors *will* exist and prepares to beat them, not wish them away.
+
+
+## See Also
+- [[chatgpt/chatgpt_coderabbit-auto-fix-limitations]]
+- [[chatgpt/chatgpt_codex-and-claude-limitations]]
+- [[chatgpt/chatgpt_global-bio-text-management]]
+- [[chatgpt/chatgpt_nodejs-module-global-object]]
+- [[chatgpt/chatgpt_roomba-corner-cleaning-limitations]]

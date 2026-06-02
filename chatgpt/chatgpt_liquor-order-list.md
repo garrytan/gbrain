@@ -51,3 +51,11 @@ Here's the updated list for the liquor order:
 4. **Gin**: 5 liters
 5. **Bitters**: 3 liters
 6. **Case of Prosecco**: 1 case
+
+
+## See Also
+- [[chatgpt/chatgpt_liquor-order-list-started]]
+- [[chatgpt/chatgpt_bar-supply-order-list]]
+- [[chatgpt/chatgpt_order-list-compilation]]
+- [[chatgpt/chatgpt_order-list-for-the-week]]
+- [[chatgpt/chatgpt_order-list-summary]]

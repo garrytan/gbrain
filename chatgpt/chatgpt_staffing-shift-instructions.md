@@ -95,3 +95,11 @@ Mr. White, here are short, kinder drop-ins:
 - “No worries at all. If you’re not feeling well, stay home and rest—we’ve got it covered. I’ll try to get you on upcoming shifts when I can.”
 
 - “Appreciate you letting me know. Please focus on resting tonight; team health first. I’ll handle coverage and look to add you to future shifts if the schedule allows.”
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_batching-instructions-and-supplies]]
+- [[chatgpt/chatgpt_bleach-and-tone-instructions]]
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_event-setup-instructions]]

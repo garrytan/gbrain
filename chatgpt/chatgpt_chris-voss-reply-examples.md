@@ -66,3 +66,11 @@ Then anchor it to **value**, not shipping cost. Send one of these:
 > “If this were a $40 item, I’d agree. What makes $10 reasonable on a $400 helmet?”
 
 Then stop typing. Silence does the work.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-replies-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-options]]
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]
+- [[chatgpt/chatgpt_chris-voss-reply-template]]

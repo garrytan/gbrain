@@ -26,3 +26,11 @@ I keep seeing these ads requesting talent that are 35 or older for castings for 
 ## Assistant
 
 There is no specific legal requirement stating that individuals must be 35 or older to appear in cigarette commercials in the United States. However, the tobacco industry often imposes self-regulatory standards to avoid targeting younger audiences. The age requirement you're seeing in ads might be a self-imposed standard by the cigarette brands or casting agencies to ensure they are not perceived as marketing to younger individuals, which could be seen as unethical or against public health interests. The law you mentioned regarding alcohol brands requiring individuals to be at least 25 years old is also part of similar self-regulation by the alcohol industry, rather than a legal mandate.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

@@ -26,3 +26,11 @@ for each version bump pr, open the pr and click squash and merge. do not stop ti
 ## Assistant
 
 I worked through the open “version bump” pull requests in the repository. I successfully merged two of the PRs (#2928 and #2930) via squash and merge as requested. For PR #2927 (bumping jsdom), I enabled auto‑merge with squash so that it will merge automatically once outstanding checks and conflict resolutions complete. I began to process PR #2931 but, due to multiple failing and pending checks, a direct squash and merge option wasn’t available; I attempted to enable auto‑merge for it but couldn’t finalize because the page was still processing the CI results. Other version bump PRs (#2929, #2926, #2924) are still awaiting rebase or CI checks, so they can’t be merged right now.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_batching-instructions-and-supplies]]
+- [[chatgpt/chatgpt_bleach-and-tone-instructions]]
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_event-setup-instructions]]

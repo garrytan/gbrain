@@ -40,3 +40,11 @@ The terms "sociopath" and "psychopath" are often used interchangeably but have d
 - **Social Interaction:** Sociopaths generally struggle with forming relationships and maintaining normal social interactions. They are more likely to be seen as hostile, irritable, and unable to hold down a job or function well in society.
 
 In summary, while both psychopathy and sociopathy are marked by a lack of empathy and antisocial behavior, psychopaths are generally more calculated and manipulative, while sociopaths are more prone to impulsive and erratic behavior.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_best-deal-comparison]]
+- [[chatgpt/chatgpt_bleach-developer-comparison]]

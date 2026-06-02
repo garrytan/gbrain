@@ -43,3 +43,11 @@ No exactly why she’s a bad example because even if she cut in session musician
 Here’s a crisp reply you can post:
 
 “Taylor’s actually a bad example. By re-recording and steering everyone to ‘Taylor’s Version,’ the original masters stopped earning—killing the master points **and** the neighboring-rights flows (SoundExchange/AFM-SAG-AFTRA/PPL) for the players on those originals. Unless they were rehired, they don’t participate in the new revenue at all. So even if she’d cut session players into the first masters, that equity got hollowed out by the re-records. Upfront pay ≠ protecting the long-tail.”
+
+
+## See Also
+- [[chatgpt/chatgpt_cell-phone-impact-on-flight]]
+- [[chatgpt/chatgpt_cosmos-gravity-impact-analysis]]
+- [[chatgpt/chatgpt_credit-card-impact]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part1]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part2]]

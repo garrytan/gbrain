@@ -38,3 +38,11 @@ Here are the **core elements or components of Artificial Intelligence (AI)** —
 Some frameworks also include **robotics**, **deep learning (neural networks)**, and **generative capabilities** as distinct elements, depending on how broadly you define AI systems. citeturn0search30turn0search16
 
 In short: AI combines **data + algorithms + learning + reasoning/decision-making + perception + language processing** to simulate intelligent behavior. citeturn0search2
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_clerk-elements-discontinued]]
+- [[chatgpt/chatgpt_clerk-elements-replacement-guidance]]
+- [[chatgpt/chatgpt_clerk-elements]]
+- [[chatgpt/chatgpt_clerk-role-elements]]

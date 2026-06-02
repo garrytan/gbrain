@@ -933,3 +933,11 @@ env:
   ```
 
 With either Option A or B, the workflow won’t stop when PR #45 already exists; it will reuse it and proceed to (re)enable auto‑merge.
+
+
+## See Also
+- [[chatgpt/chatgpt_bf-prediction-based-on-dexa]]
+- [[chatgpt/chatgpt_building-role-based-schedule]]
+- [[chatgpt/chatgpt_css-class-based-on-variables]]
+- [[chatgpt/chatgpt_date-ideas-based-on]]
+- [[chatgpt/chatgpt_evidence-based-fitness-experts]]

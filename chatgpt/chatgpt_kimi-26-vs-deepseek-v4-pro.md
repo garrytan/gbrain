@@ -68,3 +68,11 @@ My current stack recommendation:
 - Final merge review → GPT-5.5 or Claude Code
 
 That combination is likely the best capability-per-dollar setup available right now. citeturn0search13turn0search12turn0news18
+
+
+## See Also
+- [[chatgpt/chatgpt_kimi-26-overview]]
+- [[chatgpt/chatgpt_kimi-26-productive-tasks]]
+- [[chatgpt/chatgpt_composer-25-vs-deepseek-v4-pro]]
+- [[chatgpt/chatgpt_cursor-vs-deepseek-comparison]]
+- [[chatgpt/chatgpt_deepseek-ai-models]]

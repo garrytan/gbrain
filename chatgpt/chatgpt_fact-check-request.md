@@ -83,3 +83,11 @@ So by “nearly Fall 2025” there are **state-funded tiny-home villages open (S
   - Claim that by nearly fall 2025 there are **“no tiny homes”** and **“no \$750 million”** – at least **155 state-funded tiny homes are already operating in Sacramento**, and substantial state money has been deployed.
 
 So the meme takes a real delay and then **wildly exaggerates the cost and erases projects that actually exist.**
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-check-request-2]]
+- [[chatgpt/chatgpt_fact-checking-video-request-part1]]
+- [[chatgpt/chatgpt_fact-checking-video-request-part2]]
+- [[chatgpt/chatgpt_qa-check-request]]
+- [[chatgpt/chatgpt_spell-check-request]]

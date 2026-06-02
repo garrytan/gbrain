@@ -84,3 +84,11 @@ To adjust opacity in Adobe Illustrator:
    - Use the same opacity field in the Properties or Control panel to adjust the opacity for the selection.
 
 Opacity ranges from 0% (completely transparent) to 100% (completely opaque).
+
+
+## See Also
+- [[chatgpt/chatgpt_duplicate-scan-prevention]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

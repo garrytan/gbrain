@@ -30,3 +30,11 @@ not only should you look for breakage but i need the chat interface to be world 
 Also, audit the actual chat responses and stuff to see if it should be properly handling objections and user reviewing and all that shit. All of that needs to be generally hardened.
 
 Help me improve the above response by asking it to build testing, looking at what the world-class onboarding experiences are of chat interfaces like Stanley for Twitter and shit like that, where you're user-interviewing before you're even explaining the products. It is all grounded in what we're trying to do with all the experiences and stuff, and all of the different UI states of that chat and enriched data. It is showing the pop out and everything in the expanded mode, making sure that all the UX and all that shit is solid. Basically want to have a 5.5 inside codex just set at an incredibly high bar test, and then loop until it passes and then ship it. 
+
+
+## See Also
+- [[chatgpt/chatgpt_onboarding-chat-plan]]
+- [[chatgpt/chatgpt_onboarding-chat-refinement]]
+- [[chatgpt/chatgpt_waitlist-onboarding-chat]]
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]

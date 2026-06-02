@@ -128,3 +128,11 @@ Now, let's calculate the BF% for Week 5:
 ## Assistant
 
 The corrected body fat percentage (BF%) for Week 5 in your plan is approximately 16.93%. This reflects a decrease from Week 4, aligning with your expectations for the maintenance phase following a mini-cut. You should apply a similar calculation for other weeks to ensure the BF% accurately reflects changes in your body composition.
+
+
+## See Also
+- [[chatgpt/chatgpt_cutting-phase-meal-plan]]
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_body-composition-change-summary]]
+- [[chatgpt/chatgpt_body-composition-changes]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]

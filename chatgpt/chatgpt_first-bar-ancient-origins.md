@@ -53,3 +53,11 @@ The oldest professions in human history, often cited based on their historical a
 10. **Priest/Religious Leader**: Conducting religious ceremonies and offering spiritual guidance.
 
 These professions evolved over time, adapting to the needs and complexities of growing societies.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]
+- [[chatgpt/chatgpt_bulk-first-cut-later]]

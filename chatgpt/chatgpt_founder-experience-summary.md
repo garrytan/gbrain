@@ -26,3 +26,11 @@ write 100 characheter about founder experience that is as impressive as it can b
 ## Assistant
 
 Founder of Jovie, building from zero while leading product, strategy, growth, and operations.
+
+
+## See Also
+- [[chatgpt/chatgpt_co-founder-breakup-causes]]
+- [[chatgpt/chatgpt_founder-vs-ceo-explained]]
+- [[chatgpt/chatgpt_funding-with-solo-founder]]
+- [[chatgpt/chatgpt_technical-co-founder-search]]
+- [[chatgpt/chatgpt_yc-advice-for-solo-founder]]

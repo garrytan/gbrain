@@ -39,3 +39,11 @@ Here are your alcohol inventory details summarized:
 - **Whiskey**: 77 bottles
 - **Triple sec**: 37 bottles
 - **Gin**: 23 bottles
+
+
+## See Also
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary]]
+- [[chatgpt/chatgpt_drink-inventory-summary]]
+- [[chatgpt/chatgpt_inventory-count-summary]]

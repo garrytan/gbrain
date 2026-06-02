@@ -124,3 +124,11 @@ To make 11 liters of lemonade using premade simple syrup, follow these steps:
    - Refrigerate the lemonade until it is cold. Serve over ice for a refreshing drink.
 
 Enjoy your homemade lemonade!
+
+
+## See Also
+- [[chatgpt/chatgpt_lemonade-pet-insurance-waiting-period-2]]
+- [[chatgpt/chatgpt_lemonade-pet-insurance-waiting-period]]
+- [[chatgpt/chatgpt_calculate-liters-consumed]]
+- [[chatgpt/chatgpt_make-a-cosmopolitan-and-negroni]]
+- [[chatgpt/chatgpt_make-a-paloma-cocktail]]

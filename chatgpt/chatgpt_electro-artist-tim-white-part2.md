@@ -294,3 +294,11 @@ need a stronger ending
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_electro-artist-tim-white-part1]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part2]]
+- [[chatgpt/chatgpt_tim-white-single-release-part2]]
+- [[chatgpt/chatgpt_ai-driven-artist-profiles]]
+- [[chatgpt/chatgpt_artist-api-search-issue]]

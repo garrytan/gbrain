@@ -361,3 +361,11 @@ Then yes — **migrating to Prisma + self-hosted Postgres** would be smart.
 
 **TL;DR**:  
 Stick with Supabase for now. Prisma is better when you're ready to scale, need stricter typing, or want deeper backend control.
+
+
+## See Also
+- [[chatgpt/chatgpt_tirzepatide-dose-query]]
+- [[chatgpt/chatgpt_air-fryer-conversion]]
+- [[chatgpt/chatgpt_batch-conversion-recipe]]
+- [[chatgpt/chatgpt_batch-recipe-conversion]]
+- [[chatgpt/chatgpt_best-ux-and-conversion]]

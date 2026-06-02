@@ -93,3 +93,11 @@ Send:
 > I’m working on Jovie now — basically automating what I did manually for artists for 15 years: planning releases, setting up smart links, finding every place the music is live, notifying fans when something drops, and turning one song into a full campaign instead of a one-day post. It seems obvious now, but it definitely wasn’t obvious before.
 >
 > Would be great to catch up properly. Are you free for a call sometime this week or next?
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

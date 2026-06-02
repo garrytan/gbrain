@@ -173,3 +173,11 @@ For the Muffin Top project, I have some sketch visual concepts for the head and 
 Thanks, Mr. White. I’ll compare both paths—Muffin Top and the RP Hypertrophy clone—through the lens of getting you profitable and independent as fast as possible. I’ll factor in cost to launch, speed to revenue, your skill set, and scalability potential.
 
 I’ll break down what’s more likely to generate income within weeks vs. what compounds into a larger business over time. Expect a detailed, no-bullshit comparison that helps you pick the right project to laser-focus on first.
+
+
+## See Also
+- [[chatgpt/chatgpt_app-clone-development-plan-part2]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part1]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part1]]
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part1]]
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part1]]

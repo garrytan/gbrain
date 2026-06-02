@@ -63,3 +63,11 @@ Got it, Mr. White. Here are a few no-fuss, microwave-friendly flavor boosters fo
 - **Greek yogurt** + garlic powder + lemon + dill (tzatziki vibe)
 
 Minimal effort, max flavor. Want macros to match one of these?
+
+
+## See Also
+- [[chatgpt/chatgpt_banana-vs-rice-carbs]]
+- [[chatgpt/chatgpt_rice-cake-macronutrients-summary]]
+- [[chatgpt/chatgpt_rice-cooker-tutorial]]
+- [[chatgpt/chatgpt_rice-maker]]
+- [[chatgpt/chatgpt_rice-microwave-instructions]]

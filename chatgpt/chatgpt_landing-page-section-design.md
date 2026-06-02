@@ -484,3 +484,11 @@ Want a script to dump logs from device via `idevicesyslog` or `ios-deploy`?
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-landing-page-design]]
+- [[chatgpt/chatgpt_landing-page-design-options]]
+- [[chatgpt/chatgpt_landing-page-design-prompt-2]]
+- [[chatgpt/chatgpt_landing-page-design-prompt]]
+- [[chatgpt/chatgpt_landing-page-design-spec]]

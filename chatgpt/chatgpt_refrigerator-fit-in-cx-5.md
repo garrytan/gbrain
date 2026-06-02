@@ -39,3 +39,11 @@ Most standard apartment-size fridges are roughly 65–70 in tall, 28–32 in dee
 3. Its width must be ≤ 54 in (and ideally ≤ 40 in if you’re keeping it between the wheel wells).  
 
 **Bottom line:** a typical fridge (~30 in deep × ~30 in wide × ~66 in tall) **will fit** laid on its back, provided you slide the front seat forward enough. Always double-check your specific fridge’s packaged dimensions before loading.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

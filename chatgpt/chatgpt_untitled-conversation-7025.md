@@ -131,3 +131,11 @@ fetch("https://www.example.com/")
 ```
 
 In this example, the `fetch` function is used to send a GET request to the `https://www.example.com/` URL. The response is automatically parsed as JSON and the resulting data is passed to the `then` callback. Any errors that occur during the request are handled in the `catch` callback.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

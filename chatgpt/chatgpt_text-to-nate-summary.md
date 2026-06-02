@@ -67,3 +67,11 @@ Here’s a tightened version you could send as a text, Mr. White:
 ---  
 
 Do you want me to make it even shorter—something that feels more casual, like a quick “let’s line up availability” text?
+
+
+## See Also
+- [[chatgpt/chatgpt_clean-up-text-summary]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_alex-gaudino-song-summary]]

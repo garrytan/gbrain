@@ -26,3 +26,11 @@ What is True Romance?
 ## Assistant
 
 "True Romance" is a film directed by Tony Scott, written by Quentin Tarantino. It's a crime film that narrates the story of a couple, Clarence and Alabama, who after a whirlwind romance, find themselves in possession of a suitcase of cocaine and are pursued by mobsters. The film is known for its star-studded cast and Tarantino's sharp dialogue.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

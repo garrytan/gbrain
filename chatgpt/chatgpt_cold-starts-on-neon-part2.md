@@ -236,3 +236,11 @@ So the “cleanest” path = form a **new entity now (or when you actually need 
 ---
 
 Do you want me to also check **USPTO filings for “Jovi”** so you can see exactly what trademark classes Bright Horizons registered in, and whether they’d overlap with software?
+
+
+## See Also
+- [[chatgpt/chatgpt_cold-starts-neon-vercel]]
+- [[chatgpt/chatgpt_cold-starts-on-neon-part1]]
+- [[chatgpt/chatgpt_nextjs-cold-starts-vercel]]
+- [[chatgpt/chatgpt_vercel-cold-starts-explained]]
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]

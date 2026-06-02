@@ -168,3 +168,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Sure! If each bottle is about two ounces, and you have 18 bottles, that's roughly 36 ounces of dye in total. If you use about four ounces per shirt for vibrant colors, you could probably dye around nine shirts. If you use less dye per shirt, you could definitely stretch that number higher!"}
 {'asset_pointer': 'sediment://file_00000000029c622fa19302c1488d2745', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-12T02:14:26.445727+00:00', 'format': 'wav', 'metadata': {'end': 16.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 792078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_batch-quantity-calculation]]
+- [[chatgpt/chatgpt_band-t-shirt-generator]]
+- [[chatgpt/chatgpt_black-dress-shirt-options]]
+- [[chatgpt/chatgpt_blonde-in-mens-shirt]]
+- [[chatgpt/chatgpt_gym-shirt-policies-summary]]

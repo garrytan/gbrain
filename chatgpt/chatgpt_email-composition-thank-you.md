@@ -33,3 +33,11 @@ Thank you for coming in last night—it was great to meet you. I’m looping in 
 
 Best,  
 Mr. White
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]
+- [[chatgpt/chatgpt_bartender-job-application-email-3]]
+- [[chatgpt/chatgpt_bartender-job-application-email]]

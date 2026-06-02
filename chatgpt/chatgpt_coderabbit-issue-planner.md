@@ -46,3 +46,11 @@ It’s in *open beta* and configurable so that plans can be auto-generated based
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_diet-planner-integration]]
+- [[chatgpt/chatgpt_gpt-diet-planner-prompt]]
+- [[chatgpt/chatgpt_accessing-faq-content-issue]]
+- [[chatgpt/chatgpt_age-display-issue-fixed]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]

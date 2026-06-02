@@ -101,3 +101,11 @@ Finally, generate a report listing components/stories that failed, the failing a
 Quick extras:
 - Use `line-clamp`/`ellipsis` and fixed-height “message slots” to avoid shifts.
 - For buttons: enforce `whitespace-nowrap`, a `min-w`, and reserve spinner space with `relative` + `absolute` spinner overlay so text doesn’t move.
+
+
+## See Also
+- [[chatgpt/chatgpt_fix-layout-shifts]]
+- [[chatgpt/chatgpt_dst-shifts-daylight-usage]]
+- [[chatgpt/chatgpt_request-for-more-shifts]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]

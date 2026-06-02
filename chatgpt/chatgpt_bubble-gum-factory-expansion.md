@@ -134,3 +134,11 @@ That's good but lets take some inspiration now from the bubblegum and have it be
 ## Assistant
 
 Here's the updated logo with a more circular shape, inspired by the bubblegum concept. Let me know if you need any further adjustments!
+
+
+## See Also
+- [[chatgpt/chatgpt_bubble-gum-factory-logo]]
+- [[chatgpt/chatgpt_bubblegum-factory-app-icon]]
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part1]]
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part2]]
+- [[chatgpt/chatgpt_bubblegum-factory-logo-2]]

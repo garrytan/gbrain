@@ -79,3 +79,11 @@ If you want, I can rank these by **legal risk vs. satisfaction factor** so you c
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_epic-chorus-options]]
+- [[chatgpt/chatgpt_epic-job-application-draft]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

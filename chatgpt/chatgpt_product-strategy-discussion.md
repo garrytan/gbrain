@@ -151,3 +151,11 @@ Publicly, I would keep it music-first.
 Operationally, I would run fitness and one other creator vertical as cheap tests.
 
 Strategically, I would only pivot after evidence shows another vertical has materially stronger activation, payment, or retention than music.
+
+
+## See Also
+- [[chatgpt/chatgpt_product-analytics-strategy]]
+- [[chatgpt/chatgpt_product-demo-strategy]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]

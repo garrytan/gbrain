@@ -100,3 +100,11 @@ Ensure that all items are well-stocked and accessible to keep the bar running sm
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-setup-checklist]]
+- [[chatgpt/chatgpt_dishwasher-duties-checklist]]
+- [[chatgpt/chatgpt_documentation-update-checklist]]
+- [[chatgpt/chatgpt_foh-checklist-request-part1]]
+- [[chatgpt/chatgpt_foh-checklist-request-part2]]

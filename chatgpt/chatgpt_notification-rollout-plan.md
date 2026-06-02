@@ -103,3 +103,11 @@ We design **backwards from Phase 5**, so every database schema and UI element ca
 ---
 
 Do you want me to mock up **exact UI flows** for Phase 1 (MVP) and Phase 2 (subscriber dashboard) so you can see what “Apple-level polish” would look like right away?
+
+
+## See Also
+- [[chatgpt/chatgpt_universal-notification-plan]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]

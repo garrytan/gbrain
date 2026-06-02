@@ -35,3 +35,11 @@ On a **Hercules aircraft (C-130)**, **AL** usually refers to **Aircraft Load** o
 In short, **AL on a Herc AC = the max payload that specific mission or configuration allows the aircraft to carry**.  
 
 Do you want me to break down **how AL is actually calculated for a Herc mission** (weight & balance, fuel, cargo, etc.)?
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

@@ -131,3 +131,11 @@ Here's a meal plan that fits your macros and can be prepared using a microwave:
 - 1 microwaveable protein-rich snack (e.g., Quest Protein Chips) (Protein: 21g, Carbs: 4g, Fat: 4.5g)
 
 This plan ensures that all meals can be prepared quickly using a microwave, while still meeting your macro requirements. Adjust as needed for specific brand macros.
+
+
+## See Also
+- [[chatgpt/chatgpt_meal-plan-for-macros-part1]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part2]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part3]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part4]]
+- [[chatgpt/chatgpt_camping-meal-plan]]

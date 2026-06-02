@@ -234,3 +234,11 @@ Hit **Save**, and let the app do its thing. When you move into maintenance/bulk,
 4. Never switch to Primary just to “feel the burn” on a cut—that’s junk fatigue when calories are low.
 
 Flip the switches, hit Save, and the app will keep your deficit-phase volume exactly as aggressive—or as minimal—as you want.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-training-request]]
+- [[chatgpt/chatgpt_fasted-vs-fed-training]]
+- [[chatgpt/chatgpt_hypertrophy-training-gear]]
+- [[chatgpt/chatgpt_leg-training-impact-summary]]
+- [[chatgpt/chatgpt_perturbation-in-training]]

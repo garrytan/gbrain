@@ -67,3 +67,11 @@ While the MBTI is not intended to diagnose or predict specific behaviors, some s
 | **Wealth (High Income)** | **E, T, J Traits Boost Income:** Data-driven analyses have found clear income differences by MBTI preference. In a survey of over 70,000 people, **Extraverts, Thinkers, and Judgers** earned significantly more on average than their Introvert, Feeler, and Perceiver counterparts【18†L247-L254】. Specifically, having an **Extraverted** preference corresponded to an ~$9,000 higher annual income compared to Introverts, **Thinking** over Feeling gave an ~$8,000 boost, and **Judging** over Perceiving about a ~$7,000 boost【18†L247-L254】. (Sensing vs. Intuition showed only a small difference【15†L218-L221】.) The highest earners tend to be **“ETJ” types**. For example, **ENTJ** individuals (“the Commanders”) were among the top earners in early career, and around 10% of **INTJs** reached $150K+ incomes in later career – one of the highest proportions【15†L235-L242】. Over time, **ENTP** and **ESTP** types also rose to high income brackets in mid-life, after slower starts【18†L278-L287】 (often due to extended education for INTP/INTJ, or entrepreneurial paths for ENTP). In short, the MBTI dimensions align with known Big Five predictors of earnings (e.g. high *Extraversion* and *Conscientiousness*/Judging【18†L247-L254】【18†L258-L262】), making **assertive, analytical, organized types** more likely to become wealthy. |
 
 **Sources:** The above findings are drawn from psychological research papers, large-scale surveys, and expert analyses. Citations are provided after each claim for verification. Keep in mind that correlations do not mean deterministic outcomes; individual results will vary, and non-personality factors (upbringing, environment, values) strongly influence these life outcomes.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

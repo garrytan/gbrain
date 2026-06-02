@@ -548,3 +548,11 @@ does it make sense to buy a condo or something first and to save on rent for a v
 
 
 I’ll model this as a short-hold LA rent-vs-buy decision, factoring mortgage, HOA, taxes, transaction costs, runway, and whether it actually increases freedom.
+
+
+## See Also
+- [[chatgpt/chatgpt_ideal-lifestyle-planning-part2]]
+- [[chatgpt/chatgpt_sprint-planning-for-mvp-part1]]
+- [[chatgpt/chatgpt_ideal-repo-settings]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_a7x3-blog-healthy-lifestyle]]

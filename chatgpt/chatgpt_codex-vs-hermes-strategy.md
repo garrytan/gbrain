@@ -210,3 +210,11 @@ Inspect the Hermes setup and produce:
    - stop conditions for idle loops
 Do not rewrite the system broadly. Make the smallest changes that reduce spend and improve observability.
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]

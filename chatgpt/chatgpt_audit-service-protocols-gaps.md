@@ -321,3 +321,11 @@ Got it, Mr. White. Here’s a concise, paste-ready list.
 - **Time/date**, **table & seat**, **reason** (“cut-off for safety”), **who informed**, **actions taken**, **manager touch**, **notes (pass-back? security?)**.
 
 — End —
+
+
+## See Also
+- [[chatgpt/chatgpt_activate-t-mobile-service]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_audit-and-recommend-drafts]]
+- [[chatgpt/chatgpt_audit-and-strategy-tips]]

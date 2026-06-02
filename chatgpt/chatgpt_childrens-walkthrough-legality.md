@@ -211,3 +211,11 @@ All three are lawful; the safest (and cleanest) for upscale is **Option 1**.
 
 ### Bottom line
 - **There is no wristband mandate.** You’re free to choose the least-tacky system **so long as it reliably prevents service to under-21s** and staff still card when they should. If you want, I’ll draft a one-page **ID & wristband policy** tailored to your entry flow and the 18+ format.
+
+
+## See Also
+- [[chatgpt/chatgpt_cancelation-policy-legality]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_lifetime-saas-licenses-legality]]
+- [[chatgpt/chatgpt_limescooters-legality-issue]]
+- [[chatgpt/chatgpt_lost-ticket-fee-legality-2]]

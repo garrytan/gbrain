@@ -56,3 +56,11 @@ Mr. White —
 If a test cannot be run from a clean environment with a single command, the setup is wrong.
 
 If you want, I can outline a clean Clerk + DB seeding flow (local vs CI) in ~10 lines of pseudocode.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-dev-account-setup]]
+- [[chatgpt/chatgpt_clerk-otp-test-setup]]
+- [[chatgpt/chatgpt_create-account-page-setup-part1]]
+- [[chatgpt/chatgpt_create-account-page-setup-part2]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]

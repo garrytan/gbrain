@@ -118,3 +118,11 @@ I also need to confirm liquor order and get what the distributor doesnt supply
 - Fix kitchen printer issue  
 - Locate/replace missing bar screws  
 - Draft “GTFO” closing message
+
+
+## See Also
+- [[chatgpt/chatgpt_task-list-for-campaigns]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]
+- [[chatgpt/chatgpt_ai-tool-reasoning-task]]
+- [[chatgpt/chatgpt_automation-task-setup]]
+- [[chatgpt/chatgpt_claude-code-task-management]]

@@ -890,3 +890,11 @@ Landing page displays the TipPromo hero only when the env flag is enabled; copy 
 ```
 
 This prompt gives the agent everything it needs—feature flag, Apple-quality copy, YC-style clarity, and implementation details—to ship the new marketing section safely.
+
+
+## See Also
+- [[chatgpt/chatgpt_allowing-actions-to-create-prs]]
+- [[chatgpt/chatgpt_codex-integration-with-repo]]
+- [[chatgpt/chatgpt_create-account-page-setup-part1]]
+- [[chatgpt/chatgpt_create-account-page-setup-part2]]
+- [[chatgpt/chatgpt_create-anime-characters]]

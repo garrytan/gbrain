@@ -38,3 +38,11 @@ What’s up, Mr. White. Here’s the straight dope on flying with your compounde
 5. **Do NOT check it** – Avoid checking your meds. If your bag gets lost or delayed or temps spike, you’re screwed. Always carry it on.
 
 You’re all clear for takeoff. Anything else?
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

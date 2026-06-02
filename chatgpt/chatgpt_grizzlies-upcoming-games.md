@@ -84,3 +84,11 @@ Got it—GRiZ the musician, not the Grizzlies. My bad. Here's what's actually co
 ---
 
 He’s heading to the Bay Area for two nights only. If you want alerts for any upcoming shows in LA or want help grabbing tickets for SF, I got you covered. Want me to keep an eye out or dig deeper tickets?
+
+
+## See Also
+- [[chatgpt/chatgpt_current-football-games]]
+- [[chatgpt/chatgpt_hunger-games-directors]]
+- [[chatgpt/chatgpt_kieran-culkin-hunger-games]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

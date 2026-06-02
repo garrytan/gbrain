@@ -93,3 +93,11 @@ Yes — **Framer** is legitimately one of the best options if your goal is **AI-
 - **Framer vs TeleportHQ:** TeleportHQ leans more toward HTML/CSS scaffolding; Framer gives design + UI logic and interactions.
 
 **Bottom line:** Framer is a top choice for world-class landing pages you’ll manually implement in Next.js — it maximizes AI design assistance while keeping hand-coding straightforward.
+
+
+## See Also
+- [[chatgpt/chatgpt_best-ai-for-landing-pages]]
+- [[chatgpt/chatgpt_top-saas-landing-pages]]
+- [[chatgpt/chatgpt_ux-for-typing-landing-pages]]
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]

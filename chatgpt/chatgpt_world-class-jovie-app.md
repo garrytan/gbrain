@@ -718,3 +718,11 @@ The longer-term wedge is **Jovie as the AI manager that knows every fan, every r
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_designing-world-class-landing-page]]
+- [[chatgpt/chatgpt_edit-for-world-class-ux]]
+- [[chatgpt/chatgpt_redesign-for-world-class-design]]
+- [[chatgpt/chatgpt_world-class-audio-plan]]
+- [[chatgpt/chatgpt_world-class-calendar-design]]

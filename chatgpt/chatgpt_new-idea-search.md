@@ -26,3 +26,11 @@ I’m looking for an idea
 ## Assistant
 
 Could you please provide more details about the type of idea you're looking for? For example, are you interested in ideas related to a new hobby, a business venture, creative writing, fitness goals, or something else?
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]
+- [[chatgpt/chatgpt_account-search-assistance]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]
+- [[chatgpt/chatgpt_angel-investor-search]]
+- [[chatgpt/chatgpt_artist-api-search-issue]]

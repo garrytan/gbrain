@@ -57,3 +57,11 @@ Here’s the breakdown:
 - Even with perfect use, most tattoo artists still say: **no pools for 2 weeks minimum**.
 
 So: you're Gucci for looking cool and healing faster—but **not Gucci for swimming or hot tubs**. Give it a solid 10–14 days, then reassess.
+
+
+## See Also
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]
+- [[chatgpt/chatgpt_bikini-rules-in-maldives]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]
+- [[chatgpt/chatgpt_enforcing-biome-rules]]

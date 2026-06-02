@@ -1058,3 +1058,11 @@ Mr. White — do you want me to also rewrite the **Stripe billing section** into
 
 
 Update our claude md file to remove clerk billing and add stripe mentions
+
+
+## See Also
+- [[chatgpt/chatgpt_refined-pr-rules-part2]]
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]
+- [[chatgpt/chatgpt_bikini-rules-in-maldives]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]

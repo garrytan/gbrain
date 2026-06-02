@@ -84,3 +84,11 @@ Mr. White—here’s the fast audit.
 8) **Floorplan PDF** + section naming to match seat numbers. citeturn9view0
 
 If you want, I can draft the missing pages (batching, comps codes, tip-pool math, POS quick-start, onboarding) in your voice and drop them straight into the site structure.
+
+
+## See Also
+- [[chatgpt/chatgpt_hire-landing-page-designer]]
+- [[chatgpt/chatgpt_landing-page-designer-hire]]
+- [[chatgpt/chatgpt_33-taps-restaurant-info]]
+- [[chatgpt/chatgpt_apple-business-account-info]]
+- [[chatgpt/chatgpt_apple-keynote-2026-info]]

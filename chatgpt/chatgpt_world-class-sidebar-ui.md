@@ -98,3 +98,11 @@ Mr. White, here’s how I’d take this sidebar from “good” to “world-clas
 - Perf: expand/collapse under 16 ms on mid-tier hardware.
 
 If you want, I can mock this as a polished React/Tailwind component next.
+
+
+## See Also
+- [[chatgpt/chatgpt_designing-world-class-landing-page]]
+- [[chatgpt/chatgpt_edit-for-world-class-ux]]
+- [[chatgpt/chatgpt_redesign-for-world-class-design]]
+- [[chatgpt/chatgpt_world-class-audio-plan]]
+- [[chatgpt/chatgpt_world-class-calendar-design]]

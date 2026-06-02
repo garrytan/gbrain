@@ -62,3 +62,11 @@ xhr.send();
 In the example above, we create a new XHR object and open a GET request to the specified URL. Then, we use the `setRequestHeader` method to set the `Authorization` header with the appropriate token information. In this case, we're using the `Bearer` scheme, which is commonly used for token-based authentication. Finally, we send the request using the `send` method.
 
 It's worth noting that the exact format of the `Authorization` header and the authentication scheme used may vary depending on the specific requirements of your application. You should consult the documentation for the API you're using to determine the correct way to include an authentication token in the request.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]
+- [[chatgpt/chatgpt_untitled-conversation-265]]

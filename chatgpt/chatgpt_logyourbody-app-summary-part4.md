@@ -1043,3 +1043,11 @@ Eight Sleep’s layout is great because it’s a **single-number instrument pane
 That is *exactly* your Body Score + HUD philosophy. You’re not copying sleep UI — you’re copying a proven way to present **one composite score + its causes + your routine.**
 
 If you want, I can sketch the revised Home as a quick wireframe with exact spacing/typography tokens that fit your LiquidGlassCard system.
+
+
+## See Also
+- [[chatgpt/chatgpt_logyourbody-app-summary-part1]]
+- [[chatgpt/chatgpt_logyourbody-app-summary-part2]]
+- [[chatgpt/chatgpt_logyourbody-app-summary-part3]]
+- [[chatgpt/chatgpt_logyourbody-app-summary-part5]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part4]]

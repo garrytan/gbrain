@@ -28,3 +28,11 @@ tim whit
 ​It appears you might be referring to Tim Whitsett, an American music publisher, musician, songwriter, producer, author, and consultant. He was the founder of the Imperial Show Band, one of Mississippi's first integrated bands in the 1960s. Whitsett also managed Urgent! Records and held executive roles at Stax Records and Malaco Music Group. He authored several books on music publishing and passed away in 2022. citeturn0search1
 
 If you had someone else in mind, please provide more details. 
+
+
+## See Also
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_bike-information]]
+- [[chatgpt/chatgpt_chris-rosa-information]]
+- [[chatgpt/chatgpt_contact-information-formatting]]
+- [[chatgpt/chatgpt_cosmic-gate-information]]

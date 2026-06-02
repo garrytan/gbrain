@@ -27,3 +27,11 @@ Give me an arguing to convince comment about like “and this negatively impacti
 ## Assistant
 
 “And this ruins *your* Burning Man how, exactly? Unless his jet landed on your tent, why care how someone else gets there?”
+
+
+## See Also
+- [[chatgpt/chatgpt_arguing-against-selective-wage-hikes]]
+- [[chatgpt/chatgpt_arguing-assumptions-of-motive]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_comment-critique-request]]
+- [[chatgpt/chatgpt_comment-improvement-with-snark]]

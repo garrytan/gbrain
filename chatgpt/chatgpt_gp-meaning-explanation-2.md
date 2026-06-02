@@ -36,3 +36,11 @@ gp
 - **Geometric Progression** (in mathematics)
 
 The intended meaning depends on the context in which "GP" is used. 
+
+
+## See Also
+- [[chatgpt/chatgpt_gp-meaning-explanation]]
+- [[chatgpt/chatgpt_jove-meaning-explanation]]
+- [[chatgpt/chatgpt_linear-meaning-explanation]]
+- [[chatgpt/chatgpt_loom-meaning-explanation]]
+- [[chatgpt/chatgpt_resend-meaning-explanation]]

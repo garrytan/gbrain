@@ -81,3 +81,11 @@ Softer, more likable version:
 :::writing{variant="social_post" id="74778"}
 I understand why the Amazon comparison feels relevant from a fairness standpoint. The cleaner question is whether this specific use was authorized. The strongest argument here would be calm and evidence-based: show permission, show ownership, or explain the legal basis clearly. The Instagram back-and-forth is making it harder for people to focus on the actual issue.
 :::
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

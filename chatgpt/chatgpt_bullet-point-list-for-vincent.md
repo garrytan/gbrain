@@ -55,3 +55,11 @@ Got it—here’s the updated text-ready list:
 - Are you out of town for Brandon’s wedding—when are you back and fully available?  
 - When will Max’s project be complete so the room can be set?  
 - Is Chase our sound guy? Can I loop him in on lobby audio?  
+
+
+## See Also
+- [[chatgpt/chatgpt_bullet-point-list-summary]]
+- [[chatgpt/chatgpt_bullet-point-list整理]]
+- [[chatgpt/chatgpt_lexicon-cue-point-generation]]
+- [[chatgpt/chatgpt_nick-missed-the-point]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]

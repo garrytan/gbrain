@@ -73,3 +73,11 @@ The biggest takeaway: AI looked almost flat for centuries, then accelerated shar
 | 2026 | 100 | GPT‑5.5 |
 
 The historical anchors come from Pascal’s 1642–1644 calculator, Dartmouth’s 1956 AI workshop, IBM’s Deep Blue and Watson milestones, AlexNet’s 2012 ImageNet paper, and OpenAI’s GPT-era release pages. citeturn708833search4turn708833search1turn708833search2turn708833search3turn740801search0turn740801search6turn740801search3turn740801search9turn806385search0turn548070search4turn548070search0
+
+
+## See Also
+- [[chatgpt/chatgpt_improvement-over-time]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_backup-time-for-20tb]]
+- [[chatgpt/chatgpt_dns-propagation-time]]

@@ -79,3 +79,11 @@ export default {
 In this example, `textSizeClass` is a computed property that determines the appropriate text size class based on the `height` value. It checks the height against different ranges and returns the corresponding class. You can replace `height: 0` with the actual height value you want to use.
 
 By using a computed property, the code becomes more readable and maintainable compared to an inline ternary expression.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

@@ -87,3 +87,11 @@ Here is the corrected inventory for your pre-batch cocktails:
 | Watermelon         | 2.00               |
 
 If you need any further details or adjustments, let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]
+- [[chatgpt/chatgpt_drink-inventory-summary]]

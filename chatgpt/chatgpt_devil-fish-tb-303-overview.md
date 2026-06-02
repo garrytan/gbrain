@@ -32,3 +32,11 @@ tags: [chatgpt, import]
 For a practical demonstration of the Devil Fish's capabilities, you might find the following sound demo informative:
 
 videoRoland TB-303 Devil Fish Sound Demoturn0search4 
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

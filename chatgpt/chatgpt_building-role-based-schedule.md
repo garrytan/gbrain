@@ -158,3 +158,11 @@ Set **Data validation** on `Shifts!G:G` to “List from a range” → `=Eligibl
 4) Print the **Day View**.
 
 If you want, I can draft a minimal template with the formulas wired up to your “Front Bar / Sections / Flex / Chef / Line Cook / Dishwasher / Porter-Expo / Install-Seat-Kitten / Door-Run-Spot” roles so you can drop it into your Drive.
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-role-submission]]
+- [[chatgpt/chatgpt_clerk-role-elements]]
+- [[chatgpt/chatgpt_job-role-analysis]]
+- [[chatgpt/chatgpt_resume-update-bartender-role]]
+- [[chatgpt/chatgpt_role-submission-automation]]

@@ -26,3 +26,11 @@ Did Quentin write Death Proof?
 ## Assistant
 
 Yes, Quentin Tarantino wrote and directed Death Proof.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_apple-death-certificate]]
+- [[chatgpt/chatgpt_bernie-mac-pneumonia-death]]
+- [[chatgpt/chatgpt_clapback-with-proof]]
+- [[chatgpt/chatgpt_investor-proof-narrative-framework]]

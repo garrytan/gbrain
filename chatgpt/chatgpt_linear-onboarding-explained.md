@@ -45,3 +45,11 @@ linear onboarding
 In contrast, **adaptive or conditional onboarding** changes based on user behavior, role, or needs rather than forcing everyone through the same sequence. citeturn0search10
 
 If you meant **Linear (the product)** onboarding specifically, it’s a streamlined first-time user experience in the Linear app that walks new teams through setup with one input per step to quickly get their workspace ready. citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-onboarding-explained-2]]
+- [[chatgpt/chatgpt_linear-color-palette-explained]]
+- [[chatgpt/chatgpt_linear-onboarding-overview]]
+- [[chatgpt/chatgpt_linear-redesign-explained]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]

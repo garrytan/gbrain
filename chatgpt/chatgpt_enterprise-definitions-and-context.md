@@ -36,3 +36,11 @@ enterprise
 3. **Initiative and Resourcefulness**: The readiness to engage in daring or difficult actions. citeturn0search0
 
 Additionally, "Enterprise" is the name of various entities, such as the car rental company Enterprise Rent-A-Car and the fictional starship in the "Star Trek" franchise. 
+
+
+## See Also
+- [[chatgpt/chatgpt_anthropic-meaning-and-context]]
+- [[chatgpt/chatgpt_close-other-context-menus]]
+- [[chatgpt/chatgpt_context-comparison-issue]]
+- [[chatgpt/chatgpt_context-for-investor-raise]]
+- [[chatgpt/chatgpt_face-definitions-and-contexts]]

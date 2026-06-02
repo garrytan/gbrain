@@ -227,3 +227,11 @@ Let’s check all details here and correct any errors. Let’s also list the own
 ## Assistant
 
 I'll verify all the venue details, correct any errors, and provide ownership information (e.g., H.Wood Group, Houston Brothers, Live Nation, Insomniac, etc.). Additionally, I'll identify any high-volume nightclubs in West Hollywood and Hollywood that were missing from the previous list. I'll update you as soon as I have the full breakdown.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-count-bpm]]
+- [[chatgpt/chatgpt_bartender-duties-list]]

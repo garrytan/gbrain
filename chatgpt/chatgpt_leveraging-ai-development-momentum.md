@@ -119,3 +119,11 @@ Run Ruflo and Hermes against the same tasks through the same adapter. Compare ag
 Pin versions. Disable auto-upgrades. Run in containers. Use no production credentials. Give read-only access first. Add explicit token budgets. Require tool allowlists. Log every tool call. Block internet/file access by default. Add a kill switch. Promote only workflows that beat the baseline in evals.
 
 The strategic principle: **Jovie should own the interface, data, trust boundary, and product experience. Let open-source agents compete to be replaceable execution engines underneath.**
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-os-development-direction]]
+- [[chatgpt/chatgpt_ai-in-product-development]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part2]]

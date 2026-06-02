@@ -42,3 +42,11 @@ Certainly, here's the HTML code to create a dropdown select for gender with opti
 ```
 
 You can use this code to create a dropdown select element where the user can choose their gender between "Male" and "Female."
+
+
+## See Also
+- [[chatgpt/chatgpt_close-dropdown-on-edit]]
+- [[chatgpt/chatgpt_dropdown-menu-customization]]
+- [[chatgpt/chatgpt_fact-checking-gender-discrepancy]]
+- [[chatgpt/chatgpt_form-fields-height-gender-weight]]
+- [[chatgpt/chatgpt_los-angeles-nightclub-gender-policies]]

@@ -69,3 +69,11 @@ The spreadsheet titled "Body Recomposition Plan for Mr. White" has been created.
 [Download Body Recomposition Plan for Mr. White](https://storage.googleapis.com/paint_public/a300a3ab16c042f99fa1a990b658b10a.csv)
 
 Please note that the specific values for weight changes, cumulative changes, current weight, body fat percentages, and FFMI have not been calculated and entered into the document. You will need to input the weekly data as per the guidelines provided.
+
+
+## See Also
+- [[chatgpt/chatgpt_create-weight-tracking-spreadsheet]]
+- [[chatgpt/chatgpt_update-body-comp-spreadsheet]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_add-lean-body-mass]]

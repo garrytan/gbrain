@@ -64,3 +64,11 @@ Mr. White:
 
 **Claim:** Ford filed that ad-system patent “to be a hero” and keep everyone else from forcing ads on you at startup.  
 **Reality:** Ford never framed it that way. Their spokespeople said patent filings are simply “a normal part of any strong business…to protect new ideas” and “should not be viewed as an indication of our business or product plans” citeturn3view0turn4view0. There’s no evidence they pitched it as a consumer-saving crusade.
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

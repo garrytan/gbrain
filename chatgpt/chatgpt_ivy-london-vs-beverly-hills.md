@@ -26,3 +26,11 @@ Is the ivy in london the same as Beverly Hills
 ## Assistant
 
 No, the Ivy restaurants in London and Beverly Hills are not the same. While they share a similar upscale dining concept and name, they are independently owned and operated. The Ivy in London is a long-established, iconic venue known for its classic British fare and celebrity clientele, whereas the Ivy in Beverly Hills offers a more distinctly Californian style and menu.
+
+
+## See Also
+- [[chatgpt/chatgpt_beverly-hills-city-hall]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]
+- [[chatgpt/chatgpt_mystery-woman-in-beverly-hills]]
+- [[chatgpt/chatgpt_beverly-center-details-2]]
+- [[chatgpt/chatgpt_beverly-center-details]]

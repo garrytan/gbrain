@@ -82,3 +82,11 @@ Would you like me to include **Education** and **References** sections in JSON f
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-12-values]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]
+- [[chatgpt/chatgpt_extract-code-to-component-2]]
+- [[chatgpt/chatgpt_extract-code-to-component]]

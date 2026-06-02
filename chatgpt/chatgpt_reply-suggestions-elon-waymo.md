@@ -33,3 +33,11 @@ Mr. White, here are snappy replies you can drop:
 - “Easy, Elon. They’re talking Waymo here.”  
 - “Stand down, Elon—wrong target. It’s Waymo.”  
 - “Not your smoke, Elon. It’s aimed at Waymo.”
+
+
+## See Also
+- [[chatgpt/chatgpt_concise-reply-suggestions]]
+- [[chatgpt/chatgpt_email-reply-suggestions]]
+- [[chatgpt/chatgpt_automated-reply-for-new-messages]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]

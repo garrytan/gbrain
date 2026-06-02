@@ -454,3 +454,11 @@ My preference is the first one. It is the clearest balance of:
 - still obviously workflow software
 
 Use **“release workflows”** in the short label. Use the concrete task list immediately after it.
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part2]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]
+- [[chatgpt/chatgpt_startup-application-strategy-part2]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part2]]
+- [[chatgpt/chatgpt_yc-application-audit-part1]]

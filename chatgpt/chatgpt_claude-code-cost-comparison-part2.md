@@ -1179,3 +1179,11 @@ Mr. White, here is a paste-ready master prompt for Hermes to implement the full 
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part1]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part3]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part4]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part5]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]

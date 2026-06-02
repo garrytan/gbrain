@@ -82,3 +82,11 @@ I am not a legal expert, but having intoxicated passengers in the car while driv
 However, in some very specific circumstances, you might be able to argue necessity — for instance, if you claim you made a "rolling stop" in order to quickly remove a passenger who was posing an immediate danger to you or others in the car. This would be a high-risk strategy, and the burden of proof would be on you to demonstrate the necessity of your actions.
 
 Given the complexity of your situation, particularly as it relates to your role as an Uber driver, consulting a lawyer who specializes in traffic offenses or rideshare-related legal issues would be advisable.
+
+
+## See Also
+- [[chatgpt/chatgpt_automating-tixer-ticket-updates]]
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_drink-ticket-printing-tips]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_fixer-ticket-sales-setup]]

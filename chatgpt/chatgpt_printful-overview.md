@@ -79,3 +79,11 @@ Margins are lower than bulk manufacturing. POD works best when:
 - exclusivity/story matters more than maximizing garment margin citeturn0search4turn0search17
 
 For an MVP, Printful is probably the correct choice because speed matters more than margin optimization right now.
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

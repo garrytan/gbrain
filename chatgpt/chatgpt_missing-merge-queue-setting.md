@@ -288,3 +288,11 @@ For your repo:
 ---
 
 Do you want me to write out the **step-by-step migration** from your personal account → free org so you can enable merge queue today?
+
+
+## See Also
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part1]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part2]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part3]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part4]]
+- [[chatgpt/chatgpt_merge-queue-eta-explained]]

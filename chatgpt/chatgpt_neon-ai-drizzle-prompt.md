@@ -37,3 +37,11 @@ Here’s a prompt you can use with entity["software", "Neon AI", 0] + �
 > Provide code snippets, configuration files (drizzle.config.ts, db.ts), and any Neon-specific considerations (connection string, pool settings, environment variables).”*
 
 If you meant a different “drizzle prompt” (e.g., for an image AI, a “drizzle” weather-scene prompt, or a different “Neon” product) let me know and I’ll craft one accordingly, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_drizzle-neon-concurrency-setup]]
+- [[chatgpt/chatgpt_neon-drizzle-comparison]]
+- [[chatgpt/chatgpt_neon-drizzle-migrations-fix]]
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]
+- [[chatgpt/chatgpt_cold-starts-neon-vercel]]

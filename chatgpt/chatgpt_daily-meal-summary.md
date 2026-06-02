@@ -66,3 +66,11 @@ Thanks for the update. Here's a rough estimate of the macros and calories for wh
 - **Carbs**: ~262g
 
 This estimate is based on average values for the foods mentioned. If you're tracking macros closely, you might want to refine these numbers using exact packaging labels or a nutrition app. If you have specific goals in mind, let me know, and I can help adjust your diet accordingly.
+
+
+## See Also
+- [[chatgpt/chatgpt_macros-and-meal-summary]]
+- [[chatgpt/chatgpt_ai-song-uploads-daily]]
+- [[chatgpt/chatgpt_ai-vs-daily-activities]]
+- [[chatgpt/chatgpt_daily-calorie-calculation-maintenance-vs-workout]]
+- [[chatgpt/chatgpt_daily-macronutrient-intake-estimate]]

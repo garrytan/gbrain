@@ -65,3 +65,11 @@ Cognito — integrates seamlessly with AWS services. citeturn0search9
 - **Self-hosted/open source** = more control and lower costs long run, but more engineering overhead. citeturn0search6
 
 If you want, tell me your **tech stack (e.g., framework/language)** and **whether you need SSO or just basic login**, and I’ll tailor a specific recommendation.
+
+
+## See Also
+- [[chatgpt/chatgpt_best-ai-for-landing-pages]]
+- [[chatgpt/chatgpt_best-ai-tools-for-collaboration]]
+- [[chatgpt/chatgpt_best-alternative-greek-yogurt]]
+- [[chatgpt/chatgpt_best-architectural-websites]]
+- [[chatgpt/chatgpt_best-buy-explanation]]

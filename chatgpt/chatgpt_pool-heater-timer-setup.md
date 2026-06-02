@@ -66,3 +66,11 @@ If you don’t care about setting times and just want the heater on:
 - Just remember to turn it **back off manually**, or you’ll waste energy.
 
 Let me know if you want help setting specific ON/OFF times.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

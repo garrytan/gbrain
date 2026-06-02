@@ -72,3 +72,11 @@ There are **multiple unrelated projects named “gstack” on GitHub** (e.g., CL
 If useful, I can also explain:  
 - how gstack compares to **OpenAI Codex / Cursor / Claude Code setups**, or  
 - the **actual files inside the repo and how the workflows work**.
+
+
+## See Also
+- [[chatgpt/chatgpt_github-repo-cost-estimate]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_building-a-github-action]]
+- [[chatgpt/chatgpt_codex-integration-with-repo]]
+- [[chatgpt/chatgpt_create-readme-for-repo]]

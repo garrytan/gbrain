@@ -105,3 +105,11 @@ set me up for me
 ## Assistant
 
 Done, Mr. White. Your Vercel spend-management alert threshold is now set to **50%** (change saved). You still have the built-in **Usage alert at 75% of included credits** in place.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

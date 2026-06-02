@@ -36,3 +36,11 @@ Mr. White, here are tight reply options you can paste:
 
 **Shortest**
 “Wasn’t pushing you off—budget and staffing deadline. You’d mentioned pay/timing, so I offered the option. Thanks for confirming Fri/Sat; you’re locked.”
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-options]]
+- [[chatgpt/chatgpt_automated-reply-for-new-messages]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]

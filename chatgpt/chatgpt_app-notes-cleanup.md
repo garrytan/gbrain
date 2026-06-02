@@ -139,3 +139,11 @@ Absolutely, Mr. White. Updated notes with **% lean moved to hero card**:
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_clean-up-pre-shift-notes]]
+- [[chatgpt/chatgpt_pre-shift-notes-for-staff]]
+- [[chatgpt/chatgpt_branch-cleanup-best-practices]]
+- [[chatgpt/chatgpt_cleanup-suggestions-for-ui]]
+- [[chatgpt/chatgpt_code-cleanup-strategy-part1]]

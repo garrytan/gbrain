@@ -61,3 +61,11 @@ Mr. White — here’s a concise breakdown of what Menno Henselmans says about *
 ---
 
 If you like, Mr. White, I can **run your numbers** through Henselmans’ FFMI calculator (using your height, estimated wrist/ankle size) and show you an estimate of your natural muscular potential. Would you like me to set that up?
+
+
+## See Also
+- [[chatgpt/chatgpt_menno-henselmans-fitness-views]]
+- [[chatgpt/chatgpt_ffmi-and-recomp-potential]]
+- [[chatgpt/chatgpt_potential-scam-number]]
+- [[chatgpt/chatgpt_suno-user-conversion-potential]]
+- [[chatgpt/chatgpt_henselmans-natty-max-formula]]

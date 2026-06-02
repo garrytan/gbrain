@@ -89,3 +89,11 @@ Since I couldn't access specific advice from actual hiring professionals in the 
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_drexel-music-industry-alumni]]
+- [[chatgpt/chatgpt_mcp-in-music-industry]]
+- [[chatgpt/chatgpt_minimum-wage-industry-issues]]
+- [[chatgpt/chatgpt_music-industry-message-draft]]
+- [[chatgpt/chatgpt_artist-dj-relations-jobs]]

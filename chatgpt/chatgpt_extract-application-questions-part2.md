@@ -435,3 +435,11 @@ Now you’ve got **Founders’ Box, YC, and Speedrun** all in a unified voice, w
 I can bundle them into a **single ZIP file of Markdoc files** so you can store, edit, and re-use them instantly for future accelerator applications.  
 
 Do you want me to make that ZIP for you now?
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-components-to-files-part2]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part1]]

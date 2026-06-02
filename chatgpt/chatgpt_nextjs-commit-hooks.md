@@ -139,3 +139,11 @@ That’s it—clean commits, safe pushes, minimal friction.
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_basic-auth-in-nextjs]]
+- [[chatgpt/chatgpt_best-email-provider-for-nextjs]]
+- [[chatgpt/chatgpt_biggest-failures-in-nextjs-ai]]
+- [[chatgpt/chatgpt_biome-react-hooks-linter]]

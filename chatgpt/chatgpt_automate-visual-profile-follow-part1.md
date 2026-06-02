@@ -600,3 +600,11 @@ driver.get('https://app.hellothematic.com')
 - **Website Compliance**: Make sure that your actions comply with the website’s terms of service. Automating interactions might be against their terms.
 
 This method will allow you to use an already logged-in session to some extent, but it may not work for all websites, as some use additional measures to protect session integrity (like checking user-agent strings, CSRF tokens, etc.).
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part2]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part3]]
+- [[chatgpt/chatgpt_automate-follow-clicks]]
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]

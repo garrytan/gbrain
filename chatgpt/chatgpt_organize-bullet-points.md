@@ -34,3 +34,11 @@ Here’s your organized bullet-point list, Mr. White:
 - Fire off test prints.  
 - Refresher on how the outdoor section works.  
 - Expecting roughly 100 guests tonight.
+
+
+## See Also
+- [[chatgpt/chatgpt_bullet-point-list-for-vincent]]
+- [[chatgpt/chatgpt_bullet-point-list-summary]]
+- [[chatgpt/chatgpt_bullet-point-list整理]]
+- [[chatgpt/chatgpt_organize-inventory-data]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

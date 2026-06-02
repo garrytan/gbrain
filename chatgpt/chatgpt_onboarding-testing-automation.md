@@ -270,3 +270,11 @@ Don't touch A/B testing until this is green for a few weeks.
 ---
 
 If I were shipping Jovie next week, I'd spend one day building a Playwright-based "onboarding robot" and run it after every deployment. That would eliminate 95% of the manual incognito-window testing you're doing today and give you video evidence whenever the flow breaks.
+
+
+## See Also
+- [[chatgpt/chatgpt_playwright-e2e-testing-automation]]
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_best-onboarding-ux]]
+- [[chatgpt/chatgpt_debug-onboarding-issue]]
+- [[chatgpt/chatgpt_linear-onboarding-explained-2]]

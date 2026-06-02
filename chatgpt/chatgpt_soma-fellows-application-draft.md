@@ -115,3 +115,11 @@ No
 :::  
 
 If you want, I can tighten the Jovie description to be more contrarian or make it sound bigger/more inevitable.
+
+
+## See Also
+- [[chatgpt/chatgpt_email-application-draft]]
+- [[chatgpt/chatgpt_epic-job-application-draft]]
+- [[chatgpt/chatgpt_job-application-email-draft]]
+- [[chatgpt/chatgpt_apology-letter-draft]]
+- [[chatgpt/chatgpt_ar-post-draft]]

@@ -39,3 +39,11 @@ Max Martin isn't a DJ though.
 ## Assistant
 
 It’s Marshmello. The “hot chocolate” clues point to marshmallows, he produced the hit “Silence,” and he’s never granted a full interview before.
+
+
+## See Also
+- [[chatgpt/chatgpt_job-path-to-max-martin]]
+- [[chatgpt/chatgpt_max-martin-2024-2025-records]]
+- [[chatgpt/chatgpt_max-martin-construction-permits]]
+- [[chatgpt/chatgpt_max-martin-demo-search]]
+- [[chatgpt/chatgpt_max-martin-guitar-hits]]

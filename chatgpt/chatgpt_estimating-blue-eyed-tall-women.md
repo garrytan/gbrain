@@ -202,3 +202,11 @@ To estimate how many of the remaining women are atheists, we'll consider the fol
 Given this, the estimate would suggest that there are likely **2 to 3** white women in the U.S. who are over 18, under 50, over 6'1", have blue eyes, are college-educated, identify as bisexual, are not overweight, are considered 7 or higher in attractiveness, and are atheists.
 
 This is a highly speculative estimate based on multiple assumptions and should be treated as a rough calculation rather than an exact figure.
+
+
+## See Also
+- [[chatgpt/chatgpt_teal-eyed-model-with-cocktail]]
+- [[chatgpt/chatgpt_women-dont-trust-me]]
+- [[chatgpt/chatgpt_women-vs-men-eye-health]]
+- [[chatgpt/chatgpt_blue-man-group-shows]]
+- [[chatgpt/chatgpt_blue-sky-tanning]]

@@ -50,3 +50,11 @@ Mr. White — short answer: the post is misleading.
 - From the boycott’s kickoff to today, Target is down ~28% while the S&P is up ~11%—a ~39-point underperformance equating to ~**$22B** of market-cap shortfall versus a market-neutral baseline. citeturn6search1turn1finance0turn4search1turn3finance0
 
 **Caveat:** stock moves reflect many forces (earnings, guidance, retail mix, macro). Directly attributing the entire relative gap to the boycott is a **claim**, not a proven causal fact. (Context on competing explanations and litigation over DEI disclosures.) citeturn0news38
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

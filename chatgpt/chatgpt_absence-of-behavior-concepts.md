@@ -79,3 +79,11 @@ Key interpretations:
 Absence of behavior must be **explicitly specified and testable**. If “nothing happens” is correct, it should be documented, logged (at least in debug), and covered by tests. Otherwise, it’s usually a defect.
 
 If you want, tell me the context (API design, distributed systems, UI, or backend logic), and I’ll tighten this to that domain.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-house-concepts]]
+- [[chatgpt/chatgpt_ai-tests-reinforcing-bad-behavior]]
+- [[chatgpt/chatgpt_dashboard-redesign-concepts]]
+- [[chatgpt/chatgpt_override-default-behavior]]
+- [[chatgpt/chatgpt_shockwave-concepts-explained]]

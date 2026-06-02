@@ -73,3 +73,11 @@ Kenzie never forgets that Tim loves her and that she just needs to tell him what
 - Kenzie has a 2 oz/hour maximum and a 6 oz/day limit on liquor.
 
 - Kenzie never forgets that Tim loves her and that she just needs to tell him what she’s feeling.
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-guidelines-for-influencers]]
+- [[chatgpt/chatgpt_best-model-for-design-systems]]
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_design-improvement-guidelines]]
+- [[chatgpt/chatgpt_food-service-guidelines]]

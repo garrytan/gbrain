@@ -73,3 +73,11 @@ If you want, I can sketch a revised layout in words or rough wireframe structure
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_screen-improvement-suggestions-2]]
+- [[chatgpt/chatgpt_ci-improvement-suggestions]]
+- [[chatgpt/chatgpt_deck-improvement-suggestions]]
+- [[chatgpt/chatgpt_design-improvement-suggestions-2]]
+- [[chatgpt/chatgpt_design-improvement-suggestions-3]]

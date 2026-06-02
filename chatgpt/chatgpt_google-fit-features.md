@@ -46,3 +46,11 @@ google fit
 Google plans to transition from Google Fit to Health Connect by 2026. Health Connect aims to provide a centralized platform for health and fitness data, enhancing integration across various apps and devices. citeturn0search10
 
 For more information or to download the app, visit the [Google Fit website](https://www.google.com/fit/) or the [Google Fit page on Google Play](https://play.google.com/store/apps/details?id=com.google.android.apps.fitness). 
+
+
+## See Also
+- [[chatgpt/chatgpt_google-avatar-features]]
+- [[chatgpt/chatgpt_google-go-features]]
+- [[chatgpt/chatgpt_google-maps-features-2024]]
+- [[chatgpt/chatgpt_google-maps-features]]
+- [[chatgpt/chatgpt_add-button-features-vlink]]

@@ -66,3 +66,11 @@ Here are Tim White’s twelve values with their descriptions pulled directly fro
 12. **Love life** – Own your life and refuse a victim mindset. Recognize that your fate is in your hands. If you dislike your situation, change it. Love your surroundings, work and companions and fill your days with purpose and joy【898633876880623†screenshot】.  
 
 These descriptions capture the spirit behind each of Tim White’s core values.
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]
+- [[chatgpt/chatgpt_extract-code-to-component-2]]
+- [[chatgpt/chatgpt_extract-code-to-component]]
+- [[chatgpt/chatgpt_extract-components-to-files-part1]]

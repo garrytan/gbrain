@@ -445,3 +445,11 @@ If you want, I can sketch:
 - or a **multi-agent Claude setup** that mirrors how senior reviewers think
 
 Just say which.
+
+
+## See Also
+- [[chatgpt/chatgpt_web-scraper-code-analysis]]
+- [[chatgpt/chatgpt_nosonar-in-sonarqube]]
+- [[chatgpt/chatgpt_sonarqube-ai-features]]
+- [[chatgpt/chatgpt_sonarqube-mcp-overview]]
+- [[chatgpt/chatgpt_sonarqube-overview-2]]

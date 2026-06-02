@@ -599,3 +599,11 @@ Here’s your text rebuilt into a **MailerLite-ready content block** using your 
 - Replace `SIGNUP_FORM_URL` with your MailerLite signup form URL.  
 
 Would you like me to also prepare a **Spanish-first version** of this email (mirroring the tone but culturally tuned), so you can send bilingual blasts?
+
+
+## See Also
+- [[chatgpt/chatgpt_email-signup-issue]]
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]
+- [[chatgpt/chatgpt_bartender-job-application-email-3]]

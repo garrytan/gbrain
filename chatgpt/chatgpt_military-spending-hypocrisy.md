@@ -92,3 +92,11 @@ Here’s your snarky Ryan Reynolds-style roast:
 Pixar’s new strategy: one heartfelt original to win Oscars, one soulless sequel to fund it.  
 
 Balance. Like Thanos, but with more talking furniture.
+
+
+## See Also
+- [[chatgpt/chatgpt_budget-spending-advice]]
+- [[chatgpt/chatgpt_billionaire-hypocrisy-exposed]]
+- [[chatgpt/chatgpt_military-iq-requirements]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

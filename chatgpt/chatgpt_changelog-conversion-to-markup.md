@@ -887,3 +887,11 @@ Today we rolled out the first release of Jovie.
 ```
 
 Note: The date for the "Chrome Extension & Twitter Support" section is set to '2022-11-07T00:00Z', as it seems to be the intended release date based on the subsequent entry.
+
+
+## See Also
+- [[chatgpt/chatgpt_emoji-friendly-changelog-conversion]]
+- [[chatgpt/chatgpt_ai-changelog-insights-for-jovie]]
+- [[chatgpt/chatgpt_changelog-aggregation-and-analysis]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_chatgpt-changelog-january-2026]]

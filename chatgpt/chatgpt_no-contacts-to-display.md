@@ -96,3 +96,11 @@ module.exports = {
 ```
 
 By adding the `backgroundColor: ['dark']` and `textColor: ['dark']` entries to the `variants` section, you enable the dark mode variant for `backgroundColor` and `textColor` utilities.
+
+
+## See Also
+- [[chatgpt/chatgpt_adding-nicknames-to-contacts]]
+- [[chatgpt/chatgpt_age-display-issue-fixed]]
+- [[chatgpt/chatgpt_budget-adjustment-contacts-cost]]
+- [[chatgpt/chatgpt_buy-color-contacts-la]]
+- [[chatgpt/chatgpt_contacts-in-table]]

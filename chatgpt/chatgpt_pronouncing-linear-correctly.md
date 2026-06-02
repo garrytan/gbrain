@@ -40,3 +40,11 @@ This is common among people who read a lot. It usually means you built vocabular
 
 Quick practice for **linear**:
 say **“linear editing,” “linear algebra,”** and **“linear function”** with the same rhythm each time: **LIN-ee-er**. citeturn0search10turn0search14
+
+
+## See Also
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_automation-in-linear]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]

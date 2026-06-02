@@ -109,3 +109,11 @@ limit 20;
 3) If even after pruning you’re still near the cap (or you truly need that data online), **upgrade**—otherwise you’ll keep hitting the wall.
 
 If you paste the top results (top 10 tables + top 10 indexes), I’ll tell you exactly what to delete/TTL and what’s likely bloat vs real data.
+
+
+## See Also
+- [[chatgpt/chatgpt_co-founder-breakup-causes]]
+- [[chatgpt/chatgpt_flies-on-porch-causes]]
+- [[chatgpt/chatgpt_ac-air-direction-solutions]]
+- [[chatgpt/chatgpt_blocked-sink-try-solutions]]
+- [[chatgpt/chatgpt_cash-flow-solutions-needed]]

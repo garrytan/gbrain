@@ -43,3 +43,11 @@ For **speaking**:
 A simple rule of thumb: **70+ WPM typing** is fast, and **160+ WPM speaking** is fast.
 
 If you want, I can also give you “fast” benchmarks for podcasts, sales calls, presentations, or dictation.
+
+
+## See Also
+- [[chatgpt/chatgpt_domestic-wire-transfer-speed]]
+- [[chatgpt/chatgpt_gtmetrix-speed-test]]
+- [[chatgpt/chatgpt_internet-speed-test-tools-2]]
+- [[chatgpt/chatgpt_internet-speed-test-tools-3]]
+- [[chatgpt/chatgpt_internet-speed-test-tools]]

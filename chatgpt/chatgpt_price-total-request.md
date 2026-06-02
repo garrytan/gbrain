@@ -57,3 +57,11 @@ The bill adds **18% gratuity** and tax (~8.75% in Catalina):
 **Total you owe:** $97.00 + $17.46 + $8.49 = **$122.95**  
 
 So you owe **about $123**.
+
+
+## See Also
+- [[chatgpt/chatgpt_2020-harley-flhtk-price]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bidet-price-range]]
+- [[chatgpt/chatgpt_coffee-art-plus-price]]
+- [[chatgpt/chatgpt_condo-price-details]]

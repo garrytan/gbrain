@@ -26,3 +26,11 @@ Which show aired first, The Amazing Race or Fear Factor?
 ## Assistant
 
 "The Amazing Race" aired first. It debuted in September 2001, while "Fear Factor" started in June 2001.
+
+
+## See Also
+- [[chatgpt/chatgpt_amazing-race-sleep-and-breaks]]
+- [[chatgpt/chatgpt_clowning-before-modern-family]]
+- [[chatgpt/chatgpt_designing-database-before-coding]]
+- [[chatgpt/chatgpt_maintaining-diet-before-bulking]]
+- [[chatgpt/chatgpt_la-mayor-race-dates]]

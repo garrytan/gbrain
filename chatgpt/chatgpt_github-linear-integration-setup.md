@@ -33,3 +33,11 @@ I can’t directly “connect” to GitHub or Linear on my own, but I can work w
 If you’re using something like **Windsurf** or **Cursor**, those tools can already bridge me to GitHub and/or Linear so I can act on your behalf without you manually relaying each command.  
 
 Do you want me to walk you through **the exact setup so I can start pulling and pushing GitHub/Linear tasks automatically**?
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-github-integration]]
+- [[chatgpt/chatgpt_clerk-apple-integration-setup]]
+- [[chatgpt/chatgpt_github-actions-setup]]
+- [[chatgpt/chatgpt_integration-setup-guide]]
+- [[chatgpt/chatgpt_linear-auto-pr-setup]]

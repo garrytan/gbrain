@@ -65,3 +65,11 @@ Mr. White, Gmail doesn’t let you “rename” a free @gmail.com address—you�
    - As an admin you can rename a user’s address or add alias(es) without losing data. Free Gmail doesn’t support this.  
 
 That’s it—spin up the new @gmail, import/share your old mail, contacts, Drive, calendars, then re-sign apps.
+
+
+## See Also
+- [[chatgpt/chatgpt_adding-skeleton-loader]]
+- [[chatgpt/chatgpt_budget-adjustment-contacts-cost]]
+- [[chatgpt/chatgpt_buy-color-contacts-la]]
+- [[chatgpt/chatgpt_contacts-in-table]]
+- [[chatgpt/chatgpt_cursor-support-email-contacts]]

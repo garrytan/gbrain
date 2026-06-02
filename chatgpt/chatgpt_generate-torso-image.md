@@ -23,3 +23,11 @@ generate a base torso image with the desired style:
 	•	“White wireframe male torso on black background, futuristic HUD style, front view, no arms or head.”
 	•	High-resolution (e.g., 1024×1024).
 	•	Choose a muscular but neutral physique (around 15% BF).
+
+
+## See Also
+- [[chatgpt/chatgpt_generate-bf-torso-images]]
+- [[chatgpt/chatgpt_generate-image-or-rewrite]]
+- [[chatgpt/chatgpt_wireframe-torso-image]]
+- [[chatgpt/chatgpt_generate-artist-seed-data]]
+- [[chatgpt/chatgpt_generate-output-from-markdown]]

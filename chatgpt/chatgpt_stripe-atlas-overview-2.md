@@ -59,3 +59,11 @@ stripe atlas
 - Startup founders who want a **quick, online way** to form a company and get banking/payments going in the U.S., particularly **non-U.S. residents or remote founders**. citeturn0search5
 
 If you want, I can outline the *specific ongoing costs* (taxes, reporting, etc.) for a Delaware entity formed via Atlas.
+
+
+## See Also
+- [[chatgpt/chatgpt_stripe-atlas-overview]]
+- [[chatgpt/chatgpt_stripe-checkout-overview-2]]
+- [[chatgpt/chatgpt_stripe-checkout-overview]]
+- [[chatgpt/chatgpt_stripe-overview-2]]
+- [[chatgpt/chatgpt_stripe-overview]]

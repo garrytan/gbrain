@@ -65,3 +65,11 @@ Here’s what I found on the two entities you mentioned — arguably separate bu
 ---
 
 If you like, I can dig deeper (filing databases, startup-profiles, founder-bios) to check **whether Daniel Kang** has any formal role at Beacons.ai (equity, founding, advisory) and give you a definitive answer. Would you like me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_best-deal-comparison]]
+- [[chatgpt/chatgpt_bleach-developer-comparison]]

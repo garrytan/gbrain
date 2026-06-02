@@ -82,3 +82,11 @@ Here’s a concise Capture One–specific workflow to hit your look:
 - Check **Skin Tone Tool** if needed, but mostly leave skin natural.
 
 This keeps the neutral whites/greys, cools the background greens, and adds controlled pop to your subjects—all within Capture One’s toolset.
+
+
+## See Also
+- [[chatgpt/chatgpt_capture-email-addresses-sql]]
+- [[chatgpt/chatgpt_capture-ios-paywall-glitch]]
+- [[chatgpt/chatgpt_capture-one-ai-culling]]
+- [[chatgpt/chatgpt_capture-one-features]]
+- [[chatgpt/chatgpt_capture-one-lens-flares]]

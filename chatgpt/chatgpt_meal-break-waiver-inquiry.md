@@ -82,3 +82,11 @@ Mr. White, there are several non-brain-dead reasons they might insist on a 5 pm 
   Lastly, they may not have thought through the logic—“We’ve always scheduled you 5–11, break at start” is easier than re-engineering the roster for one person.
 
 In short, it’s usually a mix of real operational needs, legacy scheduling practices and risk-avoidance—not just flat-out stupidity.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]

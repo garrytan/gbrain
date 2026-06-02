@@ -44,3 +44,11 @@ Give each method a few minutes before escalating. If she stirs but drifts back, 
 Don’t shake or force her awake—if she’s simply exhausted or had alcohol, her body may need the rest. Instead, make sure she’s safe and comfortable, leave a sweet birthday note, and set up a morning surprise (breakfast, balloons, or a hot-tub session) so she still feels celebrated when she wakes.
 
 This way she either joins the fun naturally or wakes to a thoughtful continuation of the celebration.
+
+
+## See Also
+- [[chatgpt/chatgpt_wake-up-rhyme]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]

@@ -62,3 +62,11 @@ What, statistically, is the most efficient way to do street parking? Is it cars 
 * **Heavy traffic corridor:** stick with parallel—even a few extra spaces aren’t worth the crash risk and flow disruption of angle parking.
 
 Everything else—striping, meters, sensors—should be layered on only if the operational benefits outweigh the ~5 % capacity you give up.
+
+
+## See Also
+- [[chatgpt/chatgpt_sort-csv-by-street]]
+- [[chatgpt/chatgpt_street-cleaning-capacity-issue]]
+- [[chatgpt/chatgpt_street-pop-smoke-explanation]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]

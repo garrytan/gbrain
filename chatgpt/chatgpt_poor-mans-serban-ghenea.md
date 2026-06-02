@@ -44,3 +44,11 @@ Finding a mixing engineer with a skill set comparable to Serban Ghenea within yo
 5. **Social Media and Online Communities**: LinkedIn, Facebook groups dedicated to music production, and Instagram are good places to search for mixing engineers. Use hashtags related to music production, mixing engineers, or specific genres to find potential candidates.
 
 When discussing your project with potential engineers, be upfront about your budget constraints and openness to negotiating royalties. This honesty will help set clear expectations from the start. Additionally, request samples of their work to ensure their mixing style aligns with what you're looking for. Remember, finding the right fit might take time, but with persistence, you should be able to find a talented engineer within your budget who can bring your single to life.
+
+
+## See Also
+- [[chatgpt/chatgpt_serban-ghenea-studio-monitors]]
+- [[chatgpt/chatgpt_no-mans-tables-setup]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

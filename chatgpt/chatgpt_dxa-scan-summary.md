@@ -360,3 +360,11 @@ For a **BMI of 30**:
 = \frac{30 \times 76^2}{703} 
 \approx 246 \text{ lb}.
 \]
+
+
+## See Also
+- [[chatgpt/chatgpt_dexa-scan-results-summary]]
+- [[chatgpt/chatgpt_dexa-scan-summary-changes]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]

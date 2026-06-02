@@ -69,3 +69,11 @@ plan this as a feature use gstack /autoplan and generate a plan file for me.
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_onboarding-design-simplification]]
+- [[chatgpt/chatgpt_onboarding-flow-design]]
+- [[chatgpt/chatgpt_onboarding-name-input-design-part1]]
+- [[chatgpt/chatgpt_onboarding-name-input-design-part2]]
+- [[chatgpt/chatgpt_ai-driven-artist-profiles]]

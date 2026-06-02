@@ -112,3 +112,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Yeah, no worries, I totally get it. Sometimes you fix one thing and it feels like you end up uncovering another little snag right afterward. It's pretty common when you're in that final stretch of smoothing out all the little auth details.\n\nSo the key is really just to keep layering in that testing and logging so you can quickly see what the new issue is. Once you identify it, it's just another step in that process of"}
 {'asset_pointer': 'sediment://file_000000000f6071f5b25d9af881ebf7e8', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-07-20T03:00:35.315024+00:00', 'format': 'wav', 'metadata': {'end': 19.0, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 912078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_response-for-marketplace-inquiry]]
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]
+- [[chatgpt/chatgpt_authenticated-user-404-ux]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]

@@ -49,3 +49,11 @@ At **Anthropic**, engineers generally rely on **modern Git-centric CI/CD tooling
 - **AI tools like Claude Code** are used internally for coding, testing assistance, and generating workflows (not strictly a CI engine, but part of development automation). citeturn0search4
 
 There’s no public evidence Anthropic uses older standalone CI servers like Jenkins, TeamCity, or similar; GitHub Actions is the de-facto CI provider for their open repos, with likely internal extensions or integrations tailored to their infrastructure. citeturn0search3
+
+
+## See Also
+- [[chatgpt/chatgpt_anthropic-api-overview]]
+- [[chatgpt/chatgpt_anthropic-cli-overview]]
+- [[chatgpt/chatgpt_anthropic-meaning-and-context]]
+- [[chatgpt/chatgpt_claw-plan-vs-anthropic-api]]
+- [[chatgpt/chatgpt_fact-check-anthropic-deal]]

@@ -364,3 +364,11 @@ COMMIT RULES
 EXIT  
 Create the PR and comment “✅ CI tight, ready to merge” when all checks pass.  
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part4]]

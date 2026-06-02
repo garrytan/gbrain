@@ -62,3 +62,11 @@ Add a line to defend why this particular incident happened (guy drove over debri
 Here’s a clean, punchy version you can use:
 
 “LiDAR? Hard pass. I’m not paying luxury-condo prices to bolt a sci-fi forehead pimple on my car. Cameras handle it just fine. And this ‘interior yard sale’ only happened because some dude treated self-driving like a debris-eating contest—no sensor saves you from flooring it into a junk pile.”
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-check-and-comment]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]

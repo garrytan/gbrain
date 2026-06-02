@@ -206,3 +206,11 @@ Roger, Mr. White. Assuming **165 lb, ~11% BF, FFM ≈ 146.9 lb (66.6 kg)** and t
 - **Sun Aug 10, noon:** if clearly flat → raise Sun load to **275–300 g carbs**, then **150–200 g** on Mon. If puffy/smooth → keep Sun **200 g**, Mon **≤150 g**.
 
 If you give me your **current morning weight trend** and **MacroFactor maintenance**, I’ll tighten these to the exact daily kcal and expected scale targets.
+
+
+## See Also
+- [[chatgpt/chatgpt_bullet-point-list-for-vincent]]
+- [[chatgpt/chatgpt_bullet-point-list-summary]]
+- [[chatgpt/chatgpt_bullet-point-list整理]]
+- [[chatgpt/chatgpt_lexicon-cue-point-generation]]
+- [[chatgpt/chatgpt_nick-shaw-ifbb-pro-status]]

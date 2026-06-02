@@ -471,3 +471,11 @@ If useful, I can rewrite the first prompt so it keeps the Linear styling goal **
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_styling-refactor-for-ui]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]
+- [[chatgpt/chatgpt_ai-prompt-for-refactor]]
+- [[chatgpt/chatgpt_discography-table-styling]]
+- [[chatgpt/chatgpt_html-styling-jovies-span]]

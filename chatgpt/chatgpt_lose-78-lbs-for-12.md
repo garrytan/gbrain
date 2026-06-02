@@ -43,3 +43,11 @@ Now, let's calculate.
 ## Assistant
 
 To reach a body fat percentage of 12%, your target weight should be approximately 129.2 lbs. This means you would need to lose about 7.8 lbs.
+
+
+## See Also
+- [[chatgpt/chatgpt_lose-10-bf-fat-loss]]
+- [[chatgpt/chatgpt_lose-12-body-fat]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

@@ -585,3 +585,11 @@ No Tier‑1 coverage assessed for Cloudflare in this automation turn. Continue m
 ---
 
 navlistTier‑1 confirms Tesla lacks CPUC/DMV permits for robotaxi service in California; Bay Area operations remain human‑driven under TCP charter rulesturn0news15,turn0news16,turn0news18,turn0news19
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part14]]

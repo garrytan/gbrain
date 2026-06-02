@@ -116,3 +116,11 @@ If you're still having trouble hiding the element, there might be other styles i
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_hide-album-art-image]]
+- [[chatgpt/chatgpt_hide-navbar-on-homepage]]
+- [[chatgpt/chatgpt_hide-screenshots-in-photos]]
+- [[chatgpt/chatgpt_hide-seasonal-items-toast]]
+- [[chatgpt/chatgpt_hide-time-from-datepicker]]

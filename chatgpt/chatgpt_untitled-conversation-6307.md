@@ -40,3 +40,11 @@ document.body.classList.add("jovie-extension-installed");
 ```
 
 This would add the class `jovie-extension-installed` to the `body` element, which you could then style in your CSS.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

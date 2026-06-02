@@ -114,3 +114,11 @@ Dude, I don't care if they use ketamine, like, every week. Like, it's still not 
 Mr. White — here’s a tight IG reply that captures that:
 
 Totally backwards: **frequency** of off-hours ketamine use doesn’t automatically equal “can’t do the job” unless you’re claiming **on-the-job intoxication** or documented performance issues. The security question—if any—isn’t “substance = blackmail,” it’s **undisclosed illegal use** (if non-prescribed), **misuse of access**, or **actual coercion leverage**, none of which is proven by vibes. And this guilt-by-association stuff is getting hysterical—“emailed Epstein once” or “got a friend request” doesn’t make you Epstein any more than eating cheeseburgers makes you a public hazard. If there’s real evidence, cite it; if not, stop laundering speculation as certainty.
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

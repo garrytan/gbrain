@@ -31,3 +31,11 @@ Or go snarkier:
 **“Bold move to announce you don’t care… by engaging.”**  
 Or full savage:  
 **“Imagine caring so little you took time out of your day to say you don’t care. Iconic.”**
+
+
+## See Also
+- [[chatgpt/chatgpt_troll-response-generated]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]

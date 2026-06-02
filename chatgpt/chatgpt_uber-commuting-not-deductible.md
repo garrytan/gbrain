@@ -26,3 +26,11 @@ If I'm a W-2 employee, and I have to commute to an office every day, and I take 
 ## Assistant
 
 No, as a W-2 employee, you cannot write off commuting expenses, including Uber rides, on your taxes. The IRS considers commuting expenses as personal expenses and not deductible.
+
+
+## See Also
+- [[chatgpt/chatgpt_lost-id-uber-vegas]]
+- [[chatgpt/chatgpt_uber-age-requirement]]
+- [[chatgpt/chatgpt_uber-driver-gender-impact]]
+- [[chatgpt/chatgpt_uber-driver-reality-check]]
+- [[chatgpt/chatgpt_uber-vs-doordash-earnings]]

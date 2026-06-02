@@ -204,3 +204,11 @@ Clerk’s iOS SDK supports sign-in, sign-up, OAuth, Apple, MFA, sessions, token 
 7. **Staging smoke:** repeat the same auth flow using staging URLs and staging Clerk config.
 8. **Loop staging:** fix only staging-specific config/env/callback issues after local remains green.
 9. **Document:** final `AUTH_FIX_LOG.md` becomes the auth runbook.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-auth-troubleshooting]]
+- [[chatgpt/chatgpt_codex-integration-with-repo]]
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]

@@ -63,3 +63,11 @@ Common placements:
 If useful, I can also show:
 - The **most popular focus ring tattoo layouts** (photographer-style vs minimalist).  
 - **Design templates artists actually use** so you can bring one to a tattoo shop.
+
+
+## See Also
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]
+- [[chatgpt/chatgpt_focus-element-in-vuejs]]
+- [[chatgpt/chatgpt_focus-on-business-kpis]]
+- [[chatgpt/chatgpt_focus-on-import-button]]
+- [[chatgpt/chatgpt_focus-vs-focus-visible-in-tailwind]]

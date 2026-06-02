@@ -210,3 +210,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "If you decide to check it out, I think you'll find it has a really fun, quirky atmosphere, and it's definitely a great late-night spot. Let me know if you need any other suggestions or if there's anything else I can help you with!"}
 {'asset_pointer': 'sediment://file_000000003a5062309104f481eb096500', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-08T04:14:22.616145+00:00', 'format': 'wav', 'metadata': {'end': 11.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 552078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_late-night-restroom-options]]
+- [[chatgpt/chatgpt_chill-hangout-with-boundaries]]
+- [[chatgpt/chatgpt_avoiding-late-fees]]
+- [[chatgpt/chatgpt_chill-date-night-ideas]]
+- [[chatgpt/chatgpt_disputing-citation-late-fee]]

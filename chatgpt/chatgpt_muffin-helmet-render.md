@@ -31,3 +31,11 @@ Write a prokpt to crrate this photo
 ```
 A hyper-realistic 3D render of a smiling blueberry muffin helmet worn over a black crew-neck shirt. The muffin top is golden-brown, studded with irregular dark-blue chocolate chips, and the eyes are vertical glowing blue ovals embedded in the muffin top. The mouth is a simple curved smile etched into the muffin base. Soft cinematic lighting highlights the smooth, realistic texture, while a blurred dark-blue and purple background creates depth. Octane render style, crisp details, realistic materials, 1024×1024.
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_blueberry-muffin-helmet-render]]
+- [[chatgpt/chatgpt_dj-muffin-helmet-build]]
+- [[chatgpt/chatgpt_edm-muffin-helmet-design]]
+- [[chatgpt/chatgpt_muffin-helmet-design-prompt]]
+- [[chatgpt/chatgpt_muffin-helmet-design]]

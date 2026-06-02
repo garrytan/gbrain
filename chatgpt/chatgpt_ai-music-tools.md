@@ -38,3 +38,11 @@ ai music software
 **WavTool:** WavTool is a browser-based digital audio workstation (DAW) equipped with a GPT-4 composition assistant and AI text-to-sample generator, facilitating music production with AI assistance. citeturn0search3
 
 These tools exemplify the integration of AI in music production, providing innovative solutions for creators. 
+
+
+## See Also
+- [[chatgpt/chatgpt_music-career-tools]]
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]

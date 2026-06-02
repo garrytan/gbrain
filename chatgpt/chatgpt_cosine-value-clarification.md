@@ -219,3 +219,11 @@ Here’s the quick lineage for clarity:
 | **26** | Tahoe | Sept 15 2025 | New “Liquid Glass” UI, Intel Macs’ final support, improved Continuity, performance tweaks |
 
 So Tahoe is the **newest** macOS after Sequoia — but as of Oct 2025 it’s **still early-cycle** (26.0.1). For mission-critical or live production (like QLab use), **Sonoma 14.x** or **late Sequoia 15.x** remain safer until Tahoe gets broader driver and app certification.
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_beta-issue-clarification]]
+- [[chatgpt/chatgpt_clarification-of-ns-meaning]]
+- [[chatgpt/chatgpt_clarification-on-handle]]
+- [[chatgpt/chatgpt_clarification-request-2]]

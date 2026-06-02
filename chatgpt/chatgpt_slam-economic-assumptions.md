@@ -27,3 +27,11 @@ Slam them for thinking the economics were there
 ## Assistant
 
 “Iconic” doesn’t pay the bills. You built a giant open-air megaplex in the most expensive city in America and expected to survive on seasonal ticket sales and $18 cocktails? That’s not a business model, that’s a fantasy. The economics were never there.
+
+
+## See Also
+- [[chatgpt/chatgpt_arguing-assumptions-of-motive]]
+- [[chatgpt/chatgpt_hollywood-studios-economic-reality]]
+- [[chatgpt/chatgpt_slam-response-suggestion]]
+- [[chatgpt/chatgpt_slam-the-comment-logic]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

@@ -544,3 +544,11 @@ To achieve the task using **UI.Vision RPA** (a popular browser automation tool),
 - **Hotkey**: Setting a hotkey to stop the macro ensures you can interrupt the automation anytime if needed.
 
 By following these steps, you should be able to automate the process of clicking on an SVG element, running JavaScript to click "Follow" buttons, clicking a link, and repeating the sequence multiple times using UI.Vision RPA.
+
+
+## See Also
+- [[chatgpt/chatgpt_automating-browser-clicks]]
+- [[chatgpt/chatgpt_adjust-off-screen-menu]]
+- [[chatgpt/chatgpt_black-screen-youtube-fix]]
+- [[chatgpt/chatgpt_drag-and-drop-screen-design]]
+- [[chatgpt/chatgpt_fix-loading-screen-design]]

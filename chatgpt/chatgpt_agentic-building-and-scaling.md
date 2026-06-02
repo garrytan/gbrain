@@ -1256,3 +1256,11 @@ Build the system in this order:
 7. **Score every task against revenue-bearing active artists.**
 
 The architecture is already pointed correctly. The main change is making it less “agent infrastructure” and more “company command system.” The system should wake up every day, decide what matters, assign agents, verify work, learn from your judgments, and only interrupt you for approvals that change revenue, trust, taste, or irreversible risk.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-agentic-building-and-scaling-part1]]
+- [[chatgpt/chatgpt_branch-agentic-building-and-scaling-part2]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_agentic-os-for-artists-part1]]
+- [[chatgpt/chatgpt_agentic-os-for-artists-part2]]

@@ -39,3 +39,11 @@ For a practical demonstration of how to create the stutter house effect, you mig
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_doppler-effect-explained]]
+- [[chatgpt/chatgpt_5m-house-down-payment]]
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-house-concepts]]
+- [[chatgpt/chatgpt_ai-house-interview-strategy]]

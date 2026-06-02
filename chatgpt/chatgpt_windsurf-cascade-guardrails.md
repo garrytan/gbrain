@@ -170,3 +170,11 @@ Make it generic so it can apply to all projects not just iOS and Xcode but inclu
 Here you go, Mr. White:
 
 > You are editing an existing software project and must avoid regressions, duplicate features, and unnecessary redesigns. Treat the **current project files and configuration** (including build system, dependency graph, and target/module membership) as the only source of truth; never resurrect or use older/outside files unless explicitly requested. Before creating any new file/module/component, check if an equivalent already exists and prefer updating it; only create a new one if clearly needed, then ensure it is **properly wired into the actual runtime flow** (routes, imports, DI, build targets, etc.) and that the old implementation is no longer referenced. Do not leave multiple active versions of the same screen/feature (e.g. `Dashboard`, `DashboardV2`); if you introduce a replacement, update all call sites and clearly mark old code as deprecated/legacy, keeping it unused. Avoid dead or confusing code: do not create “almost identical” types or APIs without a clear purpose, and never silently switch the project back to using legacy code. Respect the scope of each request: if asked to change a specific metric/label/section/endpoint, modify only that element and what is strictly necessary to support it, preserving the rest of the design, structure, and behavior instead of redesigning or refactoring everything. Always take a minimal-diff approach: touch as few files and lines as possible, avoid unrelated refactors or renames, and in your explanation list which files changed/were created, how each is used, and which (if any) older files are now obsolete and unused. **If the project is an Xcode/iOS/macOS project**, also treat Xcode target membership as authoritative, ensure any new files are added to the correct targets, avoid reintroducing files that are not in the project, and never create alternate implementations that are not actually wired into the app.
+
+
+## See Also
+- [[chatgpt/chatgpt_windsurf-cascade-tools-issue]]
+- [[chatgpt/chatgpt_windsurf-cascade-ui]]
+- [[chatgpt/chatgpt_windsurf-cascade-workflow]]
+- [[chatgpt/chatgpt_auto-continue-in-windsurf]]
+- [[chatgpt/chatgpt_cascade-background-agents-explanation]]

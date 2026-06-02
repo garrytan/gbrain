@@ -79,3 +79,11 @@ What's the casual goodbye in French?
 ## Assistant
 
 In French, a casual goodbye can be said as "Salut" when talking to friends or people you're familiar with. Another common casual phrase is "À plus" (short for "À plus tard"), meaning "See you later." Both are widely used in informal settings.
+
+
+## See Also
+- [[chatgpt/chatgpt_advil-no-calories]]
+- [[chatgpt/chatgpt_calories-burned-walking-5k]]
+- [[chatgpt/chatgpt_calories-in-a-pan]]
+- [[chatgpt/chatgpt_calories-vs-chemicals-debate]]
+- [[chatgpt/chatgpt_estimate-maintenance-calories]]

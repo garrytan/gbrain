@@ -73,3 +73,11 @@ Here’s a breakdown of what Nostr is, how it works, and where things stand — 
 ---
 
 If you like, I can pull together a **list of recommended Nostr clients and relays**, and walk you through setting one up step-by-step. Would you like that, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_horn-arrangements-look-what-i-found]]
+- [[chatgpt/chatgpt_what-is-a-biome]]
+- [[chatgpt/chatgpt_what-is-codecov]]
+- [[chatgpt/chatgpt_what-is-jovie]]
+- [[chatgpt/chatgpt_what-is-localhost]]

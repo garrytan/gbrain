@@ -181,3 +181,11 @@ However, you can use AI (like Axiom or GPT models) in conjunction with web autom
 For practical purposes, if you need to navigate to each URL, interact with elements, or manage sessions without manual intervention, you will need to rely on web automation tools like Selenium. AI can augment this process by providing intelligence and adaptability to the script but does not replace the functional capabilities of web browsers and automation tools.
 
 If you are looking for an AI solution that can help guide or optimize a web browsing automation setup, you might consider integrating AI to analyze and direct actions based on data gathered during browsing sessions, but the actual navigation and interaction would still be handled by Selenium or a similar tool.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part1]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part2]]
+- [[chatgpt/chatgpt_automate-follow-clicks]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part3]]
+- [[chatgpt/chatgpt_jovie-artist-profile-visual]]

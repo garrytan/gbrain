@@ -448,3 +448,11 @@ If you get 404/403, your **Host** header isn’t being rewritten correctly. c
 If you prefer **no Worker**, CF Enterprise can do DNS + header rewrite rules to the same upstreams, but Workers are the cleanest path. citeturn0search0
 
 Want me to adapt this to EU, add retry/backoff, and pin CORS headers for Next 15?
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_auto-body-shop-suggestion]]
+- [[chatgpt/chatgpt_auto-claude-overview]]

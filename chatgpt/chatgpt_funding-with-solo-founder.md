@@ -181,3 +181,11 @@ The sentence I would use internally is:
 **free gets the artist live; paid grows owned audience and automates every release.**
 
 The one metric I would center is: **signup to first release page published with at least one captured fan action**. That will tell you very quickly whether the packaging is helping or blocking the real product.
+
+
+## See Also
+- [[chatgpt/chatgpt_yc-advice-for-solo-founder]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]

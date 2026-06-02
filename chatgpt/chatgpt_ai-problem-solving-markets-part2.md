@@ -287,3 +287,11 @@ Do you want me to show you how this exact phrasing could play in a **YC applicat
 
 
 Lets play around with other industries.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part1]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part3]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part4]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part5]]
+- [[chatgpt/chatgpt_solving-package-theft-impersonation]]

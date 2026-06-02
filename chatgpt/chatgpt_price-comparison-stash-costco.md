@@ -940,3 +940,11 @@ I'll add these to the "Mixers" category in the table.
 ## Assistant
 
 It seems that there was an issue due to the code context. Let me correct that and reattempt updating the table with the new Sysco pricing information. I'll make sure the categories, items, and prices are properly handled.
+
+
+## See Also
+- [[chatgpt/chatgpt_price-comparison-coke-zero]]
+- [[chatgpt/chatgpt_2020-harley-flhtk-price]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]

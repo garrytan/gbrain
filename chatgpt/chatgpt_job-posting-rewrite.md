@@ -162,3 +162,11 @@ Email **[add email/ATS link]** with subject **“Dishwasher/Porter – Immersive
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_alcohol-catering-license-posting]]
+- [[chatgpt/chatgpt_about-section-rewrite]]
+- [[chatgpt/chatgpt_bar-manager-resume-rewrite]]
+- [[chatgpt/chatgpt_closed-loops-brand-rewrite]]
+- [[chatgpt/chatgpt_empathetic-message-rewrite]]

@@ -37,3 +37,11 @@ Here’s what **Apple Music** shows for **Tim White** — a music artist you can
 Apple Music also lists **other artists with the name Tim White** (gospel/Christian music, older catalog entries, and compilations) depending on region. citeturn0search1turn0search2
 
 If you want a **direct link to his Apple Music profile or to play his tracks**, tell me which region you’re in (e.g., US/UK) and I’ll fetch it.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-music-affiliate-program]]
+- [[chatgpt/chatgpt_apple-music-overview]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]

@@ -124,3 +124,11 @@ he frames him as someone who **wins systems**.
 ---
 
 If you want, I can break down where Graham’s view differs from critics (especially post-OpenAI drama).
+
+
+## See Also
+- [[chatgpt/chatgpt_paul-graham-essays]]
+- [[chatgpt/chatgpt_altman-antitrust-comments]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_sam-altman-equity-fact-check]]
+- [[chatgpt/chatgpt_paul-grahams-recent-thinking]]

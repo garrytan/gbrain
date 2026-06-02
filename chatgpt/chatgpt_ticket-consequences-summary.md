@@ -239,3 +239,11 @@ The court’s Trial-by-Declaration instructions require your signed waiver of in
 - **Rear-facing/moving radar** is real; discovery forces the State to show **device details + calibration + officer training** so you can challenge reliability. (Your declaration should expressly require that foundation.)
 
 If you want, I’ll drop these into filled PDFs with your case/citation details and address them to the right inboxes.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_alex-gaudino-song-summary]]
+- [[chatgpt/chatgpt_ams-return-policy-summary]]

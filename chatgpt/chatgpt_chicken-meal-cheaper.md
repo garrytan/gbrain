@@ -79,3 +79,11 @@ Let's calculate the total cost for the chicken and rice meal.
 The estimated total cost for the chicken and rice meal matching the macros of the MET-Rx bar (30g protein, 10g fat, 40g carbs) is approximately $2.85. 
 
 Comparing this to the $4 cost of the MET-Rx bar, the homemade chicken and rice meal is cheaper.
+
+
+## See Also
+- [[chatgpt/chatgpt_cantina-chicken-chalupas-info]]
+- [[chatgpt/chatgpt_chicken-salad-macros-221cal-37gpro-43gfat-63gcarb]]
+- [[chatgpt/chatgpt_macros-with-chicken-and-additions]]
+- [[chatgpt/chatgpt_plate-macros-teriyaki-chicken]]
+- [[chatgpt/chatgpt_soup-packet-for-chicken-rice]]

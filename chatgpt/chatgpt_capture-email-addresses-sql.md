@@ -63,3 +63,11 @@ Note that this will find any occurrence of "John" in the email address. If you n
 
 
 **Topic:** [[chatgpt-clusters/coding_devops]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]
+- [[chatgpt/chatgpt_bartender-job-application-email-3]]
+- [[chatgpt/chatgpt_bartender-job-application-email]]

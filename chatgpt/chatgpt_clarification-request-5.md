@@ -31,3 +31,11 @@ Could you clarify what you mean by “bop drop,” Mr. White?
 - Or something else entirely?  
 
 Once you clarify I’ll dig in and pull the right info.
+
+
+## See Also
+- [[chatgpt/chatgpt_clarification-request-2]]
+- [[chatgpt/chatgpt_clarification-request-3]]
+- [[chatgpt/chatgpt_clarification-request-4]]
+- [[chatgpt/chatgpt_clarification-request-6]]
+- [[chatgpt/chatgpt_clarification-request-7]]

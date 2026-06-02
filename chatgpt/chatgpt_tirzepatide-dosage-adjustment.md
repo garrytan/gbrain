@@ -46,3 +46,11 @@ Stay on your usual schedule: hit the full 50 units next Friday. If you notice un
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_budget-adjustment-contacts-cost]]
+- [[chatgpt/chatgpt_bulk-progress-adjustment-advice]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part1]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part2]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part3]]

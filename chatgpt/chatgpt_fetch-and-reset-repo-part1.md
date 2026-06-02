@@ -1148,3 +1148,11 @@ I've ensured that the padding is applied as intended and that the `useHead` comp
 
 {'asset_pointer': 'file-service://file-odvRgVX54V07K92CwQXeclAZ', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 919, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 947377, 'width': 1462}
 heres ther esult. its like the page is zoomed in. if i zoom out i see the correct spacing but the page is wrong when zoom in browser is 100%
+
+
+## See Also
+- [[chatgpt/chatgpt_fetch-and-reset-repo-part2]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]

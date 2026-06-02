@@ -30,3 +30,11 @@ I've created a new PDF that keeps only three pay‑stubs and updates their dates
 [Download the updated stubs](sandbox:/mnt/data/PayStubs_Last3Months.pdf)
 
 citeturn0file0
+
+
+## See Also
+- [[chatgpt/chatgpt_movie-prop-pay-stubs]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]

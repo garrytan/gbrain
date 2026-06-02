@@ -57,3 +57,11 @@ You should strongly consider it if:
 **Bottom line:** fast-check is a well-regarded, practical PBT tool in the JS world with real usage in industry and active ecosystem support. But claims about wide use in *major corporations like OpenAI* aren’t backed by public evidence—so treat that as unproven.
 
 If you want to dial in on whether it fits your specific codebase or testing goals, I can help with a quick comparison to alternatives (e.g., Jest alone, Hypothesis/Haskell QuickCheck patterns).
+
+
+## See Also
+- [[chatgpt/chatgpt_fast-check-overview]]
+- [[chatgpt/chatgpt_ci-with-ai-in-fast-companies]]
+- [[chatgpt/chatgpt_fast-20k-to-1m]]
+- [[chatgpt/chatgpt_fast-mode-in-claude]]
+- [[chatgpt/chatgpt_fast-solo-bouncing-tracks]]

@@ -159,3 +159,11 @@ Perfect — seeing both **light** and **dark** versions now, here’s how to pus
 👉 Recommendation: This design is **80% there**. The *functionality* is solid; the *presentation* just needs that **Apple + Linear treatment** — depth, motion, and restraint.  
 
 Mr. White, do you want me to draft a **Cascade prompt** that will auto-rebuild this screen with Tailwind 4, Apple-grid alignment, luxury dark/light mode, and hover animations? That way your dev agent can implement these upgrades in one shot.
+
+
+## See Also
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part1]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part2]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part3]]
+- [[chatgpt/chatgpt_ux-audit-recommendations-2]]
+- [[chatgpt/chatgpt_apocalyptic-movies-recommendations]]

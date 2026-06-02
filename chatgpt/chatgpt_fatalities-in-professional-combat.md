@@ -42,3 +42,11 @@ Deaths occurring during regulated professional combat sports events typically do
 Murder generally requires the intention (mens rea) to kill or cause grievous bodily harm known to likely result in death. In the context of professional combat sports, the actions of athletes are conducted under the agreement that they are competing in a sport with established rules and with no intent to kill. When a death occurs despite adherence to the rules and safety protocols, it is usually considered a tragic accident rather than a criminal act.
 
 However, if a participant acts with deliberate intent to cause harm beyond the accepted rules and regulations of the sport, or if gross negligence is involved, legal consequences could potentially follow, but this would be highly exceptional and dependent on the specific circumstances of the incident.
+
+
+## See Also
+- [[chatgpt/chatgpt_professional-background-clarification]]
+- [[chatgpt/chatgpt_wayfair-professional-overview]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

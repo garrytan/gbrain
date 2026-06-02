@@ -579,3 +579,11 @@ GPT‑5.2 has been introduced into Windsurf with a limited‑time free‑usage p
 _No later releases have appeared since then._ citeturn0search2
 
 This beta contains fixes like workflow alias acceptance, environment race condition resolution, and process handling improvements. citeturn0search2
+
+
+## See Also
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part2]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part3]]

@@ -51,3 +51,11 @@ Neither of these threads provides any actual code or even confirms that a code s
 Your safest bet: ask an employee upon arrival. That’s the most direct and reliable way to obtain any active restroom code, if one exists.
 
 Would you like help locating nearby public restrooms in case you need alternatives?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]
+- [[chatgpt/chatgpt_codex-status-inquiry]]

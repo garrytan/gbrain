@@ -131,3 +131,11 @@ The safety rules are mostly about **conservatism, standardization, and system hy
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_cell-phone-radiation-effects]]
+- [[chatgpt/chatgpt_cosmos-gravity-impact-analysis]]
+- [[chatgpt/chatgpt_credit-card-impact]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part1]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part2]]

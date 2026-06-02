@@ -50,3 +50,11 @@ As of 2025:
 - **Kyle**, born in **1961**, is **64** years old.  
 - **Jackie**, born in **1959**, is **66** years old.  
 - **Barry**, born in **1950**, is **75** years old.
+
+
+## See Also
+- [[chatgpt/chatgpt_bmi-weight-calculation-request]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]

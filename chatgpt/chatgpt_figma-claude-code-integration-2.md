@@ -60,3 +60,11 @@ If you want setup steps or an example prompt for generating code from a Figma fi
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-figma-integration]]
+- [[chatgpt/chatgpt_figma-claude-code-integration]]
+- [[chatgpt/chatgpt_claude-code-to-figma]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_claude-agent-teams-integration]]

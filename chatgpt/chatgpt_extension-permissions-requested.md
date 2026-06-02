@@ -40,3 +40,11 @@ This is a list of permissions that can be requested by a browser extension or ad
 - "contextMenus": Allows the extension to add items to the browser's context menu (the menu that appears when the user right-clicks on a web page). This can be used to provide quick access to the extension's features or to enhance the user's browsing experience.
 
 Each of these permissions represents a potential security risk, so it's important for users to carefully consider the permissions requested by extensions before installing them.
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_chrome-extension-interaction]]
+- [[chatgpt/chatgpt_chrome-extension-popup-script]]
+- [[chatgpt/chatgpt_chrome-extension-production-url]]
+- [[chatgpt/chatgpt_chrome-extension-upload-error]]

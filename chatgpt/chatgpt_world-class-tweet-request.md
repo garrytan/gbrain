@@ -32,3 +32,11 @@ It is unacceptable in search.
 If ChatGPT & Atlas could figure this out, I would finallly stop going to google everytime atlas bombs a search.
 
 Atlas in the search tab should default to instant not auto. If im on the search tab it's because i want results now, not a thought out answer.
+
+
+## See Also
+- [[chatgpt/chatgpt_tweet-revision-request]]
+- [[chatgpt/chatgpt_designing-world-class-landing-page]]
+- [[chatgpt/chatgpt_edit-for-world-class-ux]]
+- [[chatgpt/chatgpt_redesign-for-world-class-design]]
+- [[chatgpt/chatgpt_world-class-audio-plan]]

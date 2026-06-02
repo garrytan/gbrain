@@ -104,3 +104,11 @@ Nice, Mr. White. Here’s your line:
 > “Got it, you’re planning to pick it up within the next 24 hours.  
 > If we lock it in at **$45**, I can hold it for you until then.  
 > What time works for you?”
+
+
+## See Also
+- [[chatgpt/chatgpt_power-washer-price-negotiation]]
+- [[chatgpt/chatgpt_2020-harley-flhtk-price]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bidet-price-range]]
+- [[chatgpt/chatgpt_coffee-art-plus-price]]

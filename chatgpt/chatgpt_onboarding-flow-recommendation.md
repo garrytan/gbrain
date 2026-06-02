@@ -75,3 +75,11 @@ If you want, tell me:
 - Time-to-value target  
 
 I’ll give you a concrete flow.
+
+
+## See Also
+- [[chatgpt/chatgpt_onboarding-flow-design]]
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_best-onboarding-ux]]
+- [[chatgpt/chatgpt_debug-onboarding-issue]]
+- [[chatgpt/chatgpt_linear-onboarding-explained-2]]

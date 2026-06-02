@@ -38,3 +38,11 @@ What's the song that mentions the Beachword Cafe?
 ## Assistant
 
 That line comes from Harry Styles’ ballad **“Falling”** (2019). The lyric goes, “And the coffee’s out at the Beachwood Cafe, and it kills me ’cause I know we’ve run out of things we can say.” citeturn0search4turn0search7
+
+
+## See Also
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_license-plate-delay-resolution]]
+- [[chatgpt/chatgpt_license-plate-requirements-ca]]
+- [[chatgpt/chatgpt_plate-macros-teriyaki-chicken]]
+- [[chatgpt/chatgpt_steve-jobs-license-plate-loophole]]

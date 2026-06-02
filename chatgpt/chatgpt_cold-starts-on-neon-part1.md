@@ -941,3 +941,11 @@ Do you want me to draft a **shadcn/ui + Tailwind snippet** for a polished sun/mo
 
 
 {'asset_pointer': 'file-service://file-YHv2DPyHmAqYQ11Ph3MpqU', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 757, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 325593, 'width': 1207}
+
+
+## See Also
+- [[chatgpt/chatgpt_cold-starts-neon-vercel]]
+- [[chatgpt/chatgpt_cold-starts-on-neon-part2]]
+- [[chatgpt/chatgpt_nextjs-cold-starts-vercel]]
+- [[chatgpt/chatgpt_vercel-cold-starts-explained]]
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]

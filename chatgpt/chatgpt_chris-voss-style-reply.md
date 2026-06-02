@@ -43,3 +43,11 @@ If you want to push them a bit more while inviting a better counter:
 > **Where can you go from $30 so it makes sense for me to sell it to you instead?**
 
 Both show the other interest, anchor higher, and use calibrated questions to pull them up without sounding aggressive.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-options]]
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]
+- [[chatgpt/chatgpt_chris-voss-reply-template]]

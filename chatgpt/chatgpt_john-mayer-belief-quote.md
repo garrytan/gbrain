@@ -30,3 +30,11 @@ Here’s the quote from entity["song", "Belief", 0] by entity["mu
 > “Is there anyone who ever remembers changing their mind from the paint on a sign?” citeturn0search3turn0search4  
 
 If you were thinking of a slightly different wording (e.g., “pain on a sign” instead of “paint”), I couldn’t locate a version with “pain” — the commonly cited lyric is “paint.”
+
+
+## See Also
+- [[chatgpt/chatgpt_john-legend-name-origin]]
+- [[chatgpt/chatgpt_sonesta-john-wayne-airport]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

@@ -96,3 +96,11 @@ The **drugs or alcohol** alter neurotransmitters (dopamine, serotonin, glutamate
 - In some cases, **antipsychotic medication** or **rehabilitation therapy** may be indicated.
 
 Would you like me to outline which specific drugs most often cause this “TV-show-like” psychosis and why?
+
+
+## See Also
+- [[chatgpt/chatgpt_explain-caption-meaning]]
+- [[chatgpt/chatgpt_explain-email-validation-levels]]
+- [[chatgpt/chatgpt_explain-event-sources]]
+- [[chatgpt/chatgpt_explain-lolspeak-meme]]
+- [[chatgpt/chatgpt_explain-the-drama]]

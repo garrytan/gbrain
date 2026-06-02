@@ -320,3 +320,11 @@ Always check the packaging
 
 
 no apple its way to slow to eat. no turkey jerky
+
+
+## See Also
+- [[chatgpt/chatgpt_meal-plan-for-macros-part1]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part3]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part4]]
+- [[chatgpt/chatgpt_meal-plan-new-macros]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part2]]

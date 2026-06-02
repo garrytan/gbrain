@@ -34,3 +34,11 @@ So, with your current weight of 173 pounds and 14% body fat:
 LBM = 173 pounds × (1 - 0.14) = 173 pounds × 0.86 ≈ **148.8 pounds**
 
 Your lean body mass is approximately 148.8 pounds.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-lean-body-mass]]
+- [[chatgpt/chatgpt_lean-mass-gains]]
+- [[chatgpt/chatgpt_mini-cut-to-mass-phase]]
+- [[chatgpt/chatgpt_razor-bump-with-quarter-sized-mass]]
+- [[chatgpt/chatgpt_calculating-full-paycheck]]

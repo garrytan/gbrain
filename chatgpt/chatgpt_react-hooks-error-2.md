@@ -141,3 +141,11 @@ If you want, paste **the component code** and I’ll pinpoint the exact line in 
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_react-hooks-error]]
+- [[chatgpt/chatgpt_biome-react-hooks-linter]]
+- [[chatgpt/chatgpt_react-hooks-slash-command]]
+- [[chatgpt/chatgpt_claude-code-hooks-setup]]
+- [[chatgpt/chatgpt_nextjs-commit-hooks]]

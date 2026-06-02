@@ -119,3 +119,11 @@ A better metric stack for Jovie is probably:
 - uptime/perf improvements
 
 You can still track LOC as a vanity metric or throughput proxy. Just don’t optimize for it.
+
+
+## See Also
+- [[chatgpt/chatgpt_sales-tax-on-shipping]]
+- [[chatgpt/chatgpt_shipping-connectors-for-ai]]
+- [[chatgpt/chatgpt_shipping-promotion-for-e-commerce]]
+- [[chatgpt/chatgpt_shipping-sm7-with-usps]]
+- [[chatgpt/chatgpt_shipping-stable-products]]

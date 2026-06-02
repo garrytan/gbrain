@@ -92,3 +92,11 @@ This version keeps the statement concise and professionally outlines the relatio
 
 
 **Topic:** [[chatgpt-clusters/coding_devops]]
+
+
+## See Also
+- [[chatgpt/chatgpt_format-currency-input-text]]
+- [[chatgpt/chatgpt_format-lyrics-apple-style]]
+- [[chatgpt/chatgpt_format-lyrics-for-apple-music]]
+- [[chatgpt/chatgpt_format-post-with-breaks]]
+- [[chatgpt/chatgpt_korean-phone-number-format]]

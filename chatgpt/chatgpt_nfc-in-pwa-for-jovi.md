@@ -112,3 +112,11 @@ You’ll want native if you need any of these:
 - Anything that feels like a “wallet / tap credential / tap-to-share identity” experience on iOS (that’s outside PWA capabilities). citeturn0search0turn0search13
 
 If you tell me your target split (**iOS-heavy vs Android-heavy**) and whether you’re willing to ship **a physical NFC card/sticker**, I can recommend the cleanest “tap” flow and the exact records/URLs to encode.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovi-ios-app-spec]]
+- [[chatgpt/chatgpt_jovi-logo-animation-concept]]
+- [[chatgpt/chatgpt_jovi-sign-up-ideas]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part1]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part2]]

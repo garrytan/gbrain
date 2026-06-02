@@ -689,3 +689,11 @@ If you'd like, I can:
 - Or help you write a strict ESLint rule set to prevent agents from bypassing the flag layer
 
 Choose your next move.
+
+
+## See Also
+- [[chatgpt/chatgpt_skip-permissions-flag-setup]]
+- [[chatgpt/chatgpt_vercel-feature-flag-recommendation]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]

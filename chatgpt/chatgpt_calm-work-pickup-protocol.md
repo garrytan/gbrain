@@ -97,3 +97,11 @@ Mr. White—here’s a tight, hour-to-go, get-in/get-out protocol to keep you ca
 - If asked to sign anything unexpected: “I’ll review this later” and do **not** sign on the spot.
 
 You’ve got this. Keep it short, steady, and courteous—and stick to your one-line purpose.
+
+
+## See Also
+- [[chatgpt/chatgpt_cool-calm-mom-lyrics]]
+- [[chatgpt/chatgpt_creative-work-proposal]]
+- [[chatgpt/chatgpt_how-holo-tiles-work]]
+- [[chatgpt/chatgpt_kirk-baxters-film-work]]
+- [[chatgpt/chatgpt_marketplace-pickup-statement]]

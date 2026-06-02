@@ -389,3 +389,11 @@ Raise a **$1.5M target / $3M hard-cap pre-seed** on a clean post-money SAFE, use
 
 
 **Topic:** [[chatgpt-clusters/business_startup]]
+
+
+## See Also
+- [[chatgpt/chatgpt_fundraising-strategy-evaluation]]
+- [[chatgpt/chatgpt_runway-and-fundraising-strategy]]
+- [[chatgpt/chatgpt_fundraising-call-script]]
+- [[chatgpt/chatgpt_fundraising-in-chaos]]
+- [[chatgpt/chatgpt_fundraising-investor-research]]

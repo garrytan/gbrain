@@ -66,3 +66,11 @@ On the “controversy” angle:
 - entity["musical_artist","Offset","us rapper"] has plenty of tabloid drama, but that typically **doesn’t cause catalog takedowns**—rights issues do.
 
 If you want the fastest “is it real or just hype” check: try playing it **while logged out** and **on cellular vs Wi-Fi/VPN**, and check whether *other* entity["organization","Access Records","record label"] releases are also glitching. If multiple tracks from the same label/distributor are impacted, it screams “backend rights/distribution,” not politics.
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-check-music-ownership]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_domain-availability-check-options]]

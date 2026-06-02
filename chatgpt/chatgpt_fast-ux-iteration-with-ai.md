@@ -99,3 +99,11 @@ Storybook already in the repo: keep using it.
 Storybook absent: skip making it a launch-critical project and start with preview routes.
 
 Best rule for this phase: **iterate in code, inspect in browser, validate in the real app, document later.**
+
+
+## See Also
+- [[chatgpt/chatgpt_ci-with-ai-in-fast-companies]]
+- [[chatgpt/chatgpt_fast-20k-to-1m]]
+- [[chatgpt/chatgpt_fast-check-overview]]
+- [[chatgpt/chatgpt_fast-check-worth-using]]
+- [[chatgpt/chatgpt_fast-mode-in-claude]]

@@ -1817,3 +1817,11 @@ help me out wih this output
 
 
 I’m checking the current Hermes docs for interrupt behavior, tool approvals, and local-model quirks so I can map each line of that transcript to what Hermes is actually doing.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part4]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part5]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part6]]

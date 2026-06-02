@@ -91,3 +91,11 @@ In vanilla sky
 ## Assistant
 
 Mr. White, in *Vanilla Sky* Cameron Diaz isn’t a voice role—she appears on-screen as **Julie Gianni**, David Aames’s possessive girlfriend/lover whose jealousy kicks off the central crash and the movie’s spiral. citeturn0search0turn0search3turn0search4
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ai-workflow-for-voice-dictation]]
+- [[chatgpt/chatgpt_elevenlabs-voice-ai-grant]]
+- [[chatgpt/chatgpt_finding-voice-recordings]]
+- [[chatgpt/chatgpt_hermes-voice-interaction-setup]]

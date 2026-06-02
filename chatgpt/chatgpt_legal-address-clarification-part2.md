@@ -436,3 +436,11 @@ If you truly want a **round number**:
 - Always annualize when converting
 
 Your instinct to question it was right.
+
+
+## See Also
+- [[chatgpt/chatgpt_legal-address-clarification-part1]]
+- [[chatgpt/chatgpt_bar-crawl-idea-legal-issues]]
+- [[chatgpt/chatgpt_ca-rental-application-legal-check]]
+- [[chatgpt/chatgpt_corporation-vs-legal-reform]]
+- [[chatgpt/chatgpt_e-scooters-legal-in-west-hollywood]]

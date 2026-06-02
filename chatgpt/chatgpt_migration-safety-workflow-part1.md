@@ -1069,3 +1069,11 @@ If you want, next step I can sketch:
   - On `push` to `main`: runs migrations/tests on Neon `staging`.
   - On `push` to `production`: runs migrations/tests on Neon `prod`.
 - Plus a tiny `drizzle.config.ts` tweak to keep migrations pointing at the right DB in CI.
+
+
+## See Also
+- [[chatgpt/chatgpt_migration-safety-workflow-part2]]
+- [[chatgpt/chatgpt_ai-photo-editing-workflow-part1]]
+- [[chatgpt/chatgpt_fixing-ci-workflow-part1]]
+- [[chatgpt/chatgpt_supabase-migration-github-workflow]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

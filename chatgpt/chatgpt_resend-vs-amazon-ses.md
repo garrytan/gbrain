@@ -83,3 +83,11 @@ Resend trades higher cost for simplicity and speed of development.
 SES trades convenience for scale and extremely low pricing.
 
 If you tell me your use case, Mr. White, I can give a direct recommendation.
+
+
+## See Also
+- [[chatgpt/chatgpt_resend-meaning-explanation]]
+- [[chatgpt/chatgpt_allan-keys-amazon]]
+- [[chatgpt/chatgpt_amazon-account-phone-number-issue]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]

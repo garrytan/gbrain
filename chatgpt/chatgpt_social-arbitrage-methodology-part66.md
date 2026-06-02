@@ -731,3 +731,11 @@ Your thesis—that Tesla **lacks regulatory approval in California to operate au
 I'll continue monitoring for any new CPUC/DMV filings or credible signs of autonomous robotaxi activity in the Bay Area.
 
 navlistTesla California Robotaxi Regulatory Coverageturn0news19,turn0news23,turn0news28,turn0news30
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

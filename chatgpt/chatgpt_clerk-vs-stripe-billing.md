@@ -45,3 +45,11 @@ Mr. White, here’s the YC-style blunt breakdown:
 **My call:** Go **direct with Stripe Checkout + Stripe Pricing Tables**. You’ll ship faster, have fewer surprises, and can still wire Clerk users to Stripe customers in 10 lines of code. Later, if you really want Clerk’s billing dashboards, you can layer it back in.  
 
 Want me to sketch the exact integration flow (Clerk user → Stripe Checkout → webhook → Supabase record) so you can ship it this week?
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-billing-overview]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_bolt-vs-stripe-for-jovie]]
+- [[chatgpt/chatgpt_claude-code-billing-plans]]
+- [[chatgpt/chatgpt_clerc-billing-setup]]

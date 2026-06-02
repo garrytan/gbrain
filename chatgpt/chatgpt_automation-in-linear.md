@@ -38,3 +38,11 @@ automation in linear
 Automation in Linear reduces manual work, avoids repetitive admin tasks, and helps teams keep a consistent workflow without having to manually update or create issues all the time. citeturn0search15
 
 If you meant **linear automation** in the general industrial/engineering sense (motion along a straight line using machines), that’s a different concept: it refers to systems that automate precise linear motion using actuators or guided systems in manufacturing and robotics. citeturn0search8
+
+
+## See Also
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_linear-github-automation]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]

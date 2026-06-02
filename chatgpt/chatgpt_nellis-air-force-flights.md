@@ -38,3 +38,11 @@ Do employees commute by plane
 ## Assistant
 
 It's not common for employees to commute by plane to Nellis Air Force Base. Most military and civilian personnel stationed at or working on the base typically live in the surrounding areas, like Las Vegas, and commute by car. However, there might be some specific cases or positions where individuals are required to travel by plane due to the nature of their duties or assignments.
+
+
+## See Also
+- [[chatgpt/chatgpt_cheap-flights-from-la]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]
+- [[chatgpt/chatgpt_force-commit-after-job]]
+- [[chatgpt/chatgpt_force-pnpm-on-vercel]]
+- [[chatgpt/chatgpt_force-working-ios-builds]]

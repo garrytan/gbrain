@@ -61,3 +61,11 @@ YC generally prefers:
 - File 83(b) inside the deadline citeturn0search5turn0search9
 
 If you tell me whether you expect to raise (SAFE vs priced) in the next 6–12 months and whether you’re hiring in the next 90 days, I’ll suggest a “keep-it-clean” pool size and founder vesting choice that matches that path.
+
+
+## See Also
+- [[chatgpt/chatgpt_funding-with-solo-founder]]
+- [[chatgpt/chatgpt_co-founder-breakup-causes]]
+- [[chatgpt/chatgpt_founder-experience-summary]]
+- [[chatgpt/chatgpt_founder-vs-ceo-explained]]
+- [[chatgpt/chatgpt_technical-co-founder-search]]

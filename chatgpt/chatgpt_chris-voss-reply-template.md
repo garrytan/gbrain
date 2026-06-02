@@ -80,3 +80,11 @@ Why it works
 * **Calibrated question**: invites a counter without you bidding against yourself.
 
 If he won’t budge, you can always fall back to your absolute $200 floor at the door, but this maximizes the chance you land higher.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-options]]
+- [[chatgpt/chatgpt_chris-voss-style-reply]]

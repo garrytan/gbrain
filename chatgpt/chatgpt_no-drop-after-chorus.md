@@ -26,3 +26,11 @@ name a chainsmokers song that has no drop after the first chorus
 ## Assistant
 
 "Paris" by The Chainsmokers is a song where the structure doesn't include a traditional EDM drop after the first chorus. Instead, it maintains a more consistent melodic and lyrical flow throughout the song.
+
+
+## See Also
+- [[chatgpt/chatgpt_drag-and-drop-screen-design]]
+- [[chatgpt/chatgpt_lemon-drop-shot-recipe]]
+- [[chatgpt/chatgpt_male-rivalries-mic-drop]]
+- [[chatgpt/chatgpt_pop-song-with-unique-drop]]
+- [[chatgpt/chatgpt_epic-chorus-options]]

@@ -55,3 +55,11 @@ Hard rules: same person across all 16 cells, identity unmistakable — only styl
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_model-casting-grid-design]]
+- [[chatgpt/chatgpt_cinematic-instagram-portrait-edit]]
+- [[chatgpt/chatgpt_grainy-portrait-editing-guide]]
+- [[chatgpt/chatgpt_popcorn-bath-model-portrait]]
+- [[chatgpt/chatgpt_portrait-of-cavalier-dog]]

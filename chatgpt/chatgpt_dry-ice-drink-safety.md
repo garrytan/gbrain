@@ -116,3 +116,11 @@ Here are **safe alternatives** to dry ice for creating fog, smoke, or chilling e
 For home or bar use, a **smoke infuser (with wood chips or herbs)** + **chilled glass or crushed ice** offers the safest, most realistic dry-ice-style presentation — with zero toxicity risk.  
 
 Would you like me to list **specific bar tools or products** that achieve the fog or smoke effect safely?
+
+
+## See Also
+- [[chatgpt/chatgpt_american-drink-recipes]]
+- [[chatgpt/chatgpt_batch-drink-recipe-scaling]]
+- [[chatgpt/chatgpt_caffeine-free-drink-alternatives]]
+- [[chatgpt/chatgpt_check-drink-sales-clover]]
+- [[chatgpt/chatgpt_drink-calculation]]

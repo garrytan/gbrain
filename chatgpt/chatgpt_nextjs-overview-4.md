@@ -94,3 +94,11 @@ If you like, Mr. White, I can walk you through **a practical tutorial** for Next
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_nextjs-overview-2]]
+- [[chatgpt/chatgpt_nextjs-overview-3]]
+- [[chatgpt/chatgpt_nextjs-overview-part1]]
+- [[chatgpt/chatgpt_nextjs-overview-part2]]
+- [[chatgpt/chatgpt_nextjs-overview-part3]]

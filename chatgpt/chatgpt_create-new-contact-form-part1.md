@@ -1014,3 +1014,11 @@ The code you provided is a Vue.js component template. It represents a modal dial
 Overall, this component provides a modal dialog with a form for creating and importing contacts, with various input fields and options for customization.
 
 Please note that this code assumes the availability of several custom components and icons from external libraries such as `@heroicons/vue` and `@headlessui/vue`.
+
+
+## See Also
+- [[chatgpt/chatgpt_create-new-contact-form-part2]]
+- [[chatgpt/chatgpt_contact-form-in-nextjs]]
+- [[chatgpt/chatgpt_create-contact-import-merge]]
+- [[chatgpt/chatgpt_create-account-page-setup-part1]]
+- [[chatgpt/chatgpt_create-document-outline-part1]]

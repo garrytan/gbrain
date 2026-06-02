@@ -134,3 +134,11 @@ Now he’s building Jovie: a closed-loop AI manager for music artists that autom
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_write-blurb-for-daniel]]
+- [[chatgpt/chatgpt_admin-tools-for-jovie]]
+- [[chatgpt/chatgpt_adopting-exaai-for-jovie]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-changelog-insights-for-jovie]]

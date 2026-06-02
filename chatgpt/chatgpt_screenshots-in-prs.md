@@ -49,3 +49,11 @@ Fast policy you can adopt
 - If not included: require a note **“No UI impact.”**
 
 If you tell me your stack (web/mobile) and what kinds of PRs you ship most, I can draft a tight PR template section and a simple rule reviewers can enforce.
+
+
+## See Also
+- [[chatgpt/chatgpt_hide-screenshots-in-photos]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

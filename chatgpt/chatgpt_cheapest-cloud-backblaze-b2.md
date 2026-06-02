@@ -44,3 +44,11 @@ estimate my cost on black blaze b3
 ## Assistant
 
 I'm unable to directly access the specific details of Backblaze B2's current pricing due to a technical limitation. However, you can find the most accurate and up-to-date pricing information for Backblaze B2, including any potential B3 offerings if available, directly on their official pricing page. Please visit the Backblaze website or contact their customer service for detailed pricing based on your storage needs of 60TB, along with information on upload and download costs.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-cloud-code-ci]]
+- [[chatgpt/chatgpt_cheapest-ai-in-ci]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_cheapest-coke-zero-on-amazon]]
+- [[chatgpt/chatgpt_cheapest-macbook-pro-config]]

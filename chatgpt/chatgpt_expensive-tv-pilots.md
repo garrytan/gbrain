@@ -35,3 +35,11 @@ Here are some of the most expensive TV pilot episodes ever made:
 | entity["tv_show", "Fringe", 0] (Fox) – pilot episode | ~$10 million. citeturn0search21 |
 
 If you like, Mr. White, I can pull together a **top 10 list** with pilot costs adjusted for inflation and by genre.
+
+
+## See Also
+- [[chatgpt/chatgpt_expensive-chipotle-meal-costs]]
+- [[chatgpt/chatgpt_expensive-resorts-worldwide]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

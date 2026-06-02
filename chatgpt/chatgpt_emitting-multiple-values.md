@@ -55,3 +55,11 @@ export default {
 ```
 
 Make sure that you're listening to the correct event name (`subMenuItemClicked`) in the parent component and that the event handler method (`handleSubMenuItemClicked`) is correctly defined.
+
+
+## See Also
+- [[chatgpt/chatgpt_vuejs-emitting-events]]
+- [[chatgpt/chatgpt_attractive-ffmi-values]]
+- [[chatgpt/chatgpt_ci-for-multiple-prs]]
+- [[chatgpt/chatgpt_core-values-compilation-part1]]
+- [[chatgpt/chatgpt_core-values-compilation-part2]]

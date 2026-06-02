@@ -71,3 +71,11 @@ Engadget was once great because it made new technology feel inspectable. It invi
 That spirit is worth recovering.
 
 The future deserves critics. It also deserves witnesses who still want to see what happens next.
+
+
+## See Also
+- [[chatgpt/chatgpt_angel-investors-for-music-tech]]
+- [[chatgpt/chatgpt_big-tech-halide-overview]]
+- [[chatgpt/chatgpt_cancelled-tech-and-media]]
+- [[chatgpt/chatgpt_chatgpt-tech-stack]]
+- [[chatgpt/chatgpt_folkapp-tech-stack]]

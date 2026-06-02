@@ -740,3 +740,11 @@ If you want, I can turn this into a **drop-in React component** (with the classi
 {'asset_pointer': 'file-service://file-DACYkJKWAgqFMTTQ6jEWLH', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 808, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 571646, 'width': 1470}
 {'asset_pointer': 'file-service://file-2z91xZf1TWGAfC4HGDJp8v', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 809, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 946182, 'width': 1470}
 Give me a UX audit for the design. Apple level polish. Give me the biggest ROI changes first.
+
+
+## See Also
+- [[chatgpt/chatgpt_audience-tab-roadmap-part1]]
+- [[chatgpt/chatgpt_audience-tab-roadmap-part3]]
+- [[chatgpt/chatgpt_ai-music-for-audience-building]]
+- [[chatgpt/chatgpt_audience-and-releases-ux]]
+- [[chatgpt/chatgpt_automated-audience-building]]

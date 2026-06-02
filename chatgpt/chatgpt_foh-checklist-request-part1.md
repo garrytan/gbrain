@@ -849,3 +849,11 @@ This comprehensive checklist ensures that all areas, including the bar, NoMan's 
 
 
 lobby bar is to be set up on staff arrival. the bartenders are to get in place 10 minutes before doors
+
+
+## See Also
+- [[chatgpt/chatgpt_foh-checklist-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_fact-checking-video-request-part1]]
+- [[chatgpt/chatgpt_full-spec-request-part1]]
+- [[chatgpt/chatgpt_summarize-youtube-video-request-part1]]

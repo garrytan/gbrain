@@ -134,3 +134,11 @@ If you want, I can also write the exact on-screen text (headline, subhead, callo
 Music only so cta should be music focused.
 
 Can you mock up the image of the two profiles
+
+
+## See Also
+- [[chatgpt/chatgpt_landing-page-concept-2]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part1]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part2]]

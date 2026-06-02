@@ -298,3 +298,11 @@ Your system should be built on three principles:
 That is the clean path from Instagram taste to a reusable AI-native visual library.
 
 A strong next step is: take just one collection first—probably **styling** or **color**—and turn 25 images into the first schema and first bible. Once that works, the rest of the system repeats.
+
+
+## See Also
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part1]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part2]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part3]]
+- [[chatgpt/chatgpt_building-jovie-knowledge-system]]

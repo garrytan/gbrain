@@ -46,3 +46,11 @@ kill bill fox force 5
 For a visual reference, here's the scene from "Pulp Fiction" where Mia Wallace discusses "Fox Force Five":
 
 videoFox Force Five - Pulp Fiction (1994)turn0search5 
+
+
+## See Also
+- [[chatgpt/chatgpt_click-five-meanings]]
+- [[chatgpt/chatgpt_bill-split-breakdown]]
+- [[chatgpt/chatgpt_bill-summary-calculation]]
+- [[chatgpt/chatgpt_calculate-bill-amount]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]

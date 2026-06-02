@@ -149,3 +149,11 @@ Here's the adapted Mistletoe cocktail recipe with 4 ounces of vodka:
 - Water: Approximately 1.26 oz
 
 These amounts will give you a cocktail with the same proportions as the original Mistletoe recipe, just scaled down to a single serving with 4 ounces of vodka.
+
+
+## See Also
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_batch-cocktail-calculation]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_bulk-phase-muscle-fat-ratio]]
+- [[chatgpt/chatgpt_cocktail-batch-calculation]]

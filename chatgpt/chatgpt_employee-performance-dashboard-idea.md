@@ -52,3 +52,11 @@ The AI-agent piece is already entering the mainstream suites. Workday now descri
 California makes your parking-ticket example more delicate. Wage deductions are legal only in narrow cases. The DLSE says ordinary losses, breakage, or shortages caused by mistake, accident, or simple negligence generally cannot just be deducted from wages, though the employer can discipline, terminate, or sue to recover losses. Labor Code 2802 also requires reimbursement for necessary expenditures or losses incurred in direct consequence of work duties. California also now has employment regulations covering automated decision systems in employment decisions, with the rules effective October 1, 2025 and approved modifications effective April 1, 2026. So a system where fines or incident scores automatically hit payroll or trigger termination thresholds needs legal review before deployment in Los Angeles. Treat those inputs as operational signals, not automatic payroll clawbacks. citeturn277104view3turn132821view0turn704671view0turn277104view4turn616530view0
 
 The cleanest label for what you are describing is: **strategic workforce planning + people analytics + role-specific productivity intelligence**.
+
+
+## See Also
+- [[chatgpt/chatgpt_optimize-dashboard-performance]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]

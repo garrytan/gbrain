@@ -97,3 +97,11 @@ Send feedback on any section; I’ll revise that section next.
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-landing-page-spec-2]]
+- [[chatgpt/chatgpt_jovie-landing-page-spec]]
+- [[chatgpt/chatgpt_landing-page-spec]]
+- [[chatgpt/chatgpt_jovie-landing-page-design]]
+- [[chatgpt/chatgpt_landing-page-design-options]]

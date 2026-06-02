@@ -238,3 +238,11 @@ Drizzle wins here if you want fully in-sync types without scaffolding.
 ---
 
 If you tell me **your stack (Edge? Node? Neon? Postgres? SQL flavor?)** I’ll give a final recommendation.
+
+
+## See Also
+- [[chatgpt/chatgpt_drizzle-and-orm-comparison]]
+- [[chatgpt/chatgpt_drizzle-neon-concurrency-setup]]
+- [[chatgpt/chatgpt_neon-ai-drizzle-prompt]]
+- [[chatgpt/chatgpt_neon-drizzle-migrations-fix]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]

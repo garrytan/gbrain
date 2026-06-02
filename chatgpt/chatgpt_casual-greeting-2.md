@@ -182,3 +182,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Sure! So around The Grove, there are a few coffee shops that are pretty coworking-friendly. For example, places like La La Land Kind Cafe and a couple of other local spots offer a nice environment with Wi-Fi and seating, so you can settle in and work for a few hours without the bigger price tag.'}
 {'asset_pointer': 'sediment://file_000000006c3c71f888b34d3736c5472e', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-07-16T17:15:43.010725+00:00', 'format': 'wav', 'metadata': {'end': 16.15, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 775278, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_casual-greeting]]
+- [[chatgpt/chatgpt_casual-conversation-response]]
+- [[chatgpt/chatgpt_casual-conversation]]
+- [[chatgpt/chatgpt_greeting-exchange-2]]
+- [[chatgpt/chatgpt_greeting-exchange-3]]

@@ -337,3 +337,11 @@ If you want, I can:
 - Or show how to *optionally* mirror status into Clerk safely
 
 Just say which.
+
+
+## See Also
+- [[chatgpt/chatgpt_waitlist-onboarding-chat]]
+- [[chatgpt/chatgpt_soft-auth-waitlist-strategy]]
+- [[chatgpt/chatgpt_superhuman-waitlist-process]]
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]

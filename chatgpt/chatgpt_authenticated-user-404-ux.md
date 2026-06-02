@@ -55,3 +55,11 @@ Authenticated users should get a *context-aware* 404, not a fundamentally differ
 - If you’re unsure or want to avoid leakage → **404 for everyone**, better UX for logged-in users
 
 If you want, I can give you a decision matrix or sample copy for both states.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part2]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part1]]

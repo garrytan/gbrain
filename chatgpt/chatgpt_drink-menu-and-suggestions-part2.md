@@ -382,3 +382,11 @@ If you need any further adjustments or additions, let me know!
 
 
 Okay, for our recommendations, let's label the ones we currently have as mixed drinks. Let's add beer. Our beer option would be probably Bud Light. And then we'll also add a hard seltzer. We'll do White Claw.
+
+
+## See Also
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part1]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part3]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part4]]
+- [[chatgpt/chatgpt_halloween-drink-menu]]
+- [[chatgpt/chatgpt_holiday-drink-menu-guidance]]

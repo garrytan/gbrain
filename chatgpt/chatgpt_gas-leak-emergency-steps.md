@@ -70,3 +70,11 @@ Mr. White, if you can safely reach the stove knob, turn it fully to “off” im
 - If the smell lingers after airing out, or if it gets stronger at any point, call SoCalGas’s 24-hour emergency line at 1-800-427-2200. They’ll send someone to verify it’s safe.  
 
 You don’t need to call 911 if you’ve simply left the valve on and can shut it off yourself, but you must ventilate fully and call the gas company if the odor doesn’t clear.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-claudemd-leak]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part1]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part2]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part3]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part4]]

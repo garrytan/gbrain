@@ -978,3 +978,11 @@ Copy:
 > **Jovie ships the work that turns music into fans and revenue.**
 
 That is the cleanest version so far.
+
+
+## See Also
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_ai-driven-music-bio]]
+- [[chatgpt/chatgpt_ai-growth-engine-for-music]]
+- [[chatgpt/chatgpt_ai-in-music-marketing]]
+- [[chatgpt/chatgpt_ai-in-music-production]]

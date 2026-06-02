@@ -116,3 +116,11 @@ You're working with a **hook-and-lock** style bracket:
 **Pro tip**: Grab a friend, lift from both bottom corners while gently tilting out the bottom first, then lift together.
 
 Let me know if you want me to mark a photo with where to pull.
+
+
+## See Also
+- [[chatgpt/chatgpt_tv-mount-installation-guide]]
+- [[chatgpt/chatgpt_usb-c-hub-mount-options]]
+- [[chatgpt/chatgpt_chat-input-specs]]
+- [[chatgpt/chatgpt_internal-dashboard-specs]]
+- [[chatgpt/chatgpt_mac-specs-for-coding]]

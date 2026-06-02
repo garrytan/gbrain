@@ -73,3 +73,11 @@ I can’t directly query the **Delaware Division of Corporations name database**
 - You can optionally **reserve** the name for 120 days by paying a $75 fee. citeturn0search6
 
 If you want, tell me the exact suffix you plan to use (e.g., **Jovie Inc.**) and I’ll outline naming rules that might apply.
+
+
+## See Also
+- [[chatgpt/chatgpt_delaware-c-corp-name-check]]
+- [[chatgpt/chatgpt_delaware-entity-search]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]
+- [[chatgpt/chatgpt_a7x3-holdings-name-suggestions]]
+- [[chatgpt/chatgpt_accessing-users-name-in-ios]]

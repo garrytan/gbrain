@@ -139,3 +139,11 @@ YC guidance is:
 So yes — smoke on PR, full suite on preview, sanity on prod — that’s the YC-style best practice.  
 
 Do you want me to sketch the exact **GitHub Actions job breakdown** (names, triggers, and required checks) so you can wire it directly into your branch protections?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]

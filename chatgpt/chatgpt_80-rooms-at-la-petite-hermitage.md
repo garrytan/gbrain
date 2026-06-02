@@ -26,3 +26,11 @@ Hey, what's going on? So I'm looking at La Petite Hermitage in West Hollywood, C
 ## Assistant
 
 La Petite Hermitage in West Hollywood, California, has 80 rooms.
+
+
+## See Also
+- [[chatgpt/chatgpt_syncing-audio-across-12-rooms]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

@@ -78,3 +78,11 @@ If we’re closed more than 48 hours, restroom odors can show up because P-traps
 4) Turn the restroom exhaust fan on for ~**30 minutes**.
 
 Staff rotates—whoever is on the cleaning shift should do this every time.
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part2]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part3]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part4]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part5]]

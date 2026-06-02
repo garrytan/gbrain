@@ -89,3 +89,11 @@ Sometimes the control layer gets stuck and switching modes resets it.
 - Update Stardew + iPadOS (patch-level bugs are common with specific areas/events).
 
 One quick detail so I can pinpoint it: when it “freezes,” does the **clock keep moving** (top-right time changes), or does **time stop** too?
+
+
+## See Also
+- [[chatgpt/chatgpt_bulk-export-emails-ipad]]
+- [[chatgpt/chatgpt_ipad-mini-4-listing]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

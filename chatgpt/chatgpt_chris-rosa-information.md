@@ -46,3 +46,11 @@ Several people are named **Chris / Christopher Rosa**. The most common reference
    - Has worked with artists such as **RuPaul**, **Chris Brown**, **Kelly Clarkson**, and **Usher**. citeturn0search3  
 
 If you mean a specific **Chris Rosa** (journalist, crypto researcher, producer, etc.), specify the context and I will provide a detailed profile.
+
+
+## See Also
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_bike-information]]
+- [[chatgpt/chatgpt_chris-evans-height-6ft]]
+- [[chatgpt/chatgpt_chris-voss-counter-tips]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]

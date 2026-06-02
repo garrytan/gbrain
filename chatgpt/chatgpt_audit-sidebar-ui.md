@@ -362,3 +362,11 @@ Here’s a concise UI audit of the **Vault Speakeasy sidebar** you shared:
 
 **Quick Wins**  
 Implement the stronger active-state highlight and clearer section dividers first; those yield the biggest usability boost with minimal engineering effort.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_audit-and-recommend-drafts]]
+- [[chatgpt/chatgpt_audit-and-strategy-tips]]
+- [[chatgpt/chatgpt_audit-app-layout-shifts]]

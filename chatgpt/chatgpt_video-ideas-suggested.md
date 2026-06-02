@@ -39,3 +39,11 @@ heres some video ideas. give me more ideas
 4. "One wheelers in urban environments" - In this video, you can explore the practicality and safety of using one wheelers in big cities and other urban environments. You can discuss the pros and cons of using this mode of transportation in a busy city setting and offer tips for those considering using one wheelers in an urban environment.
 
 5. "The best travel destinations for adventure seekers" - In this video, you can showcase some of the best destinations around the world for adventure seekers, highlighting the unique activities and experiences that each destination has to offer.
+
+
+## See Also
+- [[chatgpt/chatgpt_video-ideas-expansion]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]

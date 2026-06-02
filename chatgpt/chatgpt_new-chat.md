@@ -71,3 +71,11 @@ TAG POS={{!LOOP}} TYPE=DIV ATTR=TXT:starfavorite
 ```
 
 In this example, the "POS" value is set to the loop variable "{{!LOOP}}". The "SET !LOOP 2" line specifies that the loop should run 2 times, so the "TAG POS" command will be executed twice with the "POS" value set to "1" and "2" on each iteration.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

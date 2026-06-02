@@ -666,3 +666,11 @@ async function swipeRight(delay = 1000, numClicks) {
     console.log("Finished swipeRight");
 }
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_js-function-swipe-right-2]]
+- [[chatgpt/chatgpt_js-swipe-right-function]]
+- [[chatgpt/chatgpt_swipe-right-function-analysis]]
+- [[chatgpt/chatgpt_swipe-right-javascript-function]]
+- [[chatgpt/chatgpt_automating-swipe-right-js]]

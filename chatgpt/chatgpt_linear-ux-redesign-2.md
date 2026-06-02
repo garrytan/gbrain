@@ -107,3 +107,11 @@ A *linear UX redesign* isn’t about stripping all creativity—it’s about *pr
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-redesign-explained]]
+- [[chatgpt/chatgpt_linear-ux-redesign]]
+- [[chatgpt/chatgpt_ai-homepage-redesign-prompt]]
+- [[chatgpt/chatgpt_app-icon-redesign-brief]]
+- [[chatgpt/chatgpt_dashboard-redesign-concepts]]

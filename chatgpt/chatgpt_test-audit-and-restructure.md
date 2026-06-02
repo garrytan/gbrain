@@ -304,3 +304,11 @@ WORKING STYLE
 If you want one extra line to make Codex even more aggressive about pruning, add this right under “MVP RIGHT-SIZING RULES”:
 
 > “When uncertain, choose the cheaper testing approach or delete the test; prefer monitoring + fast rollback over heavy suites.”
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-agent-test-strategies]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]

@@ -51,3 +51,11 @@ Clio-winning creative technologist & producer behind AR/VR, projection mapping, 
 Projection Mapping · AR/VR/XR · Interactive Installations · Creative Coding · Web Dev · Video Production/Editing/VO · Show Control/Playback · Systems/Networking for Live · Vendor & Venue Coordination · Field Ops & Rapid Troubleshooting · Team Leadership · Client Communication
 
 If you tell me the specific role you’re targeting (e.g., Creative Technologist, Technical Producer, Experiential Engineer), I’ll tailor these bullets and build a tight resume section around it.
+
+
+## See Also
+- [[chatgpt/chatgpt_experiential-marketing-agencies-la]]
+- [[chatgpt/chatgpt_experiential-producer-jobs-la]]
+- [[chatgpt/chatgpt_creative-fishing-gift-ideas]]
+- [[chatgpt/chatgpt_creative-work-proposal]]
+- [[chatgpt/chatgpt_music-creative-hints]]

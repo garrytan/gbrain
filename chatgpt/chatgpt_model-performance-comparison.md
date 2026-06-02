@@ -55,3 +55,11 @@ Mr. White — here’s a tight, last-30-days, real-world read on how these model
 4) **Experimental:** **Falcon Alpha**—trial on back-end refactors to gauge latency/quality on your codebase. citeturn0search1
 
 If you want, I can run a **one-hour bake-off plan** (same repo/tasks, four models, same prompts) and give you a side-by-side diffs/latency/error tally—strictly using sources & runs from the next 30 days only.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part4]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part5]]

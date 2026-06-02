@@ -70,3 +70,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Yeah, that's pretty much it! Since the Supabase SDK is handling all your data fetching seamlessly, there's not really a pressing need for GraphQL at this point. If your app's data requirements become more complex in the future, you can always revisit it, but for now, it sounds like you're good to go!"}
 {'asset_pointer': 'sediment://file_00000000fc9061f6970fd340983f7551', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-02T19:49:14.377861+00:00', 'format': 'wav', 'metadata': {'end': 17.35, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 832878, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_backgrid-copyright-case]]
+- [[chatgpt/chatgpt_beachwood-canyon-rent-evaluation]]
+- [[chatgpt/chatgpt_case-status-update]]
+- [[chatgpt/chatgpt_dalia-dippolito-case-timeline]]
+- [[chatgpt/chatgpt_diddy-case-celebrity-involvement]]

@@ -620,3 +620,11 @@ Would you like to finalize this name or suggest another one?
 
 
 Okay, so let's separate these into two drink tables. One is going to be my recommendations, and then the other is going to be other options. So my recommendation is going to be a blue margarita called The Blue Dress, Lewinsky's Lemonade, Jeff's Island Breeze, the Grand Old Fashioned, the Russian Collusion, and the OJ Simpson.
+
+
+## See Also
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part2]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part3]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part4]]
+- [[chatgpt/chatgpt_halloween-drink-menu]]
+- [[chatgpt/chatgpt_holiday-drink-menu-guidance]]

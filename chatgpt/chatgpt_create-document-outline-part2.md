@@ -678,3 +678,11 @@ Given your product (funnels, personalization, onboarding) I’d do:
 If you’re not ready to operationalize those weekly, **don’t add it yet**.
 
 If you tell me your stack (Next.js? web/app split?) and your top 3 flows you’re optimizing first, I’ll give you the exact event list + 3 funnels to set up (minimal and clean).
+
+
+## See Also
+- [[chatgpt/chatgpt_create-document-outline-part1]]
+- [[chatgpt/chatgpt_create-account-page-setup-part2]]
+- [[chatgpt/chatgpt_create-csv-table-document]]
+- [[chatgpt/chatgpt_create-new-contact-form-part2]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

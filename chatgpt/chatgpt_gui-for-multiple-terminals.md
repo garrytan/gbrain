@@ -310,3 +310,11 @@ In **iTerm2 → Preferences → Profiles → Text**:
 ---
 
 If you want, I can walk you step-by-step through **saving an iTerm2 layout that opens all your worktrees at once**.
+
+
+## See Also
+- [[chatgpt/chatgpt_ci-for-multiple-prs]]
+- [[chatgpt/chatgpt_emitting-multiple-values]]
+- [[chatgpt/chatgpt_handling-multiple-agents-locally]]
+- [[chatgpt/chatgpt_multiple-units-at-station-7]]
+- [[chatgpt/chatgpt_running-multiple-codex-agents]]

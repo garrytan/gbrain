@@ -59,3 +59,11 @@ Hard rules:
 - no text, no labels, no numbers, no watermarks
 
 Photographic look: shot on a Sony A7 with natural window light, shallow depth of field, slightly warm clean color grade — feels like a candid iPhone photo by a really good photographer. Crisp on the face, dreamy soft background. Healthy glowy skin, catchlights in eyes. Magazine quality but Instagram-natural, not over-produced.
+
+
+## See Also
+- [[chatgpt/chatgpt_casting-board-grid]]
+- [[chatgpt/chatgpt_casting-brief-for-models]]
+- [[chatgpt/chatgpt_model-casting-grid-design]]
+- [[chatgpt/chatgpt_model-casting-grid]]
+- [[chatgpt/chatgpt_16x16-grid-tailwind]]

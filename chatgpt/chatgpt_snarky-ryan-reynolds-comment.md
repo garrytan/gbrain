@@ -28,3 +28,11 @@ Dude, these dumbass takes are everywhere. It's like they launched a fucking beta
 Mr. White:
 
 > Asking a two-day-old beta CLI to already be a full Cursor-for-mobile app is like yelling at a newborn for having bad LinkedIn endorsements. Let it crawl, then we can demand emulators, live previews, and a tiny deploy button with abs.
+
+
+## See Also
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comeback]]
+- [[chatgpt/chatgpt_dunk-in-ryan-reynolds-style]]
+- [[chatgpt/chatgpt_ryan-reynolds-fact-check]]
+- [[chatgpt/chatgpt_super-cocky-ryan-reynolds]]
+- [[chatgpt/chatgpt_snarky-comment-on-grapheneos]]

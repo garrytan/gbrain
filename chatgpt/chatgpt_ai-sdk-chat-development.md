@@ -106,3 +106,11 @@ You won’t get perfect determinism across all providers/runs, but you *can* get
 5) **Scale:** more skills, each with their own tool allowlist + eval suite
 
 If you tell me your exact stack (**Next.js route handlers? server actions?** and which provider/model), I’ll map this into a concrete folder structure + the minimal “skill + tools + evals” setup you can ship in a week.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-os-development-direction]]
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-in-product-development]]

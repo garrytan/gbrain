@@ -169,3 +169,11 @@ If you want, I can:
 - Help you decide **whether to say you’re looking for a cofounder (there’s a right way)**
 
 Just tell me where you want to go next.
+
+
+## See Also
+- [[chatgpt/chatgpt_job-application-optimization]]
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]

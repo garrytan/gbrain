@@ -607,3 +607,11 @@ If you ever base dev/preview branches on prod data:
 ---
 
 If you tell me your deploy target (Vercel/Cloudflare/Fly/custom) and whether previews exist, I can give you the exact recommended wiring (Neon branch create/delete + Doppler env mapping) in one concrete recipe.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part3]]
+- [[chatgpt/chatgpt_improving-agent-prompt]]

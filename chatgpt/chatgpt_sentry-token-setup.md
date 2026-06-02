@@ -81,3 +81,11 @@ Mr. White, I can add the missing Sentry secrets in Doppler, but entering the `SE
 - `SENTRY_ORG_SLUG`
 
 …and confirm you want me to paste them into the Doppler PRD config.
+
+
+## See Also
+- [[chatgpt/chatgpt_ios-mvp-sentry-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]

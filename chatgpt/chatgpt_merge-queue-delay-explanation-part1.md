@@ -865,3 +865,11 @@ GitHub added GraphQL for merge queue (enqueue/dequeue, list). citeturn0sea
 - With batching on the queue, enabling auto-merge still participates in batches per your queue config. citeturn0search2turn0search12
 
 If you want, I can wire Option A into your existing auto-merge workflow and remove the need to click anything ever again.
+
+
+## See Also
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part2]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part3]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part4]]
+- [[chatgpt/chatgpt_merge-queue-explanation]]
+- [[chatgpt/chatgpt_merge-queue-throughput-explanation]]

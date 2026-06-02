@@ -74,3 +74,11 @@ To make a Negroni, the process is straightforward:
 5. **Garnish**: Garnish with an orange peel or slice.
 
 This classic cocktail is known for its balanced, bitter, and sweet flavor profile.
+
+
+## See Also
+- [[chatgpt/chatgpt_cosmopolitan-cocktail-recipe]]
+- [[chatgpt/chatgpt_make-11-liters-lemonade]]
+- [[chatgpt/chatgpt_make-a-paloma-cocktail]]
+- [[chatgpt/chatgpt_make-a-paloma]]
+- [[chatgpt/chatgpt_make-black-and-white-image]]

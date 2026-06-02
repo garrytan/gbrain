@@ -122,3 +122,11 @@ Good question, Mr. White. If Max plays piano, he can serve as a **narrative or a
 ---
 
 If you tell me what tone you’re leaning toward — **tragic, cinematic, or campy** — I can lock in Max’s character concept (visuals, costume, demeanor, and musical motifs) to mesh perfectly with Tim, Sophie, and Stones. Which direction are you aiming for?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]
+- [[chatgpt/chatgpt_chaos-testing-explained]]
+- [[chatgpt/chatgpt_chaos-testing-nextjs]]
+- [[chatgpt/chatgpt_chaos-testing-prompt]]
+- [[chatgpt/chatgpt_fundraising-in-chaos]]

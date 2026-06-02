@@ -124,3 +124,11 @@ Here is the updated table with the shelf life for each drink:
 | 17     | Deep Throat               | Shots         |               |       | Kahlua, vodka                                    | Whipped cream   |               | Vodka             | No                |        | 1-2 weeks          |
 
 If you need any further adjustments or additions, let me know!
+
+
+## See Also
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part1]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part2]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part3]]
+- [[chatgpt/chatgpt_halloween-drink-menu]]
+- [[chatgpt/chatgpt_holiday-drink-menu-guidance]]

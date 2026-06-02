@@ -42,3 +42,11 @@ neon auth
 4. Your app can query user/session data directly through SQL. citeturn0search4
 
 In short, Neon Auth embeds authentication into the database layer so you don’t manage separate auth infrastructure or sync code manually. citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]
+- [[chatgpt/chatgpt_google-auth-console-overview]]
+- [[chatgpt/chatgpt_neon-auth-and-clerk]]
+- [[chatgpt/chatgpt_neon-auth-blog-mock]]
+- [[chatgpt/chatgpt_neon-auth-explanation]]

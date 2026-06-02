@@ -879,3 +879,11 @@ pnpm exec playwright test --reporter=list
 ```
 
 Want me to drop this prompt into `CLAUDE.md` as a “Runbook: Dashboard Polish + Settings v2 + E2E” so it’s standardized for the team?
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-profile-image-creation]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]

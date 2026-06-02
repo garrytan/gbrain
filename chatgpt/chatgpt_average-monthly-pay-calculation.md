@@ -54,3 +54,11 @@ Mr. White, from the 11 net‑pay figures visible (Oct 10 – Dec 26 
 **Average of these three months ≈ $7,336 per month.**
 
 If you’d like a full‑year figure, we’ll need the earlier 2024 stubs as well.
+
+
+## See Also
+- [[chatgpt/chatgpt_average-pay-calculation]]
+- [[chatgpt/chatgpt_monthly-income-calculation]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-birth-timing]]

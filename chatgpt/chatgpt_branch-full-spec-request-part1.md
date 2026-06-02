@@ -658,3 +658,11 @@ Okay, but now we've talked about a lot of different ideas. Is this the idea to b
 
 
 Mr. White, I’d cut this down to a survival decision: what can produce cash fastest, while also proving the product thesis. I’ll ground this in the current data/API constraints, then give you a hard recommendation.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part4]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part5]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part6]]

@@ -56,3 +56,11 @@ To discard your local changes and reset your repository to the current state of 
    Replace `branch-name` with the name of the branch you want to reset. This command moves the branch pointer to the latest commit on the remote branch, discarding any local commits that haven't been pushed yet.
 
 After following these steps, your local repository will be reset to the current state of the branch on the Git server. However, please exercise caution when using `git reset --hard`, as it permanently discards any uncommitted changes. Make sure you have a backup of any important changes before proceeding.
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-remote-desktop-setup]]
+- [[chatgpt/chatgpt_drizzle-push-vs-migrate]]
+- [[chatgpt/chatgpt_factory-reset-ring-2]]
+- [[chatgpt/chatgpt_fetch-and-reset-repo-part1]]
+- [[chatgpt/chatgpt_fetch-and-reset-repo-part2]]

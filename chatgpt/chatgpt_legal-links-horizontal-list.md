@@ -94,3 +94,11 @@ Sure! Here's the updated code with CSS styles added to make the links small and 
 ```
 
 In the HTML, we added inline styles to the anchor tags to make the font size small and the color gray. In the CSS, we added styles to transition the link color on hover, and to change the color to white when the link is hovered over. We also added a new CSS class `.Footer__LegalLinks` to style the legal links separately from other links on the page, and to ensure that the styles only apply to the legal links in the footer.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-crawl-idea-legal-issues]]
+- [[chatgpt/chatgpt_ca-rental-application-legal-check]]
+- [[chatgpt/chatgpt_corporation-vs-legal-reform]]
+- [[chatgpt/chatgpt_e-scooters-legal-in-west-hollywood]]
+- [[chatgpt/chatgpt_fathers-legal-responsibilities-established]]

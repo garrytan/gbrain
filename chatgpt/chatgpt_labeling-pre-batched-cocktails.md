@@ -80,3 +80,11 @@ Here is the updated table showing the pre-batched cocktails and their respective
 | White Russian                | Speedpors              |
 | Ruth Bader Ginsberg          | London Dry Gin Bottles |
 | Lewinsky's Lemonade          | To Be Determined       |
+
+
+## See Also
+- [[chatgpt/chatgpt_classic-cocktails-list]]
+- [[chatgpt/chatgpt_hot-bartender-w-incredible-cocktails]]
+- [[chatgpt/chatgpt_renamed-menu-and-cocktails]]
+- [[chatgpt/chatgpt_shelf-life-of-cocktails]]
+- [[chatgpt/chatgpt_who-batches-cocktails]]

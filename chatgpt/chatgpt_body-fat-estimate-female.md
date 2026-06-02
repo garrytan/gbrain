@@ -30,3 +30,11 @@ For an average female who is 6'1" and weighs 157 pounds, does not engage in resi
 This estimate considers that she is active (likely maintaining some muscle mass) but not specifically training for muscle retention or fat loss, which typically results in a higher body fat percentage. The exact percentage can vary depending on individual factors such as body composition, genetics, and diet. 
 
 If she has a leaner physique despite not engaging in resistance training, she could be closer to the lower end of that range (around 25%). If she has more body fat, she might be closer to 30% or slightly above.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate]]
+- [[chatgpt/chatgpt_estimate-body-fat-percentage]]
+- [[chatgpt/chatgpt_estimate-body-fat]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

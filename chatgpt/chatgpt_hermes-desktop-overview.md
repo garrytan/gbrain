@@ -80,3 +80,11 @@ Official project:
 - urlHermes Workspace UIhttps://hermes-workspace.com/
 
 The memory system is the piece I would pay the closest attention to. That's where most of the compounding advantage appears to come from. citeturn0search2turn0search15
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-desktop-overview]]
+- [[chatgpt/chatgpt_docker-desktop-overview]]
+- [[chatgpt/chatgpt_github-hermes-overview]]
+- [[chatgpt/chatgpt_hermes-agent-overview]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]

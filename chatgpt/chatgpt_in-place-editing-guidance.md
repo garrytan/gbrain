@@ -94,3 +94,11 @@ Tiny diff sketch (pattern only):
 You’ve pinned: file path, export name, allowed changes, and a **hard forbid** on creating/rewiring. The model now has no “escape hatch,” so it edits the existing component instead of inventing `EnhancedDashboardLayout`.
 
 If you want, I can produce the exact git-patch for `LinksManager.tsx` following the rules above.
+
+
+## See Also
+- [[chatgpt/chatgpt_career-path-guidance]]
+- [[chatgpt/chatgpt_clerk-elements-replacement-guidance]]
+- [[chatgpt/chatgpt_component-naming-guidance]]
+- [[chatgpt/chatgpt_fundraising-strategy-guidance]]
+- [[chatgpt/chatgpt_holiday-drink-menu-guidance]]

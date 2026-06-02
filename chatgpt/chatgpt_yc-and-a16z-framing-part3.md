@@ -423,3 +423,11 @@ Use these labels in the UI or voiceover:
 > Artwork, smart link, fan alert, promo copy, checklist, playlist pitch, analytics
 
 That keeps the magic clear: Jovie creates the moments, then handles the work underneath them.
+
+
+## See Also
+- [[chatgpt/chatgpt_yc-and-a16z-framing-part1]]
+- [[chatgpt/chatgpt_yc-and-a16z-framing-part2]]
+- [[chatgpt/chatgpt_a16z-speedrun-overview]]
+- [[chatgpt/chatgpt_a16z-start-program]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part3]]

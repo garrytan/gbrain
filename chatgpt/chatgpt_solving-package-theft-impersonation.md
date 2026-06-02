@@ -164,3 +164,11 @@ Doorstep delivery in dense cities will always have theft pressure.
 3. Locker expansion in multifamily buildings  
 
 These three materially reduce impersonation without massive infrastructure overhaul.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part1]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part2]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part3]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part4]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part5]]

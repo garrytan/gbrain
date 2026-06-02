@@ -65,3 +65,11 @@ Key points:
 - **AI agents:** modular capabilities that plug into an AI system to provide task-specific expertise and workflow knowledge. citeturn0search0
 
 If you want, I can list skills specific to **a particular kind of agent** (e.g., real-estate, support, insurance, AI developer).
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-overview]]
+- [[chatgpt/chatgpt_hermes-agent-overview]]
+- [[chatgpt/chatgpt_vercel-agent-overview]]
+- [[chatgpt/chatgpt_agent-skills-entry]]
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]

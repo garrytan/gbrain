@@ -187,3 +187,11 @@ If you want to argue it like a lawyer in a writers’ room, your best “exhibit
 3) The “open/close eye” + awakening motif mirroring Abre los ojos’s literal title/theme. citeturn1search22turn0news39  
 
 That’s as far as the evidence goes without inventing things.
+
+
+## See Also
+- [[chatgpt/chatgpt_almost-exclusive-lost-to-amateurs]]
+- [[chatgpt/chatgpt_lost-city-filming-locations]]
+- [[chatgpt/chatgpt_lost-ending-explanation]]
+- [[chatgpt/chatgpt_lost-id-uber-vegas]]
+- [[chatgpt/chatgpt_lost-the-plot]]

@@ -137,3 +137,11 @@ But that is email, not messages / iMessage.
 ---
 
 If you want, I can try to find the best *existing* app you can get *today* that mimics your writing style and works in iMessage + advice for setting it up. Do you want me to pull that together?
+
+
+## See Also
+- [[chatgpt/chatgpt_imessage-history-export]]
+- [[chatgpt/chatgpt_imessage-photo-compression]]
+- [[chatgpt/chatgpt_mute-imessage-reactions]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]

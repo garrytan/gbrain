@@ -341,3 +341,11 @@ To calculate the "LBM (Scale)" column in your Google Sheets based on the change 
    - Starting from Week 1 (let's say this is row 2), use the following formula in the "LBM (Scale)" column:
      ```excel
      =IF(E2 > E1, G1 + (E2 - E1) * 0.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-sheets-current-date-part1]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part2]]
+- [[chatgpt/chatgpt_airtable-vs-google-sheets]]
+- [[chatgpt/chatgpt_visit-google-pages-rpa-part2]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]

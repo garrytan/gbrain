@@ -263,3 +263,11 @@ Mr. White — yup. Here’s the **exact coverage** of what *their* public workfl
 | Optional config | Extra permissions + optional prompt/args | Shows `additional_permissions: actions: read` and commented examples for `prompt` / `claude_args` citeturn2view1 |
 
 If you want “coverage” in the sense of **exactly what `./scripts/lint` does** (eslint? biome? `tsc --noEmit`? etc.), paste that script (or link it) and I’ll break that out the same way.
+
+
+## See Also
+- [[chatgpt/chatgpt_airtag-battery-type]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_airpods-pro-3-options]]
+- [[chatgpt/chatgpt_airpods-replacement-options]]
+- [[chatgpt/chatgpt_apartment-hunt-options-la]]

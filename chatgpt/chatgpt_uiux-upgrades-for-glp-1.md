@@ -77,3 +77,11 @@ Avoid auto-save on tap; your current error suggests save is happening implicitly
 - Consider adding tiny brand icons for top meds to speed recognition.
 
 If you want, I can sketch a revised layout description (or a quick Figma-style spec) following those points.
+
+
+## See Also
+- [[chatgpt/chatgpt_improve-sidebar-uiux]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part1]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part2]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part3]]
+- [[chatgpt/chatgpt_uiux-hardening-guidelines]]

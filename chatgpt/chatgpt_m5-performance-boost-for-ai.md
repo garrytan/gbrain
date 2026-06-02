@@ -116,3 +116,11 @@ Got you, Mr. White. Here’s the *real-world* picture for your workflow (Next.js
 Because Windsurf/Cloud Code AI is **cloud-executed**, the upgrade mainly helps **local builds, indexing, installs, and simulator**—not AI inference itself. Moving from **M2 → M5** is **absolutely noticeable** in day-to-day dev (clean builds ~40% faster, dev loops ~30–50% snappier). **M5 base** is the sweet spot; **Pro/Max** only if you know your builds are core-count/memory-bound. citeturn0search0turn0search7turn1view0turn0search9turn0news42
 
 If you want, tell me your M2’s RAM/SSD and typical project sizes; I’ll map those to the closest XcodeBenchmark row and give you a more precise “seconds saved per build” projection.
+
+
+## See Also
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_cinematic-subway-performance-2]]

@@ -177,3 +177,11 @@ Do you mind if I point out the fact that people don't see a graph of how much we
 ## Assistant
 
 Notice the missing day-by-day chart—everyone just sees the hot after pic. Whether the flu or a crash diet rips off 25 lb in a week, you’ll still get likes—but that pace is metabolic self-sabotage, not a health flex.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_arguing-against-selective-wage-hikes]]
+- [[chatgpt/chatgpt_best-deal-comparison]]

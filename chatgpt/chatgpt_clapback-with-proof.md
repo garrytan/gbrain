@@ -320,3 +320,11 @@ Format it as a point by point rebuttal of the points in the screenshot
    • B.S. Music Industry (Drexel), licensing deals with UMG/Sony/Warner, meetings in Spotify’s NYC HQ & Universal’s Santa Monica tower, lawyer is ex-Head of Biz Affairs at EMI. Depth box: ticked.
 
 **TL;DR:** Spotify handed majors equity, promo & lower rev split; Tidal showed up late with no equity, smaller catalog, and lawsuits. Facts over vibes. 🫡
+
+
+## See Also
+- [[chatgpt/chatgpt_science-clapback-with-humor]]
+- [[chatgpt/chatgpt_clapback-on-monopoly-accusation]]
+- [[chatgpt/chatgpt_savvy-clapback-fact-check]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]

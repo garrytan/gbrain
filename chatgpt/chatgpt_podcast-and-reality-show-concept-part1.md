@@ -932,3 +932,11 @@ Mr. White, I’ll treat MUFFINTOP and “nobody touches the gum” as canon, the
 
 
 Start with small script units instead of full episodes, and keep the workflow repo-first in Markdown/Fountain. Avoid fine-tuning early; let approved/rejected drafts and performance data become the corpus.
+
+
+## See Also
+- [[chatgpt/chatgpt_podcast-and-reality-show-concept-part2]]
+- [[chatgpt/chatgpt_podcast-and-reality-show-concept-part3]]
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part1]]
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part2]]
+- [[chatgpt/chatgpt_cinematic-website-concept]]

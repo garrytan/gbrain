@@ -184,3 +184,11 @@ Tim White
 ---
 
 Mr. White — do you want me to also prepare a **CFPB complaint draft** you can file if they refuse to remove the $30 fee? That usually gets a very fast resolution.
+
+
+## See Also
+- [[chatgpt/chatgpt_boss-response-request]]
+- [[chatgpt/chatgpt_quick-response-request]]
+- [[chatgpt/chatgpt_response-creation-request]]
+- [[chatgpt/chatgpt_response-request]]
+- [[chatgpt/chatgpt_abs-analogy-response]]

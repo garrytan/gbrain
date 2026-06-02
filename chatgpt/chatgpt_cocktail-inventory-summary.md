@@ -208,3 +208,11 @@ Roger that, Mr. White. I’ll treat a “full batch” as **18 L**.
 **Net gap remaining (all cocktails, with buffer): ~21.4 L**, concentrated in Laughing Dust, Beetlejuice, Black Magic, and Old Hollywood.
 
 Want me to set a reminder to prep **Beetlejuice** and **Old Hollywood** tomorrow, and draft a quick make-list to close the remaining gaps?
+
+
+## See Also
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]
+- [[chatgpt/chatgpt_drink-inventory-summary]]

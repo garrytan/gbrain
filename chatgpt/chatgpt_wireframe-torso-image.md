@@ -66,3 +66,11 @@ Now give me an identical image for 40%bf
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_wireframe-human-torso]]
+- [[chatgpt/chatgpt_generate-torso-image]]
+- [[chatgpt/chatgpt_avatar-wireframe-rendering-request]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part1]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part10]]

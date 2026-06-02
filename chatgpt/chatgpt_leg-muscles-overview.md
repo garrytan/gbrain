@@ -59,3 +59,11 @@ Where is the quad
 ## Assistant
 
 The quadriceps are located at the front of the thigh. They consist of four muscles: the rectus femoris, vastus lateralis, vastus medialis, and vastus intermedius. These muscles are primarily responsible for extending the knee.
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

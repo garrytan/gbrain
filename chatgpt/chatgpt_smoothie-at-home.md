@@ -65,3 +65,11 @@ Here are **easy, high-impact at-home smoothie ideas** you can make quickly, Mr. 
 - For consistency: more liquid = thinner; more ice/frozen fruit = thicker.
 
 Want macros or specific goals (e.g., muscle gain, fat loss)?
+
+
+## See Also
+- [[chatgpt/chatgpt_home-depot-aisle-guide]]
+- [[chatgpt/chatgpt_home-maintenance-issues]]
+- [[chatgpt/chatgpt_hypertrophy-home-workouts]]
+- [[chatgpt/chatgpt_upgrade-google-home-assistant]]
+- [[chatgpt/chatgpt_work-from-home-job-options]]

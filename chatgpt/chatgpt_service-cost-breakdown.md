@@ -204,3 +204,11 @@ A few things I’d check in your service records:
   Buy it on Amazon, swap it yourself in a few minutes, save a chunk of money.
 
 If you want, Mr. White, you can paste in a photo or PDF of your service records and I can tell you exactly what’s still missing and how I’d prioritize it.
+
+
+## See Also
+- [[chatgpt/chatgpt_cost-breakdown-request]]
+- [[chatgpt/chatgpt_laundry-service-cost-text]]
+- [[chatgpt/chatgpt_patent-cost-breakdown]]
+- [[chatgpt/chatgpt_activate-t-mobile-service]]
+- [[chatgpt/chatgpt_age-range-breakdown]]

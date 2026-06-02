@@ -155,3 +155,11 @@ Mr. White, you’ve got the core coverage. The profiles I’d add to make routin
 - **data / analytics** – defines metrics, pulls data, and produces dashboards/insights (via whatever BI stack you use).
 - **support / customer ops** – triages support tickets, drafts responses, and tracks follow-ups.
 - **devops / reliability** – operational tasks, monitoring follow-ups, and runbook-driven fixes.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_create-vue-settings-menu]]
+- [[chatgpt/chatgpt_drill-settings-guide-2]]
+- [[chatgpt/chatgpt_drill-settings-guide]]
+- [[chatgpt/chatgpt_dryer-settings-for-towels]]

@@ -95,3 +95,11 @@ Based on your guidelines, here's a concise plan for your mini-cut, bulk, and cut
 Please note that the BF% Dexa and BF% Scale are approximations based on the discrepancy ratio from your historical data. The FFMI is not calculated here as it requires a more complex calculation, but it can be added in the document creation process.
 
 Would you like me to create a prompt for the doc creation plugin to make this spreadsheet?
+
+
+## See Also
+- [[chatgpt/chatgpt_bulk-and-cut-plan]]
+- [[chatgpt/chatgpt_cut-bulk-cut-plan-w-predictions]]
+- [[chatgpt/chatgpt_plan-diet-phases-cut-bulk]]
+- [[chatgpt/chatgpt_plan-minicut-bulk-cut]]
+- [[chatgpt/chatgpt_ipad-mini-4-listing]]

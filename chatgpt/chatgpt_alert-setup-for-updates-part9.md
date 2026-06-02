@@ -572,3 +572,11 @@ Here’s the latest from the **Windsurf changelog / public sources** on **new mo
 No **additional newer model releases** appear in the changelog or public sources beyond *SWE‑1.5* at this automation turn. citeturn0search5
 
 Notification complete.
+
+
+## See Also
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part2]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part3]]

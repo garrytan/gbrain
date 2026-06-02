@@ -124,3 +124,11 @@ If you want to be sure, you can call your oncologist’s office and ask:
 > “Did Dr. [Oncologist’s name] want me to follow up with my primary care doctor for a referral to GI or to get imaging approved?”
 
 Let me know if you want a script or exact language for that call.
+
+
+## See Also
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_bike-information]]
+- [[chatgpt/chatgpt_chris-rosa-information]]
+- [[chatgpt/chatgpt_contact-information-formatting]]
+- [[chatgpt/chatgpt_cosmic-gate-information]]

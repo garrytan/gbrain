@@ -170,3 +170,11 @@ I see a live `redirect_uri_mismatch` from Google this morning. That confirms **G
 Say the word:
 - **“Guide me live”** → we do Option A  
 - **“Write the runbook”** → I produce Option B immediately
+
+
+## See Also
+- [[chatgpt/chatgpt_add-google-oauth]]
+- [[chatgpt/chatgpt_create-oauth-credentials]]
+- [[chatgpt/chatgpt_fix-apple-oauth]]
+- [[chatgpt/chatgpt_google-oauth-issue]]
+- [[chatgpt/chatgpt_google-oauth-overview-2]]

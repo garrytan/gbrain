@@ -137,3 +137,11 @@ Return: concise ticker list with **thesis one‑liner, links/screens, est. senti
 ## Assistant
 
 This automation has been paused due to too many unread executions. You can resume it in automations settings or by asking ChatGPT.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

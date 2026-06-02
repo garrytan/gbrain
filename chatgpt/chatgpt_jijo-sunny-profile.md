@@ -34,3 +34,11 @@ jijo sunny
 - His presence on social media (e.g., X/Twitter and Instagram) highlights his ongoing product building for the creator economy. citeturn0search4turn0search5
 
 In short, Jijo Sunny is a software entrepreneur focused on tools that help creators monetize and manage their work. citeturn0search2
+
+
+## See Also
+- [[chatgpt/chatgpt_amaz-twitch-gamer-profile]]
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]

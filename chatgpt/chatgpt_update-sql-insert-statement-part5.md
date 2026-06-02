@@ -703,3 +703,11 @@ With this logging in place, run the script again and check the logs to see the p
 
 
 **Topic:** [[chatgpt-clusters/coding_devops]]
+
+
+## See Also
+- [[chatgpt/chatgpt_update-sql-insert-statement-part1]]
+- [[chatgpt/chatgpt_update-sql-insert-statement-part2]]
+- [[chatgpt/chatgpt_update-sql-insert-statement-part3]]
+- [[chatgpt/chatgpt_update-sql-insert-statement-part4]]
+- [[chatgpt/chatgpt_update-sql-insert-statement-part6]]

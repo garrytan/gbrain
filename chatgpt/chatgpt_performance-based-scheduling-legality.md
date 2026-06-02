@@ -137,3 +137,11 @@ For your 20–40-employee Los Angeles restaurant:
 ---
 
 Would you like me to draft a short **written scheduling policy** you could include in your employee handbook that’s compliant with California law?
+
+
+## See Also
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_cinematic-subway-performance-2]]

@@ -33,3 +33,11 @@ doppler.comp
 - Focuses on reducing risk and human error in secret handling while providing audit and compliance features. citeturn0search0
 
 If your intent was something else related to “Doppler” (e.g., Doppler ultrasound or physics concept), let me know which one.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-comp-changes-summary]]
+- [[chatgpt/chatgpt_comp-and-discount-system]]
+- [[chatgpt/chatgpt_comp-hours-and-pay]]
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_update-body-comp-spreadsheet]]

@@ -97,3 +97,11 @@ passwd = "your-16-character-app-password"
 A passkey will not work for Himalaya.
 
 One caveat: newer versions of Himalaya also support OAuth for some providers. If your Hermes install specifically mentions Gmail OAuth, that's preferable. If the docs/config are asking for `login` and `password`, use an App Password.
+
+
+## See Also
+- [[chatgpt/chatgpt_gmail-app-password-setup]]
+- [[chatgpt/chatgpt_gmail-setup-with-himalaya]]
+- [[chatgpt/chatgpt_hermes-orchestrator-model-setup]]
+- [[chatgpt/chatgpt_hermes-voice-interaction-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]

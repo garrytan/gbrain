@@ -53,3 +53,11 @@ Also say, um, your directions are pretty clear, so don't anticipate any issues, 
 ## Assistant
 
 Hey Ryan, thanks for the detailed directions! I’m just picking up some groceries at Vons and then I’ll be heading over shortly. Your directions are pretty clear so I don’t anticipate any issues, but I’ll let you know if anything comes up.
+
+
+## See Also
+- [[chatgpt/chatgpt_polite-response-suggestion]]
+- [[chatgpt/chatgpt_response-draft-summary]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]

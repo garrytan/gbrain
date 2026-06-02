@@ -212,3 +212,11 @@ Your strongest statistically accurate claim:
 > **In dense city environments, e-scooters have very high injury rates — roughly motorcycle-like per trip in the best LA data — while being used with far less protective gear, training, licensing seriousness, or cultural caution. They are less fatal than motorcycles overall, but much more dangerous than people intuitively treat them.**
 
 That is the point. The danger is not just the scooter. It is **tiny wheels + bad pavement + standing posture + no helmet + casual users + weak enforcement + dense streets.**
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]

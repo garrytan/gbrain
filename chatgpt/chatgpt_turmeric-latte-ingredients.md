@@ -32,3 +32,11 @@ Mr. White, **a traditional turmeric latte does *not* have an espresso shot.** It
 - **Turmeric latte with a shot**
 
 So: **standard = no espresso**, but cafés sometimes add one on request.
+
+
+## See Also
+- [[chatgpt/chatgpt_friends-actors-dessert-ingredients]]
+- [[chatgpt/chatgpt_hot-ingredients-in-blender]]
+- [[chatgpt/chatgpt_manhattan-cocktail-ingredients]]
+- [[chatgpt/chatgpt_moscow-mule-ingredients]]
+- [[chatgpt/chatgpt_natural-ingredients-only]]

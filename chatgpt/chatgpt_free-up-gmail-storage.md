@@ -72,3 +72,11 @@ Then empty Trash.
 - Read/unread status ❌
 
 If you want, I can give you a **10-minute surgical cleanup checklist** or identify **exact search queries** tailored to your inbox patterns.
+
+
+## See Also
+- [[chatgpt/chatgpt_manage-gmail-storage]]
+- [[chatgpt/chatgpt_clean-40gb-gmail]]
+- [[chatgpt/chatgpt_clean-gmail-guide]]
+- [[chatgpt/chatgpt_clear-gmail-username-options]]
+- [[chatgpt/chatgpt_gmail-app-password-setup]]

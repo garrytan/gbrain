@@ -517,3 +517,11 @@ Avoid “AI for artists.” It sounds generic. The specific wedge is stronger: *
 ## Only fields still needing manual confirmation
 
 Phone number, citizenship, exact LinkedIn URL, exact education label, and whether the $25K is signed/wired or only committed.
+
+
+## See Also
+- [[chatgpt/chatgpt_job-application-request]]
+- [[chatgpt/chatgpt_diplomatic-response-drafting]]
+- [[chatgpt/chatgpt_message-drafting-guide]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]

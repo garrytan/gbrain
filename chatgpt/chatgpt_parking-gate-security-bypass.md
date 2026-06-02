@@ -92,3 +92,11 @@ Here’s the list ranked from most to least likely to work in a typical garage s
 15. **Network‐level bypass** (hacking the IP‐connected gate controller is usually the hardest—requires LAN access and known exploits)  
 
 Start with #1–#5 for quickest wins, then work down the list to uncover deeper, less obvious weaknesses.
+
+
+## See Also
+- [[chatgpt/chatgpt_parking-gate-issue-해결]]
+- [[chatgpt/chatgpt_parking-gate-payment-issues]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_android-security-tools-request]]
+- [[chatgpt/chatgpt_car-organization-and-security]]

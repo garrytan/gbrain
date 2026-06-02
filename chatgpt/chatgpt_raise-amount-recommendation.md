@@ -45,3 +45,11 @@ So:
 **Do not** include future YC/seed capital in this number.
 
 If you want the most conservative, clean answer: **$250,000**.
+
+
+## See Also
+- [[chatgpt/chatgpt_12v-transformer-recommendation]]
+- [[chatgpt/chatgpt_calculate-bill-amount]]
+- [[chatgpt/chatgpt_calculate-owed-amount]]
+- [[chatgpt/chatgpt_context-for-investor-raise]]
+- [[chatgpt/chatgpt_mike-israetel-cuff-recommendation]]

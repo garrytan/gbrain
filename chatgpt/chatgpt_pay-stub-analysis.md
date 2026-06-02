@@ -51,3 +51,11 @@ Mr. White,
 - **Avg annual pay:** \$76,458.46  
 
 *(Based on eight weekly net pays from your uploaded stubs.)* citeturn0file0
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-decision-analysis]]
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]

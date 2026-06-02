@@ -122,3 +122,11 @@ Best practice for deleting branches after merge? Anyways o enforece?
 | **Local workflow** | Alias: `git config --global alias.prune-merged '!git branch --merged | egrep -v \"(^\\*|main|develop)\" | xargs git branch -d'` | Encourages devs to keep local clones tidy. |
 
 **Bottom line:** Flip the “auto-delete head branches” toggle in GitHub (or equivalent in GitLab/Bitbucket), protect `main`, and your branches will vanish as soon as the PR turns green—no one has to remember a thing.
+
+
+## See Also
+- [[chatgpt/chatgpt_cloudflare-reduces-cloud-costs]]
+- [[chatgpt/chatgpt_ded-body-removal-costs]]
+- [[chatgpt/chatgpt_ev-ownership-costs-comparison]]
+- [[chatgpt/chatgpt_expensive-chipotle-meal-costs]]
+- [[chatgpt/chatgpt_julia-garner-costs-coaching]]

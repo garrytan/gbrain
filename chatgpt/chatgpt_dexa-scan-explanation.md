@@ -74,3 +74,11 @@ Since you’re male and tall (6’4″) and located in Los Angeles:
 - If the scan shows low bone density, you should speak with a bone health specialist (endocrinologist or a sports-medicine physician) about possible interventions.
 
 If you like, I can check **costs**, **local imaging centers in Los Angeles that offer DEXA scans**, and **insurance coverage** for you. Would you like that?
+
+
+## See Also
+- [[chatgpt/chatgpt_dexa-scan-affected-by-water-weight]]
+- [[chatgpt/chatgpt_dexa-scan-analysis]]
+- [[chatgpt/chatgpt_dexa-scan-and-water-weight]]
+- [[chatgpt/chatgpt_dexa-scan-budget-update]]
+- [[chatgpt/chatgpt_dexa-scan-results-analysis]]

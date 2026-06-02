@@ -240,3 +240,11 @@ If you tell me the **main job** of this screen (quick daily check, logging, or d
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_design-improvement-suggestions-3]]
+- [[chatgpt/chatgpt_design-improvement-suggestions]]
+- [[chatgpt/chatgpt_ci-improvement-suggestions]]
+- [[chatgpt/chatgpt_deck-improvement-suggestions]]
+- [[chatgpt/chatgpt_design-cleanup-suggestions]]

@@ -108,3 +108,11 @@ I’ll get back to you with the most relevant takeaways.
 - **Renaissance Periodization Blog –** *Semaglutide (Wegovy) for Weight Loss* (recommendation to do resistance training + high protein to minimize muscle loss on GLP-1)【34†L169-L177】  
 - Recall summary of Dr. Mike on Modern Wisdom Podcast (GLP-1 drugs free up willpower and aren’t “cheating”)【58†L1-L4】  
 - Dr. Muscle article – *Caloric Deficit for Cutting* (2-3 strength sessions/week sufficient to retain muscle in deficit)【37†L247-L253】
+
+
+## See Also
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_ai-migration-naming-advice]]
+- [[chatgpt/chatgpt_airport-gun-disposal-advice]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]
+- [[chatgpt/chatgpt_apartment-hunt-advice]]

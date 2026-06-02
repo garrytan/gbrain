@@ -34,3 +34,11 @@ alessandra ambssoia
 Beyond modeling, Ambrosio launched fashion lines like Ále by Alessandra and the swimwear brand GAL Floripa. She is an ambassador for the National Multiple Sclerosis Society and supports various charitable initiatives.
 
 She has two children with former fiancé Jamie Mazur and has been in a relationship with model Richard Lee since 2021. citeturn0news21 
+
+
+## See Also
+- [[chatgpt/chatgpt_chuck-feeney-biography]]
+- [[chatgpt/chatgpt_kirk-baxter-biography]]
+- [[chatgpt/chatgpt_sam-kolder-biography]]
+- [[chatgpt/chatgpt_alessandra-ambrosios-age-42]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

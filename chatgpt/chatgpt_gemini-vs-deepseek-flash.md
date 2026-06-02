@@ -418,3 +418,11 @@ For Jovie, that means:
 - cached memory/context aggressively
 
 That matters more than picking the “best” single model.
+
+
+## See Also
+- [[chatgpt/chatgpt_deepseek-flash-v4]]
+- [[chatgpt/chatgpt_owl-alpha-vs-deepseek-flash]]
+- [[chatgpt/chatgpt_composer-25-vs-deepseek-v4-pro]]
+- [[chatgpt/chatgpt_cursor-vs-deepseek-comparison]]
+- [[chatgpt/chatgpt_deepseek-ai-models]]

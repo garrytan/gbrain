@@ -43,3 +43,11 @@ If you are using a different code editor that does not support the "cmd shift o"
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-and-open-source]]
+- [[chatgpt/chatgpt_claude-file-updates]]
+- [[chatgpt/chatgpt_company-ethos-md-file]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part1]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part2]]

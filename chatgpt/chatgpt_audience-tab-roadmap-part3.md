@@ -431,3 +431,11 @@ Here’s a single, paste-ready prompt for your AI agent to **open Linear issues*
 ---
 
 If you want, I can also give you a “mini-schema + event catalog” snippet for #6 and #4 to drop straight into the tickets.
+
+
+## See Also
+- [[chatgpt/chatgpt_audience-tab-roadmap-part1]]
+- [[chatgpt/chatgpt_audience-tab-roadmap-part2]]
+- [[chatgpt/chatgpt_ai-music-for-audience-building]]
+- [[chatgpt/chatgpt_audience-and-releases-ux]]
+- [[chatgpt/chatgpt_automated-audience-building]]

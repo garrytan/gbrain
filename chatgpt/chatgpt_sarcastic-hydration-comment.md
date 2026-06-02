@@ -51,3 +51,11 @@ Specifically target their claim of Sampras and effective hydration
 ## Assistant
 
 “Oh perfect—because my old water bottle was just *chaos and inefficiency*. Finally, hydration can be as seamless and effective as… drinking water?”
+
+
+## See Also
+- [[chatgpt/chatgpt_arguing-to-convince-comment]]
+- [[chatgpt/chatgpt_comment-critique-request]]
+- [[chatgpt/chatgpt_comment-improvement-with-snark]]
+- [[chatgpt/chatgpt_comment-request-explanation]]
+- [[chatgpt/chatgpt_comment-roast-response]]

@@ -112,3 +112,11 @@ Note that you will need to include the `placeholder-opacity` utility in your sty
 ``` 
 
 This sets the opacity of the placeholder text to 100%, making it visible.
+
+
+## See Also
+- [[chatgpt/chatgpt_update-first-name-width]]
+- [[chatgpt/chatgpt_html-input-field]]
+- [[chatgpt/chatgpt_input-field-html-code]]
+- [[chatgpt/chatgpt_input-field-properties]]
+- [[chatgpt/chatgpt_onboarding-name-input-design-part1]]

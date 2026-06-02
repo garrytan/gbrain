@@ -42,3 +42,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Got it. The DoNotPay AI chatbot is more of a guided assistant that helps you navigate their automated processes and services. It doesn't really take independent action beyond what the app already offers, like generating letters or disputing fees. It's mainly a more user-friendly interface to guide you through their existing tools. If you already have the DoNotPay"}
 {'asset_pointer': 'sediment://file_00000000f9dc6230a5f6e70572f05707', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-11-13T16:45:53.987887+00:00', 'format': 'wav', 'metadata': {'end': 21.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1032078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

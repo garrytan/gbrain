@@ -74,3 +74,11 @@ Also replace the rough earlier answers with these cleaner versions:
 > I’ve spent 15 years manually building the workflows Jovie is now automating. That work helped drive 90M+ streams, and it gave me a direct understanding of where artist growth breaks: content, links, ads, fan data, monetization, and strategy all live in separate workflows.
 >
 > Jovie is built from that operator knowledge. The thesis is simple: artists need an AI manager that can understand their catalog, choose the next highest-value move, execute it, and keep improving against revenue.
+
+
+## See Also
+- [[chatgpt/chatgpt_user-request-clarification]]
+- [[chatgpt/chatgpt_user-request-for-task]]
+- [[chatgpt/chatgpt_request-for-help]]
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]

@@ -293,3 +293,11 @@ Alright, Mr. White — here’s the timeline lined up side by side:
 👉 So yes — while they never confirmed it on record, the *Victorious* “Mr. Busey” character looks like a deliberate nod to **Gary Busey’s real-life reputation** for eccentric, “crazy” behavior after his accident.  
 
 Want me to pull **direct lines from the show** where students describe Mr. Busey, so you can see how close it feels to the Gary Busey caricature?
+
+
+## See Also
+- [[chatgpt/chatgpt_victoria-justice-career]]
+- [[chatgpt/chatgpt_cinematic-victoria-secret-ad]]
+- [[chatgpt/chatgpt_duffer-brothers-parents]]
+- [[chatgpt/chatgpt_margaret-qualleys-parents]]
+- [[chatgpt/chatgpt_justice-system-concerns]]

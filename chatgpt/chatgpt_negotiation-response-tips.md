@@ -33,3 +33,11 @@ You can reply:
 If you want to be a bit firmer:
 
 > It seems like you’re trying to stay within a budget. $80 is already my best price on this one—**is $80 a bad number for you?**
+
+
+## See Also
+- [[chatgpt/chatgpt_negotiation-tactics-response]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-5]]

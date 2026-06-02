@@ -34,3 +34,11 @@ By using `Vapor.withBaseAssetUrl()`, you are setting the base URL for assets, wh
 To utilize this code, you would typically have a `resources/js/app.js` file in your project. Inside this file, you can use the `Vapor.withBaseAssetUrl()` function to set the base URL for assets. The `import.meta.env.VITE_VAPOR_ASSET_URL` is passed as an argument to this function, indicating the desired base URL.
 
 Make sure that the value of `VITE_VAPOR_ASSET_URL` is properly defined and points to the correct URL where your assets are hosted. This allows your application to load the assets correctly when referencing them in your code.
+
+
+## See Also
+- [[chatgpt/chatgpt_fan-base-growth-pitch]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

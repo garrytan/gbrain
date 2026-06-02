@@ -53,3 +53,11 @@ Zero-calorie alcohol options do not exist, as all alcoholic beverages contain ca
 4. Dry wine (red or white) in moderation
 
 Keep in mind that even these lower-calorie options contain calories and should be consumed in moderation.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-making-drinks-images]]
+- [[chatgpt/chatgpt_cliché-american-drinks]]
+- [[chatgpt/chatgpt_shopping-list-for-drinks]]
+- [[chatgpt/chatgpt_best-ai-for-landing-pages]]
+- [[chatgpt/chatgpt_best-ai-tools-for-collaboration]]

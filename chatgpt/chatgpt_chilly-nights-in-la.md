@@ -26,3 +26,11 @@ Why does L.A. get so cold at night?
 ## Assistant
 
 Los Angeles gets cold at night due to its coastal location and the influence of the Pacific Ocean. The ocean's cool temperatures, combined with the lack of a heat-retaining cloud cover, allow heat to escape from the land more rapidly after sunset. Additionally, the dry air and clear skies common in the region enhance this cooling effect.
+
+
+## See Also
+- [[chatgpt/chatgpt_luxurious-la-summer-nights]]
+- [[chatgpt/chatgpt_nights-electrifying-urban-adventure]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

@@ -90,3 +90,11 @@ GPT-5.5               $1,100   ████████████████�
 | **Kimi role** | Good mid-tier alternative; K2.5 is attractive, K2.6 costs more |
 
 **My recommendation:** run day-to-day agent loops on **DeepSeek V4 Pro/Flash or Cursor Composer 2.5**, then escalate only hard planning, architecture, reviews, and stuck debugging to **GPT-5.5 Codex**. GPT-5.5 as the default executor is economically bad unless the subscription limits cover nearly all of your workload.
+
+
+## See Also
+- [[chatgpt/chatgpt_cost-comparison-models]]
+- [[chatgpt/chatgpt_gpt-4-models-comparison]]
+- [[chatgpt/chatgpt_versa-grips-models-comparison]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part1]]

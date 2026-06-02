@@ -16,6 +16,14 @@ updated: 2026-03-06
 
 # Figma MCP Homepage Design
 
+
+
+## See Also
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part2]]
+- [[chatgpt/chatgpt_figma-mcp-homepage-design-part3]]
+- [[chatgpt/chatgpt_frameio-homepage-for-jovie-part1]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part1]]
+- [[chatgpt/chatgpt_ingest-claim-system-design-part1]]
 **Related:** [[design_ux]]
 
 > Conversation ID: 69ab3120-0934-8329-9220-60da7e94d279

@@ -36,3 +36,11 @@ bugbot
 - **Focus:** Bugbot is meant to augment human review, catching things that linters or manual review might miss, especially in fast-paced, AI-assisted development environments. citeturn0search14
 
 There are other tools named “BugBot” in different contexts (e.g., test automation tools in quality assurance outside Cursor), but the most commonly referenced one in current tech is the AI code reviewer by Cursor. citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

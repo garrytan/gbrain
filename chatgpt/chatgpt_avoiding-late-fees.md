@@ -59,3 +59,11 @@ Under Los Angeles Parking Violations Bureau rules, a parking citation must be **
 > “The cited parking citations were never served to me. They were removed from my vehicle before I had notice. I only became aware after penalties were assessed. I request removal of late fees and reinstatement of the original base fines due to improper service.”
 
 If you want, I can **tighten this into a one-paragraph submission** optimized for LA PVB reviewers, or guide you on **which option to click on the exact page you’re on**.
+
+
+## See Also
+- [[chatgpt/chatgpt_avoiding-alcohol-service-strategies]]
+- [[chatgpt/chatgpt_excuses-for-avoiding-alcohol]]
+- [[chatgpt/chatgpt_clarifying-spv-and-fees]]
+- [[chatgpt/chatgpt_court-fees-low-income]]
+- [[chatgpt/chatgpt_disputing-citation-late-fee]]

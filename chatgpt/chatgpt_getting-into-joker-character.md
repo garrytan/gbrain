@@ -414,3 +414,11 @@ Yes — watching & listening to real Joker clips is a strong tool to internalize
 ---
 
 If you like, I can build you a **YouTube playlist link** with 8–10 curated clips (Jared Leto’s Joker) that match your performance goals (flirtation, menace, obsession) and send you that. Would you like me to do that, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_joker-and-harley-quotes]]
+- [[chatgpt/chatgpt_joker-costume-advice]]
+- [[chatgpt/chatgpt_joker-halloween-show-script]]
+- [[chatgpt/chatgpt_ai-character-web-interaction]]
+- [[chatgpt/chatgpt_am-i-getting-fat-app]]

@@ -93,3 +93,11 @@ Some workflows build helper scripts or tools (bash functions or session managers
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-hooks-setup]]
+- [[chatgpt/chatgpt_claude-code-worktrees-git]]
+- [[chatgpt/chatgpt_claude-code-worktrees-overview]]
+- [[chatgpt/chatgpt_claude-code-worktrees]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]

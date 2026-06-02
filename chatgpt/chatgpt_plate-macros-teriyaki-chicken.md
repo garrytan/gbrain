@@ -38,3 +38,11 @@ For the entire plate:
 - **Total Carbohydrates:** 101 grams
 
 These values are estimates and can vary based on the specific serving size and preparation at the restaurant.
+
+
+## See Also
+- [[chatgpt/chatgpt_chicken-salad-macros-221cal-37gpro-43gfat-63gcarb]]
+- [[chatgpt/chatgpt_macros-with-chicken-and-additions]]
+- [[chatgpt/chatgpt_cantina-chicken-chalupas-info]]
+- [[chatgpt/chatgpt_chicken-meal-cheaper]]
+- [[chatgpt/chatgpt_soup-packet-for-chicken-rice]]

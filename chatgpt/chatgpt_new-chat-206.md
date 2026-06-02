@@ -120,3 +120,11 @@ export default {
 ```
 
 In this updated code, the computed property `showMenuButton` determines whether the `<MenuButton>` component should be displayed based on the conditions. The `menuButtonClasses` computed property calculates the classes dynamically, adding the `rounded-r-md` and `border` classes only when `showMenuButton` is `true`. The `handleMenuButtonClick` method is called when the `<MenuButton>` is clicked, allowing you to handle the event as needed.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

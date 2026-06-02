@@ -15,6 +15,14 @@ updated: 2026-04-23
 
 # CSS Nightlife Style
 
+
+
+## See Also
+- [[chatgpt/chatgpt_airbnb-review-ryan-style]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part3]]
 **Related:** [[coding_web_dev]]
 
 > Conversation ID: 69e99865-e104-83e8-a9fa-b064c55a050b

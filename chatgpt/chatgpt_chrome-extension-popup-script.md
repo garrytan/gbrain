@@ -280,3 +280,11 @@ chrome.runtime.sendMessage({message: 'getData'}, function(response) {
 ```
 
 In the updated code, the `data` object is created in the background script and stored in a variable. When the content script sends a message requesting the data, the background script sends the `data` object in response. The content script logs the response to the console, which should now show the values of the `data` object.
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_chrome-extension-interaction]]
+- [[chatgpt/chatgpt_chrome-extension-production-url]]
+- [[chatgpt/chatgpt_chrome-extension-upload-error]]
+- [[chatgpt/chatgpt_chrome-extension-webpack-config]]

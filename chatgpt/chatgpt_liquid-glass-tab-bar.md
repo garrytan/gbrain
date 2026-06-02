@@ -56,3 +56,11 @@ Build that with Xcode 26, run on iOS 26, and you get:
 - Automatic shrinking/expanding behavior on scroll/search etc., same as in Apple’s own apps.citeturn3search8turn6search7  
 
 If instead you meant the *small pill of options inside a view* (sometimes at the top, not at the very bottom of the screen), that’s a **segmented control**, which in SwiftUI is a `Picker` with `.pickerStyle(.segmented)`. But the “Summary / Sharing” strip in Health that collapses with search is the tab bar, i.e. `TabView`.
+
+
+## See Also
+- [[chatgpt/chatgpt_ios-26-liquid-glass-integration]]
+- [[chatgpt/chatgpt_linear-app-liquid-glass]]
+- [[chatgpt/chatgpt_liquid-glass-implementation]]
+- [[chatgpt/chatgpt_liquid-glass-slider-ui]]
+- [[chatgpt/chatgpt_liquid-glass-ux-improvements]]

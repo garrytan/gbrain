@@ -48,3 +48,11 @@ Now this post. Comment cleverly about how fans are glued to their phones so now 
 Mr. White:  
 
 “Bieber performing from his phone is poetic, honestly. Fans spent a decade watching concerts *through* their screens, so the universe just upgraded and put the screen onstage. We didn’t just ask for this, we *autoplayed* it.”
+
+
+## See Also
+- [[chatgpt/chatgpt_snarky-comment-on-grapheneos]]
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comment]]
+- [[chatgpt/chatgpt_arguing-to-convince-comment]]
+- [[chatgpt/chatgpt_comment-critique-request]]
+- [[chatgpt/chatgpt_comment-improvement-with-snark]]

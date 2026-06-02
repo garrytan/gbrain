@@ -388,3 +388,11 @@ I would do this:
 7. **Do not expose a public API until customers ask to pay for Jovie’s enriched artist intelligence.**
 
 The moat is not “we have a music metadata API.” The moat is “Jovie understands an artist across catalog, video, socials, press, merch, fans, context, and time.”
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-music-for-audience-building]]
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]

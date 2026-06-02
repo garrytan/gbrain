@@ -97,3 +97,11 @@ if (Array.isArray(listResponse.lists)) {
 ```
 
 These checks will prevent the `TypeError` from occurring if `listResponse` is `undefined` or `null`, or if it does not have a `lists` property that is an array.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

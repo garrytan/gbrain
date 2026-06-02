@@ -590,3 +590,11 @@ Start with this:
 ```
 
 Skip vector DBs, Honcho, Mem0, custom memory infra, and agent graphs for v1. Plain files beat them on cost, portability, debuggability, and control. Add fancier memory retrieval only when the markdown system starts failing.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-communication]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]

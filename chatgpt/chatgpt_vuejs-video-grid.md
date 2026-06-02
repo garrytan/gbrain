@@ -149,3 +149,11 @@ The component can be used with the props `items` and `layout`. The `items` prop 
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_video-grid-component-template]]
+- [[chatgpt/chatgpt_vuejs-component-for-grid]]
+- [[chatgpt/chatgpt_vuejs-component-grid]]
+- [[chatgpt/chatgpt_vuejs-data-grid-cell-2]]
+- [[chatgpt/chatgpt_vuejs-data-grid-cell-3]]

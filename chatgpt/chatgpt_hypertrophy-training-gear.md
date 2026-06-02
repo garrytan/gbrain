@@ -515,3 +515,11 @@ That’s how you turn a shrug into a spine stressor.
 - The most hypertrophy-efficient fix is **changing the implement**, not forcing the bar path
 
 If you want, I can tell you **exactly** whether barbell shrugs are even the best option for *front-view* trap aesthetics given your anatomy.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-training-request]]
+- [[chatgpt/chatgpt_cutting-training-frequency]]
+- [[chatgpt/chatgpt_fasted-vs-fed-training]]
+- [[chatgpt/chatgpt_leg-training-impact-summary]]
+- [[chatgpt/chatgpt_perturbation-in-training]]

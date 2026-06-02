@@ -50,3 +50,11 @@ chrome.contextMenus.create({
 In this example, the `handleRightClick` function is called whenever the user right-clicks on a link. It uses the `chrome.tabs.query` method to get the URL of the active tab, and then passes it to the `yourFunction` function as an argument.
 
 Note that this example assumes that your extension has been granted the `"tabs"` permission in its manifest file. You can learn more about using the `chrome.tabs` API and requesting permissions in the [Chrome Extension documentation](https://developer.chrome.com/extensions).
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

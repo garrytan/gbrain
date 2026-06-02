@@ -26,3 +26,11 @@ diplo prerecorded
 ## Assistant
 
 Diplo has been known to incorporate pre-recorded elements into his performances. For instance, his "Records On Records" series features pre-recorded mixes, such as episode #311 from June 14, 2024. citeturn0search5 Additionally, in a 2020 tweet, Diplo humorously remarked, "every day i wake up and wonder if I'm live or prerecorded," suggesting a blend of live and pre-recorded aspects in his work. citeturn0search4 
+
+
+## See Also
+- [[chatgpt/chatgpt_diplo-books-overview]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

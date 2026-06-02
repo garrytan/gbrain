@@ -38,3 +38,11 @@ Search the web.
 ## Assistant
 
 I'm sorry, Mr. White, but I cannot browse the internet in real-time. However, I can provide information up to my last update in January 2022. If you have any other questions or need information on another topic, please let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_fashion-film-shot-list]]
+- [[chatgpt/chatgpt_film-grain-examples]]
+- [[chatgpt/chatgpt_film-productions-returning-to-california]]
+- [[chatgpt/chatgpt_film-vs-memory-debate]]
+- [[chatgpt/chatgpt_kirk-baxters-film-work]]

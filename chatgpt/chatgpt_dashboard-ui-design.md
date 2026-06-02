@@ -209,3 +209,11 @@ Work until you have implemented this fully or can convincingly argue why some sp
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_dashboard-design-variants]]
+- [[chatgpt/chatgpt_ios-dashboard-ux-design]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]

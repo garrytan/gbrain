@@ -364,3 +364,11 @@ I’m checking the current Hermes, WSL2, and Ollama install flow for Windows 10 
 
 
 I have the exact Windows 10 path. The default is Hermes and Ollama in the same WSL2 Ubuntu distro to avoid networking headaches, with one fallback if the model-server connection test fails.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part1]]
+- [[chatgpt/chatgpt_gtm-operations-and-tools-part2]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part2]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part3]]

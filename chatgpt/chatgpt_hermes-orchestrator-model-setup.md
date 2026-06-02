@@ -126,3 +126,11 @@ The highest leverage optimization for you:
 - use reviewers separate from implementers
 
 Hermes becomes dramatically more effective when the orchestrator mostly reads summaries/diffs instead of full repo context every cycle.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-gmail-access-setup]]
+- [[chatgpt/chatgpt_hermes-voice-interaction-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]

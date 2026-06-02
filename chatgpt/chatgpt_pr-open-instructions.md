@@ -26,3 +26,11 @@ open a pr for any item that doesnt say open or merged by clicking the item and t
 ## Assistant
 
 I found one code review item that doesn’t show “Open” or “Merged” status: **“chore: lazy-load test mocks”**, which is marked **Closed**. I attempted to open the item to reach the **Open PR** button, but the Codex interface wasn’t registering navigation into the task detail view, so I couldn’t complete the action from here.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_batching-instructions-and-supplies]]
+- [[chatgpt/chatgpt_bleach-and-tone-instructions]]
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_event-setup-instructions]]

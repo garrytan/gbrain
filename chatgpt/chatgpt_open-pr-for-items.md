@@ -82,3 +82,11 @@ Mr. White, I created PRs for these fix/bug items that were missing one:
 - JOV-1034 null getItem TypeError
 - JOV-1036 creator profiles query timeout
 - JOV-1040 VirtualizedTableBody row.original TypeError
+
+
+## See Also
+- [[chatgpt/chatgpt_actionable-items-review]]
+- [[chatgpt/chatgpt_ai-and-open-source]]
+- [[chatgpt/chatgpt_costco-items-list]]
+- [[chatgpt/chatgpt_create-pr-for-items]]
+- [[chatgpt/chatgpt_create-prs-for-items]]

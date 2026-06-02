@@ -28,3 +28,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Goodbye.'}
 {'asset_pointer': 'sediment://file_0000000048fc71fd94facbc9cadd468f', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-05-17T20:57:50.384050+00:00', 'format': 'wav', 'metadata': {'end': 3.3, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 158478, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_greeting-exchange-2]]
+- [[chatgpt/chatgpt_greeting-exchange-3]]
+- [[chatgpt/chatgpt_greeting-exchange]]
+- [[chatgpt/chatgpt_greetings-exchange]]

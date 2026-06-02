@@ -1172,3 +1172,11 @@ const printLabels = () => {
 
 
 This is great only problem is the label sheet should have the 3 columns of labels justified between the full width and display a full 10 rows per sheet for 30 labels per page. There should be no left or right margin or top or bottom margin in th sprint view
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part2]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part3]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part5]]
+- [[chatgpt/chatgpt_automated-venue-scheduling-solution]]

@@ -105,3 +105,11 @@ TAG POS=1 TYPE=DIV ATTR=TXT:starfavorite && TXT:{{!VAR1}}
 ```
 
 This code will extract the text of the first "favorite" button and store it in the variable `!VAR1`. Then, it will click the button only if the extracted text is equal to "favorite". The `SET !ERRORIGNORE YES` line is used to ignore errors that may occur if a button with the text "favorited" is encountered.
+
+
+## See Also
+- [[chatgpt/chatgpt_budget-macro-friendly-meal-options]]
+- [[chatgpt/chatgpt_imacros-macro-command]]
+- [[chatgpt/chatgpt_mackenzies-macro-adjustments]]
+- [[chatgpt/chatgpt_macro-breakdown-panda-express]]
+- [[chatgpt/chatgpt_macro-breakdown-request]]

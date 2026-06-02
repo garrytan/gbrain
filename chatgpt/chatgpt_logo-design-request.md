@@ -31,3 +31,11 @@ turn this current logo for our app into a logo in the style of linear.app that l
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_dj-logo-design-request]]
+- [[chatgpt/chatgpt_banner-design-request]]
+- [[chatgpt/chatgpt_cool-logo-request]]
+- [[chatgpt/chatgpt_design-canvas-request]]
+- [[chatgpt/chatgpt_distressed-stamp-style-logo-request]]

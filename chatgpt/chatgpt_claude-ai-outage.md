@@ -55,3 +55,11 @@ Here’s the current status of **Anthropic’s Claude AI** as of the latest repo
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-prompt-for-claude]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_auto-claude-overview]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part1]]

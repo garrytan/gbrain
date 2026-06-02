@@ -165,3 +165,11 @@ Here’s a concise UX audit of your **Jovie Manage Links** screen based on the s
 ---
 
 Would you like me to turn this into a **mockup improvement plan** (step-by-step design changes with before/after flow), or just keep it as a high-level audit?
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

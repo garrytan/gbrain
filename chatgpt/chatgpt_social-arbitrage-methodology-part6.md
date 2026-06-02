@@ -587,3 +587,11 @@ Our thesis is now widely reported and offers no unique informational advantage. 
 ---
 
 navlistTier‑1 coverage confirming Tesla’s supervised “robotaxi” pilot and CPUC restrictions in Californiaturn0search0,turn0news20,turn0news17,turn0news23
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

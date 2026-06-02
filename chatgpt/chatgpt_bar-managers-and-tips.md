@@ -42,3 +42,11 @@ In California, it is generally legal for bar managers to share in the tip pool i
 So, if a bar manager has significant managerial duties and authority, it would likely be illegal for them to share in the tip pool. However, if their role is more of a working manager who performs the same duties as other tipped employees (e.g., bartending), they might be able to legally share in the tips, provided they do not have significant managerial control.
 
 Always consult with a legal professional or check with the California Department of Industrial Relations for specific cases, as the interpretation of these rules can vary.
+
+
+## See Also
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]
+- [[chatgpt/chatgpt_apple-level-design-tips]]

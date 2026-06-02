@@ -46,3 +46,11 @@ Understood. Here’s a revised version reflecting that:
 > Hey everyone — there’s now a credible threat of violence from Rita, so I need to file a police report. Please send me screenshots of any threatening messages you’ve received from her as soon as possible.  
 
 Would you like me to make it sound more urgent or keep it matter-of-fact like this?
+
+
+## See Also
+- [[chatgpt/chatgpt_compose-group-chat-message]]
+- [[chatgpt/chatgpt_compose-message-to-sara]]
+- [[chatgpt/chatgpt_compose-policy-refusal-message]]
+- [[chatgpt/chatgpt_compose-team-schedule-text]]
+- [[chatgpt/chatgpt_political-text-message-legality]]

@@ -26,3 +26,11 @@ is there a bot reavelbot alternative that is free. the only feature i need is to
 ## Assistant
 
 For a free alternative to Revelbot that offers automatic boosting of every new post from an Instagram account, you can explore automation platforms like IFTTT (If This Then That) or Zapier. Both services allow you to create applets or zaps, respectively, that can automate tasks across different apps and services. You might set up a zap or applet that monitors an Instagram account for new posts and then performs an action, such as sharing that post to other platforms or sending notifications. However, directly interacting with Instagram's API for actions like boosting posts might be limited due to Instagram's API restrictions. Always ensure that any automation adheres to Instagram's terms of service to avoid potential account issues.
+
+
+## See Also
+- [[chatgpt/chatgpt_free-instagram-grid-planners]]
+- [[chatgpt/chatgpt_caption-instagram-post]]
+- [[chatgpt/chatgpt_caffeine-free-drink-alternatives]]
+- [[chatgpt/chatgpt_dairy-free-high-protein-snacks]]
+- [[chatgpt/chatgpt_dairy-free-protein-meal-plan]]

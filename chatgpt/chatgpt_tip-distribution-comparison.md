@@ -480,3 +480,11 @@ In the calculations for the **Weighted 2-to-1 model**, I assumed that each barba
 - **Each Barback** receives 0.5 shares.
 
 So, **two barbacks combined** receive 1 share, which is equivalent to what one server would get for a single share. This assumption means the total tip pool is divided based on these shares, and the combined barback payout is equal to the share of one server.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_barback-tip-distribution]]
+- [[chatgpt/chatgpt_best-deal-comparison]]

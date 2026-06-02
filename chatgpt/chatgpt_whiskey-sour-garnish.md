@@ -115,3 +115,11 @@ These names refer to brands of alcoholic beverages, specifically different types
    - Appleton Estate is a Jamaican brand of rum that has been in operation since 1749, making it one of the oldest rum distilleries in the country. They offer a range of aged rums, each with a unique flavor profile influenced by the natural environment of Jamaica.
 
 These brands are widely recognized and respected in the spirits industry, each offering a distinct set of flavors and characteristics within their respective categories of bourbon, tequila, and rum.
+
+
+## See Also
+- [[chatgpt/chatgpt_bitters-soda-garnish-guide]]
+- [[chatgpt/chatgpt_cinnamon-stick-garnish-tips]]
+- [[chatgpt/chatgpt_drink-garnish-orange-cherry]]
+- [[chatgpt/chatgpt_orange-garnish-slicing-tips]]
+- [[chatgpt/chatgpt_tequila-pineapple-garnish-ideas]]

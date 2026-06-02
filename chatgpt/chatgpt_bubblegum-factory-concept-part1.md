@@ -678,3 +678,11 @@ give me the prompts to build the studio
 
 
 I’ll make this a reusable canon prompt pack optimized for consistency: lock the podcast room and Tim angle first, then derive reverse angles, social shots, and factory lore.
+
+
+## See Also
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part2]]
+- [[chatgpt/chatgpt_podcast-and-reality-show-concept-part1]]
+- [[chatgpt/chatgpt_bubblegum-factory-app-icon]]
+- [[chatgpt/chatgpt_bubblegum-factory-logo-2]]
+- [[chatgpt/chatgpt_bubblegum-factory-logo-3]]

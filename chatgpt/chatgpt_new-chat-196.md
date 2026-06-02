@@ -117,3 +117,11 @@ Here is a possible reordering of the code:
 In this version, I grouped similar styles together and moved the `columnWidth` conditional to the top, followed by the `freezeColumn` and `currentContact.id == creator.id` conditionals. The `cellActive` conditional is at the end. The `v-if` directive has also been moved to the end.
 
 This reordering makes it easier to see the various styles that are applied to the cell, and makes it easier to understand the logic of the template. Of course, feel free to make further modifications to suit the specific needs of your project.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

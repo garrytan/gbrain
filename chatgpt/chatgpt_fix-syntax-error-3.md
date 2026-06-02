@@ -138,3 +138,11 @@ In the template, the `v-for` directive is used to iterate over the `userLists` a
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_css-import-syntax-error]]
+- [[chatgpt/chatgpt_fix-syntax-error-2]]
+- [[chatgpt/chatgpt_fix-syntax-error]]
+- [[chatgpt/chatgpt_syntax-error-in-colordotvue]]
+- [[chatgpt/chatgpt_tailwind-css-syntax-error]]

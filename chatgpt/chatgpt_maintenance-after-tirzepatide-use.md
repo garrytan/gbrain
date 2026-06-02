@@ -102,3 +102,11 @@ You dropped from roughly 186 lb to 175 lb over the last 13 weeks (–5 lb total)
 - **Pace**: 0.3–0.5 lb/week is ideal for muscle retention—you nailed it.  
 - **Consistency**: Steady downward slope with minor fluctuations = good adherence.  
 - **Next steps**: If you’ve hit your target, begin a slow reverse-diet/maintenance. If you want more fat loss, keep your current deficit but watch for accelerated drops (avoid >1 lb/week long-term).
+
+
+## See Also
+- [[chatgpt/chatgpt_mini-cut-after-maintenance]]
+- [[chatgpt/chatgpt_tirzepatide-restart-after-break]]
+- [[chatgpt/chatgpt_after-inc-game-details]]
+- [[chatgpt/chatgpt_cache-clearing-after-update]]
+- [[chatgpt/chatgpt_daily-calorie-calculation-maintenance-vs-workout]]

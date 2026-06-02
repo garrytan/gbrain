@@ -35,3 +35,11 @@ nosonar
 - **Language support:** Most Sonar analyzers respect `//NOSONAR`, though support and behavior can vary by language and version.citeturn0search1
 
 In short, `NOSONAR` is a SonarQube directive to silence analysis warnings on a code line. It’s useful for suppressing false positives but should be used sparingly to avoid hiding real issues.citeturn0search3
+
+
+## See Also
+- [[chatgpt/chatgpt_sonarqube-ai-features]]
+- [[chatgpt/chatgpt_sonarqube-code-analysis]]
+- [[chatgpt/chatgpt_sonarqube-mcp-overview]]
+- [[chatgpt/chatgpt_sonarqube-overview-2]]
+- [[chatgpt/chatgpt_sonarqube-overview]]

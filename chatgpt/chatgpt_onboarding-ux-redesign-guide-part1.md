@@ -614,3 +614,11 @@ Give Claude instructions to make sure this is all set up correctly throughout th
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_onboarding-ux-redesign-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_onboarding-improvements-guide]]
+- [[chatgpt/chatgpt_landing-page-redesign-part1]]
+- [[chatgpt/chatgpt_onboarding-name-input-design-part1]]

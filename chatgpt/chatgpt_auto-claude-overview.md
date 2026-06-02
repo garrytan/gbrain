@@ -50,3 +50,11 @@ If you want specific examples of what an “Auto Claude” setup can do (e.g., a
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part1]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part2]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part3]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part4]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part5]]

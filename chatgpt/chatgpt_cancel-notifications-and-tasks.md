@@ -26,3 +26,11 @@ Kill all notifications and recurring tasks. Id like to start from scratch
 ## Assistant
 
 Got it, Mr. White. To confirm: cancel **all** active automations and one-off reminders—wipe everything so we can start clean? Yes/no.
+
+
+## See Also
+- [[chatgpt/chatgpt_cancel-auction-request]]
+- [[chatgpt/chatgpt_cancel-golds-membership]]
+- [[chatgpt/chatgpt_cloud-tasks-in-claude]]
+- [[chatgpt/chatgpt_github-pr-tasks-explained]]
+- [[chatgpt/chatgpt_kimi-26-productive-tasks]]

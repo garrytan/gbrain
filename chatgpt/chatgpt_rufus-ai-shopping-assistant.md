@@ -405,3 +405,11 @@ That directly aligns with your:
 
 The reason this ecosystem is getting traction:
 it feels like an “AI operating system,” not a chatbot. citeturn0search6turn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_advantages-of-google-shopping]]
+- [[chatgpt/chatgpt_amazon-shopping-list]]
+- [[chatgpt/chatgpt_saks-fifth-avenue-shopping]]
+- [[chatgpt/chatgpt_shopping-list-for-drinks]]
+- [[chatgpt/chatgpt_shopping-list-organization]]

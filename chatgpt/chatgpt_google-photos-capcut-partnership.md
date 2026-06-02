@@ -47,3 +47,11 @@ CapCut remains under ByteDance’s control. Google didn’t acquire it, and ther
 
 **Bottom line:**  
 You’re seeing **a strategic integration/partnership for workflow convenience**, not a Google acquisition of CapCut. If you don’t want to use CapCut, you can ignore that option — it’s just another export path.
+
+
+## See Also
+- [[chatgpt/chatgpt_delete-google-photos-all]]
+- [[chatgpt/chatgpt_dove-mencare-partnership-pitch]]
+- [[chatgpt/chatgpt_pros-cons-partnership-vs-marriage]]
+- [[chatgpt/chatgpt_add-google-oauth]]
+- [[chatgpt/chatgpt_advantages-of-google-shopping]]

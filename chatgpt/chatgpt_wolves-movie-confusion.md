@@ -73,3 +73,11 @@ I'll look into the final scene of *Wolfs* starring George Clooney and Brad Pitt,
 - **Climactic Cliffhanger:** As this sinks in, they spot armed hitmen quietly surrounding the diner to **finish the job** and take out the unsuspecting fixers【3†L149-L156】. The film ends on a tense note with Jack and Nick preparing to fight back and vowing to finally exchange each other’s real names if they survive the trap【10†L159-L164】.  
 
 **Sources:** Ending explainer articles and scene dialogue breakdowns【10†L107-L115】【8†L159-L164】 provide the above details.
+
+
+## See Also
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_elio-movie-details]]
+- [[chatgpt/chatgpt_famous-movie-hackers]]
+- [[chatgpt/chatgpt_her-hologram-love-movie]]

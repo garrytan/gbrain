@@ -68,3 +68,11 @@ Option 3 is great, but also mention that I don't have access to her specific pay
 Mr. White, here’s the tweaked Option 3:
 
 “Totally hear your frustration. The total looks smaller because it was two shifts this week—not Thu–Sun. On a per-night basis you’re around ~$250 (~$35/hr) even with the slow shows. I don’t have access to your specific pay figures—Vincent does the standard calculations and Sophie runs payroll—but based on what you’ve told me, those numbers track. What part isn’t matching what you’re seeing?”
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-response-draft]]
+- [[chatgpt/chatgpt_chris-voss-response-example]]
+- [[chatgpt/chatgpt_chris-voss-style-reply]]
+- [[chatgpt/chatgpt_chris-voss-style-request]]
+- [[chatgpt/chatgpt_chris-voss-counter-tips]]

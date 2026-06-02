@@ -65,3 +65,11 @@ with LBM ≈ 142.0 lb.
 - 8% BF ≈ **154 lb**
 
 If you want, I can turn this into a tiny calculator using your LBM so you can plug in any new weigh-in and get an updated % instantly.
+
+
+## See Also
+- [[chatgpt/chatgpt_compare-scale-and-dexa-data]]
+- [[chatgpt/chatgpt_analyze-and-compare-dexa]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part1]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part2]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part3]]

@@ -650,3 +650,11 @@ If you want me to prefill the `price_` IDs and wire this into your existing rout
 
 
 **Topic:** [[chatgpt-clusters/coding_devops]]
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-supabase-integration]]
+- [[chatgpt/chatgpt_builderio-supabase-integration]]
+- [[chatgpt/chatgpt_clerk-apple-integration-setup]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part1]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part2]]

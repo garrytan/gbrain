@@ -42,3 +42,11 @@ Here’s what can be inferred and what’s missing:
 
 **Summary:**  
 Expect your actual total to be roughly **$550–$580 after cleaning and service fees**, assuming no separate hot tub or pet charge. To see the precise fees, click “Show price breakdown” on the booking panel — that’s where Airbnb hides them.
+
+
+## See Also
+- [[chatgpt/chatgpt_accessing-airbnb-footage]]
+- [[chatgpt/chatgpt_airbnb-ai-usage]]
+- [[chatgpt/chatgpt_airbnb-booking-issues]]
+- [[chatgpt/chatgpt_airbnb-damage-claim-issues]]
+- [[chatgpt/chatgpt_airbnb-essentials-list]]

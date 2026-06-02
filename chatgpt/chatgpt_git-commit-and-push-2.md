@@ -317,3 +317,11 @@ If you are still getting the error even though you have deleted the file, it's p
 If you see the deleted file in the list of tracked files, you can remove it using the command `git rm <filename>` and commit the changes with `git commit -m "Removed <filename>"`. This should remove the file from your Git repository.
 
 If you're still having issues, you can try running `git gc` to clean up any unreferenced objects in your repository. This may help reduce the size of your repository and make it easier to push changes.
+
+
+## See Also
+- [[chatgpt/chatgpt_git-commit-and-push]]
+- [[chatgpt/chatgpt_drizzle-push-vs-migrate]]
+- [[chatgpt/chatgpt_force-commit-after-job]]
+- [[chatgpt/chatgpt_git-push-error-fix]]
+- [[chatgpt/chatgpt_grant-commit-permissions]]

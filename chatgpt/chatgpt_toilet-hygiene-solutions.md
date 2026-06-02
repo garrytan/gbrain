@@ -96,3 +96,11 @@ Lower water level before sitting. This gives more clearance and reduces splash r
 Install an **elongated, deeper-bowl toilet**. Round bowls have significantly less forward clearance. Elongated models add roughly 2 inches of length, which materially reduces this problem.
 
 If you want, I can give specific toilet design specs that maximize front clearance.
+
+
+## See Also
+- [[chatgpt/chatgpt_toilet-chain-fix-guide]]
+- [[chatgpt/chatgpt_toilet-cleaner-on-sink]]
+- [[chatgpt/chatgpt_toilet-handle-issue-fix]]
+- [[chatgpt/chatgpt_ac-air-direction-solutions]]
+- [[chatgpt/chatgpt_blocked-sink-try-solutions]]

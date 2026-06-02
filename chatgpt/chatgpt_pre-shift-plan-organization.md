@@ -197,3 +197,11 @@ Here’s your **Apple Notes–ready pre-shift checklist** with setup, server/PA,
 ---
 
 Would you like me to include a short **“Tonight’s Focus”** section (e.g., guest service goal or key reminder) at the top?
+
+
+## See Also
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-iphone-organization-help]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]

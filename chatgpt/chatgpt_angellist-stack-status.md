@@ -124,3 +124,11 @@ Since you’re in California and raising your first SAFE round, here’s how I�
 ---
 
 If you like, Mr. White, I can **pull together a table** comparing 4-5 of these platforms (PartyRound, Pulley, maybe others like Carta, Capdesk etc) with features, costs, pros/cons and how suitable they are for a first-round SAFE in California. Would you like that?
+
+
+## See Also
+- [[chatgpt/chatgpt_angellist-stack-overview-2]]
+- [[chatgpt/chatgpt_angellist-stack-overview]]
+- [[chatgpt/chatgpt_ai-video-generation-stack]]
+- [[chatgpt/chatgpt_case-status-update]]
+- [[chatgpt/chatgpt_chatgpt-tech-stack]]

@@ -96,3 +96,11 @@ The simplest framework is:
 My actual bet: for a broad software company, the winning setup is usually hybrid. Clean modern UX on top, concise product explanation first, then expandable depth below: proof, objections, FAQs, examples, pricing logic, customer results, maybe even founder-style narrative lower on the page. That gives scanners a fast path and lets persuadable users keep reading. It captures most of the upside of long copy without making the whole brand feel like an affiliate funnel. That recommendation lines up with both usability research and the “fit over length” view from modern CRO. citeturn216384search3turn216384search6turn140016search0turn140016search1
 
 If you want, I can turn this into a sharper framework for Jovie: what parts of the “John funnel” are worth stealing, what parts are brand poison, and how to test it without wrecking trust.
+
+
+## See Also
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part1]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part2]]
+- [[chatgpt/chatgpt_designing-landing-page-iteratively-part3]]

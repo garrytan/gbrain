@@ -44,3 +44,11 @@ Use this path from the Facebook page:
 Meta’s current Help Center routes deletion/deactivation through **Accounts Center** and lists this general flow for permanent deletion. citeturn333539search0turn333539search1
 
 Before deleting, download your data through **Accounts Center → Your information and permissions → Download your information**. citeturn259873search0 After requesting deletion, Meta says the account becomes permanently deleted after 30 days, and full deletion of stored content may take up to 90 days. citeturn539142search0
+
+
+## See Also
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_account-search-assistance]]
+- [[chatgpt/chatgpt_adobe-account-change-fix]]
+- [[chatgpt/chatgpt_amazon-account-phone-number-issue]]
+- [[chatgpt/chatgpt_apple-business-account-info]]

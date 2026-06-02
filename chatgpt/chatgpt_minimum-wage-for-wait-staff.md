@@ -50,3 +50,11 @@ Mr. White, ZIP 90048 is in the **City of Los Angeles**, so the local minimum wag
 - The state minimum wage (where local is lower) is $16.50/hour as of Jan 1, 2025. citeturn0search4turn0search14  
 
 So for wait staff in 90048, the minimum you must pay before tips is **$17.87/hr**.
+
+
+## See Also
+- [[chatgpt/chatgpt_hollywood-minimum-wage]]
+- [[chatgpt/chatgpt_los-angeles-minimum-wage]]
+- [[chatgpt/chatgpt_minimum-wage-in-90048]]
+- [[chatgpt/chatgpt_minimum-wage-industry-issues]]
+- [[chatgpt/chatgpt_minimum-wage-rates-la]]

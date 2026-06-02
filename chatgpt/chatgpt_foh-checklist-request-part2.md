@@ -358,3 +358,11 @@ Certainly, Mr. White. Here is the updated checklist with the addition of stanchi
    - Wipe down the screens of the Clover devices.
 
 This comprehensive checklist ensures that all areas, including the bar, NoMan's Land, and Main Performance Space, are set up correctly and efficiently, providing a seamless experience for customers and staff.
+
+
+## See Also
+- [[chatgpt/chatgpt_foh-checklist-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_fact-checking-video-request-part2]]
+- [[chatgpt/chatgpt_full-spec-request-part2]]
+- [[chatgpt/chatgpt_summarize-youtube-video-request-part2]]

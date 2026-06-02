@@ -511,3 +511,11 @@ If you want, I can next give you:
 Awesome, this product is targeted at DJs, so don't change the scenery, right? It's still in a recording studio, and it's still an actual recording console. Let's think DJs. Which, quite honestly, I'm a white male of Dutch heritage, so I'm usually wearing black T-shirts. You could put on a white T-shirt and a leather jacket, or a black tank top under a black leather jacket, or something like that. Maybe he's got a necklace or something, a silver necklace or something, a pendant necklace or something hanging around. It's kind of a flowy, tribal, European T-shirt or something under the leather jacket. Think like the way Ryan Tedder or David Guetta would dress. Honestly, kind of think like Ryan Tedder in the studio. That's kind of what we're going for with this.
 
 The studio can be like a nice studio, but it should be like a writer/DJ studio, not an actual recording studio, right? Think of a home studio in Malibu. Think of a home studio in Tony Stark's Malibu house at Point Dume overlooking the ocean, with four to seven glass windows and a desk with some Barefoot speakers or something. That's the brand Barefoot sandwiches we make at our Ghazi desk or something. The desk has an 1176 blue face in it or an LA 2a or something, and then a console that's maybe a ToneLux console, a 32-channel ToneLux console, or maybe it's like an Avid S1 or something. Whole thing should look relatively modern. 
+
+
+## See Also
+- [[chatgpt/chatgpt_funny-product-reply-ideas]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]

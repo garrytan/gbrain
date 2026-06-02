@@ -70,3 +70,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'is a triple-star system. So, yes, multi-star systems are real!'}
 {'asset_pointer': 'sediment://file_0000000017dc51f69a357618a856d717', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-04-07T21:46:25.154662+00:00', 'format': 'wav', 'metadata': {'end': 4.75, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 228078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

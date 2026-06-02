@@ -34,3 +34,11 @@ Total time = Number of emails × Average delay
 Total time = 50 × 7.5 minutes = 375 minutes
 
 So, it will take approximately 375 minutes, or 6 hours and 15 minutes, to send all 50 emails.
+
+
+## See Also
+- [[chatgpt/chatgpt_random-delay-between-pages]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part1]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part2]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part3]]
+- [[chatgpt/chatgpt_license-plate-delay-resolution]]

@@ -140,3 +140,11 @@ Got it, Mr. White. Here’s a clean **Total Wine backup order**—only for items
 - Prefer 1 L where possible; otherwise convert to 750 ml to match total volume.
 - Mixed-store pickup or split cases OK to hit quantities.
 - If any item is limited, fulfill the maximum and note remaining shortfall.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-supply-order-list]]
+- [[chatgpt/chatgpt_coffee-order-summary]]
+- [[chatgpt/chatgpt_dexter-shows-in-order]]
+- [[chatgpt/chatgpt_fall-order-email-draft]]
+- [[chatgpt/chatgpt_group-order-tip-payment]]

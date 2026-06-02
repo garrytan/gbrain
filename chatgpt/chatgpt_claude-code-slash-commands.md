@@ -94,3 +94,11 @@ If you like, Mr. White, I can **send you a template repository** (with some read
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_slash-commands-vs-agent-skills]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_claude-code-agent-teams-2]]
+- [[chatgpt/chatgpt_claude-code-agent-teams]]
+- [[chatgpt/chatgpt_claude-code-api-errors]]

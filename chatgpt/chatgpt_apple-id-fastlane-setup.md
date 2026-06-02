@@ -63,3 +63,11 @@ If by *“Apple ID fastlane”* you mean using your entity["software", "fa
 ---
 
 If you like, I can walk you through **step-by-step how to set this up** (locally or on CI) with fastlane and Apple ID, including example config and pitfalls. Would you like that?
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-dev-account-setup]]
+- [[chatgpt/chatgpt_audit-fastlane-setup]]
+- [[chatgpt/chatgpt_clerk-apple-integration-setup]]
+- [[chatgpt/chatgpt_fastlane-match-dev-setup]]
+- [[chatgpt/chatgpt_fastlane-match-setup-2]]

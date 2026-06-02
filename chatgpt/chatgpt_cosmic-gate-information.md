@@ -51,3 +51,11 @@ Official channels:
 - urlYouTubeturn0search7
 
 Given your background, they're especially relevant because a large part of the modern uplifting/progressive trance ecosystem around Armada, ASOT, and festival trance was shaped by Cosmic Gate's transition from hard trance into melodic vocal records. Tracks like *Exploration of Space*, *Fire Wire*, and later *Your Mind* are reference records for that evolution. citeturn0search1turn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_cosmic-gate-la-concert]]
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_bike-information]]
+- [[chatgpt/chatgpt_chris-rosa-information]]
+- [[chatgpt/chatgpt_contact-information-formatting]]

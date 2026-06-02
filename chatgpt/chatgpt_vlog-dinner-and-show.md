@@ -64,3 +64,11 @@ Write a script for a vlog in the voice of the youtuber tim white. the vlog will 
 [Tim turns the camera around to show off the Pantages Theatre one last time]
 
 "Well, that's it for today's vlog. I hope you enjoyed coming along with me for dinner and a show. Don't forget to like and subscribe if you want to see more videos like this. And as always, I'll see you in the next one."
+
+
+## See Also
+- [[chatgpt/chatgpt_christmas-dinner-restaurant-recommendations]]
+- [[chatgpt/chatgpt_payment-split-at-dinner]]
+- [[chatgpt/chatgpt_auto-highlight-next-show]]
+- [[chatgpt/chatgpt_bodybuilding-show-nutrition-tips]]
+- [[chatgpt/chatgpt_disguise-powers-u2s-show]]

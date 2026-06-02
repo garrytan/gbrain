@@ -648,3 +648,11 @@ If you need assistance with implementing or improving this code, please let me k
 
 
 show me how to setup a simple 3 page site with navigation using vue router. there should be a home page and about page and a contact page. the home page is the default. im interested to know how the app.vue file and the view files should look
+
+
+## See Also
+- [[chatgpt/chatgpt_social-media-links-template-part2]]
+- [[chatgpt/chatgpt_engage-on-social-media]]
+- [[chatgpt/chatgpt_no-social-buzz-spikes-detected-today-part1]]
+- [[chatgpt/chatgpt_remote-social-media-jobs]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]

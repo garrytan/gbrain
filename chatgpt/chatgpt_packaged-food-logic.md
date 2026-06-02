@@ -32,3 +32,11 @@ Mr. White: 20 g of protein is 20 g of protein—your macros don’t care if it�
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_early-check-out-logic]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_murderer-escape-logic]]
+- [[chatgpt/chatgpt_savage-logic-challenge]]

@@ -73,3 +73,11 @@ If you want examples of linear flows or a checklist for implementing this in you
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-redesign-explained]]
+- [[chatgpt/chatgpt_linear-ux-redesign-2]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_automation-in-linear]]

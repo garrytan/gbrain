@@ -84,3 +84,11 @@ Replace the active traction answer with:
 For the earlier traction/onboarding field, use:
 
 > Four artists signed up inbound through Jovie-branded Profile Links, with zero outreach. Each one exposed the same issue: onboarding asked for setup before showing the magic moment. I paused open signups and am rebuilding onboarding so the user first sees what Jovie can do for their release, then answers a lightweight interview that lets Jovie personalize the plan. The go-to-market engine is built; I’m holding acquisition until onboarding converts curiosity into activation.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_application-completion-assistance]]
+- [[chatgpt/chatgpt_application-drafting-request]]
+- [[chatgpt/chatgpt_application-revision-feedback]]
+- [[chatgpt/chatgpt_application-writing-assistance]]

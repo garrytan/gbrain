@@ -38,3 +38,11 @@ Ok now we need it to actually pull the user name and photo from clerk
 ## Assistant
 
 Mr. White, I've updated the Dashboard.vue file so that it now pulls the user's name and profile photo from Clerk rather than using Supabase.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-dark-mode]]
+- [[chatgpt/chatgpt_ai-prompt-for-dark-mode]]
+- [[chatgpt/chatgpt_dark-mode-linear-colors]]
+- [[chatgpt/chatgpt_mockup-request-dark-mode]]
+- [[chatgpt/chatgpt_pass-color-prop-based-on-dark-mode]]

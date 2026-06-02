@@ -63,3 +63,11 @@ I'll find video clips where Dr. Mike Israetel discusses the best exercises and t
 - **Wide Back + Lean Waist = V-Taper Illusion** – *Finally, Israetel reminds us that a dramatic V-taper comes not just from building the lats/upper back, but also from **shrinking the waist**. In simple terms, “losing weight and…doing back workouts to grow a wider back creates the V-taper & small waist”【47†L1-L8】. In other words, **get your back and shoulders broader while reducing excess fat** around your midsection. A tighter waistline will make your new upper-back gains stand out even more. (Mike often quips that getting lean is the “super simple” secret to looking like your waist is smaller.)* **(Clip: TikTok audio)**
 
 **Sources:** Dr. Mike Israetel – social media clips and interviews【5†L52-L60】【35†L15-L23】【39†L749-L757】【39†L799-L802】【36†L27-L31】【47†L1-L8】, as linked above. Each clip highlights evidence-based techniques (full ROM, proper exercise selection, and training focus) to maximize upper-back growth for that coveted V-taper.
+
+
+## See Also
+- [[chatgpt/chatgpt_dr-mike-israetel-bio]]
+- [[chatgpt/chatgpt_mike-israetel-content-search]]
+- [[chatgpt/chatgpt_mike-israetel-cuff-recommendation]]
+- [[chatgpt/chatgpt_mike-israetel-genius-explained]]
+- [[chatgpt/chatgpt_mike-israetel-maintenance-trazepatide]]

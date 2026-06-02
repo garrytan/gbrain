@@ -61,3 +61,11 @@ Bonus:
 - Experience with other front-end technologies such as React or Angular.
 
 This is a short-term gig with potential for full-time hire later. If you are a motivated and experienced Front-End Developer looking for a challenging opportunity to work on a cutting-edge SaaS platform, please apply with your resume and cover letter today.
+
+
+## See Also
+- [[chatgpt/chatgpt_calculate-needed-income]]
+- [[chatgpt/chatgpt_cash-flow-solutions-needed]]
+- [[chatgpt/chatgpt_ecomm-seo-writer-needed]]
+- [[chatgpt/chatgpt_film-title-clarification-needed]]
+- [[chatgpt/chatgpt_jacket-needed-evening-sunny]]

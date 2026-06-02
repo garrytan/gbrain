@@ -206,3 +206,11 @@ Perfect — I’ll give you both flavors so you can pick.
 - **“Glitter is my neutral.”**  
 
 Want me to tailor these even closer to Ariana’s *thank u, next* / *Positions* / *Eternal Sunshine* era vibes?
+
+
+## See Also
+- [[chatgpt/chatgpt_caption-ideas-for-gym]]
+- [[chatgpt/chatgpt_caption-instagram-post]]
+- [[chatgpt/chatgpt_ad-campaign-instagram-for-females]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]

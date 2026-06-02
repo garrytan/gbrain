@@ -35,3 +35,11 @@ Mr. White — Chuck Feeney (1931–2023) was an Irish-American businessman and p
 - **Dying Oct 9, 2023 (age 92)** in San Francisco. citeturn0search5turn0search8  
 
 If you tell me what you’re looking for (bio, lessons for founders, his philanthropy strategy, biggest donations), I’ll tailor it.
+
+
+## See Also
+- [[chatgpt/chatgpt_alessandra-ambrosio-biography]]
+- [[chatgpt/chatgpt_kirk-baxter-biography]]
+- [[chatgpt/chatgpt_sam-kolder-biography]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

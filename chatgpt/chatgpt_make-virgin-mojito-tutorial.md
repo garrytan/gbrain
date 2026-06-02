@@ -51,3 +51,11 @@ Ah, the Virgin Mojito! A classic mocktail that's as refreshing as a dip in a coo
 7. **Sip and Enjoy!** Take a sip and let the fresh, zesty, and minty flavors dance in your mouth. Congratulations, you're now a Mojito Maestro! 🕺💃
 
 Remember, the key to a great Virgin Mojito is balance. Adjust the sweetness, lime, and mint to your taste. Have fun with it and enjoy your creation! 🥳🍹
+
+
+## See Also
+- [[chatgpt/chatgpt_html-template-creation-tutorial]]
+- [[chatgpt/chatgpt_rice-cooker-tutorial]]
+- [[chatgpt/chatgpt_make-11-liters-lemonade]]
+- [[chatgpt/chatgpt_make-a-cosmopolitan-and-negroni]]
+- [[chatgpt/chatgpt_make-a-paloma-cocktail]]

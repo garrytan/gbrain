@@ -210,3 +210,11 @@ Look for **matte white removable** sheets made for inkjet or laser.
 * **Removal:** Warm bottle slightly or let it sit at room temp for a minute; label peels off in one piece.
 
 One 25-sheet pack (750 labels) of Avery 6460 will easily cover your batches and costs under $20.
+
+
+## See Also
+- [[chatgpt/chatgpt_american-drink-recipes]]
+- [[chatgpt/chatgpt_batch-drink-recipe-scaling]]
+- [[chatgpt/chatgpt_caffeine-free-drink-alternatives]]
+- [[chatgpt/chatgpt_check-drink-sales-clover]]
+- [[chatgpt/chatgpt_drink-calculation]]

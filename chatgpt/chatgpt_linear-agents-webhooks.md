@@ -260,3 +260,11 @@ This is lightweight and effective if you already use GitHub CI.
 ---
 
 If you want, I can produce a **starter GitHub Actions YAML + serverless webhook handler** that implements this flow with your specific tools.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_automation-in-linear]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]

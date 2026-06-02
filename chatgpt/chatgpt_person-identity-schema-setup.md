@@ -109,3 +109,11 @@ This script includes a JSON-LD structured data block that describes Tim White as
 Use the [Google Structured Data Testing Tool](https://search.google.com/structured-data/testing-tool) to validate the structured data on your website. This ensures that the schema is correctly implemented and that search engines can read it.
 
 By following these steps, you should be able to add the schema for person identity to your Nuxt.js website successfully.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

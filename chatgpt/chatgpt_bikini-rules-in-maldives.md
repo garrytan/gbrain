@@ -39,3 +39,11 @@ Drinking
 ## Assistant
 
 In the Maldives, the sale and consumption of alcohol are generally restricted to resort islands, liveaboard boats, and private yachts. Alcohol is not available on local inhabited islands due to the country's strict Islamic laws. Tourists can enjoy alcoholic beverages freely within their resorts but should be aware that it is illegal to bring alcohol into the country or consume it outside designated areas.
+
+
+## See Also
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]
+- [[chatgpt/chatgpt_enforcing-biome-rules]]
+- [[chatgpt/chatgpt_ep-rules-4-6-songs]]

@@ -549,3 +549,11 @@ The ideal split is:
 - **training for ranking and ambiguous choices**
 
 The next useful thing is for me to design the exact **taste-extraction questionnaire and A/B review flow** so you can start codifying your aesthetic into the repo immediately.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-photo-editing-workflow-part1]]
+- [[chatgpt/chatgpt_delete-old-photo-api-part2]]
+- [[chatgpt/chatgpt_fixing-ci-workflow-part2]]
+- [[chatgpt/chatgpt_migration-safety-workflow-part2]]
+- [[chatgpt/chatgpt_oddities-series-no-editing-part2]]

@@ -51,3 +51,11 @@ Perfect
 ## Assistant
 
 Glad it landed, Mr. White. Anything else you need?
+
+
+## See Also
+- [[chatgpt/chatgpt_early-check-out-logic]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_murderer-escape-logic]]
+- [[chatgpt/chatgpt_packaged-food-logic]]

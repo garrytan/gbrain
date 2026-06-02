@@ -289,3 +289,11 @@ This layout guides pacing, emphasis, and intonation so it reads dramatically and
 
 Would you like me to tailor this script for a **specific generator** (e.g., ElevenLabs vs Fineshare’s Ghost Host)?  
 Each engine parses punctuation slightly differently, and I can optimize the syntax for whichever one you plan to use.
+
+
+## See Also
+- [[chatgpt/chatgpt_animation-script-expression]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_brief-summary-script-request]]
+- [[chatgpt/chatgpt_chrome-extension-popup-script]]

@@ -30,3 +30,11 @@ also look at like aperaent and other agents and see what theyre doing. aperent i
 ## User
 
 aparent used to be autoclaude its and open source repo. and put everything from our recent convos and crons and hermes and stuff together into one comphresnive plan and roadmap and then update/reorganize linear so that it matches whats happening. and keep in lfight prs in mind and recent merges so its up todate.
+
+
+## See Also
+- [[chatgpt/chatgpt_timeline-aggregation-design-ideas]]
+- [[chatgpt/chatgpt_ai-changelog-insights-for-jovie]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_changelog-conversion-to-markup]]
+- [[chatgpt/chatgpt_chatgpt-changelog-january-2026]]

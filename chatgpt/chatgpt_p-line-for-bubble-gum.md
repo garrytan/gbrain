@@ -44,3 +44,11 @@ The P Line specifically denotes the copyright holder and year of the recording, 
 **P Line:** ℗ 2024 The Bubble Gum Factory
 
 You can include "Manufactured at The Bubble Gum Factory" elsewhere on the release to indicate where the recording was manufactured, just not within the P Line itself.
+
+
+## See Also
+- [[chatgpt/chatgpt_bubble-gum-factory-expansion]]
+- [[chatgpt/chatgpt_bubble-gum-factory-logo]]
+- [[chatgpt/chatgpt_efficient-coffee-shop-line]]
+- [[chatgpt/chatgpt_fridge-water-line-setup]]
+- [[chatgpt/chatgpt_hot-pink-bubble-art]]

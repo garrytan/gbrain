@@ -60,3 +60,11 @@ Set to continue his influence in the industry, White is gearing up for the relea
 ## Assistant
 
 Tim White has made a significant impact in the electronic music scene through strategic releases and major collaborations. His career took off with singles like "Take Me Over" and "California" in 2014, amassing over 70 million UGC streams. Following this, his EP "All This Noise" demonstrated his versatility. White's collaboration with Armada Music led to successful projects such as "Revival" and "Sober," and his track "The Deep End" was spotlighted on A State Of Trance. Beyond performing, White's skills as a songwriter and producer have supported major electronic acts and his consultancy work, including a Clio Award-winning project for Hulu's Pride Fest, highlights his broader creative abilities. Anticipating the release of "Never Say A Word" on June 7th, 2024, White continues to be a prominent figure in electronic music, showcasing a blend of artistic talent and strategic insight.
+
+
+## See Also
+- [[chatgpt/chatgpt_tim-whites-musical-journey]]
+- [[chatgpt/chatgpt_electronic-flea-repellents-exist]]
+- [[chatgpt/chatgpt_egg-whites-cooked-weight-60-70g]]
+- [[chatgpt/chatgpt_jeremy-allen-whites-caa-agent]]
+- [[chatgpt/chatgpt_musical-journey-with-tim]]

@@ -109,3 +109,11 @@ Fair enough?”
 ---
 
 This keeps your $500 floor, sets the high anchor, and adds the exact pickup location so he knows the logistics upfront.
+
+
+## See Also
+- [[chatgpt/chatgpt_selling-speakers-fast]]
+- [[chatgpt/chatgpt_selling-qnap-with-drives]]
+- [[chatgpt/chatgpt_ci-with-ai-in-fast-companies]]
+- [[chatgpt/chatgpt_fast-20k-to-1m]]
+- [[chatgpt/chatgpt_fast-check-overview]]

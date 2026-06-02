@@ -96,3 +96,11 @@ You are responsible for naming database migration files. Filenames must be predi
    “What is the primary schema change (e.g., add column X to table Y / create table Z / add index on A(B))?”
 
 Return only the final filename (unless you must ask the question).
+
+
+## See Also
+- [[chatgpt/chatgpt_brand-naming-suggestions]]
+- [[chatgpt/chatgpt_component-naming-guidance]]
+- [[chatgpt/chatgpt_rp-app-naming-ideas]]
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_airport-gun-disposal-advice]]

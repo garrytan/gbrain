@@ -563,3 +563,11 @@ If your backend is already REST/RPC, integrating GraphQL adds schema maintenance
 - For your use case (Next.js + Drizzle/REST), **TanStack Query or SWR are the mainstream choices.** citeturn0search3
 
 If you want, I can map out *when to pick SWR vs. TanStack Query* in your specific UI scenarios.
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]
+- [[chatgpt/chatgpt_ai-in-product-development]]
+- [[chatgpt/chatgpt_airbnb-ai-usage]]
+- [[chatgpt/chatgpt_api-usage-and-plan-optimization]]

@@ -40,3 +40,11 @@ Details:
 - Timezone: America/Los_Angeles
 
 Import this into Google/Apple/Outlook Calendar and you’re set. If you want different durations or titles, say the word.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-events-to-calendar]]
+- [[chatgpt/chatgpt_create-calendar-event]]
+- [[chatgpt/chatgpt_anyma-music-and-events]]
+- [[chatgpt/chatgpt_lead-bartender-at-large-events]]
+- [[chatgpt/chatgpt_voss-events-contact-info]]

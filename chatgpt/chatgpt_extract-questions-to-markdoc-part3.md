@@ -150,3 +150,11 @@ This version makes you:
 If you want, I can also give you a **one-paragraph pre-application email** you can send to the Founders’ Box team to warm them up before they read this — it will distill all of the above into a “must-meet” intro.  
 
 Do you want me to make that?
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-questions-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]

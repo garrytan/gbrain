@@ -26,3 +26,11 @@ Hey homie, how's it going? Is it still illegal like it used to be? I believe it 
 ## Assistant
 
 Hey Mr. White, I'm doing well, thanks for asking. In California, particularly during drought periods, there have been regulations requiring restaurants to only serve water upon request. These regulations are intended to conserve water. It's not a blanket law that it's always illegal to put water on the table, but during times of declared drought, it can be enforced to ensure water conservation.
+
+
+## See Also
+- [[chatgpt/chatgpt_cancelation-policy-legality]]
+- [[chatgpt/chatgpt_childrens-walkthrough-legality]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_lifetime-saas-licenses-legality]]
+- [[chatgpt/chatgpt_limescooters-legality-issue]]

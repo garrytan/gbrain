@@ -46,3 +46,11 @@ Here’s a Chris-Voss-style response you can send:
 > “I’d love to get it gone today too. But making a delivery isn’t something I can take on—it just isn’t worth the time. If you’d like it, pickup at 1238 Tranquil Rain for $30 works.”
 
 It’s polite, clear, and leaves the decision with them.
+
+
+## See Also
+- [[chatgpt/chatgpt_firm-apology-response]]
+- [[chatgpt/chatgpt_firm-price-response]]
+- [[chatgpt/chatgpt_vc-firm-role-advice]]
+- [[chatgpt/chatgpt_automated-reply-for-new-messages]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]

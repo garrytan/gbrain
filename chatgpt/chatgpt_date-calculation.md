@@ -26,3 +26,11 @@ What would eight weeks from today be?
 ## Assistant
 
 Eight weeks from today (November 8, 2025) will be **January 3, 2026**.
+
+
+## See Also
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]

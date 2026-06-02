@@ -79,3 +79,11 @@ If you like, I can **pull up current live listings** for Bar Manager roles *with
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-jobs-search-results]]
+- [[chatgpt/chatgpt_artist-dj-relations-jobs]]
+- [[chatgpt/chatgpt_bartending-jobs-in-hollywood]]
+- [[chatgpt/chatgpt_bartending-jobs-in-los-angeles]]
+- [[chatgpt/chatgpt_bartending-jobs-la-venues]]

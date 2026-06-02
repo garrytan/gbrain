@@ -119,3 +119,11 @@ Then invoke with `--output-schema`. Codex supports output schemas for `codex exe
 One more point: for long autonomous coding runs, OpenAI’s Codex guide recommends the **codex-tuned model** and says it is built for long-running autonomy; it specifically names `gpt-5.3-codex` as the Codex-tuned API model and recommends higher reasoning for harder agentic work. I would use that for overnight perf loops before plain GPT-5.4 unless you specifically need GPT-5.4’s browser-debugging behavior. citeturn221471view0turn631036search12
 
 So the short diagnosis is this: your stack is probably rewarding “report progress” as a valid completion event. Change it so only **budget pass / blocker / attempt cap** can terminate, move the rule into `AGENTS.md` or a skill, and run it through `codex exec` non-interactively.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]
+- [[chatgpt/chatgpt_add-column-index-to-loop]]
+- [[chatgpt/chatgpt_claude-ralpha-loop]]
+- [[chatgpt/chatgpt_cloud-automation-loop]]
+- [[chatgpt/chatgpt_coderabbit-auto-loop]]

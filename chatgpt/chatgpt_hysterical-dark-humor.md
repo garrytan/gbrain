@@ -64,3 +64,11 @@ Make a joke about the ronot arms and the guy getting killed
 ## Assistant
 
 “Bro really trusted the robot arms like it was *Wall-E*—next thing you know, he's getting folded like a lawn chair mid-tracking shot. RIP to a man who believed in automation a little *too* much.”
+
+
+## See Also
+- [[chatgpt/chatgpt_add-dark-mode]]
+- [[chatgpt/chatgpt_ai-prompt-for-dark-mode]]
+- [[chatgpt/chatgpt_dark-mode-change]]
+- [[chatgpt/chatgpt_dark-mode-linear-colors]]
+- [[chatgpt/chatgpt_mockup-request-dark-mode]]

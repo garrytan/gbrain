@@ -339,3 +339,11 @@ Here is the table with the comments for why the song was rejected:
 | ElectrozombiesBlog          | The song sounds too commercial pop / indie pop. There are no technical flaws, but the song simply doesn't fit for us.                          |
 
 If you need any adjustments or more information, feel free to ask.
+
+
+## See Also
+- [[chatgpt/chatgpt_interview-rejection-feedback]]
+- [[chatgpt/chatgpt_ai-feedback-prompt]]
+- [[chatgpt/chatgpt_app-ui-feedback]]
+- [[chatgpt/chatgpt_application-revision-feedback]]
+- [[chatgpt/chatgpt_buyer-feedback-visibility]]

@@ -144,3 +144,11 @@ I will now paste code or directory contents. Apply the above process to whatever
 ---
 
 If you’d like, next step I can help you tailor this to your exact folder structure (e.g. `@/components/ui`, `@/lib`, `app/` vs `src/`) and add project-specific guard rails.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_landing-page-audit-prompt]]
+- [[chatgpt/chatgpt_mvp-code-audit-prompt]]
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]

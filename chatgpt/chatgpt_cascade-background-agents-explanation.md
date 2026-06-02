@@ -81,3 +81,11 @@ You might adopt this architecture when:
 ---
 
 If you like, I can pull together **a comparison of tools** (e.g., Windsurf Cascade, Cursor background agents, etc.), summarizing capabilities, costs, and suitability — do you want that, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-background-agents]]
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]

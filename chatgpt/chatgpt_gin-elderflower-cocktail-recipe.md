@@ -77,3 +77,11 @@ Enjoy your Peachy Keen cocktail!
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_cosmopolitan-cocktail-recipe]]
+- [[chatgpt/chatgpt_gin-cocktail-recipe]]
+- [[chatgpt/chatgpt_manhattan-cocktail-recipe]]
+- [[chatgpt/chatgpt_mulé-cocktail-recipe-options]]
+- [[chatgpt/chatgpt_paloma-cocktail-recipe]]

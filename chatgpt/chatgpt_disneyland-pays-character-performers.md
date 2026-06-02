@@ -26,3 +26,11 @@ How much do you get paid to be one of the people in the character costumes at Di
 ## Assistant
 
 Character performers at Disneyland typically earn around $15 to $20 per hour. Wages can vary based on experience and specific roles.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-character-web-interaction]]
+- [[chatgpt/chatgpt_anime-character-creation]]
+- [[chatgpt/chatgpt_character-clara-musso-on-lie-to-me]]
+- [[chatgpt/chatgpt_character-of-musician-in-image]]
+- [[chatgpt/chatgpt_fallout-tv-character-glasses]]

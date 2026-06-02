@@ -1615,3 +1615,11 @@ The first product is an AI release manager. Artists import a song, and Jovie cre
 The wedge is release links and artist profiles. The moat is persistent artist context. The 100x outcome is that one person can supervise the release operations of thousands of artists.
 
 This is the version I would send to YC after plugging in hard traction numbers.
+
+
+## See Also
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]
+- [[chatgpt/chatgpt_api-usage-and-plan-optimization]]

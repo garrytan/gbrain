@@ -56,3 +56,11 @@ What about UGC
 ## Assistant
 
 Yes, User Generated Content (UGC) on platforms like YouTube also counts towards RIAA certifications. This includes videos created by users that feature music, such as covers, remixes, or other derivative works, provided they meet certain criteria set by the platform and the music is properly licensed. These streams are factored into the overall streaming count needed for certifications.
+
+
+## See Also
+- [[chatgpt/chatgpt_calculate-needed-income]]
+- [[chatgpt/chatgpt_cash-flow-solutions-needed]]
+- [[chatgpt/chatgpt_ecomm-seo-writer-needed]]
+- [[chatgpt/chatgpt_film-title-clarification-needed]]
+- [[chatgpt/chatgpt_front-end-developer-needed]]

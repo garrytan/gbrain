@@ -33,3 +33,11 @@ To get an actual waist-to-hip ratio you’ll need:
 2. **Hip circumference** – measured at the widest point over the greater trochanters.  
 
 Then divide waist (inches or cm) by hip (same units). That gives the standard anthropometric waist-to-hip ratio.
+
+
+## See Also
+- [[chatgpt/chatgpt_waist-to-hip-ratio-attractiveness]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]

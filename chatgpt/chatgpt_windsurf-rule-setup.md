@@ -90,3 +90,11 @@ Here’s a clear breakdown of how Windsurf handles rules, based on recent update
 ---
 
 Let me know if you'd like a sample `.windsurfrules` file or want help crafting one tailored to your stack.
+
+
+## See Also
+- [[chatgpt/chatgpt_windsurf-autopilot-setup-part1]]
+- [[chatgpt/chatgpt_windsurf-autopilot-setup-part2]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]

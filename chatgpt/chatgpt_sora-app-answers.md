@@ -48,3 +48,11 @@ No instructions for illegal/dangerous acts.
 No copyrighted music/logos or other IP without rights.  
 Do not misrepresent metrics or make deceptive claims.  
 Always state it’s an **AI cameo of Mr. White** and keep brand-safe.
+
+
+## See Also
+- [[chatgpt/chatgpt_beatles-trivia-answers]]
+- [[chatgpt/chatgpt_improve-answers-with-jovie]]
+- [[chatgpt/chatgpt_rewrite-job-application-answers]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

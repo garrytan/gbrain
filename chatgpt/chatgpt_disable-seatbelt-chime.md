@@ -46,3 +46,11 @@ There’s no legit *factory menu* option in a 2016 Mazda CX-5 to permanently dis
 👉 TL;DR: Fastest hack = grab a dummy buckle insert. Permanent/clean solution = FORScan coding. The 20-click trick *might* work but is hit-or-miss on your year/model.  
 
 Want me to give you step-by-step for the FORScan method (with the exact adapter/cable you’d need for your CX-5)?
+
+
+## See Also
+- [[chatgpt/chatgpt_passenger-seatbelt-chime-fix]]
+- [[chatgpt/chatgpt_disable-swipe-back-vuejs]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

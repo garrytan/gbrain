@@ -306,3 +306,11 @@ The irony’s rich: torching Waymo’s million-dollar fleet—owned by Google, c
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'I know it can feel like a lot to juggle all these details, but once you have the flow in place, it should be pretty seamless for your users. And if you need any more tips or run into any other questions as you set everything up, just let me know!'}
 {'asset_pointer': 'sediment://file_00000000581861f6bccf261bd6b8f0e4', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-06T22:33:31.503885+00:00', 'format': 'wav', 'metadata': {'end': 18.25, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 876078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

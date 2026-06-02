@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 looking for internal dashbaord specs from anthropic, openai, any top yc companies, stripe.  what are they using
+
+
+## See Also
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part4]]

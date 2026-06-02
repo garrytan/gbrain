@@ -286,3 +286,11 @@ I don't need having cream anymore.
 - **Place chairs at the bar**
 
 - **Git**
+
+
+## See Also
+- [[chatgpt/chatgpt_mvp-launch-preparation]]
+- [[chatgpt/chatgpt_bar-checklist-mixers-rimming-essentials]]
+- [[chatgpt/chatgpt_bar-setup-checklist]]
+- [[chatgpt/chatgpt_bartender-for-birthday-party]]
+- [[chatgpt/chatgpt_dishwasher-duties-checklist]]

@@ -26,3 +26,11 @@ How long does it take for ice cubes to freeze in an ice cube tray?
 ## Assistant
 
 The time it takes for ice cubes to freeze in a tray can vary. Generally, it takes about three to four hours for them to freeze solid. This depends on factors like the freezer's temperature, the size of the ice cubes, and the initial temperature of the water.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-progress-over-time]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_backup-time-for-20tb]]
+- [[chatgpt/chatgpt_dns-propagation-time]]

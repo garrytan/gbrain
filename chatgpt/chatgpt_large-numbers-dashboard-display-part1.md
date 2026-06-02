@@ -982,3 +982,11 @@ Future<void> _fetchHealthData() async {
 In this revision:
 - I'm assuming `NumericHealthValue` has a property `value` that holds the actual numeric value. This is a common pattern in such classes but please adjust according to the actual API of `NumericHealthValue`.
 - The `value` is then converted to `int` for steps and `double` for weight.
+
+
+## See Also
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part2]]
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part3]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part1]]

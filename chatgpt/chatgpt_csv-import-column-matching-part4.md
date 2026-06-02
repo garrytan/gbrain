@@ -719,3 +719,11 @@ $averageWeight = $weightLogs->count() > 0
 Make sure to include this code within your `dashboard` method, and then pass the `$averageWeight` variable to your frontend view so that it can be displayed.
 
 This code will find the most recent weight log, calculate the start date for the 7-day range, query the weight logs within that range, and calculate the average weight based on those logs.
+
+
+## See Also
+- [[chatgpt/chatgpt_csv-import-column-matching-part1]]
+- [[chatgpt/chatgpt_csv-import-column-matching-part2]]
+- [[chatgpt/chatgpt_csv-import-column-matching-part3]]
+- [[chatgpt/chatgpt_csv-import-error-troubleshooting-part4]]
+- [[chatgpt/chatgpt_add-column-index-to-loop]]

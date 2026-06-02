@@ -26,3 +26,11 @@ Can a roomba map out my apartment and blacklist certain areas without additional
 ## Assistant
 
 Mr. White, modern Roomba models (e.g., the i3, i4, i5, and above) use Imprint™ Smart Mapping to learn and store your floor plan entirely with onboard sensors—no extra devices required citeturn0search0turn0search4. Once the robot completes its initial mapping run, you can open the iRobot Home App and draw “Keep-Out Zones” (virtual blacklists) anywhere on the map; the Roomba will then avoid those areas on subsequent cleans without needing physical barriers citeturn0search0turn0search5.
+
+
+## See Also
+- [[chatgpt/chatgpt_companies-doing-projection-mapping]]
+- [[chatgpt/chatgpt_roomba-corner-cleaning-limitations]]
+- [[chatgpt/chatgpt_roomba-vs-eufy-comparison]]
+- [[chatgpt/chatgpt_spotify-to-dsp-mapping]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

@@ -26,3 +26,11 @@ ATC SCM25A
 ## Assistant
 
 iturn0image0turn0image1turn0image3turn0image4The ATC SCM25A Pro Mk2 is a compact, high-performance, active 3-way studio monitor. It features a 6.5-inch carbon-paper cone bass driver, a 3-inch soft dome mid-range driver, and ATC's proprietary SH25-76S 'Dual Suspension' tweeter, which extends high-frequency response and reduces distortion. The integrated tri-amp design delivers a total of 235W: 150W to the bass driver, 60W to the mid-range, and 25W to the tweeter. The monitor offers a frequency response from 47Hz to 25kHz and a maximum SPL of 109dB. User controls include input sensitivity and bass 'lift' adjustments. The SCM25A Pro Mk2 is hand-built in England and comes with a 6-year warranty. citeturn0search0 
+
+
+## See Also
+- [[chatgpt/chatgpt_add-button-features-vlink]]
+- [[chatgpt/chatgpt_atem-iso-features]]
+- [[chatgpt/chatgpt_blender-3d-features-overview]]
+- [[chatgpt/chatgpt_canva-features-overview]]
+- [[chatgpt/chatgpt_canva-overview-and-features]]

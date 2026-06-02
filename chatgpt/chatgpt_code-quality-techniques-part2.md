@@ -145,3 +145,11 @@ Mr. White — given **public repo + GitHub Actions + TypeScript-only + low spend
 - Make sure you upload **TS coverage via `lcov.info`** (Jest/Vitest output is fine). citeturn0search13  
 
 If you tell me which test runner you use (Jest vs Vitest vs Playwright) I’ll give you the exact minimal `workflow.yml` steps + the couple Sonar settings that prevent “everything fails on day 1.”
+
+
+## See Also
+- [[chatgpt/chatgpt_code-quality-techniques-part1]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part2]]
+- [[chatgpt/chatgpt_code-cleanup-strategy-part2]]
+- [[chatgpt/chatgpt_code-quality-tools-for-startups]]

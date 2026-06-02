@@ -42,3 +42,11 @@ Of course he said they won’t overtake Google—he’s talking to the people wh
 ~~~{"variant":"social_post","title":"Altman antitrust roast 5","id":"57107"}
 This isn’t humility, it’s regulation management. You don’t poke the antitrust bear while it’s staring at you.
 ~~~
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_coderabbit-review-comments]]
+- [[chatgpt/chatgpt_paul-graham-on-altman]]
+- [[chatgpt/chatgpt_sam-altman-equity-fact-check]]
+- [[chatgpt/chatgpt_tagging-claude-in-comments]]

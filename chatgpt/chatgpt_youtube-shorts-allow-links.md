@@ -38,3 +38,11 @@ But what about in the description of the video
 ## Assistant
 
 In the description of a YouTube Shorts video, clickable links are allowed. Creators can include URLs in their video descriptions, and these links are clickable for viewers. This feature enables creators to direct viewers to external websites, merchandise, social media profiles, or other relevant pages. It's a useful tool for promoting additional content or products related to the video's content.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-youtube-shorts-urls]]
+- [[chatgpt/chatgpt_youtube-shorts-scheduler]]
+- [[chatgpt/chatgpt_youtube-shorts-vs-long-form]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_allow-previewjovie-setup]]

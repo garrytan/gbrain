@@ -80,3 +80,11 @@ If you’re seeking absolute confirmation, you could contact:
 2. **Mojave Desert Film Office / Inland Empire Film Commission** – They maintain records for filming in that region and could provide more definitive info if any formal permits were pulled for significant productions.
 
 At present, though, there’s **no widely known, high-profile movie or TV show** credited as filming at Peggy Sue’s 50’s Diner.
+
+
+## See Also
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_elio-movie-details]]
+- [[chatgpt/chatgpt_famous-movie-hackers]]
+- [[chatgpt/chatgpt_her-hologram-love-movie]]

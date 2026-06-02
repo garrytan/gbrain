@@ -65,3 +65,11 @@ Tim
 :::
 
 If you want it **shorter**, **more assertive**, or **more founder-confident**, say the word and I’ll tune it.
+
+
+## See Also
+- [[chatgpt/chatgpt_application-revision-feedback]]
+- [[chatgpt/chatgpt_ai-feedback-prompt]]
+- [[chatgpt/chatgpt_app-ui-feedback]]
+- [[chatgpt/chatgpt_buyer-feedback-visibility]]
+- [[chatgpt/chatgpt_design-feedback-improvement]]

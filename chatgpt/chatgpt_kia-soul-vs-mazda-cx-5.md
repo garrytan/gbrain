@@ -206,3 +206,11 @@ Yo dawg, uh, 2016 Mazda CX-5 Touring, um, what's the deal with that? Does it hav
 For a balance of cost and functionality, the **OEM retrofit kit** is a solid choice. It retains factory features and provides reliable CarPlay integration. If you're comfortable with DIY projects, this route offers good value.
 
 Let me know if you need links to specific kits or installation guides. 
+
+
+## See Also
+- [[chatgpt/chatgpt_2016-mazda-cx-5-liftgate]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-wipers]]
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_cloning-mazda-key-fob]]
+- [[chatgpt/chatgpt_mazda-cx-5-beep-issue]]

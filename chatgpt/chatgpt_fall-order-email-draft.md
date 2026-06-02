@@ -201,3 +201,11 @@ Please approve one of these:
 - Everything else identical.  
 
 Reply with “Plan A” or “Plan B” and I’ll send it off.
+
+
+## See Also
+- [[chatgpt/chatgpt_email-application-draft]]
+- [[chatgpt/chatgpt_email-response-draft]]
+- [[chatgpt/chatgpt_job-application-email-draft]]
+- [[chatgpt/chatgpt_apology-letter-draft]]
+- [[chatgpt/chatgpt_ar-post-draft]]

@@ -28,3 +28,11 @@ tags: [chatgpt, import]
 Do you mean **33 Taps**, the sports bar / restaurant in Los Angeles? citeturn0search0turn0search7  
 
 If not, please clarify what “33taps” refers to (app, brand, acronym, etc.).
+
+
+## See Also
+- [[chatgpt/chatgpt_clarification-request-2]]
+- [[chatgpt/chatgpt_clarification-request-3]]
+- [[chatgpt/chatgpt_clarification-request-4]]
+- [[chatgpt/chatgpt_clarification-request-5]]
+- [[chatgpt/chatgpt_clarification-request-6]]

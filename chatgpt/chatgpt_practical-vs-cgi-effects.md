@@ -98,3 +98,11 @@ Here’s a concise recipe used on set to mimic the Upside Down “ash” exactly
 - In post, duplicate the particle layer for density or mask stray blobs, but capture most of the effect in-camera for the authentic “Stranger Things” float.
 
 Follow those steps and you’ll get nearly the same slow-drifting, glowing particles you see in the Upside Down without heavy CGI.
+
+
+## See Also
+- [[chatgpt/chatgpt_cats-and-mdma-effects]]
+- [[chatgpt/chatgpt_cell-phone-radiation-effects]]
+- [[chatgpt/chatgpt_chewing-gum-effects-jaw-muscles]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part1]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part2]]

@@ -120,3 +120,11 @@ If you want, I can pull a **direct link** to one of the specific X posts about C
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-task-management-overview]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_claude-code-agent-teams-2]]
+- [[chatgpt/chatgpt_claude-code-agent-teams]]
+- [[chatgpt/chatgpt_claude-code-api-errors]]

@@ -198,3 +198,11 @@ Stop when you have at least 15 high-impact findings OR you’ve exhaustively che
 ---
 
 If you want, I can also give you a **shorter “quick scan” version** (aims for top ~10 issues only) or a **more strict one** that forces the agent to output a machine-readable JSON report.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_ai-in-music-production]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_audit-and-recommend-drafts]]
+- [[chatgpt/chatgpt_audit-and-strategy-tips]]

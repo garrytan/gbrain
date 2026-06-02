@@ -68,3 +68,11 @@ Mr. White, “Can see your location” simply means your share-to-her is still O
 - Sophie’s share-to-you is off (so you see no map or “Location Not Available”).  
 
 These toggles are independent—her having you on her list doesn’t force her to share back. If she wanted to share with you, you’d see her location or “Location Available” instead.
+
+
+## See Also
+- [[chatgpt/chatgpt_albertsons-burrata-location]]
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_defibrillator-location-search]]
+- [[chatgpt/chatgpt_hollywood-arts-filming-location]]

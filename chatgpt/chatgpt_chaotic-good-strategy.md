@@ -26,3 +26,11 @@ Exactly that is what I want to systematize and build as capabilities of Jovie. C
 3. Any other companies doing this
 4. What other things like that we could do? What are the capabilities?
 See what is out there in the whole universe of things like that that are possible and what it means for Jovie.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]

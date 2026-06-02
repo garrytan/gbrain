@@ -142,3 +142,11 @@ Exactly. Here's a concise, disarming comment that hits all those points:
 Totally get the appeal—anything that helps you relax can have real benefits. But scientifically, castor oil on your belly isn’t detoxing your liver or shrinking cysts. Barbara O’Neill (who’s banned from practicing in Australia for medical misinformation) made a lot of those claims up.  
 
 If it helps you unwind, awesome—just know it’s working about the same as cuddling your dog and queuing up Netflix. Which honestly might be cheaper and less oily.
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]
+- [[chatgpt/chatgpt_fact-check-and-comment]]

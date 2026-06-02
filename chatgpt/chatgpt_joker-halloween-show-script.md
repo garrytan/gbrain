@@ -274,3 +274,11 @@ Here's the script fully in the voice of the Joker:
 ---
 
 This version captures the Joker's signature mix of dark humor, chaos, and playful menace, ensuring that the entire experience feels true to his character while still being provocative and engaging for the guests.
+
+
+## See Also
+- [[chatgpt/chatgpt_getting-into-joker-character]]
+- [[chatgpt/chatgpt_joker-and-harley-quotes]]
+- [[chatgpt/chatgpt_joker-costume-advice]]
+- [[chatgpt/chatgpt_animation-script-expression]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]

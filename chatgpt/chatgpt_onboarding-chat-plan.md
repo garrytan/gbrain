@@ -340,3 +340,11 @@ A second round of watch sessions (3-5 artists) runs after PR 4 lands and before 
 {'asset_pointer': 'sediment://file_00000000ee28722f93fab1eb0310215b', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 2048, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 1176808, 'width': 944}
 {'asset_pointer': 'sediment://file_000000009514722fb9a85f890df2c89b', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 2048, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 722262, 'width': 944}
 This is stanley for twitter. Jovie is free artist profiles and then limited ai usage and then we charge for anything more complex. we reverse trial users on the pro plan. 
+
+
+## See Also
+- [[chatgpt/chatgpt_onboarding-chat-refinement]]
+- [[chatgpt/chatgpt_onboarding-chat-ux-qa]]
+- [[chatgpt/chatgpt_waitlist-onboarding-chat]]
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_best-onboarding-ux]]

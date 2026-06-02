@@ -168,3 +168,11 @@ If you want, I can also produce a shorter “strict system prompt” version for
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-prompt-for-refactor]]
+- [[chatgpt/chatgpt_refactor-prompt-generation]]
+- [[chatgpt/chatgpt_unit-test-optimization-prompt]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]

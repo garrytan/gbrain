@@ -55,3 +55,11 @@ make a vue component that renders a page jsut like this but use taildiwn csss an
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-link-in-bio-plan-part3]]
+- [[chatgpt/chatgpt_fitness-plan-adjustment-part3]]
+- [[chatgpt/chatgpt_gtm-strategy-for-jovie-part3]]
+- [[chatgpt/chatgpt_hypertrophy-aesthetic-plan-tips-part3]]
+- [[chatgpt/chatgpt_jovie-analysis-and-plan-part1]]

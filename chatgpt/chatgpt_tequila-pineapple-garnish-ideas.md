@@ -34,3 +34,11 @@ For a classic tequila pineapple garnish:
 3. **Skewer Option:** Alternatively, use a cocktail skewer to thread a pineapple chunk and a maraschino cherry, and place it across the glass.
 
 These garnishes add a fresh and vibrant touch to your tequila cocktail.
+
+
+## See Also
+- [[chatgpt/chatgpt_casamigos-tequila-request-summarized]]
+- [[chatgpt/chatgpt_tequila-batch-ingredient-list]]
+- [[chatgpt/chatgpt_tequila-lawsuit-credibility-check]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]

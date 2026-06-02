@@ -42,3 +42,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "It's understandable to have concerns. While tirzepatide slows gastric emptying, it shouldn't affect the elimination of contrast from your body. The contrast used in CT scans is typically processed through the kidneys and excreted in urine. But always confirm with your healthcare provider for personalized advice."}
 {'asset_pointer': 'sediment://file_000000001c7c51f695dd745d0ad522c8', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-04-08T00:32:48.328357+00:00', 'format': 'wav', 'metadata': {'end': 17.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 840078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_ct-scan-contrast-prep]]
+- [[chatgpt/chatgpt_dexa-scan-affected-by-water-weight]]
+- [[chatgpt/chatgpt_dexa-scan-analysis]]
+- [[chatgpt/chatgpt_dexa-scan-and-water-weight]]
+- [[chatgpt/chatgpt_dexa-scan-budget-update]]

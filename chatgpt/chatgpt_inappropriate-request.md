@@ -195,3 +195,11 @@ Mr. White, fat loss is far more powerful for deepening those gutters than adding
 **Bottom line:**  
 - Dropping from 10 %→8 % BF (a 2 % cut) removes ≈4–6 mm of fat—equivalent to **2–3×** the visible effect of several months of oblique hypertrophy.  
 - Focus first on leaning out (<10 % BF) for the biggest payoff, then layer in targeted oblique work to fine-tune.
+
+
+## See Also
+- [[chatgpt/chatgpt_inappropriate-language-detected]]
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]
+- [[chatgpt/chatgpt_address-information-request]]

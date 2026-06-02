@@ -50,3 +50,11 @@ Whats begat mean
 ## Assistant
 
 “Begat” is old-school English for “was the father of.” In Bible genealogies, “X begat Y” just means “X sired Y.”
+
+
+## See Also
+- [[chatgpt/chatgpt_jonahs-tale-origin-bible]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]

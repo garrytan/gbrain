@@ -1195,3 +1195,11 @@ useSeoMeta({
 ```
 
 This code combines both script tags into a single `setup` script, using the Composition API.
+
+
+## See Also
+- [[chatgpt/chatgpt_clean-discography-streamlined-marketing]]
+- [[chatgpt/chatgpt_discography-year-sorting]]
+- [[chatgpt/chatgpt_integrate-musicbrainz-discography]]
+- [[chatgpt/chatgpt_merge-discography-with-component]]
+- [[chatgpt/chatgpt_the-1975-spotify-discography]]

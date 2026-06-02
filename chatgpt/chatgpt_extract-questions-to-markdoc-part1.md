@@ -629,3 +629,11 @@ Do you want me to do that next?
 I have a bs from Drexel in music industry.
 
 Also say i founded the company this month. Were going to treat my previous jovie startup as a different company that i shutdown due to health issues. We want to highlight that I was in an accelerator for that startup and my cohort included: Stan, Fanfix, Buy Me A Coffee, Superpower, and 3 YC founders including the founder of flowbo
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-questions-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-questions-to-markdoc-part3]]

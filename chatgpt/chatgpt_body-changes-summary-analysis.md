@@ -94,3 +94,11 @@ what is the android region
 ## Assistant
 
 The android region refers to the area of the body that includes the torso and upper abdomen, often associated with male-pattern fat distribution. This area is significant in health assessments because fat accumulation here is linked to a higher risk of metabolic and cardiovascular diseases. It's where visceral fat tends to accumulate, which surrounds internal organs and can have more serious health implications than subcutaneous fat found in other body regions.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-comp-changes-summary]]
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_body-composition-change-summary]]
+- [[chatgpt/chatgpt_body-composition-changes]]
+- [[chatgpt/chatgpt_dexa-scan-summary-changes]]

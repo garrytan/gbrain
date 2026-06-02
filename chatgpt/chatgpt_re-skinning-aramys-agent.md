@@ -248,3 +248,11 @@ Do this:
 **Fork the agent. Containerize it. Put it behind a Jovie-controlled API. Feed it scoped memory and scoped tools. Use it to validate workflows. Build specialized Jovie tools around the workflows that prove valuable.**
 
 That gives you the best of both worlds: fast learning now, defensible product architecture later.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]
+- [[chatgpt/chatgpt_agent-skills-entry]]

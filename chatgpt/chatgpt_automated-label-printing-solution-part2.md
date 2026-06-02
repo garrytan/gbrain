@@ -1331,3 +1331,11 @@ This should now correct the uneven margin issue and ensure the labels are center
 
 {'asset_pointer': 'file-service://file-Kk6rZCJDzah3ROaXHmxgTGgc', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 627, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 362892, 'width': 693}
 The second page and first page have different top margins. The second page has none
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part3]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part4]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part5]]
+- [[chatgpt/chatgpt_automated-venue-scheduling-solution]]

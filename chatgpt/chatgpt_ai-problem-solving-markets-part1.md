@@ -390,3 +390,11 @@ This wedge → empire path looks like:
 ---
 
 Want me to now do a **side-by-side matrix** of the three you’ve thrown out so far (Agent OS infra vs Social Arb OS vs Agentic Video Factory) so you can see exactly how they compare on wedge, TAM, risk, and defensibility?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part2]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part3]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part4]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part5]]
+- [[chatgpt/chatgpt_solving-package-theft-impersonation]]

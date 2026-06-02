@@ -111,3 +111,11 @@ If trap bar still triggers it:
 - It may be more about **bracing/pressure** than the implement. Try **RDLs with straps**, **hip thrusts**, **leg press**, or **hinge machines** temporarily, and de-emphasize carries/shrugs.
 
 If you tell me whether your symptoms show up **during the set** vs **later that day**, and what lift is the main trigger, I’ll suggest the cleanest swap.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-training-request]]
+- [[chatgpt/chatgpt_cutting-training-frequency]]
+- [[chatgpt/chatgpt_fasted-vs-fed-training]]
+- [[chatgpt/chatgpt_hypertrophy-training-gear]]
+- [[chatgpt/chatgpt_leg-training-impact-summary]]

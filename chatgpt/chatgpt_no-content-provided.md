@@ -112,3 +112,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "I couldn't find the exact number for self-made billionaires in India specifically for 2025, but it's known that India has a significant number of family-owned businesses and inherited wealth. Even if we removed inherited wealth, India likely would still remain in the top five, given the large number of entrepreneurs and self-made billionaires in the country. If you want more details on any other country, just let me know!"}
 {'asset_pointer': 'sediment://file_000000004040622fb49b0b9646dce5f7', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-31T17:44:40.595159+00:00', 'format': 'wav', 'metadata': {'end': 26.2, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1257678, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_accessing-faq-content-issue]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_c2pa-content-credentials]]
+- [[chatgpt/chatgpt_caffeine-content-comparison-table]]
+- [[chatgpt/chatgpt_conditional-content-rendering]]

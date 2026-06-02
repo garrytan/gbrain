@@ -524,3 +524,11 @@ take over my browser and inspect the app yourself
 I’ve loaded the Linear project page you shared, but this environment doesn’t expose browser DevTools or computed CSS properties. The tools available let me click and type on elements or read the accessible DOM, but they don’t provide the font sizes, line heights, letter spacing, opacity, or icon metadata directly.
 
 To produce the exact spec you’re after, I’d still need the computed values for each component (font size, line height, letter spacing, opacity, etc.), which requires either DevTools output or a theme file. If you can share a CSS/theme file or paste the computed styles for a few representative elements from your own DevTools, I can integrate those into a complete spec.
+
+
+## See Also
+- [[chatgpt/chatgpt_app-spec-and-mockups]]
+- [[chatgpt/chatgpt_avatar-upload-spec]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]

@@ -62,3 +62,11 @@ Here's an improved version of the OpenAI API prompt taking these suggestions int
 ```
 
 Remember to replace `$data` with actual examples or sample data you want to provide for processing.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

@@ -211,3 +211,11 @@ So “Uber bad” doesn’t tell me how to vote. The real question is whether th
 
 That’s the actual issue I care about. I’m skeptical of the slogan on both sides.
 :::
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-crawl-idea-legal-issues]]
+- [[chatgpt/chatgpt_ca-rental-application-legal-check]]
+- [[chatgpt/chatgpt_e-scooters-legal-in-west-hollywood]]
+- [[chatgpt/chatgpt_fathers-legal-responsibilities-established]]
+- [[chatgpt/chatgpt_james-hype-legal-sources]]

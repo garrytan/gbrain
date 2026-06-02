@@ -203,3 +203,11 @@ Deliverables:
 
 Be aggressive about deleting duplicate auth components. Prefer one shared primitive and one shared auth surface wrapper over patching divergent implementations.
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_auth-provider-for-chatgpt]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_basic-auth-in-nextjs]]
+- [[chatgpt/chatgpt_best-auth-providers-2025]]
+- [[chatgpt/chatgpt_clerk-auth-vercel-preview]]

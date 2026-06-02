@@ -120,3 +120,11 @@ No — that’s just your share of the **check total including tax**, no tip yet
 👉 So your real out-the-door number is **~$97–131**, depending on tip % and whether meatballs are yours.  
 
 Want me to calculate it assuming a flat 20% on the full table check and then split proportionally? That would match how servers usually expect tips to be handled.
+
+
+## See Also
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_accessibility-contrast-check]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]

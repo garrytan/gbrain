@@ -265,3 +265,11 @@ Other strong options: **CueShift, Lineup, SetTime, Shiftlist, Stagehand, CrewCue
 
 # Next step
 Want me to lock “CallTime” as the working name and draft the **wireframes for Events, Offers, and Manager Board**, plus the **notification policy** copy?
+
+
+## See Also
+- [[chatgpt/chatgpt_cpi-and-employee-wages]]
+- [[chatgpt/chatgpt_employee-clock-in-solutions]]
+- [[chatgpt/chatgpt_employee-performance-dashboard-idea]]
+- [[chatgpt/chatgpt_exporting-toast-employee-data]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]

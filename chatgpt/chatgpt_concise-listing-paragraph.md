@@ -28,3 +28,11 @@ Write me a concise paragraph that I can append to the end of every single one of
 Add this to the end of each listing:
 
 “Pickup in Hollywood near Sunset & Bronson. Cash, Venmo, or Zelle accepted. First come, first served—no holds. Item is available for immediate pickup. Serious buyers only; if you’re ready to move, act now and lock it in before someone else does.”
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-maps-listing-issue]]
+- [[chatgpt/chatgpt_ebay-listing-profit]]
+- [[chatgpt/chatgpt_ebay-listing-setup]]
+- [[chatgpt/chatgpt_estate-sale-listing-draft]]
+- [[chatgpt/chatgpt_estate-sale-listing]]

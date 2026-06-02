@@ -52,3 +52,11 @@ Here is a breakdown of the properties being set:
 - `type`: This sets the type attribute of the input field to "text".
 
 - `required`: This sets the required attribute of the input field to an empty string, which makes the input field required for form submission.
+
+
+## See Also
+- [[chatgpt/chatgpt_html-input-field]]
+- [[chatgpt/chatgpt_input-field-for-first-name]]
+- [[chatgpt/chatgpt_input-field-html-code]]
+- [[chatgpt/chatgpt_vue-input-field-summary]]
+- [[chatgpt/chatgpt_neon-properties-and-uses]]

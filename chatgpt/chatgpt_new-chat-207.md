@@ -44,3 +44,11 @@ A professional painter is often more efficient due to experience and the use of 
 In addition, a professional painter would also need some time for prep work and cleanup. However, they are often able to do this more quickly than an amateur. 
 
 Overall, a professional painter might be able to complete the job in a single day if working a full day, or two shorter days. Remember, drying time between coats is also necessary, and that's typically a couple of hours at least.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

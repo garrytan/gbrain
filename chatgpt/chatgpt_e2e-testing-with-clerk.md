@@ -237,3 +237,11 @@ If you want, I can give you:
 - A **complete Next.js test fixture** with Clerk preconfigured
 
 Just tell me which E2E framework you are using (Playwright or Cypress).
+
+
+## See Also
+- [[chatgpt/chatgpt_e2e-testing-with-clerk-2]]
+- [[chatgpt/chatgpt_clerk-e2e-testing-setup]]
+- [[chatgpt/chatgpt_clerk-e2e-testing]]
+- [[chatgpt/chatgpt_clerk-playwright-testing]]
+- [[chatgpt/chatgpt_clerk-with-nextjs-react-e2e]]

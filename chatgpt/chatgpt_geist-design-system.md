@@ -55,3 +55,11 @@ In summary, the **Geist Design System** is both a conceptual design language use
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_geist-design-system-overview-2]]
+- [[chatgpt/chatgpt_geist-design-system-overview]]
+- [[chatgpt/chatgpt_geist-design-system-pricing]]
+- [[chatgpt/chatgpt_vercel-geist-design-system]]
+- [[chatgpt/chatgpt_code-review-system-design]]

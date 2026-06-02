@@ -50,3 +50,11 @@ Send this:
 > I’m going to keep it simple: I already have a full-price pickup offer for Friday, so I’m taking the easiest deal. I’m not meeting elsewhere, setting up testing, or digging up receipts.  
 >  
 > If you want to beat the current offer by picking up sooner and making it a quick as-is transaction, I’m open to it. Otherwise I’m going with the Friday buyer.
+
+
+## See Also
+- [[chatgpt/chatgpt_response-for-marketplace-inquiry]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]

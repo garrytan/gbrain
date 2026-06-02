@@ -380,3 +380,11 @@ Here are a few focused tweaks to tighten up this timeline view:
    - Add light haptic feedback on slider drag end.
 
 That will give you a clean, consistent, fully polished “premium” look—and make every element both beautiful and intuitive.
+
+
+## See Also
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part1]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part2]]
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part3]]
+- [[chatgpt/chatgpt_ux-audit-recommendations-2]]
+- [[chatgpt/chatgpt_ux-audit-recommendations]]

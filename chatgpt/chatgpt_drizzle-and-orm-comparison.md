@@ -378,3 +378,11 @@ Mr. White — short answer: **install Neon via the Vercel Marketplace** for Jovi
 
 ### Recommendation
 For your **Next.js + Clerk** app and pre-MVP pace, go **Vercel Marketplace → Neon Postgres**. You’ll get preview-branch DBs and env-var plumbing out of the box with no cost penalty — exactly what you want for rapid PR-based iteration. You can always detach/manage directly in Neon later if your deployment topology expands. citeturn0search2turn0search1turn0search5
+
+
+## See Also
+- [[chatgpt/chatgpt_neon-drizzle-comparison]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_best-deal-comparison]]

@@ -41,3 +41,11 @@ All of that consideration is split among Rhode’s various equity holders (inves
  
 
 **Bottom line:** Hailey’s actual pre-tax proceeds were closer to \$100 million, and after taxes she likely ended up with substantially less—nowhere near \$265 million, and definitely not \$510 million.
+
+
+## See Also
+- [[chatgpt/chatgpt_justin-hailey-news-2025]]
+- [[chatgpt/chatgpt_justin-bieber-updates]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_salt-lake-city-facts]]
+- [[chatgpt/chatgpt_slammed-with-tax-facts]]

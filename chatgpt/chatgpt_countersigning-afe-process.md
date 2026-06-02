@@ -86,3 +86,11 @@ Yes — **you should countersign the SAFE *before* receiving the money.**
 4. Record in cap table
 
 If you want, tell me **YC SAFE version (Post-Money / Pre-Money / MFN)** and whether any side letters exist — I’ll sanity-check for founder risk quickly.
+
+
+## See Also
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]

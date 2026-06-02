@@ -40,3 +40,11 @@ An MCP client makes requests to the MCP Server, which in turn interacts with the
 
 ### Summary
 In short, **SonarQube MCP** modernizes how SonarQube interacts with external tools by using a protocol tailored for AI and agentic workflows, making code quality insights more accessible and interactive.citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_sonarqube-overview-2]]
+- [[chatgpt/chatgpt_sonarqube-overview]]
+- [[chatgpt/chatgpt_nosonar-in-sonarqube]]
+- [[chatgpt/chatgpt_sonarqube-ai-features]]
+- [[chatgpt/chatgpt_sonarqube-code-analysis]]

@@ -74,3 +74,11 @@ nothing at all?
 Rekordbox rarely offers direct coupon codes or discounts on their official website. Most promotions, such as free trials or discounts for hardware owners (e.g., CDJ, XDJ, or DJM series), are tied to specific purchases or collaborations like the TIDAL DJ Extension.
 
 If you're not seeing any coupons or offers directly on their site, it likely means none are currently available. I recommend periodically checking the [official Rekordbox website](https://rekordbox.com) or signing up for their newsletter to stay informed about future promotions.
+
+
+## See Also
+- [[chatgpt/chatgpt_genius-shot-coupon-codes]]
+- [[chatgpt/chatgpt_lexicon-basic-plan-rekordbox]]
+- [[chatgpt/chatgpt_lexicon-vs-rekordbox-vs-mik]]
+- [[chatgpt/chatgpt_organizing-rekordbox-library]]
+- [[chatgpt/chatgpt_rekordbox-dj-organization-tips]]

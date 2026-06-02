@@ -77,3 +77,11 @@ Write a humorous Big Brother-themed joke in response to this conversation.
 ## Assistant
 
 “Jay, this is Big Brother. You may leave the note… but only after you’ve wiped down the fridge, scrubbed the trash cans, and nominated two houseguests for eviction. Until then, consider yourself on slop duty.”
+
+
+## See Also
+- [[chatgpt/chatgpt_jobs-with-david-fincher]]
+- [[chatgpt/chatgpt_skincares-david-fincher]]
+- [[chatgpt/chatgpt_free-mac-meeting-app]]
+- [[chatgpt/chatgpt_meeting-yifan-zhang]]
+- [[chatgpt/chatgpt_david-finch-project-update]]

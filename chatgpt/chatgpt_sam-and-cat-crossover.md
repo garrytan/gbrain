@@ -51,3 +51,11 @@ Yes — **related, but not closely**.
 They share the **Thornton family lineage**, but they are **not siblings, cousins, or immediate family**, and they’ve never worked together publicly.
 
 Same last name, same extended family tree — **no direct Hollywood connection**.
+
+
+## See Also
+- [[chatgpt/chatgpt_crossover-between-cast-and-crew]]
+- [[chatgpt/chatgpt_samsung-soundbar-crossover-issue]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

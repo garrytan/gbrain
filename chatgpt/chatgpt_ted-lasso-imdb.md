@@ -32,3 +32,11 @@ ted lasso imdb
 - Stars include **Jason Sudeikis** (Ted Lasso), **Hannah Waddingham** (Rebecca Welton), **Jeremy Swift**, **Phil Dunster**, **Brett Goldstein**, **Brendan Hunt**, **Nick Mohammed**, **Juno Temple** and others. citeturn0search8  
 - Main cast and episodes have strong individual episode ratings (many above 8.0/10). citeturn0search1turn0search4  
 - The series has earned significant critical acclaim and numerous awards, including multiple Primetime Emmy wins/nominations. citeturn0search40
+
+
+## See Also
+- [[chatgpt/chatgpt_fallout-imdb-info]]
+- [[chatgpt/chatgpt_imdb-overview-2]]
+- [[chatgpt/chatgpt_imdb-overview]]
+- [[chatgpt/chatgpt_imdb-pitch-pitch-perfect-2]]
+- [[chatgpt/chatgpt_origin-of-ted-lasso]]

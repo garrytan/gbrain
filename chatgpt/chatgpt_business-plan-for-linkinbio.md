@@ -180,3 +180,11 @@ If you want, I can also give you:
 - a 1-page pitch deck outline,
 - exact feature spec for MVP (screens + data model),
 - or a ruthless “what NOT to build” list to avoid commodity traps.
+
+
+## See Also
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]

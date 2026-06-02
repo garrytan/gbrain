@@ -59,3 +59,11 @@ If you want direct download links or help installing on your specific machine, t
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_chrome-remote-desktop-setup]]
+- [[chatgpt/chatgpt_claude-code-desktop-overview]]
+- [[chatgpt/chatgpt_claude-code-figma-integration]]
+- [[chatgpt/chatgpt_claude-code-to-figma]]
+- [[chatgpt/chatgpt_claude-desktop-worktrees]]

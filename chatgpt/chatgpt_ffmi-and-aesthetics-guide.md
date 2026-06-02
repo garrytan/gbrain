@@ -111,3 +111,11 @@ Do you want me to build that comparison for you now, Mr. White?
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Absolutely, Mr. White. We’ll keep it factual and straightforward. There’s no one-size-fits-all data, but we can rely on proportional guidelines and refine them as we go along. Thanks for laying out the details.'}
 {'asset_pointer': 'sediment://file_00000000b910722fac1f29f20fbb27ee', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-06-06T21:29:06.707526+00:00', 'format': 'wav', 'metadata': {'end': 12.05, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 578478, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part3]]

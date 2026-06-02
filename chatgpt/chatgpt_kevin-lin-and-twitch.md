@@ -74,3 +74,11 @@ I thought justin tv had 4 cofounders
 ## Assistant
 
 Yes, you're correct. Justin.tv did indeed have four co-founders: Justin Kan, Emmett Shear, Michael Seibel, and Kyle Vogt. Kevin Lin joined shortly after its inception and was a key figure in the company, particularly in its transition to Twitch. He's often associated closely with the founding team due to his early and significant contributions.
+
+
+## See Also
+- [[chatgpt/chatgpt_amaz-twitch-gamer-profile]]
+- [[chatgpt/chatgpt_twitch-reaction-content-tips]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

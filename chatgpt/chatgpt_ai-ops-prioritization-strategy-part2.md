@@ -1016,3 +1016,11 @@ This gives you visibility without turning the Chief of Staff into a scrollback p
 
 
 harden this. ground it in our company state and the latest from yc on how to build a company
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part1]]
+- [[chatgpt/chatgpt_bio-link-strategy-part2]]
+- [[chatgpt/chatgpt_code-cleanup-strategy-part2]]
+- [[chatgpt/chatgpt_gtm-strategy-for-jovie-part2]]

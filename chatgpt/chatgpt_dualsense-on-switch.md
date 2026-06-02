@@ -84,3 +84,11 @@ Good options that work for Switch/Switch 2 include:
 ✘ A generic PC Bluetooth USB dongle won’t work for DualSense on Switch or Switch 2. citeturn0search20  
 
 If you want the simplest, most dependable choice, go for the 8BitDo adapter model.
+
+
+## See Also
+- [[chatgpt/chatgpt_debugging-switch-statement]]
+- [[chatgpt/chatgpt_free-iphone-deals-switch]]
+- [[chatgpt/chatgpt_javascript-switch-arrow-keys]]
+- [[chatgpt/chatgpt_moes-smart-switch-connectivity-tips]]
+- [[chatgpt/chatgpt_moes-switch-firmware-concerns]]

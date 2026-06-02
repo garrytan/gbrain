@@ -72,3 +72,11 @@ Deliverables:
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-homepage-redesign-prompt]]
+- [[chatgpt/chatgpt_dashboard-redesign-concepts]]
+- [[chatgpt/chatgpt_jovie-homepage-redesign-prompt]]
+- [[chatgpt/chatgpt_landing-page-redesign-part1]]
+- [[chatgpt/chatgpt_landing-page-redesign-part2]]

@@ -104,3 +104,11 @@ It's the eating style often recommended by Dr. Mike Israetel and RP Strength, co
 - Helps control hunger and maintain steady energy and performance
 
 The approach aims for sustained fullness and steady nutrient intake, ideal for body composition goals.
+
+
+## See Also
+- [[chatgpt/chatgpt_dr-mike-israetel-bio]]
+- [[chatgpt/chatgpt_mike-israetel-content-search]]
+- [[chatgpt/chatgpt_mike-israetel-cuff-recommendation]]
+- [[chatgpt/chatgpt_mike-israetel-genius-explained]]
+- [[chatgpt/chatgpt_mike-israetel-mini-cuts]]

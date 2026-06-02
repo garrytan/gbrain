@@ -209,3 +209,11 @@ Dashboard or list page where query params (page, sort, filters) reflect UI state
 ---
 
 If you want, I can show a **code example** of using nuqs in a Next.js App Router page vs using TanStack Router in a full-stack setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_nuqs-vs-tanstack-router-2]]
+- [[chatgpt/chatgpt_pacer-vs-tanstack-query]]
+- [[chatgpt/chatgpt_tanstack-agent-skills]]
+- [[chatgpt/chatgpt_tanstack-and-sonarcloud]]
+- [[chatgpt/chatgpt_tanstack-overview]]

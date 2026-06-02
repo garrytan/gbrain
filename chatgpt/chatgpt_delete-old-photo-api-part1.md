@@ -111,3 +111,11 @@ fetch(`/attachments/363b188b428d9a1aac0050dec794`, {
 
 – The path (`/attachments/:id`) may vary slightly; match whatever URL you see when uploading a new pic (check in Network → XHR).  
 – If you get a 404 or “method not allowed,” they haven’t exposed deletion via API—your only recourse then is to ask Central Casting support.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-photo-editing-workflow-part1]]
+- [[chatgpt/chatgpt_delete-old-photo-api-part2]]
+- [[chatgpt/chatgpt_delete-old-photo-api-part3]]
+- [[chatgpt/chatgpt_affinity-photo-overview]]
+- [[chatgpt/chatgpt_ai-photo-editing-workflow-part2]]

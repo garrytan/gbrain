@@ -172,3 +172,11 @@ This table highlights the differences between starting with a mini-cut and going
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_plan-for-diet-phases]]
+- [[chatgpt/chatgpt_design-diet-plan]]
+- [[chatgpt/chatgpt_diet-plan-meal-prep]]
+- [[chatgpt/chatgpt_bulk-and-cut-plan]]
+- [[chatgpt/chatgpt_cut-bulk-cut-plan-w-predictions]]

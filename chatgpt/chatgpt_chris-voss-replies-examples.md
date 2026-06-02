@@ -159,3 +159,11 @@ Can pick up today or tomorrow $50 cash. When you wanna come?
 Mr. White, send this:
 
 “$50 cash works if you can pick up today or tomorrow. What time can you make it?”
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-counter-tips]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]

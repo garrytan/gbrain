@@ -102,3 +102,11 @@ For rotation, perspective, etc., same idea but use:
 4. Export: **File → Export As…** (PNG or JPEG).
 
 If you tell me whether you’re transforming the flare itself or the entire censored image, I can give you a one-line “do this, this, this” macro for your exact workflow.
+
+
+## See Also
+- [[chatgpt/chatgpt_lens-flare-overlays-photoshop]]
+- [[chatgpt/chatgpt_capture-one-lens-flares]]
+- [[chatgpt/chatgpt_lens-cap-requirements]]
+- [[chatgpt/chatgpt_lens-distortion-explained]]
+- [[chatgpt/chatgpt_ai-image-censorship-tools]]

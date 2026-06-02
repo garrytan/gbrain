@@ -124,3 +124,11 @@ Key evidence behind that code:
 - Product-level writeups of **Emergen-C** align with the above: not preventive, maybe mild symptom help via vit C. citeturn0search9turn0news41  
 
 If you meant “code” as in an actual program/spreadsheet to calculate expected benefit or dosing, tell me what inputs you want (age, training load, diet, etc.) and I’ll draft it.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_best-deal-comparison]]
+- [[chatgpt/chatgpt_bleach-developer-comparison]]

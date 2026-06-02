@@ -213,3 +213,11 @@ To match your macro targets exactly (160g protein, 45g fat, 265g carbs), the pre
 - A small serving of oatmeal or ready-to-eat cereal
 
 Please note that without the specific nutritional information for each product you're consuming, it's challenging to ensure the exactness of the macros. However, the suggestions provided can help guide your choices. Remember to check the nutritional labels of your chosen products to help balance out your macros for the day. If you have access to nutrition information for the products you plan to consume, you can provide that, and I can assist further in fine-tuning your meal plan.
+
+
+## See Also
+- [[chatgpt/chatgpt_meal-plan-for-macros-part1]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part2]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part3]]
+- [[chatgpt/chatgpt_meal-plan-new-macros]]
+- [[chatgpt/chatgpt_camping-meal-plan]]

@@ -64,3 +64,11 @@ Would you like a formatted pitch template to send to some of these orgs or a wee
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-dj-relations-jobs]]
+- [[chatgpt/chatgpt_bartender-jobs-search-results]]
+- [[chatgpt/chatgpt_bartending-jobs-in-hollywood]]
+- [[chatgpt/chatgpt_bartending-jobs-in-los-angeles]]
+- [[chatgpt/chatgpt_bartending-jobs-la-venues]]

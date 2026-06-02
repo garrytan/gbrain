@@ -47,3 +47,11 @@ In excellent condition, barely used. Comes with power cable and all trays as sho
 ---
 
 Let me know if you want to include ink levels, exact page count, or box/manual info.
+
+
+## See Also
+- [[chatgpt/chatgpt_facebook-marketplace-guide]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-2]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-3]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-tips]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing]]

@@ -77,3 +77,11 @@ Mr. White, here’s a lean, end-to-end pipeline to go from concept to 3D-printab
    • Test-fit, note tweaks, loop back to Blender for adjustments.
 
 By leaning on AI for rough form and using Blender’s print-prep toolset, you minimize manual block-outs and get to your final, printer-ready helmet in under a day.
+
+
+## See Also
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_arlo-camera-charging-model]]
+- [[chatgpt/chatgpt_best-model-for-design-systems]]
+- [[chatgpt/chatgpt_blonde-model-in-bathtub]]

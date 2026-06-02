@@ -693,3 +693,11 @@ export default {
   },
 };
 </script>
+
+
+## See Also
+- [[chatgpt/chatgpt_tim-whites-core-values-part1]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part2]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part4]]
+- [[chatgpt/chatgpt_core-values-compilation-part1]]
+- [[chatgpt/chatgpt_core-values-compilation-part2]]

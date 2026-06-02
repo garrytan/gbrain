@@ -33,3 +33,11 @@ Inertia is the resistance of an object to a change in its state of motion.
 This concept is formalized in **Newton’s First Law of Motion**.  
 
 Do you want me to break it down in everyday terms (like with car or gym examples), or keep it in the strict physics definition?
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

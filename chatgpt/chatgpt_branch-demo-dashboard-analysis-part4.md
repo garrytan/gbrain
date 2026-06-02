@@ -916,3 +916,11 @@ I’ll work backward from the demo into the narrowest live wedge, separating rea
 
 
 I’m treating MRI as the revenue metric unless you define it differently, and I’ll anchor the plan in the larger `JovieInc/Jovie` repo rather than the lightweight Nuxt smart-link shell.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part5]]
+- [[chatgpt/chatgpt_demo-dashboard-analysis-part4]]

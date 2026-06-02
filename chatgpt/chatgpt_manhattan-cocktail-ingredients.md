@@ -218,3 +218,11 @@ My God.
 ## Assistant
 
 Did I miss something, or is there another aspect of the Manhattan you'd like to discuss?
+
+
+## See Also
+- [[chatgpt/chatgpt_manhattan-cocktail-recipe]]
+- [[chatgpt/chatgpt_friends-actors-dessert-ingredients]]
+- [[chatgpt/chatgpt_hot-ingredients-in-blender]]
+- [[chatgpt/chatgpt_moscow-mule-ingredients]]
+- [[chatgpt/chatgpt_natural-ingredients-only]]

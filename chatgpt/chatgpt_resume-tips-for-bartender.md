@@ -185,3 +185,11 @@ Understood, Mr. White. Here's the revised and concise skills section without men
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-resume-skills-update]]
+- [[chatgpt/chatgpt_bartender-resume-summary]]
+- [[chatgpt/chatgpt_resume-update-bartender-role]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]

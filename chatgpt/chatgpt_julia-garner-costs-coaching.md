@@ -95,3 +95,11 @@ Best way to do it cleanly:
 Given Dr. Gurner’s positioning, I would expect the real cost to be **material**, likely well above ordinary executive-coach market rates, but I cannot verify a public coaching fee beyond the **$15,000 assessment**. citeturn1search4turn1search8
 
 I can draft a clean reimbursement / board-consent paragraph for founder coaching.
+
+
+## See Also
+- [[chatgpt/chatgpt_cloudflare-reduces-cloud-costs]]
+- [[chatgpt/chatgpt_ded-body-removal-costs]]
+- [[chatgpt/chatgpt_ev-ownership-costs-comparison]]
+- [[chatgpt/chatgpt_expensive-chipotle-meal-costs]]
+- [[chatgpt/chatgpt_sound-stage-rental-costs]]

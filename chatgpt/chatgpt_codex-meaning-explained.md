@@ -42,3 +42,11 @@ Other unrelated meanings of “codex” include:
 • Various brands or learning sites styled as **Codédex** for programming education. citeturn0search3
 
 If you meant something *specific* like a product, service, or acronym spelled **ccodex**, clarify the context (coding, gaming, legal, food standards, etc.) and I’ll pinpoint it.
+
+
+## See Also
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained-2]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained]]
+- [[chatgpt/chatgpt_dopl-meaning-explained]]
+- [[chatgpt/chatgpt_llo-meaning-explained]]

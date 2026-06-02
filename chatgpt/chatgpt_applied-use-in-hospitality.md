@@ -402,3 +402,11 @@ It solves a real GM-level problem: converting physical room state into sellable 
 The first product should be:
 
 > **A camera-free room-vacancy layer that ranks checkout rooms by cleanability and monetizable availability.**
+
+
+## See Also
+- [[chatgpt/chatgpt_huston-hospitality-origins]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

@@ -58,3 +58,11 @@ df_sorted.to_csv('sorted_file.csv', index=False)
 ```
 
 This script assumes that your street addresses are somewhat uniform and that each address starts with a house number. Adjustments may be needed for complex address formats or if additional sorting criteria are required (like sorting by street name after sorting by house number).
+
+
+## See Also
+- [[chatgpt/chatgpt_street-cleaning-capacity-issue]]
+- [[chatgpt/chatgpt_street-parking-efficiency]]
+- [[chatgpt/chatgpt_street-pop-smoke-explanation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

@@ -42,3 +42,11 @@ Try again
 Mr. White, how about:
 
 “Ah yes, a poorly choreographed rap, questionable face paint, and a flatbed truck. Because who needs coherent messaging when you have peak cringe? Ryan Reynolds is definitely slow-clapping... ironically.”
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

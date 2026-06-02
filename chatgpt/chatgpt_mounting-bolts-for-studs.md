@@ -53,3 +53,11 @@ Yes—grab **#10 or #12 wood screws**, **2.5" to 3" long**, with **flat or pan h
 Make sure to also get **washers** if your mount’s holes are oversized—**#10 or #12 flat washers** will work.
 
 Bring a **drill with a pilot bit** (~1/8") to pre-drill into the studs for easier screwing and to prevent splitting.
+
+
+## See Also
+- [[chatgpt/chatgpt_magnet-mounting-assistance]]
+- [[chatgpt/chatgpt_tv-mounting-anchors-guide]]
+- [[chatgpt/chatgpt_tv-mounting-diagram-advice]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

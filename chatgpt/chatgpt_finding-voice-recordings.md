@@ -131,3 +131,11 @@ done
 ```
 
 Then trim the WAVs into clean solo-speech clips. For voice training, prioritize **close-mic speech only**, with no intro music, no music bed, no guests, and no heavy reverb.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ai-workflow-for-voice-dictation]]
+- [[chatgpt/chatgpt_elevenlabs-voice-ai-grant]]
+- [[chatgpt/chatgpt_fiona-voice-cast]]
+- [[chatgpt/chatgpt_hermes-voice-interaction-setup]]

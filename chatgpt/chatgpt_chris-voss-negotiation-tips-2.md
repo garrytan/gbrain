@@ -47,3 +47,11 @@ Here’s a Chris Voss-style move you can run on this guy:
 ---
 
 Want me to draft you an exact reply in his chat that hits these beats cleanly and keeps you in control?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-5]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-6]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-7]]

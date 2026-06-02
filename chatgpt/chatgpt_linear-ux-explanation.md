@@ -201,3 +201,11 @@ Great UX for professional tools is not about being friendly.
 It’s about being **invisible**.
 
 If you want, I can translate this into a **rebuild checklist** or map it directly onto **your product’s core workflow**.
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-linear-agent-explanation]]
+- [[chatgpt/chatgpt_linear-internal-toolbar-explanation]]
+- [[chatgpt/chatgpt_linear-meaning-explanation]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]

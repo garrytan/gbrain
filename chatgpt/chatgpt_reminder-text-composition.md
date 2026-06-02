@@ -28,3 +28,11 @@ Compose a friendly reminder text to Sophie that todays call time is 5pm since we
 Mr. White, here’s a clean text you can send:
 
 “Hey Sophie! Quick reminder—today’s call time is 5:00 PM since we’re starting two-show days. See you then!”
+
+
+## See Also
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_body-composition-change-summary]]
+- [[chatgpt/chatgpt_body-composition-changes]]
+- [[chatgpt/chatgpt_body-composition-phase-plan]]
+- [[chatgpt/chatgpt_button-text-update]]

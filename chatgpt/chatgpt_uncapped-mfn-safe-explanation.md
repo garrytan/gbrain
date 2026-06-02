@@ -210,3 +210,11 @@ Mr. White — here’s the **market context for YC company valuations in 2025** 
 - **Median non-YC seed reference:** **~$16M pre-money**
 
 If you want, I can tailor that range based on your traction (ARR, users, team).
+
+
+## See Also
+- [[chatgpt/chatgpt_uncapped-safe-explanation]]
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]

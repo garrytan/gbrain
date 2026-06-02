@@ -56,3 +56,11 @@ Notion doesn’t have a built-in “Back to Home” button or fixed navbar like 
 - **Sidebar** = built-in navigation structure. citeturn0search5
 
 If you want steps to *build a specific navbar or a back-to-home button*, let me know and I can lay those out.
+
+
+## See Also
+- [[chatgpt/chatgpt_16x16-icon-in-button]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]
+- [[chatgpt/chatgpt_add-button-features-vlink]]

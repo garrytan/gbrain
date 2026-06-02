@@ -45,3 +45,11 @@ Example:
 - If you want `timwhite.vip` to redirect to `https://example.com`, set the destination URL as `https://example.com`.
 
 After setting this up, all visitors to `timwhite.vip` will be automatically redirected to the specified destination website. It may take a few minutes for the changes to propagate across the internet.
+
+
+## See Also
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part2]]
+- [[chatgpt/chatgpt_redirect-issue-when-logging-out]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

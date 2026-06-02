@@ -82,3 +82,11 @@ You **don’t charge the camera directly** — instead:
 - Or buy a **3rd-party charger** (they’re ~$10–15 and usually come with a spare battery too).
 
 Want me to find a working charger/battery combo online for you?
+
+
+## See Also
+- [[chatgpt/chatgpt_fashion-film-shot-list]]
+- [[chatgpt/chatgpt_genius-shot-coupon-codes]]
+- [[chatgpt/chatgpt_genius-shot-details]]
+- [[chatgpt/chatgpt_genius-shot-rebranding-inquiry]]
+- [[chatgpt/chatgpt_genius-shot-reddit-review]]

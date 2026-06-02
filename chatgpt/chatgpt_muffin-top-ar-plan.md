@@ -165,3 +165,11 @@ I mean, be clear that it's ChatGPT owning up to the mistake, and that I didn't m
 ## Assistant
 
 Hey Daniel—ChatGPT here. I mistakenly called our remix invite a “contest.” That was my error, not Tim’s. I apologize for the confusion.
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_blueberry-muffin-helmet-render]]
+- [[chatgpt/chatgpt_dj-muffin-helmet-build]]
+- [[chatgpt/chatgpt_edm-muffin-helmet-design]]
+- [[chatgpt/chatgpt_muffin-head-logo-design]]

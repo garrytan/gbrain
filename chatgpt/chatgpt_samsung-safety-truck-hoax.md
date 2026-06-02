@@ -29,3 +29,11 @@ Fact-check this and then challenge the concept of it being a safety thing, and t
 Mr. White, here’s a concise comment you can drop:
 
 > Samsung’s “Safety Truck” was just a trade-show prototype—never a real rollout. Latency, glare and distraction would actually make passing more dangerous, and US safety and advertising regs wouldn’t even allow a giant live video billboard on the back of a semitrailer. It’s pure marketing theater, not a production-ready solution.
+
+
+## See Also
+- [[chatgpt/chatgpt_fb-listing-samsung-tv]]
+- [[chatgpt/chatgpt_reset-samsung-tv-pin]]
+- [[chatgpt/chatgpt_samsung-soundbar-crossover-issue]]
+- [[chatgpt/chatgpt_samsung-tv-plus-overview]]
+- [[chatgpt/chatgpt_bucket-truck-pricing-guide]]

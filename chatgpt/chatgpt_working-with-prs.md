@@ -36,3 +36,11 @@ You can keep working in your **feat branch**. Here’s the clean flow most teams
 So: you don’t need to switch to `preview` for daily work. Keep coding in your `feat` branch → push → PR → CI auto-merges into `preview`.  
 
 Do you want me to sketch out the exact Git commands for the cleanest rebase/PR cycle in this setup?
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_ac-not-working-troubleshooting]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]

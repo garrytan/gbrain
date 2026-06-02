@@ -36,3 +36,11 @@ To calculate the number of streams you get in a day for a 3:23 song played on re
    - Number of streams = 86,400 / 203 ≈ 425.62
 
 Since you can't have a fraction of a stream, you would get approximately 425 streams in a day if the song is played on repeat continuously.
+
+
+## See Also
+- [[chatgpt/chatgpt_hotel-height-approx-10-stories]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

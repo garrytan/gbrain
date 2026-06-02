@@ -42,3 +42,11 @@ Its faded red
 If the red curb is **faded but still visibly red**, it’s **still legally enforceable** in Los Angeles. Parking enforcement and LAPD will typically issue tickets even if the paint is worn, as long as it's identifiable as red.
 
 If it’s **so faded that it’s truly unrecognizable as red**, you might have a case to dispute a ticket — but you're still at risk of being cited. When in doubt, **don’t park there** unless you’re willing to gamble with a ticket or tow.
+
+
+## See Also
+- [[chatgpt/chatgpt_parking-rules-clarification]]
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]
+- [[chatgpt/chatgpt_bikini-rules-in-maldives]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]

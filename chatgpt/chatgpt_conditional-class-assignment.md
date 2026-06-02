@@ -127,3 +127,11 @@ Apologies for the confusion earlier. Here's the corrected code snippet:
 In this updated code, the class array is properly formatted with commas separating the class assignments. Each class assignment is enclosed within square brackets `[ ]`, and the ternary operator `?` is used to conditionally assign classes based on the values of `xs` and `xl` variables.
 
 Please make sure to replace `xs` and `xl` with the appropriate boolean values or variables in your actual implementation.
+
+
+## See Also
+- [[chatgpt/chatgpt_conditional-css-class-assignment]]
+- [[chatgpt/chatgpt_conditional-content-rendering]]
+- [[chatgpt/chatgpt_css-class-based-on-variables]]
+- [[chatgpt/chatgpt_css-class-definition-overview]]
+- [[chatgpt/chatgpt_css-class-explanation]]

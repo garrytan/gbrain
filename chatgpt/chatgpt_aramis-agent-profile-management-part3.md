@@ -1414,3 +1414,11 @@ Run fundraise on the PC now, but keep the control system simple:
 ```
 
 That gives you parallelism without creating a fake org chart inside Linear.
+
+
+## See Also
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part3]]
+- [[chatgpt/chatgpt_automate-visual-profile-follow-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]

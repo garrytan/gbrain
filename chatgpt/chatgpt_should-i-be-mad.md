@@ -145,3 +145,11 @@ If she responds with understanding, that’s a good sign.
 If she responds with guilt, pressure, or anger, that tells you more than the paddle boarding plan ever could.
 
 Do not reward instability with extra investment.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

@@ -826,3 +826,11 @@ Here’s a UX audit of your **Settings + Links dashboard flows** based on the ne
 ---
 
 Would you like me to draft a **Figma-style spec (spacing, colors, typography tokens)** so your AI agents can implement the sidebar + settings + links refinements directly without guesswork?
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part1]]
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part3]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part2]]
+- [[chatgpt/chatgpt_yc-application-audit-part2]]
+- [[chatgpt/chatgpt_yc-homepage-audit-part2]]

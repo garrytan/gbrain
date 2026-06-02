@@ -35,3 +35,11 @@ Here's a list of the tasks you need to accomplish each week:
 6. **Meal prep**: Twice a week, after grocery shopping
 
 Does this look correct? If so, we can move on to scheduling these tasks into a weekly calendar. If there are any other tasks or adjustments needed, let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-task-automation-plan]]
+- [[chatgpt/chatgpt_ai-tool-reasoning-task]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_automation-task-setup]]
+- [[chatgpt/chatgpt_bar-staff-run-schedule]]

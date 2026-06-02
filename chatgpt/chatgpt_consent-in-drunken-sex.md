@@ -58,3 +58,11 @@ If one party is sober and the other is intoxicated, the legality of consent can 
 California law specifically states that a person who is incapacitated by drugs or alcohol cannot legally give consent. Therefore, if the intoxicated person is deemed incapable of giving consent due to their level of intoxication, the sober party could potentially face charges related to sexual assault.
 
 It's crucial for all parties involved to clearly understand and respect consent, particularly when alcohol or drugs are involved, as the implications of misunderstanding consent can have serious legal consequences.
+
+
+## See Also
+- [[chatgpt/chatgpt_consent-in-strip-clubs]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

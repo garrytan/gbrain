@@ -48,3 +48,11 @@ I’ll also incorporate design guidelines related to cuteness, minimalism, and f
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part2]]
+- [[chatgpt/chatgpt_helmet-design-aesthetics-muffintop-part3]]
+- [[chatgpt/chatgpt_edm-muffin-helmet-design]]
+- [[chatgpt/chatgpt_muffin-helmet-design-prompt]]
+- [[chatgpt/chatgpt_muffin-helmet-design]]

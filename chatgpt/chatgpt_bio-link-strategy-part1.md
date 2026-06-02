@@ -622,3 +622,11 @@ I’m checking the repo logic for your lead scoring and pressure-testing the lau
 
 
 I found the repo and GTM docs; the broad “artists already paying for a broken stack” targeting still looks directionally right, but the exact score threshold remains unverified. One thing is already clear: YC is upside, not survival, so fundraising has to start now alongside launch and outbound.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part1]]
+- [[chatgpt/chatgpt_bio-link-strategy-part2]]
+- [[chatgpt/chatgpt_bio-link-strategy-part3]]
+- [[chatgpt/chatgpt_code-cleanup-strategy-part1]]

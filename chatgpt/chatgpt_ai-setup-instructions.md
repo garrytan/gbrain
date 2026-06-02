@@ -590,3 +590,11 @@ This lets RLS & storage safely operate using the transformed UUID.
 ---
 
 Let me know if you want help writing the `jose` validation stub or the persist-to-UUID function—I can draft that too.
+
+
+## See Also
+- [[chatgpt/chatgpt_event-setup-instructions]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

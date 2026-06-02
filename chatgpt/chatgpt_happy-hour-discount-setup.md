@@ -60,3 +60,11 @@ To set up a happy hour special on your Clover point-of-sale (POS) system where y
    - Adjust the conditions as necessary to ensure it works as intended.
 
 This setup ensures the discount only applies when the criteria (two or four specialty cocktails during happy hour) are met, preventing it from triggering incorrectly. If you need further assistance, Clover’s support team can provide detailed guidance tailored to your specific POS setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_toast-pos-discount-setup]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]

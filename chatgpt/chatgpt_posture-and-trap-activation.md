@@ -260,3 +260,11 @@ If you want the most “science/coach” answer possible: tell me your current s
 - any shoulder pain (front/top) during pressing or lateral raises
 
 I’ll tell you (1) whether you’re under-rowing, (2) whether this is likely pec/lat stiffness vs scap control, and (3) the *one* highest-SFR drill you should prioritize.
+
+
+## See Also
+- [[chatgpt/chatgpt_accessory-mode-activation]]
+- [[chatgpt/chatgpt_memory-activation-request]]
+- [[chatgpt/chatgpt_s-tier-trap-exercises]]
+- [[chatgpt/chatgpt_t-mobile-activation-steps]]
+- [[chatgpt/chatgpt_trap-bar-deadlifts-approval]]

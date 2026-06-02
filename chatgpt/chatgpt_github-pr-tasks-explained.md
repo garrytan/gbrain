@@ -86,3 +86,11 @@ The task count is **not a quality signal**. Reviewers care about:
 - Whether required items (tests, accessibility, security) are satisfied
 
 If you want, I can show you **how to collapse or trim the template** so task counts stop looking misleading.
+
+
+## See Also
+- [[chatgpt/chatgpt_github-runners-explained]]
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]
+- [[chatgpt/chatgpt_allow-claude-biom-github]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]

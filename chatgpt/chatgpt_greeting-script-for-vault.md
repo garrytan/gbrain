@@ -66,3 +66,11 @@ Here’s the revised greeting script:
 ---
 
 This version gives guests the flexibility to take their time or get immediate assistance, reinforcing the lamp service feature.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_current-vault-menu]]
+- [[chatgpt/chatgpt_vault-pre-shift-map]]
+- [[chatgpt/chatgpt_vault-speakeasy-review-highlights]]
+- [[chatgpt/chatgpt_vault-speakeasy-staff-update]]

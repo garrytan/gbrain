@@ -58,3 +58,11 @@ If you liked *The Woman in Cabin 10*, Mr. White, try one of these next:
 6. **The Invisible Guest (2016)** – Spanish locked-room mystery: a businessman accused of murdering his lover recounts the story to a top defense strategist; by the time you hit the ending, the floor’s been pulled out from under you a few times. citeturn2search5turn2search8turn2search20  
 
 If you want *one* that’s closest in feel—modern, pulpy, twisty—I’d start with **The Weekend Away** or **The Woman in the Window**.
+
+
+## See Also
+- [[chatgpt/chatgpt_burlesque-movie-interior-location]]
+- [[chatgpt/chatgpt_differences-book-vs-movie]]
+- [[chatgpt/chatgpt_elio-movie-details]]
+- [[chatgpt/chatgpt_famous-movie-hackers]]
+- [[chatgpt/chatgpt_her-hologram-love-movie]]

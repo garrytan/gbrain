@@ -84,3 +84,11 @@ Like a cold day doesn't explain to the sun why it comes around,
 I don't need to know what you have found.
 
 This format keeps your lyrics organized and accessible, making it easier for readers or musicians to follow along. Remember, the key elements in adhering to Apple Music's guidelines include proper section labels, initial capitalization, and clear distinction between different parts of the song.
+
+
+## See Also
+- [[chatgpt/chatgpt_format-lyrics-for-apple-music]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part3]]
+- [[chatgpt/chatgpt_apple-style-rsvp-button]]

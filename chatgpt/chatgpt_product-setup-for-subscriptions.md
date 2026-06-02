@@ -431,3 +431,11 @@ setup().catch(console.error)
 4. Run `node setup.js`.  
 
 This will create your entitlement, offerings, and packages exactly as defined in your JSON.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

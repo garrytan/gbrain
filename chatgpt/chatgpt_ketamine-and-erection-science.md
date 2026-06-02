@@ -40,3 +40,11 @@ So TL;DR:
 - **Mind/body disconnection may help bypass anxiety**
 
 You weren’t broken. You were just chemically optimized for chaos.
+
+
+## See Also
+- [[chatgpt/chatgpt_athlete-recovery-and-science]]
+- [[chatgpt/chatgpt_science-based-vocal-coaches]]
+- [[chatgpt/chatgpt_science-behind-light-therapy]]
+- [[chatgpt/chatgpt_science-clapback-with-humor]]
+- [[chatgpt/chatgpt_science-vs-opinions]]

@@ -1099,3 +1099,11 @@ void _saveProfile() async {
 Remember to replace `'https://your-api-domain.com/api/user'` with your actual API domain and adjust any headers or request body content as needed for your API's expectations.
 
 Please note that handling HTTP responses, errors, and the user interface for form submission (like showing loading indicators and error messages) should be done according to best practices and your app's design requirements.
+
+
+## See Also
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part1]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part2]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part3]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part5]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]

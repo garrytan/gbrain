@@ -180,3 +180,11 @@ Understood. You’re anchored at **$200**, but willing to let it go at **$150 to
 ---
 
 Do you want me to also script a **hard urgency close** (something like: *“I can’t hold it past today — if you want it, we lock it in now”*) for when they hesitate after countering?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-response-example]]
+- [[chatgpt/chatgpt_polish-response-chris-voss-style]]
+- [[chatgpt/chatgpt_chris-voss-counter-tips]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]

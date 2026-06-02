@@ -258,3 +258,11 @@ methods: {
 
 This method first checks if the `dataType` prop is set to `currency`. If it is, it removes all non-numeric characters from the input value, rounds the value to 2 decimal places, and uses Intl.NumberFormat to format the value as currency. If the `dataType` prop is not set to `currency`, the method simply sets the `formattedValue` and `modelValue` to the input value.
 
+
+
+## See Also
+- [[chatgpt/chatgpt_validate-currency-input-values]]
+- [[chatgpt/chatgpt_format-lyrics-apple-style]]
+- [[chatgpt/chatgpt_format-lyrics-for-apple-music]]
+- [[chatgpt/chatgpt_format-post-with-breaks]]
+- [[chatgpt/chatgpt_korean-phone-number-format]]

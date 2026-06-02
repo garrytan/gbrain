@@ -54,3 +54,11 @@ Hey Mr. White — here’s the straight dope, concise.
 If you want, read the label’s tiny print for **lot/serving** and I can sanity-check anything odd, but based on what I can verify, the “new” Genius Shot is: **same BLG protein**, **100 mL bottle**, **label now 100 kcal**, **sweetened with sucralose**, and **TSA-legal**.
 
 Want me to cross-check your exact flavor’s panel against the site’s spec?
+
+
+## See Also
+- [[chatgpt/chatgpt_geniusshot-brand-changes]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]

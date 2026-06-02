@@ -55,3 +55,11 @@ For the enter animation, we're using `transform translate-x-full` for the `enter
 Similarly, for the leave animation, we're using `transform translate-x-0` for the `leave-from` property to keep the item in its current position. Then, `transform translate-x-full` is used for the `leave-to` property to move the item offscreen to the right, making it slide out to the right.
 
 Feel free to adjust the duration or add additional classes/styles as needed to achieve the desired animation effect.
+
+
+## See Also
+- [[chatgpt/chatgpt_8-slide-yc-pitch-deck]]
+- [[chatgpt/chatgpt_slide-in-elements-animation]]
+- [[chatgpt/chatgpt_team-slide-summary]]
+- [[chatgpt/chatgpt_deadmau5-cdj-transition]]
+- [[chatgpt/chatgpt_job-transition-message]]

@@ -72,3 +72,11 @@ During the first few days after the concrete is poured, it is important to keep 
 After this initial period, the concrete will continue to cure and gain strength over time. However, it is important to wait for the concrete to reach its full strength before placing heavy loads or conducting construction activities on the slab. This can take several weeks or even months, depending on the specific conditions and requirements of the project.
 
 It is important to consult with a qualified engineer or contractor for specific guidance on the drying and curing time for the concrete slab in your particular project.
+
+
+## See Also
+- [[chatgpt/chatgpt_cnn-outrage-framing-debate]]
+- [[chatgpt/chatgpt_contrastive-negation-framing]]
+- [[chatgpt/chatgpt_pouring-bottle-request-denied]]
+- [[chatgpt/chatgpt_pouring-with-counted-spout]]
+- [[chatgpt/chatgpt_yc-and-a16z-framing-part1]]

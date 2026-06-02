@@ -122,3 +122,11 @@ Mr. White — there isn’t a study that tests “FFMI vs. attractiveness” hea
 - “Most attractive FFMI” isn’t a thing science measures; but translating the strongest evidence: **Men ~20–22 FFMI**, **Women ~15–17 FFMI**, assuming healthy leanness (men ~10–15% BF; women ~20–24% BF) and *moderate*, not extreme, muscularity. citeturn8search3turn0search2turn1view0
 
 If you want, I can convert your height/weight/body-fat into your current FFMI and show what small changes would move you into those bands.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_calculate-ffmi-1771]]
+- [[chatgpt/chatgpt_core-values-compilation-part1]]
+- [[chatgpt/chatgpt_core-values-compilation-part2]]
+- [[chatgpt/chatgpt_emitting-multiple-values]]

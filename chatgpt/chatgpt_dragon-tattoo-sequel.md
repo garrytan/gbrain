@@ -42,3 +42,11 @@ Mr. White,
 - **Hollywood version:** **Not made** (the David Fincher remake stopped after the first film)
 
 If you want, I can **summarize the plot**, **compare book vs. film**, or **explain the later non-Larsson continuation novels**.
+
+
+## See Also
+- [[chatgpt/chatgpt_tron-ares-sequel-status]]
+- [[chatgpt/chatgpt_focus-ring-tattoo-meaning]]
+- [[chatgpt/chatgpt_love-bomb-tattoo-design]]
+- [[chatgpt/chatgpt_sex-bomb-tattoo-design]]
+- [[chatgpt/chatgpt_tattoo-design-modification]]

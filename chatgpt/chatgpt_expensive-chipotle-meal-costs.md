@@ -33,3 +33,11 @@ The high cost at Chipotle for two people can be due to several factors:
 4. **Tax and Fees**: Sales tax and potential additional fees (for example, for delivery or online orders) also contribute to the total cost.
 
 These factors can add up, making a meal for two surprisingly expensive.
+
+
+## See Also
+- [[chatgpt/chatgpt_chipotle-catering-for-meal-prep]]
+- [[chatgpt/chatgpt_cloudflare-reduces-cloud-costs]]
+- [[chatgpt/chatgpt_ded-body-removal-costs]]
+- [[chatgpt/chatgpt_ev-ownership-costs-comparison]]
+- [[chatgpt/chatgpt_julia-garner-costs-coaching]]

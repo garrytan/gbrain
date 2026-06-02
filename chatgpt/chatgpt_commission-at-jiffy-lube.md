@@ -49,3 +49,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': 'Yeah, it can kind of feel like that sometimes, right? I mean, they do have ways to check your brake fluid or your coolant or whatever, but it is true that in a lot of these quick-stop shops, they might just kind of recommend the same extras pretty routinely. It\'s not necessarily that they\'re making it up, but yeah, they might have a kind of "standard" set of suggestions they roll out for everyone. So it\'s always good to double'}
 {'asset_pointer': 'sediment://file_00000000791871fb89af8fc73c40c950', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-05-04T20:52:21.593473+00:00', 'format': 'wav', 'metadata': {'end': 17.75, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 852078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_jiffy-lube-coupon-deals]]
+- [[chatgpt/chatgpt_custom-dj-helmet-commission]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

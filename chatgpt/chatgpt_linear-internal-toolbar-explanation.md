@@ -39,3 +39,11 @@ Example use case:
 In Linear’s internal developer tooling, an **internal toolbar** held a toggle to switch a feature flag on/off quickly while testing UI changes during development. citeturn0search0
 
 So in short: **a linear internal toolbar is a horizontal UI bar inside an app containing quick-access controls or actions.** citeturn0search21
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-linear-agent-explanation]]
+- [[chatgpt/chatgpt_linear-meaning-explanation]]
+- [[chatgpt/chatgpt_linear-ux-explanation]]
+- [[chatgpt/chatgpt_statsig-toolbar-inquiry]]
+- [[chatgpt/chatgpt_vercel-flags-toolbar]]

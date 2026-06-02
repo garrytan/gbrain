@@ -803,3 +803,11 @@ This fits the existing Jovie design direction: calm operational UI, subtle motio
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_code-review-system-design]]
+- [[chatgpt/chatgpt_ai-design-review-tools]]
+- [[chatgpt/chatgpt_design-system-and-workflow]]
+- [[chatgpt/chatgpt_design-system-application]]
+- [[chatgpt/chatgpt_design-system-audit-2]]

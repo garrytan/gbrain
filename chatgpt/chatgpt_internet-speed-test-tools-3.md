@@ -40,3 +40,11 @@ Here are several **free internet speed tests** you can run right now in your bro
 **Speedtest by Ookla** — one of the most widely used tests for download/upload/latency. citeturn0search24
 
 You can click any of the above names in your browser to run the test and see your **download speed (Mbps)**, **upload speed (Mbps)**, and **latency/ping**. The exact numbers tell you how fast your internet connection really is at the moment. citeturn0search0turn0search4
+
+
+## See Also
+- [[chatgpt/chatgpt_internet-speed-test-tools-2]]
+- [[chatgpt/chatgpt_internet-speed-test-tools]]
+- [[chatgpt/chatgpt_page-speed-test-tools]]
+- [[chatgpt/chatgpt_gtmetrix-speed-test]]
+- [[chatgpt/chatgpt_unit-test-speed-tips]]

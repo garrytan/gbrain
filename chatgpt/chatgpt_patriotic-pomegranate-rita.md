@@ -86,3 +86,11 @@ No, that's, that's not good.
 ## Assistant
 
 Alright, how about "Freedom Fire Rita"? It has strong alliteration and a patriotic vibe.
+
+
+## See Also
+- [[chatgpt/chatgpt_red-nose-rita]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

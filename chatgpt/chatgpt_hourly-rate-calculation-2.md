@@ -26,3 +26,11 @@ tags: [chatgpt, import]
 ## Assistant
 
 Mr. White, \$500 over 14 hours is **\$35.71/hr** (exactly \$35 5⁄7 per hour).
+
+
+## See Also
+- [[chatgpt/chatgpt_hourly-rate-calculation]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]

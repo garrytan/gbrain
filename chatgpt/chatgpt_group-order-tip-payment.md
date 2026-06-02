@@ -35,3 +35,11 @@ So if you start the order and leave a $100 tip, *you alone* are charged that $10
 👉 They only pay for their food + any sales tax/service fees on *their own items*.  
 
 Would you like me to break down how you could *split* a big tip like that more fairly among the group?
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-supply-order-list]]
+- [[chatgpt/chatgpt_coffee-order-summary]]
+- [[chatgpt/chatgpt_dexter-shows-in-order]]
+- [[chatgpt/chatgpt_fall-order-email-draft]]
+- [[chatgpt/chatgpt_la-restraining-order-process]]

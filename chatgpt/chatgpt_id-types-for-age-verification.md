@@ -150,3 +150,11 @@ The option that matches this recipe is the first one.
 ## Assistant
 
 The correct answer is "All of the above." A U.S. Driver's License, a passport, and a Military ID are all valid forms of identification to prove age in the United States.
+
+
+## See Also
+- [[chatgpt/chatgpt_tailwind-css-border-types]]
+- [[chatgpt/chatgpt_contact-verification-issue]]
+- [[chatgpt/chatgpt_dns-verification-confirmation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

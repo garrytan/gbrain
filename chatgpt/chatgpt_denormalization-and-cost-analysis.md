@@ -109,3 +109,11 @@ A good launch-stage pattern is a single `audience_profile_snapshot` table with c
 Then update only users whose underlying events changed since the last run. That usually gives most of the speedup without turning background maintenance into a tax.
 
 If you want, I’ll map this into a concrete Neon/Postgres implementation with the exact SQL shape and when I’d choose trigger-based updates vs scheduled batch updates.
+
+
+## See Also
+- [[chatgpt/chatgpt_cost-analysis-for-24-7-agents]]
+- [[chatgpt/chatgpt_cost-analysis-inquiry]]
+- [[chatgpt/chatgpt_cost-comparison-analysis]]
+- [[chatgpt/chatgpt_cron-job-cost-analysis]]
+- [[chatgpt/chatgpt_weekly-meal-cost-analysis]]

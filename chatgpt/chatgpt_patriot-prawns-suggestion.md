@@ -525,3 +525,11 @@ Certainly! Here are 20 more creative and provocative names for chicken skewers:
 18. "Truman's Tender Temptation"
 19. "Reagan's Racy Roast"
 20. "Bush's Brazen Bird"
+
+
+## See Also
+- [[chatgpt/chatgpt_anagram-name-suggestion]]
+- [[chatgpt/chatgpt_auto-body-shop-suggestion]]
+- [[chatgpt/chatgpt_comment-suggestion-critique]]
+- [[chatgpt/chatgpt_counter-offer-suggestion]]
+- [[chatgpt/chatgpt_draft-reply-suggestion]]

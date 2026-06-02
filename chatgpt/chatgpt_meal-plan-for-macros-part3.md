@@ -325,3 +325,11 @@ Final notes:
 
 
 Add 3 rice cakes
+
+
+## See Also
+- [[chatgpt/chatgpt_meal-plan-for-macros-part1]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part2]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part4]]
+- [[chatgpt/chatgpt_meal-plan-new-macros]]
+- [[chatgpt/chatgpt_camping-meal-plan]]

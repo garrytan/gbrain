@@ -114,3 +114,11 @@ Overall, this code looks functional, but it is missing some important details, s
 ## Assistant
 
 It looks like this function is used to save a URL to Jovie, a social media management tool. The function takes a `token` and a `link` as input. It then uses a `ky` library to make an API request to Jovie, passing the `token` in the request headers for authentication. The `link` is passed to the `getSocialHandleFromLink` function to extract the username and network as separate values. The function then checks if the network is in the `supportedNetworks` array. If it is not, it shows a notification to the user saying that the link is not supported by Jovie. If the network is supported, it makes a `POST` request to the Jovie API and saves the link. If the request is successful, it shows a notification to the user. If there is an error, it shows a notification to the user.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

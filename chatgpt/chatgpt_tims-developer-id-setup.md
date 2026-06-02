@@ -231,3 +231,11 @@ base64 -i cert.p12    # CSC_LINK / MAC_CERTIFICATE_BASE64
 ```
 
 Agents set secrets either via `gh secret set` or the repository Secrets UI.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

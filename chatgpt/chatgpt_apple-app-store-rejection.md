@@ -71,3 +71,11 @@ Make a concise comment
 ## Assistant
 
 Apple is correct. The paywall does not state the trial length or clearly disclose that billing begins automatically after the trial at $9.99/year (or $1.99/month). “Start Free Trial” without explicit post-trial pricing and renewal language fails guideline 3.1.2.
+
+
+## See Also
+- [[chatgpt/chatgpt_24-hour-store-near-hollywood]]
+- [[chatgpt/chatgpt_alexa-control-for-apple-tv]]
+- [[chatgpt/chatgpt_app-store-connect-api]]
+- [[chatgpt/chatgpt_apple-airpods-options]]
+- [[chatgpt/chatgpt_apple-business-account-info]]

@@ -56,3 +56,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "It's generally recommended to use a new needle for each injection to keep things sterile and safe. So you might want to use one syringe for the first 50 units and then a fresh one for the remaining 25."}
 {'asset_pointer': 'sediment://file_000000001c8861f6896009dbfe151f15', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-28T21:32:13.434699+00:00', 'format': 'wav', 'metadata': {'end': 9.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 456078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-meaning-clarification]]
+- [[chatgpt/chatgpt_beta-issue-clarification]]
+- [[chatgpt/chatgpt_clarification-of-ns-meaning]]
+- [[chatgpt/chatgpt_clarification-on-handle]]
+- [[chatgpt/chatgpt_clarification-request-2]]

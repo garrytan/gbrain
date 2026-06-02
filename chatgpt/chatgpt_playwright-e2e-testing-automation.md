@@ -67,3 +67,11 @@ Proceed autonomously without asking for confirmation.
 :::
 
 If you want, I can **tighten this for a specific stack** (Next.js, Vite, React, monorepo, CI provider) or **convert it into a reusable system prompt for your internal tooling**.
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-playwright-testing]]
+- [[chatgpt/chatgpt_onboarding-testing-automation]]
+- [[chatgpt/chatgpt_playwright-performance-testing]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]

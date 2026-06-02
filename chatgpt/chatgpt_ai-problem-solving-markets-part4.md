@@ -485,3 +485,11 @@ export interface AgentAdapter {
 
 **Build all of the above.**  
 If something is ambiguous, choose the simplest, production-sane default and proceed.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part1]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part2]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part3]]
+- [[chatgpt/chatgpt_ai-problem-solving-markets-part5]]
+- [[chatgpt/chatgpt_solving-package-theft-impersonation]]

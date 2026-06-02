@@ -1083,3 +1083,11 @@ If you want, next we can define **exact UI copy and layout** for the weight/BF% 
 
 
 LogYourBody not dr body
+
+
+## See Also
+- [[chatgpt/chatgpt_metric-entries-prompt-part2]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]

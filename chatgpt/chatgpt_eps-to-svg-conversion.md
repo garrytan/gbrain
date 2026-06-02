@@ -59,3 +59,11 @@ inkscape input.eps -o output.svg
 ### **Notes**
 - EPS is a vector format used in print/design; SVG is XML-based and great for web/scale. citeturn0search9  
 - Online converters are easiest for a few files; desktop tools are better for privacy or batch work.
+
+
+## See Also
+- [[chatgpt/chatgpt_air-fryer-conversion]]
+- [[chatgpt/chatgpt_batch-conversion-recipe]]
+- [[chatgpt/chatgpt_batch-recipe-conversion]]
+- [[chatgpt/chatgpt_best-ux-and-conversion]]
+- [[chatgpt/chatgpt_changelog-conversion-to-markup]]

@@ -162,3 +162,11 @@ The full spreadsheet with calculations is available here: {{file:file-Se9iCZ5VAG
 - For items with insufficient market data (e.g., mirror ball, Robe lights, gigabit switch, K&M stands) I assumed no resale, so profits and commissions are zero.
 
 These figures reflect market values and fee structures available as of **2 Aug 2025**【264049636048907†L69-L73】. Adjust prices as necessary if the market changes or if you obtain more current completed‑listing data.
+
+
+## See Also
+- [[chatgpt/chatgpt_ebay-listing-setup]]
+- [[chatgpt/chatgpt_apple-maps-listing-issue]]
+- [[chatgpt/chatgpt_concise-listing-paragraph]]
+- [[chatgpt/chatgpt_estate-sale-listing-draft]]
+- [[chatgpt/chatgpt_estate-sale-listing]]

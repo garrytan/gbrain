@@ -72,3 +72,11 @@ Here are two versions you could use:
 *"Hey Sophie, would you be able to come in earlier tomorrow at 3pm instead of 5pm? That way we can go over some new things and get everything ready."*  
 
 Do you want me to make it sound more **excited/energetic**, or keep it **neutral and to the point**?
+
+
+## See Also
+- [[chatgpt/chatgpt_draft-complaint-message]]
+- [[chatgpt/chatgpt_follow-up-message-draft]]
+- [[chatgpt/chatgpt_message-response-draft]]
+- [[chatgpt/chatgpt_music-industry-message-draft]]
+- [[chatgpt/chatgpt_negotiation-message-draft]]

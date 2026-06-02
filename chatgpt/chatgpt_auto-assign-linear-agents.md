@@ -95,3 +95,11 @@ If you want, I can:
 - Design an ownership → Linear mapping schema
 
 Tell me which.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_codex-auto-pr-linear]]
+- [[chatgpt/chatgpt_linear-auto-pr-setup]]
+- [[chatgpt/chatgpt_linear-agents-webhooks]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]

@@ -27,3 +27,11 @@ The equinox on sunset blvd has a retail space next to it that now says equinox e
 ## Assistant
 
 I couldn't find specific information about the "white box" expansion at the Equinox on Sunset Blvd in West Hollywood. However, some reviews from late 2022 mention that the facility was overcrowded and suggest the need for expansion to accommodate the high number of visitors【7†source】. This could indicate that the "white box" space next to the gym may be part of an effort to expand the gym's facilities, although this is not confirmed. For the most accurate and up-to-date information, I recommend contacting Equinox directly at (310) 289-1900【6†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_sunset-blvd-lot-development]]
+- [[chatgpt/chatgpt_equinox-guest-passes-info]]
+- [[chatgpt/chatgpt_equinox-hollywood-membership-deal]]
+- [[chatgpt/chatgpt_equinox-membership-cancellation]]
+- [[chatgpt/chatgpt_equinox-trainer-quiz-prep]]

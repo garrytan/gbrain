@@ -75,3 +75,11 @@ In this example, the `placeholder-gray-500` class sets the color of the placehol
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_style-sky-button-tailwind]]
+- [[chatgpt/chatgpt_tailwind-ui-avatar-placeholder]]
+- [[chatgpt/chatgpt_16x16-grid-tailwind]]
+- [[chatgpt/chatgpt_16x16-in-tailwind]]
+- [[chatgpt/chatgpt_288px-in-tailwind]]

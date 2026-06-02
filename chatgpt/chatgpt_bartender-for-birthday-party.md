@@ -80,3 +80,11 @@ Tim
 📱 732-668-2148  
 📧 timwhitebartending@gmail.com  
 📍 Based in West Hollywood
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-count-bpm]]
+- [[chatgpt/chatgpt_bartender-duties-list]]

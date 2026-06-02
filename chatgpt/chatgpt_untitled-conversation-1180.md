@@ -88,3 +88,11 @@ if (info.linkUrl.startsWith("https://instagram.com") ||
 ```
 
 This code checks if the link starts with `https://instagram.com`, `https://twitter.com`, `https://tiktok.com`, or `https://twitch.com` and creates a new tab only in those cases. Otherwise, it does nothing.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]
+- [[chatgpt/chatgpt_untitled-conversation-265]]

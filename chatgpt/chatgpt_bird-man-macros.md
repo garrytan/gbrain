@@ -39,3 +39,11 @@ The bird man from yeastie boys
 ## Assistant
 
 The "Bird Man" is a reference to a sandwich from Yeastie Boys, an artisan bagel truck in Los Angeles known for their creative bagel sandwiches. The specific ingredients of the "Bird Man" sandwich would determine its macro breakdown. Typically, a sandwich from a bagel shop might include a bagel (high in carbohydrates), a protein source like turkey, chicken or other meats, possibly cheese or spread (which would contribute fats and proteins), and vegetables or sprouts. For a precise macro count, you would need the exact recipe or nutritional information from Yeastie Boys.
+
+
+## See Also
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_baguette-macros-50g]]
+- [[chatgpt/chatgpt_calculate-macros-food-consumed]]
+- [[chatgpt/chatgpt_chicken-salad-macros-221cal-37gpro-43gfat-63gcarb]]
+- [[chatgpt/chatgpt_fat-loss-deloading-macros]]

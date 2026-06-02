@@ -156,3 +156,11 @@ That’s it: with **WHEN = new issue**, you’ll get **one Linear issue per new 
 - Decide routing: which **Linear team / labels / priority** Sentry should set on creation. citeturn1view2turn2search5  
 
 If you tell me your Sentry project list (or naming convention) and which Linear team should own each, I’ll give you a tight routing scheme (labels/priorities) that stays low-noise while still being “every new issue.”
+
+
+## See Also
+- [[chatgpt/chatgpt_sentry-ai-sdk-integration]]
+- [[chatgpt/chatgpt_sentry-csp-integration]]
+- [[chatgpt/chatgpt_sentry-linear-integration-issues]]
+- [[chatgpt/chatgpt_ai-command-palettes-integration]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]

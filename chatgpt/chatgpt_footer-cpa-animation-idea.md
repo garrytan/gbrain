@@ -355,3 +355,11 @@ Best next move: generate 8–16 stills from this prompt, pick the strongest comp
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_animation-script-expression]]
+- [[chatgpt/chatgpt_bar-crawl-idea-legal-issues]]
+- [[chatgpt/chatgpt_buffy-livestream-name-idea]]
+- [[chatgpt/chatgpt_button-success-animation]]
+- [[chatgpt/chatgpt_cinematic-website-footer-design]]

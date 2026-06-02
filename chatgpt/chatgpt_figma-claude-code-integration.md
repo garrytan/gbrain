@@ -91,3 +91,11 @@ If you want sample plugin code for Figma itself (e.g., a custom Figma plugin tha
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-figma-integration]]
+- [[chatgpt/chatgpt_figma-claude-code-integration-2]]
+- [[chatgpt/chatgpt_claude-code-to-figma]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_claude-agent-teams-integration]]

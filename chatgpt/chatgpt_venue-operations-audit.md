@@ -144,3 +144,11 @@ Your site already surfaces weekly shows/tickets/capacity/revenue; turn that into
 - Tonight’s audit: top and bottom server on attach-rate share how they did it.”
 
 If you want, I’ll turn the above into updated SOP pages (Comps/Discounts, Lamp/Runner SLAs, Pre-/Post-show flows) ready to paste into your site’s sections.
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-venue-scheduling-solution]]
+- [[chatgpt/chatgpt_luxury-venue-name-ideas]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]

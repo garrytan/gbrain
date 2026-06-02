@@ -61,3 +61,11 @@ For a lightweight CRM to manage an angel round (contacts, statuses, interactions
 - Only use Google Sheets *if* you want zero overhead and manual updating.
 
 If you want, I can outline an Airtable base schema and example prompts to automate with Claude.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-sheets-current-date-part1]]
+- [[chatgpt/chatgpt_google-sheets-current-date-part2]]
+- [[chatgpt/chatgpt_add-google-oauth]]
+- [[chatgpt/chatgpt_advantages-of-google-shopping]]
+- [[chatgpt/chatgpt_creating-google-web-stories]]

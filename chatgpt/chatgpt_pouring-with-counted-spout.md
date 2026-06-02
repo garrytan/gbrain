@@ -52,3 +52,11 @@ at what bpm is a 1 second equal to 1 beat
 ## Assistant
 
 In music, BPM (beats per minute) indicates the tempo, or speed, of the music. If one second is equal to one beat, this would be 60 BPM. This is because there are 60 seconds in a minute, so one beat per second would total 60 beats in a minute.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

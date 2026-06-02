@@ -26,3 +26,11 @@ Define pedantic
 ## Assistant
 
 Pedantic refers to an excessive focus on minor details, rules, or formalities, often in a way that comes across as overly concerned with accuracy or academic precision at the expense of practicality or broader understanding. It can describe someone who nitpicks small errors, corrects trivial mistakes, or insists on strict adherence to formal rules.
+
+
+## See Also
+- [[chatgpt/chatgpt_laconic-definition-explained]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_clerk-definition]]
+- [[chatgpt/chatgpt_conductor-definition-and-examples]]
+- [[chatgpt/chatgpt_css-class-definition-overview]]

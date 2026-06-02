@@ -28,3 +28,11 @@ weather
 ​forecastturn0forecast0
 
 A shift in the forecast starts tomorrow with the re-introduction of monsoonal flow into Southern Nevada. Overnight we could see some sprinkles, but the real storm potential begins Tuesday afternoon in Las Vegas. Temps will drop into the low 100s starting tomorrow and we'll generally stick to the 90 ...  Rain chances continue through Saturday, and ...  citeturn0news0 
+
+
+## See Also
+- [[chatgpt/chatgpt_clear-weather-no-rain]]
+- [[chatgpt/chatgpt_raining-check-weather-app]]
+- [[chatgpt/chatgpt_weather-factors-for-chat-kit]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]

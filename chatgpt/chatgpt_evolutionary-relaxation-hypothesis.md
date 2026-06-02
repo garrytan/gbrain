@@ -446,3 +446,11 @@ What is your confidence level?
 ## Assistant
 
 ~80 % sure it was the Washington Nationals’ two-coach police escort heading to Dodger Stadium for tonight’s 7:10 p.m. game. scheduleturn0sports0
+
+
+## See Also
+- [[chatgpt/chatgpt_cta-experiment-hypothesis]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

@@ -42,3 +42,11 @@ Reminder: if your company name is *Astronomer* and you just got to a billion-dol
 ---
 
 Let me know if you want a version for a story caption or comment reply.
+
+
+## See Also
+- [[chatgpt/chatgpt_snarky-response-generated]]
+- [[chatgpt/chatgpt_troll-response-strategy]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]

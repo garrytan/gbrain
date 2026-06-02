@@ -170,3 +170,11 @@ Here's your env file converted to JSON:
   "MIX_PUSHER_APP_CLUSTER": "mt1",
   "MIX_PUSHER_APP_KEY": "ed9f45b62d22913a42a7",
   "MIX_STRIPE_KEY":
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-json-example]]
+- [[chatgpt/chatgpt_claude-file-updates]]
+- [[chatgpt/chatgpt_company-ethos-md-file]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part1]]
+- [[chatgpt/chatgpt_customize-nuxt-appvue-file-part2]]

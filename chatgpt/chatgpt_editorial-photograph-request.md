@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 generate Editorial photograph of a young indie singer-songwriter performing on a New York City subway platform at night. She is seated on a small amp, holding an acoustic guitar mid-strum, eyes down on the strings, a candid unposed moment. A small open guitar case sits in front of her with a few folded bills and a hand-written cardboard sign that simply reads her stage name. Cinematic 35mm film look, shallow depth of field, soft warm tungsten platform lights bokeh-ing in the background, the train tunnel receding into shadow on her right. Composition is wide rectangular, subject framed left-of-center with deliberate negative space on the right two-thirds (so a phone can compose into that space). Mood: quiet, intimate, hopeful, premium. No text, no logos, no people other than the performer, no overt brand marks, no AI artifacting on the guitar strings or fingers. Photorealistic, magazine-cover quality. 3:2 aspect ratio.
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_age-calculation-request]]

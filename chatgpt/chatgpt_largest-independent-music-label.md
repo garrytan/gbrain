@@ -111,3 +111,11 @@ Mr. White,
 - Strategically powerful, but **narrower in scope** than Concord-type conglomerates
 
 If you want, I can give you **a clean tier list** of indie labels by *revenue*, *catalog size*, or *genre dominance*.
+
+
+## See Also
+- [[chatgpt/chatgpt_largest-fictional-ipo]]
+- [[chatgpt/chatgpt_search-largest-email-file]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_ai-driven-music-bio]]
+- [[chatgpt/chatgpt_ai-for-music-catalogs]]

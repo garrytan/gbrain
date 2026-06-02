@@ -109,3 +109,11 @@ Email line:
 > The link should allow viewing and downloading without requiring an Apple ID. Please let me know if you have any trouble accessing it.
 
 Safer version: keep the iCloud link, but also upload the same files to **Google Drive** and send both links. GEICO is more likely to handle Drive cleanly.
+
+
+## See Also
+- [[chatgpt/chatgpt_82x-claim-defensibility]]
+- [[chatgpt/chatgpt_airbnb-damage-claim-issues]]
+- [[chatgpt/chatgpt_beatport-streaming-vs-files-2]]
+- [[chatgpt/chatgpt_beatport-streaming-vs-files]]
+- [[chatgpt/chatgpt_cannot-access-master-files]]

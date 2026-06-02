@@ -58,3 +58,11 @@ For creating a QR code that directly encodes your URL without using a generator'
 3. **Offline QR Code Generators**: There are software applications and browser extensions that can generate QR codes offline. These tools typically create direct QR codes without intermediary links.
 
 When using these services, always test the QR code to ensure it directly links to your intended URL.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-cloud-code-ci]]
+- [[chatgpt/chatgpt_agent-skills-vs-code-cli]]
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_ai-code-review-tools]]
+- [[chatgpt/chatgpt_allowing-actions-to-create-prs]]

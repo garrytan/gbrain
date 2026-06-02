@@ -88,3 +88,11 @@ Mr. White, here’s a concise checklist of what to add or improve—and specific
 - **Error recovery**: allow users to “Edit code” directly rather than clearing the whole field on error.  
 
 Implement these and your OTP screen will feel fast, reliable, and bullet-proof.
+
+
+## See Also
+- [[chatgpt/chatgpt_designing-world-class-landing-page]]
+- [[chatgpt/chatgpt_edit-for-world-class-ux]]
+- [[chatgpt/chatgpt_redesign-for-world-class-design]]
+- [[chatgpt/chatgpt_world-class-audio-plan]]
+- [[chatgpt/chatgpt_world-class-calendar-design]]

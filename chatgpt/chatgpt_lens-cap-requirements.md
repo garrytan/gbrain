@@ -71,3 +71,11 @@ For example, if you have **3 EF lenses**, buy:
 - 3 front caps — one of them likely **86mm** for the Sigma 85mm Art
 
 Check the front rim of each lens for the **Ø##mm** marking before ordering the front caps. Generic caps are fine for resale; OEM caps look cleaner in listing photos.
+
+
+## See Also
+- [[chatgpt/chatgpt_capture-one-lens-flares]]
+- [[chatgpt/chatgpt_lens-distortion-explained]]
+- [[chatgpt/chatgpt_lens-flare-overlays-photoshop]]
+- [[chatgpt/chatgpt_overlay-lens-flare-image]]
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]

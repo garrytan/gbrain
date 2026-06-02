@@ -44,3 +44,11 @@ Yes. Boom treats split-rent setups as legit as long as **(1)** you’re named on
 - Cost: $3 /mo for ongoing reporting, optional $25 one-time for up to 24 months back-reporting (worth it if you’ve lived there a while). citeturn3search1
 
 Bottom line: link the account you Venmo from, label the transfers as rent, and Boom will add those on-time payments to all three bureaus—no landlord phone-tag required.
+
+
+## See Also
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part3]]

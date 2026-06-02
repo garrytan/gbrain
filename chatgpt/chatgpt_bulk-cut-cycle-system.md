@@ -219,3 +219,11 @@ If you’re truly starting from less-optimized training, you might be near “ea
 **In short,** 215 at 8% BF is a longer-term project. Consistency, patient lean bulking, periodic cuts, and evidence-based training will get you there. Just don’t expect it in a single bulk or even a single year—steadily layer on the muscle over successive cycles, and keep your cuts tight to maintain a lean, aesthetic look throughout.
 
 _Stay the course, Mr. White, and you’ll approach that goal physique—one disciplined cycle at a time._
+
+
+## See Also
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_building-jovie-knowledge-system]]
+- [[chatgpt/chatgpt_bulk-and-cut-plan]]
+- [[chatgpt/chatgpt_bulk-clean-bookmarks-guide]]
+- [[chatgpt/chatgpt_bulk-cut-maintain]]

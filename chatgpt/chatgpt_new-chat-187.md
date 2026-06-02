@@ -184,3 +184,11 @@ export default {
 </script>
 
 In this example, the switch case has been separated into a separate function "getMaxWidth" that takes in the "size" prop and returns the maximum width. The "containerClasses" computed property uses this function to build the class string dynamically.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

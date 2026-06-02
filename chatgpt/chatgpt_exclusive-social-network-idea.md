@@ -76,3 +76,11 @@ However, that's changed in the last week. Twitter no longer solves the problem.
 So I think there is a need for this.
 
 If you were to build it, you need to really make it expensive to break the rules. It has to be a safe space, or it doesn't work. Loss of membership might not be enough. Random selfie checks to make sure you're not sharing your account (like Uber drivers have to do) would be essential. And it would have to be incredibly secure.
+
+
+## See Also
+- [[chatgpt/chatgpt_almost-exclusive-lost-to-amateurs]]
+- [[chatgpt/chatgpt_android-tv-network-issues]]
+- [[chatgpt/chatgpt_bar-crawl-idea-legal-issues]]
+- [[chatgpt/chatgpt_buffy-livestream-name-idea]]
+- [[chatgpt/chatgpt_employee-performance-dashboard-idea]]

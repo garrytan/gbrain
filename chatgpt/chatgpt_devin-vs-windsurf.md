@@ -71,3 +71,11 @@ Right now (transition year):
 ---
 
 If you want a concise pros/cons table or pricing comparison, tell me your workflow and I’ll tailor it.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-continue-in-windsurf]]
+- [[chatgpt/chatgpt_git-workspaces-in-windsurf-2]]
+- [[chatgpt/chatgpt_git-workspaces-in-windsurf]]
+- [[chatgpt/chatgpt_github-windsurf-repositories]]
+- [[chatgpt/chatgpt_mcp-troubleshooting-in-windsurf]]

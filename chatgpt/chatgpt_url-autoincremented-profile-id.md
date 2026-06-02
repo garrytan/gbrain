@@ -464,3 +464,11 @@ router.addHandler("artist", async ({ request, $, log }) => {
       if (/soundcloud/.test(link.url)) {
         soundcloudURL = link.url;
       } else if (/spotify/.test(link
+
+
+## See Also
+- [[chatgpt/chatgpt_amaz-twitch-gamer-profile]]
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]

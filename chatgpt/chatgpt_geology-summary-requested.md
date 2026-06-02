@@ -38,3 +38,11 @@ Definition
 ## Assistant
 
 Geology is the scientific study of the Earth, its structure, and the processes that have shaped its formation and evolution. It involves examining the materials that make up the Earth, such as rocks and minerals, and understanding how geological forces such as volcanoes, earthquakes, and plate tectonics have shaped the planet's landscape over time. Geologists also study the history of life on Earth by analyzing fossil records.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_alex-gaudino-song-summary]]
+- [[chatgpt/chatgpt_ams-return-policy-summary]]

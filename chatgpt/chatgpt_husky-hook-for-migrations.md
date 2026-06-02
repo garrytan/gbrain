@@ -704,3 +704,11 @@ If you want to turn this into build instructions:
 > - Designed for mobile; desktop just centers the same layout with sensible max-width.
 
 If you want, next step we can sketch exact spacing + sizes (e.g. “16/24/32 px tokens”) so your devs don’t improvise.
+
+
+## See Also
+- [[chatgpt/chatgpt_neon-drizzle-migrations-fix]]
+- [[chatgpt/chatgpt_squashing-super-based-migrations]]
+- [[chatgpt/chatgpt_windsurf-hook-gear]]
+- [[chatgpt/chatgpt_zustand-vs-react-hook-form]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

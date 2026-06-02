@@ -36,3 +36,11 @@ Here’s a concise text you can send Vincent:
 
 **Text for Vincent:**  
 “Hey Vincent, found a laundry service: they pick up our bar rags & napkins Monday 8 AM, clean/fold, and drop back Wednesday. $2.50/lb, 50 lb minimum. If we buy enough to run a full extra set so they pick up Monday and return the following Monday, price drops to $1.99/lb (same 50 lb min). We’d just leave the full trash can behind the counter for pickup.”
+
+
+## See Also
+- [[chatgpt/chatgpt_laundry-service-options]]
+- [[chatgpt/chatgpt_service-cost-breakdown]]
+- [[chatgpt/chatgpt_activate-t-mobile-service]]
+- [[chatgpt/chatgpt_audit-service-protocols-gaps]]
+- [[chatgpt/chatgpt_avoiding-alcohol-service-strategies]]

@@ -96,3 +96,11 @@ Mr. White, here’s an on-the-go plan (today’s macros: 177 P / 52 F / 56 C). Y
 - If you pick the Chipotle bowl, dial back to a Quest bar later.  
 
 Adjust choices so you hit roughly 177 P / 52 F / 56 C by day’s end.
+
+
+## See Also
+- [[chatgpt/chatgpt_paid-plan-creation-guide]]
+- [[chatgpt/chatgpt_camping-meal-plan]]
+- [[chatgpt/chatgpt_cutting-phase-meal-plan]]
+- [[chatgpt/chatgpt_dairy-free-protein-meal-plan]]
+- [[chatgpt/chatgpt_diet-plan-meal-prep]]

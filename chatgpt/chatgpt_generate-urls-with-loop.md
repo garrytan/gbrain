@@ -136,3 +136,11 @@ router.addDefaultHandler(async ({ enqueueLinks, log, index }) => {
 
 In either case, the `index` variable will be passed to the default handler function and will be available for use within the function.
 
+
+
+## See Also
+- [[chatgpt/chatgpt_generate-artist-seed-data]]
+- [[chatgpt/chatgpt_generate-bf-torso-images]]
+- [[chatgpt/chatgpt_generate-image-or-rewrite]]
+- [[chatgpt/chatgpt_generate-output-from-markdown]]
+- [[chatgpt/chatgpt_generate-shared-secret-revenuecat]]

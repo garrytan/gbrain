@@ -212,3 +212,11 @@ The company prefix is a unique number assigned to a company or organization, and
 It's also important to ensure that the GTIN number is printed clearly and accurately on the product label or packaging to ensure that it can be scanned and tracked correctly.
 
 In addition to the net content and unique identification number, you may choose to include additional information in the GTIN number, such as lot or batch numbers or other product-specific information. However, this additional information should be encoded in a separate data field and not included as part of the GTIN number itself.
+
+
+## See Also
+- [[chatgpt/chatgpt_gtin-creation-for-shopify]]
+- [[chatgpt/chatgpt_a7x3-guidelines-for-influencers]]
+- [[chatgpt/chatgpt_comp-ticket-guidelines]]
+- [[chatgpt/chatgpt_design-improvement-guidelines]]
+- [[chatgpt/chatgpt_food-service-guidelines]]

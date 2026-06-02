@@ -1865,3 +1865,11 @@ does this make sense, or more profiles? diff setup? how can we also maximize out
 
 
 I’m checking the current Hermes profile/memory docs plus Codex automations and Typefully so I can pressure-test your architecture instead of answering from memory.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part4]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part6]]

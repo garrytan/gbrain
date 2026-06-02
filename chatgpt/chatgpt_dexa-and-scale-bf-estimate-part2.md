@@ -654,3 +654,11 @@ and I’ll tell you whether the smarter next move is **hold**, **tighten food fi
 {'asset_pointer': 'sediment://file_000000008dd071fd8e9187d1e27879ab', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1536, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 190807, 'width': 709}
 {'asset_pointer': 'sediment://file_00000000aa7871f8b93e87f4b74e2aa3', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1536, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 192353, 'width': 709}
 Ignore the 178 number. Here’s actual scale data
+
+
+## See Also
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part1]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part3]]
+- [[chatgpt/chatgpt_compare-scale-and-dexa-data]]
+- [[chatgpt/chatgpt_compare-scale-data-and-dexa]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

@@ -127,3 +127,11 @@ How many milligrams of caffeine in a shot of espresso from Starbucks?
 ## Assistant
 
 A shot of espresso from Starbucks typically contains about 75 milligrams of caffeine. This can vary slightly depending on factors like the exact coffee blend used. Enjoy your coffee!
+
+
+## See Also
+- [[chatgpt/chatgpt_caffeine-content-comparison-table]]
+- [[chatgpt/chatgpt_caffeine-free-drink-alternatives]]
+- [[chatgpt/chatgpt_cavalier-king-charles-espresso]]
+- [[chatgpt/chatgpt_condensed-milk-with-espresso]]
+- [[chatgpt/chatgpt_espresso-martini-sourcing-options]]

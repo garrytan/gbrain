@@ -145,3 +145,11 @@ You’re actually close — structurally it’s the same screen. You just need t
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-level-design-tips]]
+- [[chatgpt/chatgpt_design-improvement-tips]]
+- [[chatgpt/chatgpt_landing-page-design-tips]]
+- [[chatgpt/chatgpt_page-design-improvement-tips]]
+- [[chatgpt/chatgpt_design-comparison-graphic]]

@@ -86,3 +86,11 @@ The actual Boring case is:
 ## Caveat
 
 He is right that **a single car tunnel does not match a high-frequency subway line**. If TBC claimed it could replace the Lexington Avenue Line or the 7 train at rush hour with Teslas, that would be nonsense. His error is converting that valid narrow point into “this cannot scale in sizable cities.” It can scale for many urban use cases; it just scales differently from heavy rail.
+
+
+## See Also
+- [[chatgpt/chatgpt_bird-identification-question]]
+- [[chatgpt/chatgpt_cold-pool-surface-question]]
+- [[chatgpt/chatgpt_cord-power-question]]
+- [[chatgpt/chatgpt_extract-question-and-answer]]
+- [[chatgpt/chatgpt_plate-number-question]]

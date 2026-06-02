@@ -92,3 +92,11 @@ This hits the **startup sweet spot**: quick legal entity with strong downstream 
 ---
 
 If you tell me your **founder structure (US vs non-US)** and **whether you plan to raise VC soon**, I can give a tailored recommendation.
+
+
+## See Also
+- [[chatgpt/chatgpt_tax-savings-incorporation-timing]]
+- [[chatgpt/chatgpt_ac-air-direction-solutions]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]

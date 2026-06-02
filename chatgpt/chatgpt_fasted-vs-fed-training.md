@@ -36,3 +36,11 @@ Mr. White,
 - For **resistance training performance**, many people perform **better fed** (higher training quality/volume), which can support **muscle retention** during dieting.  
 - For getting lean while keeping muscle, the high-impact facts are: **adequate protein**, **hard resistance training**, **sufficient sleep**, and a **manageable calorie deficit**.  
 - **Meal timing (e.g., first meal at 12pm)** is a behavioral tool that can help adherence for some people; it is **not inherently superior** for fat loss if calories/protein are unchanged.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-training-request]]
+- [[chatgpt/chatgpt_cutting-training-frequency]]
+- [[chatgpt/chatgpt_hypertrophy-training-gear]]
+- [[chatgpt/chatgpt_leg-training-impact-summary]]
+- [[chatgpt/chatgpt_perturbation-in-training]]

@@ -117,3 +117,11 @@ Explain how it raises the skill required for an industry because skilled workers
 When wages jump in one industry, people with more skills than the job requires start applying—because the pay is suddenly better than their own field. Employers then pick those higher-skilled applicants, raising the bar for hiring.  
 
 That means jobs that used to be entry-level now demand more experience, shutting out the lower-skilled workers the raise was supposed to help.
+
+
+## See Also
+- [[chatgpt/chatgpt_arguing-assumptions-of-motive]]
+- [[chatgpt/chatgpt_arguing-to-convince-comment]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_ford-wage-gold-comparison]]
+- [[chatgpt/chatgpt_hollywood-minimum-wage]]

@@ -626,3 +626,11 @@ Your core thesis—that Tesla lacks regulatory clearance for autonomous or reven
 - **Next Step:** Unless you possess **non‑public permit filings or insider regulatory insights**, it is prudent to **scale back exposure tied to near‑term robotaxi upside** in California. Broad market understanding now aligns with your analysis.
 
 Let me know if you’d like this formatted for internal dashboards or compliance logs.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

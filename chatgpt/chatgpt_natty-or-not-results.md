@@ -49,3 +49,11 @@ Mr. White — here’s the quick scoreboard from Derek/More Plates More Dates’
 If you want to browse the whole series, Derek keeps a dedicated **Natty or Not** playlist (100+ vids over the years). It’s a mix of lab-tested breakdowns and pure case studies. citeturn4search22
 
 Want me to turn this into a compact table with links and the specific test types Derek used in each case?
+
+
+## See Also
+- [[chatgpt/chatgpt_henselmans-natty-max-formula]]
+- [[chatgpt/chatgpt_bartender-jobs-search-results]]
+- [[chatgpt/chatgpt_bodyspec-results-summary]]
+- [[chatgpt/chatgpt_claude-blackmail-test-results]]
+- [[chatgpt/chatgpt_dexa-scan-results-analysis]]

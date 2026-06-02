@@ -618,3 +618,11 @@ This table summarizes the total non-alcoholic ingredients, specified beverage ca
 
 
 Our club soda comes in 1 liter containers.
+
+
+## See Also
+- [[chatgpt/chatgpt_draft-cocktail-menu-part1]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part2]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part4]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part5]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part3]]

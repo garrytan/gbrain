@@ -98,3 +98,11 @@ Mr. White, here are the core arguments against blanket enforcement of deportatio
 
 - **Diverts public‐safety resources**  
   Local police and sheriffs lose millions in COPS and Byrne grants when funds shift to ICE detainers. That pulls officers off violent-crime investigations and community policing for low-level immigration cases citeturn4search3.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_chaos-testing-explained]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained-2]]

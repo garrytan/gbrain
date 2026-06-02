@@ -70,3 +70,11 @@ Here’s a tighter, Codex-5.2-optimized version—clear objectives, explicit con
 No cold starts. No unnecessary SSR. Public profiles are effectively static, edge-served, and fast by default.
 
 ---
+
+
+## See Also
+- [[chatgpt/chatgpt_nextjs-performance-audit]]
+- [[chatgpt/chatgpt_recursive-performance-audit]]
+- [[chatgpt/chatgpt_public-profile-test-automation]]
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]

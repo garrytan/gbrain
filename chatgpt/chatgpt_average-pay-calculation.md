@@ -50,3 +50,11 @@ Based on the three Paychex stubs you sent (paid 1 Jan 02, 1 Jan 09, an
 - **Yearly net pay (projected): ≈ $38 k**
 
 (Actual January net was $3,678.83; February-to‑date is $60.) citeturn0file0
+
+
+## See Also
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-birth-timing]]
+- [[chatgpt/chatgpt_average-height-median-vs-mean]]

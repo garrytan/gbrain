@@ -184,3 +184,11 @@ Here’s what to know:
 - San Vicente Blvd between Santa Monica Blvd and Melrose Ave will be closed from **5 a.m. to 5 p.m.**  
 - Santa Monica Blvd between Doheny Dr and La Cienega Blvd will be closed from **7 a.m. to 3 p.m.**  
 - Parts of Doheny Dr, La Cienega Blvd, and Melrose Ave will also have lane restrictions during those hours.
+
+
+## See Also
+- [[chatgpt/chatgpt_email-follow-up-note]]
+- [[chatgpt/chatgpt_make-11-liters-lemonade]]
+- [[chatgpt/chatgpt_make-a-cosmopolitan-and-negroni]]
+- [[chatgpt/chatgpt_make-a-paloma-cocktail]]
+- [[chatgpt/chatgpt_make-a-paloma]]

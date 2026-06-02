@@ -62,3 +62,11 @@ Serban Ghenea, a renowned mixing engineer known for his work on numerous hit rec
 6. **Attention to Detail:** Ghenea's meticulous attention to every detail, including the subtle use of effects like reverb and delay, contributes significantly to the separation and clarity of his mixes. These effects are used sparingly and with precision to avoid muddiness.
 
 While Serban Ghenea's approach to mixing is characterized by subtlety and musicality rather than extreme measures, the exact techniques and settings used can vary significantly from one project to another. His ability to achieve clear separation without making elements feel isolated is a testament to his deep understanding of music production and mixing principles.
+
+
+## See Also
+- [[chatgpt/chatgpt_guitar-center-mesa-info]]
+- [[chatgpt/chatgpt_guitar-center]]
+- [[chatgpt/chatgpt_guitar-tracking-with-brent]]
+- [[chatgpt/chatgpt_job-path-to-max-martin]]
+- [[chatgpt/chatgpt_max-martin-2024-2025-records]]

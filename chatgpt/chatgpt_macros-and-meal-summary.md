@@ -276,3 +276,11 @@ Here's the final table with all your meals for the day, including the adjusted a
 | **Total**                                             | **272**     | **73.125** | **72**    | **2034.125**           |
 
 Please note, the Whey Protein Shake and the initial portion of Grilled Chicken Breast (500g) were not included in the final total, as you mentioned you hadn't consumed them yet. The table includes the adjusted portion of Grilled Chicken Breast (242g) to meet your protein goal. The total macros and calories are for the meals listed.
+
+
+## See Also
+- [[chatgpt/chatgpt_daily-meal-summary]]
+- [[chatgpt/chatgpt_macros-breakdown-summary]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part1]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part2]]
+- [[chatgpt/chatgpt_meal-plan-for-macros-part3]]

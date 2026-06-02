@@ -49,3 +49,11 @@ By adding the alias, you're instructing the bundler to use the Vue bundler build
 Make sure you have the correct build of Vue installed. You can check your package.json or run `npm ls vue` to see the installed version. If you have a different version, you might need to update it to the version that supports runtime compilation.
 
 After making these changes, rebuild your application, and the error should be resolved.
+
+
+## See Also
+- [[chatgpt/chatgpt_core-values-compilation-part1]]
+- [[chatgpt/chatgpt_core-values-compilation-part2]]
+- [[chatgpt/chatgpt_inventory-list-compilation]]
+- [[chatgpt/chatgpt_order-list-compilation]]
+- [[chatgpt/chatgpt_contact-apis-supported]]

@@ -765,3 +765,11 @@ Then just hit **logout** → **login as** different seeded test user.
 ✅ **Best speed hack for you right now:** use Clerk’s **Dev Browser** — it lets you swap between seeded users instantly without re-entering credentials, and it persists across local reloads.  
 
 Do you want me to also draft a **seed script** (e.g. `seedUsers.ts`) that creates 2–3 fake artists so you can immediately log in/out in Dev Browser and test your RLS + profile flow?
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_build-test-automation-tips]]
+- [[chatgpt/chatgpt_ci-profile-page-test]]
+- [[chatgpt/chatgpt_overnight-test-automation]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]

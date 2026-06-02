@@ -48,3 +48,11 @@ To prepare an espresso martini, a bartender would typically follow these steps:
 8. **Serve**: Serve the drink immediately.
 
 Espresso martinis are popular for their rich coffee flavor balanced with the smoothness of vodka and the complexity of the coffee liqueur. The shake not only chills the drink but also creates a frothy top layer.
+
+
+## See Also
+- [[chatgpt/chatgpt_espresso-martini-sourcing-options]]
+- [[chatgpt/chatgpt_caffeine-in-starbucks-espresso]]
+- [[chatgpt/chatgpt_cavalier-king-charles-espresso]]
+- [[chatgpt/chatgpt_chilling-martini-glasses]]
+- [[chatgpt/chatgpt_condensed-milk-with-espresso]]

@@ -121,3 +121,11 @@ Let your IDE auto-fix on save + run TS server — fastest workflow.
 ---
 
 If you tell me your stack (**React? Next.js? pnpm? turborepo?**), I’ll tailor the exact setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-contact-poster-rotation]]
+- [[chatgpt/chatgpt_automate-follow-clicks]]
+- [[chatgpt/chatgpt_automate-music-biz-y-combinator]]
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part1]]
+- [[chatgpt/chatgpt_automate-thematic-page-interaction-part2]]

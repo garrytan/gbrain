@@ -60,3 +60,11 @@ Do **10–16 hard sets/week for chest** split across 2–3 days.
 - Body fat hiding separation (definition comes mostly from leanness)
 
 If you tell me what you’re currently doing for chest (exercises + sets/reps) and whether you feel it more in shoulders/tris than pecs, I’ll tune this into a tight plan.
+
+
+## See Also
+- [[chatgpt/chatgpt_ios-app-development-tips]]
+- [[chatgpt/chatgpt_chest-and-triceps-specialization]]
+- [[chatgpt/chatgpt_chest-size-gain-realism]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]

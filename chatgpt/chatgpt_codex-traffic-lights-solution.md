@@ -104,3 +104,11 @@ Before coding:
 - Then explain the implementation plan briefly.
 - After coding, report changed files, screenshots/manual verification notes, and exact test commands/results.
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]

@@ -282,3 +282,11 @@ Specifically:
 That is how you get from “I am scared and ashamed” to “I have something concrete to show.”
 
 You do not need to feel confident first. You need to create evidence. Confidence can come after evidence.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part1]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part2]]
+- [[chatgpt/chatgpt_cost-of-ai-operations]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part3]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part3]]

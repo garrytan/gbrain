@@ -482,3 +482,11 @@ If you want, I can now:
 - add light traction metrics without overpromising  
 - add one-liners about defensibility and data flywheels  
 - rephrase to sound more aggressive or more humble depending on preference
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]

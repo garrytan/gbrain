@@ -36,3 +36,11 @@ My practical answer:
 **Day 4:** eat only if it smells/looks normal, especially if dairy/fruit.  
 **Day 5+:** only plain/buttercream cake gets a maybe.  
 **Day 7+:** toss it.
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_birthday-cake-alternatives]]
+- [[chatgpt/chatgpt_fridge-search-under-1k]]
+- [[chatgpt/chatgpt_fridge-water-line-setup]]
+- [[chatgpt/chatgpt_let-them-eat-cake]]

@@ -86,3 +86,11 @@ I would also keep three guardrails in the loop:
 The clearest falsifiable test is simple: check whether TRIBE features add predictive power over a plain computer-vision baseline. If they do not improve human preference prediction, stop using them. If they do improve it, then they are useful as a pre-screening signal.
 
 My bottom-line view: the loop can work as a research system for optimizing a proxy. It will not perpetually converge toward universal human attractiveness. It will converge toward whatever reward you define, and that reward has to be validated against real human judgments before you trust it. The best use of TRIBE here is as one biologically informed feature source inside a calibrated preference model, not as the objective itself.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-column-index-to-loop]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]
+- [[chatgpt/chatgpt_ai-in-product-development]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_app-clone-development-plan-part1]]

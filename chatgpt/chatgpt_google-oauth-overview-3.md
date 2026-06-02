@@ -58,3 +58,11 @@ google oauth
 - Sensitive scopes (e.g., Gmail read) require app verification by Google. citeturn0search1
 
 If you want, I can provide a **code example** for a specific language (Node.js, Python, etc.) or a minimal **“Sign in with Google” widget** setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-oauth-overview-2]]
+- [[chatgpt/chatgpt_google-oauth-overview-4]]
+- [[chatgpt/chatgpt_google-oauth-overview]]
+- [[chatgpt/chatgpt_google-admin-overview]]
+- [[chatgpt/chatgpt_google-auth-console-overview]]

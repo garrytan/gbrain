@@ -40,3 +40,11 @@ If you need to **reset or reassign PINs**, you’ll need to:
 4. The new PIN will be set directly on the POS — it cannot be exported.
 
 Would you like me to outline a secure workflow for auditing employee access or resetting all PINs in bulk?
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-data-via-api]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_building-music-data-api]]
+- [[chatgpt/chatgpt_chatgpt-data-sync]]

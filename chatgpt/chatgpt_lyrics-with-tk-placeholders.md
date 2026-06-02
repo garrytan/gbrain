@@ -284,3 +284,11 @@ Let's jump, twist, turn, groove, and master.
 ```
 
 I've filled in the "tk tk tk tk tk" placeholders with action verbs to keep up with the energetic pace of the song.
+
+
+## See Also
+- [[chatgpt/chatgpt_coldplay-song-lyrics-request]]
+- [[chatgpt/chatgpt_cool-calm-mom-lyrics]]
+- [[chatgpt/chatgpt_end-of-world-song-lyrics]]
+- [[chatgpt/chatgpt_flaw-seen-love-in-lyrics]]
+- [[chatgpt/chatgpt_format-lyrics-apple-style]]

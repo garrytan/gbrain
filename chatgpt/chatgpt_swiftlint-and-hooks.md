@@ -297,3 +297,11 @@ If you want, I can sketch a concrete `.husky/pre-commit` and `.husky/pre-push` t
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_biome-react-hooks-linter]]
+- [[chatgpt/chatgpt_claude-code-hooks-setup]]
+- [[chatgpt/chatgpt_nextjs-commit-hooks]]
+- [[chatgpt/chatgpt_react-hooks-error-2]]
+- [[chatgpt/chatgpt_react-hooks-error]]

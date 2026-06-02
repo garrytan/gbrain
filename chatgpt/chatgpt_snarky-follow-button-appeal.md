@@ -90,3 +90,11 @@ Give me 5
 3. "Follow Now, Thank Me Later."
 4. "Don’t Just Scroll, Hit Follow."
 5. "Add Some Epic to Your Feed."
+
+
+## See Also
+- [[chatgpt/chatgpt_pizza-order-snarky-support]]
+- [[chatgpt/chatgpt_snarky-andreesan-mocks-wedding]]
+- [[chatgpt/chatgpt_snarky-comment-on-grapheneos]]
+- [[chatgpt/chatgpt_snarky-comment-on-post]]
+- [[chatgpt/chatgpt_snarky-dj-bio-rewrite]]

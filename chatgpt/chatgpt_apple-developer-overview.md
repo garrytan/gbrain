@@ -53,3 +53,11 @@ To publish apps and distribute them to users via Apple’s App Store (iOS, iPadO
 - Apple takes a commission on digital sales through the App Store (up to 30%, with 15% for small business program qualifiers). citeturn0search3
 
 **Summary:** Apple Developer is the official platform for building Apple software. To publish and distribute apps to users on the App Store, you need the Apple Developer Program membership at $99/year; free registration gives you access to development resources but not distribution. citeturn0search0turn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-business-manager-overview]]
+- [[chatgpt/chatgpt_apple-music-overview]]
+- [[chatgpt/chatgpt_apple-developer-assistance]]
+- [[chatgpt/chatgpt_apple-developer-program]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]

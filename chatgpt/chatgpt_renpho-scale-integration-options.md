@@ -349,3 +349,11 @@ For your current BLE-only Renpho scale:
   - Live with the legal/maintenance implications **unless** Renpho officially partners and documents the protocol.
 
 If you tell me your target platform stack (native Swift/SwiftUI vs React Native/Flutter + what backend), I can sketch a very concrete technical design for Option 1 (how the BLE pairing/measurement flow would look in your app) so you can decide if that surface area is worth owning.
+
+
+## See Also
+- [[chatgpt/chatgpt_statsig-integration-options]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_ai-command-palettes-integration]]
+- [[chatgpt/chatgpt_airpods-pro-3-options]]
+- [[chatgpt/chatgpt_airpods-replacement-options]]

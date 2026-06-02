@@ -1070,3 +1070,11 @@ If you tell me:
 - The **amount you want financed**
 
 I can outline *specific financing scenarios* with approximate monthly payments.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_chat-input-specs]]
+- [[chatgpt/chatgpt_circuit-breakers-in-coding]]

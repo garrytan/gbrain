@@ -69,3 +69,11 @@ Claude Code’s security restrictions may block navigating outside the initial r
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-desktop-overview]]
+- [[chatgpt/chatgpt_claude-code-overview-2]]
+- [[chatgpt/chatgpt_claude-code-overview]]
+- [[chatgpt/chatgpt_claude-code-teams-overview]]
+- [[chatgpt/chatgpt_claude-code-worktrees-git]]

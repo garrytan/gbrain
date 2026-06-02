@@ -38,3 +38,11 @@ I'm six foot four. I want my height in inches.
 ## Assistant
 
 You're six feet four inches tall, which converts to seventy-six inches. Is there anything else you'd like to know?
+
+
+## See Also
+- [[chatgpt/chatgpt_average-height-median-vs-mean]]
+- [[chatgpt/chatgpt_chris-evans-height-6ft]]
+- [[chatgpt/chatgpt_convert-height-to-feet]]
+- [[chatgpt/chatgpt_emily-ratajkowskis-height]]
+- [[chatgpt/chatgpt_form-fields-height-gender-weight]]

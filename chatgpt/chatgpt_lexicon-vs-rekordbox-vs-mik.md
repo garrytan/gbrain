@@ -125,3 +125,11 @@ Ultimately, the **most efficient workflow** before a CDJ-3000 performance could 
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_lexicon-basic-plan-rekordbox]]
+- [[chatgpt/chatgpt_rekordbox-lexicon-features]]
+- [[chatgpt/chatgpt_rekordbox-vs-lexicon]]
+- [[chatgpt/chatgpt_beatgrid-editing-in-lexicon]]
+- [[chatgpt/chatgpt_lexicon-based-sentiment-analysis]]

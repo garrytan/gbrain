@@ -532,3 +532,11 @@ Make these first:
 8. **Add production-build verification before recording.**
 
 These changes preserve the plan’s core constraint: ship the YC demo wedge without schema changes, persistence, LLM parsing, or broad product work.
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_harden-agents-file]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part1]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part2]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part3]]

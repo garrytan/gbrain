@@ -26,3 +26,11 @@ Write a quick message that attached photo shows view from one of the hosts camer
 ## Assistant
 
 “Attached photo shows the host’s camera view capturing far more than the driveway they claimed—clearly visible are bedroom windows, balconies, and interior spaces including the living room, kitchen, and bathroom.”
+
+
+## See Also
+- [[chatgpt/chatgpt_draft-complaint-message]]
+- [[chatgpt/chatgpt_follow-up-message-draft]]
+- [[chatgpt/chatgpt_message-draft-assistance]]
+- [[chatgpt/chatgpt_message-response-draft]]
+- [[chatgpt/chatgpt_music-industry-message-draft]]

@@ -1306,3 +1306,11 @@ Let's add some features here.
 
 Firs ta check box to select today as the date or to pick a date. 
 Second lets extract the json object to its own file. Currently the file is in tools/Label-Generator.vue, we'll move it to a folder for the label generator with the component now being the index.vue in there and the json file being in there as well
+
+
+## See Also
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part2]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part4]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part5]]
+- [[chatgpt/chatgpt_automated-venue-scheduling-solution]]

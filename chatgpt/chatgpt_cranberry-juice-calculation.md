@@ -58,3 +58,11 @@ Since you initially needed 9.8 liters, you now have:
 \]
 
 You have 0.95 liters left.
+
+
+## See Also
+- [[chatgpt/chatgpt_bottle-calculation-for-juice]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]

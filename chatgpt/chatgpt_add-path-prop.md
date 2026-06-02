@@ -137,3 +137,11 @@ export default {
 ```
 
 In the updated code, the `path` prop is added, and we use `v-if` and `v-else` directives to conditionally render the menu item as a router link or a regular button based on the presence of the `path` prop. If `path` is provided, the button is rendered as a router link using the `:to` directive with the value set to the `path` prop. If `path` is not provided, the button is rendered as a regular button.
+
+
+## See Also
+- [[chatgpt/chatgpt_career-path-guidance]]
+- [[chatgpt/chatgpt_career-plan-for-startup-path]]
+- [[chatgpt/chatgpt_chingys-evolving-career-path]]
+- [[chatgpt/chatgpt_claude-cli-path-windows]]
+- [[chatgpt/chatgpt_dj-xs-las-vegas-path-part1]]

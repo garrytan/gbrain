@@ -50,3 +50,11 @@ Is that normal or was this like a special thing because something happened to th
 ## Assistant
 
 In West Hollywood, it is a common practice for the City Council to appoint the mayor from among its members, rather than through a direct public election. This process is part of the city's system of governance, where council members rotate the mayoral position annually based on council consensus. John Erickson's appointment as mayor in December 2023 followed this typical procedure, with unanimous support from his council colleagues【7†source】【8†source】【9†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_2024-election-outcome-query]]
+- [[chatgpt/chatgpt_la-mayor-race-dates]]
+- [[chatgpt/chatgpt_west-hollywood-mayor-info]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

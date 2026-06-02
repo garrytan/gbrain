@@ -58,3 +58,11 @@ Want me to pull examples where you can actually hear this — like his older mix
 ## User
 
 It would be more successful if he cleaned it up
+
+
+## See Also
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part1]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part2]]
+- [[chatgpt/chatgpt_airbnb-review-ryan-style]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]

@@ -1125,3 +1125,11 @@ Didn't you have a name with soul in it
 ## Assistant
 
 Yes, one of the suggestions was **Souls of the Spirits Margarita**. Would you like to use that one, or make adjustments to it?
+
+
+## See Also
+- [[chatgpt/chatgpt_american-drink-recipes]]
+- [[chatgpt/chatgpt_batch-drink-recipe-scaling]]
+- [[chatgpt/chatgpt_caffeine-free-drink-alternatives]]
+- [[chatgpt/chatgpt_check-drink-sales-clover]]
+- [[chatgpt/chatgpt_drink-calculation]]

@@ -268,3 +268,11 @@ For a pre-batched Elderflower Collins, here's how you can prepare and store it:
 - **Club Soda**: Always add the club soda just before serving to ensure it stays fizzy and fresh.
 
 By following these steps, you can efficiently prepare and enjoy a batch of Elderflower Collins cocktails.
+
+
+## See Also
+- [[chatgpt/chatgpt_liquor-adaptation-request]]
+- [[chatgpt/chatgpt_liquor-order-list-started]]
+- [[chatgpt/chatgpt_liquor-order-list]]
+- [[chatgpt/chatgpt_agent-orchestration-summary]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]

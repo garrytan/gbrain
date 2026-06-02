@@ -118,3 +118,11 @@ Mr. White — here are **three** Los Angeles-based (or LA-friendly/remote) agenc
 ---
 
 If you like, I can **compile a list of 10-12 agencies in LA + remote** that specialise in projection mapping / immersive brand experiences *and* filter by those with currently listed roles (with links). Would that be helpful?
+
+
+## See Also
+- [[chatgpt/chatgpt_nfl-smart-glass-projection]]
+- [[chatgpt/chatgpt_qlab-projection-masking-tips]]
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]
+- [[chatgpt/chatgpt_ci-with-ai-in-fast-companies]]
+- [[chatgpt/chatgpt_roomba-mapping-and-blacklist]]

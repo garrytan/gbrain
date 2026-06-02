@@ -94,3 +94,11 @@ Let me know if you want a custom Capacitor plugin setup to pass variables from `
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-env-variables]]
+- [[chatgpt/chatgpt_breaking-bad-setting]]
+- [[chatgpt/chatgpt_css-class-based-on-variables]]
+- [[chatgpt/chatgpt_missing-merge-queue-setting]]
+- [[chatgpt/chatgpt_setting-item-cost-in-toast]]

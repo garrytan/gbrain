@@ -76,3 +76,11 @@ YC’s core idea (emphasized by Seibel) is that *spec, measurement, and iteratio
 ---
 
 If you want **a direct link to the exact video clip** where Seibel specifically walks through the brainstorming + KPI-sprint process (often labeled *“Building Product” or “Product Development Cycle” from YC), I can find that next — just confirm whether you want the full talk or a shorter snippet.
+
+
+## See Also
+- [[chatgpt/chatgpt_sprint-planning-for-mvp-part1]]
+- [[chatgpt/chatgpt_sprint-planning-for-mvp-part2]]
+- [[chatgpt/chatgpt_budget-planning-overview]]
+- [[chatgpt/chatgpt_demo-video-planning]]
+- [[chatgpt/chatgpt_design-system-planning]]

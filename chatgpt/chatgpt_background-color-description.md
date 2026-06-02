@@ -30,3 +30,11 @@ The background color is a very dark gray—RGB approximately **(19, 19, 20)** (a
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-tools-for-background-placement]]
+- [[chatgpt/chatgpt_background-image-integration]]
+- [[chatgpt/chatgpt_background-job-setup]]
+- [[chatgpt/chatgpt_cascade-background-agents-explanation]]
+- [[chatgpt/chatgpt_claude-code-background-agents]]

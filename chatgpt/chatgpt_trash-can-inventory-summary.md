@@ -50,3 +50,11 @@ Here is the trash can inventory table:
 | 25-gallon (Cafe)      | 1        |
 
 Let me know if you need any changes or additional information.
+
+
+## See Also
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary]]
+- [[chatgpt/chatgpt_drink-inventory-summary]]

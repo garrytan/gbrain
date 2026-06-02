@@ -109,3 +109,11 @@ Because each envelope has a dedicated card, no bill can pull from the wrong buck
 - **Automatic Robinhood** ensures steady investing without thinking.
 
 This setup keeps bills bulletproof, builds a cushion for slow months, and still funds fun and investing.
+
+
+## See Also
+- [[chatgpt/chatgpt_work-hours-calculation]]
+- [[chatgpt/chatgpt_total-calorie-calculation]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_comp-hours-and-pay]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]

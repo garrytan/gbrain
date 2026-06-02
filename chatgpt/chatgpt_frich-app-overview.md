@@ -75,3 +75,11 @@ Given your background as a founder in Los Angeles, here’s how you can use this
 ---
 
 If you like, I can pull **detailed metrics** on Frich (user growth, retention, funding, business model details) and compare it to 2–3 comparable fintech/community apps. Would you like me to do that?
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

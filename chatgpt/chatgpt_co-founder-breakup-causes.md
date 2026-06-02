@@ -82,3 +82,11 @@ Add a clear line in your profile:
 - “CEO role is predefined and non-negotiable. I will serve as CEO; co-founder role is complementary.”
 
 If needed, the rest can be framed similarly as filters rather than preferences.
+
+
+## See Also
+- [[chatgpt/chatgpt_bottleneck-causes-and-solutions]]
+- [[chatgpt/chatgpt_flies-on-porch-causes]]
+- [[chatgpt/chatgpt_founder-experience-summary]]
+- [[chatgpt/chatgpt_founder-vs-ceo-explained]]
+- [[chatgpt/chatgpt_funding-with-solo-founder]]

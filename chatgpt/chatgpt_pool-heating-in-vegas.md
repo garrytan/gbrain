@@ -28,3 +28,11 @@ Yo homie, so I'm gonna go to my house in Vegas in like two weeks, and like it's 
 forecastturn1forecast0
 
 Mr. White, late June in Vegas will hit about 103°F by day and dip to around 74°F at night. Vegas pools bake in that sun—expect water temps in the mid-80s to low-90s. You can skip pre-heating and still have a swim-ready pool. If you want it extra hot for a nighttime dip, fire up the heater a few hours before you arrive; otherwise, you’re all set.
+
+
+## See Also
+- [[chatgpt/chatgpt_chlorine-pool-sex-safety]]
+- [[chatgpt/chatgpt_cold-pool-surface-question]]
+- [[chatgpt/chatgpt_db-pool-pressure]]
+- [[chatgpt/chatgpt_dj-xs-las-vegas-path-part1]]
+- [[chatgpt/chatgpt_dj-xs-las-vegas-path-part2]]

@@ -87,3 +87,11 @@ If success can be defined as *“user did X”*, Linear UX usually wins.
 If success is *“user explored and decided”*, it probably won’t.
 
 If you want, tell me **what product or flow** you’re redesigning and I’ll map a clean linear version in bullets or a quick flow outline, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-onboarding-overview]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_automation-in-linear]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]

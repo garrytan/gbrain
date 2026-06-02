@@ -36,3 +36,11 @@ If you allow a **delete push** (e.g. `git push --force` or deleting branches) wi
 By enforcing that tests pass *before* a delete/force push, you guarantee that only validated code is allowed to overwrite or remove existing code. It’s a guardrail: tests first, then destructive operations.  
 
 Want me to draft you a concise **git hook setup** that enforces test runs before `git push --force` or branch deletions?
+
+
+## See Also
+- [[chatgpt/chatgpt_biome-react-hooks-linter]]
+- [[chatgpt/chatgpt_claude-code-hooks-setup]]
+- [[chatgpt/chatgpt_nextjs-commit-hooks]]
+- [[chatgpt/chatgpt_react-hooks-error-2]]
+- [[chatgpt/chatgpt_react-hooks-error]]

@@ -56,3 +56,11 @@ If you’re looking for **lens flare overlays for entity["software","Adobe
 ---
 
 If you like, I can **find a curated list of 10 top free lens-flare overlay packs** (with download links) for you that are Photoshop-ready. Would you like me to pull that together?
+
+
+## See Also
+- [[chatgpt/chatgpt_overlay-lens-flare-image]]
+- [[chatgpt/chatgpt_light-leak-overlays-photoshop]]
+- [[chatgpt/chatgpt_capture-one-lens-flares]]
+- [[chatgpt/chatgpt_lens-cap-requirements]]
+- [[chatgpt/chatgpt_lens-distortion-explained]]

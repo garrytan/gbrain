@@ -52,3 +52,11 @@ As a security researcher, it's crucial to approach your investigations with ethi
 5. **Research and Disclosure**: If your research identifies security vulnerabilities or privacy issues, consider responsible disclosure. This means privately notifying the affected company of the findings and giving them a chance to fix the issues before publicly disclosing them. This approach helps protect users while still advancing security knowledge.
 
 For legitimate security research, consider partnering with academic institutions or organizations that have established ethical guidelines and legal frameworks for conducting research. Additionally, engaging directly with platforms through their bug bounty or security research programs can be a way to explore system vulnerabilities in a legal and ethically responsible manner.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]
+- [[chatgpt/chatgpt_airbnb-ai-usage]]
+- [[chatgpt/chatgpt_api-usage-and-plan-optimization]]
+- [[chatgpt/chatgpt_backslash-usage-overview]]
+- [[chatgpt/chatgpt_capture-one-usage]]

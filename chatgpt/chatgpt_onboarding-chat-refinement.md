@@ -405,3 +405,11 @@ The conversation is just the control surface. The product moment is the live pro
 - or move the user to activation.
 
 That is how you get something shippable: tight state machine, grounded knowledge, Stanley-style momentum, evals before deploy, and founder taste converted into goldens instead of scattered prompt notes.
+
+
+## See Also
+- [[chatgpt/chatgpt_onboarding-chat-plan]]
+- [[chatgpt/chatgpt_onboarding-chat-ux-qa]]
+- [[chatgpt/chatgpt_waitlist-onboarding-chat]]
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_best-onboarding-ux]]

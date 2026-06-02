@@ -165,3 +165,11 @@ The script section defines the component's logic using JavaScript code.
   - `clearInputs` is a method triggered when the "Clear" div is clicked. It resets the `code` array to contain six empty strings, clearing the input fields.
   - `checkComplete` is an asynchronous method triggered when an input field receives input or a paste event occurs. It checks if the code is complete and emits events accordingly. If a valid OTP code is entered, it emits an event to update the parent component's model value and another event to indicate completion.
   - `checkClipboard` is an asynchronous
+
+
+## See Also
+- [[chatgpt/chatgpt_vuejs-form-input-template]]
+- [[chatgpt/chatgpt_input-field-html-code]]
+- [[chatgpt/chatgpt_contact-form-in-nextjs]]
+- [[chatgpt/chatgpt_create-new-contact-form-part1]]
+- [[chatgpt/chatgpt_create-new-contact-form-part2]]

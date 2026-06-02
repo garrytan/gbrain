@@ -137,3 +137,11 @@ I would not trust it alone for:
 - anything touching artist payouts
 
 Those are the places where Claude still earns its keep. citeturn0search3turn0search7
+
+
+## See Also
+- [[chatgpt/chatgpt_leveraging-free-models]]
+- [[chatgpt/chatgpt_nvidia-free-api-models]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_casting-brief-for-models]]
+- [[chatgpt/chatgpt_cheap-models-for-cos]]

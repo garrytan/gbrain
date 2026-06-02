@@ -33,3 +33,11 @@ It’s describing an event or brand concept.
 - **“Translated through clothes and furniture”** means that design sensibility shows up in the fashion worn by staff/guests and in the furniture and décor.  
 
 In short: it’s a high-end, design-driven coffee tasting where the aesthetic extends to what people wear and how the space is furnished.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartending-skills-experience-proficiency]]
+- [[chatgpt/chatgpt_drake-bell-nickelodeon-experience]]
+- [[chatgpt/chatgpt_edible-buffet-experience]]
+- [[chatgpt/chatgpt_extract-job-experience]]
+- [[chatgpt/chatgpt_founder-experience-summary]]

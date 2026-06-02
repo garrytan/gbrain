@@ -531,3 +531,11 @@ Celebrate your night out with a friend and enjoy the thrill of being Partners in
 ---
 
 This menu includes a variety of drinks that are thematic, easy to prepare, and visually appealing.
+
+
+## See Also
+- [[chatgpt/chatgpt_scandalous-summer-bar-menu-part1]]
+- [[chatgpt/chatgpt_scandalous-summer-bar-menu-part2]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part3]]
+- [[chatgpt/chatgpt_drink-menu-and-suggestions-part3]]
+- [[chatgpt/chatgpt_luxurious-la-summer-nights]]

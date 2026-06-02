@@ -122,3 +122,11 @@ export default {
 
 In this example, the `v-focus` directive is bound to the `shouldFocus` computed property, which is a boolean that is derived from the values of `isFocused` and `isInputVisible`. The input element will receive focus only if both `isFocused` and `isInputVisible` are `true`.
 
+
+
+## See Also
+- [[chatgpt/chatgpt_automate-webpage-data-input]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_chat-input-specs]]
+- [[chatgpt/chatgpt_extract-input-element-to-component]]
+- [[chatgpt/chatgpt_fix-invalid-input]]

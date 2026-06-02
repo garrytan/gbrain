@@ -36,3 +36,11 @@ Can you confirm the correct spec for those panel-mount screws and send a quote w
 Thanks,
 Mr. White  
 [phone/email]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]
+- [[chatgpt/chatgpt_bartender-job-application-email-3]]
+- [[chatgpt/chatgpt_bartender-job-application-email]]

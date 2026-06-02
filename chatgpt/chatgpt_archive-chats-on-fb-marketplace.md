@@ -46,3 +46,11 @@ On Facebook Marketplace, there’s no built-in “archive by item” feature, bu
    - If you want everything in one place, you can create a custom **“Archived – Sold Items” folder** in Messenger’s search bar by filtering for the item name, then bulk archiving those threads.
 
 Would you like me to walk you through a **step-by-step flow for bulk archiving all chats tied to one listing** (so you don’t have to click each conversation individually), or do you prefer the manual one-by-one approach?
+
+
+## See Also
+- [[chatgpt/chatgpt_facebook-marketplace-description]]
+- [[chatgpt/chatgpt_facebook-marketplace-guide]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-2]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-3]]
+- [[chatgpt/chatgpt_facebook-marketplace-listing-tips]]

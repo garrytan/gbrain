@@ -52,3 +52,11 @@ Focus your next 6 months on **LogYourBody.**
 Keep a **tiny** weekly slot (e.g., Friday 2 h) for slow-burn R&D: track Linkfire feature gaps, prototype alternate layouts, and dog-food it for your own music drops. If a killer differentiator emerges or the fitness app hits stable cash-flow, you can spin Jovie up fast; until then, don’t split focus.
 
 Bottom line: ship LogYourBody, get paying users, then revisit Jovie.
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-in-product-development]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]

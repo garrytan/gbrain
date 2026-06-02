@@ -60,3 +60,11 @@ Mr. White — in the middle of a shift, the fastest way to relax her is **brief,
 If you get one moment when she pauses:  
 **“Look at me—inhale, exhale. You’re crushing it. One hour. Go.”**  
 Then give her a little nod and let her move.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

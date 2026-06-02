@@ -112,3 +112,11 @@ What that means for a weekly-average method:
 Bottom line: **Weekly averaging is only “legal” if it still pays the actual service team for the patrons who tipped and excludes managers.** In practice, a **per-show pool** is the compliant, defensible way to avoid §351 problems. citeturn2search0turn2search2
 
 If you want, I can draft a one-page per-show policy and a worksheet that allocates early-prep across shows by sales share.
+
+
+## See Also
+- [[chatgpt/chatgpt_toast-tip-pooling-options]]
+- [[chatgpt/chatgpt_cancelation-policy-legality]]
+- [[chatgpt/chatgpt_childrens-walkthrough-legality]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_lifetime-saas-licenses-legality]]

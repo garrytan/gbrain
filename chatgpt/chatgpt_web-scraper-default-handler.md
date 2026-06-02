@@ -67,3 +67,11 @@ router.addDefaultHandler(async ({ enqueueLinks, log }) => {
 This will add an index number to the log message that increments by 1 each time the default handler function is called. The index number will be logged along with the message "Processing link #" followed by the index number.
 
 Note that the value of `index` will be persisted between function calls, so the index number will continue to increment each time the function is called.
+
+
+## See Also
+- [[chatgpt/chatgpt_default-alive-for-artists]]
+- [[chatgpt/chatgpt_default-alive-meaning]]
+- [[chatgpt/chatgpt_default-songs-initialization]]
+- [[chatgpt/chatgpt_override-default-behavior]]
+- [[chatgpt/chatgpt_vue-default-export-typeerror]]

@@ -45,3 +45,11 @@ This quote is often attributed to Wozniak in paraphrased form. While Woz has des
 - The Atari incident is true.
 - The IPO claim is false.
 - The quote is exaggerated but loosely based on Woz’s sentiments.
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-check-anthropic-deal]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

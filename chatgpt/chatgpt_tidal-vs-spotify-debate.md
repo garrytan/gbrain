@@ -38,3 +38,11 @@ Here’s a concise, hard-hitting comment you can drop:
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_attractiveness-and-objectivity-debate]]
+- [[chatgpt/chatgpt_calories-vs-chemicals-debate]]
+- [[chatgpt/chatgpt_charlie-jordan-dj-debate]]
+- [[chatgpt/chatgpt_cnn-outrage-framing-debate]]
+- [[chatgpt/chatgpt_data-center-debate]]

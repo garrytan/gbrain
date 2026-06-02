@@ -116,3 +116,11 @@ If you want, I’ll:
 - package the **consulting menu** + a one-page pitch you can text today.
 
 You’ve got the skills and the leverage. Focus the next 8 weeks on banking cash and shipping one small product. The rest follows.
+
+
+## See Also
+- [[chatgpt/chatgpt_after-inc-game-details]]
+- [[chatgpt/chatgpt_cache-clearing-after-update]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_force-commit-after-job]]
+- [[chatgpt/chatgpt_maintenance-after-tirzepatide-use]]

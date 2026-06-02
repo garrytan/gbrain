@@ -121,3 +121,11 @@ Then produce the report described above.
 --- 
 
 If you want, I can also add a “scoring rubric” so the agent ranks items consistently (e.g., impact = user-facing perf + defect risk + frequency of use + cost).
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]
+- [[chatgpt/chatgpt_mobile-ux-optimization-prompt]]
+- [[chatgpt/chatgpt_unit-test-optimization-prompt]]
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]

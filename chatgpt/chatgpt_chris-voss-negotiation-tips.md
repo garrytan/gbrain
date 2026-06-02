@@ -122,3 +122,11 @@ When he circled back to “junk,” that was a tell he wanted control of the fra
 Now you just let the $250 offer close out. If it somehow falls through, you relist—your position is still strong.  
 
 Want me to script the clean, final closing message you can drop on the $250 buyer so the deal locks fast?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-5]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-6]]

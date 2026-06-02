@@ -59,3 +59,11 @@ In summary, **Claude Code** is an agentic AI coding assistant that helps automat
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-desktop-overview]]
+- [[chatgpt/chatgpt_claude-code-overview]]
+- [[chatgpt/chatgpt_claude-code-teams-overview]]
+- [[chatgpt/chatgpt_claude-code-worktrees-overview]]
+- [[chatgpt/chatgpt_auto-claude-overview]]

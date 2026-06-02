@@ -477,3 +477,11 @@ const stats = computed(() => [
 ```
 
 In this script, the `convertKgToLbs` function converts kilograms to pounds and formats the result to two decimal places. The `leanBodyMassLbs` computed property then uses this function to convert the `leanbodymassKg` prop and appends the "lbs" unit for display. This conversion will be reflected in your template where the `stats` are used.
+
+
+## See Also
+- [[chatgpt/chatgpt_calculating-lean-body-mass]]
+- [[chatgpt/chatgpt_lean-mass-gains]]
+- [[chatgpt/chatgpt_mini-cut-to-mass-phase]]
+- [[chatgpt/chatgpt_razor-bump-with-quarter-sized-mass]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

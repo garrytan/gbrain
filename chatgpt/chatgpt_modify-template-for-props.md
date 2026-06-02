@@ -190,3 +190,11 @@ In this modification:
 - When the button is clicked, the `'action'` event is emitted. You can listen to this event in the parent component where this button component is used and define the desired action.
 
 Remember to handle the `'action'` event in the parent component to perform the desired action when the button is clicked.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]
+- [[chatgpt/chatgpt_chris-voss-reply-template]]
+- [[chatgpt/chatgpt_concise-jovie-template]]
+- [[chatgpt/chatgpt_contact-page-template]]
+- [[chatgpt/chatgpt_html-template-creation-tutorial]]

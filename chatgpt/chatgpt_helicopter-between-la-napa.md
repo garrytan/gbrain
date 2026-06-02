@@ -122,3 +122,11 @@ Notes: Singles (e.g., Bell LongRanger) list lower hourly rates (~$2,350/hr) but 
 - **Helicopter when it makes sense:** If you **must land downtown** on the Vegas end (e.g., a private pad) or avoid the airline terminal experience entirely, helicopter can be worth the premium—but most clients just **jet to LAS or HND** and drive 10–20 minutes.
 
 If you want, I can sketch **same-day round-trip** pricing (which introduces wait-time and daily minimums) and compare **VNY/SNA/LAX departure options** for the best operator availability.
+
+
+## See Also
+- [[chatgpt/chatgpt_crossover-between-cast-and-crew]]
+- [[chatgpt/chatgpt_random-delay-between-pages]]
+- [[chatgpt/chatgpt_helicopter-circulation-investigation]]
+- [[chatgpt/chatgpt_helicopter-from-la-to-vegas]]
+- [[chatgpt/chatgpt_helicopter-pilot-license-cost]]

@@ -41,3 +41,11 @@ Quick how-to (if you want it)
 
 If you want, I can:
 - grab the exact Toast report names and the Excel calculator link and show the step-by-step export + sample spreadsheet formulas you’d need. Say “do it” and I’ll pull them.
+
+
+## See Also
+- [[chatgpt/chatgpt_toast-scheduling-options]]
+- [[chatgpt/chatgpt_tip-pooling-legality-la]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_airpods-pro-3-options]]
+- [[chatgpt/chatgpt_airpods-replacement-options]]

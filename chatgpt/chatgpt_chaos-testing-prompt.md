@@ -25,3 +25,11 @@ What I would say is I would go through our app and think about big tech companie
 - Logging out is actually kind of hard.
 - For some reason, there is a gap in billing. This person wouldn't be able to upgrade. This person wouldn't bill it out of grid.
 Think about that kind of stuff. Close the gap of things that need to be built that aren't necessarily on my radar because they're not specific to my customer. They're specific to all customers, or things that maybe we built for the customer but we didn't think of. We built a task to generate album art or something, but we didn't think about the fact that, okay, well, now you need a place to view the album art later. We have a library for that, so it's covered in that case, but there are cases where it's not. You know what I mean? Stuff like that.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chaos-testing-tools]]
+- [[chatgpt/chatgpt_chaos-testing-explained]]
+- [[chatgpt/chatgpt_chaos-testing-nextjs]]
+- [[chatgpt/chatgpt_bar-to-chaos-number]]
+- [[chatgpt/chatgpt_fundraising-in-chaos]]

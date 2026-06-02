@@ -21,3 +21,11 @@ tags: [chatgpt, import]
 
 Make image:
 Front view of a male torso only (no head, no arms), shown as a detailed white wireframe on a black background, futuristic HUD interface style, symmetrical proportions, no text or numbers.
+
+
+## See Also
+- [[chatgpt/chatgpt_image-of-treatment-request]]
+- [[chatgpt/chatgpt_image-segment-request]]
+- [[chatgpt/chatgpt_response-creation-request]]
+- [[chatgpt/chatgpt_artist-profile-image-creation]]
+- [[chatgpt/chatgpt_crop-circle-image-creation]]

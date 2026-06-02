@@ -76,3 +76,11 @@ Understood. I’ll compile a table of all crossover cast and core crew (such as 
 | **Ken Whittingham** | Director – Directed multiple episodes of *Modern Family* (e.g. Season 8)【67†L139-L147】 | Director – Directed multiple episodes of *Entourage* (HBO series)【67†L139-L147】 |
 
 **Sources:** Sofia Vergara’s cameo in *Entourage*【42†L271-L279】; Jami Gertz’s roles on *Modern Family* and *Entourage*【10†L7-L10】; Ken Whittingham’s directing credits on both series【67†L139-L147】.
+
+
+## See Also
+- [[chatgpt/chatgpt_helicopter-between-la-napa]]
+- [[chatgpt/chatgpt_random-delay-between-pages]]
+- [[chatgpt/chatgpt_cast-list-attendance]]
+- [[chatgpt/chatgpt_fiona-voice-cast]]
+- [[chatgpt/chatgpt_love-island-cast-earnings]]

@@ -648,3 +648,11 @@ Your thesis—that Tesla **does not yet hold regulatory approval in California t
 - **Suggested Action:** Unless you possess **non-public DMV or CPUC filings** suggesting imminent permit approval, you should **consider scaling back exposure tied to near‑term robotaxi deployment expectations in California**. Current regulatory posture and media coverage fully support your internal analysis.
 
 Let me know if you’d like this formatted for compliance logs or internal dashboards.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

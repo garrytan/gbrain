@@ -54,3 +54,11 @@ If you need assistance with specific configurations or further details, please p
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "I don't see any specific workflow files shared in our recent chats. We talked about some technical issues and configurations, but if you want to share any workflow files"}
 {'asset_pointer': 'sediment://file_000000006bd06230a90c61e206fec88c', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-21T03:42:54.603626+00:00', 'format': 'wav', 'metadata': {'end': 7.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 360078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

@@ -41,3 +41,11 @@ SonarQube
 **Why teams use it:** It *shifts quality and security left* — catching issues earlier — and enforces consistent coding standards across teams with automated reporting and enforcement. citeturn0search1turn0search21
 
 In short, SonarQube automates code review and quality assurance to help teams deliver more reliable, secure, and maintainable software. citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_sonarqube-mcp-overview]]
+- [[chatgpt/chatgpt_sonarqube-overview-2]]
+- [[chatgpt/chatgpt_nosonar-in-sonarqube]]
+- [[chatgpt/chatgpt_sonarqube-ai-features]]
+- [[chatgpt/chatgpt_sonarqube-code-analysis]]

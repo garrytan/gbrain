@@ -45,3 +45,11 @@ Here’s the status:
 - If you’re waiting for something *even newer than the 2025 model*, there’s **no verified timeline or rumor of a 4th-generation launch soon**.
 
 If you want, I can compare the current Nest Doorbell models and tell you which is the best pick today.
+
+
+## See Also
+- [[chatgpt/chatgpt_3rd-gen-nest-doorbell]]
+- [[chatgpt/chatgpt_best-doorbell-cameras-2026]]
+- [[chatgpt/chatgpt_fix-ring-doorbell-boot-loop]]
+- [[chatgpt/chatgpt_google-doorbell-options]]
+- [[chatgpt/chatgpt_nest-aware-overview]]

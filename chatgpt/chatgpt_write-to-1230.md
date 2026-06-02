@@ -38,3 +38,11 @@ On the 16th, I started at 5.30pm.
 ## Assistant
 
 Noted. If you have any other updates or need assistance, feel free to let me know.
+
+
+## See Also
+- [[chatgpt/chatgpt_marketplace-description-write]]
+- [[chatgpt/chatgpt_response-suggestion-write]]
+- [[chatgpt/chatgpt_write-apple-level-prompt]]
+- [[chatgpt/chatgpt_write-blurb-for-daniel]]
+- [[chatgpt/chatgpt_write-message-to-sophie]]

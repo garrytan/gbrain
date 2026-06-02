@@ -115,3 +115,11 @@ Serve immediately and enjoy the refreshing, spicy kick of your Michelada!
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_cosmopolitan-cocktail-recipe]]
+- [[chatgpt/chatgpt_gin-cocktail-recipe]]
+- [[chatgpt/chatgpt_gin-elderflower-cocktail-recipe]]
+- [[chatgpt/chatgpt_manhattan-cocktail-ingredients]]
+- [[chatgpt/chatgpt_mulé-cocktail-recipe-options]]

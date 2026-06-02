@@ -110,3 +110,11 @@ Want real wealth advice? Start with a CPA, not an Instagram reel.
 ---
 
 Let me know if you want to add a snarky closer or question to bait replies.
+
+
+## See Also
+- [[chatgpt/chatgpt_dunk-in-ryan-reynolds-style]]
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comeback]]
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comment]]
+- [[chatgpt/chatgpt_super-cocky-ryan-reynolds]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]

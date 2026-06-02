@@ -114,3 +114,11 @@ Here’s a tight version you can drop straight in:
 > “Even with the hand-grip upgrade this is still just bioelectrical impedance. Four-point BIA is only a tiny step up from foot-only and still swings with hydration, food, and the device’s formulas. Peer-reviewed tests show ±3–5 kg fat-mass error versus a DEXA scan. The accuracy boost is so negligible it’s basically just for spotting trends—you’re no better off than a $20 **Renpho** foot-only scale and a quarterly DEXA if you want a real trend line and actual clinical data.”
 
 That hits the tech, the limitation, and the Renpho+DEXA alternative in one concise punch.
+
+
+## See Also
+- [[chatgpt/chatgpt_bodied-hume-dexa-accuracy]]
+- [[chatgpt/chatgpt_breast-milk-alcohol-test-accuracy]]
+- [[chatgpt/chatgpt_compare-scale-and-dexa-data]]
+- [[chatgpt/chatgpt_compare-scale-data-and-dexa]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part1]]

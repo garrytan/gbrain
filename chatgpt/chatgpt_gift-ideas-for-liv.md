@@ -275,3 +275,11 @@ Mr. White — easy. Keep it **girly, cute, and usable** (without overlapping the
 - **Sephora/Ulta gift card** ($50) + one small physical item (like hoops or a claw clip) so it doesn’t feel impersonal.
 
 If you tell me her **jewelry metal** (gold vs silver) and whether she’s more **vanilla/clean scents** or **sweet/floral**, I’ll pick the best 6 items.
+
+
+## See Also
+- [[chatgpt/chatgpt_creative-fishing-gift-ideas]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]

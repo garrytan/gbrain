@@ -182,3 +182,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Absolutely! In a high-volume setting, you want to keep things efficient while maintaining quality. For an Old Fashioned, you could use simple syrup instead of a sugar cube to save muddling time. Pre-batching the bitters and simple syrup mixture can also help speed things up—just measure out that mix and add whiskey over ice, then stir and garnish.\n\nFor something like a Mojito, you can pre-muddle a batch of mint and lime in advance, then add the rum and simple syrup quickly. Having everything lined up—like you mentioned with the glasses and ice—definitely saves time.\n\nFor something like an Espresso Martini, you can pre-mix the coffee liqueur and vodka in a bottle and just add fresh espresso as needed. Multi-tasking with garnishes and pouring with both hands is perfect for speed. Just keep everything organized and within reach, and you'll be able to crank out quality cocktails quickly."}
 {'asset_pointer': 'sediment://file_00000000fde4622fb71bd142ce70287e', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-11-05T04:17:37.326108+00:00', 'format': 'wav', 'metadata': {'end': 52.2, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 2505678, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_bartending-quiz-prep-part2]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part1]]
+- [[chatgpt/chatgpt_equinox-trainer-quiz-prep]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part10]]
+- [[chatgpt/chatgpt_bartending-job-alerts-part11]]

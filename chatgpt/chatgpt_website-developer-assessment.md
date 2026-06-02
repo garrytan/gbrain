@@ -593,3 +593,11 @@ AND MODIFIED BY ARTHUR ZEY
 - **Pass on:** Tight-deadline feature work where brevity, quick commits, and humble collaboration are critical.
 
 If you proceed, start with a paid take-home coding test and a 30-minute pair-programming session to verify he can ship concise, production-ready code within constraints.
+
+
+## See Also
+- [[chatgpt/chatgpt_cinematic-website-concept]]
+- [[chatgpt/chatgpt_cinematic-website-footer-design]]
+- [[chatgpt/chatgpt_copyright-notice-on-website]]
+- [[chatgpt/chatgpt_high-end-website-mockup]]
+- [[chatgpt/chatgpt_import-website-to-figma]]

@@ -39,3 +39,11 @@ To mitigate nausea while using tirzepatide, try the following:
 10. **Rest & Move Carefully** – Sudden movements can trigger nausea; try lying down in a cool, dark room if needed.  
 
 If nausea persists or worsens, talk to your doctor about dose adjustments or additional treatments.
+
+
+## See Also
+- [[chatgpt/chatgpt_flying-with-tirzepatide]]
+- [[chatgpt/chatgpt_maintenance-after-tirzepatide-use]]
+- [[chatgpt/chatgpt_mike-israel-tirzepatide-advice]]
+- [[chatgpt/chatgpt_mixing-tirzepatide-safety]]
+- [[chatgpt/chatgpt_next-gen-tirzepatide-successors]]

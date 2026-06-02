@@ -101,3 +101,11 @@ If you want automation, the cleanest is:
 If you tell me what you’re using (GitHub merge queue vs something else, and what CI provider), I’ll give you:
 - the exact GitHub Actions triggers (`pull_request`, `merge_group`) setup, or
 - a concrete batching script outline using the GitHub API (which endpoints, what data to pull, and the batching/splitting logic).
+
+
+## See Also
+- [[chatgpt/chatgpt_emitting-multiple-values]]
+- [[chatgpt/chatgpt_gui-for-multiple-terminals]]
+- [[chatgpt/chatgpt_handling-multiple-agents-locally]]
+- [[chatgpt/chatgpt_multiple-units-at-station-7]]
+- [[chatgpt/chatgpt_running-multiple-codex-agents]]

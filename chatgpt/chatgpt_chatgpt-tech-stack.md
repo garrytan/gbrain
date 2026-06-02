@@ -80,3 +80,11 @@ If you want, I can sketch the exact client architecture (React app shell + API c
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_folkapp-tech-stack]]
+- [[chatgpt/chatgpt_openai-ios-tech-stack]]
+- [[chatgpt/chatgpt_tech-stack-advice]]
+- [[chatgpt/chatgpt_tech-stack-comparison]]
+- [[chatgpt/chatgpt_tech-stack-inquiry]]

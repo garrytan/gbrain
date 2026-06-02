@@ -432,3 +432,11 @@ Drop that into your AI of choice and watch it generate a rock-solid, production-
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bmi-calculation-for-weight]]
+- [[chatgpt/chatgpt_bmi-weight-calculation-request]]
+- [[chatgpt/chatgpt_macrofactor-trend-weight-calculation]]
+- [[chatgpt/chatgpt_target-weight-calculation]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

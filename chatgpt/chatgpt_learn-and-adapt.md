@@ -36,3 +36,11 @@ Here are the key product patterns worth borrowing from urlStanley for X
 - **Personality + utility**: “Head of Content” framing makes the assistant feel like a team member, while still being a tool.
 
 If you want, I can translate these into a prioritized feature spec for Jovie (MVP vs. v2) and suggest a UI flow map.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

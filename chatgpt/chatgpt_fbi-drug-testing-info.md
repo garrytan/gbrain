@@ -34,3 +34,11 @@ Here’s a quick breakdown of how drug testing works if you applied for a job at
 - In addition to drug testing, you’ll undergo a full background investigation, a polygraph exam, fingerprinting, and security-clearance screening. citeturn0search0turn0search21turn0search25
 
 If you like — I can pull up the **latest (2025) published drug-use / disqualifier guidelines** for the FBI (with legal-drug vs. illegal-drug distinctions), to see exactly how strict they are now.
+
+
+## See Also
+- [[chatgpt/chatgpt_33-taps-restaurant-info]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]

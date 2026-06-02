@@ -1073,3 +1073,11 @@ The only thing I’d add to the eng plan is a preflight test that intentionally 
 ```
 
 That catches the silent Clerk redirect failure before this reaches production.
+
+
+## See Also
+- [[chatgpt/chatgpt_dj-linkinbio-interface-design]]
+- [[chatgpt/chatgpt_improve-interface-flow]]
+- [[chatgpt/chatgpt_interface-design-audit]]
+- [[chatgpt/chatgpt_music-interface-design-ideas]]
+- [[chatgpt/chatgpt_vue-js-tabbed-interface]]

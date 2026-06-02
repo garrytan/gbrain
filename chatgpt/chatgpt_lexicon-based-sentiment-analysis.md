@@ -33,3 +33,11 @@ lexicon analysis
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_beatgrid-editing-in-lexicon]]
+- [[chatgpt/chatgpt_lexicon-basic-plan-rekordbox]]
+- [[chatgpt/chatgpt_lexicon-cue-point-generation]]
+- [[chatgpt/chatgpt_lexicon-plugin-strategy]]
+- [[chatgpt/chatgpt_lexicon-vs-rekordbox-vs-mik]]

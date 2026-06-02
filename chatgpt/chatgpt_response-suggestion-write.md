@@ -36,3 +36,11 @@ You:
 - Acknowledge their timing ✅  
 - Label their intent (“grab a few drives at once”) ✅  
 - Use calibrated questions to make *them* name the bundle and the price first ✅
+
+
+## See Also
+- [[chatgpt/chatgpt_friendly-response-suggestion]]
+- [[chatgpt/chatgpt_polite-response-suggestion]]
+- [[chatgpt/chatgpt_response-suggestion]]
+- [[chatgpt/chatgpt_slam-response-suggestion]]
+- [[chatgpt/chatgpt_write-response-to-sophie]]

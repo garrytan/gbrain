@@ -245,3 +245,11 @@ The lengths of the arrays for the non-liquor order list are mismatched. I'll cor
 ## Assistant
 
 The order lists have been successfully generated and are now separated into liquor and non-liquor categories. You can review and adjust the quantities as needed. Let me know if there is anything else you require!
+
+
+## See Also
+- [[chatgpt/chatgpt_inventory-management-solutions]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_camera-kit-inventory-review]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]

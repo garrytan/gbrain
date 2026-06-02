@@ -27,3 +27,11 @@ Can u order a pup cup on the Starbucks app
 ## Assistant
 
 Mr. White, you can’t order a pup-cup through the Starbucks app—it’s a complimentary, in-store treat. Just swing by the counter or drive-thru and ask your barista for a pup cup.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-supply-order-list]]
+- [[chatgpt/chatgpt_coffee-order-summary]]
+- [[chatgpt/chatgpt_dexter-shows-in-order]]
+- [[chatgpt/chatgpt_fall-order-email-draft]]
+- [[chatgpt/chatgpt_group-order-tip-payment]]

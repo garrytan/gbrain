@@ -55,3 +55,11 @@ Why this fixes it:
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_calculate-fat-weight-formula]]
+- [[chatgpt/chatgpt_henselmans-natty-max-formula]]
+- [[chatgpt/chatgpt_lbm-formula]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

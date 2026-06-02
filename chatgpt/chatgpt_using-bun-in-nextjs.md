@@ -257,3 +257,11 @@ and I’ll give you a minimal Vercel + CI config for Jovie that locks this all i
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_basic-auth-in-nextjs]]
+- [[chatgpt/chatgpt_best-email-provider-for-nextjs]]
+- [[chatgpt/chatgpt_biggest-failures-in-nextjs-ai]]
+- [[chatgpt/chatgpt_biome-vs-eslint-nextjs]]

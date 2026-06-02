@@ -111,3 +111,11 @@ Here's a logically ordered to-do list for setting up the bars:
    - Get ice.
 
 By following this order, you ensure that all perishable items remain fresh, equipment is ready, and any dirty items are cleaned promptly.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

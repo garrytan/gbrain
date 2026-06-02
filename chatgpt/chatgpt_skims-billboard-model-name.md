@@ -81,3 +81,11 @@ Since you’re in LA and seeing the physical boards:
 4. You can also check **SKIMS’ official Instagram / TikTok** for recent holiday posts and see if any behind-the-scenes content tags the models.
 
 I know that’s not the clean “here’s her name” answer you wanted, but right now there just isn’t enough verifiable public info for me to identify her without guessing — and I’m not going to make up a second wrong name.
+
+
+## See Also
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]
+- [[chatgpt/chatgpt_ai-3d-model-creation]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_arlo-camera-charging-model]]
+- [[chatgpt/chatgpt_best-model-for-design-systems]]

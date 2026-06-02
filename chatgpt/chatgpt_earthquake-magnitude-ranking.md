@@ -36,3 +36,11 @@ In historical terms, an 8.7 puts it among the **top 20 strongest earthquakes eve
 - The **1965 Rat Islands earthquake** in Alaska was 8.7.
 
 Only quakes above **9.0** (e.g., 1960 Chile, 2004 Indian Ocean) rank higher.
+
+
+## See Also
+- [[chatgpt/chatgpt_billboard-1-songs-ranking]]
+- [[chatgpt/chatgpt_californias-independent-economy-ranking]]
+- [[chatgpt/chatgpt_freelancer-ranking-for-ux]]
+- [[chatgpt/chatgpt_meta-tiktok-ranking-review-part1]]
+- [[chatgpt/chatgpt_meta-tiktok-ranking-review-part2]]

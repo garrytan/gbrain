@@ -447,3 +447,11 @@ export default {
 ```
 
 This component will now display the updated core values with the more eloquent and evolved "Judge intention, not action" value.
+
+
+## See Also
+- [[chatgpt/chatgpt_tim-whites-core-values-part1]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part2]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part3]]
+- [[chatgpt/chatgpt_core-values-compilation-part1]]
+- [[chatgpt/chatgpt_core-values-compilation-part2]]

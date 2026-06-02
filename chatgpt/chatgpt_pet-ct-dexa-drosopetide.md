@@ -169,3 +169,11 @@ Right before peak time:
 ---
 
 Let me know your exact timing and I’ll give you the hour-by-hour version.
+
+
+## See Also
+- [[chatgpt/chatgpt_analyze-and-compare-dexa]]
+- [[chatgpt/chatgpt_bf-prediction-based-on-dexa]]
+- [[chatgpt/chatgpt_bodied-hume-dexa-accuracy]]
+- [[chatgpt/chatgpt_body-recomposition-plan-dexa]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-2]]

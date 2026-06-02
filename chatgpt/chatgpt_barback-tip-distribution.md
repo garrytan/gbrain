@@ -222,3 +222,11 @@ In a typical bar scenario, the splits between bartenders, servers, and barbacks 
 - **Full share/half share** systems are common when there are multiple roles, with barbacks often getting a reduced share due to their supporting role.
 
 These are averages, and actual splits can vary based on location, bar size, and local customs.
+
+
+## See Also
+- [[chatgpt/chatgpt_cocktail-sales-distribution]]
+- [[chatgpt/chatgpt_food-distribution-system]]
+- [[chatgpt/chatgpt_fuga-distribution-overview]]
+- [[chatgpt/chatgpt_music-distribution-challenges]]
+- [[chatgpt/chatgpt_tip-distribution-comparison]]

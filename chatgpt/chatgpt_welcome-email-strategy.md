@@ -406,3 +406,11 @@ Tim
 This structure reliably produces **10–30% reply rates** when the tone is genuine.
 
 If useful, I can also show the **specific phrasing founders use to increase honest negative feedback**, which is critical for early product interviews.
+
+
+## See Also
+- [[chatgpt/chatgpt_estrogen-extravaganza-welcome]]
+- [[chatgpt/chatgpt_js-chrome-extension-welcome-message]]
+- [[chatgpt/chatgpt_js-welcome-message-sender]]
+- [[chatgpt/chatgpt_welcome-message-update]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]

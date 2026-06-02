@@ -176,3 +176,11 @@ Once you've provided those numbers, I’ll give you a concise breakdown highligh
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Yeah, that can definitely feel surprising given how dedicated you are to hypertrophy training. Sometimes these comparisons are based on general population data, which might not perfectly reflect your specific situation. Also, lean mass can be influenced by a lot of factors, including height, bone structure, and even genetics. The most important thing is that you're consistent with your training and you feel good about your progress. The numbers are just one piece of the bigger picture!"}
 {'asset_pointer': 'sediment://file_00000000699462308febe1904b0a9996', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-01-22T20:57:34.441329+00:00', 'format': 'wav', 'metadata': {'end': 30.4, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1459278, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_app-test-report]]
+- [[chatgpt/chatgpt_audit-report-summary]]
+- [[chatgpt/chatgpt_bodyspec-report-summary]]
+- [[chatgpt/chatgpt_chat-testing-report]]
+- [[chatgpt/chatgpt_de-annual-report-filing]]

@@ -141,3 +141,11 @@ export default {
 - `background-position: center;` centers the background image within the div.
 
 This modification will set your specified image as the background for the component, with the text and iframe elements overlaid on top.
+
+
+## See Also
+- [[chatgpt/chatgpt_remove-image-background]]
+- [[chatgpt/chatgpt_ai-tools-for-background-placement]]
+- [[chatgpt/chatgpt_background-color-description]]
+- [[chatgpt/chatgpt_background-job-setup]]
+- [[chatgpt/chatgpt_cascade-background-agents-explanation]]

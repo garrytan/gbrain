@@ -199,3 +199,11 @@ Bartender/Barback
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response]]
+- [[chatgpt/chatgpt_head-bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-response]]
+- [[chatgpt/chatgpt_job-application-response]]

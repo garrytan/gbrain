@@ -322,3 +322,11 @@ No custom memory infra unless agents are actively using it.
 ```
 
 You are directionally correct, but I would **de-risk by making Obsidian the daily driver** and treating GBrain as an agent layer, not the operating system itself.
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]
+- [[chatgpt/chatgpt_2024-election-outcome-query]]
+- [[chatgpt/chatgpt_add-gbrain-as-mcp]]
+- [[chatgpt/chatgpt_clarify-bronson-depot-query]]
+- [[chatgpt/chatgpt_connect-gbrain-to-chatgpt]]

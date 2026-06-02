@@ -136,3 +136,11 @@ How old is a 3 year old dog do g years
 To calculate a dog's age in "dog years," a common method used to be multiplying the dog's age in human years by 7. However, this method has been found to be oversimplified. The American Veterinary Medical Association suggests that a 1-year-old dog is approximately equivalent to a 15-year-old human, a 2-year-old dog is about 24 years in human years, and each additional year is roughly 4 to 5 human years.
 
 Using this more nuanced approach, a 3-year-old dog would be approximately 28 to 29 in human years. This is based on the initial leap in maturity in the first two years and a more gradual aging process thereafter. Keep in mind that breed and size can also influence the rate at which dogs age.
+
+
+## See Also
+- [[chatgpt/chatgpt_mezcal-mexican-mule-recipe]]
+- [[chatgpt/chatgpt_moonshine-mule-recipe]]
+- [[chatgpt/chatgpt_friends-actors-dessert-ingredients]]
+- [[chatgpt/chatgpt_hot-ingredients-in-blender]]
+- [[chatgpt/chatgpt_manhattan-cocktail-ingredients]]

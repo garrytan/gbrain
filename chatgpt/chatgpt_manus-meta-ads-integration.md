@@ -43,3 +43,11 @@ The Manus integration isn’t a separate “Meta Ads” product but **a set of A
 
 **Positioning**  
 Manus is positioned as a tool to augment how advertisers plan and run campaigns — offering generative, autonomous task execution rather than just text generation — while being part of Meta’s broader push to shift from passive AI assistants to agents that can actively execute work. citeturn0search21
+
+
+## See Also
+- [[chatgpt/chatgpt_meta-manus-ai-features]]
+- [[chatgpt/chatgpt_ai-command-palettes-integration]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]
+- [[chatgpt/chatgpt_background-image-integration]]
+- [[chatgpt/chatgpt_builderio-supabase-integration]]

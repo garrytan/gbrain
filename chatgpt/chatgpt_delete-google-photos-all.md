@@ -144,3 +144,11 @@ selectAndScroll();
 4. **Press Enter to run the script.** It will keep selecting photos and scrolling down until it can't find more to load.
 
 **Note:** This script will try to scroll down and load more photos after selecting the visible ones. You need to monitor it because if your photo library is very large, it could take a while. Also, be mindful that such scripts can sometimes lead to performance issues on the page or unexpected behavior, depending on how Google Photos' frontend is implemented at the time you run this. Always ensure you have backups of your data before running batch operations like this.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-photos-capcut-partnership]]
+- [[chatgpt/chatgpt_add-google-oauth]]
+- [[chatgpt/chatgpt_advantages-of-google-shopping]]
+- [[chatgpt/chatgpt_airtable-vs-google-sheets]]
+- [[chatgpt/chatgpt_creating-google-web-stories]]

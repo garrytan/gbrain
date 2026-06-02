@@ -354,3 +354,11 @@ Timestamp	Name.	Number of additional guests? 	Date Attending.	Email Address.	If 
 ## Assistant
 
 All set! The Tixr row and guestlist numbers have been updated according to the data you provided.
+
+
+## See Also
+- [[chatgpt/chatgpt_edit-numbers]]
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part1]]
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part2]]
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part3]]
+- [[chatgpt/chatgpt_passing-index-numbers-to-components]]

@@ -103,3 +103,11 @@ In California, **bartenders are service employees** and can be included in a man
 - If you stay in the pool as main bartender, negotiate **more points** to reflect lead responsibility.
 
 If you want, tell me your typical pool $ amounts and I’ll show exactly how many dollars each extra point is worth.
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-decision-analysis]]
+- [[chatgpt/chatgpt_bar-manager-negotiation-advice]]
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]

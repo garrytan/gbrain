@@ -61,3 +61,11 @@ Given your background (startup founder), a good planning range for U.S. patent p
 
 If you like — I can pull up a **2025-2026 cost estimate matrix** for you — covering micro, small, and large entities (filing fees, typical attorney fees, maintenance over 20 years).  
 Do you want me to build that table now, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_cost-breakdown-request]]
+- [[chatgpt/chatgpt_service-cost-breakdown]]
+- [[chatgpt/chatgpt_age-range-breakdown]]
+- [[chatgpt/chatgpt_bill-split-breakdown]]
+- [[chatgpt/chatgpt_branch-cost-of-ai-operations-part1]]

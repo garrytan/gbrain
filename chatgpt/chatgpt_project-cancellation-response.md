@@ -40,3 +40,11 @@ Please go ahead and cancel the contract and send over the code completed so far.
 
 I do appreciate everyone being professional and responsive throughout the process, and I genuinely wish the team the best moving forward.
 :::
+
+
+## See Also
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-job-application-response-2]]

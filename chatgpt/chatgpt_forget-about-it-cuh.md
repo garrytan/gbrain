@@ -64,3 +64,11 @@ Forget about it cih
 ## Assistant
 
 Mr. White, “forget about it, cih” is the same as “forget about it, cuh” — you’re telling someone “never mind, don’t sweat it, bro.” “Cih” is just a stylized spelling of “cuz” or “cuh,” street-slang for cousin/friend.
+
+
+## See Also
+- [[chatgpt/chatgpt_forget-about-it-cuh-2]]
+- [[chatgpt/chatgpt_about-section-rewrite]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

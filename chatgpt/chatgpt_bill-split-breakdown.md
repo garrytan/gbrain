@@ -193,3 +193,11 @@ Ben had a latte too
 ## Assistant
 
 I’ve added the latte to Ben’s total, and the table now reflects the corrected amounts. Let me know if this looks good or if any further changes are needed!
+
+
+## See Also
+- [[chatgpt/chatgpt_age-range-breakdown]]
+- [[chatgpt/chatgpt_bill-summary-calculation]]
+- [[chatgpt/chatgpt_budget-breakdown-bro]]
+- [[chatgpt/chatgpt_calculate-bill-amount]]
+- [[chatgpt/chatgpt_check-split-calculation]]

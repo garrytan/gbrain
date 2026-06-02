@@ -42,3 +42,11 @@ capture one
 Capture One is available for macOS, Windows, and iOS, with the latest version being 16.6.3 as of June 23, 2025. citeturn0search18
 
 For more information or to start a free trial, visit the official website: [captureone.com](https://www.captureone.com). 
+
+
+## See Also
+- [[chatgpt/chatgpt_capture-email-addresses-sql]]
+- [[chatgpt/chatgpt_capture-ios-paywall-glitch]]
+- [[chatgpt/chatgpt_capture-one-ai-culling]]
+- [[chatgpt/chatgpt_capture-one-lens-flares]]
+- [[chatgpt/chatgpt_capture-one-usage]]

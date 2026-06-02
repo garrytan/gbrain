@@ -209,3 +209,11 @@ Done, Mr. White.
   - A clear **Definition of Done** checklist
 
 If you want, I can now generate the ESLint rules and a codemod plan to enforce these automatically.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_cancel-notifications-and-tasks]]
+- [[chatgpt/chatgpt_ios-automations-and-shortcuts]]
+- [[chatgpt/chatgpt_keyboard-shortcuts-in-dj-software]]
+- [[chatgpt/chatgpt_managing-notifications-effectively]]

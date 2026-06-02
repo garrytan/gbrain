@@ -70,3 +70,11 @@ Can you make a pretty table for me?
 ## Assistant
 
 I've created a table for the pre-batched cocktails inventory. You can view it directly. Let me know if there's anything else you need!
+
+
+## See Also
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]
+- [[chatgpt/chatgpt_drink-inventory-summary]]

@@ -415,3 +415,11 @@ This should make the goal line visible again and position it appropriately relat
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-components-to-files-part1]]
+- [[chatgpt/chatgpt_extract-components-to-files-part2]]
+- [[chatgpt/chatgpt_extract-components-to-files-part3]]
+- [[chatgpt/chatgpt_extract-components-to-files-part4]]
+- [[chatgpt/chatgpt_extract-vue-components-npm]]

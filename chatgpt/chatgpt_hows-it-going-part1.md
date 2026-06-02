@@ -146,3 +146,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'in', 'text': "going down on Liv sometimes she squirts a little bit and sometimes when I finger her with like rapid movements with two fingers inside her in like a come hither motion I'll get her close and then when I like pull my whole hand in and out like slapping her clit basically with the palm of my hand as I'm fingering her then she'll tend to squirt a little bit more what can I do to more I can consistently make her squirt and make her squirt harder and longer"}
 {'audio_asset_pointer': {'asset_pointer': 'sediment://file_000000006eb4622fb59814e158f14f3d', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-11-21T05:48:10.283297+00:00', 'format': 'wav', 'metadata': {'end': 35.62, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 1709838, 'tool_audio_direction': None}, 'audio_start_timestamp': 1199.9424528090167, 'content_type': 'real_time_user_audio_video_asset_pointer', 'expiry_datetime': '2025-11-21T05:48:10.283297+00:00', 'frames_asset_pointers': [], 'video_container_asset_pointer': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_hows-it-going-part2]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_accident-liability-and-insurance-part1]]
+- [[chatgpt/chatgpt_accident-timing-and-coverage-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]

@@ -257,3 +257,11 @@ return new Response(JSON.stringify({ ok: true }));
 ---
 
 If you want, I’ll draft the SQL migrations, the 3 core components (`SubscribeSheet`, `ContactField`, `SegmentedToggle`), and the `/api/notifications/*` routes exactly to your stack next.
+
+
+## See Also
+- [[chatgpt/chatgpt_notification-rollout-plan]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]

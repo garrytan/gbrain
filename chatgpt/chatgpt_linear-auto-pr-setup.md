@@ -56,3 +56,11 @@ Mr. White — **yes, but not natively by default.**
 - This is how most “AI engineer” pipelines actually work in production.
 
 If you want, I can outline a **minimal Linear → GitHub auto-PR architecture** or a **GitHub Action template**.
+
+
+## See Also
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_codex-auto-pr-linear]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]

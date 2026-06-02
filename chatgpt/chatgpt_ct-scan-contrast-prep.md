@@ -44,3 +44,11 @@ For a **CT scan with contrast**, the preparation depends on the type of contrast
    - No jewelry, zippers, or metal objects in the scan area.
 
 Call the imaging center if you need specific instructions, but these are the basics.
+
+
+## See Also
+- [[chatgpt/chatgpt_pet-scan-prep-guidelines]]
+- [[chatgpt/chatgpt_accessibility-contrast-check]]
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_bartending-quiz-prep-part1]]
+- [[chatgpt/chatgpt_bartending-quiz-prep-part2]]

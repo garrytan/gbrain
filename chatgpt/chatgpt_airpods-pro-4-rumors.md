@@ -54,3 +54,11 @@ There’s not universal agreement on the name — some sources refer to these as
 ---
 
 If you want the **most likely features vs. current AirPods Pro 3 specs**, let me know and I can break that down cleanly.
+
+
+## See Also
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]
+- [[chatgpt/chatgpt_airpods-pro-3-options]]
+- [[chatgpt/chatgpt_airpods-release-history]]
+- [[chatgpt/chatgpt_airpods-replacement-options]]
+- [[chatgpt/chatgpt_amc-rumors-and-market-chatter]]

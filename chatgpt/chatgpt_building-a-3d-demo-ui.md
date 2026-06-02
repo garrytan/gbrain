@@ -85,3 +85,11 @@ Rules that keep this from becoming a second product:
 ---
 
 If you tell me what Jovie is (product type) and what **2–3 interactions** you want to “feel real” (e.g., create task, move status, open detail panel), I’ll outline the exact demo screens + the mock dataset structure to match.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]

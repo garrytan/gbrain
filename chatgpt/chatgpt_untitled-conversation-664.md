@@ -52,3 +52,11 @@ fetch("https://dev.jov.ie/api/import", {
 This code creates a JavaScript object with a property whose name is the value of the `network` variable and whose value is the value of the `username` variable. It then makes a `POST` request to the `https://dev.jov.ie/api/import` URL with that object as the request body. The `Content-Type` header is set to `application/json` to indicate that the request body is in JSON format. Finally, the code uses `.then()` to handle the response from the server.
 
 I hope this helps! Let me know if you have any other questions.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

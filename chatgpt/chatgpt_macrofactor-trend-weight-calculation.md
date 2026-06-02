@@ -51,3 +51,11 @@ Mr. White, here’s a single-paragraph prompt you can drop into your task/spec:
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bmi-calculation-for-weight]]
+- [[chatgpt/chatgpt_bmi-weight-calculation-request]]
+- [[chatgpt/chatgpt_current-weight-calculation-design]]
+- [[chatgpt/chatgpt_steady-weight-loss-trend]]
+- [[chatgpt/chatgpt_target-weight-calculation]]

@@ -28,3 +28,11 @@ In this vlog Tim and RJ fly a DJI Mavic AIr in a lightning storm and the drone g
 ## Assistant
 
 Tim and RJ fly a DJI Mavic Air during a lightning storm, resulting in the drone getting struck near the Brooklyn Bridge. They then head to TAO nightclub to create projection mapped digital art from a mural. Tim, Druu, and Holly T write a new song, but Tim breaks his Sony A7iii while vlogging.
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_ai-video-generation-stack]]
+- [[chatgpt/chatgpt_ai-video-tools-available]]
+- [[chatgpt/chatgpt_demo-video-planning]]
+- [[chatgpt/chatgpt_download-video-audio-javascript]]

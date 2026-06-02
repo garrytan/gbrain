@@ -1442,3 +1442,11 @@ With less than $1K in the bank, do not run Qwen as the always-on Chief of Staff 
 
 
 i really need visibiltiy so i talk to my cheif of stagg but how do i know what needs attention without scrolling through the thread. should we build a lightweight interface or whats the move here. 
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part2]]
+- [[chatgpt/chatgpt_bio-link-strategy-part1]]
+- [[chatgpt/chatgpt_code-cleanup-strategy-part1]]
+- [[chatgpt/chatgpt_gtm-strategy-for-jovie-part1]]

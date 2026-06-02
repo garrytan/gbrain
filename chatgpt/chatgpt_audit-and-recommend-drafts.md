@@ -171,3 +171,11 @@ Use the next slots like this:
 8. **Forbes list one-liner**
 
 Hold the higher-ed post until the wording is made precise. It has the most upside, but also the most claim-risk.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-code-quality-audit]]
+- [[chatgpt/chatgpt_audit-and-harden-prompt]]
+- [[chatgpt/chatgpt_audit-and-strategy-tips]]
+- [[chatgpt/chatgpt_audit-app-layout-shifts]]
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part1]]

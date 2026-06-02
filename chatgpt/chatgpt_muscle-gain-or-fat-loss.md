@@ -56,3 +56,11 @@ If strength, libido, sleep, or mood are dropping, you’re pushing too far.
 **Bottom line:** at your size, the highest-ROI “improvement” is likely **a maintenance phase and then a lean bulk**. Aim to gain **0.25–0.5% BW/week** (same 0.4–0.8 lb/week), keep lifts progressing, and you’ll look dramatically better at 175–185 than at 162.
 
 If you want, tell me your exact goal (stay shredded vs add size/strength) and what your current training split + calories look like, and I’ll tune numbers.
+
+
+## See Also
+- [[chatgpt/chatgpt_fat-loss-muscle-gain]]
+- [[chatgpt/chatgpt_muscle-gain-in-2-years]]
+- [[chatgpt/chatgpt_muscle-gain-plan]]
+- [[chatgpt/chatgpt_muscle-gain-visualization]]
+- [[chatgpt/chatgpt_muscle-gain-with-surplus]]

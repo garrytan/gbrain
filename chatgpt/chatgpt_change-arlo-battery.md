@@ -60,3 +60,11 @@ If your camera **doesn’t separate**, it has a **built-in battery**:
 ---
 
 If you want, I can help you confirm exactly which model it is — just tell me if there’s any **text or model number** printed inside the battery compartment or on the back.
+
+
+## See Also
+- [[chatgpt/chatgpt_adobe-account-change-fix]]
+- [[chatgpt/chatgpt_airtag-battery-type]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_arlo-brand-explanation]]
+- [[chatgpt/chatgpt_arlo-camera-charging-model]]

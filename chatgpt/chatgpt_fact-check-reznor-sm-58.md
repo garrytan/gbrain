@@ -182,3 +182,11 @@ tags: [chatgpt, import, long-form]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Yeah, it's definitely a brave new world in that sense. But hey, on the bright side, it means you can get great results without having to haul around a ton of gear. So there’s a bit of freedom in that too. If anything, it just shows that the creativity and the performance matter most, and the tech is just there to back you up."}
 {'asset_pointer': 'sediment://file_000000000408622fb8b522a852bac30a', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-03-04T13:47:37.900694+00:00', 'format': 'wav', 'metadata': {'end': 17.65, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 847278, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]
+- [[chatgpt/chatgpt_fact-check-and-comment-2]]

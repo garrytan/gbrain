@@ -399,3 +399,11 @@ White's debut vocal track "California" paved the way for a series of releases th
 "Seaside Heights" reflects White's nostalgic memories of summers in New Jersey, connecting listeners to the universal joy of youthful summers. His work with industry figures like Randy Jackson, Two Friends, and Ørjan Nilsen has broadened his creative scope, while his engineering for Lauryn Hill and support from industry giants like Andrew Rayel and Ben Gold underline his respect in the music world.
 
 White's collaborations with Armada Music include "Revival" with Tom Fall, "Sober" by Jochen Miller & Tom Fall featuring Tim White, and three unreleased tracks, showcasing his ongoing evolution. With releases under Armada Music and Black Hole Recordings, White's career is a testament to his relentless pursuit of musical innovation and his ability to create resonant, timeless soundscapes.
+
+
+## See Also
+- [[chatgpt/chatgpt_musical-journey-with-tim]]
+- [[chatgpt/chatgpt_tim-whites-electronic-journey]]
+- [[chatgpt/chatgpt_american-musical-supply-overview]]
+- [[chatgpt/chatgpt_egg-whites-cooked-weight-60-70g]]
+- [[chatgpt/chatgpt_jeremy-allen-whites-caa-agent]]

@@ -31,3 +31,11 @@ Mr. White, here are the best Genius Brand codes I found:
 - **TENEREBESTPRODUCTS** – 10% off site-wide on repeat orders (universal) citeturn3search3
 
 If you’re not a first-time buyer, the 10% code will stack on any order. No minimums required.
+
+
+## See Also
+- [[chatgpt/chatgpt_genius-shot-details]]
+- [[chatgpt/chatgpt_genius-shot-rebranding-inquiry]]
+- [[chatgpt/chatgpt_genius-shot-reddit-review]]
+- [[chatgpt/chatgpt_genius-shot-relaunch]]
+- [[chatgpt/chatgpt_genius-shot-review]]

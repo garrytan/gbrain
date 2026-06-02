@@ -433,3 +433,11 @@ If useful, I can also outline:
 - a **full wireframe flow**
 - the **database schema for onboarding state**
 - a **conversion-optimized version used by top creator platforms**.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-driven-onboarding-design]]
+- [[chatgpt/chatgpt_best-onboarding-ux]]
+- [[chatgpt/chatgpt_debug-onboarding-issue]]
+- [[chatgpt/chatgpt_linear-onboarding-explained-2]]
+- [[chatgpt/chatgpt_linear-onboarding-explained]]

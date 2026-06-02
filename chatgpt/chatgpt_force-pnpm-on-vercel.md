@@ -126,3 +126,11 @@ Overall, the logic works, but you might consider these improvements for robustne
 
 
 **Topic:** [[chatgpt-clusters/coding_devops]]
+
+
+## See Also
+- [[chatgpt/chatgpt_corepack-pnpm-fixes]]
+- [[chatgpt/chatgpt_doppler-pnpm-setup]]
+- [[chatgpt/chatgpt_npx-vs-pnpm-comparison]]
+- [[chatgpt/chatgpt_pnpm-in-ci]]
+- [[chatgpt/chatgpt_pnpm-vs-npm-choice]]

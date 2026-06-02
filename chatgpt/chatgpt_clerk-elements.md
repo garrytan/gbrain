@@ -40,3 +40,11 @@ clerk elements
 - Helpers like `<Clerk.GlobalError>` and strategy handlers (e.g., email code) citeturn0search13
 
 In short, “Clerk Elements” are the modular pieces you use to build custom authentication UIs on top of Clerk’s API without relying on their standard styled components. citeturn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_clerk-elements-discontinued]]
+- [[chatgpt/chatgpt_clerk-elements-replacement-guidance]]
+- [[chatgpt/chatgpt_clerk-role-elements]]
+- [[chatgpt/chatgpt_clerk-account-management-features]]
+- [[chatgpt/chatgpt_clerk-allowlist-feature]]

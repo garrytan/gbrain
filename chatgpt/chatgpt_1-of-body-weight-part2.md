@@ -111,3 +111,11 @@ This prompt clarifies the need for dynamic formulas that adjust as each week pro
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_body-fat-target-weight]]
+- [[chatgpt/chatgpt_body-fat-tracking-method-part2]]
+- [[chatgpt/chatgpt_log-weight-bf-data-part2]]
+- [[chatgpt/chatgpt_update-component-for-weight-logs-part2]]

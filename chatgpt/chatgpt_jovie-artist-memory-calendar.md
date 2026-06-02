@@ -1045,3 +1045,11 @@ That is the clean version.
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part1]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part2]]
+- [[chatgpt/chatgpt_jovie-artist-profile-visual]]
+- [[chatgpt/chatgpt_honcho-memory-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-artist-profiles]]

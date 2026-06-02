@@ -58,3 +58,11 @@ Blog release posts can be browsed here:
 ---
 
 If you want a **machine-readable full changelog** (e.g., JSON or one continuous diff across versions), let me know and I can point you to that too.
+
+
+## See Also
+- [[chatgpt/chatgpt_electron-app-turborepo-setup]]
+- [[chatgpt/chatgpt_explain-turborepo]]
+- [[chatgpt/chatgpt_test-turborepo-locally]]
+- [[chatgpt/chatgpt_turborepo-env-setup]]
+- [[chatgpt/chatgpt_turborepo-in-github-actions]]

@@ -37,3 +37,11 @@ Here’s the quick checklist:
 Still flashing? Unplug it for 30 seconds, plug it back in, and go through the steps again.
 
 Let me know if it still won't work — I’ll walk you through it.
+
+
+## See Also
+- [[chatgpt/chatgpt_blender-3d-features-overview]]
+- [[chatgpt/chatgpt_blender-humanoid-creation-help-part1]]
+- [[chatgpt/chatgpt_blender-humanoid-creation-help-part2]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part1]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part10]]

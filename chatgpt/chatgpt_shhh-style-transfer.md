@@ -63,3 +63,11 @@ replace the landscape with palm trees and the sunset strip
 ## Assistant
 
 The image has been updated with the elements you requested.
+
+
+## See Also
+- [[chatgpt/chatgpt_muffin-head-style-transfer]]
+- [[chatgpt/chatgpt_airbnb-review-ryan-style]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]

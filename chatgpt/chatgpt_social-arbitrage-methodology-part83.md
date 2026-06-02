@@ -869,3 +869,11 @@ Run a pre-market social-arbitrage scan. Search Reddit, X/Twitter, YouTube, TikTo
 4. Liquidity ≥$50M ADDV  
 
 Prioritize consumer tech, creator-economy tools, WFH/edtech, wearables, and discretionary names. Return: ticker, thesis one-liner, links/screens, est. sentiment, velocity magnitude, and suggested timing window.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

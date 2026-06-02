@@ -47,3 +47,11 @@ Payroll providers like Gusto integrate with your business bank account to **comp
 
 **Therefore:**  
 If you just want to *move money* to yourself, you can use the business and personal accounts. If you want *proper payroll with tax compliance*, you need a payroll provider like Gusto.
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-hunting-and-gym-needs]]
+- [[chatgpt/chatgpt_compare-rho-vs-mercury]]
+- [[chatgpt/chatgpt_mercury-callsign-explanation]]
+- [[chatgpt/chatgpt_mercury-meanings-explained]]
+- [[chatgpt/chatgpt_mercury-white-explanation]]

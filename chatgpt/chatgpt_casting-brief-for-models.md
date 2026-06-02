@@ -78,3 +78,11 @@ Photographic look: shot on a Sony A7 with natural window light, shallow depth of
 ## Assistant
 
 Your prompt may violate the guardrails around similarity to third-party content; editing out named celebrity references or retrying with more generic descriptors may help.
+
+
+## See Also
+- [[chatgpt/chatgpt_casting-grid-brief]]
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_cheap-models-for-cos]]
+- [[chatgpt/chatgpt_cinema-4d-supplement-models]]
+- [[chatgpt/chatgpt_cost-comparison-coding-models]]

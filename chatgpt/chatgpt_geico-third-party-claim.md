@@ -114,3 +114,11 @@ Tell GEICO:
 > “The check engine light came on after the collision, and there is front-side damage near the wheel/headlight. I do not feel safe driving it. I need GEICO to authorize a tow and inspection.”
 
 This helps establish that the CEL is **collision-related**, not random maintenance. Take a photo/video of the dashboard with the light on before anyone touches the car.
+
+
+## See Also
+- [[chatgpt/chatgpt_third-party-geico-claim]]
+- [[chatgpt/chatgpt_third-party-claim-query]]
+- [[chatgpt/chatgpt_geico-callback-mystery-explained]]
+- [[chatgpt/chatgpt_82x-claim-defensibility]]
+- [[chatgpt/chatgpt_airbnb-damage-claim-issues]]

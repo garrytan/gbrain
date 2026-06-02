@@ -703,3 +703,11 @@ Here's the updated table with the new shift added:
 | **Total**                        |                    |                    | **127.75**   |
 
 Let me know if there are any further updates or adjustments needed!
+
+
+## See Also
+- [[chatgpt/chatgpt_tracking-work-hours-system]]
+- [[chatgpt/chatgpt_tracking-work-hours]]
+- [[chatgpt/chatgpt_work-hours-and-pay]]
+- [[chatgpt/chatgpt_work-hours-calculation]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]

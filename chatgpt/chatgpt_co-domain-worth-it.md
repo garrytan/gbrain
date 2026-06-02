@@ -52,3 +52,11 @@ Here’s how to judge if a **.co domain is worth it** for your project:
 If you can, **buy both .com and .co and 301-redirect the .com to your .co** (or vice versa) to protect your brand and capture mistyped traffic. citeturn0search9
 
 **Bottom line:** .co can be worth it as a *second choice* to .com — great for brandability and availability, but not as universally trusted or instinctive for users.
+
+
+## See Also
+- [[chatgpt/chatgpt_buffett-vs-musk-net-worth]]
+- [[chatgpt/chatgpt_fast-check-worth-using]]
+- [[chatgpt/chatgpt_ken-griffin-net-worth-breakdown]]
+- [[chatgpt/chatgpt_storybook-ai-worth]]
+- [[chatgpt/chatgpt_alias-vercel-preview-domain]]

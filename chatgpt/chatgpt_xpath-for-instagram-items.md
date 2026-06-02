@@ -206,3 +206,11 @@ To fix this issue, you can modify the workflow as follows:
 15. Run the task and export the table with all the profile data and social links.
 
 By waiting for all the social links to appear before extracting the data, the workflow should now extract all the social links for each profile.
+
+
+## See Also
+- [[chatgpt/chatgpt_actionable-items-review]]
+- [[chatgpt/chatgpt_ad-campaign-instagram-for-females]]
+- [[chatgpt/chatgpt_beeper-issue-instagram-login]]
+- [[chatgpt/chatgpt_caption-instagram-post]]
+- [[chatgpt/chatgpt_cinematic-instagram-portrait-edit]]

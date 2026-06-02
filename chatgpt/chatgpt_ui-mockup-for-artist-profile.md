@@ -65,3 +65,11 @@ do we need 2 image of the artist? can we have just one? the cover art ist hard t
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-image-creation]]
+- [[chatgpt/chatgpt_artist-profile-page-design]]
+- [[chatgpt/chatgpt_artist-profile-suggestions]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part1]]

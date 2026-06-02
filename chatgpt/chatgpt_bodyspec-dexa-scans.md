@@ -30,3 +30,11 @@ bodyspec
 For more information, you can visit their official website.
 
 To see a sample scan report, you can check out their YouTube channel. citeturn0search5 
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-2]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-3]]
+- [[chatgpt/chatgpt_bodyspec-dexa-summary]]
+- [[chatgpt/chatgpt_bodyspec-discount-codes]]
+- [[chatgpt/chatgpt_bodyspec-json-example]]

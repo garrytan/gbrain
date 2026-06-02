@@ -151,3 +151,11 @@ Perfect, Mr. White. Since Beetlejuice is out, here’s how you can slot in **Blo
 ---
 
 Do you want me to **design Blood Rain as a safe, practical effect** (materials, rigging, cleanup plan), or focus more on **theatrical beats and choreography** so you can hand it to your creative team?
+
+
+## See Also
+- [[chatgpt/chatgpt_halloween-discount-code-ideas]]
+- [[chatgpt/chatgpt_halloween-costume-idea]]
+- [[chatgpt/chatgpt_halloween-drink-menu]]
+- [[chatgpt/chatgpt_halloween-song-concept]]
+- [[chatgpt/chatgpt_joker-halloween-show-script]]

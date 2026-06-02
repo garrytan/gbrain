@@ -205,3 +205,11 @@ I would not use Gmail long-term for OTP canaries at scale because:
 - parsing inconsistencies
 
 SES or Mailgun is cleaner.
+
+
+## See Also
+- [[chatgpt/chatgpt_email-setup-options]]
+- [[chatgpt/chatgpt_email-testing-options]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_airpods-pro-3-options]]
+- [[chatgpt/chatgpt_airpods-replacement-options]]

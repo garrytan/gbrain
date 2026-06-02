@@ -28,3 +28,11 @@ What's the tale of Jonah and what's its origin?
 The tale of Jonah is a biblical narrative originating from the Book of Jonah in the Old Testament. Jonah is a prophet who is called by God to go to the city of Nineveh to prophesy against it because of its wickedness. Instead of obeying, Jonah tries to flee from God's presence by boarding a ship to Tarshish. God sends a great storm, and the sailors, realizing that Jonah's disobedience is the cause, throw him overboard. Jonah is then swallowed by a large fish, often described as a whale, where he spends three days and three nights. Inside the fish, Jonah prays to God and repents. The fish subsequently vomits him out onto dry land.
 
 God once again commands Jonah to go to Nineveh, and this time he obeys. Jonah's warning leads the people of Nineveh, including their king, to repent, and God spares the city from destruction. The story ends with Jonah grappling with his anger and disappointment over God’s mercy toward Nineveh, which contrasts with his own desire for justice. The Book of Jonah is often interpreted as a lesson in compassion and God's mercy.
+
+
+## See Also
+- [[chatgpt/chatgpt_efficient-bible-reading-tips]]
+- [[chatgpt/chatgpt_cup-song-origin]]
+- [[chatgpt/chatgpt_john-legend-name-origin]]
+- [[chatgpt/chatgpt_origin-of-ted-lasso]]
+- [[chatgpt/chatgpt_origin-of-term-86]]

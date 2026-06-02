@@ -145,3 +145,11 @@ The key shift: the row is no longer about playing a track; it is about getting a
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_dj-linkinbio-interface-design]]
+- [[chatgpt/chatgpt_interface-design-audit]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_timeline-aggregation-design-ideas]]

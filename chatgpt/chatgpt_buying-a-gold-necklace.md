@@ -193,3 +193,11 @@ Got it — thanks for clarifying, Mr. White. When you say *“a good fit for Liv
 ---
 
 Do you want me to recommend a **specific style and length** I think would suit Liv best based on what you’ve told me about her so far?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-powered-ad-buying]]
+- [[chatgpt/chatgpt_buying-fireworks-in-nv]]
+- [[chatgpt/chatgpt_buying-plane-tickets]]
+- [[chatgpt/chatgpt_ford-wage-gold-comparison]]
+- [[chatgpt/chatgpt_gold-rush-clarification]]

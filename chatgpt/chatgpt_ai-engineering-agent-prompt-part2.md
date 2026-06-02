@@ -992,3 +992,11 @@ If you want, I’ll write the exact Drizzle policy block for your table and let 
 
 
 Is there anything we should be doing for our file uploads to make them resilient? Like, I want to be able to drop a profile photo in there that's, you know, 20 megabytes and have it elegantly handle it. But I want someone to, you know, um, um, you know, I remember one of these fucking websites with super rigid rules like, you know, profile image can, has to be over 500 pixels, but if it's under, but under 2000 by 2000 pixels, and it has to be under 2 megabytes, but, you know, um, and, and only a JPEG, and it, you know, and then it just fails, and it has bad error handling. The point of, you know, I'd rather it just, like, magically work. Um, someone uploads a fucking 20 megabyte file, and I just accept it, and then have them, you know, convert it down to an optimal file on our end, and fuck with the user, you know what I mean? Um, I'm like, if they do upload a 20 megabyte file, I want to make sure that that file, you know, uploads, if all of a sudden their internet connection gets cut off halfway through them uploading it, and then it gets reconnected, I want that upload to automatically resume, like, you know what I mean?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part3]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-agent-automation-part2]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]

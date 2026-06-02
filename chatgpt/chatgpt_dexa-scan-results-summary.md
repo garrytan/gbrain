@@ -387,3 +387,11 @@ Certainly, Mr. White. Here's a summary of your DEXA scan report:
 Your overall body fat percentage increased slightly, but you also gained lean mass. Your VAT, associated with metabolic diseases, has also increased slightly. 
 
 Would you like further analysis or have any specific questions?
+
+
+## See Also
+- [[chatgpt/chatgpt_dexa-scan-results-analysis]]
+- [[chatgpt/chatgpt_dexa-scan-summary-changes]]
+- [[chatgpt/chatgpt_bodyspec-dexa-summary]]
+- [[chatgpt/chatgpt_bodyspec-results-summary]]
+- [[chatgpt/chatgpt_dexa-scan-affected-by-water-weight]]

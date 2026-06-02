@@ -259,3 +259,11 @@ That’s very much in line with how Isratel / Menno talk about it:
 ---
 
 If you want, I can sketch a setup that *maximizes* arm/upper growth while keeping fat gain in check (smart surplus, arm-focused volume, deload timing, etc.), so you’re squeezing the most muscle possible out of each pound you gain.
+
+
+## See Also
+- [[chatgpt/chatgpt_upper-body-emphasis-strategies]]
+- [[chatgpt/chatgpt_fat-loss-muscle-gain]]
+- [[chatgpt/chatgpt_muscle-gain-in-2-years]]
+- [[chatgpt/chatgpt_muscle-gain-or-fat-loss]]
+- [[chatgpt/chatgpt_muscle-gain-plan]]

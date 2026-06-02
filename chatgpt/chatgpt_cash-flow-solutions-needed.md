@@ -129,3 +129,11 @@ I didn't even think about selling the camera. I guess I could sell the camera. Y
 - **Liquidity > optics.** Paying Liv back and keeping the wheels turning beats a camera collecting dust.  
 
 Move the kit, pocket ~$1 450, clear your obligations, breathe. Then focus on code and gigs—not sunk hardware.
+
+
+## See Also
+- [[chatgpt/chatgpt_cash-flow-plan-request]]
+- [[chatgpt/chatgpt_ac-air-direction-solutions]]
+- [[chatgpt/chatgpt_blocked-sink-try-solutions]]
+- [[chatgpt/chatgpt_bottleneck-causes-and-solutions]]
+- [[chatgpt/chatgpt_employee-clock-in-solutions]]

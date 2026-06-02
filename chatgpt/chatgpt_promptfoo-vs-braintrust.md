@@ -146,3 +146,11 @@ Success criteria:
 ```
 
 Promptfoo’s docs currently show `npx promptfoo@latest init` for setup and `npx promptfoo@latest eval -c promptfooconfig.yaml` for CI-style eval runs; they also support JSON, HTML, and JUnit output formats. citeturn130144search2turn130144search5 Red-team setup is available separately through `npx promptfoo@latest redteam setup` when you want security-focused scanning beyond the first eval harness. citeturn130144search6
+
+
+## See Also
+- [[chatgpt/chatgpt_using-braintrust-for-jovie]]
+- [[chatgpt/chatgpt_evals-and-promptfoo-explained]]
+- [[chatgpt/chatgpt_promptfoo-llm-evaluation]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

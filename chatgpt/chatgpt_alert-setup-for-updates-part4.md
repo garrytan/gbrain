@@ -563,3 +563,11 @@ The **Wave 13 “Merry Shipmas”** update introduces a **promotional new model 
 - **Multi‑Cascade panes & dedicated terminal beta** — interface and agent execution improvements. citeturn0search2
 
 No *other* newly introduced models beyond **SWE‑1.5 Free** were detected in the latest changelog.
+
+
+## See Also
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part2]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part3]]

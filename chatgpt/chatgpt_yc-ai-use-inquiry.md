@@ -40,3 +40,11 @@ Mr. White — there’s **no public evidence YC (Y Combinator) explicitly uses A
 Accelerated tool-assisted shipping (whether code or physical goods) is a *hot area* inside YC and the broader ecosystem — but the idea of YC using AI internally to vet applicants’ commit histories is speculative. YC typically evaluates teams on **traction, founders, and product vision**, not quantitative repo “shipping speed.” That said, intelligent prioritization tools (e.g., ones that summarize code or detect product issues) *do exist* and are being built by YC companies themselves, which might influence what YC looks for indirectly. citeturn0search12
 
 If you wanted a real strategy to edge YC evaluation, focusing on *real customer outcomes and demonstrable progress* (regardless of tooling used) is still the strongest observable signal.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]

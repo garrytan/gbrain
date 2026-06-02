@@ -566,3 +566,11 @@ Run on a frequent cron. Process open PRs using parallel isolated git worktrees. 
 ## Merge bias
 
 Merge safe PRs fast. Fix shared root causes once. Spend tokens only where they materially reduce queue time or protect production. Keep production deployable at all times.
+
+
+## See Also
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_admin-workflow-design]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]
+- [[chatgpt/chatgpt_ai-agent-automation-part2]]

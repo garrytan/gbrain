@@ -46,3 +46,11 @@ Got it. If you’re talking about an airsoft gun and you want to dispose of it, 
 3. **Trash it safely** – Remove all gas/CO2 canisters, batteries, and any BBs. Break it into pieces if possible, wrap it in a bag, and dispose of it in the trash. Avoid carrying it openly in public on the way to do so.
 
 Want it to just disappear without attention? Wrap it in a trash bag, toss it in a public dumpster late at night.
+
+
+## See Also
+- [[chatgpt/chatgpt_sonesta-john-wayne-airport]]
+- [[chatgpt/chatgpt_accident-insurance-exchange-advice]]
+- [[chatgpt/chatgpt_ai-migration-naming-advice]]
+- [[chatgpt/chatgpt_allen-key-for-disposal]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]

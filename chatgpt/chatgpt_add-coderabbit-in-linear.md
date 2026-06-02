@@ -38,3 +38,11 @@ Once done, you’ll be able to:
 - Use linked issues during reviews so CodeRabbit understands and validates PRs against your existing Linear tickets. citeturn0search12
 
 That’s the standard setup flow. citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_automation-in-linear]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]
+- [[chatgpt/chatgpt_claude-in-linear-integration]]

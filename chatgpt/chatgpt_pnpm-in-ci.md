@@ -116,3 +116,11 @@ This checks out code, sets up pnpm + Node, installs deps, and runs tests in CI. 
 ---
 
 If you want a ready-to-copy CI config for a platform other than GitHub Actions (GitLab, Azure, CircleCI, etc.), just tell me your target!
+
+
+## See Also
+- [[chatgpt/chatgpt_corepack-pnpm-fixes]]
+- [[chatgpt/chatgpt_doppler-pnpm-setup]]
+- [[chatgpt/chatgpt_force-pnpm-on-vercel]]
+- [[chatgpt/chatgpt_npx-vs-pnpm-comparison]]
+- [[chatgpt/chatgpt_pnpm-vs-npm-choice]]

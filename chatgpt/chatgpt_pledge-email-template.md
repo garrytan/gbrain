@@ -89,3 +89,11 @@ Notes:
 - The link includes `utm_source=mailerlite&utm_medium=email&utm_campaign=pledge&utm_content=cta` and appends the subscriber’s email via MailerLite’s merge tag `{$email}`. citeturn0search3
 
 Want me to swap “Patricia” for a first-name variable or add hidden preheader text?
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-job-application-email-2]]
+- [[chatgpt/chatgpt_bartender-job-application-email-3]]
+- [[chatgpt/chatgpt_bartender-job-application-email]]

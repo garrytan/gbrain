@@ -45,3 +45,11 @@ Sample message:
 > “I get wanting the best deal. This drive is priced fairly at $100 given its condition and capacity. What number did you have in mind?”
 
 This invites them to speak first, keeps your price credible, and maintains control of the negotiation.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-5]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-6]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-7]]

@@ -76,3 +76,11 @@ A couple quick details that matter in practice:
 - There’s also a **self-hosted Sentry** option that’s free software-wise (you pay infra/ops). citeturn0search10  
 
 So for an iOS app early on: start free, watch your event volume, and add sampling rules if needed.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_auto-fix-sentry-crashes]]

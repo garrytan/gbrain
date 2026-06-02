@@ -228,3 +228,11 @@ For **you as Tim White**:
   - You seriously might consider a slightly modified professional name (e.g., **Tim R. White**, **Tim White Jr.**, **Tim James White**), while still being legally Tim White on contracts and ID.
 
 If you ever get to the “I’m ready to join” point and discover there *is* another Tim White in the system, I can help you strategize specific variants that feel real and protect you from being confused with some other guy’s credits and residuals.
+
+
+## See Also
+- [[chatgpt/chatgpt_ada-gym-accessibility-rules]]
+- [[chatgpt/chatgpt_bikini-rules-in-maldives]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]
+- [[chatgpt/chatgpt_enforcing-biome-rules]]

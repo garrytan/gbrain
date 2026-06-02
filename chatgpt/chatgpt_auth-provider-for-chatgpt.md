@@ -43,3 +43,11 @@ So:
 - For end users: OpenAI’s own auth + Google/Microsoft/Apple social login.  
 - For orgs: Your own SAML/OIDC IdP (Okta, Entra, etc.).  
 - Under the hood: very likely Auth0, but that part is based on observed behavior and community evidence, not an official OpenAI statement.
+
+
+## See Also
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_auth-ux-audit]]
+- [[chatgpt/chatgpt_basic-auth-in-nextjs]]
+- [[chatgpt/chatgpt_best-auth-providers-2025]]
+- [[chatgpt/chatgpt_clerk-auth-vercel-preview]]

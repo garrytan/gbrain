@@ -60,3 +60,11 @@ The clean takeaway is this: for **small delegated issue work**, Pro is strongest
 You can check the live truth for your account in the **Codex usage dashboard**, and in the CLI with **`/status`**. citeturn842016view1
 
 If useful, I can turn this into a practical recommendation for your team like: “use model X for cloud issue delegation, model Y for local debugging, and switch to Fast only in these cases.”
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]

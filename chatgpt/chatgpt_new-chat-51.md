@@ -48,3 +48,11 @@ Now, let's compute these values.
 ## Assistant
 
 At a weight of 169 lbs with no muscle loss, your lean body mass would remain at approximately 156.1 lbs. Your new body fat percentage would be about 7.6%.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

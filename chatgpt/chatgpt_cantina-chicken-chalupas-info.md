@@ -65,3 +65,11 @@ Can I get them in Henderson, Nevada?
 Yes — looks like at least one Taco Bell in Henderson, NV *is* offering the Cantina Chicken Cheesy Street Chalupas right now. citeturn0search8
 
 If you want, I can check a few nearest locations to you and see which ones have it and their hours.
+
+
+## See Also
+- [[chatgpt/chatgpt_chicken-meal-cheaper]]
+- [[chatgpt/chatgpt_chicken-salad-macros-221cal-37gpro-43gfat-63gcarb]]
+- [[chatgpt/chatgpt_macros-with-chicken-and-additions]]
+- [[chatgpt/chatgpt_plate-macros-teriyaki-chicken]]
+- [[chatgpt/chatgpt_soup-packet-for-chicken-rice]]

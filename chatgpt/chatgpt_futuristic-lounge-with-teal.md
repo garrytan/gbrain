@@ -74,3 +74,11 @@ This is great but less orange
 ## Assistant
 
 Here's the revised rendering of The Astro Lounge, with a more subdued use of orange, and teal and white as the dominant colors.
+
+
+## See Also
+- [[chatgpt/chatgpt_futuristic-lounge-furniture-update]]
+- [[chatgpt/chatgpt_teal-eyed-model-with-cocktail]]
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]

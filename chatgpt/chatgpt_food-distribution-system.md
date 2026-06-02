@@ -83,3 +83,11 @@ If you want this as a pasteable message for the team, say the word and I’ll fo
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_barback-tip-distribution]]
+- [[chatgpt/chatgpt_building-jovie-knowledge-system]]
+- [[chatgpt/chatgpt_bulk-cut-cycle-system]]

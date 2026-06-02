@@ -44,3 +44,11 @@ Your intuition is directionally solid.
 ### Summary:
 
 If this system allows men to select women drivers in any way, it increases harassment risk. If it's women-rider-only and opt-in, it's probably a marginal net benefit—but limited by low supply. The risk is in the implementation details.
+
+
+## See Also
+- [[chatgpt/chatgpt_uber-driver-reality-check]]
+- [[chatgpt/chatgpt_cell-phone-impact-on-flight]]
+- [[chatgpt/chatgpt_cosmos-gravity-impact-analysis]]
+- [[chatgpt/chatgpt_credit-card-impact]]
+- [[chatgpt/chatgpt_drug-use-impact-analysis-part1]]

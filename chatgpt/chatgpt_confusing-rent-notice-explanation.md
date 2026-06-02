@@ -140,3 +140,11 @@ If they confirm it’s a **partial charge or discount**, they should be able to 
 ---
 
 Would you like me to help you write a short, direct email or note you can send to management to clarify this? I can make it sound professional but firm.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_allied-axe-explanation]]

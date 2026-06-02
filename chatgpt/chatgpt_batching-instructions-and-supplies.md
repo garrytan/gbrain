@@ -128,3 +128,11 @@ Added. Here’s the **updated supply list** with the new item included.
 ---
 
 Everything else in the batching instructions remains the same.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_bleach-and-tone-instructions]]
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_event-setup-instructions]]
+- [[chatgpt/chatgpt_grid-alignment-instructions]]

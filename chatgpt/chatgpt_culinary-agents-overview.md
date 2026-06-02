@@ -32,3 +32,11 @@ culinaryagents
 In Los Angeles, Culinary Agents lists various job opportunities across the hospitality sector. For instance, positions such as Sales Consultant, Part-Time Instructor in Culinary Arts, and Culinary Specialist are available. citeturn0search1
 
 To explore these opportunities, you can visit their website and create a free profile to connect with potential employers. 
+
+
+## See Also
+- [[chatgpt/chatgpt_culinary-agents-overview-2]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_cascade-background-agents-explanation]]
+- [[chatgpt/chatgpt_claude-code-background-agents]]
+- [[chatgpt/chatgpt_claude-sub-agents-explained]]

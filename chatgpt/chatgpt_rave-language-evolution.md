@@ -274,3 +274,11 @@ Here’s a slam dunk reply:
 ---
 
 Want a spicier version or a more sarcastic tone?
+
+
+## See Also
+- [[chatgpt/chatgpt_body-language-song]]
+- [[chatgpt/chatgpt_inappropriate-language-detected]]
+- [[chatgpt/chatgpt_math-language-for-jovie]]
+- [[chatgpt/chatgpt_silverware-language-options]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

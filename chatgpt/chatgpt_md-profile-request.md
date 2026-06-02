@@ -44,3 +44,11 @@ Mr. White, I built the Markdown profile here:
 I structured it for agent training/use with sections for identity, privacy handling, communication style, Jovie/product context, technical preferences, fitness defaults, legal jurisdiction, politics/social-topic handling, stale-context warnings, and a compact copy-paste agent prompt seed.
 
 I also omitted your exact home address from the reusable profile and framed it as private context agents should only use when a task genuinely requires it.
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_address-correction-request]]
+- [[chatgpt/chatgpt_address-information-request]]
+- [[chatgpt/chatgpt_age-calculation-request]]

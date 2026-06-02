@@ -35,3 +35,11 @@ geist mono
 - Often paired with **Geist Sans** for UI/brand typography and also available from Google Fonts or via npm packages for web projects. citeturn0search8turn0search12
 
 In short, Geist Mono is a clean, developer-friendly programming font with minimalist, balanced letterforms suitable for both design and code environments. citeturn0search2
+
+
+## See Also
+- [[chatgpt/chatgpt_geist-basement-studios-query]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]
+- [[chatgpt/chatgpt_2024-election-outcome-query]]
+- [[chatgpt/chatgpt_clarify-bronson-depot-query]]
+- [[chatgpt/chatgpt_gbrain-wikilink-query]]

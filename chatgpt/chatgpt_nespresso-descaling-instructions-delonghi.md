@@ -87,3 +87,11 @@ To descale your white Nespresso machine made by DeLonghi, the steps vary dependi
 Each model has specific steps to enter descale mode and complete the process, which typically involve pressing certain buttons or levers.
 
 For detailed, model-specific instructions, it's best to consult the user manual for your particular machine. You can also visit the Nespresso website for machine assistance and more information on descaling your model【11†source】【12†source】.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_batching-instructions-and-supplies]]
+- [[chatgpt/chatgpt_bleach-and-tone-instructions]]
+- [[chatgpt/chatgpt_clawd-project-instructions]]
+- [[chatgpt/chatgpt_event-setup-instructions]]

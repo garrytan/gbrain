@@ -142,3 +142,11 @@ Do you want me to **set this up for you now** if you send the logo files, or do 
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_lease-addition-advice]]
+- [[chatgpt/chatgpt_animated-news-headlines]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

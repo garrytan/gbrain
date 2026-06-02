@@ -42,3 +42,11 @@ Two safety notes:
 - If you’re altered, keep interactions calm: **sit on the floor, let the cat approach, gentle touch, stop if the tail flicks/ears pin/backing away**.
 
 If you tell me what your cat did (e.g., got clingy vs hid vs swatted), I can help interpret it.
+
+
+## See Also
+- [[chatgpt/chatgpt_cell-phone-radiation-effects]]
+- [[chatgpt/chatgpt_chewing-gum-effects-jaw-muscles]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part1]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part2]]
+- [[chatgpt/chatgpt_glp-1-and-drug-effects-part3]]

@@ -176,3 +176,11 @@ This script:
   - Loops back to refresh the page and repeat the process indefinitely.
 
 To stop the script, you will need to manually interrupt it in the UI.Vision interface.
+
+
+## See Also
+- [[chatgpt/chatgpt_click-all-follow-buttons]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part1]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part2]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part3]]
+- [[chatgpt/chatgpt_animation-script-expression]]

@@ -219,3 +219,11 @@ I’ll design a minimal, robust auto-fix architecture that won’t wreck prod.
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]
+- [[chatgpt/chatgpt_claude-in-linear-integration]]
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_linear-github-integration]]
+- [[chatgpt/chatgpt_sentry-linear-issue-resolution]]

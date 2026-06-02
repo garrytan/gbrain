@@ -154,3 +154,11 @@ In the example above, I've created a `menuItems` array that contains the data fo
 Note that I've added a `handleButtonClick` method to handle the button clicks. It checks the type of the clicked item and either calls `setFiltersType` or toggles the `suggestMerge` property accordingly.
 
 Make sure to adjust the values in the `counts` object and any other necessary parts according to your requirements.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-column-index-to-loop]]
+- [[chatgpt/chatgpt_adjust-off-screen-menu]]
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_claude-ralpha-loop]]
+- [[chatgpt/chatgpt_close-menu-on-click]]

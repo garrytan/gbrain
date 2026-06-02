@@ -31,3 +31,11 @@ I wanna move the user menu to a settings button the bottom. and have the version
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_adjust-off-screen-menu]]
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_close-menu-on-click]]
+- [[chatgpt/chatgpt_contact-menu-management]]
+- [[chatgpt/chatgpt_create-onlyfans-tip-menu]]

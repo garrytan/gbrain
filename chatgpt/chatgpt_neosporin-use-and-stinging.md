@@ -81,3 +81,11 @@ Depending on how mild or severe your irritation/cut is, here are better options:
 ---
 
 If you want, I can suggest a local OTC product (in LA) that’s known to work well and be gentle. Want me to pull up a few for you?
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

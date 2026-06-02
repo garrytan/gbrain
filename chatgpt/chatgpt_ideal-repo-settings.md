@@ -207,3 +207,11 @@ Prereqs:
 - Repo setting **Allow auto-merge** = ON.
 - Squash merges enabled.
 - Your ruleset requires merge queue + checks (no approvals needed).
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_create-vue-settings-menu]]
+- [[chatgpt/chatgpt_drill-settings-guide-2]]
+- [[chatgpt/chatgpt_drill-settings-guide]]
+- [[chatgpt/chatgpt_dryer-settings-for-towels]]

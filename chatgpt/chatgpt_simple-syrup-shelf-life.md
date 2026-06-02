@@ -26,3 +26,11 @@ How long does simple syrup last
 ## Assistant
 
 Simple syrup can last anywhere from one to six months, depending on how it's stored and the ratio of sugar to water. A 1:1 ratio (equal parts sugar and water) typically lasts about one month when stored in the refrigerator, while a 2:1 ratio (two parts sugar to one part water) can last up to six months under the same conditions. Always store simple syrup in a clean, airtight container in the refrigerator, and discard it if you notice any cloudiness, mold, or off smells.
+
+
+## See Also
+- [[chatgpt/chatgpt_making-simple-syrup-2]]
+- [[chatgpt/chatgpt_making-simple-syrup]]
+- [[chatgpt/chatgpt_simple-syrup-8oz-sugarwater]]
+- [[chatgpt/chatgpt_shelf-life-of-cocktails]]
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part1]]

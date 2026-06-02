@@ -228,3 +228,11 @@ Mr. White — here’s a clean, numbers-first comparison for **two people**.
 - If you only want **taste/chlorine removal** and your water report looks clean, a simple **under-sink carbon inline** is cheaper up-front—but it won’t match RO on dissolved contaminants.
 
 If you want, tell me your **daily intake target** (e.g., 0.5 vs 1 gal/person), whether you prefer **tanked or tankless**, and I’ll pin down a short parts list and exact annualized cost for your specific pick.
+
+
+## See Also
+- [[chatgpt/chatgpt_25l-water-in-ice]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_bathtub-cold-water-issue]]
+- [[chatgpt/chatgpt_calculate-water-cases]]
+- [[chatgpt/chatgpt_data-center-water-brown]]

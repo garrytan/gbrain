@@ -841,3 +841,11 @@ Best line to keep:
 > **Jovie turns five songs into a year of Fridays.**
 
 Ground it in current product where possible: release pages, smart links, fan notifications, pre-save/countdown campaigns, click analytics, AI insights, album-art/chat, and release planning/tasks are already in the product surface. fileciteturn0file1
+
+
+## See Also
+- [[chatgpt/chatgpt_yc-and-a16z-framing-part2]]
+- [[chatgpt/chatgpt_yc-and-a16z-framing-part3]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_a16z-speedrun-overview]]
+- [[chatgpt/chatgpt_a16z-start-program]]

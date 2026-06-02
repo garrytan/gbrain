@@ -164,3 +164,11 @@ In this modified code, the menu items are stored in the `menuItems` array within
 Inside the template, a `v-for` loop is used to iterate through the `menuItems` array and create a `<DropdownMenuItem>` component for each item. The `:name` and `:icon` properties are bound to the respective values of the current item, and the `@click` event is bound to the `action` method of the item.
 
 By organizing the menu items and their associated actions within the `data()` section, you can easily loop through them and have the corresponding methods executed when the items are clicked.
+
+
+## See Also
+- [[chatgpt/chatgpt_adjust-off-screen-menu]]
+- [[chatgpt/chatgpt_bar-menu-sop-vault]]
+- [[chatgpt/chatgpt_close-menu-on-click]]
+- [[chatgpt/chatgpt_contact-menu-management]]
+- [[chatgpt/chatgpt_create-onlyfans-tip-menu]]

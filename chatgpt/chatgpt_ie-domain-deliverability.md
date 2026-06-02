@@ -531,3 +531,11 @@ You **shouldn’t**, because:
 - It makes failures catastrophic instead of contained
 
 If you want, I can draw the **exact failure scenarios** (Gmail + Outlook) that happen when teams centralize domains — or help you pick the **cheapest, safest cold domain** to buy.
+
+
+## See Also
+- [[chatgpt/chatgpt_alias-vercel-preview-domain]]
+- [[chatgpt/chatgpt_api-key-domain-error]]
+- [[chatgpt/chatgpt_available-domain-search-unsuccessful]]
+- [[chatgpt/chatgpt_cloudflare-http-to-another-domain]]
+- [[chatgpt/chatgpt_co-domain-worth-it]]

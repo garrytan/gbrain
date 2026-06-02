@@ -650,3 +650,11 @@ No first-ride screenshots or regulatory filings yet. Monitoring remains active p
 ✅ No new permit filing or first-ride public evidence yet. Watching continues per hourly schedule.
 
 navlistRelated coverage on Tesla robotaxi rollout & CA regulationsturn0news26,turn0news23,turn0news22
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part14]]

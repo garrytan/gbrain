@@ -1104,3 +1104,11 @@ pull the repo context and the ops repo context so you understand were applying t
 
 
 I’ll pull the current repo and ops context first, then turn it into a single overnight Hermes prompt grounded in your scripts, quality gates, and stabilization-only guardrails.
+
+
+## See Also
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part1]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part2]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part3]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part4]]
+- [[chatgpt/chatgpt_hermes-agent-performance-comparison-part5]]

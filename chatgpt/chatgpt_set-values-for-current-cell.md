@@ -75,3 +75,11 @@ export default {
 This will bind the `handleUpdateCurrentCell` function to the `update:currentCell` event emitted by the row component, so that when the event is emitted, the function will be called and the `currentCell` property in the table component will be updated with the new values.
 
 I hope this helps! Let me know if you have any questions or need further clarification.
+
+
+## See Also
+- [[chatgpt/chatgpt_cell-phone-impact-on-flight]]
+- [[chatgpt/chatgpt_cell-phone-radiation-effects]]
+- [[chatgpt/chatgpt_fuel-cell-cars-overview]]
+- [[chatgpt/chatgpt_handle-cell-navigation-event]]
+- [[chatgpt/chatgpt_vue-data-grid-cell-component]]

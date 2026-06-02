@@ -832,3 +832,11 @@ You should have agent mode now, so you should be able to go forward.
 ## Assistant
 
 Mr. White, agent mode isn’t currently active on my side (tool calls are being blocked), so I can’t proceed with live browser actions yet. Please restart/enable agent mode again and tell me what page you’re on, and I’ll continue from there.
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-report-summary]]
+- [[chatgpt/chatgpt_inventory-summary-report]]
+- [[chatgpt/chatgpt_ux-audit-summary]]
+- [[chatgpt/chatgpt_app-test-report]]
+- [[chatgpt/chatgpt_chat-testing-report]]

@@ -268,3 +268,11 @@ Here are some useful videos where Dr. Israetel addresses these concepts:
 3. **[Common Back Training Mistakes](https://www.youtube.com/watch?v=ey_VtgtF0A4)**: Dr. Israetel highlights common mistakes and optimal strategies for back training, emphasizing the importance of recovery.
 
 These resources can give you a deeper understanding of his philosophy on training frequency, rest, and maximizing hypertrophy while managing fatigue.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-composition-change-summary]]
+- [[chatgpt/chatgpt_body-composition-changes]]
+- [[chatgpt/chatgpt_dexa-scan-summary-changes]]
+- [[chatgpt/chatgpt_update-body-comp-spreadsheet]]

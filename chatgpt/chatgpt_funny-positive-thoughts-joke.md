@@ -77,3 +77,11 @@ Be more clever, be funnier, and make more sense.
 9. “Positivity level: I smiled at a captcha and it let me straight through.”
 
 10. “Thought so many good thoughts my horoscope asked *me* for advice.”
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-joke-ideas]]
+- [[chatgpt/chatgpt_calendar-gig-joke]]
+- [[chatgpt/chatgpt_dog-joke-dumbness]]
+- [[chatgpt/chatgpt_funny-city-guess]]
+- [[chatgpt/chatgpt_funny-product-reply-ideas]]

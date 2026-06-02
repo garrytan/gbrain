@@ -437,3 +437,11 @@ If you want, I can:
 - Draft an outreach proposal to Genius
 - Define a “new release only” submission policy
 - Compare ROI of Genius vs MusicBrainz vs DSP-native metadata surfaces
+
+
+## See Also
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part3]]

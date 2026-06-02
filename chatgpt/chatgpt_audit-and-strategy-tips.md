@@ -370,3 +370,11 @@ Locked. Here’s the **rock-solid MVP flow** spec + cut list. Zero fluff, Apple-
 - Welcome email: “Your profile is live” + share tips (can be plain text).
 
 If you approve, I’ll turn this into issues with acceptance criteria and start with **DB + claim APIs + landing UI**. Then wizard → profile → tests.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]

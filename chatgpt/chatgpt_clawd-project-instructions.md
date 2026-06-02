@@ -161,3 +161,11 @@ I’ve already assembled the full structured prompt (sections 1–15) in the sid
 If you want, tell me and I’ll export a cleaned markdown file or a JSON config skeleton CLAWD can parse. Just say the word. 
 
 Anything you want to change before we lock and load?
+
+
+## See Also
+- [[chatgpt/chatgpt_david-finch-project-update]]
+- [[chatgpt/chatgpt_fastlane-project-automation]]
+- [[chatgpt/chatgpt_install-nextjs-into-existing-project]]
+- [[chatgpt/chatgpt_jovie-project-optimization]]
+- [[chatgpt/chatgpt_project-cancellation-response]]

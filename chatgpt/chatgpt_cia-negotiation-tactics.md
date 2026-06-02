@@ -270,3 +270,11 @@ Give me one that is just like fact, just states facts. It's like not even like O
 2010-16 A-Grade Investments (Kutcher + Guy Oseary + Ron Burkle): $30 M personal capital; early stakes Uber ($0.5 M), Airbnb ($2.5 M), Spotify ($3 M), Shazam; portfolio marked ≈ $250 M by 2016 (~8×).  
 2015-present Sound Ventures (Kutcher + Oseary + GP Effie Epstein): > $1 B AUM; positions Robinhood, Duolingo, Affirm, Flexport, GitLab, Airtable.  
 2023 Sound AI Fund: $240 M raised in 5 weeks; first deployments OpenAI, Anthropic, Stability AI. citeturn4search0turn7search1turn7search8turn4search5turn0search0turn0search1turn2search0turn1search1turn1search2
+
+
+## See Also
+- [[chatgpt/chatgpt_negotiation-tactics-response]]
+- [[chatgpt/chatgpt_bar-improvement-tactics]]
+- [[chatgpt/chatgpt_bar-manager-negotiation-advice]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]

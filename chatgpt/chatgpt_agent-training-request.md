@@ -21,3 +21,11 @@ tags: [chatgpt, import]
 
 im trying to train a agent on me. can you find out everything you can about me how i speak.
 and put it together a compacted memory md file. ask for clarificaiton if you need
+
+
+## See Also
+- [[chatgpt/chatgpt_cutting-training-frequency]]
+- [[chatgpt/chatgpt_fasted-vs-fed-training]]
+- [[chatgpt/chatgpt_hypertrophy-training-gear]]
+- [[chatgpt/chatgpt_leg-training-impact-summary]]
+- [[chatgpt/chatgpt_perturbation-in-training]]

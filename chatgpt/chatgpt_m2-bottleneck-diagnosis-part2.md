@@ -747,3 +747,11 @@
  com.apple.DriverKit-IOUserDockChannelSerial	800 KB	2	66	555	_driverkit	0.0	0.46	(null)	Apple	0.0	0.00	0 bytes	0 bytes	0 bytes	No	Yes	Yes	(null)	No	0 bytes	0	0 bytes	0	0 bytes	0 bytes	-	0 bytes	0 bytes	No	(null)	
  tee	784 KB	1	11	28015	timwhite	0.0	0.13	(null)	Apple	0.0	0.00	0 bytes	0 bytes	0 bytes	No	No	Yes	(null)	No	0 bytes	0	0 bytes	0	0 bytes	0 bytes	-	0 bytes	0 bytes	No	(null)	
 
+
+
+## See Also
+- [[chatgpt/chatgpt_m2-bottleneck-diagnosis-part1]]
+- [[chatgpt/chatgpt_m2-bottleneck-diagnosis-part3]]
+- [[chatgpt/chatgpt_brake-noise-diagnosis-cx-5]]
+- [[chatgpt/chatgpt_cx-5-steering-noise-diagnosis]]
+- [[chatgpt/chatgpt_bottleneck-causes-and-solutions]]

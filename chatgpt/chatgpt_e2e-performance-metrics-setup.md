@@ -161,3 +161,11 @@ If you want to push this further later, I’d recommend:
 - Capturing **client-side hydration completion** explicitly (huge for perceived speed)
 
 Say the word and I’ll extend the prompt in that direction.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]

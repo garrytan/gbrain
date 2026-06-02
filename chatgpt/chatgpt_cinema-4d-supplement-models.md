@@ -62,3 +62,11 @@ The successful candidate should possess the following qualifications:
 This is a contract position, and the successful candidate will work remotely. The project timeline is flexible, and we are willing to work with the right candidate to ensure the successful completion of the project.
 
 If you are passionate about 3D modeling and rendering, and you possess the skills and experience required for this project, please submit your application, including your resume, cover letter, and portfolio.
+
+
+## See Also
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_casting-brief-for-models]]
+- [[chatgpt/chatgpt_cheap-models-for-cos]]
+- [[chatgpt/chatgpt_cost-comparison-coding-models]]
+- [[chatgpt/chatgpt_cost-comparison-models]]

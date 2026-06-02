@@ -360,3 +360,11 @@ You're right, Mr. White—my FFMI numbers were off. Here are the **correct** cal
 - **After (proj.):** 25.5 ÷ 168.9 = **15.10%**.
 
 If you’d like, I can recompute for **+1.5 lb** and **+2.5 lb** lean regain bands as well.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-changes-summary-analysis]]
+- [[chatgpt/chatgpt_body-comp-changes-summary]]
+- [[chatgpt/chatgpt_body-composition-analysis]]
+- [[chatgpt/chatgpt_body-composition-change-summary]]
+- [[chatgpt/chatgpt_body-composition-phase-plan]]

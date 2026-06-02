@@ -40,3 +40,11 @@ To qualify for unemployment benefits in California, you generally need to meet t
 6. **Active Job Search**: You are required to actively seek employment each week that you file a claim.
 
 Once eligible, you can file a claim with the California Employment Development Department (EDD) either online, by phone, or by mail. After filing, you'll need to continue certifying for benefits biweekly, reporting any earnings and your job search efforts.
+
+
+## See Also
+- [[chatgpt/chatgpt_california-unemployment-benefits]]
+- [[chatgpt/chatgpt_california-unemployment-overview]]
+- [[chatgpt/chatgpt_docstrings-benefits-and-necessity]]
+- [[chatgpt/chatgpt_glp-1-benefits-beyond-diabetes]]
+- [[chatgpt/chatgpt_m2-macbook-upgrade-benefits]]

@@ -93,3 +93,11 @@ Would you like me to run that quick estimate?
 
 
 **Topic:** [[chatgpt-clusters/personal_finance]]
+
+
+## See Also
+- [[chatgpt/chatgpt_weekly-pay-after-taxes]]
+- [[chatgpt/chatgpt_tax-withholding-for-1099]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

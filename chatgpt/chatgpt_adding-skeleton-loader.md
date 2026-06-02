@@ -78,3 +78,11 @@ export default {
 ```
 
 In this implementation, the `loading` prop is used to control the display of the skeleton loader. When `loading` is true, the skeleton loader is displayed, and when it's false, the contact avatar image is displayed. The skeleton loader is a simple div with a background color, border-radius, and animation to simulate a loading effect. You can adjust the size and animation properties to fit your needs.
+
+
+## See Also
+- [[chatgpt/chatgpt_adding-nicknames-to-contacts]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

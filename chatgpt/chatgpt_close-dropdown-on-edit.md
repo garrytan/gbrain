@@ -841,3 +841,11 @@ export default {
 In this example, the `JovieDropdownMenu` component wraps the trigger button and the dropdown menu content. The trigger button is defined within a scoped slot named "trigger", and the `isOpen` prop is used to apply the appropriate styles to the button based on the open/closed state.
 
 By updating the `socialurlediting` variable in the `toggleMenu` method, you can control the open/closed state of the dropdown menu.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-close-modal-on-update]]
+- [[chatgpt/chatgpt_cinematic-instagram-portrait-edit]]
+- [[chatgpt/chatgpt_close-fb-account]]
+- [[chatgpt/chatgpt_close-friends-post-visibility]]
+- [[chatgpt/chatgpt_close-menu-on-click]]

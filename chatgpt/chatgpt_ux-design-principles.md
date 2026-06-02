@@ -698,3 +698,11 @@ That’s it—no new vendors, < 200 lines of code, zero extra budget, full contr
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_rc-deck-design-principles-part1]]
+- [[chatgpt/chatgpt_rc-deck-design-principles-part2]]
+- [[chatgpt/chatgpt_improving-from-first-principles]]
+- [[chatgpt/chatgpt_3d-muffin-head-design]]
+- [[chatgpt/chatgpt_admin-workflow-design]]

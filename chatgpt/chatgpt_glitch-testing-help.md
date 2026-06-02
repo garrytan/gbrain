@@ -166,3 +166,11 @@ Mobile Safari → homepage → open nav → screenshot viewport → assert heade
 ```
 
 That would have caught this screenshot.
+
+
+## See Also
+- [[chatgpt/chatgpt_capture-ios-paywall-glitch]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part1]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part2]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part3]]
+- [[chatgpt/chatgpt_ai-app-testing-process-part4]]

@@ -63,3 +63,11 @@ If you want an example tailored to specific framework (React/Vue/Svelte) or with
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_tailwind-style-placeholder-text]]
+- [[chatgpt/chatgpt_16x16-grid-tailwind]]
+- [[chatgpt/chatgpt_16x16-in-tailwind]]
+- [[chatgpt/chatgpt_288px-in-tailwind]]
+- [[chatgpt/chatgpt_8px-margin-in-tailwind]]

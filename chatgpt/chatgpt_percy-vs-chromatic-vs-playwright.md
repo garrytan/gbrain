@@ -109,3 +109,11 @@ If you want, I can:
 - Map this to your **team size & CI budget**
 - Give a **setup blueprint (1–2 days max)**
 - Quantify **flake rate vs cost tradeoffs**
+
+
+## See Also
+- [[chatgpt/chatgpt_chromatic-meaning-explained-2]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained]]
+- [[chatgpt/chatgpt_chromatic-storybook-integration]]
+- [[chatgpt/chatgpt_clerk-playwright-testing]]
+- [[chatgpt/chatgpt_meaning-of-percy]]

@@ -172,3 +172,11 @@ These recipes are nutritious and ideal for those focusing on fitness and bodybui
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_calculate-macros-food-consumed]]
+- [[chatgpt/chatgpt_food-distribution-system]]
+- [[chatgpt/chatgpt_food-service-guidelines]]
+- [[chatgpt/chatgpt_packaged-food-logic]]

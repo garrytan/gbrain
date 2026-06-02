@@ -105,3 +105,11 @@ Focus on:
 - Clean separation of concerns: the UI just calls a generic “subscribe user to artist notifications” backend, without going into backend implementation details.
 
 Implement the UI and interaction flow according to this description.
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-subscription-copy]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part3]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part1]]

@@ -156,3 +156,11 @@ Mr. White: “’No fucking way!’ he screams *after* calmly rolling under a sp
 ## Assistant
 
 Mr. White: “’Dad’s got Asperger’s,’ she ‘casually slips’—because recounting childhood quirks in a memoir totally replaces a proper diagnosis. Anecdote ≠ medical exam.”
+
+
+## See Also
+- [[chatgpt/chatgpt_billionaire-hypocrisy-exposed]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

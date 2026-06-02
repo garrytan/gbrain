@@ -138,3 +138,11 @@ Here are some song / music ideas that’d work well for a dramatic reveal — a 
 ---
 
 If you tell me whether you want rock, cinematic, hip-hop, or “soundtrack style,” I can narrow it down and even send you Spotify links. Want me to pick 3 that match your scene?
+
+
+## See Also
+- [[chatgpt/chatgpt_getting-into-joker-character]]
+- [[chatgpt/chatgpt_joker-costume-advice]]
+- [[chatgpt/chatgpt_joker-halloween-show-script]]
+- [[chatgpt/chatgpt_2020-harley-flhtk-price]]
+- [[chatgpt/chatgpt_finchers-the-killer-quotes]]

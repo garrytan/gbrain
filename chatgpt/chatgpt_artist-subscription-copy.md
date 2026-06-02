@@ -63,3 +63,11 @@ If you want, I can **A/B test variants** based on artist size (emerging vs estab
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_audit-developer-copy]]
+- [[chatgpt/chatgpt_button-copy-suggestions]]
+- [[chatgpt/chatgpt_hero-copy-feedback]]
+- [[chatgpt/chatgpt_jovie-homepage-copy-adaptation]]
+- [[chatgpt/chatgpt_landing-page-copy-ideas]]

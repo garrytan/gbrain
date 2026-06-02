@@ -1067,3 +1067,11 @@ Please adjust the code as needed to fit your application's structure and require
 
 
 can we use the moethoud described in my revious message
+
+
+## See Also
+- [[chatgpt/chatgpt_csv-import-column-matching-part1]]
+- [[chatgpt/chatgpt_csv-import-column-matching-part2]]
+- [[chatgpt/chatgpt_csv-import-column-matching-part4]]
+- [[chatgpt/chatgpt_csv-import-error-troubleshooting-part3]]
+- [[chatgpt/chatgpt_add-column-index-to-loop]]

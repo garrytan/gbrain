@@ -198,3 +198,11 @@ useEffect(() => {
 - The first point where it drops from 76 → 75 is your culprit.
 
 If you want to paste the height parse/convert code path (input handler + submit + display), I’ll mark the exact failure point and the minimal patch.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-update-branch-preview]]
+- [[chatgpt/chatgpt_age-field-update-issue-part1]]
+- [[chatgpt/chatgpt_age-field-update-issue-part2]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]

@@ -49,3 +49,11 @@ So, you need to reach approximately **166 lbs** to achieve 8% body fat, assuming
 
 
 **Topic:** [[chatgpt-clusters/personal_health]]
+
+
+## See Also
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_target-weight-calculation]]
+- [[chatgpt/chatgpt_target-weight-for-8-bf-2]]
+- [[chatgpt/chatgpt_target-weight-for-8-bf-3]]

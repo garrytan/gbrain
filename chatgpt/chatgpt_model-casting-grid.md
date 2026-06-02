@@ -83,3 +83,11 @@ Hard rules:
 - no text, no labels, no numbers, no watermarks
 
 Photographic look: Sony A7 with natural window light, shallow depth of field, slightly warm clean color grade — candid iPhone-by-a-pro feel. Crisp on the face with cheekbone shadow visible, dreamy soft background. Healthy glowy adult skin, faint laugh lines welcome. Catchlights in eyes.
+
+
+## See Also
+- [[chatgpt/chatgpt_model-casting-grid-design]]
+- [[chatgpt/chatgpt_casting-board-grid]]
+- [[chatgpt/chatgpt_casting-grid-brief]]
+- [[chatgpt/chatgpt_16x16-grid-tailwind]]
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]

@@ -56,3 +56,11 @@ Here you go — sharper and tighter:
 ---
 
 **@insidethemindofjenn** That *is* science. It’s called a **caloric deficit** — no fat loss happens without it. You can lift all you want, but if you’re overeating, your abs are just hiding under Doritos. Thermodynamics > your feelings.
+
+
+## See Also
+- [[chatgpt/chatgpt_athlete-recovery-and-science]]
+- [[chatgpt/chatgpt_ketamine-and-erection-science]]
+- [[chatgpt/chatgpt_science-based-vocal-coaches]]
+- [[chatgpt/chatgpt_science-behind-light-therapy]]
+- [[chatgpt/chatgpt_science-clapback-with-humor]]

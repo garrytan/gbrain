@@ -58,3 +58,11 @@ Producing is 20 years of X so that i can earn the right to stand in the back of 
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part1]]
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part2]]
+- [[chatgpt/chatgpt_life-goals-and-business-aspirations-part3]]
+- [[chatgpt/chatgpt_life-lessons]]
+- [[chatgpt/chatgpt_shelf-life-of-cocktails]]

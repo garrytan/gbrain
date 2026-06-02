@@ -62,3 +62,11 @@ Run both for 2 sessions each with the same set/rep/RIR scheme and ask:
 Whichever wins those is your best SFR choice — and in practice, that’s very often the **Smith**.
 
 If you tell me what incline angle you typically use and whether you feel free-weight incline mostly in delts vs pecs, I’ll give you the exact setup (bench position relative to bar, touch point, elbow path) to bias upper pec as hard as possible.
+
+
+## See Also
+- [[chatgpt/chatgpt_hammer-strength-incline-press]]
+- [[chatgpt/chatgpt_hip-abduction-machine-guide]]
+- [[chatgpt/chatgpt_wayback-machine-explanation]]
+- [[chatgpt/chatgpt_embargoed-press-release-strategy]]
+- [[chatgpt/chatgpt_tall-struggle-bench-press]]

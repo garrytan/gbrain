@@ -83,3 +83,11 @@ If you want, I can sketch:
 - the exact UX copy
 - the minimal data model
 - or the approval/waitlist flag logic
+
+
+## See Also
+- [[chatgpt/chatgpt_superhuman-waitlist-process]]
+- [[chatgpt/chatgpt_waitlist-and-onboarding-system]]
+- [[chatgpt/chatgpt_waitlist-onboarding-chat]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]

@@ -129,3 +129,11 @@ For one Innovation X Venture Partners Form D filing, Ceros is listed as the plac
 So the best wording is:
 
 > There may be a substantial SPV-level fee or placement fee before Carter’s separate fee. We need the actual Innovation X / Forte Capital offering documents to confirm whether that fee is a one-time placement fee, an annual management fee, carried interest, or some combination of those.
+
+
+## See Also
+- [[chatgpt/chatgpt_clarifying-g-meaning]]
+- [[chatgpt/chatgpt_avoiding-late-fees]]
+- [[chatgpt/chatgpt_court-fees-low-income]]
+- [[chatgpt/chatgpt_hidden-airbnb-fees-analysis]]
+- [[chatgpt/chatgpt_towing-laws-and-fees]]

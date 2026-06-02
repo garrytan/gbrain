@@ -65,3 +65,11 @@ To prepare it, you would typically:
 5. Strain the mixture into the salt-rimmed glass filled with fresh ice.
 
 You can also adjust the proportions of the ingredients to suit your taste, such as making it stronger or sweeter by varying the amounts of tequila or triple sec. Some variations include adding simple syrup for sweetness or using different flavors of liqueur for a unique twist on the classic margarita.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

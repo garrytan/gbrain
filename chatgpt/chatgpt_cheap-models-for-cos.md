@@ -309,3 +309,11 @@ Heavy solo-founder usage:
 | Mostly DeepSeek + selective escalation | $100–700 |
 
 The routing architecture matters more than the individual model.
+
+
+## See Also
+- [[chatgpt/chatgpt_attractiveness-data-and-models]]
+- [[chatgpt/chatgpt_casting-brief-for-models]]
+- [[chatgpt/chatgpt_cinema-4d-supplement-models]]
+- [[chatgpt/chatgpt_cost-comparison-coding-models]]
+- [[chatgpt/chatgpt_cost-comparison-models]]

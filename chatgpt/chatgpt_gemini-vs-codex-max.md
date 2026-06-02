@@ -75,3 +75,11 @@ Mr. White — if I had to pick depending on your typical tasks:
 ---
 
 If you like, I can **dig into actual pricing**, API release status, availability (enterprise vs developer) for both models, so you can see which is realistic *right now*. Would that be helpful?
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]
+- [[chatgpt/chatgpt_codex-52-prompt-optimization]]

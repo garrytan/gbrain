@@ -48,3 +48,11 @@ My apologies for the mix-up! The line you're referring to is from the song "Just
 With a couple of lawsuits inside her palm/"
 
 This song is featured on his album "Encore." Thanks for pointing that out!
+
+
+## See Also
+- [[chatgpt/chatgpt_coldplay-song-lyrics-request]]
+- [[chatgpt/chatgpt_end-of-world-song-lyrics]]
+- [[chatgpt/chatgpt_flaw-seen-love-in-lyrics]]
+- [[chatgpt/chatgpt_format-lyrics-apple-style]]
+- [[chatgpt/chatgpt_format-lyrics-for-apple-music]]

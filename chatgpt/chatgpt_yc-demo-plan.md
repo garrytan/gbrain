@@ -193,3 +193,11 @@ The version I would actually submit is:
 **mobile profile → pre-save page → command center generate plan → tasks auto-filled → same URL live after launch → audience segment → geo insight → compounding chart**
 
 That is the clearest story, the strongest proof, and the best use of the product surface you publicly show today.
+
+
+## See Also
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]

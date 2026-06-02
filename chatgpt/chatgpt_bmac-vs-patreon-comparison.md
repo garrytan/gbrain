@@ -63,3 +63,11 @@ This draft uses the Buy Me a Coffee comparison page as the primary source, with 
 2. The Buy Me a Coffee page says Patreon’s fee is **12%**, but Patreon’s current official pricing for **new creators** is **10%** after August 4, 2025, while legacy creators may be on older plans. citeturn125306view0turn119342view0turn967896view0
 
 Tell me your creator model—newsletter, YouTube, podcast, indie hacker, artist, educator, or streamer—and I’ll reweight this matrix for your exact use case.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_best-deal-comparison]]
+- [[chatgpt/chatgpt_bleach-developer-comparison]]

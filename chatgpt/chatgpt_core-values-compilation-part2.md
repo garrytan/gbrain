@@ -485,3 +485,11 @@ theme: {
 ---
 
 If you want, I can also draft **specific CSS tokens** for each page section (hero, music grid/cards, bio image blocks) based on your current markup so the dark theme sings on those pages.
+
+
+## See Also
+- [[chatgpt/chatgpt_core-values-compilation-part1]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part2]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part1]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part3]]
+- [[chatgpt/chatgpt_tim-whites-core-values-part4]]

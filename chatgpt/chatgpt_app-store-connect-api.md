@@ -82,3 +82,11 @@ Here’s a high-level view of how you might call the API:
 ---
 
 If you like, I can pull together **sample code** (in Swift / JavaScript / Python) for using the App Store Connect API and automate a common workflow (e.g., uploading metadata + submitting a build) — would that be helpful, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_connect-financial-accounts]]
+- [[chatgpt/chatgpt_connect-gbrain-to-chatgpt]]
+- [[chatgpt/chatgpt_connect-qlab-to-nextjs]]
+- [[chatgpt/chatgpt_24-hour-store-near-hollywood]]
+- [[chatgpt/chatgpt_apple-app-store-rejection]]

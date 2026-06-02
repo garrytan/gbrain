@@ -68,3 +68,11 @@ The Legislature keeps floating predictive-scheduling bills (e.g., **SB 878 would
 * When in doubt, pay the premium; it’s cheaper than a PAGA lawsuit.
 
 _Not legal advice—consult counsel before firing anyone or rewriting policy._
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-tools-for-scheduling]]
+- [[chatgpt/chatgpt_automated-venue-scheduling-solution]]
+- [[chatgpt/chatgpt_employee-scheduling-app-plan]]
+- [[chatgpt/chatgpt_forearm-sets-per-week]]
+- [[chatgpt/chatgpt_on-call-server-scheduling]]

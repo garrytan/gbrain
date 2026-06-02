@@ -276,3 +276,11 @@ function doPost(e) {
 This script sets the necessary CORS headers to allow cross-origin requests. Note that setting `Access-Control-Allow-Origin` to `*` allows requests from any origin, which might not be suitable for all use cases due to security concerns. Adjust according to your needs.
 
 If the issue persists after checking these points, consider testing the network request from a different environment (e.g., Postman or another HTTP client) to isolate the problem further.
+
+
+## See Also
+- [[chatgpt/chatgpt_email-auth-vs-google-apple]]
+- [[chatgpt/chatgpt_contact-form-in-nextjs]]
+- [[chatgpt/chatgpt_create-new-contact-form-part1]]
+- [[chatgpt/chatgpt_create-new-contact-form-part2]]
+- [[chatgpt/chatgpt_fill-out-edd-form]]

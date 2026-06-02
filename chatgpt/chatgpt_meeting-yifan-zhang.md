@@ -157,3 +157,11 @@ Use these near the end:
 ## Best one-sentence close
 
 > **I think Jovie is the kind of company AI2 is built for: a deep domain workflow, a founder who has done the work manually, and an AI system that can turn that expertise into repeatable execution at scale.**
+
+
+## See Also
+- [[chatgpt/chatgpt_free-mac-meeting-app]]
+- [[chatgpt/chatgpt_meeting-david-fincher]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

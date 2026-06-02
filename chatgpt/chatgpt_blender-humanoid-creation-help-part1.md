@@ -992,3 +992,11 @@ You should now see a full-body humanoid silhouette with smooth topology and cris
 
 {'asset_pointer': 'file-service://file-Cg6H4VNWtpVYwyJRr7VMHC', 'content_type': 'image_asset_pointer', 'fovea': None, 'height': 1350, 'metadata': {'asset_pointer_link': None, 'container_pixel_height': None, 'container_pixel_width': None, 'dalle': None, 'emu_omit_glimpse_image': None, 'emu_patches_override': None, 'generation': None, 'gizmo': None, 'is_no_auth_placeholder': None, 'lpe_delta_encoding_channel': None, 'lpe_keep_patch_ijhw': None, 'sanitized': True, 'watermarked_asset_pointer': None}, 'size_bytes': 795925, 'width': 1080}
 Ok lets use makehumn to make this look more real
+
+
+## See Also
+- [[chatgpt/chatgpt_blender-humanoid-creation-help-part2]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part1]]
+- [[chatgpt/chatgpt_blender-3d-features-overview]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part10]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part11]]

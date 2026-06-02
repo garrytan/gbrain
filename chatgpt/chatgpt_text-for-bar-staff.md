@@ -34,3 +34,11 @@ Hey team — please reply with your availability for October so we can finalize 
 ---
 
 Want me to also draft a version that includes a response deadline (e.g., “by Friday”) to keep everyone on track?
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-staff-run-schedule]]
+- [[chatgpt/chatgpt_button-text-update]]
+- [[chatgpt/chatgpt_cant-hear-ai-text]]
+- [[chatgpt/chatgpt_clean-up-text-2]]
+- [[chatgpt/chatgpt_clean-up-text-options]]

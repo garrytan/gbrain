@@ -1122,3 +1122,11 @@ The first demo:
 > **dead artist account → Jovie imports catalog → generates 3 posts → approval by text → live TikTok feed full of good posts**
 
 That is the thing to build.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovi-sign-up-ideas]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part1]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part2]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part4]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part3]]

@@ -163,3 +163,11 @@ If you tell me what stack you’re mainly using (backend language, frontend fram
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_claude-code-agent-teams-2]]
+- [[chatgpt/chatgpt_claude-code-agent-teams]]
+- [[chatgpt/chatgpt_claude-code-api-errors]]
+- [[chatgpt/chatgpt_claude-code-background-agents]]

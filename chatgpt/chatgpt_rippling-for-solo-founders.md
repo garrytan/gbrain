@@ -739,3 +739,11 @@ If you want, I can:
 - Lock this into a **simple burn/runway spreadsheet**
 - Tell you **exact take-home at $700 vs $750**
 - Help you pick the **optimal withholding settings** so cash flow stays tight and predictable
+
+
+## See Also
+- [[chatgpt/chatgpt_fast-solo-bouncing-tracks]]
+- [[chatgpt/chatgpt_funding-with-solo-founder]]
+- [[chatgpt/chatgpt_solo-vs-full-mix]]
+- [[chatgpt/chatgpt_yc-advice-for-solo-founder]]
+- [[chatgpt/chatgpt_funding-revenue-founders]]

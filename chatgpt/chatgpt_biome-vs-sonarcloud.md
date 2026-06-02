@@ -247,3 +247,11 @@ Windsurf merges system → user → workspace, and all run in order. citet
 ---
 
 If you tell me your stack (monorepo? pnpm? turborepo? next? backend language?) I’ll tailor the exact command set and the “protected paths” list so you don’t block legitimate workflows while still preventing catastrophic mistakes.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]
+- [[chatgpt/chatgpt_ally-biome]]
+- [[chatgpt/chatgpt_biome-react-hooks-linter]]
+- [[chatgpt/chatgpt_biome-vs-eslint-nextjs]]
+- [[chatgpt/chatgpt_enforcing-biome-rules]]

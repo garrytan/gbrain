@@ -75,3 +75,11 @@ Here’s how annual traffic‐stop rates stack up per 1,000 residents:
   In 2023 CPD’s rate was 202 stops per 1,000 residents—the highest in the nation. citeturn3view0  
 
 **Bottom line:** Compared to the ~60 stops/1,000 national average, Chicago and Houston run well above, NYC is moderately above, and LA is below.
+
+
+## See Also
+- [[chatgpt/chatgpt_codex-traffic-lights-solution]]
+- [[chatgpt/chatgpt_dev-traffic-misclassification]]
+- [[chatgpt/chatgpt_ebay-sales-trends-analysis]]
+- [[chatgpt/chatgpt_ride-sharing-safety-trends]]
+- [[chatgpt/chatgpt_self-driving-cars-and-traffic]]

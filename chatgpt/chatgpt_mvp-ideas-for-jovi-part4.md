@@ -637,3 +637,11 @@ The first business model is a paid managed service.
 The first software is almost nothing: landing page, payment link, upload intake, internal ops board, approval texts.
 
 The long-term product can become SaaS, but the fastest way to find out is to make your own dead catalog look alive this week.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovi-sign-up-ideas]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part1]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part2]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part3]]
+- [[chatgpt/chatgpt_jovi-ios-app-spec]]

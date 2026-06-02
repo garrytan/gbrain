@@ -36,3 +36,11 @@ Mr. White, based on your description:
 One extra Mazda-specific possibility: if the green headlight icon has an **“A” inside it**, that is the **High Beam Control (automatic high-beam) indicator**, meaning the auto high-beam system is active. citeturn296317view4turn874804view4
 
 So your blind-spot guess on the orange one was right. Send a photo of the cluster and I’ll identify the green one exactly.
+
+
+## See Also
+- [[chatgpt/chatgpt_2016-mazda-cx-5-liftgate]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-wipers]]
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_cloning-mazda-key-fob]]
+- [[chatgpt/chatgpt_kia-soul-vs-mazda-cx-5]]

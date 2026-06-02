@@ -73,3 +73,11 @@ Would you like me to break this down by **date-type context** (e.g., romantic vs
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_33-taps-restaurant-info]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]
+- [[chatgpt/chatgpt_christmas-dinner-restaurant-recommendations]]
+- [[chatgpt/chatgpt_restaurant-review-summary]]
+- [[chatgpt/chatgpt_restaurant-tax-snark]]

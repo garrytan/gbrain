@@ -78,3 +78,11 @@ Toast likely cannot automatically **re-sort them below guest tickets on the same
 For actual deprioritization, the operational hack is:
 
 > **Staff Meal dining option + separate routing + manual fire/hold policy.**
+
+
+## See Also
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_bar-staff-run-schedule]]
+- [[chatgpt/chatgpt_exporting-toast-employee-data]]
+- [[chatgpt/chatgpt_hide-seasonal-items-toast]]
+- [[chatgpt/chatgpt_hide-tips-on-toast]]

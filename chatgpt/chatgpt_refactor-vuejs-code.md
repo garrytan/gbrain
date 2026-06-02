@@ -120,3 +120,11 @@ I refactored the code to extract the default image into a data property. This al
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_refactor-vuejs-code-2]]
+- [[chatgpt/chatgpt_improve-vuejs-code-snippet]]
+- [[chatgpt/chatgpt_improve-vuejs-code]]
+- [[chatgpt/chatgpt_refactor-vuejs-component-2]]
+- [[chatgpt/chatgpt_refactor-vuejs-component-3]]

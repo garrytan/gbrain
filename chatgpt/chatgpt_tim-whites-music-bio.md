@@ -142,3 +142,11 @@ In addition to fitness and travel, Tim is also passionate about technology and e
 And of course, you'll get to see the music that inspires Tim, as well as his own creative process as a producer and artist. So if you're ready to join Tim on his adventures, hit that subscribe button and let's go!
 
 Subscribe to Tim on of.com/itstimwhite.
+
+
+## See Also
+- [[chatgpt/chatgpt_tim-whites-music-career]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]
+- [[chatgpt/chatgpt_ai-driven-music-bio]]
+- [[chatgpt/chatgpt_ai-for-music-catalogs]]
+- [[chatgpt/chatgpt_ai-growth-engine-for-music]]

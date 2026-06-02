@@ -160,3 +160,11 @@ If you want, I can:
 - Sketch a **concrete schema**
 - Recommend **matching confidence thresholds**
 - Or sanity-check whether your use case actually needs ISRC at all
+
+
+## See Also
+- [[chatgpt/chatgpt_google-search-isrc-number]]
+- [[chatgpt/chatgpt_isrc-code-issuance-rules]]
+- [[chatgpt/chatgpt_isrc-song-information]]
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]

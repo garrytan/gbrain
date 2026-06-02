@@ -118,3 +118,11 @@ In Los Angeles, California, there are no specific legal restrictions preventing 
 3. Industry-Specific Rules: Some industries have specific regulations about rest periods and days off.
 
 Remember, consistently working without adequate rest can impact health and wellbeing. It's important to balance work with rest.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]
+- [[chatgpt/chatgpt_california-drivers-license-rules]]
+- [[chatgpt/chatgpt_california-king-on-king-bed]]
+- [[chatgpt/chatgpt_california-license-plate-requirement]]
+- [[chatgpt/chatgpt_california-park-closure-update]]

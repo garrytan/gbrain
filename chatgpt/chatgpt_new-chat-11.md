@@ -117,3 +117,11 @@ document.getElementById("swipeRight").addEventListener("click", function () {
 In this updated code, the `swipeRight` function now takes three parameters: `numClicks`, `delay`, and `totalSwipes`. These parameters can be used to control the number of swipes to be performed, the delay between each swipe, and the total number of swipes to be performed.
 
 The `document.getElementById("swipeRight").addEventListener("click", ...)` code listens for a click event on an element with an ID of "swipeRight". When the event is triggered, it sends a `swipeRight` message to the active tab in the current window, passing along the `numClicks`, `delay`, and `totalSwipes` parameters.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

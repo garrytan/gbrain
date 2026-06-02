@@ -232,3 +232,11 @@ Safe rollout + instant disable if vendors rate-limit us.
 - **Testing**: mock remote image responses; e2e for flow (save → toast → avatar visible).
 
 Want me to draft the **next wave** (Linktree scrape → Suggested links UI) when this ships?
+
+
+## See Also
+- [[chatgpt/chatgpt_3d-avatar-rendering-issues]]
+- [[chatgpt/chatgpt_amaz-twitch-gamer-profile]]
+- [[chatgpt/chatgpt_apple-level-profile-design]]
+- [[chatgpt/chatgpt_apple-music-profile-ux]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]

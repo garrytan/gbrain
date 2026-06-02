@@ -106,3 +106,11 @@ If you have a **screenshotted snippet**, even a few exact words (e.g., the preci
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_career-strategy-and-music-goals]]
+- [[chatgpt/chatgpt_music-career-and-financials]]
+- [[chatgpt/chatgpt_music-career-tools]]
+- [[chatgpt/chatgpt_tim-whites-music-career]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]

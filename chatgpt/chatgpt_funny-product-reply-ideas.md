@@ -37,3 +37,11 @@ Here are a few punchy options you can paste:
 4) “Congrats on the pickup! Mine ships with an extra frame per second of self-esteem, but they’ll probably patch that in.”
 
 5) “All good. May your HDMI handshakes be firm. If it ever sighs and whispers ‘could’ve been better,’ that’s just it missing me.”
+
+
+## See Also
+- [[chatgpt/chatgpt_product-mockup-ideas]]
+- [[chatgpt/chatgpt_automated-reply-for-new-messages]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-options]]

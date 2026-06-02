@@ -52,3 +52,11 @@ If you like, I can walk you through *your* specific `mcp_config.json` and logs (
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ac-crackling-troubleshooting]]
+- [[chatgpt/chatgpt_ac-not-working-troubleshooting]]
+- [[chatgpt/chatgpt_al-error-troubleshooting]]
+- [[chatgpt/chatgpt_app-crash-troubleshooting]]
+- [[chatgpt/chatgpt_auto-claude-troubleshooting-steps-part1]]

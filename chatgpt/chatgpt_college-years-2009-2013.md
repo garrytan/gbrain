@@ -38,3 +38,11 @@ Give me the months
 ## Assistant
 
 If you started college immediately after graduating high school in 2009, you likely began in the fall of 2009, around August or September. A typical 4-year college program would then conclude in the spring of 2013, around May or June.
+
+
+## See Also
+- [[chatgpt/chatgpt_celebrating-4-years]]
+- [[chatgpt/chatgpt_muscle-gain-in-2-years]]
+- [[chatgpt/chatgpt_waymo-project-2009-start]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]

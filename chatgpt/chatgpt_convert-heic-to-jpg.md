@@ -48,3 +48,11 @@ convert heic to jpg
 - urliLoveIMG HEIC Converterhttps://www.iloveimg.com/convert-to-jpg/heic-to-jpg
 
 If you upload the HEIC file here, I can convert it for you and return a JPG.
+
+
+## See Also
+- [[chatgpt/chatgpt_convert-code-to-emit-event]]
+- [[chatgpt/chatgpt_convert-component-to-composition-api]]
+- [[chatgpt/chatgpt_convert-height-to-feet]]
+- [[chatgpt/chatgpt_convert-markdown-to-html]]
+- [[chatgpt/chatgpt_convert-milliliters-to-ounces]]

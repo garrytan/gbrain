@@ -75,3 +75,11 @@ Here’s how I’d prioritize your list for **MVP launch** vs. **secondary impro
 ---
 
 Do you want me to draft this into a **linear-style issue breakdown** (tiny, parallelizable tickets) so your AI agents can take them on without stepping on each other?
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-holdings-name-suggestions]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part1]]
+- [[chatgpt/chatgpt_ai-ops-prioritization-strategy-part2]]
+- [[chatgpt/chatgpt_app-name-suggestions]]
+- [[chatgpt/chatgpt_artist-profile-suggestions]]

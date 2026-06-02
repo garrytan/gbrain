@@ -30,3 +30,11 @@ Here’s a concise blanket statement you can paste at the end of all your Market
 **“Pickup only, must be gone today. First come, first served—I can’t hold items. Payment via Venmo, Cash, Zelle, or Interac. I’ve got plenty of other stuff too if you want to take a look, just be prompt.”**  
 
 Want me to make you a slightly shorter, punchier version too for mobile-friendly listings?
+
+
+## See Also
+- [[chatgpt/chatgpt_calm-work-pickup-protocol]]
+- [[chatgpt/chatgpt_peonies-delivery-or-pickup]]
+- [[chatgpt/chatgpt_pink-peonies-pickup-delivery]]
+- [[chatgpt/chatgpt_archive-chats-on-fb-marketplace]]
+- [[chatgpt/chatgpt_bank-statement-editing-tips]]

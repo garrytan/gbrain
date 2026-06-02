@@ -660,3 +660,11 @@ If you want next, I can:
 - Or a **hospitality-turned-experiential-marketing** resume that makes your Vault + Bravo story look like a straight line into $120k+ experiential roles.
 
 You don’t have to decide everything now; you mostly need a **bridge that pays ≥$1k/week without wrecking your brain**, and TikTok/live host + one extra shift or small side gig looks like the cleanest immediate move for that.
+
+
+## See Also
+- [[chatgpt/chatgpt_annual-driving-estimate]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-female]]
+- [[chatgpt/chatgpt_body-fat-estimate]]
+- [[chatgpt/chatgpt_budget-estimate-for-airbnb]]

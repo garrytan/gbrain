@@ -65,3 +65,11 @@ Combine all the ingredients in a large container, stir well, and serve chilled.
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_batch-conversion-recipe]]
+- [[chatgpt/chatgpt_batch-drink-recipe-scaling]]
+- [[chatgpt/chatgpt_drink-recipe-and-batch-prep]]
+- [[chatgpt/chatgpt_air-fryer-conversion]]
+- [[chatgpt/chatgpt_best-ux-and-conversion]]

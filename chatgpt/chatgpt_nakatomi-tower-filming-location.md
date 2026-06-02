@@ -26,3 +26,11 @@ What is the real building that Nakatomi Tower was filmed in?
 ## Assistant
 
 The building used as Nakatomi Tower in the film "Die Hard" is the Fox Plaza in Century City, Los Angeles, California.
+
+
+## See Also
+- [[chatgpt/chatgpt_hollywood-arts-filming-location]]
+- [[chatgpt/chatgpt_current-filming-on-sunset]]
+- [[chatgpt/chatgpt_entourage-filming-locations-table]]
+- [[chatgpt/chatgpt_icarly-filming-locations]]
+- [[chatgpt/chatgpt_lost-city-filming-locations]]

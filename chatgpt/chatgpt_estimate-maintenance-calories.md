@@ -40,3 +40,11 @@ Assuming you are currently in a caloric deficit for cutting, your maintenance ca
 1790 calories (cutting) + 15% = 1790 * 1.15 = 2058.5 calories
 
 This is a rough estimate. For a more precise number, please provide your current weight and activity level.
+
+
+## See Also
+- [[chatgpt/chatgpt_advil-no-calories]]
+- [[chatgpt/chatgpt_calories-burned-walking-5k]]
+- [[chatgpt/chatgpt_calories-in-a-pan]]
+- [[chatgpt/chatgpt_calories-in-pussy-juice]]
+- [[chatgpt/chatgpt_calories-vs-chemicals-debate]]

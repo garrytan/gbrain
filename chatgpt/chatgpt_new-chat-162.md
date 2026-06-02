@@ -74,3 +74,11 @@ In the previous code, the `this` keyword was not included, so it's possible that
 By including the `this` keyword before `$store`, this code should be able to access the `crmPage` object in the Vue store and set the `showCustomFieldsModal` property to `true` when the user clicks on the `PlusIcon` component.
 
 However, as mentioned before, it's important to test and validate code to ensure that it works as expected and is accessible to all users.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

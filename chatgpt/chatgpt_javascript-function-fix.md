@@ -119,3 +119,11 @@ Try using this updated version of the function and see if it works as expected.
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_fix-javascript-function]]
+- [[chatgpt/chatgpt_swipe-right-javascript-function]]
+- [[chatgpt/chatgpt_chrome-extension-function-location]]
+- [[chatgpt/chatgpt_create-javascript-bookmarklets]]
+- [[chatgpt/chatgpt_download-video-audio-javascript]]

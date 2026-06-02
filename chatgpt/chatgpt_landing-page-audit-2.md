@@ -597,3 +597,11 @@ The landing page should create intrigue and push people into one action:
 > **Start a conversation with Jovie.**
 
 Then the chat extracts the data you need, qualifies users, and gives you a better fundraising story: not just demand, but structured evidence of who wants Jovie, why they want it, what they are using today, and which users are worth inviting first.
+
+
+## See Also
+- [[chatgpt/chatgpt_landing-page-audit-prompt]]
+- [[chatgpt/chatgpt_landing-page-audit]]
+- [[chatgpt/chatgpt_yc-audit-for-landing-page]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_ai-landing-page-workflow]]

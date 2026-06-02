@@ -197,3 +197,11 @@ Great! Here's the updated shopping list for the missing items, organized by typi
 2. **Tajin** (typically found in the spices or ethnic foods aisle)
 
 This should help you navigate Pavilions efficiently to grab the remaining items you need.
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-shopping-list]]
+- [[chatgpt/chatgpt_shopping-list-for-drinks]]
+- [[chatgpt/chatgpt_shopping-list-summary]]
+- [[chatgpt/chatgpt_advantages-of-google-shopping]]
+- [[chatgpt/chatgpt_rufus-ai-shopping-assistant]]

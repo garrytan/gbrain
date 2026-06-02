@@ -1132,3 +1132,11 @@ End with:
 ## Optional extra hardening
 
 Run Claude Code with a coordinator subagent or settings that restrict worker tools. Claude Code supports subagent tool allowlists and permission rules, so the safest setup is read/grep/glob/bash for discovery workers and write access only for scratch/final synthesis. citeturn215324view0turn215324view1
+
+
+## See Also
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part1]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part2]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part3]]
+- [[chatgpt/chatgpt_improve-and-harden-prompt-part4]]
+- [[chatgpt/chatgpt_codex-audit-prompt]]

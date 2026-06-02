@@ -808,3 +808,11 @@ Event                         | Payload
 - A/B test different corner positions and copy (“Scan to tip quickly!”).
 
 ---
+
+
+## See Also
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part1]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part2]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part3]]
+- [[chatgpt/chatgpt_mvp-ideas-for-jovi-part4]]
+- [[chatgpt/chatgpt_jovi-ios-app-spec]]

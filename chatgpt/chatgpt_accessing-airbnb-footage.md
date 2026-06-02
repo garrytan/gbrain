@@ -43,3 +43,11 @@ Mr. White, you generally **can’t force an Airbnb host to hand over their priva
 - If they refuse and you need it, your path is a subpoena after filing in small claims or civil court.
 
 Bottom line: you can *ask*, but to actually **get** the footage you’d need either the host’s consent or a court order/subpoena.
+
+
+## See Also
+- [[chatgpt/chatgpt_accessing-faq-content-issue]]
+- [[chatgpt/chatgpt_accessing-localhost-server]]
+- [[chatgpt/chatgpt_accessing-users-name-in-ios]]
+- [[chatgpt/chatgpt_airbnb-ai-usage]]
+- [[chatgpt/chatgpt_airbnb-booking-issues]]

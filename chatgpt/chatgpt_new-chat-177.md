@@ -40,3 +40,11 @@ is the options api depreciated?
 The options API, also known as the traditional component syntax, is not deprecated in Vue.js. It is still the primary way to define components in Vue.js and is fully supported in the latest version of the framework. 
 
 The Vue.js composition API is an additional way to define components that was introduced in version 3.0, and it is designed to provide an alternative syntax that is more intuitive and flexible. The composition API is built on top of the existing options API, and it is intended to be used alongside it, rather than as a replacement. You can use either the options API or the composition API, depending on your preference and the needs of your project.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

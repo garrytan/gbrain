@@ -67,3 +67,11 @@ It implies: label services, artist independence, operational pain, AI leverage. 
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_agentic-os-for-artists-part1]]
+- [[chatgpt/chatgpt_agentic-os-for-artists-part2]]
+- [[chatgpt/chatgpt_agentic-os-for-artists-part3]]
+- [[chatgpt/chatgpt_album-sales-2024-12-artists]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]

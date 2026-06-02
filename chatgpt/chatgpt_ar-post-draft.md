@@ -62,3 +62,11 @@ Sure, Mr. White. Here’s an engagement-optimized Twitter thread to call in thos
 **Tweet 4:**  
 👇 Drop your links in DMs or reply with “💌” and we’ll reach out. Can’t wait to hear what you’ve got!  
 #PopToplines #UnreleasedMusic #SongwritersWanted #AandR
+
+
+## See Also
+- [[chatgpt/chatgpt_apology-letter-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-response-draft]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part1]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part2]]

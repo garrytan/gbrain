@@ -40,3 +40,11 @@ fast-check
 3. If a counterexample is found, fast-check reports it and typically *shrinks* it to the smallest failing input. citeturn0search2
 
 This approach helps catch edge-case bugs and unexpected behaviors that typical example-based unit tests might miss. citeturn0search2
+
+
+## See Also
+- [[chatgpt/chatgpt_fast-check-worth-using]]
+- [[chatgpt/chatgpt_ci-with-ai-in-fast-companies]]
+- [[chatgpt/chatgpt_fast-20k-to-1m]]
+- [[chatgpt/chatgpt_fast-mode-in-claude]]
+- [[chatgpt/chatgpt_fast-solo-bouncing-tracks]]

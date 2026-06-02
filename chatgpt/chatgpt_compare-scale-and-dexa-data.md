@@ -71,3 +71,11 @@ Mr. White — keep your DEXA conditions **consistent**. “Lightly fasted” is 
 
 ## For you
 You usually go in fasted. Keep that, **but hydrated and on normal carbs**. Given your current trend, expect a DEXA **~10.5–11.5%** if you follow the steps above. If you arrive notably low-carb or under-hydrated, add ~**+0.5–1.0** points to that.
+
+
+## See Also
+- [[chatgpt/chatgpt_compare-scale-data-and-dexa]]
+- [[chatgpt/chatgpt_analyze-and-compare-dexa]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part1]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part2]]
+- [[chatgpt/chatgpt_dexa-and-scale-bf-estimate-part3]]

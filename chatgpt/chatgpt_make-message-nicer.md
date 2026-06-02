@@ -74,3 +74,11 @@ If you want Meg to come in, that’s fine—just let me know. But moving forward
 ---
 
 Would you like me to make this **more formal and professional** (like something you could send to an executive), or keep it in this **direct but conversational** tone?
+
+
+## See Also
+- [[chatgpt/chatgpt_add-count-to-log-message]]
+- [[chatgpt/chatgpt_anniversary-trip-message]]
+- [[chatgpt/chatgpt_aviation-mysteries-stendec-message]]
+- [[chatgpt/chatgpt_clean-up-message-2]]
+- [[chatgpt/chatgpt_clean-up-message]]

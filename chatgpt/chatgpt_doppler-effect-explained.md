@@ -40,3 +40,11 @@ In medical imaging, **Doppler ultrasound** uses the Doppler effect to measure **
 - **Navigation & Sensors:** Doppler effects help calculate speed or movement in various technologies. citeturn0search27
 
 In short, *Doppler* typically means something involving **frequency changes due to relative motion** — especially waves like sound or light — and includes technologies like Doppler ultrasound that exploit this phenomenon. citeturn0search5
+
+
+## See Also
+- [[chatgpt/chatgpt_doppler-secret-visibility-explained]]
+- [[chatgpt/chatgpt_stutter-house-effect-explained]]
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]
+- [[chatgpt/chatgpt_alcohols-effect-on-fat-loss]]

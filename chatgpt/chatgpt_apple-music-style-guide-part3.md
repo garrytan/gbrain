@@ -82,3 +82,11 @@ Better in my head
 ---
 
 This formatting ensures that each section of the song is clearly defined, with consistent capitalization at the beginning of each line, as per traditional grammar rules, and with no punctuation at the end of lines except where grammatically appropriate (e.g., at the end of sentences or for abbreviations). The use of bold for section headings (Verse, Pre-Chorus, Chorus) helps distinguish different parts of the song for easier readability and organization.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_tiktok-live-music-guide]]
+- [[chatgpt/chatgpt_apple-music-affiliate-program]]
+- [[chatgpt/chatgpt_apple-music-overview]]

@@ -132,3 +132,11 @@ In the workout room, the room is going to go, all of the workout equipment is go
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-homepage-redesign-prompt]]
+- [[chatgpt/chatgpt_app-icon-redesign-brief]]
+- [[chatgpt/chatgpt_dashboard-redesign-concepts]]
+- [[chatgpt/chatgpt_jovie-homepage-redesign-prompt]]
+- [[chatgpt/chatgpt_landing-page-redesign-part1]]

@@ -50,3 +50,11 @@ To specify a profile angle in a DALL-E prompt, you can include details about the
 4. **Over-the-Shoulder Angle**: "Illustrate an over-the-shoulder view of a person, focusing on the back of their head and shoulders with a glimpse of their face in profile."
 
 5. **Bird’s-Eye View**: "Create a bird’s-eye view image of a scene, looking
+
+
+## See Also
+- [[chatgpt/chatgpt_blonde-model-in-popcorn-bathtub]]
+- [[chatgpt/chatgpt_blonde-model-in-popcorn-filled-bathtub]]
+- [[chatgpt/chatgpt_model-in-popcorn-bath]]
+- [[chatgpt/chatgpt_popcorn-bath-cinematic-model]]
+- [[chatgpt/chatgpt_popcorn-bath-model-portrait]]

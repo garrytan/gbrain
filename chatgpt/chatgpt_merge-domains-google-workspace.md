@@ -104,3 +104,11 @@ Yes, adding the domain as an alias to your Google Workspace account can simplify
    - Also, send an email from the alias to confirm that it can send emails properly.
 
 By adding the domain as an alias in Google Workspace, you can manage all your emails from one account without the need for additional SMTP servers or complex routing rules.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-domains-alternatives-summary]]
+- [[chatgpt/chatgpt_google-workspace-login-steps]]
+- [[chatgpt/chatgpt_google-workspace-overview]]
+- [[chatgpt/chatgpt_create-contact-import-merge]]
+- [[chatgpt/chatgpt_merge-block-reasons]]

@@ -92,3 +92,11 @@ This script will:
 1. Click all elements with the class `harmony-7dahz9` with a 100ms delay between each click.
 2. Scroll down by one viewport height.
 3. Wait 2 seconds and repeat the process until no more elements with the specified class are found.
+
+
+## See Also
+- [[chatgpt/chatgpt_click-buttons-with-delay-part2]]
+- [[chatgpt/chatgpt_click-buttons-with-delay-part3]]
+- [[chatgpt/chatgpt_merge-queue-delay-explanation-part1]]
+- [[chatgpt/chatgpt_click-all-buttons-script]]
+- [[chatgpt/chatgpt_click-all-follow-buttons]]

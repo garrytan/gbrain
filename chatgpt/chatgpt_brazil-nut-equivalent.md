@@ -65,3 +65,11 @@ How many Brazil nuts is that
 ## Assistant
 
 Brazil nuts vary in size, but on average, one Brazil nut weighs about 5 grams. So, 19 grams of Brazil nuts would be approximately 3 to 4 nuts. Keep in mind that this is an estimate, and actual weights can vary. It's always best to use a scale for precise measurement.
+
+
+## See Also
+- [[chatgpt/chatgpt_carbs-equivalent-to-45g-fat]]
+- [[chatgpt/chatgpt_drizzle-migrate-fresh-equivalent]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

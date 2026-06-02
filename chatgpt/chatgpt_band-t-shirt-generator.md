@@ -877,3 +877,11 @@ Payout ledger = artist accounting source of truth
 ```
 
 That lets artists create, kill, rank, and optimize merch from chat without being constrained by Printful’s storefront/product-management model.
+
+
+## See Also
+- [[chatgpt/chatgpt_black-dress-shirt-options]]
+- [[chatgpt/chatgpt_blonde-in-mens-shirt]]
+- [[chatgpt/chatgpt_estimate-t-shirt-quantity]]
+- [[chatgpt/chatgpt_gym-shirt-policies-summary]]
+- [[chatgpt/chatgpt_bow-wow-wow-band]]

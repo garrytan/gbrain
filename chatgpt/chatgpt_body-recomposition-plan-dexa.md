@@ -155,3 +155,11 @@ Great, here is a structured prompt that you can use with a document creation plu
 ---
 
 Would you like to create this document now? If so, please specify the format (PDF, DOCX, etc.) and any additional details you may want to include.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-recomposition-plan]]
+- [[chatgpt/chatgpt_body-composition-phase-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-reduction-plan-2]]
+- [[chatgpt/chatgpt_body-fat-reduction-plan]]

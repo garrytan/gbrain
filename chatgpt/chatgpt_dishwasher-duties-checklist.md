@@ -674,3 +674,11 @@ Here’s the updated checklist with the additional mixers:
 ---
 
 This checklist ensures each bar is fully stocked and ready for service.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-checklist-mixers-rimming-essentials]]
+- [[chatgpt/chatgpt_bar-setup-checklist]]
+- [[chatgpt/chatgpt_documentation-update-checklist]]
+- [[chatgpt/chatgpt_foh-checklist-request-part1]]
+- [[chatgpt/chatgpt_foh-checklist-request-part2]]

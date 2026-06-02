@@ -283,3 +283,11 @@ Begin now:
 9. Watch every PR until merged, fixing all comments, CI failures, conflicts, and queue issues.
 10. Keep repeating until the run is exhausted.
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_build-test-automation-tips]]
+- [[chatgpt/chatgpt_public-profile-test-automation]]
+- [[chatgpt/chatgpt_overnight-claude-session-plan]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]

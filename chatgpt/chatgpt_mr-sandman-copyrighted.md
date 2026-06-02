@@ -42,3 +42,11 @@ Yes, it is true. Even though "Mr. Sandman" was released before the Sonny Bono Co
 The original copyright term for works created before 1978 was 28 years, with the possibility of renewing the copyright for an additional 28 years. The Copyright Act of 1976 extended the renewal term to 47 years, which means that the copyright for "Mr. Sandman" was renewed and will last for a total of 75 years from the date of its first publication. 
 
 In 1998, the Sonny Bono Copyright Term Extension Act further extended the duration of copyright protection for works created on or after January 1, 1978, to the life of the author plus 70 years, and for works created before that date, to a total of 95 years from the date of publication or 120 years from the date of creation, whichever is shorter. However, this extension did not affect works that were already under copyright protection at the time. Therefore, "Mr. Sandman" is still under copyright protection and is not in the public domain.
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

@@ -597,3 +597,11 @@ You can then use this method in the template like this:
       <CheckCircleIcon
         v-if="passesValidation"
         class="h-5 w-5 text-red-500
+
+
+## See Also
+- [[chatgpt/chatgpt_explain-email-validation-levels]]
+- [[chatgpt/chatgpt_fix-email-validation-function]]
+- [[chatgpt/chatgpt_modify-email-validation-function]]
+- [[chatgpt/chatgpt_vue-email-validation-component-2]]
+- [[chatgpt/chatgpt_vue-email-validation-component]]

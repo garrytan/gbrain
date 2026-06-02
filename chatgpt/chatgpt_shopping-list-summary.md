@@ -32,3 +32,11 @@ Here is your list:
 - Six bags of chips
 - Gallon of milk
 - Chives
+
+
+## See Also
+- [[chatgpt/chatgpt_amazon-shopping-list]]
+- [[chatgpt/chatgpt_shopping-list-for-drinks]]
+- [[chatgpt/chatgpt_shopping-list-organization]]
+- [[chatgpt/chatgpt_bullet-point-list-summary]]
+- [[chatgpt/chatgpt_order-list-summary]]

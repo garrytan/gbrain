@@ -69,3 +69,11 @@ Mr. White,
 Alternatively, polycarbonate is another option, offering higher impact resistance than both glass and plexiglass, though it may be more expensive. citeturn0search1
 
 Consider these factors when choosing the replacement material for your garage door window. 
+
+
+## See Also
+- [[chatgpt/chatgpt_champagne-glass-alternatives]]
+- [[chatgpt/chatgpt_claude-cli-path-windows]]
+- [[chatgpt/chatgpt_description-of-glass-tables]]
+- [[chatgpt/chatgpt_garage-cant-hold-you]]
+- [[chatgpt/chatgpt_glass-bottle-mark-meaning]]

@@ -68,3 +68,11 @@ Completion means the work is **production-ready**, not merely functional.
 ---
 
 **Want this stricter (e.g., require screenshots of test output, CI links, or enforce commit message format)?** I can harden it further.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part2]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part3]]
+- [[chatgpt/chatgpt_tech-debt-agent-prompt]]

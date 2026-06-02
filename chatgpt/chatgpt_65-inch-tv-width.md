@@ -26,3 +26,11 @@ How wide is a 65-inch TV?
 ## Assistant
 
 A 65″ TV (16:9 aspect ratio) has an active screen width of about **56.6 inches** (≈144 cm). Most manufacturers add a slim bezel, so the total cabinet width ends up around **57–58 inches**.
+
+
+## See Also
+- [[chatgpt/chatgpt_allen-key-size-14-inch]]
+- [[chatgpt/chatgpt_get-width-from-array]]
+- [[chatgpt/chatgpt_responsive-input-width]]
+- [[chatgpt/chatgpt_set-storestate-with-window-width]]
+- [[chatgpt/chatgpt_tailwind-max-width-680px]]

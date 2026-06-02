@@ -55,3 +55,11 @@ If you tell me **1–2 specifics** about what you mean by “relevant to the lar
 ## User
 
 Tea, what about Zachary Jones and Chiddy Bang?
+
+
+## See Also
+- [[chatgpt/chatgpt_mcp-in-music-industry]]
+- [[chatgpt/chatgpt_music-industry-message-draft]]
+- [[chatgpt/chatgpt_la-film-industry-jobs]]
+- [[chatgpt/chatgpt_minimum-wage-industry-issues]]
+- [[chatgpt/chatgpt_agentic-billing-for-music]]

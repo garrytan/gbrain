@@ -58,3 +58,11 @@ Given your profile (assuming you’re involved in a U.S.-based startup or planni
 - Compare Stack vs specialist tools (e.g., Carta for cap table, Brex for banking, etc.). If you value consolidation, Stack might win; if you have highly specialized needs in one vertical, you might gain from best-in-class tool there.
 
 If you like, I can pull together **pricing, feature comparison**, and **alternatives** (e.g., Carta, Pulley, etc) to see which is the best fit for your startup scenario. Would you like that?
+
+
+## See Also
+- [[chatgpt/chatgpt_angellist-stack-overview]]
+- [[chatgpt/chatgpt_supplement-stack-overview]]
+- [[chatgpt/chatgpt_tech-stack-overview]]
+- [[chatgpt/chatgpt_angellist-stack-status]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]

@@ -97,3 +97,11 @@ So challenge the 1 take and no cgi
 Here’s a snappy challenge you can post:
 
 > “One take, zero CGI”? Come on. The split was real, sure—but let’s not pretend this was some raw YouTuber stunt. Safety harnesses were edited out, the lighting was dialed in, and there were *definitely* multiple takes before nailing it. It’s an ad, not a documentary.
+
+
+## See Also
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_murderer-escape-logic]]
+- [[chatgpt/chatgpt_packaged-food-logic]]
+- [[chatgpt/chatgpt_savage-logic-challenge]]

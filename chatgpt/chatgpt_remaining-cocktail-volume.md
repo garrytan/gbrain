@@ -473,3 +473,11 @@ Cons: small setup.
 - For perfs, add caching (e.g., `revalidate` or an in-memory/edge cache) if your sheet doesn’t change often.
 
 Want me to drop this into a ready-to-run Next.js repo structure or convert to Server Actions?
+
+
+## See Also
+- [[chatgpt/chatgpt_adjust-vocal-volume-rides]]
+- [[chatgpt/chatgpt_batch-cocktail-calculation]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_cocktail-batch-calculation]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]

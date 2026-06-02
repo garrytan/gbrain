@@ -1087,3 +1087,11 @@ th.sticky {
 ```
 
 In this updated code, the `filteredSongs` computed property is added, which filters out songs with "mix" or "edit" in the title using a regular expression. The table now iterates over `filteredSongs` instead of `sortedSongs`.
+
+
+## See Also
+- [[chatgpt/chatgpt_edit-numbers]]
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part1]]
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part2]]
+- [[chatgpt/chatgpt_large-numbers-dashboard-display-part3]]
+- [[chatgpt/chatgpt_passing-index-numbers-to-components]]

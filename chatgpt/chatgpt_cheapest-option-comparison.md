@@ -53,3 +53,11 @@ Let’s calculate the **price per liter** for each size:
 - **1.75 L ($30.49)** → \( 30.49 / 1.75 = \$17.42 per liter \)  
 
 ✅ **Best value per liter:** **Jack Daniel’s Black 1.75 L** at **\$17.42 per liter**.
+
+
+## See Also
+- [[chatgpt/chatgpt_exercise-stock-option-no-nap]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_best-deal-comparison]]

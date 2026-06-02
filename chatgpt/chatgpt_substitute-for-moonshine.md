@@ -26,3 +26,11 @@ What's a good substitute for moonshine?
 ## Assistant
 
 A good substitute for moonshine is high-proof vodka or Everclear, as they have a similar strong, neutral flavor profile. For a more traditional flavor, you could also use white whiskey or unaged bourbon.
+
+
+## See Also
+- [[chatgpt/chatgpt_moonshine-mule-recipe]]
+- [[chatgpt/chatgpt_substitute-for-4-rice-cakes]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

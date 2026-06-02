@@ -34,3 +34,11 @@ Short answer: **No — Codex does *not* currently support automatically running 
 - Some feature requests on the official Codex repo discuss richer slash command integration (like auto-invoke or metadata to trigger commands based on context), but these are *requests* and not available features. citeturn0search20
 
 If you’re trying to automate workflows (e.g., after each execution), you’d need to wrap the Codex CLI invocation in an external script or automation tool (like a shell script, Makefile, or CI pipeline) that runs whatever commands you want *after* Codex finishes — Codex itself won’t trigger those automatically.
+
+
+## See Also
+- [[chatgpt/chatgpt_react-hooks-slash-command]]
+- [[chatgpt/chatgpt_chatgpt-vs-gpt-51-codex]]
+- [[chatgpt/chatgpt_cheapest-codex-usage-options]]
+- [[chatgpt/chatgpt_codex-51-vs-claude-45]]
+- [[chatgpt/chatgpt_codex-52-for-refactoring]]

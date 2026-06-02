@@ -63,3 +63,11 @@ Mr. White — since you’re paid weekly, you’re at **≈$69.3k/yr** (**≈$33
 - **All occupations (LA area avg):** **$36.64/hr** → **$76.2k**. citeturn2view0  
 
 **Bottom line:** You’re about **+87% vs. LA minimum**, **~17–33% above** common entry-level office/call-center roles, and **~9% below** the overall LA-area average across all jobs.
+
+
+## See Also
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_ai-iphone-organization-help]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_anxiety-attack-seek-help]]

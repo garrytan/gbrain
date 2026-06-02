@@ -62,3 +62,11 @@ Tell me which applies, and I’ll help you apply the right intervention — e.g.
 If you tell me what’s stressing you — work, gym, personal life — I’ll give you a tailored strategy (RP-style: practical, trackable, and evidence-based).  
 
 What’s the main stressor right now?
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-iphone-organization-help]]
+- [[chatgpt/chatgpt_anxiety-attack-seek-help]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part1]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part2]]
+- [[chatgpt/chatgpt_aramis-agent-profile-management-part3]]

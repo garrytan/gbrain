@@ -115,3 +115,11 @@ Use this routing:
 3. **Try NVIDIA NIM separately**, but treat it as experimental for Hermes right now. There are recent NVIDIA forum reports about DeepSeek V4 NIM tool-call streaming/token-count weirdness, which matters for agent workflows. citeturn917255search7turn985172search4
 
 4. **Self-host NIM only after telemetry proves sustained load.** For your current agent orchestration, API pricing almost certainly beats GPU rental unless agents are running constantly at very high token volume.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-sink-requirements-california]]
+- [[chatgpt/chatgpt_cookie-banner-requirements-2]]
+- [[chatgpt/chatgpt_cookie-banner-requirements-3]]
+- [[chatgpt/chatgpt_cookie-banner-requirements]]
+- [[chatgpt/chatgpt_id-requirements-domestic-flight]]

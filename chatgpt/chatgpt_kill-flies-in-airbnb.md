@@ -76,3 +76,11 @@ No bug spray? A **mist of water + a bit of dish soap in a spray bottle** can kno
 If you’re seeing **dozens** or they keep coming from one spot (drain, trash area, etc.), message the host and say there’s a **fly problem/infestation** and they need to get pest control or deep cleaning done.
 
 If you tell me what you have in the kitchen (vinegar, fruit, plastic wrap, spray, etc.), I can give you a super-specific “use this, put it here” plan.
+
+
+## See Also
+- [[chatgpt/chatgpt_accessing-airbnb-footage]]
+- [[chatgpt/chatgpt_airbnb-ai-usage]]
+- [[chatgpt/chatgpt_airbnb-booking-issues]]
+- [[chatgpt/chatgpt_airbnb-damage-claim-issues]]
+- [[chatgpt/chatgpt_airbnb-essentials-list]]

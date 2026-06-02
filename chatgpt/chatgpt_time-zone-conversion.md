@@ -28,3 +28,11 @@ tags: [chatgpt, import]
 1 PM CET (Central European Time) is **5 AM in Los Angeles (PST)**.  
 
 If daylight saving time is active in Europe (i.e., CEST instead of CET), then 1 PM CEST would be **4 AM in Los Angeles**.
+
+
+## See Also
+- [[chatgpt/chatgpt_time-zone-conversion-2]]
+- [[chatgpt/chatgpt_time-zone-conversion-3]]
+- [[chatgpt/chatgpt_time-conversion-inquiry]]
+- [[chatgpt/chatgpt_time-zone-issue-fix]]
+- [[chatgpt/chatgpt_ai-progress-over-time]]

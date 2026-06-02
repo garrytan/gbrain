@@ -69,3 +69,11 @@ Voice Control requires a **one-time download**, and after that Apple says it doe
 My practical recommendation: do a 2-minute test in **TextEdit** after setting the mic manually and checking the on-device/internet note in Keyboard settings. If it still takes 10–15 seconds there, I would stop fighting Apple Dictation and switch to a dedicated dictation layer. Current options that advertise dictation into any app include **Superwhisper**, **Wispr Flow**, and **Aqua Voice**. citeturn183773search0turn183773search1turn183773search2
 
 If you want, I’ll give you the exact fastest settings sequence to try on your Mac in under 3 minutes.
+
+
+## See Also
+- [[chatgpt/chatgpt_actor-bio-optimization]]
+- [[chatgpt/chatgpt_ai-dev-workflow-optimization]]
+- [[chatgpt/chatgpt_ai-operations-optimization]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]

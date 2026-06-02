@@ -36,3 +36,11 @@ The Google People API allows developers to access and manage the contacts and pe
 7. `country` - The country of the contact, represented as a two-letter ISO 3166-1 alpha-2 country code, such as "US" for the United States.
 
 These fields are used to represent the different components of an address and provide a standardized format for storing and retrieving addresses across different systems and applications.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-google-oauth]]
+- [[chatgpt/chatgpt_advantages-of-google-shopping]]
+- [[chatgpt/chatgpt_airtable-vs-google-sheets]]
+- [[chatgpt/chatgpt_can-black-people-be-irish]]
+- [[chatgpt/chatgpt_capture-email-addresses-sql]]

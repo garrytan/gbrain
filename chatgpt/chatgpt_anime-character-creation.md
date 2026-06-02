@@ -35,3 +35,11 @@ Here’s your anime-style portrait, Mr. White.
 Here’s another anime-style portrait of both of you as characters, Mr. White:
 
 ![Anime rendition of two young adults on a couch](/mnt/data/A_2D_anime-style_illustration_showcases_a_young_wo.png)
+
+
+## See Also
+- [[chatgpt/chatgpt_fictional-character-creation]]
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_ai-3d-model-creation]]
+- [[chatgpt/chatgpt_ai-character-web-interaction]]
+- [[chatgpt/chatgpt_ai-music-prompt-creation]]

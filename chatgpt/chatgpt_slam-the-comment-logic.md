@@ -45,3 +45,11 @@ A sharper slam would be:
 “Calling it a monopoly ignores basic ad economics. Advertisers don’t spend out of loyalty. They spend where it converts. If it were unusable, billions in ad budget would reallocate immediately.”
 
 Attack the reasoning, not the person.
+
+
+## See Also
+- [[chatgpt/chatgpt_early-check-out-logic]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_logic-refactoring-advice-part2]]
+- [[chatgpt/chatgpt_murderer-escape-logic]]
+- [[chatgpt/chatgpt_packaged-food-logic]]

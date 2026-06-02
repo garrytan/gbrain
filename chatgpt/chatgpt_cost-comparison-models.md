@@ -104,3 +104,11 @@ Sloppy context loop: $500+/month
 ```
 
 The main risk is **context creep**, not model price. A Hermes agent that keeps resending huge GBrain dumps, repo context, logs, and chat history can 10x the bill fast. Keep memory retrieval tight, summarize aggressively, and cap loops.
+
+
+## See Also
+- [[chatgpt/chatgpt_cost-comparison-coding-models]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part1]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part2]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part3]]
+- [[chatgpt/chatgpt_claude-code-cost-comparison-part4]]

@@ -51,3 +51,11 @@ The screenplay for the film "The Killer" directed by David Fincher was written b
 ## User
 
 Why was Jeff Cronenworth not involved in the project?
+
+
+## See Also
+- [[chatgpt/chatgpt_cronenworth-not-part-of-the-killer]]
+- [[chatgpt/chatgpt_finchers-coffee-preferences-starbucks]]
+- [[chatgpt/chatgpt_joker-and-harley-quotes]]
+- [[chatgpt/chatgpt_spy-movie-quotes]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

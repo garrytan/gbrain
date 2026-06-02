@@ -145,3 +145,11 @@ Here are three more Ryan Reynolds–style comebacks you could fire back with:
 1. **“Thanks, make it a group prayer for everyone selling cheap crap on Facebook Marketplace.”**  
 2. **“Perfect, I’ll pray you find a delivery driver with lower self-esteem.”**  
 3. **“Awesome, I’ll pray for gas prices to drop to 1995 levels so delivery makes sense.”**  
+
+
+## See Also
+- [[chatgpt/chatgpt_coke-zero-delivery-options]]
+- [[chatgpt/chatgpt_costco-business-delivery-terms]]
+- [[chatgpt/chatgpt_costco-delivery-zone-issue]]
+- [[chatgpt/chatgpt_druze-epitide-delivery-and-injection]]
+- [[chatgpt/chatgpt_flower-delivery-on-friday]]

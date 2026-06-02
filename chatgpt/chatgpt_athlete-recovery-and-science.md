@@ -38,3 +38,11 @@ Tighter:
 “Elite recovery is an availability strategy. Muscle growth still runs on resistance training, enough calories/protein, and sleep. Repeated post-lift ice baths can blunt hypertrophy; massage mostly changes soreness; cupping is low-evidence. Great return-to-play logic. Weak muscle-building advice.” citeturn623764search0turn904029search1turn904029search2turn107267search19turn794577search13turn794577search5turn794577search10turn116284search9
 
 One accuracy tweak from your draft: recovery is driven mostly by sleep, nutrition, time, and load management. Light activity can help soreness and readiness in some settings. citeturn107267search19turn904029search1turn904029search2turn687129search2
+
+
+## See Also
+- [[chatgpt/chatgpt_ketamine-and-erection-science]]
+- [[chatgpt/chatgpt_science-based-vocal-coaches]]
+- [[chatgpt/chatgpt_science-behind-light-therapy]]
+- [[chatgpt/chatgpt_science-clapback-with-humor]]
+- [[chatgpt/chatgpt_science-vs-opinions]]

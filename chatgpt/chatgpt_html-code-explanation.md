@@ -143,3 +143,11 @@ It looks like you have provided some code written in HTML, which is a markup lan
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_atomic-code-explanation]]
+- [[chatgpt/chatgpt_html-source-code-request]]
+- [[chatgpt/chatgpt_input-field-html-code]]
+- [[chatgpt/chatgpt_add-cloud-code-ci]]
+- [[chatgpt/chatgpt_agent-skills-vs-code-cli]]

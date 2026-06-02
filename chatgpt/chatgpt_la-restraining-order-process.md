@@ -51,3 +51,11 @@ will the other party be at the court date
 ## Assistant
 
 Yes, the other party will have the opportunity to appear in court and contest the restraining order at the hearing. If the other party does appear in court, they will have the opportunity to present their side of the story and any evidence they have to counter your request for a restraining order. The judge will then weigh the evidence and decide whether to grant or deny the restraining order. It's important to note that even if the other party does not appear in court, the judge may still grant a restraining order based on the evidence presented by you.
+
+
+## See Also
+- [[chatgpt/chatgpt_restraining-order-eligibility]]
+- [[chatgpt/chatgpt_bar-supply-order-list]]
+- [[chatgpt/chatgpt_coffee-order-summary]]
+- [[chatgpt/chatgpt_dexter-shows-in-order]]
+- [[chatgpt/chatgpt_fall-order-email-draft]]

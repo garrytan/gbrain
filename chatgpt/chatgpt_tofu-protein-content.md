@@ -41,3 +41,11 @@ Tofu is a **plant-based, soy-derived protein source** and a complete protein (co
 - It’s considered **complete protein** and can substitute for animal protein in many diets. citeturn0search0
 
 If you want exact grams for a specific brand or type, check the nutrition label.
+
+
+## See Also
+- [[chatgpt/chatgpt_accessing-faq-content-issue]]
+- [[chatgpt/chatgpt_bind-input-value-to-content-script]]
+- [[chatgpt/chatgpt_budgeting-protein-and-brunch]]
+- [[chatgpt/chatgpt_c2pa-content-credentials]]
+- [[chatgpt/chatgpt_caffeine-content-comparison-table]]

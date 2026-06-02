@@ -115,3 +115,11 @@ If you’d like, I can pull together a **starter template** using Geist UI (Reac
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_geist-design-system-overview-2]]
+- [[chatgpt/chatgpt_geist-design-system-pricing]]
+- [[chatgpt/chatgpt_geist-design-system]]
+- [[chatgpt/chatgpt_vercel-geist-design-system]]
+- [[chatgpt/chatgpt_code-review-system-design]]

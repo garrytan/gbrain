@@ -26,3 +26,11 @@ Can an employer ask for an ssn during an application
 ## Assistant
 
 Yes, an employer can ask for your Social Security Number (SSN) during the application process. They typically use it for background checks, verifying your identity, and tax purposes. However, you should ensure that the employer is legitimate and that your SSN will be handled securely.
+
+
+## See Also
+- [[chatgpt/chatgpt_congress-asks-president-israel-arms]]
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_answer-employer-questions]]
+- [[chatgpt/chatgpt_application-completion-assistance]]
+- [[chatgpt/chatgpt_application-drafting-request]]

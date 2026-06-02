@@ -187,3 +187,11 @@ That should get you a working GUI and a live socket that Blender can talk to. Le
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_blender-wireframe-generation-part1]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part10]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part11]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part12]]
+- [[chatgpt/chatgpt_blender-wireframe-generation-part13]]

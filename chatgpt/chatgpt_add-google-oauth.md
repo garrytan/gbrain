@@ -26,3 +26,11 @@ add google oauth to our dev enviroment too on clerk
 ## Assistant
 
 I accessed the Clerk dashboard and added Google OAuth as an SSO connection for your development environment. The Google provider now appears alongside your existing Spotify connection and is enabled for sign-in/sign-up【773501750337425†screenshot】.
+
+
+## See Also
+- [[chatgpt/chatgpt_google-oauth-issue]]
+- [[chatgpt/chatgpt_google-oauth-overview-2]]
+- [[chatgpt/chatgpt_google-oauth-overview-3]]
+- [[chatgpt/chatgpt_google-oauth-overview-4]]
+- [[chatgpt/chatgpt_google-oauth-overview]]

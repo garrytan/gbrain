@@ -79,3 +79,11 @@ Yes. In addition to *Ted Lasso*, **Kiki May** has appeared in other screen roles
 • *Professor T* (TV) – appeared as **Francesca Sanders** in at least one episode citeturn0search0
 
 Her earliest listed acting work was on *Ted Lasso*, and she has since expanded into other TV and film roles. citeturn0search7
+
+
+## See Also
+- [[chatgpt/chatgpt_origin-of-ted-lasso]]
+- [[chatgpt/chatgpt_ted-lasso-3-seasons]]
+- [[chatgpt/chatgpt_ted-lasso-filming-locations]]
+- [[chatgpt/chatgpt_ted-lasso-imdb]]
+- [[chatgpt/chatgpt_ted-lasso-mental-health]]

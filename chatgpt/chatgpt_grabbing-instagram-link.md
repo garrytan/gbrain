@@ -33,3 +33,11 @@ Assuming that this XPath expression is targeting an HTML element with a `data-ty
 ```
 
 This modified XPath expression should select the `href` attribute of the element that matches the `[data-type='instagram']` condition, returning the value of the link.
+
+
+## See Also
+- [[chatgpt/chatgpt_creating-instagram-deep-link]]
+- [[chatgpt/chatgpt_instagram-link-html-template]]
+- [[chatgpt/chatgpt_modify-instagram-link-logging]]
+- [[chatgpt/chatgpt_ad-campaign-instagram-for-females]]
+- [[chatgpt/chatgpt_beeper-issue-instagram-login]]

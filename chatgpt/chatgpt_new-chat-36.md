@@ -20,3 +20,11 @@ tags: [chatgpt, import]
 ## User
 
 I have a app based on laravel. It uses vue.js for the front end with tailwind css. it use laravel sanctum for auth. It is currently a web app only. I would like to add a mobile app. What is the best way to build a mobile app for iOS based on my current setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

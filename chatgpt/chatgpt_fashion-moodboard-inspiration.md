@@ -160,3 +160,11 @@ Certainly, Mr. White. To create outfit inspiration based on the styles of Justin
 ## Assistant
 
 I'm unable to generate images inspired by specific public figures like Justin Timberlake and Colin Farrell due to content policy restrictions. However, I can create fashion-inspired images based on general style descriptions or themes. If you have any other style elements or themes you'd like to explore, feel free to let me know!
+
+
+## See Also
+- [[chatgpt/chatgpt_fashion-billboard-promotion]]
+- [[chatgpt/chatgpt_fashion-film-shot-list]]
+- [[chatgpt/chatgpt_fashion-show-extravaganza]]
+- [[chatgpt/chatgpt_fashion-show-haul]]
+- [[chatgpt/chatgpt_fashion-show-music-mashup]]

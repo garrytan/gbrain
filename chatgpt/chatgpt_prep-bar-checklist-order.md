@@ -134,3 +134,11 @@ Certainly. Here's the updated task list with the adjustment to stock mixers befo
 - Check server stations and tables for any needs.
 - Ensure there are four lamps on the bar and two menus on each bar.
 - Get in uniform.
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-checklist-mixers-rimming-essentials]]
+- [[chatgpt/chatgpt_bar-setup-checklist]]
+- [[chatgpt/chatgpt_dishwasher-duties-checklist]]
+- [[chatgpt/chatgpt_documentation-update-checklist]]
+- [[chatgpt/chatgpt_foh-checklist-request-part1]]

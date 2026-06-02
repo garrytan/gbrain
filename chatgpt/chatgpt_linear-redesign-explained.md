@@ -59,3 +59,11 @@ If you want, I can show concrete examples of steps a typical **linear redesign p
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-color-palette-explained]]
+- [[chatgpt/chatgpt_linear-onboarding-explained-2]]
+- [[chatgpt/chatgpt_linear-onboarding-explained]]
+- [[chatgpt/chatgpt_linear-ux-redesign-2]]
+- [[chatgpt/chatgpt_linear-ux-redesign]]

@@ -95,3 +95,11 @@ Yes — **entity["people","Nemesio Oseguera Cervantes","mexican cartel lea
 He was **shot and seriously wounded in a firefight with Mexican Army and special forces in Tapalpa, Jalisco**, and **died from his injuries while being transferred to a hospital.** citeturn0search28  
 
 The raid was carried out by **Mexican federal forces** (Army and National Guard) — with reported U.S. intelligence support — aiming to capture him; the violence following his death included blockades and clashes in several states. citeturn0search27turn0search43
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

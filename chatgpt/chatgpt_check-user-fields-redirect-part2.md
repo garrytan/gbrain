@@ -569,3 +569,11 @@ Here's a checklist to debug the issue:
 - **Data Type and Format**: Make sure that the data types are consistent. The average calculation might be returning `null` or an unexpected data type that's not being handled correctly on the frontend.
 
 By going through these checks, you should be able to pinpoint where the problem lies and fix it. If the issue persists, you may need to provide more details about the exact behavior and any error messages or logs that are being generated.
+
+
+## See Also
+- [[chatgpt/chatgpt_check-user-fields-redirect-part1]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part2]]
+- [[chatgpt/chatgpt_dns-propagation-check-part2]]
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]

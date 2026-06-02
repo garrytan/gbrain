@@ -39,3 +39,11 @@ Products that require certain information or configurations before use (e.g., se
 **Trade-offs:**  
 - **Simple to build and predictable** for new users. citeturn0search5  
 - **Can feel rigid or unnecessary** for experienced users or those with different goals — modern UX often enhances it with contextual or adaptive cues instead. citeturn0search4
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-onboarding-explained-2]]
+- [[chatgpt/chatgpt_linear-onboarding-explained]]
+- [[chatgpt/chatgpt_linear-ux-overview]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]

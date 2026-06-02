@@ -109,3 +109,11 @@ Mr. White, lower-ab fluff is almost always just body-fat holding out at roughly 
   Once you hit ~165.5 lb and check your lower abs, switch back to a lean bulk (+150–250 kcal/day) to build thickness in shoulders/arms/chest, then rinse-repeat mini-cuts as needed.  
 
 That short mini-cut will give you the lower-abs and gutters you want without sacrificing the muscle you’ve built.
+
+
+## See Also
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_add-lean-body-mass]]
+- [[chatgpt/chatgpt_age-calculation-request]]

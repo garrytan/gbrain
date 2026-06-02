@@ -255,3 +255,11 @@ What location was this guy working at
 ## Assistant
 
 He worked at the **Northmead McDonald’s in western Sydney, Australia** for his entire 30-plus-year career. citeturn0search2
+
+
+## See Also
+- [[chatgpt/chatgpt_comment-critique-request]]
+- [[chatgpt/chatgpt_cruiser-critique-comment]]
+- [[chatgpt/chatgpt_anagram-name-suggestion]]
+- [[chatgpt/chatgpt_arguing-to-convince-comment]]
+- [[chatgpt/chatgpt_auto-body-shop-suggestion]]

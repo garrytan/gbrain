@@ -201,3 +201,11 @@ Got it, Mr. White — here’s a **fearless, high-risk/high-reward plan** for Ye
 ---
 
 Do you want me to turn this into a **12-month roadmap** with 4 “moonshot bets” per quarter (kill/scale rhythm), so it looks like a concrete battle plan you could drop on a CEO’s desk?
+
+
+## See Also
+- [[chatgpt/chatgpt_lead-bartender-at-large-events]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-plan-for-ios-refactor]]
+- [[chatgpt/chatgpt_ai-task-automation-plan]]

@@ -199,3 +199,11 @@ I also find it pretty ironic that you shut down political conversations on the p
 
 If we’re going to talk about this stuff, I’m happy to. But I’m going to actually read what’s being proposed and look at who funded the message, not just react to the headline of the video.
 :::
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-checking-video-request-part1]]
+- [[chatgpt/chatgpt_summarize-youtube-video-request-part2]]
+- [[chatgpt/chatgpt_summarize-youtube-video-request-part1]]
+- [[chatgpt/chatgpt_summarize-youtube-video-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]

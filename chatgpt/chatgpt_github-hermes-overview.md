@@ -50,3 +50,11 @@ For your setup specifically (Jovie + MacBook Air + MBP + GBrain + OpenRouter), H
 citeturn0search10turn0search17turn0search15
 
 If you're asking about a specific GitHub repo, organization, issue, or release related to Hermes, tell me which one and I'll pull it up.
+
+
+## See Also
+- [[chatgpt/chatgpt_github-overview-2]]
+- [[chatgpt/chatgpt_github-overview-3]]
+- [[chatgpt/chatgpt_github-overview]]
+- [[chatgpt/chatgpt_hermes-agent-overview]]
+- [[chatgpt/chatgpt_hermes-desktop-overview]]

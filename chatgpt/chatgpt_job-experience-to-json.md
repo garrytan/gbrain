@@ -118,3 +118,11 @@ Would you like me to now **structure this OCR text into a JSON object** for the 
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bartending-skills-experience-proficiency]]
+- [[chatgpt/chatgpt_coffee-experience-explanation]]
+- [[chatgpt/chatgpt_drake-bell-nickelodeon-experience]]
+- [[chatgpt/chatgpt_edible-buffet-experience]]
+- [[chatgpt/chatgpt_extract-job-experience]]

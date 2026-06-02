@@ -41,3 +41,11 @@ Mr. White — here’s the clean way to do a **bitters & soda** and what to garn
 - **Mint sprig** — extra-refreshing, especially with orange bitters
 
 *Optional:* ¼ oz simple syrup if you want it softer; a tiny pinch of salt (or a few drops saline) to pop the flavors.
+
+
+## See Also
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_angel-round-research-guide]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part3]]

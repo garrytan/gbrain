@@ -194,3 +194,11 @@ The best remaining path to definitive confirmation would be:
 5. Kyle Lucas obituary or probate filings
 
 Without those, “William” is still the most evidence-supported inference rather than a confirmed fact.
+
+
+## See Also
+- [[chatgpt/chatgpt_cavalier-king-charles-espresso]]
+- [[chatgpt/chatgpt_finding-dj-edits]]
+- [[chatgpt/chatgpt_finding-forgotten-celebrity]]
+- [[chatgpt/chatgpt_finding-voice-recordings]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

@@ -79,3 +79,11 @@ Set `line-height` equal to container height for single-line text only. cite�
 Even once CSS centers something perfectly, designers sometimes nudge it up or down for *visual* balance — especially with larger text or graphics that don’t “feel” centered. This isn’t a CSS property but a design adjustment (e.g., extra top margin/padding) to counter perception quirks. citeturn0search1
 
 If you want code for a specific layout (e.g., text inside a card, icon + label, etc.), tell me the HTML structure.
+
+
+## See Also
+- [[chatgpt/chatgpt_vertical-ai-for-artists]]
+- [[chatgpt/chatgpt_vertical-positioning-explanation]]
+- [[chatgpt/chatgpt_vertical-video-content-editor]]
+- [[chatgpt/chatgpt_vertical-zoom-in-pro-tools]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

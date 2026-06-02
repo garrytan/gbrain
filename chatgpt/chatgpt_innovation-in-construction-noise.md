@@ -61,3 +61,11 @@ Short answer: yes—there are real efforts, and the incentives are growing. High
 - **Prefab/off-site** fabrication to shift noisy phases away from neighbors (policy can incentivize). (Inference supported by mitigation frameworks.) citeturn1search14
 
 Bottom line, Mr. White: there *are* incentives (California CORE, Singapore funds) and mandates (EU labeling, NYC plans, Oslo zero-emission sites). If LA wanted rapid impact, copy NYC’s enforcement and Singapore’s cash incentives, layer them onto CORE, and tighten variance pricing.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_brake-noise-diagnosis-cx-5]]
+- [[chatgpt/chatgpt_cx-5-steering-noise-diagnosis]]
+- [[chatgpt/chatgpt_max-martin-construction-permits]]
+- [[chatgpt/chatgpt_music-marketing-innovation-2024]]

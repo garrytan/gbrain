@@ -145,3 +145,11 @@ frontier_model: manual_only
 ```
 
 Verdict: **DeepSeek V4 Flash is probably the right primary model for Hermes right now.** The $20/day burn says Hermes needs token discipline, loop caps, caching, and routing. A frontier model would likely turn that same usage into hundreds or over a thousand dollars per day.
+
+
+## See Also
+- [[chatgpt/chatgpt_aesthetic-muscle-focus-64-model]]
+- [[chatgpt/chatgpt_ai-3d-model-creation]]
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_arlo-camera-charging-model]]
+- [[chatgpt/chatgpt_best-model-for-design-systems]]

@@ -84,3 +84,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Yeah, that's pretty much the idea. So when Beverly Hills or any part of LA decides to develop a new area and they want those classic palm trees, they're still bringing them in from places that naturally grow them. So it could be the Canary Islands, it could be nurseries in California that specialize in"}
 {'asset_pointer': 'sediment://file_00000000ebd071f6b3116d5abb88e69f', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-05-29T23:50:07.324204+00:00', 'format': 'wav', 'metadata': {'end': 13.75, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 660078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]
+- [[chatgpt/chatgpt_1001tracklisting-search-query]]

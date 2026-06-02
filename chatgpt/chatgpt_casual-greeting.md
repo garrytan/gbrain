@@ -69,3 +69,11 @@ Do you want me to map out the exact flow with Supabase tables, API calls, and wh
 ## User
 
 Yeah, but first I just want to figure out if there's anything else that should be added to that flow to make it as magical as possible.
+
+
+## See Also
+- [[chatgpt/chatgpt_casual-greeting-2]]
+- [[chatgpt/chatgpt_casual-conversation-response]]
+- [[chatgpt/chatgpt_casual-conversation]]
+- [[chatgpt/chatgpt_greeting-exchange-2]]
+- [[chatgpt/chatgpt_greeting-exchange-3]]

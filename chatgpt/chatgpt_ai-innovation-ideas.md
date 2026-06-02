@@ -42,3 +42,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "I'm excited to see what you come up with! The possibilities are really endless, especially with how fast AI is evolving. If you want to brainstorm more or dive deeper"}
 {'asset_pointer': 'sediment://file_00000000be546230903c3b01d876d4a4', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2025-12-18T03:20:44.881432+00:00', 'format': 'wav', 'metadata': {'end': 7.5, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 360078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]
+- [[chatgpt/chatgpt_better-vvip-name-ideas]]
+- [[chatgpt/chatgpt_bootstrapping-app-ideas-part1]]

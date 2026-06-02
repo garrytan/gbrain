@@ -69,3 +69,11 @@ In short: use **Git worktrees + Claude Code** to spawn multiple isolated coding 
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-code-worktrees-overview]]
+- [[chatgpt/chatgpt_claude-code-worktrees-setup]]
+- [[chatgpt/chatgpt_claude-code-worktrees]]
+- [[chatgpt/chatgpt_apple-shortcuts-claude-code]]
+- [[chatgpt/chatgpt_claude-code-agent-teams-2]]

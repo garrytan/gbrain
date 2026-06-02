@@ -43,3 +43,11 @@ These options offer a variety of cuisines and atmospheres, so you can choose bas
 
 
 **Topic:** [[chatgpt-clusters/personal_life]]
+
+
+## See Also
+- [[chatgpt/chatgpt_la-christmas-day-story]]
+- [[chatgpt/chatgpt_payment-split-at-dinner]]
+- [[chatgpt/chatgpt_vlog-dinner-and-show]]
+- [[chatgpt/chatgpt_33-taps-restaurant-info]]
+- [[chatgpt/chatgpt_beverly-hills-restaurant-inquiry]]

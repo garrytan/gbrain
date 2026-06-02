@@ -26,3 +26,11 @@ Bernie Mac death cause
 ## Assistant
 
 Bernie Mac died from complications of pneumonia on August 9, 2008.
+
+
+## See Also
+- [[chatgpt/chatgpt_apple-death-certificate]]
+- [[chatgpt/chatgpt_quentin-wrote-death-proof]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

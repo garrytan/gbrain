@@ -39,3 +39,11 @@ Pro and con sharing location with my gf on iphone
 
 **Bottom line:**  
 If you both clearly agree on boundaries (e.g., “only for emergencies” or “turn off anytime without drama”) it can be useful. Without that understanding, it’s easy for it to slide into surveillance.
+
+
+## See Also
+- [[chatgpt/chatgpt_coding-on-mushrooms-pros-and-cons]]
+- [[chatgpt/chatgpt_pros-cons-partnership-vs-marriage]]
+- [[chatgpt/chatgpt_public-repo-pros-and-cons]]
+- [[chatgpt/chatgpt_location-sharing-in-relationships]]
+- [[chatgpt/chatgpt_ride-sharing-safety-trends]]

@@ -173,3 +173,11 @@ Got it, let's correct the totals with the new information:
    - **Total: 12 liters**
 
 Please confirm if there are any other updates or corrections needed.
+
+
+## See Also
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary]]
+- [[chatgpt/chatgpt_inventory-count-summary]]
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]

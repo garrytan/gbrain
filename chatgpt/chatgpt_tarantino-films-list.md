@@ -85,3 +85,11 @@ When you merge *Kill Bill: Vol. 1* and *Vol. 2* into one title, you get these ni
 9. **Once Upon a Time in Hollywood**
 
 So, **Death Proof** is definitely written and directed by Tarantino—it just confuses people because of the “nine movies” labeling, which comes down to whether or not you treat *Kill Bill* as one film or two.
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-supplement-list-request]]
+- [[chatgpt/chatgpt_ai-optimizes-to-do-list]]
+- [[chatgpt/chatgpt_airbnb-essentials-list]]
+- [[chatgpt/chatgpt_amazon-shopping-list]]
+- [[chatgpt/chatgpt_apocalyptic-movies-list]]

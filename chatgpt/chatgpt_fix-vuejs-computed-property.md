@@ -91,3 +91,11 @@ This code uses a `switch` statement to determine the color based on the value of
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_improve-computed-property]]
+- [[chatgpt/chatgpt_add-prop-to-vuejs-component]]
+- [[chatgpt/chatgpt_disable-swipe-back-vuejs]]
+- [[chatgpt/chatgpt_focus-element-in-vuejs]]
+- [[chatgpt/chatgpt_improve-vuejs-code-snippet]]

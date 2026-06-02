@@ -82,3 +82,11 @@ Food/Health:
 Finance:
 - The crypto world is bullshit: This video could delve into the often-opaque and volatile world of cryptocurrency, explaining the risks and potential pitfalls of investing in it. It could discuss the lack of regulation, the potential for fraud or scams, and the difficulty of predicting the value of cryptocurrencies. The video could also offer cautionary tales or tips for avoiding common mistakes when dealing with cryptocurrency.
 - Why aren't we taught about investing and financal responsibility in school/as kids: This video could explore the importance of financial literacy and the lack of emphasis on it in the education system. It could discuss the need for young people
+
+
+## See Also
+- [[chatgpt/chatgpt_video-ideas-suggested]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]

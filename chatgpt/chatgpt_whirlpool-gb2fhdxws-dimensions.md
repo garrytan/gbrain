@@ -60,3 +60,11 @@ GB2FHDXWS09 version?
 The "09" suffix typically denotes a production revision or factory code, not a change in physical design or features. Therefore, the GB2FHDXWS09 maintains the same dimensions and specifications as the base model. citeturn0search13
 
 For detailed parts diagrams and repair information specific to the GB2FHDXWS09, you can refer to resources like [PartSelect](https://www.partselect.com/Models/GB2FHDXWS09/) or [Sears PartsDirect](https://www.searspartsdirect.com/manual/4qpnpe088k-001198/whirlpool-gb2fhdxws09-bottom-mount-refrigerator-parts). 
+
+
+## See Also
+- [[chatgpt/chatgpt_tv-wall-stud-dimensions]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

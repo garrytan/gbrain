@@ -65,3 +65,11 @@ Is that a small medium or large nutrient increase
 ## Assistant
 
 The adjustment to maintenance levels during a deload could be seen as a medium nutrient increase compared to the reduced caloric intake during a fat loss phase. It's a moderation to support recovery without hindering fat loss progress. For precise adjustments, it's advisable to consult with a nutritionist or use tools like the RP Diet App, which can provide personalized recommendations based on your individual circumstances and goals.
+
+
+## See Also
+- [[chatgpt/chatgpt_adjusting-macros-for-extra-food]]
+- [[chatgpt/chatgpt_alcohols-effect-on-fat-loss]]
+- [[chatgpt/chatgpt_applecare-theft-loss-coverage]]
+- [[chatgpt/chatgpt_baguette-macros-50g]]
+- [[chatgpt/chatgpt_bird-man-macros]]

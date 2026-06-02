@@ -96,3 +96,11 @@ Mr. White — **a year of intermittent bright-red blood is still not normal**, a
 2) When it happens, is the blood **on the paper / on the outside**, or **mixed into** the stool / in the water?  
 3) Any **pain with BMs**, itching, or a lump?  
 4) Any **weight loss, diarrhea, mucus, belly pain, fatigue**, or family history of colon cancer/IBD?
+
+
+## See Also
+- [[chatgpt/chatgpt_blood-in-stool-emergency]]
+- [[chatgpt/chatgpt_bright-future-for-north-bergen]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

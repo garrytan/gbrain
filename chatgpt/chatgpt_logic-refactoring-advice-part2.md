@@ -368,3 +368,11 @@ If you want, I can give you a tiny reference folder layout (server + iOS) that m
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_logic-refactoring-advice-part1]]
+- [[chatgpt/chatgpt_payroll-and-reimbursements-advice-part2]]
+- [[chatgpt/chatgpt_early-check-out-logic]]
+- [[chatgpt/chatgpt_murderer-escape-logic]]
+- [[chatgpt/chatgpt_packaged-food-logic]]

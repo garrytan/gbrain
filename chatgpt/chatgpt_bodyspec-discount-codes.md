@@ -34,3 +34,11 @@ Mr. White, here are a few BodySpec codes that have been reported working recentl
 - **YSWC30** — 50% off your DEXA scan. Featured on a coupon site. citeturn0search2  
 
 (Codes can expire—try them at checkout ASAP.)
+
+
+## See Also
+- [[chatgpt/chatgpt_clear-discount-codes]]
+- [[chatgpt/chatgpt_dj-skins-discount-codes]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-2]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-3]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans]]

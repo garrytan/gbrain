@@ -40,3 +40,11 @@ bodyspec
 Appointments can be scheduled online through BodySpec's website. No doctor's referral is needed for body composition scans. Same-day results are typically available.
 
 For more information or to book an appointment, visit [BodySpec's official website](https://www.bodyspec.com). 
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-2]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans]]
+- [[chatgpt/chatgpt_bodyspec-dexa-summary]]
+- [[chatgpt/chatgpt_bodyspec-discount-codes]]
+- [[chatgpt/chatgpt_bodyspec-json-example]]

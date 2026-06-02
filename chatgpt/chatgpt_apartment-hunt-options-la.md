@@ -143,3 +143,11 @@ Got it, Mr. White. Here’s the **concise structured breakdown** of your situati
 
 Would you like me to also mock up a sample Craigslist/Hotpads search with filters based on this plan? (It’ll save you a ton of time.)  
 **Yes or no?**
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-hunt-advice]]
+- [[chatgpt/chatgpt_apartment-decision-analysis]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_apartment-hunting-and-gym-needs]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]

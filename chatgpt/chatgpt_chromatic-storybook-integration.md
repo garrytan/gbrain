@@ -410,3 +410,11 @@ const variant = await posthogServer.getFeatureFlag('pricing_test', distinctId);
 **Implementation is aligned with PostHog docs for Next.js/Vercel setup, reverse proxying, server/client SDKs, bootstrapping, timeouts, and migration from Statsig.** See: Vercel+Next.js feature flags guide, reverse proxy on Vercel/Next rewrites, feature flag install/creation, Node & JS SDK usage, request timeouts/bootstrapping, and Statsig migration guidance. citeturn0search0turn0search1turn0search2turn0search3turn0search6turn0search8turn0search9turn0search13turn0search16turn0search4
 
 If you want, I can tailor the codemod to your current Statsig call patterns and wire this into your existing app layout.
+
+
+## See Also
+- [[chatgpt/chatgpt_chromatic-meaning-explained-2]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained]]
+- [[chatgpt/chatgpt_percy-vs-chromatic-vs-playwright]]
+- [[chatgpt/chatgpt_ai-command-palettes-integration]]
+- [[chatgpt/chatgpt_analytics-integration-advice]]

@@ -85,3 +85,11 @@ Here’s the cleaned and merged guest list, keeping only **upcoming shows (Oct 2
 - **Saturday November 2nd at 9 PM** – 22  
 
 Would you like me to export this cleaned summary as a new Excel or CSV file?
+
+
+## See Also
+- [[chatgpt/chatgpt_guest-count-inquiry]]
+- [[chatgpt/chatgpt_guest-count-violation-advice]]
+- [[chatgpt/chatgpt_sunday-guest-count]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_chill-date-night-ideas]]

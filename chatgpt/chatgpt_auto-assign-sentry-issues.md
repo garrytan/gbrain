@@ -56,3 +56,11 @@ You *can* have Sentry create Linear issues and you *can* assign those issues to 
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_auto-fix-sentry-crashes]]
+- [[chatgpt/chatgpt_pr-auto-opening-issues]]
+- [[chatgpt/chatgpt_plan-sentry-issues]]
+- [[chatgpt/chatgpt_sentry-linear-integration-issues]]

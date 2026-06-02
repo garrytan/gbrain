@@ -125,3 +125,11 @@ Getting a publishing deal as an emerging songwriter involves multiple steps:
 11. **Showcase Talent**: Utilize platforms like YouTube or SoundCloud to gain exposure.
 
 Focus on creating value and building relationships for a better chance at securing a deal.
+
+
+## See Also
+- [[chatgpt/chatgpt_music-publishing-deal-structure]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]
+- [[chatgpt/chatgpt_am-i-getting-fat-app]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_best-coke-deal-member-offer]]

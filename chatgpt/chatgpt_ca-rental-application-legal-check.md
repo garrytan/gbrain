@@ -121,3 +121,11 @@ I am applying as a guarantor/co-signer for another applicant. (I will not be liv
 * Everything else is within normal CA screening practices.
 
 (Not legal advice; for a binding opinion talk to a tenants’‑rights lawyer.)
+
+
+## See Also
+- [[chatgpt/chatgpt_bar-crawl-idea-legal-issues]]
+- [[chatgpt/chatgpt_corporation-vs-legal-reform]]
+- [[chatgpt/chatgpt_e-scooters-legal-in-west-hollywood]]
+- [[chatgpt/chatgpt_fathers-legal-responsibilities-established]]
+- [[chatgpt/chatgpt_james-hype-legal-sources]]

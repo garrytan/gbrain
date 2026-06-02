@@ -65,3 +65,11 @@ If you want more Chris Voss / softer:
 > I hear you. Sounds like you’re working with a real ceiling. I can’t get close to $280 on a pair of Genelecs, though. How close can you get to $425 if you pick them up today?
 
 Best move: anchor **$425**, then settle at **$400 cash today** if you want it gone.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-5]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-6]]

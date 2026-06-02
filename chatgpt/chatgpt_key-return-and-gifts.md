@@ -86,3 +86,11 @@ Add in trash can and tv wall mount
 ## Assistant
 
 I have removed all of my belongings from the venue. The venue key, dry storage key, liquor room key, champagne fridge key, my parking pass, and the garage door opener to Vincent’s apartment are all on Vincent’s desk. Vincent also has the set of keys to his apartment that he gave me; he may keep the AirTag on them as a gift from me. It is also noted that the AirTag has been unregistered from my Apple account, so I no longer have any access to it. The venue may keep my mini-fridge, microwave, white desk chair, trash can, and TV wall mount, as these all seem like items that will be useful in the space for cast and crew. Merry Christmas.
+
+
+## See Also
+- [[chatgpt/chatgpt_ams-return-policy-summary]]
+- [[chatgpt/chatgpt_late-rental-return-fee]]
+- [[chatgpt/chatgpt_one-way-car-return]]
+- [[chatgpt/chatgpt_return-policy-exceptions]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

@@ -69,3 +69,11 @@ So AmazonBasics in bulk tends to be significantly cheaper per battery than your 
 Yes — in most realistic scenarios, **buying AmazonBasics (or similar generic / store brand) in bulk from Amazon will cost you less per battery** than $20.59 for 40 Duracells. Even a “good deal” at Costco for the Duracell (like $18.15) still comes out higher per battery compared to bulk AmazonBasics packs.
 
 If you like, I can compare **exact current prices for your ZIP / area** (Costco and Amazon) and tell you what is truly the cheapest *right now*. Do you want me to do that for Los Angeles?
+
+
+## See Also
+- [[chatgpt/chatgpt_costco-vs-amazon-products]]
+- [[chatgpt/chatgpt_allan-keys-amazon]]
+- [[chatgpt/chatgpt_amazon-account-phone-number-issue]]
+- [[chatgpt/chatgpt_amazon-battery-lifespan-comparison]]
+- [[chatgpt/chatgpt_amazon-kindle-update-announcement]]

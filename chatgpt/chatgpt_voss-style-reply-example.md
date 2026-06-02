@@ -32,3 +32,11 @@ Here you go, Mr. White—Voss-style reply you can drop in:
 > The thing is, I already have a firm $40 offer from another buyer who’s ready to pick it up.  
 > For me to pass on that and hold it for you, I’d need $45 if you can grab it tonight or tomorrow.  
 > How am I supposed to say yes to 20 when I already have 40 on the table?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-style-reply]]
+- [[chatgpt/chatgpt_voss-style-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-options]]

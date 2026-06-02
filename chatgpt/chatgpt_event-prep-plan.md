@@ -141,3 +141,11 @@ Here’s a concise master checklist you can work from, Mr. White:
 7. Update Toast menus.
 
 Reply with any added deadlines or items you want locked to specific dates and I can slot them into a tighter schedule.
+
+
+## See Also
+- [[chatgpt/chatgpt_diet-plan-meal-prep]]
+- [[chatgpt/chatgpt_10k-mrr-plan]]
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]

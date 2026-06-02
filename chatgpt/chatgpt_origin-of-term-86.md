@@ -54,3 +54,11 @@ Here’s what’s solid and what’s not:
 - **Prohibition bartenders**: Same problem—no period sources using 86 this way.
 
 So the clean answer: *86* comes from early-20th-century diner and soda-fountain shorthand for “no longer available,” and later got applied to kicking out customers or canceling things. The speakeasy stories are colorful but unsupported.
+
+
+## See Also
+- [[chatgpt/chatgpt_long-term-effects-of-whip-its]]
+- [[chatgpt/chatgpt_short-term-ev-lease-options]]
+- [[chatgpt/chatgpt_unclear-term-clarification]]
+- [[chatgpt/chatgpt_cup-song-origin]]
+- [[chatgpt/chatgpt_john-legend-name-origin]]

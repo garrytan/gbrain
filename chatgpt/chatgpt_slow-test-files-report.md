@@ -438,3 +438,11 @@ Mr. White — here are the **slow test files** from your log, **sorted slowest �
 12) `tests/unit/components/molecules/AvatarUploadable.test.tsx` — **252ms** *(same)*  
 
 If you want a different cutoff (e.g., **≥ 500ms only**), tell me and I’ll re-slice the list.
+
+
+## See Also
+- [[chatgpt/chatgpt_app-test-report]]
+- [[chatgpt/chatgpt_beatport-streaming-vs-files-2]]
+- [[chatgpt/chatgpt_beatport-streaming-vs-files]]
+- [[chatgpt/chatgpt_cannot-access-master-files]]
+- [[chatgpt/chatgpt_combine-csv-files-mac]]

@@ -28,3 +28,11 @@ write a function that will got to instagram.com/lorena/following and extract the
 It is not possible to write a function that will go to a specific Instagram page and extract information from it without first having access to Instagram's API or web scraping tools. Furthermore, it is generally not considered good practice to scrape information from websites without the explicit permission of the website owner. 
 
 Instead, you may want to consider reaching out to Instagram and requesting access to their API, which would allow you to programmatically access information about users and their followers. This would be a much more reliable and legitimate way to obtain this information.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

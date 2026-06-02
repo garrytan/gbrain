@@ -37,3 +37,11 @@ Creating a structured and informative product code format for your music release
 **Example:** For the first pop music release on March 24, 2024, the product code would be `TWL-20240324-POP-01`.
 
 This format not only provides clear, at-a-glance information about each release (such as the release date and genre) but also ensures that each product code is unique. Adjust the genre abbreviations and the sequence numbering as needed to fit the volume and variety of your releases.
+
+
+## See Also
+- [[chatgpt/chatgpt_format-currency-input-text]]
+- [[chatgpt/chatgpt_format-lyrics-apple-style]]
+- [[chatgpt/chatgpt_format-lyrics-for-apple-music]]
+- [[chatgpt/chatgpt_format-post-with-breaks]]
+- [[chatgpt/chatgpt_korean-phone-number-format]]

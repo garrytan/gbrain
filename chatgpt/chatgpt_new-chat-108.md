@@ -63,3 +63,11 @@ Mr. White —
    In Xcode ➜ File navigator, _Right-click ➜ Delete_ any grey (missing) file references, choose “Remove Reference”. Then _Project ➜ Validate Workspace_ to clear stale paths.
 
 Do those and the tree stops biting you.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

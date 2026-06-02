@@ -128,3 +128,11 @@ then Flow is one of the platforms I would actively prototype against alongside:
 - entity["company","Pika","AI video platform"]
 
 Flow currently appears strongest when the goal is **consistent cinematic worlds and recurring characters**, which is exactly the direction creator businesses are moving. citeturn0search1turn0search3turn0search6
+
+
+## See Also
+- [[chatgpt/chatgpt_google-flow-ai-filmmaking-2]]
+- [[chatgpt/chatgpt_google-flow-ai-filmmaking]]
+- [[chatgpt/chatgpt_google-flow-mcp-integration]]
+- [[chatgpt/chatgpt_google-flow-overview-2]]
+- [[chatgpt/chatgpt_google-flow-overview]]

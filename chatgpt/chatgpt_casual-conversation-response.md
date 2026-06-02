@@ -28,3 +28,11 @@ tags: [chatgpt, import]
 
 {'content_type': 'audio_transcription', 'decoding_id': None, 'direction': 'out', 'text': "Hey Mr. White, doing well! Let's keep it concise"}
 {'asset_pointer': 'sediment://file_000000004884623097042c7d712ebb42', 'content_type': 'audio_asset_pointer', 'expiry_datetime': '2026-02-13T19:01:18.178368+00:00', 'format': 'wav', 'metadata': {'end': 1.75, 'end_timestamp': None, 'interruptions': None, 'original_audio_source': None, 'pretokenized_vq': None, 'start': 0.0, 'start_timestamp': None, 'transcription': None, 'word_transcription': None}, 'size_bytes': 84078, 'tool_audio_direction': None}
+
+
+## See Also
+- [[chatgpt/chatgpt_casual-conversation]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]

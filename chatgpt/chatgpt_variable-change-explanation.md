@@ -26,3 +26,11 @@ Explain variable change
 ## Assistant
 
 Variable change in mathematics typically refers to substituting one variable in an equation or expression with another. This is often done to simplify the problem, make it more solvable, or apply certain methods. For example, in integration, a variable change (substitution) can transform a difficult integral into a simpler form. The concept is also fundamental in areas like algebra, calculus, and differential equations.
+
+
+## See Also
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_adobe-account-change-fix]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]

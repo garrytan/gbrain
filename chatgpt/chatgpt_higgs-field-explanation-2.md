@@ -35,3 +35,11 @@ Key points:
 - The **Higgs boson** is the quantum excitation (particle) of the Higgs field. Its discovery in 2012 at the Large Hadron Collider confirmed that the field exists. citeturn0search4
 
 In formal definitions, the Higgs field is described as a quantum field with a **nonzero vacuum expectation value** (it has a constant background level even in vacuum), which leads to spontaneous symmetry breaking in the electroweak force and endows particles with mass. citeturn0search6
+
+
+## See Also
+- [[chatgpt/chatgpt_higgs-field-explanation]]
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]

@@ -179,3 +179,11 @@ For “width,” you want **lats + teres major + upper-lat lines** with your elb
 - **Chest-supported row (lat-biased):** 3–5 sets (8–15 reps)
 
 If you tell me what equipment you have (pull-up bar, cables, specific machines), I’ll pick the exact 2–3 movements that fit your gym and program them into your week.
+
+
+## See Also
+- [[chatgpt/chatgpt_chest-size-gain-realism]]
+- [[chatgpt/chatgpt_inner-chest-development-tips]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

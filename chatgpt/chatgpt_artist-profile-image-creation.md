@@ -141,3 +141,11 @@ Mr. White — updated: **no text** on **Zero setup** and **Opinionated design**,
 
 
 **Topic:** [[chatgpt-clusters/jovie_music]]
+
+
+## See Also
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-page-design]]
+- [[chatgpt/chatgpt_artist-profile-suggestions]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part1]]
+- [[chatgpt/chatgpt_jovie-artist-profile-ad-part2]]

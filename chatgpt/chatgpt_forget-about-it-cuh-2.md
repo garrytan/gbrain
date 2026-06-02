@@ -55,3 +55,11 @@ Mr. White, here’s how “I said, ‘forget about it, cuh’” has rippled thr
 - **Cross-lingual spread**: Spanish-speaking TikTokers tag it under “Frases De Paul Walker,” illustrating how non-English audiences have adopted it into their own meme lexicons citeturn0search17.  
 
 In short, what began as a casual throwaway in 2 Fast 2 Furious has become a globally recognized catchphrase—used anywhere you want to tell someone, “drop it, move on.”
+
+
+## See Also
+- [[chatgpt/chatgpt_forget-about-it-cuh]]
+- [[chatgpt/chatgpt_about-section-rewrite]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]

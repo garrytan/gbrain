@@ -96,3 +96,11 @@ Mr. White — short answer: **No.** Curacity hasn’t shut down; they’ve **shi
 - Historically they did run an influencer booking/discount program; today the messaging is more about **measurable revenue from editorial-style content** vs. generic “free-stay” collabs. citeturn0search12turn0search14
 
 If you want, I can outline how to pitch Curacity-style partners (deliverables, tracking, and rate card) so your “boujee” content turns into comped stays + paid placements.
+
+
+## See Also
+- [[chatgpt/chatgpt_a7x3-guidelines-for-influencers]]
+- [[chatgpt/chatgpt_ai-innovation-ideas]]
+- [[chatgpt/chatgpt_ai-platform-design-ideas]]
+- [[chatgpt/chatgpt_artist-profile-design-ideas]]
+- [[chatgpt/chatgpt_bartender-joke-ideas]]

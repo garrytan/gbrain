@@ -90,3 +90,11 @@ You’re thinking about it correctly: shrink batch size, isolate changes, and le
 - **One stronger/managed agent** (e.g., Devin) wins for long-horizon, cross-cutting work (Stripe integration, auth rewrites, caching layers) where global context and long sessions matter. citeturn0search0
 
 If you want, I can drop a ready-to-paste **GitHub Actions + merge-queue + Vercel/Neon + PostHog flags** pack and a **Linear template** that enforces the agent contract.
+
+
+## See Also
+- [[chatgpt/chatgpt_statsig-deployment-velocity]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]
+- [[chatgpt/chatgpt_ai-agent-test-strategies]]
+- [[chatgpt/chatgpt_ai-in-product-development]]
+- [[chatgpt/chatgpt_ai-optimization-strategies]]

@@ -66,3 +66,11 @@ Yes, focusing on muscle hypertrophy before cutting can be more beneficial for yo
 The approach of bulking before cutting is aligned with your stated goal of achieving an aesthetically pleasing body with decent muscle mass, particularly since you’ve identified specific areas that require development. This sequence helps ensure that when you do cut to lower your body fat percentage, you have a well-developed muscular foundation to reveal, which is crucial for both your aesthetic goals and your profession as a model.
 
 In contrast, cutting first to a lower body fat percentage and then attempting to mass could potentially leave you looking too lean and might not provide the robust foundation of muscle mass that would most benefit your physique and professional modeling goals.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-first-companies-biome-usage]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]
+- [[chatgpt/chatgpt_extract-first-email-column]]

@@ -910,3 +910,11 @@ The biggest decisions to iterate:
 | Founder/Jovie lab | private working room vs visible “startup aquarium” from tour route |
 
 My instinct: keep **Podcast Room A at 2 o’clock** for now. It gives the tour a clean overlook, keeps it close to the lobby for guests, and lets the live/control cluster occupy the other high-value studio side.
+
+
+## See Also
+- [[chatgpt/chatgpt_podcast-and-reality-show-concept-part1]]
+- [[chatgpt/chatgpt_podcast-and-reality-show-concept-part2]]
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part1]]
+- [[chatgpt/chatgpt_bubblegum-factory-concept-part2]]
+- [[chatgpt/chatgpt_cinematic-website-concept]]

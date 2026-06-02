@@ -74,3 +74,11 @@ App estimates can be off by a few %. Track:
 **Target:** let BF drift up to ~13–15% while you gain muscle. When you hit that, do a short **mini-cut** back to ~10–12% and repeat.
 
 If you want, tell me your current training split + main lifts and I’ll tighten the volume/exercise choices to fit you.
+
+
+## See Also
+- [[chatgpt/chatgpt_fat-loss-muscle-gain]]
+- [[chatgpt/chatgpt_muscle-gain-in-2-years]]
+- [[chatgpt/chatgpt_muscle-gain-or-fat-loss]]
+- [[chatgpt/chatgpt_muscle-gain-visualization]]
+- [[chatgpt/chatgpt_muscle-gain-with-surplus]]

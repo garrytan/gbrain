@@ -47,3 +47,11 @@ write 10 options for a 1 liner call to action for our facebook ads, for example 
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_supplement-ads-facebook-options]]
+- [[chatgpt/chatgpt_delete-facebook-page-steps]]
+- [[chatgpt/chatgpt_facebook-acquired-tbh-trick]]
+- [[chatgpt/chatgpt_facebook-listing-creation]]
+- [[chatgpt/chatgpt_facebook-listing-request]]

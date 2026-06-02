@@ -135,3 +135,11 @@ Create a **minimal admin dashboard page for Jovie** inside our **existing Next.j
    - Keep the UI **minimal**, clean, and aligned with shadcn’s dashboard look.
 
 Return the full implementation (page + components) ready to paste into the repo, with clear `// TODO: replace mock data with real API` comments where appropriate.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part1]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part2]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part3]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part4]]
+- [[chatgpt/chatgpt_branch-demo-dashboard-analysis-part5]]

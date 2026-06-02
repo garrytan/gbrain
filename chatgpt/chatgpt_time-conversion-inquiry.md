@@ -32,3 +32,11 @@ Pst
 ## Assistant
 
 7:00 PM **CET** is **10:00 AM PST** on the same day, Mr. White.
+
+
+## See Also
+- [[chatgpt/chatgpt_time-zone-conversion-2]]
+- [[chatgpt/chatgpt_time-zone-conversion-3]]
+- [[chatgpt/chatgpt_time-zone-conversion]]
+- [[chatgpt/chatgpt_ai-progress-over-time]]
+- [[chatgpt/chatgpt_airpods-charge-time-summary]]

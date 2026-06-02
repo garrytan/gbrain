@@ -47,3 +47,11 @@ Understood, Mr. White. Three hours is a long fast—here’s how to kill time wi
 - **Meditation or mind games**: Use a meditation app, solve puzzles, or play a non-stimulating game on your phone to distract from hunger and caffeine cravings.  
 
 Stick to water and take it easy—time will pass faster than you think.
+
+
+## See Also
+- [[chatgpt/chatgpt_bad-iced-coffee-vibes]]
+- [[chatgpt/chatgpt_coffee-ad-creation]]
+- [[chatgpt/chatgpt_coffee-and-coke-combo]]
+- [[chatgpt/chatgpt_coffee-art-plus-price]]
+- [[chatgpt/chatgpt_coffee-break-hotspots-la]]

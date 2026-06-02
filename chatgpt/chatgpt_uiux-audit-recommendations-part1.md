@@ -645,3 +645,11 @@ Apply these together and you’ll have a seamless, “glassy,” accessible dash
 
 
 The menu bar on the bottom. Should it be liquid glass
+
+
+## See Also
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part2]]
+- [[chatgpt/chatgpt_uiux-audit-recommendations-part3]]
+- [[chatgpt/chatgpt_audit-clodmd-for-yc-alignment-part1]]
+- [[chatgpt/chatgpt_ux-audit-recommendations-2]]
+- [[chatgpt/chatgpt_ux-audit-recommendations]]

@@ -196,3 +196,11 @@ To help you move forward, here are the key assets and next steps:
 - **Schedule** – Use eBay’s “Schedule start time” feature to choose Sunday evening as advised (9:03 pm ET for the decks, 9:06 pm ET for the mixer). Set a handling time of one business day, enable 30‑day returns (buyer pays shipping; 10 % restock), require signature on delivery, and block low‑feedback bidders per your guidelines.
 
 Once the eBay site becomes reachable again, you can follow these steps in your account to create the listings exactly as planned.
+
+
+## See Also
+- [[chatgpt/chatgpt_ebay-listing-profit]]
+- [[chatgpt/chatgpt_accelerator-tracking-setup]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_ai-setup-instructions]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]

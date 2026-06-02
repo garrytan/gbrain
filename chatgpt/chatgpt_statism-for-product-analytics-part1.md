@@ -891,3 +891,11 @@ Whatfastlane setup?
 Build us a whole dev ops plan based on our stack that follows open ai shipping cadence or YCombinator principles.
 
 Statsig,supabase, verrcel, clerk, revenuecat, sentry, GitHub actions is what we've got so far. 
+
+
+## See Also
+- [[chatgpt/chatgpt_statism-for-product-analytics-part2]]
+- [[chatgpt/chatgpt_statism-for-product-analytics-part3]]
+- [[chatgpt/chatgpt_statism-for-product-analytics-part4]]
+- [[chatgpt/chatgpt_product-analytics-strategy]]
+- [[chatgpt/chatgpt_product-feedback-and-issues-part1]]

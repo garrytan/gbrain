@@ -154,3 +154,11 @@ Use **Vercel Image** now. Itâ€™s simpler, faster to ship, and plenty for Jovieâ€
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-model-comparison-for-nextjs]]
+- [[chatgpt/chatgpt_nextjs-supabase-vs-laravel]]
+- [[chatgpt/chatgpt_nextjs-vs-nuxt-comparison]]
+- [[chatgpt/chatgpt_vercel-nextjs-vs-laravel-vapor]]
+- [[chatgpt/chatgpt_basic-auth-in-nextjs]]

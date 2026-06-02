@@ -89,3 +89,11 @@ async function swipeRight() {
 ```
 
 In this version, I've used `querySelector` instead of multiple nested loops to find the first `.encounters-action--like` element. If a `likeBtn` is found, the function calls the `click` method on it and then breaks out of the loop. If no `likeBtn` is found, the function does nothing and returns.
+
+
+## See Also
+- [[chatgpt/chatgpt_js-function-swipe-right-2]]
+- [[chatgpt/chatgpt_js-function-swipe-right]]
+- [[chatgpt/chatgpt_js-swipe-right-function]]
+- [[chatgpt/chatgpt_swipe-right-javascript-function]]
+- [[chatgpt/chatgpt_automating-swipe-right-js]]

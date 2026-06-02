@@ -36,3 +36,11 @@ Mr. White, for today’s tasks these items currently have no PR:
 JOV-1035 is still running (“Working on your task”), so there’s no PR action available yet.
 
 Do you want me to click “Create PR” on the 5 finished items listed above?
+
+
+## See Also
+- [[chatgpt/chatgpt_create-prs-for-items]]
+- [[chatgpt/chatgpt_actionable-items-review]]
+- [[chatgpt/chatgpt_allowing-actions-to-create-prs]]
+- [[chatgpt/chatgpt_costco-items-list]]
+- [[chatgpt/chatgpt_create-account-page-setup-part1]]

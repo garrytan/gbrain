@@ -52,3 +52,11 @@ Can I use this in an intagram ad
 No, you cannot directly use the `instagram://` deep link in an Instagram ad because Instagram ads typically do not support custom deep links like that. Instead, you should use the standard URL format `https://www.instagram.com/timwhite/` in your ad. 
 
 When users click on this link in your Instagram ad, it will open your profile in the Instagram app if they are on a mobile device with the app installed, or in a web browser if they are on a desktop or do not have the app installed.
+
+
+## See Also
+- [[chatgpt/chatgpt_grabbing-instagram-link]]
+- [[chatgpt/chatgpt_instagram-link-html-template]]
+- [[chatgpt/chatgpt_modify-instagram-link-logging]]
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_deep-end-album-art]]

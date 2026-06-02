@@ -46,3 +46,11 @@ To address physical symptoms of anxiety, consider the following strategies:
 9. **Consult a Healthcare Provider**: A doctor may prescribe medication or recommend other therapies.
 
 Consider incorporating these strategies into your routine and consult with a healthcare professional for personalized advice.
+
+
+## See Also
+- [[chatgpt/chatgpt_anxiety-attack-seek-help]]
+- [[chatgpt/chatgpt_anxiety-or-vertigo-sensations]]
+- [[chatgpt/chatgpt_manage-insane-anxiety-tips]]
+- [[chatgpt/chatgpt_managing-features-nextjs]]
+- [[chatgpt/chatgpt_managing-notifications-effectively]]

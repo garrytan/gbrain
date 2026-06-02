@@ -72,3 +72,11 @@ It is worth noting that the `&` operator used in this object is a bitwise operat
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-env-variables]]
+- [[chatgpt/chatgpt_bf-prediction-based-on-dexa]]
+- [[chatgpt/chatgpt_building-role-based-schedule]]
+- [[chatgpt/chatgpt_conditional-class-assignment]]
+- [[chatgpt/chatgpt_conditional-css-class-assignment]]

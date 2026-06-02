@@ -107,3 +107,11 @@ The only time you’d have a legal claim is if:
 So yeah — legally speaking, the machine can just pocket the extra 50 cents.  
 
 Want me to grab you the actual California Civil Code/UCC section that covers this?
+
+
+## See Also
+- [[chatgpt/chatgpt_parking-meter-power-outage]]
+- [[chatgpt/chatgpt_parking-fee-legality]]
+- [[chatgpt/chatgpt_parking-legality-cx-5]]
+- [[chatgpt/chatgpt_cancelation-policy-legality]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]

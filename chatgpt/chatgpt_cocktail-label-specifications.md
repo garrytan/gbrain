@@ -66,3 +66,11 @@ Based on your available 1.5 liters of Kahlua, here are the adjusted quantities f
 - White Chocolate Liquor (optional): 1.5 liters
 
 These adjustments will maintain the correct proportions for your batch. Let me know if you need further help!
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-label-ops-for-artists]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part1]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part2]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part3]]
+- [[chatgpt/chatgpt_automated-label-printing-solution-part4]]

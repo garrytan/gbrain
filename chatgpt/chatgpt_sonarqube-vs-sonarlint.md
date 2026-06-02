@@ -247,3 +247,11 @@ If you want, tell me:
 - Auth solution (NextAuth, custom, etc.)
 
 I’ll give you **exact prompts** tuned to your setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_nosonar-in-sonarqube]]
+- [[chatgpt/chatgpt_sonarqube-ai-features]]
+- [[chatgpt/chatgpt_sonarqube-code-analysis]]
+- [[chatgpt/chatgpt_sonarqube-mcp-overview]]
+- [[chatgpt/chatgpt_sonarqube-overview-2]]

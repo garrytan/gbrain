@@ -95,3 +95,11 @@ Mr. White, at 15.3 % BF and 179.2 lb total mass (27.5 lb fat, 144.9 lb lean, 6.8
 - If you ever bulk, cap at 14 % BF, then cut back to ~10–12 % for ab definition.  
 - Use small surpluses (+200–300 kcal) and deficits (−15–20 %) to stay in that window.  
 - Keep protein ~1 g/lb lean mass, stick to your RP-style training and track weekly weight.
+
+
+## See Also
+- [[chatgpt/chatgpt_body-fat-reduction-plan-2]]
+- [[chatgpt/chatgpt_body-composition-phase-plan]]
+- [[chatgpt/chatgpt_body-fat-estimate-and-plan]]
+- [[chatgpt/chatgpt_body-fat-reduction-scenarios]]
+- [[chatgpt/chatgpt_body-recomposition-plan-dexa]]

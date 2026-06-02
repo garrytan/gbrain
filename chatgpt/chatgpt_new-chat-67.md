@@ -417,3 +417,11 @@ export default {
 In this code, the `openRightClickMenu` method is modified to include the `event` parameter for capturing the coordinates. The `x` and `y` coordinates are extracted from the event object and stored in the `coordinates` object. Additionally, the contact data is assigned to `rightClickMenuContact`, and the `rightClickMenuOpen` flag is set to `true` to show the right-click menu.
 
 Make sure to update the event listener in the template to call `openRightClickMenu($event, contact)` so that the event object is passed to the method along with the contact data.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

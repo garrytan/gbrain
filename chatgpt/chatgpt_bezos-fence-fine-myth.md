@@ -166,3 +166,11 @@ Mr. White, here are the key points regarding privacy hedges in Beverly Hills as 
    - The city has issued various building and landscaping permits for Bezos’s estate, but there’s no direct evidence of him paying fines or otherwise skirting the hedge-height rules.
 
 In short, while many Beverly Hills homeowners rely on hedges for privacy, the city’s regulations do limit how tall front-yard hedges can be. If Bezos’s hedge is tall, he either obtained the necessary approvals or the city hasn’t taken enforcement action—at least, not publicly.
+
+
+## See Also
+- [[chatgpt/chatgpt_trapped-water-myth]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]
+- [[chatgpt/chatgpt_1-of-body-weight-part1]]
+- [[chatgpt/chatgpt_1-of-body-weight-part2]]
+- [[chatgpt/chatgpt_100-mbps-upload-options]]

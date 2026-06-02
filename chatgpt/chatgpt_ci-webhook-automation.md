@@ -56,3 +56,11 @@ This avoids relying on undocumented bot-to-bot comment chaining.
 - **If you want to experiment:** yes, you can try having CodeRabbit’s plan comment include a tag, but it may fail depending on the agent’s trigger rules (especially bot-authored comments).
 
 If you want, I can sketch a minimal GitHub Action that triggers on CodeRabbit’s plan comment and pings Codex automatically.
+
+
+## See Also
+- [[chatgpt/chatgpt_slack-webhook-github-actions]]
+- [[chatgpt/chatgpt_sonarcloud-webhook-setup]]
+- [[chatgpt/chatgpt_stripe-webhook]]
+- [[chatgpt/chatgpt_2026-nextra-docs-automation]]
+- [[chatgpt/chatgpt_ai-agent-automation-part1]]

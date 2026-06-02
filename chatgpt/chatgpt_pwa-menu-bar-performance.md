@@ -91,3 +91,11 @@ main {
 On iOS “installed” PWAs, Safari/WebKit quirks still exist (viewport sizing, safe areas, occasional repaint oddities). The pattern above (fixed + safe-area inset + minimal blur + transform-only animation) is the most reliable way to match that look.
 
 If you tell me your target platforms (iOS only vs iOS+Android) and whether you want the bar to auto-hide on scroll, I can give you the most robust implementation approach for that behavior.
+
+
+## See Also
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_anitta-performance-style]]
+- [[chatgpt/chatgpt_app-performance-hardening-skill]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_cinematic-subway-performance-2]]

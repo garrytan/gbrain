@@ -53,3 +53,11 @@ Here is the recipe for the "Summer Scandal":
 4. Strain the mixture into a glass filled with ice.
 5. Garnish with a lemon wheel and a few fresh raspberries.
 6. Serve and enjoy your "Summer Scandal"!
+
+
+## See Also
+- [[chatgpt/chatgpt_shrimp-cocktail-name-request]]
+- [[chatgpt/chatgpt_a7x3-holdings-name-suggestions]]
+- [[chatgpt/chatgpt_accessing-users-name-in-ios]]
+- [[chatgpt/chatgpt_allowing-actions-to-create-prs]]
+- [[chatgpt/chatgpt_anagram-name-suggestion]]

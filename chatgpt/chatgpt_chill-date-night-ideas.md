@@ -44,3 +44,11 @@ Mr. White — you’re into laid-back vibes, so here are some *chill* date ideas
 - **Board game café or chill game night:** cooperative games are great.
 
 If you want ultra low-stimulus, the home spa, puzzle night, or stargazing options are the most “recovery-friendly” vibes.
+
+
+## See Also
+- [[chatgpt/chatgpt_date-ideas-based-on]]
+- [[chatgpt/chatgpt_fun-date-ideas]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_date-calculation]]
+- [[chatgpt/chatgpt_date-display-in-bar-graph-part1]]

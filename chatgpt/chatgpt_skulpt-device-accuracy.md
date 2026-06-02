@@ -61,3 +61,11 @@ Skulpt devices, known for measuring body composition and muscle quality, offer a
 5. **Individual Variability:** Factors like skin thickness, hydration, and underlying medical conditions can affect accuracy.
 
 Overall, while Skulpt devices provide a convenient way to track body composition and muscle quality over time, it's important to use them as part of a broader approach to fitness and health, which might include other forms of body composition analysis and professional guidance. Remember, no single method provides a complete picture, and each has its limitations.
+
+
+## See Also
+- [[chatgpt/chatgpt_bodied-hume-dexa-accuracy]]
+- [[chatgpt/chatgpt_breast-milk-alcohol-test-accuracy]]
+- [[chatgpt/chatgpt_debunking-ai-scale-accuracy]]
+- [[chatgpt/chatgpt_manifest-accuracy-in-lost]]
+- [[chatgpt/chatgpt_song-title-accuracy-corrected]]

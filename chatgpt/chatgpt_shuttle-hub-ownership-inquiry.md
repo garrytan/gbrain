@@ -109,3 +109,11 @@ If you ever want a definitive answer instead of my high-confidence read:
 
 But functionally, what you’ve already intuited is right:  
 You’re living next to a **back-of-house transport node for Netflix / studio people**, not some mysterious city shuttle project.
+
+
+## See Also
+- [[chatgpt/chatgpt_jovieai-ownership-inquiry]]
+- [[chatgpt/chatgpt_ai-ops-setup-inquiry]]
+- [[chatgpt/chatgpt_apartment-price-inquiry]]
+- [[chatgpt/chatgpt_bartender-job-inquiry]]
+- [[chatgpt/chatgpt_bathroom-code-inquiry]]

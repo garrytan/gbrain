@@ -107,3 +107,11 @@ Use **`git worktree`** + **one Cascade tab per branch**. This mirrors how senior
 If you want, I can give you:
 - A **one-command script** to spin up a new Cascade + worktree
 - A **cleanup flow** when branches are merged
+
+
+## See Also
+- [[chatgpt/chatgpt_git-workspaces-in-windsurf]]
+- [[chatgpt/chatgpt_auto-continue-in-windsurf]]
+- [[chatgpt/chatgpt_devin-vs-windsurf]]
+- [[chatgpt/chatgpt_github-windsurf-repositories]]
+- [[chatgpt/chatgpt_mcp-troubleshooting-in-windsurf]]

@@ -1047,3 +1047,11 @@ struct Demo: View {
 --- 
 
 If you want, I can also add tuned constants after you see a first visual pass.
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-tech-stack]]
+- [[chatgpt/chatgpt_folkapp-tech-stack]]
+- [[chatgpt/chatgpt_openai-ios-tech-stack]]
+- [[chatgpt/chatgpt_tech-stack-comparison]]
+- [[chatgpt/chatgpt_tech-stack-inquiry]]

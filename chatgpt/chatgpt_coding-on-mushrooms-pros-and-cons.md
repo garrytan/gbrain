@@ -100,3 +100,11 @@ Exclusively for vibe coding
 
 **Verdict:** excellent for *creative ignition*, terrible for *execution*.  
 Treat it like a jam session, not a recording studio.
+
+
+## See Also
+- [[chatgpt/chatgpt_location-sharing-pros-and-cons]]
+- [[chatgpt/chatgpt_pros-cons-partnership-vs-marriage]]
+- [[chatgpt/chatgpt_public-repo-pros-and-cons]]
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]

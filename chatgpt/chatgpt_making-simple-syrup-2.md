@@ -33,3 +33,11 @@ To make 4 liters of simple syrup (1:1 ratio):
 4. Let cool, then transfer to a clean container or bottles.  
 
 For richer syrup (2:1 ratio), use **2 liters water + 4 kilograms sugar** to yield roughly 4 liters of syrup.
+
+
+## See Also
+- [[chatgpt/chatgpt_making-simple-syrup]]
+- [[chatgpt/chatgpt_simple-syrup-8oz-sugarwater]]
+- [[chatgpt/chatgpt_simple-syrup-shelf-life]]
+- [[chatgpt/chatgpt_bartender-making-drinks-images]]
+- [[chatgpt/chatgpt_rsvp-another-simple-favor]]

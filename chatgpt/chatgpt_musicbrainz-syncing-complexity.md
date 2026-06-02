@@ -234,3 +234,11 @@ To make it world-class, you want to **eliminate that visual jump entirely** whil
 ---
 
 If you want, I can rewrite the **CSS & minimal JS** so you can drop it in and get **fixed-width, smooth state animations** without any layout shift. That would make it feel premium instantly.
+
+
+## See Also
+- [[chatgpt/chatgpt_syncing-audio-across-12-rooms]]
+- [[chatgpt/chatgpt_google-uses-musicbrainz-data]]
+- [[chatgpt/chatgpt_integrate-musicbrainz-discography]]
+- [[chatgpt/chatgpt_musicbrainz-contributor-guide]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

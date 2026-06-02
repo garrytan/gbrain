@@ -144,3 +144,11 @@ Mr. White, here is the **single, complete, clean list of all questions**, merged
 ~~~
 
 **Want me to convert this into a filled example, an answer framework, or a scoring rubric based on what investors usually look for?**
+
+
+## See Also
+- [[chatgpt/chatgpt_extract-application-questions-part1]]
+- [[chatgpt/chatgpt_extract-application-questions-part2]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part1]]
+- [[chatgpt/chatgpt_extract-questions-markdoc-part2]]
+- [[chatgpt/chatgpt_extract-questions-to-json]]

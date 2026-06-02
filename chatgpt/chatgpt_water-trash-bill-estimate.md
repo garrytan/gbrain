@@ -89,3 +89,11 @@ Liv not Lib. My girlfriend remember? Don’t make that mistake again.
 ## Assistant
 
 Apologies, Mr. White—Liv, not Lib. I’ll make sure to get her name right moving forward. Let me know if you’d like me to resend those estimates addressed to Liv.
+
+
+## See Also
+- [[chatgpt/chatgpt_25l-water-in-ice]]
+- [[chatgpt/chatgpt_annual-driving-estimate]]
+- [[chatgpt/chatgpt_batched-cocktail-water-source]]
+- [[chatgpt/chatgpt_bathtub-cold-water-issue]]
+- [[chatgpt/chatgpt_bill-split-breakdown]]

@@ -42,3 +42,11 @@ Bar manager position Bev Vincent who has been mentally absent this entire run an
 Got it, Mr. White. Here’s a concise text you can send:
 
 “John, I’m sorry, but I have to step down from the bar manager role. I loved working at Voss, but this run I’ve been covering for Vincent—he’s been largely absent and tied up with side projects. We’ve been stuck reacting instead of planning or budgeting, and responsibility keeps getting deflected. It’s new behavior from him, and it’s sad to say this as friends, but it isn’t sustainable. I hope you understand.”
+
+
+## See Also
+- [[chatgpt/chatgpt_resignation-letter-draft]]
+- [[chatgpt/chatgpt_ar-post-draft]]
+- [[chatgpt/chatgpt_chris-voss-reply-draft]]
+- [[chatgpt/chatgpt_chris-voss-response-draft]]
+- [[chatgpt/chatgpt_draft-cocktail-menu-part1]]

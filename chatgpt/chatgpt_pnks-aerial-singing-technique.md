@@ -58,3 +58,11 @@ In short, the “person standing on her abs” approach is a flashy gimmick with
 - **Sandbag/rib‐press phonation** (5–10 lb starting weight, 2–3 sets of 10–15 sec phonation)  
 
 That respects both RP Strength’s principles and Dr. Mike’s emphasis on stability under load—without risking injury from someone stomping on your midsection.
+
+
+## See Also
+- [[chatgpt/chatgpt_aerial-performance-prep]]
+- [[chatgpt/chatgpt_immersive-eleven-aerial-ideas]]
+- [[chatgpt/chatgpt_roll-rs-technique]]
+- [[chatgpt/chatgpt_alex-singing-timeline]]
+- [[chatgpt/chatgpt_fatness-and-singing-ability]]

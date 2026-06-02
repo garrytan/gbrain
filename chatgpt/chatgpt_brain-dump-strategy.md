@@ -269,3 +269,11 @@ If you want, I can turn this into a concrete implementation spec with:
 - extraction prompt
 - dedupe logic
 - a small sync script in Python or TypeScript
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]

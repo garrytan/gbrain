@@ -774,3 +774,11 @@ No additional Tier‑1 developments detected.
 
 
 Run a **pre‑market social‑arbitrage scan** now — check Reddit, X/Twitter, YouTube, TikTok, Discord, Google Trends, and major retailer OOS trackers for U.S.-listed tickers meeting the stated criteria. Return prioritized tickers with thesis one‑liner, supporting links/screens, est. sentiment, magnitude vs. baseline, and entry/exit timing window.
+
+
+## See Also
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part1]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part10]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part11]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part12]]
+- [[chatgpt/chatgpt_social-arbitrage-methodology-part13]]

@@ -163,3 +163,11 @@ if (socialMediaRegex.test(info.linkUrl)) {
 In the code above, we added a check to see if the username extracted from the URL starts with an `@` symbol, and if it does, we remove the `@` symbol using the `substring()` method. This ensures that the username we send in the request to the backend does not include the `@` symbol.
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

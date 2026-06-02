@@ -161,3 +161,11 @@ If you want, I can also adapt this prompt into two versions: one for a “planne
 
 
 **Topic:** [[chatgpt-clusters/code_review]]
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-prompt-for-refactor]]
+- [[chatgpt/chatgpt_test-and-refactor-prompt]]
+- [[chatgpt/chatgpt_admin-dashboard-prompt]]
+- [[chatgpt/chatgpt_agent-mode-prompt]]
+- [[chatgpt/chatgpt_ai-engineering-agent-prompt-part1]]

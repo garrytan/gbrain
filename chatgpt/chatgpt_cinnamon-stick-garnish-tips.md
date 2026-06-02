@@ -58,3 +58,11 @@ For a cinnamon stick garnish, here are a few methods to ensure it stays in place
 4. **Resting Across the Glass**: For wider glasses, you can rest the cinnamon stick across the top of the glass, parallel to the rim.
 
 The method you choose might also depend on the effect you want. For example, partially submerging the cinnamon stick can infuse the drink with more flavor.
+
+
+## See Also
+- [[chatgpt/chatgpt_orange-garnish-slicing-tips]]
+- [[chatgpt/chatgpt_macro-estimation-for-cinnamon-bun]]
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]

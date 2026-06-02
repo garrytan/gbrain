@@ -31,3 +31,11 @@ Are you referring to the recent proposal by House Republicans to eliminate taxes
 
 
 **Topic:** [[chatgpt-clusters/personal_finance]]
+
+
+## See Also
+- [[chatgpt/chatgpt_bill-split-breakdown]]
+- [[chatgpt/chatgpt_bill-summary-calculation]]
+- [[chatgpt/chatgpt_calculate-bill-amount]]
+- [[chatgpt/chatgpt_fox-force-five-kill-bill]]
+- [[chatgpt/chatgpt_medi-cal-healthcare-bill-impact]]

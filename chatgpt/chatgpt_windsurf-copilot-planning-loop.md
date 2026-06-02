@@ -157,3 +157,11 @@ If you want literally **everything** merged on green, remove the `ai-task` label
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_add-column-index-to-loop]]
+- [[chatgpt/chatgpt_auto-continue-in-windsurf]]
+- [[chatgpt/chatgpt_budget-planning-overview]]
+- [[chatgpt/chatgpt_claude-ralpha-loop]]
+- [[chatgpt/chatgpt_cloud-automation-loop]]

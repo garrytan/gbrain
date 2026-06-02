@@ -31,3 +31,11 @@ Give me a slamtastic comment
 Here’s your slamtastic comment:
 
 **“Man dies after breathing air. Woman dies after existing. This headline says nothing. If you're gonna report festival deaths, at least distinguish between freak accident, medical condition, or poor planning. Otherwise, it’s just clickbait with a body count.”**
+
+
+## See Also
+- [[chatgpt/chatgpt_slamtastic-comment-rewrite]]
+- [[chatgpt/chatgpt_slamtastic-instagram-comment]]
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_ai-3d-model-creation]]
+- [[chatgpt/chatgpt_ai-music-prompt-creation]]

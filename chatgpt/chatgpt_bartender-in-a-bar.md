@@ -39,3 +39,11 @@ Generate an image I can use a background for comping
 ## Assistant
 
 I'm sorry for any misunderstanding, but I'm unable to create or generate images. However, you can use photo editing software to superimpose the bartender into a bar scene using an image of a bar as a background. If you're looking for images to use, you might want to check stock photo websites where you can find a wide variety of bar backgrounds that are available for use.
+
+
+## See Also
+- [[chatgpt/chatgpt_bartender-application-email-2]]
+- [[chatgpt/chatgpt_bartender-application-email]]
+- [[chatgpt/chatgpt_bartender-application-response]]
+- [[chatgpt/chatgpt_bartender-count-bpm]]
+- [[chatgpt/chatgpt_bartender-duties-list]]

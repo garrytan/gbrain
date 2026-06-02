@@ -56,3 +56,11 @@ The person behind that song is known for blending thoughtful lyrics with express
 Over time he leaned more heavily into blues and rock, releasing albums such as entity["album","Continuum","John Mayer album"] and later becoming the lead guitarist for the touring group entity["music_group","Dead & Company","Grateful Dead successor band"]. The public image alternates between introspective songwriter, technically skilled guitarist, and outspoken interview personality.
 
 In simple terms: the creator of the 2003 song “Daughters” is a modern blues-influenced guitarist who became one of the defining singer-songwriters of the early 2000s.
+
+
+## See Also
+- [[chatgpt/chatgpt_1password-with-chatgpt-atlas]]
+- [[chatgpt/chatgpt_adjusting-parfait-with-pecans]]
+- [[chatgpt/chatgpt_arguing-with-facts]]
+- [[chatgpt/chatgpt_auth-system-with-toast-pin]]
+- [[chatgpt/chatgpt_beat-competitor-with-thesis]]

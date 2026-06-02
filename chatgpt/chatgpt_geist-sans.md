@@ -37,3 +37,11 @@ Key points about Geist Sans:
 - **Use cases:** UI text, headings, posters, logos, and body copy where a modern, clean aesthetic is desired. citeturn0search0
 
 It’s gaining adoption in web and app design, especially in projects using Vercel and Next.js, where it can be imported easily via npm and applied as a variable font. citeturn0search8
+
+
+## See Also
+- [[chatgpt/chatgpt_vercel-geist-sans-usage]]
+- [[chatgpt/chatgpt_geist-basement-studios-query]]
+- [[chatgpt/chatgpt_geist-design-system-overview-2]]
+- [[chatgpt/chatgpt_geist-design-system-overview]]
+- [[chatgpt/chatgpt_geist-design-system-pricing]]

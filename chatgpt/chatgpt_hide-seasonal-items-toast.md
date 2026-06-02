@@ -38,3 +38,11 @@ Yeah, Toast can do that cleanly:
 - Or set the **Active Date Range** to the season dates, then just extend or reactivate next year.
 
 Both hide them completely without marking them “out of stock,” so guests never see them and you can bring them back with one toggle.
+
+
+## See Also
+- [[chatgpt/chatgpt_hide-tips-on-toast]]
+- [[chatgpt/chatgpt_hide-album-art-image]]
+- [[chatgpt/chatgpt_hide-div-with-custom-css]]
+- [[chatgpt/chatgpt_hide-navbar-on-homepage]]
+- [[chatgpt/chatgpt_hide-screenshots-in-photos]]

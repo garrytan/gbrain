@@ -64,3 +64,11 @@ Be concise
 ## Assistant
 
 None of these guys are founders. They didn’t build the company—they were hired to babysit it. Founders take existential risk. These execs take bonuses for cost-cutting and stock bumps. $471M to steer someone else’s ship isn’t leadership—it’s luxury valet service.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-elements-explained]]
+- [[chatgpt/chatgpt_ai-test-writing-explained]]
+- [[chatgpt/chatgpt_ama-meaning-explained]]
+- [[chatgpt/chatgpt_chaos-testing-explained]]
+- [[chatgpt/chatgpt_chromatic-meaning-explained-2]]

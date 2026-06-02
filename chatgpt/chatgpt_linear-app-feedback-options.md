@@ -40,3 +40,11 @@ Yes — but **not directly from end users out of the box** in the way a dedicate
 - Linear alone isn’t a self-serve user feedback portal; it’s primarily an internal issue/feature tracking system. Teams generally combine it with external feedback tools. citeturn0search0
 
 **Bottom line:** yes, you can **surface and manage real user feedback in Linear**, but you’ll typically need to set up an **integration or external feedback board** if you want users to submit feedback directly.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_automation-in-linear]]
+- [[chatgpt/chatgpt_changelog-automation-in-linear]]
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]

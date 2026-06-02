@@ -66,3 +66,11 @@ https://your-brain.ngrok.app/mcp
 4. Register ChatGPT as an OAuth client in GBrain’s `/admin` dashboard using `authorization_code` + PKCE, with `read` and optionally `write` scopes. GBrain’s own ChatGPT guide recommends leaving `admin` off for ChatGPT. citeturn446393view0  
 
 So the practical answer: **Yes on ChatGPT web with Pro read/fetch or Business/Enterprise/Edu full MCP. Probably no on regular Plus/Free for arbitrary GBrain MCP.**
+
+
+## See Also
+- [[chatgpt/chatgpt_app-store-connect-api]]
+- [[chatgpt/chatgpt_connect-financial-accounts]]
+- [[chatgpt/chatgpt_connect-qlab-to-nextjs]]
+- [[chatgpt/chatgpt_add-gbrain-as-mcp]]
+- [[chatgpt/chatgpt_cost-for-gbrain]]

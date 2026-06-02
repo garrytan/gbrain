@@ -108,3 +108,11 @@ Lets keep working on this application
 ## Assistant
 
 I've dropped a tightened, investor-style revision of your application into the canvas. Give it a scan and let me know which sections you’d like to tweak or where you want extra punch—happy to iterate fast.
+
+
+## See Also
+- [[chatgpt/chatgpt_feedback-on-application]]
+- [[chatgpt/chatgpt_ai-feedback-prompt]]
+- [[chatgpt/chatgpt_app-ui-feedback]]
+- [[chatgpt/chatgpt_buyer-feedback-visibility]]
+- [[chatgpt/chatgpt_design-feedback-improvement]]

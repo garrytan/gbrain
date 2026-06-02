@@ -79,3 +79,11 @@ I’ll get back to you shortly with the findings.
 | Los Feliz – *Vintage Brick Studio*     | ~$1,495【17†L1-L4】 | 400 sq ft     | Charming vintage building (hardwood floors, exposed brick, updated counters)【17†L1-L4】. Likely no A/C central. Laundry on-site typical. | Utilities not included; street or permit parking in area. Desirable neighborhood, so price is mid-range for a basic renovated unit. |
 
 **Sources:** Local rental listings and market data for Beachwood Canyon and surrounding areas【3†L225-L233】【8†L525-L533】【18†L256-L264】【16†L193-L200】. These examples illustrate that a $1,100 rent in this location is significantly below current market rates for similar studios.
+
+
+## See Also
+- [[chatgpt/chatgpt_boom-rent-reporting-guide]]
+- [[chatgpt/chatgpt_boosting-credit-with-rent]]
+- [[chatgpt/chatgpt_confusing-rent-notice-explanation]]
+- [[chatgpt/chatgpt_debit-card-for-rent]]
+- [[chatgpt/chatgpt_fundraising-strategy-evaluation]]

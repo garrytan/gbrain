@@ -74,3 +74,11 @@ Got it. Here's a tighter, punchier version:
 “Nothing says ‘innocent privacy’ like needing military-grade security to hide your Candy Crush losses and desperate Google searches.” 
 
 Want a version with more bite or more absurdity?
+
+
+## See Also
+- [[chatgpt/chatgpt_snarky-comment-on-post]]
+- [[chatgpt/chatgpt_snarky-ryan-reynolds-comment]]
+- [[chatgpt/chatgpt_arguing-to-convince-comment]]
+- [[chatgpt/chatgpt_comment-critique-request]]
+- [[chatgpt/chatgpt_comment-improvement-with-snark]]

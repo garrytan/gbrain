@@ -74,3 +74,11 @@ For an 18 L batch, multiply those percentages by 18 L:
 **Total:** 2.7 + 2.7 + 2.7 + 2.7 + 7.2 = **18 L** exactly.
 
 That 18 L batch yields roughly **61 cocktails** at the original recipe size.
+
+
+## See Also
+- [[chatgpt/chatgpt_cocktail-batch-calculation]]
+- [[chatgpt/chatgpt_batch-quantity-calculation]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]

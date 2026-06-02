@@ -59,3 +59,11 @@ Summarize
   - Minor left–right differences in arms and legs (**<2 lb**), within normal limits. fileciteturn0file0
 
 **Bottom line:** Mr. White, you’re lean with favorable fat distribution, low visceral fat, solid bone density, and a recent **lean-mass rebound**. The main watch-out is the **recent fat uptick since November**, particularly trunk/android, despite overall improvement since summer.
+
+
+## See Also
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-2]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans-3]]
+- [[chatgpt/chatgpt_bodyspec-dexa-scans]]
+- [[chatgpt/chatgpt_bodyspec-report-summary]]
+- [[chatgpt/chatgpt_bodyspec-results-summary]]

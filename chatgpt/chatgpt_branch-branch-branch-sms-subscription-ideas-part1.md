@@ -796,3 +796,11 @@ I’ll frame this as a channel architecture decision grounded in Jovie’s notif
 
 
 The repo has channel/preference scaffolding but no provider locked in, so the key is channel orchestration, inbound handling, and avoiding an SMS-only architecture.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-sms-subscription-ideas-part1]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part2]]
+- [[chatgpt/chatgpt_branch-branch-branch-sms-subscription-ideas-part3]]
+- [[chatgpt/chatgpt_branch-branch-sms-subscription-ideas-part2]]

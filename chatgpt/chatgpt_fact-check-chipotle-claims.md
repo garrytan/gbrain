@@ -63,3 +63,11 @@ should really be read as:
 **Fact-check rating: technically supported, marketing-framed, easy to overread.**
 
 The numbers are model-based averages, not verified real-world savings from your exact order.
+
+
+## See Also
+- [[chatgpt/chatgpt_fact-check-data-center-claims]]
+- [[chatgpt/chatgpt_altman-openai-salary-fact-check]]
+- [[chatgpt/chatgpt_atari-deal-fact-check]]
+- [[chatgpt/chatgpt_castor-oil-fact-check]]
+- [[chatgpt/chatgpt_fact-check-and-analysis]]

@@ -176,3 +176,11 @@ You can adapt that per feature (login, onboarding, etc).
 ---
 
 If you want, next step I can help you craft a super-short personalized header specific to your project (`DashboardNew` plus whatever else you’ve refactored) that you just keep in a text snippet and paste into any new Claude / ChatGPT coding thread.
+
+
+## See Also
+- [[chatgpt/chatgpt_agent-skills-in-ai-coding]]
+- [[chatgpt/chatgpt_ai-coding-plan-comparison]]
+- [[chatgpt/chatgpt_ai-coding-tools-update]]
+- [[chatgpt/chatgpt_circuit-breakers-in-coding]]
+- [[chatgpt/chatgpt_coding-on-mushrooms-pros-and-cons]]

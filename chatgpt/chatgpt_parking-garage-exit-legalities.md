@@ -114,3 +114,11 @@ If you’d like, I can:
 - Draft a 1–2 sentence “I believed gate was open” script that is legally cautious if you’re stopped by security or police.
 
 Which of those would you prefer, Mr. White?
+
+
+## See Also
+- [[chatgpt/chatgpt_legalities-of-charging-for-parking]]
+- [[chatgpt/chatgpt_carplay-parking-automation]]
+- [[chatgpt/chatgpt_fight-parking-ticket]]
+- [[chatgpt/chatgpt_flight-and-parking-options]]
+- [[chatgpt/chatgpt_parking-fee-legality]]

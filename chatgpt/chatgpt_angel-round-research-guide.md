@@ -211,3 +211,11 @@ If you paste (or upload) Daniel’s template columns here, I’ll map them to th
 - the exact columns to add/remove,
 - a scoring formula,
 - and a copy/paste prompt you can reuse to batch-enrich 20–50 investors at a time without garbage output.
+
+
+## See Also
+- [[chatgpt/chatgpt_angel-round-sheet-optimization]]
+- [[chatgpt/chatgpt_7-eleven-rewards-guide]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part3]]

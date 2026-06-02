@@ -130,3 +130,11 @@ I’ll report back with a clear breakdown of what people actually experienced.
 - **Serious Overruns – Fees, Bans, or Legal Action:** A smaller number of cases showed more severe consequences beyond a single day’s charge. In some instances, **additional late fees** were applied on top of the daily rental rate (one TikTok user reported a $50 fee for the first late day, $15 for the second, then $5 per day thereafter)【55†L29-L36】.  There were also **contract issues** – renters who greatly exceeded the return date found their contracts effectively terminated and were blacklisted (placed on Enterprise’s “Do Not Rent” list) even if they eventually paid up【26†L259-L264】. **Legal threats** sometimes materialized as well: if a car remained unreturned for long, Enterprise’s risk management would escalate the matter. A few renters have had vehicles **reported stolen** and faced police intervention – one Reddit user recounted being pulled over on the 30th day of an unreturned rental and **arrested on felony charges** for a stolen vehicle【26†L273-L281】. In another case in California, a 77-year-old customer was mistakenly arrested at gunpoint after Enterprise **erroneously flagged her extended rental as stolen** (due to a paperwork error not showing her extension)【35†L165-L173】. These serious outcomes were relatively rare compared to the simple “extra day charge” scenarios, but they illustrate that keeping an Enterprise car past the max rental period **can** result in hefty fees, loss of rental privileges, or even law enforcement involvement if not promptly resolved. 
 
 
+
+
+## See Also
+- [[chatgpt/chatgpt_ams-return-policy-summary]]
+- [[chatgpt/chatgpt_avoiding-late-fees]]
+- [[chatgpt/chatgpt_ca-rental-application-legal-check]]
+- [[chatgpt/chatgpt_disputing-citation-late-fee]]
+- [[chatgpt/chatgpt_fashionably-late-to-disco]]

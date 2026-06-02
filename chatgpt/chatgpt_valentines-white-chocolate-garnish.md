@@ -80,3 +80,11 @@ Blood orange
 ## Assistant
 
 A slice or wedge of blood orange would be a fantastic garnish. Its vibrant red color is perfect for Valentine's Day, and its slightly tart, berry-like flavor would complement the sweetness of the white chocolate schnapps, butterscotch, and vodka beautifully. You could also consider a twist of blood orange peel for a subtler touch.
+
+
+## See Also
+- [[chatgpt/chatgpt_caramel-valentines-mulled-wine]]
+- [[chatgpt/chatgpt_cliché-valentines-day-activities]]
+- [[chatgpt/chatgpt_add-songs-tim-white]]
+- [[chatgpt/chatgpt_bio-for-tim-white]]
+- [[chatgpt/chatgpt_clean-white-air-force-1]]

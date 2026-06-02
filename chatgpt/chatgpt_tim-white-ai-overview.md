@@ -92,3 +92,11 @@ Give me a prompt to make an avatar of tim
 ## Assistant
 
 Create an avatar of Tim White, a dynamic and stylish artist. He is 6'4" with an athletic build, sporting short, well-groomed hair. He has a confident and approachable demeanor, often seen with a charismatic smile. For his outfit, dress him in trendy, casual-chic attire: a fitted black t-shirt, dark jeans, and stylish sneakers. Add accessories like a minimalist watch and a necklace. Ensure the background is modern and vibrant, reflecting his energetic and creative personality. The overall look should be sleek and polished, exuding confidence and charm.
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

@@ -34,3 +34,11 @@ whats in the suitcaase in pulpfiction
 For more insight, you might find this interview with Quentin Tarantino informative:
 
 videoQuentin Tarantino on the Briefcase in Pulp Fictionturn0search8 
+
+
+## See Also
+- [[chatgpt/chatgpt_cathedral-city-stream-mystery]]
+- [[chatgpt/chatgpt_geico-callback-mystery-explained]]
+- [[chatgpt/chatgpt_hotwire-mystery-hotel-info]]
+- [[chatgpt/chatgpt_kaueah-pop-up-mystery]]
+- [[chatgpt/chatgpt_mystery-woman-in-beverly-hills]]

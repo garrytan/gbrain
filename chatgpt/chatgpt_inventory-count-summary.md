@@ -386,3 +386,11 @@ Got it, Mr. White — here’s your **consolidated inventory** with alcohol sepa
 - **Locate:** extra bottle caps (Ben).
 - **Check:** wine key count.
 - **Maintenance:** clean & turn on ice machines.
+
+
+## See Also
+- [[chatgpt/chatgpt_alcohol-inventory-summary]]
+- [[chatgpt/chatgpt_cocktail-inventory-count]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-2]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary-3]]
+- [[chatgpt/chatgpt_cocktail-inventory-summary]]

@@ -74,3 +74,11 @@ Mr. White, here are the main off-the-shelf re-housing and blank-remote options f
 
 - **Programming Tool: KEYDIY KD-X2 Remote Maker**  
   ~$193; identifies and writes remote and 96-bit/48-bit transponder chips. citeturn0search6
+
+
+## See Also
+- [[chatgpt/chatgpt_2016-mazda-cx-5-liftgate]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-wipers]]
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_kia-soul-vs-mazda-cx-5]]
+- [[chatgpt/chatgpt_mazda-cx-5-beep-issue]]

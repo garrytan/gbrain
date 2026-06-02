@@ -1799,3 +1799,11 @@ Build in this order:
 8. Later: TikTok Upload API / Share Kit
 
 The QR handoff becomes a general Jovie primitive. The TikTok-specific piece is just one template inside it.
+
+
+## See Also
+- [[chatgpt/chatgpt_ethernet-detection-issue]]
+- [[chatgpt/chatgpt_key-detection-comparison]]
+- [[chatgpt/chatgpt_spotify-artist-detection-methods]]
+- [[chatgpt/chatgpt_agent-os-development-direction]]
+- [[chatgpt/chatgpt_ai-in-product-development]]

@@ -106,3 +106,11 @@ The function now takes an optional parameter `numOfSwipes`, which specifies the 
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_js-function-swipe-right-2]]
+- [[chatgpt/chatgpt_js-function-swipe-right]]
+- [[chatgpt/chatgpt_js-swipe-right-function]]
+- [[chatgpt/chatgpt_swipe-right-function-analysis]]
+- [[chatgpt/chatgpt_automating-swipe-right-js]]

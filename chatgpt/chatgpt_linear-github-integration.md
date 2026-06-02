@@ -46,3 +46,11 @@ For more details and setup instructions, visit the [Linear GitHub Integration pa
 For a visual guide on syncing Linear with GitHub, you may find this video helpful:
 
 videoHow to Sync Linear.app with GitHub.comturn0search3 
+
+
+## See Also
+- [[chatgpt/chatgpt_github-linear-integration-setup]]
+- [[chatgpt/chatgpt_chatgpt-linear-integration]]
+- [[chatgpt/chatgpt_claude-in-linear-integration]]
+- [[chatgpt/chatgpt_linear-github-automation]]
+- [[chatgpt/chatgpt_sentry-linear-integration-issues]]

@@ -66,3 +66,11 @@ If you want, I can sketch a **clean PR workflow using Claude via GitHub Actions*
 
 
 **Topic:** [[chatgpt-clusters/coding_troubleshoot]]
+
+
+## See Also
+- [[chatgpt/chatgpt_coderabbit-auto-fix]]
+- [[chatgpt/chatgpt_coderabbit-auto-loop]]
+- [[chatgpt/chatgpt_auto-advance-date-tracking]]
+- [[chatgpt/chatgpt_auto-assign-linear-agents]]
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]

@@ -579,3 +579,11 @@ Here are the **material new model introductions or promotional model usage updat
 ✔ **Falcon Alpha** appears as an additional new model option. citeturn0search0
 
 No other **new model introductions or free promo offers** are detected beyond these entries in the Windsurf changelogs. citeturn0search0turn0search1
+
+
+## See Also
+- [[chatgpt/chatgpt_alert-setup-for-updates-part1]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part10]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part11]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part2]]
+- [[chatgpt/chatgpt_alert-setup-for-updates-part3]]

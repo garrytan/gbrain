@@ -60,3 +60,11 @@ _To translate net to gross (assuming ~25% effective tax rate):_
 - **30% buffer gross:** \$51,168 ÷ 0.75 ≈ **\$68,200/yr**  
 
 Let me know if you want tweaks on any assumptions.
+
+
+## See Also
+- [[chatgpt/chatgpt_aaa-membership-savings-tips]]
+- [[chatgpt/chatgpt_ab-definition-tips]]
+- [[chatgpt/chatgpt_ac-cooling-efficiency-tips]]
+- [[chatgpt/chatgpt_adult-job-search-tips]]
+- [[chatgpt/chatgpt_apartment-decision-analysis]]

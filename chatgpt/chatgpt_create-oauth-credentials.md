@@ -123,3 +123,11 @@ should we always show account selector prompt?
 The “Always show account selector prompt” option controls whether Google forces users to select an account each time they sign in. Leaving it off lets Google silently reuse the last signed‑in account, which can be more convenient but sometimes confusing if users have multiple accounts. Turning it on ensures they always see the account picker, which reduces accidental sign‑ins with the wrong account.
 
 If your users often have multiple Google accounts, it’s usually a good idea to enable this prompt; otherwise, you can leave it off for a smoother sign‑in experience. Let me know which you prefer, and I can update the setting accordingly before adding the connection.
+
+
+## See Also
+- [[chatgpt/chatgpt_add-google-oauth]]
+- [[chatgpt/chatgpt_fix-apple-oauth]]
+- [[chatgpt/chatgpt_google-oauth-issue]]
+- [[chatgpt/chatgpt_google-oauth-overview-2]]
+- [[chatgpt/chatgpt_google-oauth-overview-3]]

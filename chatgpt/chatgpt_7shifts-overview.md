@@ -45,3 +45,11 @@ tags: [chatgpt, import]
 Additional add-ons, such as Tip Management, are available for an extra fee. citeturn0search19
 
 For more information or to start a free trial, visit the [7shifts website](https://www.7shifts.com). 
+
+
+## See Also
+- [[chatgpt/chatgpt_7shifts-bid-process]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]

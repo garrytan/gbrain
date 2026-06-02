@@ -43,3 +43,11 @@ Does that include Liv?
 Including **Liv’s shift (2:30 pm – 6:00 pm on 9/23)** adds **3.5 hours**.  
 
 That brings the total to **49.92 hours** and at **$20/hour**, the pay would be **$998.33**.
+
+
+## See Also
+- [[chatgpt/chatgpt_apartment-deep-clean-time-4-6-hours]]
+- [[chatgpt/chatgpt_dtla-after-hours-legality]]
+- [[chatgpt/chatgpt_hyatt-regency-pool-hours]]
+- [[chatgpt/chatgpt_production-work-hours-logged]]
+- [[chatgpt/chatgpt_total-hours-calculation]]

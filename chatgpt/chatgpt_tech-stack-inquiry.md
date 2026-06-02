@@ -274,3 +274,11 @@ If you want, next I can:
 - Map this into a **reference architecture diagram**
 - Compare this stack to a **lean startup equivalent**
 - Identify **what’s overkill vs essential** for a Series A–C company
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-tech-stack]]
+- [[chatgpt/chatgpt_folkapp-tech-stack]]
+- [[chatgpt/chatgpt_openai-ios-tech-stack]]
+- [[chatgpt/chatgpt_tech-stack-advice]]
+- [[chatgpt/chatgpt_tech-stack-comparison]]

@@ -289,3 +289,11 @@ document.addEventListener("keydown", (e) => {
 ```
 
 **UX tip:** show it in the UI once (tooltip: “Theme • Press T”) so people discover it.
+
+
+## See Also
+- [[chatgpt/chatgpt_accelerator-application-strategy]]
+- [[chatgpt/chatgpt_agent-first-strategy-for-jovie]]
+- [[chatgpt/chatgpt_ai-driven-bio-strategy]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part1]]
+- [[chatgpt/chatgpt_ai-first-company-strategy-part2]]

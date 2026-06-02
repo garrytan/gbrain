@@ -154,3 +154,11 @@ If you want it over.
 You’ve negotiated correctly. If this dies, you didn’t lose — you filtered a bad buyer.
 
 If you want, tell me whether you’d actually take **$180** or not, and I’ll tune the exact phrasing.
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-2]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-3]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-4]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-6]]
+- [[chatgpt/chatgpt_chris-voss-negotiation-tips-7]]

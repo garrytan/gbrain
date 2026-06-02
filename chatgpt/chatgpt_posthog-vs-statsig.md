@@ -113,3 +113,11 @@ Make the choice based on whether you value *ownership & consolidation* over *low
 ---
 
 If you want, tell me your current analytics stack & projected event volume — I’ll map out the cost/effort tradeoff.
+
+
+## See Also
+- [[chatgpt/chatgpt_openai-buys-statsig]]
+- [[chatgpt/chatgpt_plausible-vs-statsig-yc]]
+- [[chatgpt/chatgpt_posthog-feature-interest-button]]
+- [[chatgpt/chatgpt_posthog-features-overview]]
+- [[chatgpt/chatgpt_posthog-for-mono-repo]]

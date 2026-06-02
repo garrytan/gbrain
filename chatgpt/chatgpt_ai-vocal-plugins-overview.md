@@ -44,3 +44,11 @@ Here are some notable AI vocal plugins:
 For a visual demonstration of an AI vocal plugin in action, you might find this video informative:
 
 videoThis AI Vocal Plugin Will Change Your Production Foreverturn0search3 
+
+
+## See Also
+- [[chatgpt/chatgpt_claude-plugins-overview-2]]
+- [[chatgpt/chatgpt_claude-plugins-overview]]
+- [[chatgpt/chatgpt_code-plugins-overview]]
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]

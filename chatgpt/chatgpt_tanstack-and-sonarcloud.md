@@ -140,3 +140,11 @@ If you want, tell me:
 - Branch strategy (main-only vs PRs)
 
 I’ll give you the exact command or button path to force it every time.
+
+
+## See Also
+- [[chatgpt/chatgpt_biome-vs-sonarcloud]]
+- [[chatgpt/chatgpt_exporting-sonarcloud-issues]]
+- [[chatgpt/chatgpt_nuqs-vs-tanstack-router-2]]
+- [[chatgpt/chatgpt_nuqs-vs-tanstack-router]]
+- [[chatgpt/chatgpt_pacer-vs-tanstack-query]]

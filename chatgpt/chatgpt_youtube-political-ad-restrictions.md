@@ -66,3 +66,11 @@ The verification process for political ads on YouTube involves several steps to 
 5. Approval process: Once the ad has been reviewed and all requirements have been met, YouTube will approve the ad for display on the platform.
 
 It is worth noting that the verification process for political ads on YouTube may take longer than the process for non-political ads due to the additional requirements and review steps involved.
+
+
+## See Also
+- [[chatgpt/chatgpt_political-campaign-letterhead]]
+- [[chatgpt/chatgpt_political-text-message-legality]]
+- [[chatgpt/chatgpt_political-views-inquiry]]
+- [[chatgpt/chatgpt_app-automation-for-youtube]]
+- [[chatgpt/chatgpt_automate-youtube-shorts-urls]]

@@ -98,3 +98,11 @@ What's that song that's like, with some Sour Patch Kids and a Coke can?
 ## Assistant
 
 The song you're thinking of is likely "Mood" by 24kGoldn featuring iann dior. The lyrics mention, "I could never get attached. When I start to feel,
+
+
+## See Also
+- [[chatgpt/chatgpt_angellist-stack-status]]
+- [[chatgpt/chatgpt_audit-public-profile-performance]]
+- [[chatgpt/chatgpt_backgrid-copyright-case]]
+- [[chatgpt/chatgpt_case-status-update]]
+- [[chatgpt/chatgpt_codex-status-inquiry]]

@@ -35,3 +35,11 @@ Mr. White, two bespectacled guys pop up in Fallout:
 | **Middle-aged scientist the Ghoul is hunting (Dr. Siggi Wilzig)** | **Michael Emerson** | Ben Linus in *Lost*, Harold Finch in *Person of Interest*, Dr. Townsend in *Evil*, Zep in *Saw*, recurring spots on *Law & Order: SVU* and more. citeturn5search5 |
 
 Pick whichever four-eyes you had in mind.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-character-web-interaction]]
+- [[chatgpt/chatgpt_anime-character-creation]]
+- [[chatgpt/chatgpt_character-clara-musso-on-lie-to-me]]
+- [[chatgpt/chatgpt_character-of-musician-in-image]]
+- [[chatgpt/chatgpt_chilling-martini-glasses]]

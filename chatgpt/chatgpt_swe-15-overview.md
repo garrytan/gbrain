@@ -35,3 +35,11 @@ swe 1.5
 - **Context:** It’s typically accessible within platforms like **Windsurf**, where it serves as the default high-performance engineering model. citeturn0search9
 
 In short, **SWE-1.5 is a fast, AI-driven software engineering model** optimized to make code generation and engineering assistance quicker and more efficient for developers. citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

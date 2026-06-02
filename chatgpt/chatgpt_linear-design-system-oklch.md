@@ -480,3 +480,11 @@ If you want, I can:
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_linear-design-system-breakdown]]
+- [[chatgpt/chatgpt_linear-design-system-clarification]]
+- [[chatgpt/chatgpt_framer-to-linear-design]]
+- [[chatgpt/chatgpt_linear-avatars-ux-design]]
+- [[chatgpt/chatgpt_code-review-system-design]]

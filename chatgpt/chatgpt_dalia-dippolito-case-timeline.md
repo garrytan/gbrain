@@ -123,3 +123,11 @@ Mr. White, the mix-up was in who felt cheated:
 - **It was Michael who felt cheated**, not Dalia.  She’d convinced him to hand over \$100 000 of his savings—promising she’d chip in \$91 000 toward his \$191 000 restitution—but never forwarded his money to his lawyer, leaving him \$100 000 out of pocket. citeturn1search0turn1search3  
 - **Dalia’s mindset**: Prosecutors say she never intended to pay; her “offer” was a ruse to get his cash and secure control of their condo and joint accounts. citeturn1search3  
 - **Escalation**: When Michael balked at the missing funds and threatened to undo the deed transfer, Dalia’s resentment boiled over—first planting drugs to trigger a probation violation, then plotting murder when that failed. citeturn1search0
+
+
+## See Also
+- [[chatgpt/chatgpt_alex-singing-timeline]]
+- [[chatgpt/chatgpt_bretts-career-timeline]]
+- [[chatgpt/chatgpt_molly-effects-timeline]]
+- [[chatgpt/chatgpt_real-id-delays-timeline]]
+- [[chatgpt/chatgpt_timeline-aggregation-design-ideas]]

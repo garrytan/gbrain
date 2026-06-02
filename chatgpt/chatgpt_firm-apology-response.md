@@ -49,3 +49,11 @@ Got you, Mr. White. Here’s a sharper reply you can post under his review:
 > As your messages became more rude and aggressive, my replies got shorter because it was clear you weren’t reading what I’d already answered. After you changed the pickup plans, I decided not to move forward with the sale at all.  
 >   
 > Leaving a 1-star review for a transaction that never happened and after that kind of messaging says more about you than it does about me. My other reviews reflect how I normally deal with serious, respectful buyers.
+
+
+## See Also
+- [[chatgpt/chatgpt_firm-price-response]]
+- [[chatgpt/chatgpt_abs-analogy-response]]
+- [[chatgpt/chatgpt_ai-imessage-voice-response]]
+- [[chatgpt/chatgpt_ariana-grande-donut-response]]
+- [[chatgpt/chatgpt_bartender-application-response]]

@@ -31,3 +31,11 @@ You can reply with something like:
 > “I can do $400 for the six 10 TB drives—final offer.”
 
 It’s short, clear, and signals that you won’t negotiate further.
+
+
+## See Also
+- [[chatgpt/chatgpt_anagram-name-suggestion]]
+- [[chatgpt/chatgpt_auto-body-shop-suggestion]]
+- [[chatgpt/chatgpt_best-coke-deal-member-offer]]
+- [[chatgpt/chatgpt_chris-voss-counter-tips]]
+- [[chatgpt/chatgpt_comment-suggestion-critique]]

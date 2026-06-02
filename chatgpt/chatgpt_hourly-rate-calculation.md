@@ -53,3 +53,11 @@ What would 9 hours at LA minimum wage be for 90048?
 If you worked **9 hours** at **$17.87/hr** (the City of Los Angeles minimum wage effective July 1, 2025) citeturn0search5turn0search1  
 
 Your pay = 9 × 17.87 = **$160.83**
+
+
+## See Also
+- [[chatgpt/chatgpt_hourly-rate-calculation-2]]
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]

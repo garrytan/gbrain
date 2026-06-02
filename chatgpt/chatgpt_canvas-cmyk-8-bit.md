@@ -32,3 +32,11 @@ For printing on canvas, especially through a service like Canvas World, it's gen
 2. **Bit Depth**: A bit depth of 8 bits per channel is typically sufficient for high-quality prints and is widely supported by printing services. This setting offers a good balance between file size and color detail.
 
 Ensure you also set your image resolution to 300 DPI (dots per inch) for high-quality print output. If Canvas World provides any specific guidelines or requirements, it's best to follow those for optimal results.
+
+
+## See Also
+- [[chatgpt/chatgpt_chatgpt-canvas-overview]]
+- [[chatgpt/chatgpt_design-canvas-request]]
+- [[chatgpt/chatgpt_extend-canvas-to-8820px]]
+- [[chatgpt/chatgpt_help-with-spotify-canvas]]
+- [[chatgpt/chatgpt_01-vs-091-proof]]

@@ -956,3 +956,11 @@ Automation Turn 129 executed at **2025‑08‑24 22:17:26 ‑0700 (PDT)**.
 - Notifications are disabled; no alert will be sent until both NS lookups consistently resolve to the expected Vercel nameservers.  
 
 —Automation Turn 129 complete.
+
+
+## See Also
+- [[chatgpt/chatgpt_dns-propagation-check-part1]]
+- [[chatgpt/chatgpt_dns-propagation-check-part3]]
+- [[chatgpt/chatgpt_dns-propagation-check-part4]]
+- [[chatgpt/chatgpt_check-user-fields-redirect-part2]]
+- [[chatgpt/chatgpt_dns-propagation-time]]

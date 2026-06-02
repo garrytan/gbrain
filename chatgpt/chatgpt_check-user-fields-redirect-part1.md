@@ -1116,3 +1116,11 @@ class WeightLogController extends Controller
 
 
 the avg weight is not calculating correctly. it should take the most recent log, then look back 7 days from that point, and then average those 7 days to come up with a new number
+
+
+## See Also
+- [[chatgpt/chatgpt_check-user-fields-redirect-part2]]
+- [[chatgpt/chatgpt_clerk-supabase-user-profile-part1]]
+- [[chatgpt/chatgpt_dns-propagation-check-part1]]
+- [[chatgpt/chatgpt_add-ffmi-to-user]]
+- [[chatgpt/chatgpt_authed-user-404-handling]]

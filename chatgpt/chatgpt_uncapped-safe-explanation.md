@@ -41,3 +41,11 @@ In startup finance, an **“uncapped SAFE”** is a **Simple Agreement for Futur
 - They *can* be used strategically for quick closes or bridge funding, but can be tough to sell to investors focused on downside protection.citeturn0search22
 
 In short: **uncapped SAFE = SAFE with no valuation ceiling**, shifting valuation risk to the investor and offering simplicity to founders.citeturn0search0
+
+
+## See Also
+- [[chatgpt/chatgpt_uncapped-mfn-safe-explanation]]
+- [[chatgpt/chatgpt_5d-camelot-key-explanation]]
+- [[chatgpt/chatgpt_abs-routine-explanation]]
+- [[chatgpt/chatgpt_account-explanation-request]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]

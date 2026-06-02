@@ -58,3 +58,11 @@ Use CI to validate that **Sentry instrumentation works**, but keep it **intentio
 - Ensure **scrubbing** is correct (headers, tokens, user data) before any of this.
 
 If you tell me your stack (web/mobile/backend) and whether you use Sentry performance + replays, I can suggest the exact minimum CI events/transactions that give high confidence without turning your Sentry into a dumpster fire.
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_auto-fix-sentry-crashes]]
+- [[chatgpt/chatgpt_automating-sentry-fixes]]
+- [[chatgpt/chatgpt_github-sentry-bot]]
+- [[chatgpt/chatgpt_ios-mvp-sentry-setup]]

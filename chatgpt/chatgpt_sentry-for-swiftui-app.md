@@ -45,3 +45,11 @@ After picking `Sentry`, set **Add to Target** to your `logyourbody` app target a
 
 
 **Topic:** [[chatgpt-clusters/coding_mobile]]
+
+
+## See Also
+- [[chatgpt/chatgpt_auto-assign-sentry-issues]]
+- [[chatgpt/chatgpt_auto-fix-sentry-crashes]]
+- [[chatgpt/chatgpt_automating-sentry-fixes]]
+- [[chatgpt/chatgpt_github-sentry-bot]]
+- [[chatgpt/chatgpt_ios-mvp-sentry-setup]]

@@ -1471,3 +1471,11 @@ The key thing: **lock the deterministic visual flow before recording final audio
 ## User
 
 I want you to check the actual repo for what is available right now so that you're grounding this in a spot of expanding what we have and not rebuilding what's already there. Also, do deep research on this against anything to harden the general plan and give it to me as a handoff that I can give to a coding agent that can just build the whole thing. 
+
+
+## See Also
+- [[chatgpt/chatgpt_demo-video-planning]]
+- [[chatgpt/chatgpt_playwright-demo-video-workflow]]
+- [[chatgpt/chatgpt_3d-product-video-creation]]
+- [[chatgpt/chatgpt_auto-tune-settings-demo-vocals]]
+- [[chatgpt/chatgpt_branch-cinematic-demo-script]]

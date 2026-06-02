@@ -147,3 +147,11 @@ To calculate how many drinks you can get out of 18 liters, assuming 50% are sing
    \]
 
 So, you can make approximately **35 single drinks** and **35 double drinks** (70 drinks total) out of 18 liters of the prebatched cocktail.
+
+
+## See Also
+- [[chatgpt/chatgpt_169-ratio-calculation]]
+- [[chatgpt/chatgpt_age-calculation-request]]
+- [[chatgpt/chatgpt_average-monthly-pay-calculation]]
+- [[chatgpt/chatgpt_average-pay-calculation]]
+- [[chatgpt/chatgpt_batch-cocktail-calculation]]

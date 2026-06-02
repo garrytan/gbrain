@@ -58,3 +58,11 @@ Mr. White, this is expected behavior.
 - Use comments, markdown, or external task managers instead.
 
 If you want, tell me **what workflow you’re aiming for** (inline todos, sprint planning, refactor tracking), and I’ll give you the most efficient setup.
+
+
+## See Also
+- [[chatgpt/chatgpt_balance-sheet-unavailable]]
+- [[chatgpt/chatgpt_unavailable-com-domains]]
+- [[chatgpt/chatgpt_auto-continue-in-windsurf]]
+- [[chatgpt/chatgpt_devin-vs-windsurf]]
+- [[chatgpt/chatgpt_git-workspaces-in-windsurf-2]]

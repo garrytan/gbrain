@@ -28,3 +28,11 @@ how can i fix this code
 In order to help you fix your code, I would need to see it and know what the issue is. Can you provide more information, such as the specific error message you are seeing and the code you are trying to run?
 
 It's also important to note that I am a large language model trained by OpenAI and do not have the ability to access external resources or run code. I can provide general advice and guidance on programming, but I am not able to fix specific issues with your code.
+
+
+## See Also
+- [[chatgpt/chatgpt_untitled-conversation-1180]]
+- [[chatgpt/chatgpt_untitled-conversation-120]]
+- [[chatgpt/chatgpt_untitled-conversation-128]]
+- [[chatgpt/chatgpt_untitled-conversation-157]]
+- [[chatgpt/chatgpt_untitled-conversation-261]]

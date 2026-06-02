@@ -98,3 +98,11 @@ Add 2–4 custom checks that enforce what actually hurts you in production. Thes
 - Warning if user-visible changes don’t include release notes (or a “No user impact” statement).
 
 If you want, paste what your team ships (backend/frontend/mobile, monorepo vs multi, CI provider, whether you use Linear/Jira/GitHub Issues, and whether you require conventional commits) and I’ll tailor the thresholds + add-on checks to match your exact workflow.
+
+
+## See Also
+- [[chatgpt/chatgpt_customizing-shopify-account-system]]
+- [[chatgpt/chatgpt_2026-landing-page-workflow]]
+- [[chatgpt/chatgpt_add-coderabbit-in-linear]]
+- [[chatgpt/chatgpt_admin-workflow-design]]
+- [[chatgpt/chatgpt_ai-deal-workflow-explanation]]

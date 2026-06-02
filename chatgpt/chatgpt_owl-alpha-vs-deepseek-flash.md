@@ -87,3 +87,11 @@ Hermes officially supports OpenRouter model IDs in the `<author>/<slug>` format 
 **Escalate to DeepSeek V4 Flash paid for code, repo work, and anything where correctness matters.**
 
 Do not run Owl on private/sensitive Jovie material unless you are fine with the provider logging policy.
+
+
+## See Also
+- [[chatgpt/chatgpt_deepseek-flash-v4]]
+- [[chatgpt/chatgpt_gemini-vs-deepseek-flash]]
+- [[chatgpt/chatgpt_composer-25-vs-deepseek-v4-pro]]
+- [[chatgpt/chatgpt_cursor-vs-deepseek-comparison]]
+- [[chatgpt/chatgpt_deepseek-ai-models]]

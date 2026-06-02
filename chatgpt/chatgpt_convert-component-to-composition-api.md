@@ -229,3 +229,11 @@ export default {
 
 
 **Topic:** [[chatgpt-clusters/coding_web_dev]]
+
+
+## See Also
+- [[chatgpt/chatgpt_convert-to-composition-api-2]]
+- [[chatgpt/chatgpt_convert-to-composition-api]]
+- [[chatgpt/chatgpt_convert-vue-component-to-options-api]]
+- [[chatgpt/chatgpt_convert-vue-component-to-typescript]]
+- [[chatgpt/chatgpt_convert-code-to-emit-event]]

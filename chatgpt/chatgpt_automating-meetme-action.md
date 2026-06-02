@@ -174,3 +174,11 @@ SET !LOOP !LOOP + 1
 ```
 
 This script uses the `TAG` command to select the `A` element with the `HREF` attribute, and then uses the `EXTRACT` and `SAVEAS` commands to extract the value of the `HREF` attribute and save it to a CSV file. The `SET` commands at the beginning are used to loop through each page and keep track of which line in the data source file is being processed.
+
+
+## See Also
+- [[chatgpt/chatgpt_building-a-github-action]]
+- [[chatgpt/chatgpt_next-weeks-action-items]]
+- [[chatgpt/chatgpt_automating-browser-clicks]]
+- [[chatgpt/chatgpt_automating-feature-design]]
+- [[chatgpt/chatgpt_automating-lint-fixes]]

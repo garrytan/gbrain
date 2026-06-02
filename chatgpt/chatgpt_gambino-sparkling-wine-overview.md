@@ -64,3 +64,11 @@ Not necessarily. The term "Brut" refers to the dryness level of sparkling wine, 
 - **Gambino Sparkling Wine** may or may not be labeled as a "Brut," depending on the specific product. Gambino produces a range of sparkling wines, and some might be Brut, while others could be Extra Dry, Demi-Sec, or even sweeter, depending on the style.
 
 So, whether both would be considered "Brut" depends on the specific product from Gambino. If a Gambino wine is labeled as "Brut," then it would be in the same dryness category as Stanford Brut. Otherwise, they could differ in sweetness levels.
+
+
+## See Also
+- [[chatgpt/chatgpt_1001tracklists-overview-2]]
+- [[chatgpt/chatgpt_1001tracklists-overview-3]]
+- [[chatgpt/chatgpt_1001tracklists-overview]]
+- [[chatgpt/chatgpt_11-labs-grant-overview]]
+- [[chatgpt/chatgpt_1600-vine-st-overview]]

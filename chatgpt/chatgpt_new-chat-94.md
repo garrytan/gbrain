@@ -44,3 +44,11 @@ handleCellNavigation(event) {
 ## Assistant
 
 This function appears to handle cell navigation in response to arrow key presses. It uses a switch statement to check the value of the "event" parameter, which is likely an event object representing the key press. Depending on the arrow key that was pressed, the function updates the "currentCell" object's "row" and "column" properties accordingly. For example, if the "ArrowRight" key is pressed, the current cell's column value will be incremented by 1.
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-chat-instrumentation-tools]]
+- [[chatgpt/chatgpt_ai-chat-security-test]]
+- [[chatgpt/chatgpt_ai-chat-test]]
+- [[chatgpt/chatgpt_ai-sdk-chat-development]]
+- [[chatgpt/chatgpt_chat-input-specs]]

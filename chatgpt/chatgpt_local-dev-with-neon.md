@@ -159,3 +159,11 @@ Done, Mr. White. I added a new section to **CLAUDE.md** with precise agent instr
 - Cleanup guidance and clarifications for pooled vs direct URLs.
 
 If you want, I can also drop a ready-to-use `scripts/neon-sync-env.sh` into your repo and wire a Husky hook.
+
+
+## See Also
+- [[chatgpt/chatgpt_neon-local-meanings]]
+- [[chatgpt/chatgpt_kpi-improvement-with-local-agent]]
+- [[chatgpt/chatgpt_clerk-auth-vs-neon-auth]]
+- [[chatgpt/chatgpt_cold-starts-neon-vercel]]
+- [[chatgpt/chatgpt_cold-starts-on-neon-part1]]

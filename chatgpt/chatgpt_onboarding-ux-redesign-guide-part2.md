@@ -829,3 +829,11 @@ This aligns with “time-to-value” and “convert early” from the YC playboo
 
 
 **Topic:** [[chatgpt-clusters/design_ux]]
+
+
+## See Also
+- [[chatgpt/chatgpt_onboarding-ux-redesign-guide-part1]]
+- [[chatgpt/chatgpt_apple-music-style-guide-part2]]
+- [[chatgpt/chatgpt_onboarding-improvements-guide]]
+- [[chatgpt/chatgpt_landing-page-redesign-part2]]
+- [[chatgpt/chatgpt_onboarding-name-input-design-part2]]

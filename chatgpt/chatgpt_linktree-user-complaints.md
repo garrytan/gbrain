@@ -904,3 +904,11 @@ Mr. White — the live preview page (`/tim/tip`) isn't loading directly in my en
 If you can share a screenshot of the current live view (light & dark), I can pinpoint exact visual tweaks: spacing, font sizes, colors, contrast ratios. Otherwise, implement the above, then test with Lighthouse in both modes and make adjustments to meet 95+ scores on accessibility and best practices.
 
 Let me know if you'd like help with HTML/CSS examples for the CTA + dark/light toggle.
+
+
+## See Also
+- [[chatgpt/chatgpt_linktree-complaints-analysis]]
+- [[chatgpt/chatgpt_laylo-user-complaints-summary]]
+- [[chatgpt/chatgpt_ai-lead-plan-for-linktree]]
+- [[chatgpt/chatgpt_linktree-click-rate-explained]]
+- [[chatgpt/chatgpt_linktree-conversion-metrics]]

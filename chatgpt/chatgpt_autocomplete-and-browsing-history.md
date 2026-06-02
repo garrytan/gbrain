@@ -123,3 +123,11 @@ If you’re using the **ChatGPT Mac app**, your conversations are **not shared w
 ⚡Bottom line: it feels spooky, but it’s just **Google’s predictive autocomplete + your own search history + recency bias.**  
 
 Do you want me to give you exact Chrome/Google settings you can toggle to make sure nothing is cross-pollinating from history or sync?
+
+
+## See Also
+- [[chatgpt/chatgpt_discover-users-through-browsing]]
+- [[chatgpt/chatgpt_airpods-release-history]]
+- [[chatgpt/chatgpt_beaconsai-funding-history]]
+- [[chatgpt/chatgpt_imessage-history-export]]
+- [[chatgpt/chatgpt_lighthouse-history-and-technology]]

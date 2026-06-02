@@ -114,3 +114,11 @@ timwhitebartending@gmail.com
 If you want, I’ll also generate a clean **plain-text version of your résumé** formatted for Craigslist so you can just paste it under the line.
 
 Want that pasted in? (yes/no)
+
+
+## See Also
+- [[chatgpt/chatgpt_application-completion-assistance]]
+- [[chatgpt/chatgpt_job-application-writing]]
+- [[chatgpt/chatgpt_account-search-assistance]]
+- [[chatgpt/chatgpt_amex-lawsuit-assistance]]
+- [[chatgpt/chatgpt_apple-developer-assistance]]

@@ -57,3 +57,11 @@ FRAME F=2
 SET !ERRORIGNORE YES
 TAG POS={{!LOOP}} TYPE=DIV ATTR=TXT:starfavorite
 ```
+
+
+## See Also
+- [[chatgpt/chatgpt_ai-command-palettes-integration]]
+- [[chatgpt/chatgpt_alexa-spotify-queue-command]]
+- [[chatgpt/chatgpt_budget-macro-friendly-meal-options]]
+- [[chatgpt/chatgpt_claude-code-command]]
+- [[chatgpt/chatgpt_codex-slash-command-automation]]

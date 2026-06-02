@@ -71,3 +71,11 @@ Here’s a clean Chris Voss–style acceptance that sets the frame and urgency:
 ---  
 
 That way you accept her number but keep the pressure on her to solve the pickup problem fast. Want me to also give you a softer fallback line if she hesitates on pickup?
+
+
+## See Also
+- [[chatgpt/chatgpt_chris-voss-reply-examples]]
+- [[chatgpt/chatgpt_chris-voss-reply-options]]
+- [[chatgpt/chatgpt_chris-voss-reply-template-2]]
+- [[chatgpt/chatgpt_chris-voss-reply-template]]
+- [[chatgpt/chatgpt_chris-voss-response-draft]]

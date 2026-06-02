@@ -39,3 +39,11 @@ Here’s what **“jov.e”** likely refers to — assuming you mean **JOVE / Jo
 - A tribe, place name, book imprint, or personal name. citeturn0search2
 
 If you meant **something specific like a URL, product, or handle** spelled exactly *jov.e*, clarify and I’ll look it up.
+
+
+## See Also
+- [[chatgpt/chatgpt_gp-meaning-explanation-2]]
+- [[chatgpt/chatgpt_gp-meaning-explanation]]
+- [[chatgpt/chatgpt_linear-meaning-explanation]]
+- [[chatgpt/chatgpt_loom-meaning-explanation]]
+- [[chatgpt/chatgpt_resend-meaning-explanation]]

@@ -36,3 +36,11 @@ Mr. White,
 - 1½ oz Cranberry Juice  
 
 Combine all ingredients in a shaker with ice, shake, then strain into a glass. If you were referring to the activity, just keep legal and safety considerations in mind. Enjoy responsibly.
+
+
+## See Also
+- [[chatgpt/chatgpt_american-drink-recipes]]
+- [[chatgpt/chatgpt_batch-drink-recipe-scaling]]
+- [[chatgpt/chatgpt_caffeine-free-drink-alternatives]]
+- [[chatgpt/chatgpt_check-drink-sales-clover]]
+- [[chatgpt/chatgpt_drink-calculation]]

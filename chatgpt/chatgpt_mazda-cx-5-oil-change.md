@@ -34,3 +34,11 @@ If your last oil change was **Nov 7, 2025**:
 - **“Severe” driving (Schedule 2 — lots of short trips/city/stop-and-go, dusty, etc.):** **every 4 months or 5,000 miles** → **due by Mar 7, 2026** *or* +5,000 miles. citeturn2view0turn1view0  
 
 Tip: if your CX-5 is set to **Flexible**, it’s using the onboard oil-life calculation; Mazda notes **0W-20** is required for the *best* calculation performance. citeturn2view0turn0search2
+
+
+## See Also
+- [[chatgpt/chatgpt_2016-mazda-cx-5-liftgate]]
+- [[chatgpt/chatgpt_2016-mazda-cx-5-wipers]]
+- [[chatgpt/chatgpt_apple-carplay-install-mazda]]
+- [[chatgpt/chatgpt_cloning-mazda-key-fob]]
+- [[chatgpt/chatgpt_kia-soul-vs-mazda-cx-5]]

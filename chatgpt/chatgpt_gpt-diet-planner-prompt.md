@@ -95,3 +95,11 @@ This prompt structure provides a clear, step-by-step guide for the GPT model to 
 
 
 **Topic:** [[chatgpt-clusters/coding_ai]]
+
+
+## See Also
+- [[chatgpt/chatgpt_diet-planner-integration]]
+- [[chatgpt/chatgpt_barcode-scanners-for-diet]]
+- [[chatgpt/chatgpt_calculate-diet-phase-stats]]
+- [[chatgpt/chatgpt_design-diet-plan]]
+- [[chatgpt/chatgpt_diet-app-parameters-rules]]

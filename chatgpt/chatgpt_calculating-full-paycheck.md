@@ -42,3 +42,11 @@ What is barbacoa
 ## Assistant
 
 Barbacoa is a traditional Mexican dish typically made from beef, lamb, or goat. The meat is seasoned with a variety of spices, wrapped in maguey (agave) leaves, and then slow-cooked, often in an underground pit, which imparts a unique smoky flavor. The result is tender, flavorful meat that is usually shredded and served in tacos, burritos, or alongside other dishes. Barbacoa is often accompanied by onions, cilantro, and lime, and can vary by region in terms of specific ingredients and cooking methods.
+
+
+## See Also
+- [[chatgpt/chatgpt_branch-full-spec-request-part1]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part2]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part3]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part4]]
+- [[chatgpt/chatgpt_branch-full-spec-request-part5]]
