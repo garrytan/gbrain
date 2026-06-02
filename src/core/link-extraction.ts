@@ -138,6 +138,15 @@ const QUALIFIED_WIKILINK_RE = new RegExp(
 const WIKILINK_GENERIC_RE = /\[\[([^|\]#\n[]+?)(?:#[^|\]]*?)?(?:\|([^\]]+?))?\]\]/g;
 
 /**
+ * Issue #972 (codex [P2]): a markdown link whose LABEL contains a wikilink,
+ * e.g. `[see [[acme]]](companies/acme.md)`. Pass-1's ENTITY_REF_RE can't match
+ * the nested `]]` so it never spans this; without masking, the generic 2c pass
+ * would emit a stray basename ref for the inner `[[acme]]`. Mask the whole
+ * span out of the 2c scan so a wikilink inside a markdown label is inert.
+ */
+const MARKDOWN_LABEL_WIKILINK_RE = /\[[^\]\n]*\[\[[^\]\n]+\]\][^\]\n]*\]\([^)\n]+\)/g;
+
+/**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
  * replacing them with whitespace of equivalent length. Preserves byte offsets
  * for any caller that cares about positions; for our extractors this is just
@@ -282,6 +291,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
   //    Markdown links have no source-qualification syntax — they're
   //    always unqualified. Omit sourceId so the shape stays compatible
   //    with pre-v0.17 consumers doing strict equality.
+  const markdownRanges: Array<[number, number]> = [];
   const mdPattern = new RegExp(ENTITY_REF_RE.source, ENTITY_REF_RE.flags);
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
@@ -289,6 +299,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     const slug = fullPath;
     const dir = fullPath.split('/')[0];
     refs.push({ name, slug, dir });
+    markdownRanges.push([match.index, match.index + match[0].length]);
   }
 
   // 2a. v0.17.0 qualified wikilinks: [[source-id:path]] or [[source-id:path|Display]]
@@ -330,8 +341,19 @@ export function extractEntityRefs(content: string): EntityRef[] {
   //     `needsResolution: true` so the caller routes them through a
   //     SlugResolver's `resolveBasenameMatches` before persisting.
   //     Mask out 2a/2b ranges so we don't double-emit; skip qualified-
-  //     syntax tokens (contain `:`) that would be 2a's job.
-  const genericMasked = maskRanges(stripped, [...qualifiedRanges, ...unqualifiedRanges]);
+  //     syntax tokens (contain `:`) that would be 2a's job. Issue #972
+  //     (codex [P2]): ALSO mask pass-1 markdown-link ranges so a wikilink
+  //     inside a markdown label — `[see [[acme]]](companies/acme.md)` —
+  //     doesn't spawn a stray generic basename ref from inside the label.
+  const labelWikilinkRanges: Array<[number, number]> = [];
+  const labelWlPattern = new RegExp(MARKDOWN_LABEL_WIKILINK_RE.source, MARKDOWN_LABEL_WIKILINK_RE.flags);
+  while ((match = labelWlPattern.exec(stripped)) !== null) {
+    labelWikilinkRanges.push([match.index, match.index + match[0].length]);
+  }
+  const genericMasked = maskRanges(
+    stripped,
+    [...markdownRanges, ...qualifiedRanges, ...unqualifiedRanges, ...labelWikilinkRanges],
+  );
   const genericPattern = new RegExp(WIKILINK_GENERIC_RE.source, WIKILINK_GENERIC_RE.flags);
   while ((match = genericPattern.exec(genericMasked)) !== null) {
     let slug = match[1].trim();
@@ -456,6 +478,9 @@ export async function extractPageLinks(
       const idx = content.indexOf(ref.slug);
       const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
       for (const matched of matches) {
+        // Issue #972 (codex [P2]): a basename `[[own-tail]]` on its own page
+        // resolves back to itself — drop the self-loop.
+        if (matched === slug) continue;
         candidates.push({
           targetSlug: matched,
           linkType: WIKILINK_BASENAME_LINK_TYPE,
@@ -518,6 +543,12 @@ export async function extractPageLinks(
 
   // Within-page dedup: same (fromSlug, targetSlug, linkType, linkSource)
   // collapses to one entry. First occurrence wins.
+  // Issue #972 (codex P2d, decided): a qualified `[[companies/acme]]` (typed
+  // markdown edge) and a bare `[[acme]]` (wikilink-resolved edge) to the SAME
+  // target are KEPT as separate rows — they carry different provenance
+  // (link_source) and link_type, and the audit trail (which kind of reference
+  // created the edge) is worth more than collapsing them. graph-query callers
+  // that want a unique target set dedup on to_slug themselves.
   const seen = new Set<string>();
   const result: LinkCandidate[] = [];
   for (const c of candidates) {

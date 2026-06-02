@@ -37,7 +37,7 @@ import {
   extractPageLinks, parseTimelineEntries, inferLinkType, makeResolver,
   extractFrontmatterLinks, isGlobalBasenameEnabled,
   WIKILINK_BASENAME_LINK_TYPE,
-  buildBasenameIndex, queryBasenameIndex,
+  buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
   type UnresolvedFrontmatterRef,
 } from '../core/link-extraction.ts';
 import { createProgress } from '../core/progress.ts';
@@ -322,7 +322,12 @@ export async function extractLinksFromFile(
   // by default for back-compat with the v0.10.1 ancestor-only behavior.
   const globalBasename = opts?.globalBasename ?? false;
 
-  for (const { name, relTarget } of extractMarkdownLinks(content)) {
+  // Issue #972 (codex [P2]): strip code fences before scanning so a
+  // `[[name]]` inside a code block doesn't create an FS edge. Mirrors the
+  // DB path, which goes through extractEntityRefs (which strips internally).
+  const scanContent = stripCodeBlocks(content);
+
+  for (const { name, relTarget } of extractMarkdownLinks(scanContent)) {
     const resolvedSlugs = resolveSlugAll(fileDir, relTarget, allSlugs, { globalBasename });
     if (resolvedSlugs.length === 0) continue;
     // Single hit on the ancestor path → emit one edge with the inferred
@@ -334,6 +339,9 @@ export async function extractLinksFromFile(
       || (globalBasename && resolvedSlugs.length === 1
           && resolveSlug(fileDir, relTarget, allSlugs) === null);
     for (const target of resolvedSlugs) {
+      // Issue #972 (codex [P2]): drop a basename self-loop ([[own-tail]] on
+      // its own page resolving back to itself).
+      if (isBasename && target === slug) continue;
       links.push({
         from_slug: slug,
         to_slug: target,

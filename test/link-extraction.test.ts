@@ -154,6 +154,18 @@ describe('extractEntityRefs', () => {
     expect(wrongQualified.length).toBe(0);
   });
 
+  test('a wikilink inside a markdown-link label is inert (codex P2a)', () => {
+    // `[see [[acme]]](companies/acme.md)` must NOT spawn a stray generic
+    // basename ref for the inner `[[acme]]`. Pass-1 can't match the nested
+    // brackets, so the label-wikilink span is masked out of pass 2c.
+    const refs = extractEntityRefs('[see [[acme]]](companies/acme.md)');
+    expect(refs.filter(r => r.needsResolution)).toEqual([]);
+    // But an independent bare wikilink on the same line still emits.
+    const refs2 = extractEntityRefs('[Acme](companies/acme) and bare [[acme]] here.');
+    expect(refs2.find(r => r.slug === 'companies/acme' && !r.needsResolution)).toBeDefined();
+    expect(refs2.find(r => r.slug === 'acme' && r.needsResolution)).toBeDefined();
+  });
+
   test('strips .md suffix from bare wikilinks', () => {
     const refs = extractEntityRefs('See [[struktura.md]] for context.');
     expect(refs.length).toBe(1);
@@ -313,6 +325,23 @@ describe('extractPageLinks', () => {
     expect(candidates[0].linkType).toBe('wikilink_basename');
   });
 
+  test('basename self-link is dropped (codex P2c)', async () => {
+    // `[[struktura]]` on the page concepts/struktura resolves back to itself —
+    // the self-loop must be dropped.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['concepts/struktura', 'projects/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/struktura',                      // the page being processed
+      'See [[struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    // Only the OTHER match survives; no self-edge to concepts/struktura.
+    expect(candidates.map(c => c.targetSlug)).toEqual(['projects/struktura']);
+  });
+
   test('aliased wikilink resolves the TARGET, not the display text (codex #972)', async () => {
     // `[[struktura|the project]]` must resolve basename `struktura`, never
     // the alias "the project". Regression for the codex-caught bug where
@@ -387,6 +416,26 @@ describe('extractPageLinks', () => {
     );
     expect(withFm.candidates.find(c => c.linkType === 'source')).toBeDefined();
     expect(withoutFm.candidates.find(c => c.linkType === 'source')).toBeUndefined();
+    // Issue #972 (codex P2e): skipFrontmatter must return an empty unresolved
+    // list (the pass is skipped entirely), never undefined.
+    expect(withoutFm.unresolved).toEqual([]);
+  });
+
+  test('skipFrontmatter suppresses unresolved frontmatter refs too (codex P2e)', async () => {
+    // A frontmatter field the resolver CANNOT resolve normally populates
+    // `unresolved`; with skipFrontmatter the whole pass is gone so it's [].
+    const resolver: SlugResolver = { resolve: async () => null };
+    const fm = { key_people: ['Nobody Known'] };
+    const withFm = await extractPageLinks(
+      'companies/acme', 'plain content', fm, 'company', resolver,
+      { skipFrontmatter: false },
+    );
+    const withoutFm = await extractPageLinks(
+      'companies/acme', 'plain content', fm, 'company', resolver,
+      { skipFrontmatter: true },
+    );
+    expect(withFm.unresolved.length).toBeGreaterThan(0);   // pass ran, ref unresolved
+    expect(withoutFm.unresolved).toEqual([]);              // pass skipped
   });
 
   test('globalBasename does nothing when resolver lacks resolveBasenameMatches', async () => {

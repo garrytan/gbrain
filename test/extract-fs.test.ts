@@ -253,7 +253,25 @@ import {
   resolveSlug,
   resolveSlugAll,
   resolveBasenameMatchesFromSlugs,
+  extractLinksFromFile,
 } from '../src/commands/extract.ts';
+
+describe('extractLinksFromFile — code-fence stripping (codex P2b)', () => {
+  test('a bare wikilink inside a code fence does NOT create an FS edge', async () => {
+    const allSlugs = new Set(['projects/struktura', 'concepts/x']);
+    const content = [
+      '---', 'title: X', 'type: concept', '---', '',
+      'Real ref: [[struktura]].',
+      '',
+      '```', 'code mentions [[struktura]] but must be ignored', '```',
+    ].join('\n');
+    const links = await extractLinksFromFile(content, 'concepts/x.md', allSlugs, { globalBasename: true });
+    const toStruktura = links.filter(l => l.to_slug === 'projects/struktura');
+    // Exactly one edge — from the prose ref, NOT the fenced one.
+    expect(toStruktura.length).toBe(1);
+    expect(toStruktura[0].link_source).toBe('wikilink-resolved');
+  });
+});
 
 describe('resolveBasenameMatchesFromSlugs (pure)', () => {
   test('returns ALL slugs whose tail matches', () => {
