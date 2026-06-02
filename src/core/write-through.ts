@@ -3,9 +3,11 @@
  *
  * After a page row lands in the DB (via importFromContent / putPage), this
  * renders the row to markdown via `serializePageToMarkdown` and writes it to
- * `sync.repo_path` so the brain repo has a committable `.md` artifact that
- * round-trips cleanly through `gbrain sync`. The file is rendered FROM the DB
- * row, so the two sinks cannot diverge.
+ * the PAGE'S SOURCE repo (`sources.local_path` for `opts.sourceId`), falling
+ * back to the global `sync.repo_path` only for pure-DB sources with no
+ * local_path. The file is rendered FROM the DB row, so the two sinks cannot
+ * diverge. Routing per-source (rather than off the single global
+ * `sync.repo_path`) prevents cross-source write leaks on multi-source brains.
  *
  * Extracted from the v0.38 `put_page` write-through (operations.ts) so the
  * `put_page` op AND `gbrain brainstorm/lsd --save` share one implementation
@@ -26,6 +28,7 @@ import { dirname } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
+import { fetchSource } from './sources-load.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -67,7 +70,34 @@ export async function writePageThrough(
 ): Promise<WriteThroughResult> {
   const sourceId = opts.sourceId ?? 'default';
   try {
-    const repoPath = await engine.getConfig('sync.repo_path');
+    // Resolve the write target FROM THE PAGE'S SOURCE, not the global
+    // `sync.repo_path` key. `sync.repo_path` is a single global value that the
+    // last `gbrain sync <dir>` / import overwrites (last-writer-wins), so on a
+    // multi-source brain it can point at the wrong repo — causing a page from
+    // source A to be written into source B's working tree (cross-source leak,
+    // e.g. `<repoB>/.sources/A/<slug>.md`). Each source already carries its own
+    // `local_path`; routing per-source makes the write self-correct regardless
+    // of which source synced last, which agent/device wrote, or CLI-vs-MCP.
+    // Falls back to the global `sync.repo_path` only for sources with no
+    // local_path (pure-DB sources) — preserving pre-existing behavior there.
+    let repoPath: string | null | undefined;
+    // `ownRepo` = we resolved the source's OWN local_path. When true the file
+    // lives at <repo>/<slug>.md directly. When false (global-fallback path) we
+    // keep the legacy `.sources/<sourceId>/` nesting so a non-default page
+    // written into the DEFAULT repo stays namespaced (pre-existing behavior).
+    let ownRepo = false;
+    try {
+      const src = await fetchSource(engine, sourceId);
+      if (src?.local_path) {
+        repoPath = src.local_path;
+        ownRepo = true;
+      }
+    } catch {
+      // sources table unavailable (pre-multi-source brain) → fall through.
+    }
+    if (!repoPath) {
+      repoPath = await engine.getConfig('sync.repo_path');
+    }
     if (!repoPath) {
       return { written: false, skipped: 'no_repo_configured' };
     }
@@ -85,7 +115,12 @@ export async function writePageThrough(
       frontmatterOverrides: opts.frontmatterOverrides,
     });
 
-    const filePath = resolvePageFilePath(repoPath, slug, sourceId);
+    // When writing into the source's OWN repo, the page lives at the plain
+    // slug path (resolvePageFilePath treats 'default' as the no-namespace
+    // case). Only the global-fallback path keeps the `.sources/<id>/` nesting.
+    const filePath = ownRepo
+      ? resolvePageFilePath(repoPath, slug, 'default')
+      : resolvePageFilePath(repoPath, slug, sourceId);
     mkdirSync(dirname(filePath), { recursive: true });
 
     // Atomic write: unique temp sibling + rename. Unique name (pid + random)
