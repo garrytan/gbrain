@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Skin Care Process
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 012c574c-37b7-48ed-ab59-2c0b0fbf22f8
 > Created: 2023-02-26T06:06:43Z
 > Updated: 2023-02-26T06:06:43Z

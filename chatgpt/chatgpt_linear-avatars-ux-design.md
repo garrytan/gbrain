@@ -15,6 +15,8 @@ updated: 2025-12-18
 
 # Linear avatars UX design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69438fde-77f0-8327-8648-2f8af96368ef
 > Created: 2025-12-18T05:23:43Z
 > Updated: 2025-12-18T05:24:25Z

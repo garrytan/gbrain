@@ -17,6 +17,8 @@ updated: 2024-01-07
 
 # Health Data Tracker App
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 0eb9d000-8492-470c-b509-91425a339d63
 > Created: 2024-01-07T06:48:33Z
 > Updated: 2024-01-07T06:51:34Z

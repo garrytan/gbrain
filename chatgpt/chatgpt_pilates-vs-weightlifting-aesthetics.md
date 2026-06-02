@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Pilates vs weightlifting aesthetics
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68b6e667-0d54-8327-97cd-e00b93b735f8
 > Created: 2025-09-02T12:43:46Z
 > Updated: 2025-09-02T12:47:02Z

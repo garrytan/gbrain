@@ -16,6 +16,8 @@ updated: 2022-12-24
 
 # JavaScript switch arrow keys
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: c95f2fd1-dd84-417f-87a7-b3f326624efc
 > Created: 2022-12-24T23:09:17Z
 > Updated: 2022-12-24T23:09:17Z

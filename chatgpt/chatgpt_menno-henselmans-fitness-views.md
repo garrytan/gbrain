@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Menno Henselmans Fitness Views
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6843802e-5bdc-8007-a18a-b3e50b9b34c6
 > Created: 2025-06-06T23:56:30Z
 > Updated: 2025-06-07T00:07:57Z

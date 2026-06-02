@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Selling Broken Bed Frame
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68183a7a-3728-8007-8713-f2ef12f63596
 > Created: 2025-05-05T04:11:38Z
 > Updated: 2025-05-05T04:11:47Z

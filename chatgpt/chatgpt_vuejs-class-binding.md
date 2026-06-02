@@ -16,6 +16,8 @@ updated: 2023-05-05
 
 # Vue.js Class Binding.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6878b463-1caa-47ba-b98a-f561ab410ea9
 > Created: 2023-05-05T16:56:04Z
 > Updated: 2023-05-05T16:57:11Z

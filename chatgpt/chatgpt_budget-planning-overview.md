@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Budget Planning Overview
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 680f1055-28dc-8007-aa1d-1032619a10a7
 > Created: 2025-04-28T05:21:25Z
 > Updated: 2025-04-28T05:26:36Z

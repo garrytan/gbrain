@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Developing for CarPlay
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6851fa42-5290-8007-932d-d8003e1bcfd8
 > Created: 2025-06-17T23:29:52Z
 > Updated: 2025-06-17T23:37:56Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Catching Fire Cut Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6a0a921e-3c94-83e8-b2ad-aeb39b0454ac
 > Created: 2026-05-18T04:14:38Z
 > Updated: 2026-05-18T04:31:03Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Testing Philosophy Interview
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 697ff03b-5efc-8330-a997-cc182bbd88e7
 > Created: 2026-02-02T00:30:52Z
 > Updated: 2026-02-02T00:59:44Z

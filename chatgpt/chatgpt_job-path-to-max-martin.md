@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Job Path to Max Martin
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67c65176-6630-8007-91c1-26933dd0fee1
 > Created: 2025-03-04T01:03:50Z
 > Updated: 2025-03-04T02:07:34Z

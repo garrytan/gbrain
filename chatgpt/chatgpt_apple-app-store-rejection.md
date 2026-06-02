@@ -15,6 +15,8 @@ updated: 2026-02-25
 
 # Apple App Store Rejection
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 699f534f-6aa0-8332-93e6-18ac289fdd55
 > Created: 2026-02-25T19:53:57Z
 > Updated: 2026-02-25T19:54:18Z

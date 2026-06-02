@@ -16,6 +16,8 @@ updated: 2023-01-09
 
 # Vue.js HTML Page Template
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: f5b69df6-ab91-414e-a550-b95a263f3acc
 > Created: 2023-01-09T00:19:51Z
 > Updated: 2023-01-09T00:19:51Z

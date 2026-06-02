@@ -15,6 +15,8 @@ updated: 2023-11-18
 
 # Distressed stamp-style logo request.
 
+**Related:** [[design_ux]]
+
 > Conversation ID: b009b53d-e08e-440d-b033-c6f628817f7b
 > Created: 2023-11-18T08:08:57Z
 > Updated: 2023-11-18T22:27:20Z

@@ -16,6 +16,8 @@ updated: 2025-11-08
 
 # UI design for filters
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 690fc369-5a0c-8325-be01-480db243d7b7
 > Created: 2025-11-08T22:25:47Z
 > Updated: 2025-11-08T22:26:01Z

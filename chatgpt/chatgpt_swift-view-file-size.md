@@ -15,6 +15,8 @@ updated: 2025-07-15
 
 # Swift view file size
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6875b27a-09f8-8007-9a92-aa2213d4c2cc
 > Created: 2025-07-15T01:44:26Z
 > Updated: 2025-07-15T01:44:37Z

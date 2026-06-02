@@ -15,6 +15,8 @@ updated: 2025-06-13
 
 # Beats iOS UX
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 684c87b0-9310-8007-8948-18f2f7aaa591
 > Created: 2025-06-13T20:18:56Z
 > Updated: 2025-06-13T20:19:13Z

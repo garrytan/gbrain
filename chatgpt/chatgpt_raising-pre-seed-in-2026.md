@@ -15,6 +15,8 @@ updated: 2026-05-13
 
 # Raising Pre-seed in 2026
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a04db10-848c-83e8-919e-72a8b8ac605b
 > Created: 2026-05-13T20:12:17Z
 > Updated: 2026-05-13T20:12:30Z

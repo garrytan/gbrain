@@ -17,6 +17,8 @@ updated: 2026-05-24
 
 # Test Coverage Goal Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a126605-1270-83e8-9401-b26d7d751839
 > Created: 2026-05-24T02:44:21Z
 > Updated: 2026-05-24T03:00:40Z

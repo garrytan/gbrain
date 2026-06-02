@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym Music Coincidence
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 696932df-a970-8328-aaba-6175a4e22a12
 > Created: 2026-01-15T18:34:34Z
 > Updated: 2026-01-15T18:36:09Z

@@ -15,6 +15,8 @@ updated: 2024-06-03
 
 # Savings Growth Calculation 2000
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: be736301-6e21-4ac7-89d4-acfc1072f7b7
 > Created: 2024-06-03T03:00:59Z
 > Updated: 2024-06-03T03:01:09Z

@@ -15,6 +15,8 @@ updated: 2024-08-07
 
 # Infusing Mezcal Without Seeds
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 9ae31dc1-6d88-443f-9ce1-3e83ce95d500
 > Created: 2024-08-07T21:18:05Z
 > Updated: 2024-08-07T21:18:57Z

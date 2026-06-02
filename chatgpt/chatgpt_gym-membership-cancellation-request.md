@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym Membership Cancellation Request
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 684e2b36-ec40-8007-b97d-e3c574c3004c
 > Created: 2025-06-15T02:08:55Z
 > Updated: 2025-06-15T02:12:15Z

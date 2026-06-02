@@ -6,6 +6,8 @@ Here are the **highest-impact improvements**, in order of value:
 ---
 
 # **1. Tighten the nav item spacing**
+
+**Related:** [[design_ux]]
 Right now your nav items are a little too vertically spaced. Reduce spacing by **10–15%**. This makes the sidebar feel denser, more intentional, and more “SaaS-app expensive.”
 
 Linear does this: **compact, not crowded**.

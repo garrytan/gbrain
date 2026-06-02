@@ -16,6 +16,8 @@ updated: 2023-03-02
 
 # Docker Command Not Found.
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 676616e1-9975-42c6-a800-9471ae7fc35b
 > Created: 2023-03-02T16:14:56Z
 > Updated: 2023-03-02T16:14:56Z

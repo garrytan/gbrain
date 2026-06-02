@@ -17,6 +17,8 @@ updated: 2026-05-30
 
 # Jovie Workflow Ideas
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a1a28df-75c0-83e8-bd9d-bb9cff049c5c
 > Created: 2026-05-30T00:01:36Z
 > Updated: 2026-05-30T00:43:33Z

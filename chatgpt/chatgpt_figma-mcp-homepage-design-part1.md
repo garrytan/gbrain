@@ -16,6 +16,8 @@ updated: 2026-03-06
 
 # Figma MCP Homepage Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69ab3120-0934-8329-9220-60da7e94d279
 > Created: 2026-03-06T19:55:40Z
 > Updated: 2026-03-06T19:59:41Z

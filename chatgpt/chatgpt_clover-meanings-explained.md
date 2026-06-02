@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Clover meanings explained
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68ceedff-b350-8331-9acc-e19c5c72a46a
 > Created: 2025-09-20T18:10:08Z
 > Updated: 2025-09-20T18:10:13Z

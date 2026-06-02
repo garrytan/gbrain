@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Rewrite job application answers
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6912f1b3-ed48-8326-9be4-2e5bb6e6deb5
 > Created: 2025-11-11T08:21:13Z
 > Updated: 2025-11-11T08:39:34Z

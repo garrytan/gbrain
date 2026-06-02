@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # 3D Avatar Rendering Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68584c1c-4458-8007-9102-7ec3bd4068d0
 > Created: 2025-06-22T18:31:56Z
 > Updated: 2025-06-22T18:39:28Z

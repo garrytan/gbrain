@@ -17,6 +17,8 @@ updated: 2023-12-19
 
 # iOS Mobile App Options
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: fd64a845-298c-436a-a151-74e4ab1cfa3c
 > Created: 2023-12-19T19:30:39Z
 > Updated: 2023-12-19T23:28:39Z

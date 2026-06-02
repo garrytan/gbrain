@@ -142,6 +142,8 @@ title: "Jovie — Founders Box Fall 2025 Application (Markdoc)"
 
 # Founders' Box Accelerator: Fall 2025 — Application
 
+**Related:** [[business_startup]]
+
 > **Note:** Concise answers. Replace bracketed placeholders before submission.
 
 ## Section 1: Basic Company Information

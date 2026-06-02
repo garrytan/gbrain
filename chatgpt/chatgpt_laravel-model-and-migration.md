@@ -17,6 +17,8 @@ updated: 2023-01-04
 
 # Laravel Model and Migration
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: b4346c49-f890-483a-a2e9-099c57e98cda
 > Created: 2023-01-04T23:33:56Z
 > Updated: 2023-01-04T23:33:56Z

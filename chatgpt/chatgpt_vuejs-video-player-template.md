@@ -16,6 +16,8 @@ updated: 2023-02-26
 
 # Vue.js Video Player Template
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 88096905-80f0-4abe-b261-e92aff70c754
 > Created: 2023-02-26T00:19:49Z
 > Updated: 2023-02-26T00:19:49Z

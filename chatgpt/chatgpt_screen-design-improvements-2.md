@@ -15,6 +15,8 @@ updated: 2025-11-22
 
 # Screen design improvements
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69210966-c854-8325-98f0-1cfb7ce9767f
 > Created: 2025-11-22T00:53:12Z
 > Updated: 2025-11-22T00:54:01Z

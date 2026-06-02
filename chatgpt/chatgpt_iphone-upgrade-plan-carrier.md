@@ -15,6 +15,8 @@ updated: 2025-10-06
 
 # iPhone upgrade plan carrier
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68e3f6f1-6a88-8325-9f49-49376d33c224
 > Created: 2025-10-06T17:06:25Z
 > Updated: 2025-10-06T17:06:37Z

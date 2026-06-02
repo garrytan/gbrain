@@ -17,6 +17,8 @@ updated: 2024-03-09
 
 # Embed Laylo in Vue
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 794c8719-9cf0-4a8b-b5f4-bfd8aba3cdaf
 > Created: 2024-03-08T02:42:25Z
 > Updated: 2024-03-09T08:38:22Z

@@ -15,6 +15,8 @@ updated: 2025-11-03
 
 # Claude Code background agents
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 690816c8-ffe8-832b-999b-7e157dcb9e22
 > Created: 2025-11-03T02:43:26Z
 > Updated: 2025-11-03T02:44:18Z

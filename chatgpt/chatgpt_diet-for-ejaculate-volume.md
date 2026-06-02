@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Diet for Ejaculate Volume
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 683359f7-bc4c-8007-a9f1-2400a4a54eb2
 > Created: 2025-05-25T17:57:11Z
 > Updated: 2025-05-25T19:59:13Z

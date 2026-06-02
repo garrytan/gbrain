@@ -16,6 +16,8 @@ updated: 2022-12-28
 
 # Vue.js Form Input Template
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 86a21520-becf-422c-aab5-1bfbba70a97f
 > Created: 2022-12-28T23:03:10Z
 > Updated: 2022-12-28T23:03:10Z

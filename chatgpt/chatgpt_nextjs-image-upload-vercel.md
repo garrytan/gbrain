@@ -16,6 +16,8 @@ updated: 2025-09-27
 
 # Next.js image upload Vercel
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68d7422b-561c-8320-91d7-36e6aad7fbf5
 > Created: 2025-09-27T01:47:40Z
 > Updated: 2025-09-27T01:48:14Z

@@ -17,6 +17,8 @@ updated: 2026-05-24
 
 # Codex Goals for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a126388-9548-83e8-ac37-1d0680af0948
 > Created: 2026-05-24T02:33:45Z
 > Updated: 2026-05-24T02:40:57Z

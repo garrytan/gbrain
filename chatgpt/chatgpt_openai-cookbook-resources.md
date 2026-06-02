@@ -15,6 +15,8 @@ updated: 2026-01-29
 
 # OpenAI Cookbook Resources
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 697af8ec-79f8-8326-ac12-86c50a070145
 > Created: 2026-01-29T06:06:37Z
 > Updated: 2026-01-29T06:07:11Z

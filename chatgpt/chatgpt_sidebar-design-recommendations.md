@@ -15,6 +15,8 @@ updated: 2026-04-23
 
 # Sidebar Design Recommendations
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69e9b7c8-2d0c-83e8-ab19-cd9241877e91
 > Created: 2026-04-23T06:10:43Z
 > Updated: 2026-04-23T06:14:24Z

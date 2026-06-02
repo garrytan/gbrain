@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Invalid host error fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68ac8a6c-8958-8325-b612-f890e2e4263d
 > Created: 2025-08-25T16:08:13Z
 > Updated: 2025-08-25T16:16:53Z

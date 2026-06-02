@@ -17,6 +17,8 @@ updated: 2026-05-30
 
 # Spotify Development Seminar
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a1a3a9d-b884-83e8-ba7c-84e7eaded5ac
 > Created: 2026-05-30T01:17:53Z
 > Updated: 2026-05-30T01:19:02Z

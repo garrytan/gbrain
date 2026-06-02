@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Yale Assure Lock Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6834f755-3be0-8007-89d7-ffd885c948f7
 > Created: 2025-05-26T23:20:53Z
 > Updated: 2025-05-26T23:21:04Z

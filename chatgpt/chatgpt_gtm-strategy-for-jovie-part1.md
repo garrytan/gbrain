@@ -17,6 +17,8 @@ updated: 2026-05-16
 
 # GTM strategy for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a08a9fa-8fd8-83e8-b4fe-7855827e9614
 > Created: 2026-05-16T17:31:39Z
 > Updated: 2026-05-16T22:48:15Z

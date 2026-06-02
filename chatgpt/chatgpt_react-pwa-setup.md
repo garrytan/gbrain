@@ -16,6 +16,8 @@ updated: 2025-06-08
 
 # React PWA Setup
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6846129f-6964-8007-adca-438b73c82705
 > Created: 2025-06-08T22:45:51Z
 > Updated: 2025-06-08T22:46:09Z

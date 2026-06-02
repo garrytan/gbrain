@@ -17,6 +17,8 @@ updated: 2026-04-30
 
 # AI Driven Artist Profiles
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69f292a3-184c-83e8-9bc4-183565148e80
 > Created: 2026-04-29T23:22:11Z
 > Updated: 2026-04-30T00:31:52Z

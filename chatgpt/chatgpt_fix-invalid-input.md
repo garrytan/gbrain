@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Fix Invalid Input
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6889a78b-1b90-474e-8a21-b668e3865ddb
 > Created: 2022-12-21T03:41:07Z
 > Updated: 2022-12-21T03:41:07Z

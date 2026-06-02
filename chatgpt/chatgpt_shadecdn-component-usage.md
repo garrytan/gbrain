@@ -17,6 +17,8 @@ updated: 2025-09-09
 
 # Shadecdn component usage
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68c0739a-959c-8321-8e4c-788f1b845e36
 > Created: 2025-09-09T18:36:18Z
 > Updated: 2025-09-09T20:21:53Z

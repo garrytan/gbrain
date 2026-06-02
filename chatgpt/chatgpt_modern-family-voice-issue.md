@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Modern Family Voice Issue
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69e9c59f-010c-83e8-ab65-fec7ea47658c
 > Created: 2026-04-23T07:09:20Z
 > Updated: 2026-04-23T07:09:33Z

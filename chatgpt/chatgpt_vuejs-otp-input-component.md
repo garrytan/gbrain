@@ -17,6 +17,8 @@ updated: 2023-01-03
 
 # Vue.js OTP Input Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 45404eb6-aa42-4d6e-be09-cc7bae39d901
 > Created: 2023-01-03T01:25:47Z
 > Updated: 2023-01-03T01:25:47Z

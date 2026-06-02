@@ -15,6 +15,8 @@ updated: 2025-12-21
 
 # Vercel vs PostHog comparison
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 694849f3-89b4-8331-a9d0-584c6b12c3bc
 > Created: 2025-12-21T19:27:10Z
 > Updated: 2025-12-21T19:28:40Z

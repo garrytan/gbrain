@@ -17,6 +17,8 @@ updated: 2024-01-07
 
 # Flutter Code Errors & Fixes
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 398d8406-181c-43e4-a911-d208b1ba1683
 > Created: 2024-01-07T03:24:15Z
 > Updated: 2024-01-07T03:25:34Z

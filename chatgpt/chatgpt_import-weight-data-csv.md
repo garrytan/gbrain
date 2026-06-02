@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Import Weight Data CSV
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 505099bf-92e6-4d2e-9b13-d5f12eebae5f
 > Created: 2023-12-02T22:12:44Z
 > Updated: 2023-12-02T22:18:54Z

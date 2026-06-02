@@ -27,6 +27,8 @@ That lets you target DJs and LA late-night artists without explaining everything
 
 # Recommended website sections
 
+**Related:** [[jovie_music]]
+
 ## 1. Hero — “Meet Jovie”
 
 **Visual:**  

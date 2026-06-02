@@ -21,6 +21,8 @@ I’ll be back shortly with a reliable step-by-step fix that clears up both your
 
 # Integrating Supabase with Vercel (Next.js App Router): Common Issues & Solutions
 
+**Related:** [[coding_web_dev]]
+
 ## 1. Supabase Environment Variables on Vercel (with Branching Enabled)  
 When using Vercel’s official Supabase integration, environment variables are meant to be synchronized automatically for each deployment environment (Production, Preview, Development). Supabase’s integration generates separate API keys and URLs for each **Database Branch** (Supabase’s term for preview environments)【1†L116-L123】 and injects them into the corresponding Vercel deployment. In theory, this allows each Git branch (e.g. dev, feature preview, main) to target its own Supabase instance. The integration updates Vercel env vars when you open a Pull Request (PR) for a new branch【3†L769-L777】.  
 

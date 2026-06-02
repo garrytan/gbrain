@@ -15,6 +15,8 @@ updated: 2026-01-18
 
 # DJ Linkinbio Interface Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 696d1da7-0ce4-832c-9a09-3dddbc23ce71
 > Created: 2026-01-18T17:53:03Z
 > Updated: 2026-01-18T17:54:05Z

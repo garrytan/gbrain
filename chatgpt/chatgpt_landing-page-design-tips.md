@@ -15,6 +15,8 @@ updated: 2026-02-16
 
 # Landing Page Design Tips
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69910f07-88ec-8329-ad3f-b73a1090abb6
 > Created: 2026-02-15T00:10:48Z
 > Updated: 2026-02-16T02:03:43Z

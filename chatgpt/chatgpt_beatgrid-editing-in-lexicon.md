@@ -15,6 +15,8 @@ updated: 2025-01-20
 
 # Beatgrid Editing in Lexicon
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 678eddaa-08dc-8007-b28b-b2ea43c63618
 > Created: 2025-01-20T23:35:06Z
 > Updated: 2025-01-20T23:35:13Z

@@ -16,6 +16,8 @@ updated: 2026-01-06
 
 # Max Martin LA Studios
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 695c43f5-6ec4-832a-bbb6-975811676213
 > Created: 2026-01-05T23:06:29Z
 > Updated: 2026-01-06T23:26:59Z

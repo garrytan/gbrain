@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Cursor agent flow issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69463f56-c5a4-832c-9f4b-e2c284ab84e4
 > Created: 2025-12-20T06:17:03Z
 > Updated: 2025-12-20T06:27:30Z

@@ -17,6 +17,8 @@ updated: 2024-01-22
 
 # Extract Components to Files
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 00f4f7ef-d682-4d3c-935d-10496e194087
 > Created: 2024-01-21T21:15:05Z
 > Updated: 2024-01-22T07:01:49Z

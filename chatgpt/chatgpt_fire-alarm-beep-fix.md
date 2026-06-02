@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fire Alarm Beep Fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 67d128dc-3a4c-8007-bedd-33177628a53b
 > Created: 2025-03-12T06:25:32Z
 > Updated: 2025-03-12T06:33:39Z

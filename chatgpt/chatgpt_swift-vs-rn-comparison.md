@@ -15,6 +15,8 @@ updated: 2025-06-18
 
 # Swift vs RN Comparison
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 685324fa-2fa4-8007-a148-9c3b20611d24
 > Created: 2025-06-18T20:43:38Z
 > Updated: 2025-06-18T20:43:47Z

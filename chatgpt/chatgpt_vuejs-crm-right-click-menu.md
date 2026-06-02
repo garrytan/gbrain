@@ -17,6 +17,8 @@ updated: 2023-06-09
 
 # Vue.js CRM Right-Click Menu
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 66e79f50-447d-480a-b2ea-b92cb09f9554
 > Created: 2023-06-09T00:54:12Z
 > Updated: 2023-06-09T00:54:37Z

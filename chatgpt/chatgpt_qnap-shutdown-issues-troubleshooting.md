@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # QNAP Shutdown Issues Troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 09f4294f-92a4-4a07-bec5-58961a3d807b
 > Created: 2024-01-28T01:05:31Z
 > Updated: 2024-01-28T01:23:32Z

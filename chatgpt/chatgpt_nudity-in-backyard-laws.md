@@ -15,6 +15,8 @@ updated: 2025-07-27
 
 # Nudity in Backyard Laws
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6886b2f4-7ab0-8324-b411-9443fbb14e20
 > Created: 2025-07-27T23:15:01Z
 > Updated: 2025-07-27T23:15:08Z

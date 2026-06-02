@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Fix email validation function
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: fbb33182-011f-4d45-87fb-483d20dce856
 > Created: 2022-12-22T21:20:46Z
 > Updated: 2022-12-22T21:20:46Z

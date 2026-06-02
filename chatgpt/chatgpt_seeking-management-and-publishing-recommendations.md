@@ -15,6 +15,8 @@ updated: 2023-11-02
 
 # Seeking Management and Publishing Recommendations
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: d16d584f-c020-4ad5-b466-7d051b4ee5f5
 > Created: 2023-11-02T04:03:48Z
 > Updated: 2023-11-02T04:04:35Z

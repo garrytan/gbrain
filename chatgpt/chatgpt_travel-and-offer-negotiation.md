@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Travel and offer negotiation
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 691e946f-2cf4-832b-bda8-4a0449686d78
 > Created: 2025-11-20T04:09:30Z
 > Updated: 2025-11-20T04:16:55Z

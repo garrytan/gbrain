@@ -15,6 +15,8 @@ updated: 2026-01-20
 
 # Table Design Improvements
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 696fe48c-dd50-8329-b8cf-ab9bd40f022c
 > Created: 2026-01-20T20:25:08Z
 > Updated: 2026-01-20T20:25:58Z

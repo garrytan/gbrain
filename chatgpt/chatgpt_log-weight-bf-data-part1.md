@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Log Weight & BF% Data
 
+**Related:** [[personal_health]]
+
 > Conversation ID: e7a856ce-deee-4ad0-b327-1588dfd12f82
 > Created: 2023-11-23T09:41:37Z
 > Updated: 2023-11-23T10:28:56Z

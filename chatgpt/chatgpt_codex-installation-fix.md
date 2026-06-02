@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Codex installation fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 687f0571-901c-8332-be22-1128109e5c9b
 > Created: 2025-07-22T03:28:50Z
 > Updated: 2025-07-22T04:57:06Z

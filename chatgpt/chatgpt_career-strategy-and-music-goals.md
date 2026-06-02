@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Career Strategy and Music Goals
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67bed0e3-bb90-8007-85b3-4591bb3dbc69
 > Created: 2025-02-26T08:29:24Z
 > Updated: 2025-02-26T08:31:53Z

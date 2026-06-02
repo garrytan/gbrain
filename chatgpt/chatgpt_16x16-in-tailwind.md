@@ -16,6 +16,8 @@ updated: 2026-01-28
 
 # 16x16 in Tailwind
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 697986b0-7084-8332-951c-b5a74bc782f9
 > Created: 2026-01-28T03:46:57Z
 > Updated: 2026-01-28T03:47:28Z

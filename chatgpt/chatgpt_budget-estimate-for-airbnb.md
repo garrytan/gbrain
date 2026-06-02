@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Budget estimate for Airbnb
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6914ebd4-5438-8333-8f34-8b73225f116e
 > Created: 2025-11-12T20:20:42Z
 > Updated: 2025-11-12T20:27:19Z

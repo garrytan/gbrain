@@ -17,6 +17,8 @@ updated: 2026-04-27
 
 # Jovie Landing Page Spec
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69eed94c-be40-83e8-88dc-9ea0ad58a2e7
 > Created: 2026-04-27T03:34:37Z
 > Updated: 2026-04-27T03:40:29Z

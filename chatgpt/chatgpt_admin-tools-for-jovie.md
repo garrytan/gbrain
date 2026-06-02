@@ -15,6 +15,8 @@ updated: 2025-12-06
 
 # Admin tools for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 693465c8-d598-8331-baeb-df45829a253f
 > Created: 2025-12-06T17:20:19Z
 > Updated: 2025-12-06T17:20:49Z

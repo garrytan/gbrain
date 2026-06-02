@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Fact check crypto claim
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 687d67bb-f834-8321-93cd-df2ed297ec4e
 > Created: 2025-07-20T22:03:41Z
 > Updated: 2025-07-20T22:22:34Z

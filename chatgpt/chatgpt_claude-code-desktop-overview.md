@@ -15,6 +15,8 @@ updated: 2025-12-21
 
 # Claude Code Desktop overview
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69477457-1584-8326-8688-288e49d3374e
 > Created: 2025-12-21T04:15:20Z
 > Updated: 2025-12-21T04:15:53Z

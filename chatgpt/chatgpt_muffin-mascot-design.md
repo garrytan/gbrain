@@ -15,6 +15,8 @@ updated: 2025-05-18
 
 # Muffin Mascot Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68296472-b6a0-8007-85d5-4bd6787de0c5
 > Created: 2025-05-18T04:39:14Z
 > Updated: 2025-05-18T19:14:33Z

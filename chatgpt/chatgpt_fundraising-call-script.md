@@ -16,6 +16,8 @@ updated: 2026-05-28
 
 # Fundraising Call Script
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a18d366-c128-83e8-8871-a2a263427b73
 > Created: 2026-05-28T23:44:57Z
 > Updated: 2026-05-28T23:47:09Z

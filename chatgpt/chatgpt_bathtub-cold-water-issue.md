@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bathtub Cold Water Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 67e35e1e-3378-8007-9ab6-15d6378bb7ee
 > Created: 2025-03-26T01:53:34Z
 > Updated: 2025-03-26T01:56:07Z

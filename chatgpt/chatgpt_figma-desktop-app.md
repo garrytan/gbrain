@@ -15,6 +15,8 @@ updated: 2026-02-20
 
 # Figma Desktop App
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6998ca7e-b7c4-832a-b019-afaa5e7f7a81
 > Created: 2026-02-20T20:56:31Z
 > Updated: 2026-02-20T20:57:02Z

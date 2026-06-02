@@ -16,6 +16,8 @@ updated: 2026-02-15
 
 # Claude Code Hooks Setup
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69924ace-a49c-8326-a2c3-3741f9572b53
 > Created: 2026-02-15T22:38:19Z
 > Updated: 2026-02-15T22:38:46Z

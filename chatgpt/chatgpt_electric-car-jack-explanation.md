@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Electric car jack explanation
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68cb935b-bcc0-8330-90b6-ea502f19bbd4
 > Created: 2025-09-18T05:06:58Z
 > Updated: 2025-09-18T05:07:04Z

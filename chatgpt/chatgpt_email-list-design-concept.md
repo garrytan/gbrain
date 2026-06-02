@@ -15,6 +15,8 @@ updated: 2026-04-29
 
 # Email List Design Concept
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69f19408-8f60-83e8-81f0-e1b31140a62b
 > Created: 2026-04-29T05:15:53Z
 > Updated: 2026-04-29T05:22:38Z

@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Extract code to component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: e785c999-6b17-463c-bfe6-d2669c10e725
 > Created: 2022-12-21T20:47:14Z
 > Updated: 2022-12-21T20:47:14Z

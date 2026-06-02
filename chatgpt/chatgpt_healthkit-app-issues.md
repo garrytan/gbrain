@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # HealthKit App Issues
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 686adb5c-ebb0-8007-91e1-72b377161d73
 > Created: 2025-07-06T20:23:57Z
 > Updated: 2025-07-06T20:29:22Z

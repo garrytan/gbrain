@@ -16,6 +16,8 @@ updated: 2025-11-24
 
 # Funding revenue founders
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6924e388-dd30-8331-84f0-00ccf9ecdbcd
 > Created: 2025-11-24T23:00:30Z
 > Updated: 2025-11-24T23:03:32Z

@@ -16,6 +16,8 @@ updated: 2025-06-27
 
 # Replace CA ID at Kiosk
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 685e2cc3-990c-8007-9920-53762603e89e
 > Created: 2025-06-27T05:31:47Z
 > Updated: 2025-06-27T07:24:19Z

@@ -15,6 +15,8 @@ updated: 2025-08-05
 
 # Segment startup program
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68928574-57ec-8323-9bd9-4e03b155368f
 > Created: 2025-08-05T22:28:04Z
 > Updated: 2025-08-05T22:28:13Z

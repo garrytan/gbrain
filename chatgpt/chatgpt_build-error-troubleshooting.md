@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Build error troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 687c9386-6e64-8328-8b67-18678bdc7d25
 > Created: 2025-07-20T06:58:15Z
 > Updated: 2025-07-20T19:36:52Z

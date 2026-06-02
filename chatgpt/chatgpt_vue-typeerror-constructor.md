@@ -15,6 +15,8 @@ updated: 2023-02-05
 
 # Vue TypeError Constructor
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 3dd07b6a-10f4-42f1-bc00-d25e05632202
 > Created: 2023-02-05T04:46:54Z
 > Updated: 2023-02-05T04:46:54Z

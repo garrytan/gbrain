@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Peony Flower Care Tips
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 698fc3dd-2020-8327-8205-327a9d17f993
 > Created: 2026-02-14T00:39:26Z
 > Updated: 2026-02-14T03:44:40Z

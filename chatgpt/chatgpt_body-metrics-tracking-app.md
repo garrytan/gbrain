@@ -17,6 +17,8 @@ updated: 2025-05-31
 
 # Body Metrics Tracking App
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 683b67cb-8dfc-8007-b6ca-a10fd47e7714
 > Created: 2025-05-31T20:34:19Z
 > Updated: 2025-05-31T20:47:52Z

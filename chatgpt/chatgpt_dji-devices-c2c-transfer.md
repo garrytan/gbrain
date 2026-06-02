@@ -15,6 +15,8 @@ updated: 2025-09-12
 
 # DJI devices C2C transfer
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68c47e4f-2428-8321-9056-2d7f892dc8a2
 > Created: 2025-09-12T20:11:14Z
 > Updated: 2025-09-12T20:12:55Z

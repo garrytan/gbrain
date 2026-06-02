@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Staffing and availability issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68ede9ab-6464-8330-b77e-b9aa9d160166
 > Created: 2025-10-14T06:17:47Z
 > Updated: 2025-10-14T07:04:04Z
@@ -21,7 +23,8 @@ tags: [chatgpt, import, long-form]
 
 Gotcha. Didn’t realize Harrison got fired to work here… he really does need to work on not seeming super miserable the whole time. 
 
-I just figured if Brandon is possibly here we’d want people who are super used to how things work. Jordan has sold drinks outside before which we are starting Thursday and dealt with a room changeover/two show day which we are starting FridaySame with Sophie vs Maya. Just thought these new additions were supplementing the core team who knows how this works, not in place of them?
+I just figured if Brandon is possibly here we’d want people who are super used to how things work. Jordan has sold drinks outside before which we are starting Thursday and dealt with a room changeover/two show day which we are starting Friday
+Same with Sophie vs Maya. Just thought these new additions were supplementing the core team who knows how this works, not in place of them?
 
 
 
@@ -225,7 +228,8 @@ Vincent said Agreed. But Maya was being given three shifts this week originally 
 
 How I’ve always structured  it is is people who commit to being her for the long haul get scheduled first, and the newer people share the open slots. This deviates from that and I think isn’t going to go over well Agreed. But Maya was being given three shifts this week originally and scheduled over someone who’s been here a lot more. The only shift she didn’t have was one she couldn’t do. But that same structure didn’t apply to Sophie that’s my confusion. And you said maya isn’t going to have Saturdays because of kook which is the important day looking forward...
 
-How I’ve always structured  it is is people who commit to being her for the long haul get scheduled first, and the newer people share the open slots. This deviates from that and I think isn’t going to go over well  (I’d be saying the same if Sophie told us she couldn’t do Saturday’s for the next three months)
+How I’ve always structured  it is is people who commit to being her for the long haul get scheduled first, and the newer people share the open slots. This deviates from that and I think isn’t going to go over well  
+(I’d be saying the same if Sophie told us she couldn’t do Saturday’s for the next three months)
 
 
 

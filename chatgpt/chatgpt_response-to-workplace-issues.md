@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Response to workplace issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68a14685-8a64-8326-988f-d53f97b5f6d4
 > Created: 2025-08-17T03:03:39Z
 > Updated: 2025-08-17T03:03:48Z

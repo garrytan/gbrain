@@ -17,6 +17,8 @@ updated: 2026-04-28
 
 # Jovie Artist Profile Ad
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69eff238-a9bc-83e8-a80f-91ad5d248eb5
 > Created: 2026-04-27T23:33:13Z
 > Updated: 2026-04-28T02:02:03Z

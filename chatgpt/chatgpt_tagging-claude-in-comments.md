@@ -15,6 +15,8 @@ updated: 2026-01-09
 
 # Tagging Claude in Comments
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69616252-01e8-832a-a80e-eb4e2b3e4699
 > Created: 2026-01-09T20:17:22Z
 > Updated: 2026-01-09T20:19:41Z

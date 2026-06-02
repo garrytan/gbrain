@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cosmopolitan Cocktail Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 2789ae72-0524-4d54-ac32-c696d157c9cd
 > Created: 2024-08-03T04:42:50Z
 > Updated: 2024-08-03T04:42:54Z

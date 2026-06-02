@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Create Vue component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: caf28025-f6c3-4e89-b0d9-6429c3186fec
 > Created: 2022-12-21T23:50:10Z
 > Updated: 2022-12-21T23:50:10Z

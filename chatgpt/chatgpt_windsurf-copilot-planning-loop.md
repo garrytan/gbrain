@@ -17,6 +17,8 @@ updated: 2025-08-09
 
 # Windsurf Copilot planning loop
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6897b1f5-640c-8321-a18e-5a3589025614
 > Created: 2025-08-09T20:39:26Z
 > Updated: 2025-08-09T23:05:52Z

@@ -17,6 +17,8 @@ updated: 2026-04-03
 
 # Jovie Homepage Redesign Prompt
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69d01e80-9c7c-83e8-9cbf-12c8907e9381
 > Created: 2026-04-03T20:09:42Z
 > Updated: 2026-04-03T20:14:30Z

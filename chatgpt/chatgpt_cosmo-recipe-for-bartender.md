@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cosmo Recipe for Bartender
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 966d241a-8a46-41a6-ad1b-328956853bd5
 > Created: 2023-12-22T05:56:02Z
 > Updated: 2023-12-23T03:16:14Z

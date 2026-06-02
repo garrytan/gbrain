@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Target Weight Calculation
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 66e79c8c-ebf0-8007-8a76-42bfadb868ab
 > Created: 2024-09-16T02:48:45Z
 > Updated: 2024-09-16T17:04:30Z

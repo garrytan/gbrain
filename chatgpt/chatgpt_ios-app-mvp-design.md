@@ -16,6 +16,8 @@ updated: 2026-04-13
 
 # iOS App MVP Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69dd4d2a-7af0-83e8-903f-39ab4603d92b
 > Created: 2026-04-13T20:08:11Z
 > Updated: 2026-04-13T20:32:09Z

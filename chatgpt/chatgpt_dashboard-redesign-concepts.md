@@ -16,6 +16,8 @@ updated: 2026-04-24
 
 # Dashboard Redesign Concepts
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69eb87d7-1e14-83e8-b92e-6e0d71322e80
 > Created: 2026-04-24T15:10:16Z
 > Updated: 2026-04-24T15:31:51Z

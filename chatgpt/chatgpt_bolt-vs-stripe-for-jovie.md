@@ -17,6 +17,8 @@ updated: 2025-09-14
 
 # Bolt vs Stripe for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68c5d0b0-d554-832c-8ed2-80a9ff659f76
 > Created: 2025-09-13T20:14:52Z
 > Updated: 2025-09-14T20:49:27Z

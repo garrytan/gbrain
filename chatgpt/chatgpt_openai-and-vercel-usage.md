@@ -15,6 +15,8 @@ updated: 2025-09-13
 
 # OpenAI and Vercel usage
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68c5f028-7af4-8323-a4b2-7443c7427059
 > Created: 2025-09-13T22:29:01Z
 > Updated: 2025-09-13T22:29:05Z

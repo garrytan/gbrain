@@ -17,6 +17,8 @@ updated: 2025-07-13
 
 # Timeline Aggregation Design Ideas
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6873ec70-ba64-8007-9523-1f17426ea36e
 > Created: 2025-07-13T17:27:12Z
 > Updated: 2025-07-13T18:29:22Z

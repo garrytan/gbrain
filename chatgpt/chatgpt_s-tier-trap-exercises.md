@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # S tier trap exercises
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6923c87e-49c8-8325-ae9f-c758913ca853
 > Created: 2025-11-24T02:52:57Z
 > Updated: 2025-11-24T03:18:09Z

@@ -16,6 +16,8 @@ updated: 2026-01-24
 
 # Tailwind UI Avatar Placeholder
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 697531dd-5dd0-832b-b2c6-493045bc37eb
 > Created: 2026-01-24T20:55:57Z
 > Updated: 2026-01-24T20:57:02Z

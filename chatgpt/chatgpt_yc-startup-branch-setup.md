@@ -15,6 +15,8 @@ updated: 2025-12-23
 
 # YC Startup Branch Setup
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6949f6dc-e6bc-832e-9f66-9dfee795b4f4
 > Created: 2025-12-23T01:56:45Z
 > Updated: 2025-12-23T02:04:16Z

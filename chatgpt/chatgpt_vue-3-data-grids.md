@@ -15,6 +15,8 @@ updated: 2022-12-20
 
 # Vue 3 Data Grids
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 5d3a98bf-7ad7-44f7-83d4-848bfcd71d73
 > Created: 2022-12-20T23:07:38Z
 > Updated: 2022-12-20T23:07:38Z

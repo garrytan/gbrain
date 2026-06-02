@@ -15,6 +15,8 @@ updated: 2025-12-27
 
 # Spotify Apple Music Analytics
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 694f46bf-b57c-832d-90b4-1011c906c489
 > Created: 2025-12-27T02:39:08Z
 > Updated: 2025-12-27T02:41:14Z

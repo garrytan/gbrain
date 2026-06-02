@@ -17,6 +17,8 @@ updated: 2024-06-11
 
 # Music Album JSON Update
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: d943a4d1-6210-46c0-9ddb-2ee03342643d
 > Created: 2024-06-11T01:07:13Z
 > Updated: 2024-06-11T15:57:37Z

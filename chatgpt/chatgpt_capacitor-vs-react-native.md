@@ -15,6 +15,8 @@ updated: 2025-06-09
 
 # Capacitor vs React Native
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6846fab7-4cfc-8007-b19e-6cb4a14084b6
 > Created: 2025-06-09T15:16:07Z
 > Updated: 2025-06-09T15:19:20Z

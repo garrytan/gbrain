@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # CSV Import Error Troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: b4f651d8-35d5-4b93-bca9-524f8fafb659
 > Created: 2023-12-05T02:35:52Z
 > Updated: 2023-12-05T03:10:20Z

@@ -15,6 +15,8 @@ updated: 2025-05-11
 
 # Tequila Lawsuit Credibility Check
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6820e70c-325c-8007-af86-0abce5e2df52
 > Created: 2025-05-11T18:06:04Z
 > Updated: 2025-05-11T18:08:03Z

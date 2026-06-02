@@ -16,6 +16,8 @@ updated: 2025-11-18
 
 # Improve UX design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 691bac7f-1238-8327-9303-91ba8940e81f
 > Created: 2025-11-17T23:15:29Z
 > Updated: 2025-11-18T23:28:26Z

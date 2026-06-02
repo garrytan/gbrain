@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Restaurant Tax Snark
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 680ff372-13f0-8007-8e89-da755b4a77e1
 > Created: 2025-04-28T21:30:26Z
 > Updated: 2025-04-28T21:38:21Z

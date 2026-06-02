@@ -15,6 +15,8 @@ updated: 2024-05-29
 
 # Taylor Swift Album Announcement
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 4cf6ef01-b94f-49f1-b496-d97590220a2f
 > Created: 2024-05-29T01:17:17Z
 > Updated: 2024-05-29T01:18:08Z

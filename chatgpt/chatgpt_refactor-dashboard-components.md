@@ -15,6 +15,8 @@ updated: 2025-11-21
 
 # Refactor dashboard components
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 691fd6e5-e738-832d-a4d3-da2320a34e51
 > Created: 2025-11-21T03:05:56Z
 > Updated: 2025-11-21T03:06:15Z

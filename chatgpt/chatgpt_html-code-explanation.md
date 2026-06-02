@@ -15,6 +15,8 @@ updated: 2022-12-22
 
 # HTML code explanation
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 35a13d15-6bbe-4b72-bfbb-5053c75deb4b
 > Created: 2022-12-22T01:58:15Z
 > Updated: 2022-12-22T01:58:15Z

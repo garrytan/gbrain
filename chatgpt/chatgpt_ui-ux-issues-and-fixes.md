@@ -16,6 +16,8 @@ updated: 2026-02-01
 
 # UI UX Issues and Fixes
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 697f9f9d-615c-8333-8bac-e6ee8bb5b036
 > Created: 2026-02-01T18:47:21Z
 > Updated: 2026-02-01T18:50:51Z

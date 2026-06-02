@@ -16,6 +16,8 @@ updated: 2023-04-29
 
 # Vue.js component for displaying contact's profile picture
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: fa7a31fb-3593-4f67-98bf-47c619da55dc
 > Created: 2023-04-29T21:16:48Z
 > Updated: 2023-04-29T21:17:15Z

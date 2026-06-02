@@ -15,6 +15,8 @@ updated: 2025-07-04
 
 # XDJ-1000MK2s for Sale
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68683e83-f148-8007-881c-ea70e5325ae2
 > Created: 2025-07-04T20:50:12Z
 > Updated: 2025-07-04T20:50:16Z

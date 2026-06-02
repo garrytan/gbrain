@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Moes Smart Switches Troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: c9016834-610f-40a6-9fb2-acd6d904b86a
 > Created: 2023-11-30T22:48:26Z
 > Updated: 2023-11-30T22:49:41Z

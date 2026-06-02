@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Nuxt Configuration Module Settings
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 837f3ea7-59d5-44e9-b3db-5cf73a5d295c
 > Created: 2024-06-06T19:01:44Z
 > Updated: 2024-06-06T19:07:48Z

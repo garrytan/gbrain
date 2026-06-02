@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # KDS menu issue troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68d5eba8-cc30-832d-b631-c72533192d1f
 > Created: 2025-09-26T01:26:40Z
 > Updated: 2025-09-26T01:29:17Z

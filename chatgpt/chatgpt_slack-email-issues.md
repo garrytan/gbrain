@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Slack email issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6941bdc3-e434-8332-85fc-b1e7b57b0ec7
 > Created: 2025-12-16T20:15:01Z
 > Updated: 2025-12-16T20:16:36Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Network error troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 694975fa-12f8-8328-b344-e5ceb3b2bc52
 > Created: 2025-12-22T16:46:51Z
 > Updated: 2025-12-23T04:43:46Z

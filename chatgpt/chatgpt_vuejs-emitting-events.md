@@ -16,6 +16,8 @@ updated: 2022-12-24
 
 # Vue.js Emitting Events
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 7cbcb9b8-146e-4c76-a764-ce4b9814c1bd
 > Created: 2022-12-24T21:08:30Z
 > Updated: 2022-12-24T21:08:30Z

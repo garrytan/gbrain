@@ -17,6 +17,8 @@ updated: 2025-12-29
 
 # Vercel Redis Integration
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6952acf7-228c-8333-9d6d-396f9e601c59
 > Created: 2025-12-29T16:31:52Z
 > Updated: 2025-12-29T16:35:35Z

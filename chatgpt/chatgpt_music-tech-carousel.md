@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Music Tech Carousel
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6a08dfaf-97e4-83e8-80d5-97e2197c4081
 > Created: 2026-05-16T21:20:49Z
 > Updated: 2026-05-16T21:28:08Z

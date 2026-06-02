@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Chapter 13 Bankruptcy Eligibility
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 2b3f7f24-e706-4186-87bf-c8f5f8408680
 > Created: 2023-12-01T20:08:33Z
 > Updated: 2023-12-01T20:09:43Z

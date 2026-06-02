@@ -17,6 +17,8 @@ updated: 2026-04-23
 
 # World Class Audio Plan
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69e9975b-bad4-83e8-8f45-640461ff5962
 > Created: 2026-04-23T03:51:57Z
 > Updated: 2026-04-23T05:43:40Z

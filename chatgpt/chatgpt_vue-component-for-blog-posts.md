@@ -16,6 +16,8 @@ updated: 2023-01-05
 
 # Vue component for blog posts
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 485c17da-738a-48a5-807a-e163b3d11469
 > Created: 2023-01-05T17:51:11Z
 > Updated: 2023-01-05T17:51:11Z

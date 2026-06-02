@@ -16,6 +16,8 @@ updated: 2026-04-22
 
 # Vertical AI for Artists
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69e8f3a7-e260-83e8-8f83-fcecf096afb7
 > Created: 2026-04-22T16:13:28Z
 > Updated: 2026-04-22T18:18:27Z

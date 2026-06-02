@@ -15,6 +15,8 @@ updated: 2026-04-24
 
 # Next.js Mobile UX Design
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69ebeaa4-f8cc-83e8-83d5-8c8e85aa8a50
 > Created: 2026-04-24T22:12:53Z
 > Updated: 2026-04-24T22:13:16Z

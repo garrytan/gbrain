@@ -17,6 +17,8 @@ updated: 2025-07-06
 
 # Nikita Bier Growth Hacks
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68684365-24ac-8007-aea8-112ac78b1e80
 > Created: 2025-07-04T21:11:01Z
 > Updated: 2025-07-06T16:01:27Z

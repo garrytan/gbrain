@@ -15,6 +15,8 @@ updated: 2024-06-21
 
 # Gay Marriage Legalized in NY
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 2a8b455d-f36b-4750-b441-5202a64621ce
 > Created: 2024-06-21T17:28:44Z
 > Updated: 2024-06-21T17:28:46Z

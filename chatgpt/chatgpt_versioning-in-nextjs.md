@@ -17,6 +17,8 @@ updated: 2026-01-31
 
 # Versioning in Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 697e6915-3dac-8325-8982-85a6022ab04c
 > Created: 2026-01-31T20:42:57Z
 > Updated: 2026-01-31T22:54:00Z

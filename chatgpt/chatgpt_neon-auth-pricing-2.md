@@ -15,6 +15,8 @@ updated: 2026-01-04
 
 # Neon Auth Pricing
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6959d9d0-2f00-8328-9e83-8ed7eee2a03b
 > Created: 2026-01-04T03:09:04Z
 > Updated: 2026-01-04T03:09:35Z

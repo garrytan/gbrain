@@ -16,6 +16,8 @@ updated: 2023-01-31
 
 # Trigger Function with HTML Button
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 60ed6535-9485-4a15-ab1a-cee29c287942
 > Created: 2023-01-31T04:46:50Z
 > Updated: 2023-01-31T04:46:50Z

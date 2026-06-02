@@ -17,6 +17,8 @@ updated: 2026-04-24
 
 # Landing Page Redesign
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69eaa5f4-cd3c-83e8-82ea-3b8496dbca2a
 > Created: 2026-04-23T23:06:29Z
 > Updated: 2026-04-24T03:42:08Z

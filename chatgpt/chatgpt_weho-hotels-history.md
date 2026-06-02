@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # WeHo Hotels History
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 5f0df5ee-75ae-4f8e-b9ae-8c547422931f
 > Created: 2024-06-07T17:21:10Z
 > Updated: 2024-06-07T17:21:25Z

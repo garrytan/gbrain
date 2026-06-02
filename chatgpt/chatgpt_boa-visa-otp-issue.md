@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # BoA Visa OTP Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6864bba1-81e8-8007-915c-c315530c970b
 > Created: 2025-07-02T04:54:57Z
 > Updated: 2025-07-02T05:09:50Z

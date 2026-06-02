@@ -16,6 +16,8 @@ updated: 2025-08-03
 
 # Artist profile suggestions
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 688fcd4b-314c-8328-9eb4-123188b50e81
 > Created: 2025-08-03T20:57:49Z
 > Updated: 2025-08-03T21:33:34Z

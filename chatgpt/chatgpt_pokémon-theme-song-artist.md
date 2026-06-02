@@ -15,6 +15,8 @@ updated: 2025-03-02
 
 # Pokémon Theme Song Artist
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67c4ce88-bbfc-8007-a5c6-eb0c95a6f963
 > Created: 2025-03-02T21:32:56Z
 > Updated: 2025-03-02T21:33:03Z

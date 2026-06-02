@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Health Data Fetching App
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 02a46251-8ae5-41a1-9fc9-62757bf2edf4
 > Created: 2024-01-07T00:14:31Z
 > Updated: 2024-01-07T00:19:40Z

@@ -16,6 +16,8 @@ updated: 2026-01-18
 
 # Music Monetization Strategy
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 696d186d-eca0-832e-bf68-c68a78636a32
 > Created: 2026-01-18T17:29:19Z
 > Updated: 2026-01-18T17:31:07Z

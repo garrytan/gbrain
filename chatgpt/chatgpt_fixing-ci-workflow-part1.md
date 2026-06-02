@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Fixing CI workflow
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68b60eeb-995c-832b-81b4-81e1bfe9d5dc
 > Created: 2025-09-01T21:23:56Z
 > Updated: 2025-09-01T22:40:25Z

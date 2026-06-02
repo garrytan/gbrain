@@ -16,6 +16,8 @@ updated: 2026-02-16
 
 # Managing Features Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69939a8f-c4c4-832d-9757-9ea5887af119
 > Created: 2026-02-16T22:30:47Z
 > Updated: 2026-02-16T23:14:08Z

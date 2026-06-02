@@ -16,6 +16,8 @@ updated: 2025-12-21
 
 # MVP launch checklist
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 694828f1-f1fc-832f-948b-50add9969674
 > Created: 2025-12-21T17:06:20Z
 > Updated: 2025-12-21T17:32:54Z

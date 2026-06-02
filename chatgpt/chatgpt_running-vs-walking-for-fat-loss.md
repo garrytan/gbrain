@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Running vs Walking for Fat Loss
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 683922e8-cf50-8007-ba0c-3ad74c6951ec
 > Created: 2025-05-30T03:15:52Z
 > Updated: 2025-05-30T04:30:06Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Weight Loss and BF
 
+**Related:** [[personal_health]]
+
 > Conversation ID: aef66ef8-0ce1-4f1c-8fb1-cf2c49d0d14e
 > Created: 2024-08-19T18:36:12Z
 > Updated: 2024-08-19T18:37:14Z

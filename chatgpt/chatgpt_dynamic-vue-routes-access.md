@@ -15,6 +15,8 @@ updated: 2023-01-06
 
 # Dynamic Vue Routes Access
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: dcc3d788-ed57-4229-8a47-54a374546e44
 > Created: 2023-01-06T01:12:39Z
 > Updated: 2023-01-06T01:12:39Z

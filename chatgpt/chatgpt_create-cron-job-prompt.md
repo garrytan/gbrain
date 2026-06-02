@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Create cron job prompt
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69fccf15-6700-83e8-99c4-137b3617653b
 > Created: 2026-05-07T17:42:46Z
 > Updated: 2026-05-07T22:22:04Z

@@ -15,6 +15,8 @@ updated: 2026-01-15
 
 # AirPods release history
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6969526c-83e8-832b-8a1b-7c0122a0e61d
 > Created: 2026-01-15T20:47:40Z
 > Updated: 2026-01-15T20:53:48Z

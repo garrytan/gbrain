@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Red Carpet Disruption
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67bbbef8-cb8c-8007-a0a4-e9ebe1d9e623
 > Created: 2025-02-24T00:36:09Z
 > Updated: 2025-02-24T00:36:16Z

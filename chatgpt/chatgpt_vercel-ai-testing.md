@@ -15,6 +15,8 @@ updated: 2026-02-21
 
 # Vercel AI Testing
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 69992549-1e9c-8327-8e13-34cce067f663
 > Created: 2026-02-21T03:23:53Z
 > Updated: 2026-02-21T03:24:28Z

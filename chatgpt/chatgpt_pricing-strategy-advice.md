@@ -16,6 +16,8 @@ updated: 2025-11-09
 
 # Pricing strategy advice
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6910f4b0-7f10-8331-b158-ee53e1a092e8
 > Created: 2025-11-09T20:08:25Z
 > Updated: 2025-11-09T20:08:41Z

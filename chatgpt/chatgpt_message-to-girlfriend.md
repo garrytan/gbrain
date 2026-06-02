@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Message to girlfriend
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68c5b10e-0284-832b-8867-182dfeef3bbb
 > Created: 2025-09-13T18:02:04Z
 > Updated: 2025-09-13T18:02:08Z

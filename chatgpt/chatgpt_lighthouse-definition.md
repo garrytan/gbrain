@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Lighthouse definition
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6945abae-2c90-8326-a261-24621656bc3f
 > Created: 2025-12-19T19:46:54Z
 > Updated: 2025-12-19T19:47:40Z

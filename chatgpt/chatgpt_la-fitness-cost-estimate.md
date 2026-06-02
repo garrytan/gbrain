@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # LA Fitness cost estimate
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68851212-d6b0-832f-a65b-5b81e22f0238
 > Created: 2025-07-26T17:36:19Z
 > Updated: 2025-07-26T19:04:06Z

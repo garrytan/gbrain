@@ -15,6 +15,8 @@ updated: 2024-06-03
 
 # Pitch for Tim White
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 2f602919-209e-4c43-80f4-d62b5224f526
 > Created: 2024-06-03T23:57:59Z
 > Updated: 2024-06-03T23:59:15Z

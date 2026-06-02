@@ -15,6 +15,8 @@ updated: 2025-11-30
 
 # Vercel queues overview
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 692c8fca-3158-8326-965f-39d79692a79b
 > Created: 2025-11-30T18:41:18Z
 > Updated: 2025-11-30T18:41:30Z

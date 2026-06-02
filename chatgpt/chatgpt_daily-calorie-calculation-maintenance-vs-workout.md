@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Daily Calorie Calculation: Maintenance vs. Workout
 
+**Related:** [[personal_health]]
+
 > Conversation ID: e78ece03-e7ba-4540-a36c-db6b5abd06f1
 > Created: 2023-09-29T22:25:15Z
 > Updated: 2023-10-01T00:22:38Z

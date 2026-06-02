@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Best glute exercise
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 690fcabb-ab7c-8331-93ab-6e5138effe52
 > Created: 2025-11-08T22:57:03Z
 > Updated: 2025-11-08T22:57:29Z

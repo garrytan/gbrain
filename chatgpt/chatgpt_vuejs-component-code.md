@@ -16,6 +16,8 @@ updated: 2022-12-24
 
 # Vue.js component code
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: ae823834-2dad-473b-810d-82a1182bfb57
 > Created: 2022-12-24T04:35:02Z
 > Updated: 2022-12-24T04:35:02Z

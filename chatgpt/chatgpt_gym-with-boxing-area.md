@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym with Boxing Area
 
+**Related:** [[personal_health]]
+
 > Conversation ID: d8669bf1-65c9-4ef3-ac73-d0b553c2360e
 > Created: 2024-04-25T01:03:46Z
 > Updated: 2024-04-25T01:07:02Z

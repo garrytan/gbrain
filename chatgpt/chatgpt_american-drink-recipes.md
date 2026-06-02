@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # American Drink Recipes
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 1ad8dbf3-d567-4991-94d8-b4f56c32ba8d
 > Created: 2024-05-30T09:03:11Z
 > Updated: 2024-05-30T09:03:23Z

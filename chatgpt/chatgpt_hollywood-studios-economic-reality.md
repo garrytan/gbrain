@@ -16,6 +16,8 @@ updated: 2025-03-04
 
 # Hollywood Studios Economic Reality
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 67c3d57a-71f8-8007-abe8-131fa5133c26
 > Created: 2025-03-02T03:50:18Z
 > Updated: 2025-03-04T01:17:46Z

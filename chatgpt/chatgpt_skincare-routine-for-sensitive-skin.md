@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Skincare Routine for Sensitive Skin
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67c6a659-7ae8-8007-9a5f-8f4cc3171e52
 > Created: 2025-03-04T07:06:01Z
 > Updated: 2025-03-04T07:20:10Z

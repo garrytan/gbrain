@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Private Gyms Hollywood
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 69517ba3-2bf8-8332-8f87-3887cafc8413
 > Created: 2025-12-28T18:49:07Z
 > Updated: 2025-12-28T18:50:16Z

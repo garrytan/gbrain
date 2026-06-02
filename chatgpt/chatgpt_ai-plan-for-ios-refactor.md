@@ -17,6 +17,8 @@ updated: 2025-07-25
 
 # AI plan for iOS refactor
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 688333b1-43c4-8321-9c83-1b7a1d3bf4dc
 > Created: 2025-07-25T07:35:14Z
 > Updated: 2025-07-25T19:38:51Z

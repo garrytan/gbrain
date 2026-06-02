@@ -16,6 +16,8 @@ updated: 2025-12-12
 
 # AI model comparison for Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 693b4eec-ffa4-8333-babd-cbd35d758757
 > Created: 2025-12-11T23:08:59Z
 > Updated: 2025-12-12T06:08:47Z

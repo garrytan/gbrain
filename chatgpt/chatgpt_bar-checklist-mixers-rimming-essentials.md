@@ -15,6 +15,8 @@ updated: 2024-07-11
 
 # Bar Checklist: Mixers, Rimming, Essentials
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 02ce5fb5-a4c4-49e4-b8b6-5cdf4ab93925
 > Created: 2024-07-11T03:21:43Z
 > Updated: 2024-07-11T03:21:52Z

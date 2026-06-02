@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # CarPlay Parking Automation
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 683142f0-ba3c-8007-ae8c-8d289814b594
 > Created: 2025-05-24T03:54:25Z
 > Updated: 2025-05-24T03:54:32Z

@@ -7,6 +7,8 @@ But let’s analyze it properly, so you're making the right *strategic* decision
 
 # ⭐ FIRST: The PSYCHOLOGY is correct
 
+**Related:** [[design_ux]]
+
 Showing:
 
 > “You’re #1,820 in line”

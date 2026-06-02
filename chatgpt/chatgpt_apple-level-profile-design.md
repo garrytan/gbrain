@@ -16,6 +16,8 @@ updated: 2026-04-25
 
 # Apple Level Profile Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69eae9cb-3470-83e8-bd7e-195284870d86
 > Created: 2026-04-24T03:55:56Z
 > Updated: 2026-04-25T03:23:59Z

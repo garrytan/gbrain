@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Muscle twitching after gym
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 69362074-c164-8327-bbf6-5837e9d27c76
 > Created: 2025-12-08T00:48:59Z
 > Updated: 2025-12-08T00:49:09Z

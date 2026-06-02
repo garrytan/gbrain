@@ -15,6 +15,8 @@ updated: 2026-01-07
 
 # Adrianna Papell Designs Overview
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 695ec4fd-be00-832c-97df-9c2e27edfa95
 > Created: 2026-01-07T20:41:34Z
 > Updated: 2026-01-07T20:41:47Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bank Statement Editing Tips
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6805a0c4-e640-8007-9674-ba3ea6edaf49
 > Created: 2025-04-21T01:35:01Z
 > Updated: 2025-04-21T01:35:16Z

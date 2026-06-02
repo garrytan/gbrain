@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Failing and Slow Tests
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 696abc03-9750-8328-94b2-7b27ac5f1458
 > Created: 2026-01-16T22:30:37Z
 > Updated: 2026-01-16T22:42:33Z

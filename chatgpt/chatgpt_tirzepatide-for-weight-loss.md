@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Tirzepatide for Weight Loss
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67baa37c-3880-8007-9193-968137ce0ca7
 > Created: 2025-02-23T04:26:36Z
 > Updated: 2025-02-23T05:18:52Z

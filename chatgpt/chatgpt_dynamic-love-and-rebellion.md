@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Dynamic Love and Rebellion.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: d50a7cf1-940a-4e86-9233-1772cef2a58a
 > Created: 2024-03-21T00:07:15Z
 > Updated: 2024-03-21T00:16:23Z

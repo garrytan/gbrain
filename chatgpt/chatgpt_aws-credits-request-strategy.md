@@ -15,6 +15,8 @@ updated: 2026-05-17
 
 # AWS Credits Request Strategy
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6a0a0176-23d4-83e8-880b-4a2721dde819
 > Created: 2026-05-17T17:57:11Z
 > Updated: 2026-05-17T18:21:36Z

@@ -15,6 +15,8 @@ updated: 2025-02-01
 
 # Hurry Up Tomorrow Album
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 679dca08-9c98-8007-99db-fbb15e9f89fb
 > Created: 2025-02-01T07:15:20Z
 > Updated: 2025-02-01T07:15:50Z

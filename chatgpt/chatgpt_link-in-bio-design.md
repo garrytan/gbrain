@@ -16,6 +16,8 @@ updated: 2025-12-18
 
 # Link in bio design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69435dbc-adb0-832e-ac88-78941745741c
 > Created: 2025-12-18T01:49:49Z
 > Updated: 2025-12-18T02:25:39Z

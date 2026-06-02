@@ -15,6 +15,8 @@ updated: 2025-11-28
 
 # Suno founders details
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 692a12c8-2b60-8326-a8d7-1054e2e9b900
 > Created: 2025-11-28T21:23:20Z
 > Updated: 2025-11-28T21:24:32Z

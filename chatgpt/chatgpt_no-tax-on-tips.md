@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # No tax on tips
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68cf89e6-8594-8332-99f2-84ada54b7262
 > Created: 2025-09-21T05:15:19Z
 > Updated: 2025-09-21T05:15:33Z

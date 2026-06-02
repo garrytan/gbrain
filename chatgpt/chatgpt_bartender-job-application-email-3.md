@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Bartender Job Application Email
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6811acb3-007c-8007-965d-28a3a6cf107a
 > Created: 2025-04-30T04:53:07Z
 > Updated: 2025-04-30T05:01:59Z

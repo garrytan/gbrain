@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Emoji-friendly Changelog Conversion
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 35afc0b7-000e-4492-933a-ec1acf9a3d45
 > Created: 2023-05-29T18:16:04Z
 > Updated: 2023-05-29T18:20:24Z

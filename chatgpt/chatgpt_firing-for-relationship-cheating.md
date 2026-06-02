@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Firing for relationship cheating
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6914f423-7634-8330-a193-cddfc6ff0ba1
 > Created: 2025-11-12T20:55:16Z
 > Updated: 2025-11-12T20:57:06Z

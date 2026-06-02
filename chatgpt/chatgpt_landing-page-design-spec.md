@@ -15,6 +15,8 @@ updated: 2026-04-26
 
 # Landing Page Design Spec
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69ee5450-f2b0-83e8-8436-766a05b6f799
 > Created: 2026-04-26T18:07:13Z
 > Updated: 2026-04-26T18:26:17Z

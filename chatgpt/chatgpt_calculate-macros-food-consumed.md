@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Calculate Macros: Food Consumed
 
+**Related:** [[personal_life]]
+
 > Conversation ID: d9618727-c5dc-495a-9f3a-a4bdda93b5bd
 > Created: 2024-01-17T02:07:47Z
 > Updated: 2024-01-17T03:49:16Z

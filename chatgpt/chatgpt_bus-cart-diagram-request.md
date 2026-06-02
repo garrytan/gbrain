@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bus Cart Diagram Request
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 2dfd4563-295d-43c1-b945-a2fc4ee314dd
 > Created: 2024-08-14T20:46:44Z
 > Updated: 2024-08-14T20:48:40Z

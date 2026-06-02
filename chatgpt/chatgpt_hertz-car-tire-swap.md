@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hertz Car Tire Swap
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 4a42dee2-9f42-4836-91f4-5b0c1c6162ab
 > Created: 2023-10-11T10:48:41Z
 > Updated: 2023-10-11T19:26:01Z

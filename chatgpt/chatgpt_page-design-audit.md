@@ -15,6 +15,8 @@ updated: 2026-01-16
 
 # Page Design Audit
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 696a9755-2d50-8331-a7c9-de907ae5a39b
 > Created: 2026-01-16T19:53:59Z
 > Updated: 2026-01-16T19:54:33Z

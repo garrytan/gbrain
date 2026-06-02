@@ -15,6 +15,8 @@ updated: 2025-04-19
 
 # iPhone Connection Features
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 680420d9-412c-8007-8344-d0598384b686
 > Created: 2025-04-19T22:16:57Z
 > Updated: 2025-04-19T22:17:31Z

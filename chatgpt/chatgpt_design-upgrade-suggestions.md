@@ -15,6 +15,8 @@ updated: 2025-11-22
 
 # Design upgrade suggestions
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69212255-bc7c-8325-8ab2-90254b3f6c38
 > Created: 2025-11-22T02:40:12Z
 > Updated: 2025-11-22T02:41:29Z

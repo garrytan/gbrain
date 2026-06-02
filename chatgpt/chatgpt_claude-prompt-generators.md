@@ -15,6 +15,8 @@ updated: 2025-12-21
 
 # Claude prompt generators
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69486271-bf84-832b-a622-5655fa000398
 > Created: 2025-12-21T21:11:14Z
 > Updated: 2025-12-21T21:11:48Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Apple Payment Method Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6a17a5c9-c324-83e8-9943-f094d1e8dcef
 > Created: 2026-05-28T02:17:57Z
 > Updated: 2026-05-28T02:18:11Z

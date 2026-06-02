@@ -17,6 +17,8 @@ updated: 2022-12-24
 
 # Vue.js data grid cell
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 3a1aeee3-e5d3-4ad0-a4ff-5febda24cdc7
 > Created: 2022-12-24T07:20:46Z
 > Updated: 2022-12-24T07:20:46Z

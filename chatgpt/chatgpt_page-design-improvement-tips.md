@@ -15,6 +15,8 @@ updated: 2025-12-10
 
 # Page design improvement tips
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6939ed6b-4e68-832f-8946-f9b7e43551f8
 > Created: 2025-12-10T22:00:16Z
 > Updated: 2025-12-10T23:10:27Z

@@ -16,6 +16,8 @@ updated: 2025-08-25
 
 # Maroon 5 album credits
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68acd377-d924-8327-8762-75aeda46bbc5
 > Created: 2025-08-25T21:20:51Z
 > Updated: 2025-08-25T21:23:49Z

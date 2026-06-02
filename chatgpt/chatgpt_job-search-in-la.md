@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job search in LA
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69069e3e-7d78-832e-a358-e1677ace7a8b
 > Created: 2025-11-01T23:56:50Z
 > Updated: 2025-11-01T23:59:39Z

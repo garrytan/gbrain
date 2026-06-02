@@ -15,6 +15,8 @@ updated: 2026-02-25
 
 # David Guetta Spotify
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 699e4e8e-4894-8331-98ac-036a4459cc71
 > Created: 2026-02-25T01:21:23Z
 > Updated: 2026-02-25T01:21:55Z

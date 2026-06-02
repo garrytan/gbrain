@@ -15,6 +15,8 @@ updated: 2026-02-14
 
 # Honk Spotify AI System
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6990d114-495c-832f-a1f8-7a3cc2138bbf
 > Created: 2026-02-14T19:47:18Z
 > Updated: 2026-02-14T20:00:09Z

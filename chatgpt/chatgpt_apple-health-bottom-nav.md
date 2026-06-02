@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Apple Health bottom nav
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 691a8916-ecb0-8332-acf7-5cec595f6b07
 > Created: 2025-11-17T02:32:10Z
 > Updated: 2025-11-17T02:38:32Z

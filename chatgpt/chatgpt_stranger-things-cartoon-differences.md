@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Stranger Things Cartoon Differences
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69f414cf-fc04-83e8-973d-1d99e3ab399a
 > Created: 2026-05-01T02:49:52Z
 > Updated: 2026-05-01T04:44:11Z

@@ -15,6 +15,8 @@ updated: 2023-02-05
 
 # Tailwind CSS: Ring vs Border
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: cc7cf4f7-d905-4b64-99cc-ac7344731d6d
 > Created: 2023-02-05T00:57:31Z
 > Updated: 2023-02-05T00:57:31Z

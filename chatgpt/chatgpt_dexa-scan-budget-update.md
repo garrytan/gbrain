@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # DEXA Scan Budget Update
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68260d14-125c-8007-a3ef-085a3a9b7e34
 > Created: 2025-05-15T15:49:40Z
 > Updated: 2025-05-15T15:49:51Z

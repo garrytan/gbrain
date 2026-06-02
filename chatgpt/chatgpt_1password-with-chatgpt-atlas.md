@@ -15,6 +15,8 @@ updated: 2025-10-28
 
 # 1Password with ChatGPT Atlas
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69002321-05f4-8327-be15-93360ea1c6c8
 > Created: 2025-10-28T01:58:02Z
 > Updated: 2025-10-28T01:58:37Z

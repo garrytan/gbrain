@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Daltan Caldwell music career
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 693ef99d-2ea0-8327-9223-b19281e893e1
 > Created: 2025-12-14T17:53:33Z
 > Updated: 2025-12-14T17:54:33Z

@@ -16,6 +16,8 @@ updated: 2025-12-02
 
 # Spotify API limitations
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 692dee71-7284-832c-9a74-590c6e487581
 > Created: 2025-12-01T19:37:22Z
 > Updated: 2025-12-02T19:18:04Z

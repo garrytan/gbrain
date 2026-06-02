@@ -16,6 +16,8 @@ updated: 2025-11-13
 
 # Dashboard UI design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 691579c9-0a38-832e-bf71-af5eea139c81
 > Created: 2025-11-13T06:25:26Z
 > Updated: 2025-11-13T06:30:51Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Ted Lasso Mental Health
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 023eade0-90a4-4008-8b9c-54095689e9b1
 > Created: 2024-01-24T06:02:34Z
 > Updated: 2024-01-24T06:19:05Z

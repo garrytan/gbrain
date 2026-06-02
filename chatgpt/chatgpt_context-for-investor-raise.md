@@ -15,6 +15,8 @@ updated: 2026-05-19
 
 # Context for Investor Raise
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a0caaf5-ee24-83e8-8dd8-02840f66cf34
 > Created: 2026-05-19T18:24:54Z
 > Updated: 2026-05-19T18:41:57Z

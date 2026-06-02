@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Work-from-home job options
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68843e86-26c8-832e-b6b4-244bc9e3a7ef
 > Created: 2025-07-26T02:33:42Z
 > Updated: 2025-07-26T03:19:11Z

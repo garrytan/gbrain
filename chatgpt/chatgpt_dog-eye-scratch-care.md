@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Dog Eye Scratch Care
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 66dd81d1-8a94-8007-a5ac-322a0a27da49
 > Created: 2024-09-08T10:52:01Z
 > Updated: 2024-09-08T10:52:07Z

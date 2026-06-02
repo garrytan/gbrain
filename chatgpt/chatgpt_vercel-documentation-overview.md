@@ -15,6 +15,8 @@ updated: 2026-02-18
 
 # Vercel Documentation Overview
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 69961dca-6d04-832a-a908-b2142265cf3b
 > Created: 2026-02-18T20:15:07Z
 > Updated: 2026-02-18T20:15:16Z

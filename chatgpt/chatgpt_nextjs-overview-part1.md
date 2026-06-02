@@ -17,6 +17,8 @@ updated: 2025-06-16
 
 # Next.js Overview
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 684e27a5-b504-8007-bfe3-71ee4147f48d
 > Created: 2025-06-15T01:53:41Z
 > Updated: 2025-06-16T19:02:42Z

@@ -17,6 +17,8 @@ updated: 2022-12-20
 
 # Limit div resize using CSS
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: de3c218a-308b-458f-8c6d-c180198b2dc7
 > Created: 2022-12-20T21:47:18Z
 > Updated: 2022-12-20T21:47:18Z

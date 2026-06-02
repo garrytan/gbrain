@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Placeholder for missing weight
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67ce163d-3074-8007-8851-d7a068dc5e9d
 > Created: 2025-03-09T22:29:17Z
 > Updated: 2025-03-09T23:33:58Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Macro Plan with Additional Carbs
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 133b22c1-12b1-4ec0-9f5e-24927190425b
 > Created: 2023-11-30T04:41:19Z
 > Updated: 2023-11-30T22:48:24Z

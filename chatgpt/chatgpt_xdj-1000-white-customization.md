@@ -15,6 +15,8 @@ updated: 2025-01-31
 
 # XDJ-1000 White Customization
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 679c4a50-30ec-8007-bbbb-8b4e70c2f066
 > Created: 2025-01-31T03:58:08Z
 > Updated: 2025-01-31T03:58:16Z

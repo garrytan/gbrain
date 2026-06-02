@@ -16,6 +16,8 @@ updated: 2024-03-07
 
 # Hide Album Art Image
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: e23a82e6-003a-4692-bc02-ea68d4a7395b
 > Created: 2024-03-07T22:34:08Z
 > Updated: 2024-03-07T23:36:14Z

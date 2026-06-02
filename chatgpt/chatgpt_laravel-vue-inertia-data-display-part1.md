@@ -17,6 +17,8 @@ updated: 2023-12-02
 
 # Laravel, Vue & Inertia: Data Display
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 8a2cc099-3db5-4c29-95a2-79d991e8536a
 > Created: 2023-11-23T23:08:59Z
 > Updated: 2023-12-02T20:35:33Z

@@ -15,6 +15,8 @@ updated: 2026-05-09
 
 # Update pitch deck
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69fec24e-e71c-83e8-8165-e8879bbfb314
 > Created: 2026-05-09T05:12:47Z
 > Updated: 2026-05-09T05:14:10Z

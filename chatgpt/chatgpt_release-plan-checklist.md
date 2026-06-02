@@ -15,6 +15,8 @@ updated: 2026-04-22
 
 # Release Plan Checklist
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69e81601-18e8-83e8-9030-705f91fd2a2d
 > Created: 2026-04-22T00:27:45Z
 > Updated: 2026-04-22T19:00:03Z

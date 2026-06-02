@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Prohibition Sour Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: cc8a6323-18c9-493c-9104-52d6a368a852
 > Created: 2024-07-18T04:17:48Z
 > Updated: 2024-07-18T04:25:04Z

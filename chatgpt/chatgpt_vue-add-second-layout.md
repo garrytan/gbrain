@@ -16,6 +16,8 @@ updated: 2023-02-26
 
 # Vue: Add Second Layout
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 54fe999e-18b7-4815-8f3a-0b7dc01b4b85
 > Created: 2023-02-26T01:10:50Z
 > Updated: 2023-02-26T01:10:50Z

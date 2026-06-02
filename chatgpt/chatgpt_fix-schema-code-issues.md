@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Fix schema code issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68a3b586-8b08-8328-ac2e-e57a5e173147
 > Created: 2025-08-18T23:22:25Z
 > Updated: 2025-08-19T00:35:27Z

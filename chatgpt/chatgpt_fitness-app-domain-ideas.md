@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fitness App Domain Ideas
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67d32d60-bc24-8007-a777-e70ca633d76c
 > Created: 2025-03-13T19:09:21Z
 > Updated: 2025-03-13T20:11:07Z

@@ -724,6 +724,8 @@ This is the recommended way to work with Python projects. It keeps your dependen
 
 ```bash
 # Create a virtual environment
+
+**Related:** [[coding_mobile]]
 /opt/homebrew/bin/python3 -m venv myenv
 
 # Activate the virtual environment

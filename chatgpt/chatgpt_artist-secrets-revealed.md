@@ -15,6 +15,8 @@ updated: 2025-06-23
 
 # Artist Secrets Revealed
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6858cfae-eda0-8007-9630-165e9eefdf25
 > Created: 2025-06-23T03:53:19Z
 > Updated: 2025-06-23T03:53:45Z

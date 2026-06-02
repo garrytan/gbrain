@@ -15,6 +15,8 @@ updated: 2024-08-13
 
 # Tip Pool Distribution Analysis
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6ae11969-c0ee-4ac8-afa0-16d2aeefaf40
 > Created: 2024-08-13T21:24:32Z
 > Updated: 2024-08-13T21:24:56Z

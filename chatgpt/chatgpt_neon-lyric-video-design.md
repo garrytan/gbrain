@@ -15,6 +15,8 @@ updated: 2024-06-20
 
 # Neon Lyric Video Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 4ec6dcee-38cb-4b49-b750-85ffbe00c76d
 > Created: 2024-06-20T18:10:52Z
 > Updated: 2024-06-20T18:15:05Z

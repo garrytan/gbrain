@@ -17,6 +17,8 @@ import string
 from algoliasearch.search_client import SearchClient
 
 # Setup basic configuration for logging
+
+**Related:** [[coding_mobile]]
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Initialize the Algolia client

@@ -16,6 +16,8 @@ updated: 2026-01-23
 
 # Biome React Hooks Linter
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6973cb16-b8a0-8332-b80f-76ce98351571
 > Created: 2026-01-23T19:25:11Z
 > Updated: 2026-01-23T19:25:45Z

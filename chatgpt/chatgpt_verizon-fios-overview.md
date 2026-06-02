@@ -15,6 +15,8 @@ updated: 2026-01-03
 
 # Verizon Fios Overview
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6958858b-6a84-832f-9cc8-3f79d0a99b3b
 > Created: 2026-01-03T02:57:24Z
 > Updated: 2026-01-03T02:58:03Z

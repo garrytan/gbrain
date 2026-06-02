@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Minecraft Bedrock Win10 Fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 695dac74-3b1c-8333-adb3-95cfd89eb09c
 > Created: 2026-01-07T00:45:07Z
 > Updated: 2026-01-07T00:45:33Z

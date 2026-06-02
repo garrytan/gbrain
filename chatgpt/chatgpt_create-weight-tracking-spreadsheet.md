@@ -15,6 +15,8 @@ updated: 2023-11-07
 
 # Create Weight Tracking Spreadsheet
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 583c0704-ea2c-4200-98ad-1c60da65d45c
 > Created: 2023-11-07T19:10:59Z
 > Updated: 2023-11-07T19:13:11Z

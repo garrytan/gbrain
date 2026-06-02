@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Extracting DataGridCell component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 1edc390e-f211-470f-a4b7-177271f0456d
 > Created: 2022-12-21T22:26:12Z
 > Updated: 2022-12-21T22:26:12Z

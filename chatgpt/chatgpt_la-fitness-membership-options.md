@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # LA Fitness Membership Options
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6840b669-52fc-8007-ad98-5dba847c106d
 > Created: 2025-06-04T21:11:05Z
 > Updated: 2025-06-04T21:15:50Z

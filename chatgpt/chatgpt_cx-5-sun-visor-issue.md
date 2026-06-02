@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # CX-5 Sun Visor Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6838e613-0ad4-8007-a9c9-762507d3fa42
 > Created: 2025-05-29T22:56:19Z
 > Updated: 2025-05-29T22:57:47Z

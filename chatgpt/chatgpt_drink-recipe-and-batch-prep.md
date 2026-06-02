@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Drink Recipe and Batch Prep
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6841a81e-d594-8007-a478-01e7a408d34e
 > Created: 2025-06-05T14:22:23Z
 > Updated: 2025-06-05T15:35:13Z

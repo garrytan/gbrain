@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Earnings Pre-Post Tax
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68491941-4e4c-8007-9c86-3e15d2229123
 > Created: 2025-06-11T05:50:57Z
 > Updated: 2025-06-11T05:51:43Z

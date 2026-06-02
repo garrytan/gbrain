@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Eight Sleep Overview
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 684761f4-6fb8-8007-a0cb-3cdb510bfbf8
 > Created: 2025-06-09T22:36:36Z
 > Updated: 2025-06-09T22:36:55Z

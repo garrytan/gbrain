@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Carbs in 35g Dextrose: 35g
 
+**Related:** [[personal_life]]
+
 > Conversation ID: cb742b5a-c25e-4cb5-9a87-e6b826ac7f7b
 > Created: 2023-09-22T21:47:32Z
 > Updated: 2023-09-22T21:47:32Z

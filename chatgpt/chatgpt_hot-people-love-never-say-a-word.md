@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hot People Love "Never Say A Word"
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 9e6cdb3c-1b06-4110-adb9-6502d47d8862
 > Created: 2024-06-26T05:33:43Z
 > Updated: 2024-06-26T05:33:46Z

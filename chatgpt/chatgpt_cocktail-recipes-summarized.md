@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Cocktail Recipes Summarized
 
+**Related:** [[personal_life]]
+
 > Conversation ID: f8604d8c-891f-4733-98d2-ad65f530419c
 > Created: 2024-07-15T20:50:48Z
 > Updated: 2024-07-16T04:25:05Z

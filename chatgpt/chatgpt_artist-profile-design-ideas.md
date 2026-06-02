@@ -16,6 +16,8 @@ updated: 2026-04-29
 
 # Artist Profile Design Ideas
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69f03be4-2e50-83e8-bc35-725576612566
 > Created: 2026-04-28T04:47:32Z
 > Updated: 2026-04-29T07:21:08Z

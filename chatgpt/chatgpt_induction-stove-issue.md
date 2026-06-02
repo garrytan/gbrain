@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Induction Stove Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69b22455-469c-8320-8b1c-c1ab5fde8ec2
 > Created: 2026-03-12T02:26:30Z
 > Updated: 2026-03-12T03:03:15Z

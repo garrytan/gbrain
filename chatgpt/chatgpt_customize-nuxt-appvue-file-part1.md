@@ -17,6 +17,8 @@ updated: 2024-06-26
 
 # Customize Nuxt App.vue File
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 1cbf99fc-6ced-4086-8d85-6b80e7d2382d
 > Created: 2024-06-26T05:37:29Z
 > Updated: 2024-06-26T06:59:34Z

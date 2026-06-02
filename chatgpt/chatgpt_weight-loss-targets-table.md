@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Weight Loss Targets Table
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6ede38ec-a9ce-4357-a673-6a26e62af9d9
 > Created: 2023-10-31T20:43:30Z
 > Updated: 2023-10-31T20:45:25Z

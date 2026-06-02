@@ -17,6 +17,8 @@ updated: 2026-05-24
 
 # Jovie Profile on Wallet
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a12a209-f62c-83e8-b076-e22329945744
 > Created: 2026-05-24T07:00:26Z
 > Updated: 2026-05-24T07:15:44Z

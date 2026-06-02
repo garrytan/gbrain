@@ -17,6 +17,8 @@ updated: 2026-01-08
 
 # Linear Design System Breakdown
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 695eff83-6484-8332-aa3c-cffb973b44a9
 > Created: 2026-01-08T00:51:32Z
 > Updated: 2026-01-08T02:59:36Z

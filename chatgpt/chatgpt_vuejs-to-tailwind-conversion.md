@@ -16,6 +16,8 @@ updated: 2023-05-03
 
 # Vue.js to Tailwind conversion
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6bed9894-9095-4a96-a5a3-5555bcfd854c
 > Created: 2023-05-03T22:59:09Z
 > Updated: 2023-05-03T22:59:19Z

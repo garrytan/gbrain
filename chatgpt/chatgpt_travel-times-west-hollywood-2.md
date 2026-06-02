@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Travel Times: West Hollywood
 
+**Related:** [[personal_life]]
+
 > Conversation ID: d5635bb8-6910-4913-b11a-b5ea50c3cb1a
 > Created: 2023-07-20T19:11:50Z
 > Updated: 2023-07-20T19:12:00Z

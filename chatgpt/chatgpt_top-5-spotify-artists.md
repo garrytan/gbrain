@@ -16,6 +16,8 @@ updated: 2025-08-02
 
 # Top 5 Spotify artists
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 688e9933-bbdc-8320-8089-168f8c2443e2
 > Created: 2025-08-02T23:03:16Z
 > Updated: 2025-08-02T23:05:37Z

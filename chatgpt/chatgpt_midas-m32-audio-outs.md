@@ -15,6 +15,8 @@ updated: 2025-09-21
 
 # Midas M32 audio outs
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68d04d0c-738c-8332-9050-19d120f69620
 > Created: 2025-09-21T19:08:17Z
 > Updated: 2025-09-21T19:08:28Z

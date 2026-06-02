@@ -17,6 +17,8 @@ updated: 2026-04-21
 
 # AI Platform Design Ideas
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69e80210-e0bc-83e8-bccd-307511f17a27
 > Created: 2026-04-21T23:02:41Z
 > Updated: 2026-04-21T23:38:47Z

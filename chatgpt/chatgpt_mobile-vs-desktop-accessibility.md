@@ -15,6 +15,8 @@ updated: 2024-07-02
 
 # Mobile vs Desktop Accessibility
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 4b793359-dcfe-42be-b7e6-6780fe824adc
 > Created: 2024-07-02T22:37:28Z
 > Updated: 2024-07-02T22:37:39Z

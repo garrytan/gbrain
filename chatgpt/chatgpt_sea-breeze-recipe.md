@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Sea Breeze Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 26d4b2f4-94af-4c0d-9e39-c2a4be13552e
 > Created: 2024-06-29T22:59:17Z
 > Updated: 2024-06-29T23:17:37Z

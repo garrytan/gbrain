@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Apartment Hunting and Gym Needs
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6a14a5b3-301c-83e8-9e2c-00ff75938b2d
 > Created: 2026-05-25T19:40:36Z
 > Updated: 2026-05-25T19:57:14Z

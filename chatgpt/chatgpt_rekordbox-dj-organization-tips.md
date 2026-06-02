@@ -16,6 +16,8 @@ updated: 2025-02-22
 
 # Rekordbox DJ Organization Tips
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67b9199c-4b9c-8007-8f05-81cb46e9373b
 > Created: 2025-02-22T00:26:04Z
 > Updated: 2025-02-22T00:33:35Z

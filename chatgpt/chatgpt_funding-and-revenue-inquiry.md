@@ -15,6 +15,8 @@ updated: 2026-02-18
 
 # Funding and Revenue Inquiry
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69961c95-8724-8332-b7e1-eb4824a243e1
 > Created: 2026-02-18T20:09:58Z
 > Updated: 2026-02-18T20:24:47Z

@@ -15,6 +15,8 @@ updated: 2026-02-25
 
 # Jovie Homepage Copy Adaptation
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 699f4be8-d18c-8333-8fbb-a0b8a26bf2bf
 > Created: 2026-02-25T19:22:58Z
 > Updated: 2026-02-25T19:26:00Z

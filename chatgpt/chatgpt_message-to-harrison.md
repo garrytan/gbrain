@@ -16,6 +16,8 @@ updated: 2025-10-10
 
 # Message to Harrison
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68e86916-ec90-8329-a6b9-46ec4f7cbc27
 > Created: 2025-10-10T02:02:03Z
 > Updated: 2025-10-10T02:04:54Z

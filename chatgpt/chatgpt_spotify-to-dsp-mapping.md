@@ -17,6 +17,8 @@ updated: 2026-01-16
 
 # Spotify to DSP Mapping
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 696a8965-3380-8327-b49b-f0cd625bbfe5
 > Created: 2026-01-16T18:54:50Z
 > Updated: 2026-01-16T19:54:33Z

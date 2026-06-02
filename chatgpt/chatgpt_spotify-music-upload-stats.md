@@ -16,6 +16,8 @@ updated: 2025-08-08
 
 # Spotify music upload stats
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68964e8b-11fc-832a-b532-0533cd92cd06
 > Created: 2025-08-08T19:22:55Z
 > Updated: 2025-08-08T20:29:53Z

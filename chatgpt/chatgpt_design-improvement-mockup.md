@@ -16,6 +16,8 @@ updated: 2025-11-13
 
 # Design improvement mockup
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69166f0e-41cc-832b-bf31-e10147ddd9eb
 > Created: 2025-11-13T23:51:46Z
 > Updated: 2025-11-13T23:55:46Z

@@ -16,6 +16,8 @@ updated: 2025-12-28
 
 # Spotify OAuth Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69517571-863c-832c-862b-0c387f9241e8
 > Created: 2025-12-28T18:22:42Z
 > Updated: 2025-12-28T18:24:54Z

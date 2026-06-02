@@ -15,6 +15,8 @@ updated: 2024-05-29
 
 # Pacific Design Center: 1975
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 4958fc15-ccfd-49e4-a8a0-1645ad933595
 > Created: 2024-05-29T00:29:17Z
 > Updated: 2024-05-29T00:30:45Z

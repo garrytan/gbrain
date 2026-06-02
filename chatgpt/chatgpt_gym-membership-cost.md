@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym Membership Cost
 
+**Related:** [[personal_health]]
+
 > Conversation ID: c57707f6-2829-4bd6-8ed3-09487a796ffd
 > Created: 2024-06-03T22:06:13Z
 > Updated: 2024-06-03T22:08:11Z

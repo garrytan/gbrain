@@ -17,6 +17,8 @@ updated: 2026-05-11
 
 # Jovie Cinematic Demo
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a011d66-6db4-83e8-a5fa-3bede03786b3
 > Created: 2026-05-11T00:05:59Z
 > Updated: 2026-05-11T01:36:47Z

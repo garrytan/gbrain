@@ -16,6 +16,8 @@ updated: 2023-02-05
 
 # Vue.js Table Class Generation
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 4a83ba55-4f3e-4023-b5de-7e0075891695
 > Created: 2023-02-05T01:05:44Z
 > Updated: 2023-02-05T01:05:44Z

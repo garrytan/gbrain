@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # QNAP TVS-872XT Update Error
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: d04f3391-a612-4070-adc5-c0b4881fcd6c
 > Created: 2024-04-04T20:06:52Z
 > Updated: 2024-04-04T20:26:36Z

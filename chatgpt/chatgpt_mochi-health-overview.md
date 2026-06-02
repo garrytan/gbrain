@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Mochi Health Overview
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67bbcc3a-f074-8007-a395-7df9dcd07b87
 > Created: 2025-02-24T01:32:43Z
 > Updated: 2025-02-24T01:32:48Z

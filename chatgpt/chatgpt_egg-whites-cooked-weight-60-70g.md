@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Egg Whites Cooked Weight: 60-70g
 
+**Related:** [[personal_health]]
+
 > Conversation ID: c5573b07-43cc-42d1-acc4-daa3f1f9aee2
 > Created: 2024-05-18T22:11:27Z
 > Updated: 2024-05-18T22:12:03Z

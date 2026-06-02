@@ -17,6 +17,8 @@ updated: 2025-11-14
 
 # Apple Health cards SwiftUI
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 69167190-90c8-832e-9685-3a7eff3d63a3
 > Created: 2025-11-14T00:02:31Z
 > Updated: 2025-11-14T01:52:02Z

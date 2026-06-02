@@ -16,6 +16,8 @@ updated: 2026-04-28
 
 # Product Page Components
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69f04c12-8cb4-83e8-afca-05e999217e45
 > Created: 2026-04-28T05:56:35Z
 > Updated: 2026-04-28T06:02:32Z

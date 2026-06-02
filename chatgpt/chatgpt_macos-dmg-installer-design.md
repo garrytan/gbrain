@@ -15,6 +15,8 @@ updated: 2026-05-16
 
 # macOS DMG Installer Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a087733-a9e4-83e8-aa7a-e6670f2688d3
 > Created: 2026-05-16T13:55:00Z
 > Updated: 2026-05-16T13:56:36Z

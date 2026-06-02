@@ -15,6 +15,8 @@ updated: 2025-01-16
 
 # Serato DJ Software Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6789056f-fe9c-8007-9f61-688982c85af7
 > Created: 2025-01-16T13:11:12Z
 > Updated: 2025-01-16T13:11:24Z

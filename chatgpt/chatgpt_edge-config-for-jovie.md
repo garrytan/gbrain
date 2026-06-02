@@ -17,6 +17,8 @@ updated: 2025-08-07
 
 # Edge config for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68951965-33d8-8320-829f-04b8fd2e8c76
 > Created: 2025-08-07T21:24:06Z
 > Updated: 2025-08-07T21:52:52Z

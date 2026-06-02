@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Extract job experience
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 691278db-d4f8-832e-899a-92b4d7199e5e
 > Created: 2025-11-10T23:44:32Z
 > Updated: 2025-11-10T23:44:44Z

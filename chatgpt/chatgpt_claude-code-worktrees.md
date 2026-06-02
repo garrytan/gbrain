@@ -16,6 +16,8 @@ updated: 2026-01-18
 
 # Claude Code Worktrees
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 696c2bae-87f0-8333-8f8d-53d287d8109b
 > Created: 2026-01-18T00:39:11Z
 > Updated: 2026-01-18T00:40:20Z

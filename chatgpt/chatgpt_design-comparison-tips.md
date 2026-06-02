@@ -15,6 +15,8 @@ updated: 2025-11-13
 
 # Design comparison tips
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69162ee8-5100-8326-ac87-ffb1abf6a447
 > Created: 2025-11-13T19:18:35Z
 > Updated: 2025-11-13T19:21:11Z

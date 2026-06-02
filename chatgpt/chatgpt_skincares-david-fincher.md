@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Skincare's David Fincher
 
+**Related:** [[personal_life]]
+
 > Conversation ID: abb651b2-fffb-4fa1-9cab-23fd4a6134f1
 > Created: 2023-02-26T06:06:21Z
 > Updated: 2023-02-26T06:06:21Z

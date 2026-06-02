@@ -15,6 +15,8 @@ updated: 2026-04-21
 
 # AI Upscaling for Mobile
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69e7eb3b-6998-83e8-9625-03557f1bdf14
 > Created: 2026-04-21T21:25:16Z
 > Updated: 2026-04-21T21:29:00Z

@@ -15,6 +15,8 @@ updated: 2025-08-08
 
 # Starting new startup steps
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6896744f-16a8-8332-b776-4ff4decc91d7
 > Created: 2025-08-08T22:05:30Z
 > Updated: 2025-08-08T22:06:42Z

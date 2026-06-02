@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Turbopack Performance Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69824c62-673c-832a-8779-c1b3ddb6ccfa
 > Created: 2026-02-03T19:28:34Z
 > Updated: 2026-02-04T21:51:28Z

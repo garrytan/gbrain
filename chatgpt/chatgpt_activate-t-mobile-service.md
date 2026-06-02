@@ -15,6 +15,8 @@ updated: 2025-12-02
 
 # Activate T-Mobile service
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 692e2de5-5e44-832b-b89a-41971c881e50
 > Created: 2025-12-02T00:08:05Z
 > Updated: 2025-12-02T00:08:43Z

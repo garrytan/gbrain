@@ -15,6 +15,8 @@ updated: 2025-12-02
 
 # T-Mobile activation steps
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 692e2ece-fa18-832a-afc9-c2c5b7b40ac1
 > Created: 2025-12-02T00:11:59Z
 > Updated: 2025-12-02T19:53:17Z

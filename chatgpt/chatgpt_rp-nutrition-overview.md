@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # RP Nutrition Overview
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67c8fc98-bc7c-8007-95b6-119a66c33108
 > Created: 2025-03-06T01:38:33Z
 > Updated: 2025-03-06T01:38:40Z

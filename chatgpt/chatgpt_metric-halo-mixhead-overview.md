@@ -15,6 +15,8 @@ updated: 2025-02-01
 
 # Metric Halo MixHead Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 679dce91-8d10-8007-8b09-b615f2da03b1
 > Created: 2025-02-01T07:34:41Z
 > Updated: 2025-02-01T07:34:46Z

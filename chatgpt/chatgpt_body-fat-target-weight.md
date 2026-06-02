@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Body Fat Target Weight
 
+**Related:** [[personal_health]]
+
 > Conversation ID: a955ea52-7b6d-4f8e-9727-28c53301189b
 > Created: 2024-08-01T03:42:12Z
 > Updated: 2024-08-01T03:42:20Z

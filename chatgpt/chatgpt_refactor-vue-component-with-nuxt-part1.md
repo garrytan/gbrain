@@ -17,6 +17,8 @@ updated: 2024-06-26
 
 # Refactor Vue component with Nuxt
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: c82a66b1-d1b6-46c1-93c2-6f6828f8266a
 > Created: 2024-06-25T22:09:20Z
 > Updated: 2024-06-26T03:20:48Z

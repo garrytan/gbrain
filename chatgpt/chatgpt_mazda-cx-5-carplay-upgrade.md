@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Mazda CX-5 CarPlay Upgrade
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68084e6e-1d50-8007-9046-2f130f7fe0a7
 > Created: 2025-04-23T02:20:31Z
 > Updated: 2025-04-23T02:20:53Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Silver Poker Card Joyful Girl
 
+**Related:** [[personal_life]]
+
 > Conversation ID: b16ae780-c1a2-4ad8-954c-41bc41fad523
 > Created: 2024-01-28T04:11:18Z
 > Updated: 2024-01-28T04:12:02Z

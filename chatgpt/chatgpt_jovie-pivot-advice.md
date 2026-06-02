@@ -16,6 +16,8 @@ updated: 2026-05-23
 
 # Jovie Pivot Advice
 
+**Related:** [[jovie-product-strategy]]
+
 > Conversation ID: 6a11ded2-80f8-83e8-ac4f-9b6818badb5e
 > Created: 2026-05-23T17:11:44Z
 > Updated: 2026-05-23T17:12:25Z

@@ -16,6 +16,8 @@ updated: 2026-02-01
 
 # Statsig with Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 697ea22e-3338-8331-8ac1-75e4e0d2df20
 > Created: 2026-02-01T00:46:52Z
 > Updated: 2026-02-01T00:47:57Z

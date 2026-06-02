@@ -16,6 +16,8 @@ updated: 2025-12-31
 
 # AI for CSS Animations
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69549c9e-3eb4-832f-9acc-3d7bc2748093
 > Created: 2025-12-31T03:46:39Z
 > Updated: 2025-12-31T03:48:13Z

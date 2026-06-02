@@ -15,6 +15,8 @@ updated: 2024-05-14
 
 # Album vs EP Disadvantages
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 5300854b-0363-470b-84ee-54b157f0b35c
 > Created: 2024-05-14T23:30:56Z
 > Updated: 2024-05-14T23:31:00Z

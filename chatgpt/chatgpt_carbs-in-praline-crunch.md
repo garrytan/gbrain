@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Carbs in Praline Crunch
 
+**Related:** [[personal_life]]
+
 > Conversation ID: eda94b44-e0cd-4516-b594-f10f7a534a8d
 > Created: 2023-12-07T04:29:57Z
 > Updated: 2023-12-08T05:16:24Z

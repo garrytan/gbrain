@@ -16,6 +16,8 @@ updated: 2026-05-26
 
 # Music Industry Message Draft
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a1515f2-4654-83e8-843d-5f7a2cd6e457
 > Created: 2026-05-26T03:39:40Z
 > Updated: 2026-05-26T03:39:46Z

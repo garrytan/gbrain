@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fuel Cell Cars Overview
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 680528b1-04e0-8007-8f94-7651f25df76b
 > Created: 2025-04-20T17:02:41Z
 > Updated: 2025-04-20T17:03:05Z

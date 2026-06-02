@@ -15,6 +15,8 @@ updated: 2025-04-15
 
 # Visual Timer Clarification
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 67fde8f7-1a98-8007-9ab4-5d1f0fe71bb3
 > Created: 2025-04-15T05:04:55Z
 > Updated: 2025-04-15T05:05:10Z

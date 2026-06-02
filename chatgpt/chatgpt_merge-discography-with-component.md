@@ -17,6 +17,8 @@ updated: 2024-06-08
 
 # Merge discography with component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 803c1b3f-5b15-43c9-a441-c02d0c0b8f1f
 > Created: 2024-06-08T01:04:56Z
 > Updated: 2024-06-08T01:05:17Z

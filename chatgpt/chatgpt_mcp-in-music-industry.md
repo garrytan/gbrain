@@ -16,6 +16,8 @@ updated: 2026-02-09
 
 # MCP in Music Industry
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 698a4b2b-d9ec-832b-b35b-c1aed0056738
 > Created: 2026-02-09T21:01:41Z
 > Updated: 2026-02-09T21:03:54Z

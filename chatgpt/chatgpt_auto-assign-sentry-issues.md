@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Auto-assign Sentry Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69966362-30d8-8332-b397-44b58e9f1c72
 > Created: 2026-02-19T01:12:12Z
 > Updated: 2026-02-19T01:13:10Z

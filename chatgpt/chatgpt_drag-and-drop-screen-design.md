@@ -17,6 +17,8 @@ updated: 2026-05-16
 
 # Drag and Drop Screen Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a087477-56e0-83e8-a0fc-7e6d5cb7310f
 > Created: 2026-05-16T13:43:20Z
 > Updated: 2026-05-16T13:54:54Z

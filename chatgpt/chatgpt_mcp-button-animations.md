@@ -16,6 +16,8 @@ updated: 2026-04-16
 
 # MCP Button Animations
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69e08b49-e9c4-83e8-942f-7c4053ec0c59
 > Created: 2026-04-16T07:10:02Z
 > Updated: 2026-04-16T17:26:58Z

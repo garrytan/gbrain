@@ -15,6 +15,8 @@ updated: 2023-04-16
 
 # Laravel developer endorsement.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: fa0d89f9-0f78-4c4c-90ef-80cd8d97df55
 > Created: 2023-04-16T17:00:17Z
 > Updated: 2023-04-16T17:00:28Z

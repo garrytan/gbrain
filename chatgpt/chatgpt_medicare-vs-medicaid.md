@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Medicare vs Medicaid
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67bbd09e-c694-8007-be4b-431774339da9
 > Created: 2025-02-24T01:51:27Z
 > Updated: 2025-02-24T01:51:55Z

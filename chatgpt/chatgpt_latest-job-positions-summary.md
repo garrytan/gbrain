@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Latest Job Positions Summary
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6a062f17-1954-83e8-ad43-97a9f461f669
 > Created: 2026-05-14T20:22:48Z
 > Updated: 2026-05-14T20:28:41Z

@@ -16,6 +16,8 @@ updated: 2026-01-11
 
 # Luicide React
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6964024a-36dc-832c-bbf9-f9282957985c
 > Created: 2026-01-11T20:04:26Z
 > Updated: 2026-01-11T20:05:32Z

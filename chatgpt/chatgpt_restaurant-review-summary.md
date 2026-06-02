@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Restaurant review summary
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6864ac91-3de8-8007-beb2-d051f5855fcb
 > Created: 2025-07-02T03:50:41Z
 > Updated: 2025-07-02T03:50:49Z

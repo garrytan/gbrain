@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Moonshine Mule Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: fa835a43-7c47-46dd-a39d-286edb28cc93
 > Created: 2024-05-31T02:34:38Z
 > Updated: 2024-05-31T02:37:38Z

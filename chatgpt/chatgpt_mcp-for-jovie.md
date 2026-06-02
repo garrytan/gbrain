@@ -17,6 +17,8 @@ updated: 2026-05-20
 
 # MCP for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a0d430b-0618-83e8-bd8d-302eda147067
 > Created: 2026-05-20T05:13:47Z
 > Updated: 2026-05-20T06:33:49Z

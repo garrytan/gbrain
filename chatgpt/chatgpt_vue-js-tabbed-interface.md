@@ -15,6 +15,8 @@ updated: 2023-01-04
 
 # Vue JS Tabbed Interface
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: b067302f-d64f-4542-a73d-49b7ed1afeca
 > Created: 2023-01-04T00:03:53Z
 > Updated: 2023-01-04T00:03:53Z

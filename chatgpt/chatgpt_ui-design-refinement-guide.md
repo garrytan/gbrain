@@ -16,6 +16,8 @@ updated: 2025-11-08
 
 # UI design refinement guide
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 690fa18c-a794-8330-8222-a8f59b55f724
 > Created: 2025-11-08T20:01:58Z
 > Updated: 2025-11-08T21:20:05Z

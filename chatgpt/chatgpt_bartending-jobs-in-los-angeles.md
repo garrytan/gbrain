@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bartending Jobs in Los Angeles
 
+**Related:** [[personal_life]]
+
 > Conversation ID: a17f5999-f8fd-42c9-8d79-b867312cdd11
 > Created: 2023-10-25T23:40:20Z
 > Updated: 2023-10-25T23:41:11Z

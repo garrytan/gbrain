@@ -16,6 +16,8 @@ updated: 2026-02-25
 
 # OpenClaw vs Claude
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 699f5ebe-1ffc-832f-9b4f-a71693cd4cf4
 > Created: 2026-02-25T20:43:22Z
 > Updated: 2026-02-25T20:46:28Z

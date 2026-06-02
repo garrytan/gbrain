@@ -15,6 +15,8 @@ updated: 2026-05-10
 
 # Reimagining Jovie App
 
+**Related:** [[jovie-product-strategy]]
+
 > Conversation ID: 69ffe084-d7ec-83e8-b56e-df7f5bdf45df
 > Created: 2026-05-10T01:34:02Z
 > Updated: 2026-05-10T01:53:41Z

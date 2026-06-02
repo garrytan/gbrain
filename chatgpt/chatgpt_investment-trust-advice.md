@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Investment Trust Advice
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 69921784-0f54-832f-868c-8c8d101ba87b
 > Created: 2026-02-15T19:00:06Z
 > Updated: 2026-02-15T19:00:59Z

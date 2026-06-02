@@ -16,6 +16,8 @@ updated: 2023-02-25
 
 # Vue template uses WorkSection.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: c9b1789e-fb55-40aa-bf47-4e377e2dd018
 > Created: 2023-02-25T22:18:19Z
 > Updated: 2023-02-25T22:18:19Z

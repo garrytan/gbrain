@@ -16,6 +16,8 @@ updated: 2023-01-03
 
 # Laravel Mix and Webpack
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: e56e2559-3690-4ef7-9500-9c4bb978402c
 > Created: 2023-01-03T18:10:14Z
 > Updated: 2023-01-03T18:10:14Z

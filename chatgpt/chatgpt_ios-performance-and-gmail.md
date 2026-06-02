@@ -16,6 +16,8 @@ updated: 2026-05-25
 
 # iOS performance and Gmail
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6a13ae33-59c4-83e8-be9e-b6e5ec8ac17e
 > Created: 2026-05-25T02:04:35Z
 > Updated: 2026-05-25T02:09:21Z

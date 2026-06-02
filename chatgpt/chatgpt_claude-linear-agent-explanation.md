@@ -15,6 +15,8 @@ updated: 2026-01-15
 
 # Claude Linear Agent Explanation
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6968669f-875c-832a-ade8-082330a7e2d0
 > Created: 2026-01-15T04:01:35Z
 > Updated: 2026-01-15T04:02:09Z

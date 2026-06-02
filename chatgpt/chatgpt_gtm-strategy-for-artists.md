@@ -16,6 +16,8 @@ updated: 2026-02-12
 
 # GTM Strategy for Artists
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 698d376c-9418-8328-9475-0a5a8967546f
 > Created: 2026-02-12T02:14:20Z
 > Updated: 2026-02-12T02:15:01Z

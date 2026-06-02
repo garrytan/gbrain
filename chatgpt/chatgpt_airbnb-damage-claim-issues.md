@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Airbnb damage claim issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68d0237f-7e90-8322-8241-644b628c2934
 > Created: 2025-09-21T16:11:26Z
 > Updated: 2025-09-21T16:11:39Z

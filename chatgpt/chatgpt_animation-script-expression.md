@@ -16,6 +16,8 @@ updated: 2023-03-16
 
 # Animation script expression.
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 5adc5fc2-db35-4d0c-aa14-2edfd29affae
 > Created: 2023-03-16T06:19:10Z
 > Updated: 2023-03-16T06:19:10Z

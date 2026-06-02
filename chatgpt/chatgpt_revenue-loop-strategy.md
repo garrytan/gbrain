@@ -16,6 +16,8 @@ updated: 2026-03-07
 
 # Revenue Loop Strategy
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69ac88d9-83b0-8326-b66e-0bdc6160a8e0
 > Created: 2026-03-07T20:21:46Z
 > Updated: 2026-03-07T20:43:05Z

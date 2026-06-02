@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bartender Jobs Search Results
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 41cfe85c-7ecc-4543-9fb8-fff077e96f92
 > Created: 2023-10-25T23:39:19Z
 > Updated: 2023-10-25T23:40:00Z

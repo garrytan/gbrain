@@ -15,6 +15,8 @@ updated: 2025-11-08
 
 # Wireframe torso image
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 690f9ca4-0d88-8328-ac69-70a3e19de8d2
 > Created: 2025-11-08T19:41:10Z
 > Updated: 2025-11-08T22:24:33Z

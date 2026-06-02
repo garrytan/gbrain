@@ -15,6 +15,8 @@ updated: 2025-10-24
 
 # Redesign for world-class design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68fbeba5-3734-8323-a341-daff5e487e43
 > Created: 2025-10-24T21:12:25Z
 > Updated: 2025-10-24T21:13:41Z

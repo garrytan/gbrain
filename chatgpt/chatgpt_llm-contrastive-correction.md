@@ -15,6 +15,8 @@ updated: 2026-02-25
 
 # LLM Contrastive Correction
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 699f3837-06a8-8333-9296-0b306f8f721a
 > Created: 2026-02-25T17:58:38Z
 > Updated: 2026-02-25T18:21:45Z

@@ -15,6 +15,8 @@ updated: 2026-03-23
 
 # Spotify Playlist for Priming
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69c1cd51-909c-83e8-85e9-b3a2e792b2c3
 > Created: 2026-03-23T23:31:31Z
 > Updated: 2026-03-23T23:32:35Z

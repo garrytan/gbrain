@@ -15,6 +15,8 @@ updated: 2025-11-14
 
 # Codex 5.1 vs Claude 4.5
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69177537-83e0-832d-89d6-c69796b1557f
 > Created: 2025-11-14T18:30:22Z
 > Updated: 2025-11-14T18:32:53Z

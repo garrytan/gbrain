@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Essentia Water Health Claims
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67d9e46e-ae84-8007-9b9b-2de6b24e7236
 > Created: 2025-03-18T21:23:58Z
 > Updated: 2025-03-18T21:34:05Z

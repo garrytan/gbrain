@@ -15,6 +15,8 @@ updated: 2025-01-15
 
 # Organizing DJ Library 2025
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6787690a-69e4-8007-bef6-3d20e6798b15
 > Created: 2025-01-15T07:51:38Z
 > Updated: 2025-01-15T07:52:00Z

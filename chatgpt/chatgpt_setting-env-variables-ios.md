@@ -16,6 +16,8 @@ updated: 2025-06-10
 
 # Setting Env Variables iOS
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68477efe-1708-8007-b0a9-8b970886d5ae
 > Created: 2025-06-10T00:40:30Z
 > Updated: 2025-06-10T00:40:41Z

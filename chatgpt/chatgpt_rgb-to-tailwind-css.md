@@ -16,6 +16,8 @@ updated: 2023-06-01
 
 # RGB to Tailwind CSS
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 7089e71d-48f1-45f9-9bda-5202ab6b1584
 > Created: 2023-06-01T23:38:37Z
 > Updated: 2023-06-01T23:38:46Z

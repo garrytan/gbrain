@@ -15,6 +15,8 @@ updated: 2025-11-28
 
 # Stripe setup in Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 692a0976-2494-832d-b2e2-90c5ce17560f
 > Created: 2025-11-28T20:44:12Z
 > Updated: 2025-11-28T20:44:47Z

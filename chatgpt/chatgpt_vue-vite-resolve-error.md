@@ -16,6 +16,8 @@ updated: 2024-04-08
 
 # Vue Vite Resolve Error
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: a130ff4f-bd22-4c4e-96af-dd35f5e15803
 > Created: 2024-04-08T20:21:57Z
 > Updated: 2024-04-08T20:22:47Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hotel Guessing and Bidding
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69530eb1-32cc-8331-a6cc-5932965d73a6
 > Created: 2025-12-29T23:29:04Z
 > Updated: 2025-12-29T23:30:14Z

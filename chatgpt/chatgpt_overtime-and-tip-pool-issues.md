@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Overtime and tip pool issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 690b9cdd-7198-8326-b809-1a558a9d8e69
 > Created: 2025-11-05T18:52:41Z
 > Updated: 2025-11-05T19:21:23Z

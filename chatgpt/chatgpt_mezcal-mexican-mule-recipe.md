@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Mezcal Mexican Mule Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 8f6eb01c-2356-434e-ad22-29f4bf15b0d9
 > Created: 2024-07-02T03:21:48Z
 > Updated: 2024-07-02T04:25:00Z

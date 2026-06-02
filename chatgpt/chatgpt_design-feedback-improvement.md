@@ -15,6 +15,8 @@ updated: 2026-05-12
 
 # Design Feedback Improvement
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a0267d2-3260-83e8-8bde-ae6fa0fcac4d
 > Created: 2026-05-11T23:35:47Z
 > Updated: 2026-05-12T00:33:50Z

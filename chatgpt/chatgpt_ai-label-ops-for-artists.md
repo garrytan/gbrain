@@ -15,6 +15,8 @@ updated: 2026-04-30
 
 # AI Label Ops for Artists
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69f2e598-d61c-83e8-b28d-1ece99768908
 > Created: 2026-04-30T05:16:22Z
 > Updated: 2026-04-30T05:16:27Z

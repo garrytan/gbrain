@@ -16,6 +16,8 @@ updated: 2025-07-27
 
 # Component deduplication concerns
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68858584-4060-8329-b936-182706b87741
 > Created: 2025-07-27T01:48:53Z
 > Updated: 2025-07-27T01:58:56Z

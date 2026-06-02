@@ -17,6 +17,8 @@ updated: 2026-05-16
 
 # Keyboard Shortcuts in DJ Software
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a089fa4-40bc-83e8-88fd-9fe4207f8e0d
 > Created: 2026-05-16T16:47:33Z
 > Updated: 2026-05-16T22:08:18Z

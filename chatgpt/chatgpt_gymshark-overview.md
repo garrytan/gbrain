@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gymshark Overview
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 684dcc0a-cb9c-8007-b9b2-810b1cc27876
 > Created: 2025-06-14T19:22:50Z
 > Updated: 2025-06-14T19:23:00Z

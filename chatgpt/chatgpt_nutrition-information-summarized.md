@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Nutrition Information Summarized
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 348295bb-7d4d-4284-a1cf-6bd97f282867
 > Created: 2024-05-29T05:54:05Z
 > Updated: 2024-05-29T05:54:13Z

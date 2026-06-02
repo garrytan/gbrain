@@ -15,6 +15,8 @@ updated: 2026-05-18
 
 # Portrait Grid Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a0b7989-4454-83e8-8cd2-06ae0431adff
 > Created: 2026-05-18T20:41:46Z
 > Updated: 2026-05-18T20:45:27Z

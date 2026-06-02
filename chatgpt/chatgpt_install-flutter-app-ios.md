@@ -15,6 +15,8 @@ updated: 2024-01-10
 
 # Install Flutter App iOS
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: e320ccd0-f9d4-4c47-a7eb-e9f5a2c8f49b
 > Created: 2024-01-10T04:42:56Z
 > Updated: 2024-01-10T04:43:16Z

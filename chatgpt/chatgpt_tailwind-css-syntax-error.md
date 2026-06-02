@@ -15,6 +15,8 @@ updated: 2023-01-22
 
 # Tailwind CSS Syntax Error
 
+**Related:** [[coding_web_dev]]
+
 
 > Conversation ID: e6914f49-cd47-47b3-986a-47c7f3dc6b55
 > Created: 2023-01-22T09:09:45Z

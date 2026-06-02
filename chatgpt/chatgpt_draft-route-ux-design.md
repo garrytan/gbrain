@@ -15,6 +15,8 @@ updated: 2026-05-16
 
 # Draft Route UX Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a08f15d-a490-83e8-a19b-92877bf11974
 > Created: 2026-05-16T22:36:15Z
 > Updated: 2026-05-16T22:36:25Z

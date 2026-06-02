@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Meditation Benefits Fitness
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 4014517a-a44b-483c-95e9-b87e43d5db8e
 > Created: 2024-05-16T22:34:55Z
 > Updated: 2024-05-16T22:35:33Z

@@ -17,6 +17,8 @@ updated: 2025-08-03
 
 # Animated logos addition
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 688ef1a3-2558-8326-b0f6-0530c3a5d64d
 > Created: 2025-08-03T05:20:37Z
 > Updated: 2025-08-03T05:23:08Z

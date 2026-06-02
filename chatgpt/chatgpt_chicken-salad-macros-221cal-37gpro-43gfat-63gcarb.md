@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Chicken Salad Macros: 221cal, 37gPro, 4.3gFat, 6.3gCarb
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 43963935-7fff-4b02-afe1-8a591175dd03
 > Created: 2023-12-19T04:09:05Z
 > Updated: 2023-12-19T05:46:13Z

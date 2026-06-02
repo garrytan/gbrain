@@ -17,6 +17,8 @@ updated: 2025-11-27
 
 # Force working iOS builds
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 692891eb-30ec-832a-883d-cd4c82ce2041
 > Created: 2025-11-27T18:02:30Z
 > Updated: 2025-11-27T18:07:20Z

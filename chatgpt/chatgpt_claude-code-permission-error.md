@@ -16,6 +16,8 @@ updated: 2025-08-24
 
 # Claude code permission error
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68ab8d53-5124-8332-a73f-5754fd012c4d
 > Created: 2025-08-24T22:08:27Z
 > Updated: 2025-08-24T22:09:16Z

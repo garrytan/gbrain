@@ -17,6 +17,8 @@ updated: 2025-11-17
 
 # Body fat tracking method
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6918ef1d-eebc-832d-8a52-35beef252768
 > Created: 2025-11-15T21:22:38Z
 > Updated: 2025-11-17T20:31:13Z

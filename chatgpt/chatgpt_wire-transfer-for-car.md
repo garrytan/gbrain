@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Wire Transfer for Car
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 680543dc-d414-8007-9dc4-0c987b4d1931
 > Created: 2025-04-20T18:58:36Z
 > Updated: 2025-04-20T19:02:11Z

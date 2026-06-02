@@ -16,6 +16,8 @@ updated: 2023-11-07
 
 # Weight and FFMI Tracker
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 42a7ee3f-52ec-4a5e-ba81-5d1ea567477b
 > Created: 2023-11-07T19:16:03Z
 > Updated: 2023-11-07T19:20:24Z

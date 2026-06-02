@@ -15,6 +15,8 @@ updated: 2026-01-10
 
 # Spotify Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6961f813-49b4-8333-9c86-843799599eef
 > Created: 2026-01-10T06:56:20Z
 > Updated: 2026-01-10T06:56:26Z

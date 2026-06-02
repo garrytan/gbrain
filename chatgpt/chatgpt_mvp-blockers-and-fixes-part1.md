@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # MVP blockers and fixes
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68a3491b-d3d4-8323-8011-2639e9fb77ff
 > Created: 2025-08-18T15:39:12Z
 > Updated: 2025-08-18T19:03:16Z

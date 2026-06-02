@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Slammed with tax facts
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 687319ac-dfd4-8007-8b02-20f97a3dd715
 > Created: 2025-07-13T02:27:57Z
 > Updated: 2025-07-13T02:28:32Z

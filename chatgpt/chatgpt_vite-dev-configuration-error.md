@@ -16,6 +16,8 @@ updated: 2023-05-12
 
 # Vite Dev Configuration Error
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 475369c9-9e6a-4a14-90f1-d00b6b5e4822
 > Created: 2023-05-12T03:07:30Z
 > Updated: 2023-05-12T03:29:08Z

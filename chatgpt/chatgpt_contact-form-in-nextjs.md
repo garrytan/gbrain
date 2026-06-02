@@ -16,6 +16,8 @@ updated: 2025-09-23
 
 # Contact form in Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68d2c058-6aa0-8323-b140-6e3bf8b65349
 > Created: 2025-09-23T15:44:25Z
 > Updated: 2025-09-23T15:45:38Z

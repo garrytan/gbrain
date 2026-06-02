@@ -15,6 +15,8 @@ updated: 2024-04-13
 
 # Depp's Business Ventures
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 813f0aea-5ae9-47a2-82c1-f3c405345a02
 > Created: 2024-04-12T05:48:30Z
 > Updated: 2024-04-13T19:32:37Z

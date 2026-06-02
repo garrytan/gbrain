@@ -16,6 +16,8 @@ updated: 2025-08-18
 
 # Reset supabase db
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68a3a908-914c-8321-9c32-3ae23412d92f
 > Created: 2025-08-18T22:28:31Z
 > Updated: 2025-08-18T22:38:03Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Dexascan and water weight
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 5cec8edb-1d8a-4bfa-9a06-247ca8a72658
 > Created: 2023-11-27T20:35:17Z
 > Updated: 2023-11-28T07:56:35Z

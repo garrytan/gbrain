@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # LA Gym Cambered Bar
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 565b331b-6411-40e2-954b-dd4bbd22e175
 > Created: 2023-11-15T10:20:08Z
 > Updated: 2023-11-15T10:21:10Z

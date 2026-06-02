@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Apple vs Orange Cartoon
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6a062fec-1a3c-83e8-96ef-95984cc9b214
 > Created: 2026-05-14T20:26:20Z
 > Updated: 2026-05-14T20:40:45Z

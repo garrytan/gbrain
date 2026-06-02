@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Resume Update Bartender Role
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6838f4bf-a1f0-8007-b66b-5c0287b56886
 > Created: 2025-05-29T23:58:55Z
 > Updated: 2025-05-30T00:02:03Z

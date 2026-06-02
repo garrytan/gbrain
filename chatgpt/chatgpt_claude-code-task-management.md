@@ -15,6 +15,8 @@ updated: 2026-01-23
 
 # Claude Code Task Management
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6972c650-5678-832a-bb4e-2d39e7a2d1a4
 > Created: 2026-01-23T00:52:32Z
 > Updated: 2026-01-23T00:53:59Z

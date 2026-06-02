@@ -15,6 +15,8 @@ updated: 2025-08-26
 
 # Free iPhone deals switch
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68ae1aa4-3304-832b-893b-253add1099dc
 > Created: 2025-08-26T20:36:01Z
 > Updated: 2025-08-26T20:36:13Z

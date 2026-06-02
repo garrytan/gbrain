@@ -15,6 +15,8 @@ updated: 2023-06-29
 
 # ChatGPT Enhances Communication
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: a10f1833-e613-4e43-afae-8e4a310e55fc
 > Created: 2023-06-29T17:34:00Z
 > Updated: 2023-06-29T17:34:04Z

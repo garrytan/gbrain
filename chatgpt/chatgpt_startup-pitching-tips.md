@@ -15,6 +15,8 @@ updated: 2026-04-24
 
 # Startup Pitching Tips
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69ebcfec-b1b8-83e8-bfc0-d8d2990bdcdb
 > Created: 2026-04-24T20:17:56Z
 > Updated: 2026-04-24T20:19:22Z

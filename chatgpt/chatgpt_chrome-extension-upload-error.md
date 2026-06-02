@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Chrome Extension Upload Error
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 03d77abd-4527-445a-b55c-644cdcc531b8
 > Created: 2023-02-24T03:01:33Z
 > Updated: 2023-02-24T03:01:33Z

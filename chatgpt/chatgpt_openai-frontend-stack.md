@@ -17,6 +17,8 @@ updated: 2025-09-17
 
 # OpenAI frontend stack
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68ca0e04-0b24-8328-89b6-3d60d32002c7
 > Created: 2025-09-17T01:25:24Z
 > Updated: 2025-09-17T01:39:49Z

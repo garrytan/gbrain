@@ -17,6 +17,8 @@ updated: 2024-05-28
 
 # New Song Release Announcement
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: d79c819b-058c-4dfa-9a69-1c7389404573
 > Created: 2024-05-25T01:14:14Z
 > Updated: 2024-05-28T21:38:45Z

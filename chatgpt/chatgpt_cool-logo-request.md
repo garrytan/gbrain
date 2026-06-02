@@ -15,6 +15,8 @@ updated: 2024-07-02
 
 # Cool Logo Request
 
+**Related:** [[design_ux]]
+
 > Conversation ID: de2c574e-3322-4022-b243-2dd177feb9cb
 > Created: 2024-07-02T22:53:12Z
 > Updated: 2024-07-02T22:53:24Z

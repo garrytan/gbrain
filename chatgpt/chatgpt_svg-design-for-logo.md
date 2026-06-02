@@ -17,6 +17,8 @@ updated: 2025-11-17
 
 # SVG design for logo
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 691b5232-f180-8328-9ae1-8d60312c2a31
 > Created: 2025-11-17T16:49:57Z
 > Updated: 2025-11-17T16:53:05Z

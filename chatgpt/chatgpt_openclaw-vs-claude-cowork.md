@@ -15,6 +15,8 @@ updated: 2026-02-21
 
 # OpenClaw vs Claude Cowork
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69990d48-2c04-8327-aacf-2b0625530b34
 > Created: 2026-02-21T01:41:39Z
 > Updated: 2026-02-21T05:43:26Z

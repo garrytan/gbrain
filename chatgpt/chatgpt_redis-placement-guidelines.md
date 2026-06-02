@@ -17,6 +17,8 @@ updated: 2025-08-27
 
 # Redis placement guidelines
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68ae9d90-f4d0-832c-8693-042899b47b8e
 > Created: 2025-08-27T05:54:36Z
 > Updated: 2025-08-27T18:41:14Z

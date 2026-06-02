@@ -8,6 +8,8 @@ Here are **headline improvements** that fit your layout, keep the same tone, fee
 ---
 
 # ⭐ **Best Upgrade (ship this)**
+
+**Related:** [[design_ux]]
 **Turn Visitors Into Fans.**
 
 It’s:

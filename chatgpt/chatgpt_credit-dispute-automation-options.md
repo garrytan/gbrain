@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Credit Dispute Automation Options
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68143e2a-c3c4-8007-941a-23657dd11658
 > Created: 2025-05-02T03:38:19Z
 > Updated: 2025-05-02T03:40:19Z

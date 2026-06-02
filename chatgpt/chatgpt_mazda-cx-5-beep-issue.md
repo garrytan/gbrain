@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Mazda CX-5 Beep Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69f53b22-f4c8-83e8-97f6-ea9fd9dfd503
 > Created: 2026-05-01T23:45:39Z
 > Updated: 2026-05-01T23:47:23Z

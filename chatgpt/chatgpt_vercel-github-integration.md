@@ -15,6 +15,8 @@ updated: 2025-12-11
 
 # Vercel GitHub integration
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 693a6b63-1380-8330-9d13-8ebd4069fb68
 > Created: 2025-12-11T06:57:39Z
 > Updated: 2025-12-11T06:58:53Z

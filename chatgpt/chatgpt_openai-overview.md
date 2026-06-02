@@ -15,6 +15,8 @@ updated: 2025-11-26
 
 # OpenAI overview
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 692684fb-d55c-832e-a2b4-49d17473abc6
 > Created: 2025-11-26T04:41:35Z
 > Updated: 2025-11-26T04:42:14Z

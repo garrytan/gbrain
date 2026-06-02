@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Carb Increase for Photoshoot
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 8d962340-ab8e-49bc-b1d3-a81bacd1a9c0
 > Created: 2024-01-28T21:23:58Z
 > Updated: 2024-01-28T22:08:25Z

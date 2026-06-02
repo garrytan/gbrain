@@ -17,6 +17,8 @@ updated: 2024-01-23
 
 # Flutter Laravel Account Registration
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: e4340e58-4bab-4d78-97b9-0c5e8585317a
 > Created: 2024-01-22T20:49:28Z
 > Updated: 2024-01-23T06:03:18Z

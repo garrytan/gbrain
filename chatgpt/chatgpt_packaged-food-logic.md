@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Packaged Food Logic
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68445e9c-6244-8007-958e-dd18aafa84df
 > Created: 2025-06-07T15:45:32Z
 > Updated: 2025-06-07T15:45:52Z

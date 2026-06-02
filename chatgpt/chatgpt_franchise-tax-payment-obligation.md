@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Franchise Tax Payment Obligation
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6969601f-e8ec-8326-9337-68927161b84f
 > Created: 2026-01-15T21:46:21Z
 > Updated: 2026-01-15T21:46:48Z

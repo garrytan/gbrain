@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Car Cooling Tips CX-5
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 681fbfff-2094-8007-9e55-fb2723d78dcb
 > Created: 2025-05-10T21:09:02Z
 > Updated: 2025-05-10T21:10:04Z

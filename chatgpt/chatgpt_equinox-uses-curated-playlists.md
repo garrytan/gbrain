@@ -15,6 +15,8 @@ updated: 2024-06-27
 
 # Equinox Uses Curated Playlists
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 209ae60b-02dd-4335-9466-c40345572fb9
 > Created: 2024-06-27T04:18:40Z
 > Updated: 2024-06-27T04:40:29Z

@@ -15,6 +15,8 @@ updated: 2025-01-31
 
 # DJ Skins Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 679c49bc-88b4-8007-b97d-2a93af624d1b
 > Created: 2025-01-31T03:55:40Z
 > Updated: 2025-01-31T03:55:51Z

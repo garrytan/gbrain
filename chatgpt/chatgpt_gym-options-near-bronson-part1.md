@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Gym options near Bronson
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68293e22-f634-8007-ac16-f38e178075cf
 > Created: 2025-05-18T01:55:47Z
 > Updated: 2025-05-18T02:27:01Z

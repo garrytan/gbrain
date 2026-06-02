@@ -15,6 +15,8 @@ updated: 2025-12-18
 
 # Cost of GPT-5.2 usage
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69435552-6118-832d-ba9a-7d30dc844e3a
 > Created: 2025-12-18T01:14:21Z
 > Updated: 2025-12-18T01:15:33Z

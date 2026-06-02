@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Cron Job Cost Analysis
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6a011c1f-b6a0-83e8-94c2-8cec66e0078d
 > Created: 2026-05-11T00:00:32Z
 > Updated: 2026-05-11T00:03:51Z

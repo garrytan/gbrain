@@ -17,6 +17,8 @@ updated: 2026-05-17
 
 # Pitch Deck Integration Plan
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a0a0b28-92b0-83e8-8cba-8fa234fc2734
 > Created: 2026-05-17T18:38:33Z
 > Updated: 2026-05-17T18:42:42Z

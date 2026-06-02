@@ -16,6 +16,8 @@ updated: 2025-09-03
 
 # Component naming guidance
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68b77f65-d16c-8330-b335-26c4456f2ebe
 > Created: 2025-09-02T23:36:06Z
 > Updated: 2025-09-03T04:19:55Z

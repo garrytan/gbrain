@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Mulé cocktail recipe options.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 1764f910-712e-4a54-acd6-51d158b33420
 > Created: 2023-12-24T06:15:33Z
 > Updated: 2023-12-24T21:24:33Z

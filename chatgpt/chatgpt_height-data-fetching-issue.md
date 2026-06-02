@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Height Data Fetching Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 8feffa2f-b02c-4e3b-a15b-ca04d06d3931
 > Created: 2024-01-07T06:23:34Z
 > Updated: 2024-01-07T06:24:00Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # UX Issues to Fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 684ca96b-108c-8007-a5db-792b7ddece04
 > Created: 2025-06-13T22:42:51Z
 > Updated: 2025-06-14T04:05:04Z

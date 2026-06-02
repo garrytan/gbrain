@@ -16,6 +16,8 @@ updated: 2024-08-13
 
 # Tip Distribution Comparison
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 23ca32c0-d57c-4c18-8d45-4057b8bdb109
 > Created: 2024-08-13T21:59:09Z
 > Updated: 2024-08-13T22:07:36Z

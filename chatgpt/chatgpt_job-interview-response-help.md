@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job Interview Response Help
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 681928b0-a430-8007-ae7b-f487d5924c4f
 > Created: 2025-05-05T21:08:01Z
 > Updated: 2025-05-05T21:08:08Z

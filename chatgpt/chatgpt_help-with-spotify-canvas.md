@@ -15,6 +15,8 @@ updated: 2024-06-19
 
 # Help with Spotify Canvas
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 52fbf9f5-954e-473b-9858-bd8923c2c587
 > Created: 2024-06-19T09:45:07Z
 > Updated: 2024-06-19T09:45:22Z

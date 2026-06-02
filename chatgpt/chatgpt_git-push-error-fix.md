@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Git push error fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 694730e8-7838-8325-9e43-4a7d9b5305ce
 > Created: 2025-12-20T23:27:37Z
 > Updated: 2025-12-22T17:31:17Z

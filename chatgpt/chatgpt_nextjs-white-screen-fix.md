@@ -16,6 +16,8 @@ updated: 2025-09-07
 
 # Next.js white screen fix
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68bdb7bb-438c-8326-ac65-823685eda542
 > Created: 2025-09-07T16:50:04Z
 > Updated: 2025-09-07T16:51:02Z

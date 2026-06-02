@@ -17,6 +17,8 @@ updated: 2023-12-06
 
 # Vue Component for SVGs
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: e75ffd90-a26e-4643-a1a5-182f10fc8c4a
 > Created: 2023-12-06T02:01:20Z
 > Updated: 2023-12-06T02:36:18Z

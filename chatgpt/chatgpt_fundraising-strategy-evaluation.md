@@ -15,6 +15,8 @@ updated: 2026-05-11
 
 # Fundraising Strategy Evaluation
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a022697-4c94-83e8-8a81-b6fbd05cad5f
 > Created: 2026-05-11T18:57:28Z
 > Updated: 2026-05-11T19:17:53Z

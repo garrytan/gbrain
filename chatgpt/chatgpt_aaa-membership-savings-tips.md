@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # AAA Membership Savings Tips
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 682f7f22-db3c-8007-9e66-8711729e2cea
 > Created: 2025-05-22T19:46:43Z
 > Updated: 2025-05-22T19:47:02Z

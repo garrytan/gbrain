@@ -15,6 +15,8 @@ updated: 2026-01-28
 
 # MBP Release Rumors 2026
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 697a7c0f-a9a8-8327-a35b-174e18540df7
 > Created: 2026-01-28T21:13:52Z
 > Updated: 2026-01-28T21:15:33Z

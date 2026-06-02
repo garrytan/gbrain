@@ -15,6 +15,8 @@ updated: 2025-12-10
 
 # Vercel AWS usage
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6939bad1-d644-8326-8680-157d01342f81
 > Created: 2025-12-10T18:24:18Z
 > Updated: 2025-12-10T21:38:29Z

@@ -16,6 +16,8 @@ updated: 2026-05-21
 
 # World Class Jovie App
 
+**Related:** [[jovie-product-strategy]]
+
 > Conversation ID: 6a0f4af7-bf08-83e8-93dc-38608df1192e
 > Created: 2026-05-21T18:12:08Z
 > Updated: 2026-05-21T18:17:16Z

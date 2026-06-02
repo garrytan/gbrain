@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Server Job Application Letter
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 629b005d-f948-4702-98e7-2007a313d346
 > Created: 2023-11-08T06:28:33Z
 > Updated: 2023-11-08T06:31:14Z

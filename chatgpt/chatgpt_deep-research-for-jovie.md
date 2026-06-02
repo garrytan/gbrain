@@ -17,6 +17,8 @@ updated: 2026-04-27
 
 # Deep Research for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69eecec8-a09c-83e8-8559-a795e65a04f9
 > Created: 2026-04-27T02:49:45Z
 > Updated: 2026-04-27T03:24:31Z

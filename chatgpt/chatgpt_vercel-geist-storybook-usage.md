@@ -15,6 +15,8 @@ updated: 2025-12-08
 
 # Vercel Geist Storybook usage
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6935c922-6b64-832d-bcf5-822634aad358
 > Created: 2025-12-07T18:36:19Z
 > Updated: 2025-12-08T18:31:51Z

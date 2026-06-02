@@ -16,6 +16,8 @@ updated: 2023-02-07
 
 # Improve VueJS Code Snippet
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 7f1e346d-c4ae-4b84-8eac-015f02c9d36b
 > Created: 2023-02-07T17:48:04Z
 > Updated: 2023-02-07T17:48:04Z

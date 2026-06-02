@@ -16,6 +16,8 @@ updated: 2025-09-25
 
 # Ticket sales data
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68d5be05-99e4-8320-91dd-13af492f0716
 > Created: 2025-09-25T22:11:31Z
 > Updated: 2025-09-25T22:11:46Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Best Car Lumbar Support
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 686af272-2fb0-8007-8b73-a4bec66ad7d0
 > Created: 2025-07-06T22:02:26Z
 > Updated: 2025-07-06T22:02:37Z

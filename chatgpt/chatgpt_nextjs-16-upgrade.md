@@ -16,6 +16,8 @@ updated: 2025-12-15
 
 # Next.js 16 upgrade
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 693f6fd3-5710-8328-bb8d-5dbaecd8a960
 > Created: 2025-12-15T02:17:55Z
 > Updated: 2025-12-15T02:18:28Z

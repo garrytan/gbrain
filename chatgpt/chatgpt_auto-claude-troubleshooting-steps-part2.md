@@ -232,6 +232,8 @@ Run these and paste the output:
 APP_SUPPORT="$HOME/Library/Application Support/auto-claude-ui"
 
 # See roadmap runner files
+
+**Related:** [[coding_troubleshoot]]
 find "$APP_SUPPORT/auto-claude-source/runners/roadmap" -maxdepth 2 -type f | sed -n '1,120p'
 
 # Try to locate the entrypoint script

@@ -16,6 +16,8 @@ updated: 2025-11-30
 
 # Run experiments like OpenAI
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 692b89fc-a1e4-832d-bc82-f27602e74010
 > Created: 2025-11-30T00:04:24Z
 > Updated: 2025-11-30T00:07:03Z

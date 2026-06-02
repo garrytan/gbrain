@@ -16,6 +16,8 @@ updated: 2026-01-23
 
 # Native HTML vs ARIA
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6973ab8c-44cc-832c-b3b2-294e35df7eb0
 > Created: 2026-01-23T17:10:36Z
 > Updated: 2026-01-23T20:55:30Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Youtube Premium Family
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6955c1c1-c480-832d-a8d9-8e11de527d14
 > Created: 2026-01-01T00:37:22Z
 > Updated: 2026-01-01T00:37:56Z

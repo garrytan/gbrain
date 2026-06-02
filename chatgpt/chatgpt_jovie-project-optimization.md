@@ -15,6 +15,8 @@ updated: 2025-12-27
 
 # Jovie project optimization
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69502480-2ec4-8330-9eee-e6dd660d9fea
 > Created: 2025-12-27T18:25:04Z
 > Updated: 2025-12-27T19:57:08Z

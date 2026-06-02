@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Long Island Iced Tea Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 66e3bf41-4530-8007-9d29-32ee28d9b589
 > Created: 2024-09-13T04:27:45Z
 > Updated: 2024-09-13T04:27:52Z

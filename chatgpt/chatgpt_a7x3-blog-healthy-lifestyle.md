@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # A7X3 Blog: Healthy Lifestyle.
 
+**Related:** [[personal_health]]
+
 > Conversation ID: d40d3ed5-e4db-4fe7-97b9-46cafd237a80
 > Created: 2023-03-30T13:53:15Z
 > Updated: 2023-03-30T13:53:36Z

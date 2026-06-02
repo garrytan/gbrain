@@ -15,6 +15,8 @@ updated: 2024-04-10
 
 # View iOS App API
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 76cedf31-0eaf-47f2-9ed3-41b47270a380
 > Created: 2024-04-10T21:24:17Z
 > Updated: 2024-04-10T21:25:09Z

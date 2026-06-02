@@ -15,6 +15,8 @@ updated: 2026-05-21
 
 # App Monetization Strategy
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a0f471d-d164-83e8-8658-c7cc0216905f
 > Created: 2026-05-21T17:55:43Z
 > Updated: 2026-05-21T18:37:38Z

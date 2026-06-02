@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Samsung soundbar crossover issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69176cc1-2e04-8325-b375-c9dad141f5ac
 > Created: 2025-11-14T17:55:08Z
 > Updated: 2025-11-14T17:56:46Z

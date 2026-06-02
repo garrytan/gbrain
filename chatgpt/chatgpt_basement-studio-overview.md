@@ -15,6 +15,8 @@ updated: 2026-01-30
 
 # Basement Studio Overview
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 697c1e0b-b3e4-832a-bdfa-c7f2afb8dff0
 > Created: 2026-01-30T02:57:16Z
 > Updated: 2026-01-30T02:58:25Z

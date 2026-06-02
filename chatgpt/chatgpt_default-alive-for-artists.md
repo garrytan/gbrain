@@ -15,6 +15,8 @@ updated: 2026-05-19
 
 # Default Alive for Artists
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a0b74cd-1f5c-83e8-a142-4cc6e67c13d0
 > Created: 2026-05-18T20:23:33Z
 > Updated: 2026-05-19T02:50:15Z

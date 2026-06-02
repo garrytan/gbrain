@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Flaw-Seen Love in Lyrics
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 17a7e096-55a4-476b-90a1-27039fe3fce9
 > Created: 2023-11-28T07:23:22Z
 > Updated: 2023-11-28T08:05:41Z

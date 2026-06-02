@@ -15,6 +15,8 @@ updated: 2023-02-04
 
 # Vue.js Component Definition
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: c899a217-aa99-4991-994c-baf5840d28ac
 > Created: 2023-02-04T22:41:50Z
 > Updated: 2023-02-04T22:41:50Z

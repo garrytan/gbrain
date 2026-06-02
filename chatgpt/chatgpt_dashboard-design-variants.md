@@ -15,6 +15,8 @@ updated: 2026-04-26
 
 # Dashboard Design Variants
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69ed7e1d-ba0c-83e8-98d2-fbe155962c55
 > Created: 2026-04-26T02:53:18Z
 > Updated: 2026-04-26T04:40:30Z

@@ -15,6 +15,8 @@ updated: 2026-05-16
 
 # Columbia Square Studios Status
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6a08cddf-dc20-83e8-a60d-232cc24b4b5b
 > Created: 2026-05-16T20:06:08Z
 > Updated: 2026-05-16T20:10:35Z

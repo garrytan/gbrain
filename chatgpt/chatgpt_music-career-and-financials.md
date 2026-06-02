@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Music Career and Financials
 
+**Related:** [[personal_life]]
+
 > Conversation ID: abbede41-cf5b-494c-978b-34e7b1bc43d9
 > Created: 2024-06-19T00:57:43Z
 > Updated: 2024-06-19T00:58:09Z

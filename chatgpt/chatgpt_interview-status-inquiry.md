@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Interview status inquiry
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68966b25-b008-832b-8c31-e1049fe970e8
 > Created: 2025-08-08T21:25:03Z
 > Updated: 2025-08-08T21:25:14Z

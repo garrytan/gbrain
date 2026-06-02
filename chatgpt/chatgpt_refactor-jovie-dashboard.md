@@ -17,6 +17,8 @@ updated: 2025-09-11
 
 # Refactor Jovie Dashboard
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68c19963-efcc-8329-8b35-e9d0843a5f23
 > Created: 2025-09-10T15:29:45Z
 > Updated: 2025-09-11T19:04:24Z

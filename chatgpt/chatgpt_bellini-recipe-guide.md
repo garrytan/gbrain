@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bellini Recipe Guide
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 3c14cc94-735f-49fb-be29-65815a857f23
 > Created: 2024-02-11T23:41:17Z
 > Updated: 2024-02-12T00:44:38Z

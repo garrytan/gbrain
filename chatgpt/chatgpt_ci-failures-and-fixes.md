@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # CI Failures and Fixes
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6998f198-7130-832e-98d2-57e7e3de6fe7
 > Created: 2026-02-20T23:43:21Z
 > Updated: 2026-02-20T23:44:15Z

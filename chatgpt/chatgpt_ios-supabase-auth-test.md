@@ -17,6 +17,8 @@ updated: 2025-07-04
 
 # iOS Supabase Auth Test
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6864cbff-c9ec-8007-b9bd-8c709253f398
 > Created: 2025-07-02T06:04:47Z
 > Updated: 2025-07-04T04:44:49Z

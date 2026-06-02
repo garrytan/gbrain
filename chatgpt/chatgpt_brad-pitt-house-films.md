@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Brad Pitt House Films
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67ccfc5f-64bc-8007-aefc-665b2e0ee21f
 > Created: 2025-03-09T02:26:39Z
 > Updated: 2025-03-09T02:30:01Z

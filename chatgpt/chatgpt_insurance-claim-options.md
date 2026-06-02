@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Insurance Claim Options
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6a190e9d-25a0-83e8-a9bd-0e62d88b3490
 > Created: 2026-05-29T03:57:21Z
 > Updated: 2026-05-29T04:00:40Z

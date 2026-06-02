@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Neighbor's Smoke Alarm Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 694c8515-d930-8329-af86-cbd2a6265591
 > Created: 2025-12-25T00:28:30Z
 > Updated: 2025-12-25T00:28:42Z

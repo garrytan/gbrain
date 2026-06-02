@@ -16,6 +16,8 @@ updated: 2026-02-22
 
 # iOS App Development Tips
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 699aa1bb-2784-8326-a536-aa0024def426
 > Created: 2026-02-22T06:28:01Z
 > Updated: 2026-02-22T18:42:19Z

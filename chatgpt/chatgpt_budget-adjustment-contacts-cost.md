@@ -15,6 +15,8 @@ updated: 2025-05-15
 
 # Budget Adjustment Contacts Cost
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68263370-30b4-8007-a01e-1daef005d0b4
 > Created: 2025-05-15T18:33:20Z
 > Updated: 2025-05-15T18:37:39Z

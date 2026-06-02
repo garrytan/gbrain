@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cloud agent setup fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 694726cd-bab0-8329-944f-41c6f82efc7f
 > Created: 2025-12-20T22:45:38Z
 > Updated: 2025-12-20T22:57:50Z

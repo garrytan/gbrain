@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Tax disadvantage payroll timing
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 693ef079-305c-832b-a44e-ea61a1945554
 > Created: 2025-12-14T17:14:43Z
 > Updated: 2025-12-14T17:21:05Z

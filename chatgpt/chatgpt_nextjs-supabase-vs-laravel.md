@@ -17,6 +17,8 @@ updated: 2025-06-16
 
 # Next.js Supabase vs Laravel
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68503810-c2bc-8007-b8d1-f39a6ac3c5a3
 > Created: 2025-06-16T15:28:16Z
 > Updated: 2025-06-16T19:38:04Z

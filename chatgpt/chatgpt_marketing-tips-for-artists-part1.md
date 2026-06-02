@@ -16,6 +16,8 @@ updated: 2024-06-20
 
 # Marketing Tips for Artists
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 18504a82-1e31-4274-b73d-a58bf9717918
 > Created: 2024-06-20T04:29:35Z
 > Updated: 2024-06-20T05:03:07Z

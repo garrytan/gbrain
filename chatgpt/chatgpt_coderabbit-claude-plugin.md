@@ -16,6 +16,8 @@ updated: 2026-02-03
 
 # Coderabbit Claude Plugin
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69814bed-31dc-8330-8d45-e13c05aad3fd
 > Created: 2026-02-03T01:14:21Z
 > Updated: 2026-02-03T01:15:39Z

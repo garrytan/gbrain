@@ -17,6 +17,8 @@ updated: 2025-11-03
 
 # Apple-level design tips
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69090c4e-8610-8328-88e9-a28b539f6533
 > Created: 2025-11-03T20:11:10Z
 > Updated: 2025-11-03T21:26:44Z

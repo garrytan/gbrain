@@ -16,6 +16,8 @@ updated: 2025-12-08
 
 # Button success animation
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69371e4b-6650-8333-ba4f-b4df82d657b6
 > Created: 2025-12-08T18:51:55Z
 > Updated: 2025-12-08T18:52:37Z

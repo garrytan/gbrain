@@ -15,6 +15,8 @@ updated: 2025-08-23
 
 # AI prompt for Claude
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68aa2144-4524-832f-80d0-368d6332c8c9
 > Created: 2025-08-23T20:15:02Z
 > Updated: 2025-08-23T20:15:08Z

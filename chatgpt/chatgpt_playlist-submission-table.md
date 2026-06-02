@@ -15,6 +15,8 @@ updated: 2024-06-04
 
 # Playlist Submission Table
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: dcc70b23-71af-44aa-a00e-3d1773a69d72
 > Created: 2024-06-04T02:07:37Z
 > Updated: 2024-06-04T02:09:29Z

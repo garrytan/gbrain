@@ -16,6 +16,8 @@ updated: 2026-04-27
 
 # Design Comparison Graphic
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69efcf2f-293c-83e8-a8cb-7e655e7d1bd3
 > Created: 2026-04-27T21:03:44Z
 > Updated: 2026-04-27T22:44:35Z

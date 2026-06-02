@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # AppleCare+ Theft Loss Coverage
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6952c828-b4f4-8328-bb9d-5b83a358d507
 > Created: 2025-12-29T18:28:03Z
 > Updated: 2025-12-29T18:28:57Z

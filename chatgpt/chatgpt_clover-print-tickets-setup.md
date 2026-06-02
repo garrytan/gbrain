@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Clover Print Tickets Setup
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 8b9b5eb5-d20d-4b84-86db-0c996dd939fb
 > Created: 2024-08-15T23:41:59Z
 > Updated: 2024-08-15T23:42:03Z

@@ -15,6 +15,8 @@ updated: 2026-02-15
 
 # Apple Shortcuts Claude Code
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69920e3f-7aa0-832b-acf0-e0989fd7dc73
 > Created: 2026-02-15T18:20:01Z
 > Updated: 2026-02-15T18:21:16Z

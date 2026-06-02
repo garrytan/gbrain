@@ -16,6 +16,8 @@ updated: 2026-04-28
 
 # Jovie version request
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69f00f53-20e0-83e8-b087-9dc8acbdbb7c
 > Created: 2026-04-28T01:37:24Z
 > Updated: 2026-04-28T02:10:53Z

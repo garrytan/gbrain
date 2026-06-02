@@ -15,6 +15,8 @@ updated: 2025-08-02
 
 # CarPlay audio issue fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 688e81f7-0dec-832c-bf09-2e18616e7579
 > Created: 2025-08-02T21:24:08Z
 > Updated: 2025-08-02T21:26:20Z

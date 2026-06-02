@@ -15,6 +15,8 @@ updated: 2026-05-24
 
 # Pitch Deck Enhancement
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a123d47-2dbc-83e8-850e-d840ead734eb
 > Created: 2026-05-23T23:50:32Z
 > Updated: 2026-05-24T00:33:02Z

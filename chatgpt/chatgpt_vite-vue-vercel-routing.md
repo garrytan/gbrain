@@ -16,6 +16,8 @@ updated: 2024-02-27
 
 # Vite, Vue, Vercel Routing
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6a174f53-1435-4cb8-9f03-f459a1008e66
 > Created: 2024-02-27T21:45:29Z
 > Updated: 2024-02-27T21:45:48Z

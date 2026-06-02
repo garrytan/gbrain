@@ -15,6 +15,8 @@ updated: 2025-11-26
 
 # Opus vs GPT-5.1 comparison
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69268366-8104-8325-802d-c5589aba055f
 > Created: 2025-11-26T04:34:52Z
 > Updated: 2025-11-26T04:35:29Z

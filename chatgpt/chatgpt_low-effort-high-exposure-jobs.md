@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Low-Effort High-Exposure Jobs
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6831e78a-c368-8007-a3fe-222bf2592bdb
 > Created: 2025-05-24T15:36:43Z
 > Updated: 2025-05-24T15:37:09Z

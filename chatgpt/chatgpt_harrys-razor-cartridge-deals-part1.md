@@ -16,6 +16,8 @@ updated: 2025-08-18
 
 # Harry's razor cartridge deals
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68a265e5-4468-8326-ac3b-57a3d84e67fe
 > Created: 2025-08-17T23:30:01Z
 > Updated: 2025-08-18T01:42:09Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job Application Email Draft
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6812b78e-9010-8007-bfaf-0fa44464a174
 > Created: 2025-04-30T23:51:42Z
 > Updated: 2025-04-30T23:51:57Z

@@ -15,6 +15,8 @@ updated: 2025-08-30
 
 # The 1975 Spotify discography
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68b32efa-a7f8-8329-9d73-72bfe13101a2
 > Created: 2025-08-30T17:03:55Z
 > Updated: 2025-08-30T17:04:12Z

@@ -15,6 +15,8 @@ updated: 2023-04-18
 
 # Clean up Laravel UI.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: b9697b6c-4aae-4df7-b2d1-550304c2644c
 > Created: 2023-04-18T20:01:44Z
 > Updated: 2023-04-18T20:02:12Z

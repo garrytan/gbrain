@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Subwoofer phase issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68e3feb1-fa30-832e-a83c-503126114b54
 > Created: 2025-10-06T17:38:58Z
 > Updated: 2025-10-06T18:13:58Z

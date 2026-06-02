@@ -17,6 +17,8 @@ updated: 2026-04-26
 
 # Reframing Jovie Strategy
 
+**Related:** [[jovie-product-strategy]]
+
 > Conversation ID: 69ee58a5-1c1c-83e8-9dce-f0bb7cf1670d
 > Created: 2026-04-26T18:25:42Z
 > Updated: 2026-04-26T18:32:48Z

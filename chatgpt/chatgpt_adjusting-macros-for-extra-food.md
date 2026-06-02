@@ -15,6 +15,8 @@ updated: 2024-01-13
 
 # Adjusting Macros for Extra Food
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6d676afd-0e63-4816-8e58-1a284a3b9817
 > Created: 2024-01-13T05:53:21Z
 > Updated: 2024-01-13T05:53:34Z

@@ -15,6 +15,8 @@ updated: 2025-10-19
 
 # Recipe adjustment guide
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68f47eb3-88e4-8327-b518-f425ff86a2d6
 > Created: 2025-10-19T06:02:15Z
 > Updated: 2025-10-19T06:02:28Z

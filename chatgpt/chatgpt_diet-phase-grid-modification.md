@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Diet Phase Grid Modification
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 53c750bc-b94e-4591-9ee7-7789b9537217
 > Created: 2023-12-05T22:13:09Z
 > Updated: 2023-12-05T22:33:26Z

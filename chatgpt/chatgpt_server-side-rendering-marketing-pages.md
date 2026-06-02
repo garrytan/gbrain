@@ -15,6 +15,8 @@ updated: 2023-01-04
 
 # Server-Side Rendering Marketing Pages
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 24aa83da-7bac-48f1-a477-e4300068d42b
 > Created: 2023-01-04T22:36:28Z
 > Updated: 2023-01-04T22:36:28Z

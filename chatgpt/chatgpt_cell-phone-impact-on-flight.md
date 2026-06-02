@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cell phone impact on flight
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69124ad4-2350-8333-9ade-c9bd635ddfff
 > Created: 2025-11-10T20:28:16Z
 > Updated: 2025-11-10T20:28:48Z

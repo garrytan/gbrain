@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fix Ring doorbell boot loop
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 688c338f-5b64-8327-b75f-1d3fa48f20c1
 > Created: 2025-08-01T03:25:22Z
 > Updated: 2025-08-01T03:25:33Z

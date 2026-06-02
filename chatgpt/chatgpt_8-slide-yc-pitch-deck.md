@@ -15,6 +15,8 @@ updated: 2026-04-22
 
 # 8-Slide YC Pitch Deck
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69e83cf7-2d58-83e8-b47a-b05a72ce161a
 > Created: 2026-04-22T03:14:12Z
 > Updated: 2026-04-22T16:42:15Z

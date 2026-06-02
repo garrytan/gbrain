@@ -450,6 +450,8 @@ Do **not** reuse on the homepage:
 
 # Full homepage spec
 
+**Related:** [[design_ux]]
+
 ## 0. Global nav
 
 **Left**

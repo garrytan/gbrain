@@ -15,6 +15,8 @@ updated: 2025-01-15
 
 # Rekordbox DJing 2025
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67876f5b-d9f4-8007-a04e-ca4418fd4f77
 > Created: 2025-01-15T08:18:36Z
 > Updated: 2025-01-15T08:18:47Z

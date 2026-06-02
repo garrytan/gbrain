@@ -15,6 +15,8 @@ updated: 2025-07-09
 
 # iOS App Performance Optimization
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 686ed1eb-a140-8007-b338-84f96addbf85
 > Created: 2025-07-09T20:32:43Z
 > Updated: 2025-07-09T20:32:54Z

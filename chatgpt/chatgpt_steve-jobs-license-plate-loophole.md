@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Steve Jobs License Plate Loophole
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6840f4f4-7a24-8007-ac20-a5faa2776289
 > Created: 2025-06-05T01:37:56Z
 > Updated: 2025-06-05T01:38:10Z

@@ -16,6 +16,8 @@ updated: 2026-01-05
 
 # Startup Idea Feedback
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 695b0d1b-39e4-832f-a8ac-72bf728a89b9
 > Created: 2026-01-05T01:00:11Z
 > Updated: 2026-01-05T01:03:20Z

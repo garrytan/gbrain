@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job day-to-day breakdown
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69168e4f-38c4-8332-bd7b-448646c6f721
 > Created: 2025-11-14T02:05:13Z
 > Updated: 2025-11-14T02:05:25Z

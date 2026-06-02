@@ -17,6 +17,8 @@ updated: 2025-12-12
 
 # Next.js dashboard optimization
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 693bd39c-3844-832b-b648-04acb53984be
 > Created: 2025-12-12T08:34:36Z
 > Updated: 2025-12-12T09:16:23Z

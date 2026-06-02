@@ -15,6 +15,8 @@ updated: 2026-05-23
 
 # Agent-First Strategy for Jovie
 
+**Related:** [[jovie-product-strategy]]
+
 > Conversation ID: 6a113248-75f0-83e8-926e-df37969fe38d
 > Created: 2026-05-23T04:51:20Z
 > Updated: 2026-05-23T05:02:01Z

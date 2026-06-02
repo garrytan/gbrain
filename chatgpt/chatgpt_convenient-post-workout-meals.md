@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Convenient Post-Workout Meals
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 4aaa7bb5-0f53-42c5-ada5-e7fe6683c5f4
 > Created: 2024-08-13T00:53:25Z
 > Updated: 2024-08-13T00:53:47Z

@@ -17,6 +17,8 @@ updated: 2026-05-21
 
 # Google Omni and Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a0d0c9e-ce14-83e8-b07f-5e411628366c
 > Created: 2026-05-20T01:21:35Z
 > Updated: 2026-05-21T17:56:04Z

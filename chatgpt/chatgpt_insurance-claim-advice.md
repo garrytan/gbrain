@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Insurance claim advice
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6878408f-a710-832b-8dc4-50bb28995343
 > Created: 2025-07-17T00:17:13Z
 > Updated: 2025-07-17T00:17:20Z

@@ -15,6 +15,8 @@ updated: 2025-06-14
 
 # Mailgun Features and Pricing
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 684ddc4b-05bc-8007-8541-d7043da20a8f
 > Created: 2025-06-14T20:32:11Z
 > Updated: 2025-06-14T20:32:35Z

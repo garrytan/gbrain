@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Credit Karma overview
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68a282a5-ad84-8322-9866-b431e71ff6c7
 > Created: 2025-08-18T01:32:22Z
 > Updated: 2025-08-18T01:32:27Z

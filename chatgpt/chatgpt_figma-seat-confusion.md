@@ -15,6 +15,8 @@ updated: 2026-05-12
 
 # Figma Seat Confusion
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a036f6d-3afc-83e8-936f-243b945ceebc
 > Created: 2026-05-12T18:20:31Z
 > Updated: 2026-05-12T19:19:40Z

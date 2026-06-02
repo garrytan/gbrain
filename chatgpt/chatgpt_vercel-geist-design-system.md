@@ -15,6 +15,8 @@ updated: 2026-02-17
 
 # Vercel Geist Design System
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6993d28f-7860-8327-bf24-a4535b0bfc92
 > Created: 2026-02-17T02:29:43Z
 > Updated: 2026-02-17T02:30:45Z

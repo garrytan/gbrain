@@ -16,6 +16,8 @@ updated: 2023-10-31
 
 # Music Publishing Deal Structure
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 54c40df9-675e-4ad8-9816-959e4f88419e
 > Created: 2023-10-31T09:33:19Z
 > Updated: 2023-10-31T10:13:03Z

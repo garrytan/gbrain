@@ -16,6 +16,8 @@ updated: 2025-11-29
 
 # Claude Vercel integration
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 692a3991-7f84-8329-a6d0-ea502e04aa58
 > Created: 2025-11-29T00:08:49Z
 > Updated: 2025-11-29T01:58:06Z

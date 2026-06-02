@@ -15,6 +15,8 @@ updated: 2026-01-14
 
 # Tailwind CSS 4 SonarQube
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6967e345-ea64-832a-addd-026d6d43031a
 > Created: 2026-01-14T18:41:10Z
 > Updated: 2026-01-14T18:42:34Z

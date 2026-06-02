@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Renting Car in Ontario: Insurance
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 5f413883-255f-4a53-a667-6ec32b627fba
 > Created: 2024-06-05T04:49:49Z
 > Updated: 2024-06-05T04:50:14Z

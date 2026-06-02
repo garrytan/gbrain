@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hotel Height: Approx. 10 Stories
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 7d8631da-46d5-4f18-a57e-72bb1677843a
 > Created: 2024-04-19T02:48:44Z
 > Updated: 2024-04-19T02:48:51Z

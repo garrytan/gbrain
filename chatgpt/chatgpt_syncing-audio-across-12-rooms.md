@@ -16,6 +16,8 @@ updated: 2024-07-03
 
 # Syncing Audio Across 12 Rooms
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 163e87e2-78ed-4a40-b59d-04c39b2cdde3
 > Created: 2024-07-03T21:26:54Z
 > Updated: 2024-07-03T21:28:27Z

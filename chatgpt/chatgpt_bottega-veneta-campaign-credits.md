@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bottega Veneta Campaign Credits
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: b46d8a54-ee08-48ba-8c94-7d18fbeab5e1
 > Created: 2024-01-17T00:11:44Z
 > Updated: 2024-01-17T00:18:44Z

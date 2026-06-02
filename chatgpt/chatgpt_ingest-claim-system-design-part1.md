@@ -17,6 +17,8 @@ updated: 2025-12-10
 
 # Ingest claim system design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69346c35-9638-8329-9274-e4b7b3cbaf50
 > Created: 2025-12-06T17:50:42Z
 > Updated: 2025-12-10T20:21:25Z

@@ -15,6 +15,8 @@ updated: 2026-01-10
 
 # T-Mobile 5G Antennas Help
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6961e8fd-ccf8-832b-832c-ca8e6ab8b4c7
 > Created: 2026-01-10T05:52:22Z
 > Updated: 2026-01-10T05:52:38Z

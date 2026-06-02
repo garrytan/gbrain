@@ -15,6 +15,8 @@ updated: 2025-11-16
 
 # Career plan for startup path
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 691a5c4f-bc50-8329-826f-86d5835dbae3
 > Created: 2025-11-16T23:20:48Z
 > Updated: 2025-11-16T23:21:08Z

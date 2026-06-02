@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # DEXA scan affected by water weight
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 1d57d158-9a6f-4a5c-bbaf-a0174849b325
 > Created: 2023-11-27T20:35:26Z
 > Updated: 2023-11-27T20:35:35Z

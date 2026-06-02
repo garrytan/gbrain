@@ -15,6 +15,8 @@ updated: 2026-01-29
 
 # Next.js Performance Audit
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 697adb0e-38f8-832c-a2cd-28df0fb04cec
 > Created: 2026-01-29T03:59:10Z
 > Updated: 2026-01-29T03:59:50Z

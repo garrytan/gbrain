@@ -16,6 +16,8 @@ updated: 2023-02-07
 
 # Disable Swipe Back Vue.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: b6ad6800-d461-4009-a42b-847a6b997070
 > Created: 2023-02-07T18:47:14Z
 > Updated: 2023-02-07T18:47:14Z

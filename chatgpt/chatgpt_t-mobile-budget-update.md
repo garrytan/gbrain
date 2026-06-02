@@ -15,6 +15,8 @@ updated: 2025-05-11
 
 # T-Mobile Budget Update
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6820d6e1-1644-8007-b9c2-01c4514afea7
 > Created: 2025-05-11T16:57:05Z
 > Updated: 2025-05-11T17:00:17Z

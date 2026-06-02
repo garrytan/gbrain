@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Medi-Cal Healthcare Bill Impact
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68681e62-7ef0-8007-9b3d-bd03a5be4478
 > Created: 2025-07-04T18:33:06Z
 > Updated: 2025-07-04T18:33:16Z

@@ -17,6 +17,8 @@ updated: 2025-08-20
 
 # Jovie testing stack
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68a645e0-9478-832f-b0e1-101272c242f4
 > Created: 2025-08-20T22:02:39Z
 > Updated: 2025-08-20T23:27:42Z

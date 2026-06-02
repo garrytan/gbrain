@@ -15,6 +15,8 @@ updated: 2025-03-05
 
 # Tailwind CSS Job Listings
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 67c7cb54-bfbc-8007-9c79-0c10cafc36f6
 > Created: 2025-03-05T03:56:04Z
 > Updated: 2025-03-05T03:56:12Z

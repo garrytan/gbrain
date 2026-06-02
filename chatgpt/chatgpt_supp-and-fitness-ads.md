@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Supp and fitness ads.
 
+**Related:** [[personal_health]]
+
 > Conversation ID: de5a0629-4b58-42d7-825e-02e31040afd0
 > Created: 2023-05-02T03:16:59Z
 > Updated: 2023-05-02T03:17:25Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # BMI Calculation for Weight
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67bbcf3e-8b24-8007-958d-4cde99a058e1
 > Created: 2025-02-24T01:45:34Z
 > Updated: 2025-03-04T20:31:11Z

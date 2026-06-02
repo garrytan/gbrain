@@ -16,6 +16,8 @@ updated: 2026-01-23
 
 # Memoization in React
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6973c979-9cb8-832a-bc77-b7536280036f
 > Created: 2026-01-23T19:18:18Z
 > Updated: 2026-01-23T19:20:14Z

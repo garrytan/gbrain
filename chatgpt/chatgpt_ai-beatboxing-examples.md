@@ -15,6 +15,8 @@ updated: 2023-01-24
 
 # AI Beatboxing Examples
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: f140d1dc-8e9d-484e-833b-3bc0598a8739
 > Created: 2023-01-24T20:35:42Z
 > Updated: 2023-01-24T20:35:42Z

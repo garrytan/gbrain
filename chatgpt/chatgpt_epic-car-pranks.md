@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Epic car pranks
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68954693-69bc-832b-8ddb-12debe09772f
 > Created: 2025-08-08T00:37:02Z
 > Updated: 2025-08-08T00:38:27Z

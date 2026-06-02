@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Exercise Stock Option: No Nap
 
+**Related:** [[personal_health]]
+
 > Conversation ID: a6d0bdf1-6cb2-4c96-88ea-82f3c4e4f85f
 > Created: 2023-05-05T22:52:43Z
 > Updated: 2023-05-05T22:52:51Z

@@ -15,6 +15,8 @@ updated: 2025-02-01
 
 # Deadmau5 Mastering Chain
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 679dd1fe-2edc-8007-baa1-0208abd369da
 > Created: 2025-02-01T07:49:18Z
 > Updated: 2025-02-01T07:49:26Z

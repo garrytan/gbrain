@@ -15,6 +15,8 @@ updated: 2026-01-15
 
 # Laylo Revenue Estimate
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 696930fe-20d4-832f-a57a-dd88ba05a837
 > Created: 2026-01-15T18:25:45Z
 > Updated: 2026-01-15T18:26:52Z

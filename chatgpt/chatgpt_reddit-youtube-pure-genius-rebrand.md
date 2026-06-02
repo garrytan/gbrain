@@ -16,6 +16,8 @@ updated: 2025-12-22
 
 # Reddit YouTube Pure Genius rebrand
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6948c4b8-b168-8327-8d80-819fc0adcaaa
 > Created: 2025-12-22T04:10:33Z
 > Updated: 2025-12-22T04:12:08Z

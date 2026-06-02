@@ -16,6 +16,8 @@ updated: 2026-01-30
 
 # PR Mode in Claude
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 697d1fe3-dfb0-832b-b3aa-d81c5a504c03
 > Created: 2026-01-30T21:17:25Z
 > Updated: 2026-01-30T21:18:51Z

@@ -15,6 +15,8 @@ updated: 2024-05-14
 
 # Love Album Art Request
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 191bc051-2e13-4a13-aee7-68f7674da869
 > Created: 2024-05-14T22:26:04Z
 > Updated: 2024-05-14T22:27:18Z

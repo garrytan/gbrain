@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Side Delt Exercises Experts
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67e07495-60ac-8007-ac2a-4838e376a951
 > Created: 2025-03-23T20:52:37Z
 > Updated: 2025-03-23T21:06:15Z

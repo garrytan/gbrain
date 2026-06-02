@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Self-driving car improvement
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68c8857d-24e0-8322-ae83-fabe6eb19a46
 > Created: 2025-09-15T21:30:37Z
 > Updated: 2025-09-15T21:32:00Z

@@ -17,6 +17,8 @@ updated: 2026-05-24
 
 # Flags Manager Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a132570-12b0-83e8-9f3d-14c10afdfc39
 > Created: 2026-05-24T16:21:04Z
 > Updated: 2026-05-24T16:26:43Z

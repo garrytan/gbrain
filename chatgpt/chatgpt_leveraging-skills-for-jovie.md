@@ -15,6 +15,8 @@ updated: 2026-05-07
 
 # Leveraging Skills for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69fcd2e2-5dc4-83e8-9091-3ed65c8d51f1
 > Created: 2026-05-07T17:58:59Z
 > Updated: 2026-05-07T18:35:44Z

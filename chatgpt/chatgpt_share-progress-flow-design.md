@@ -16,6 +16,8 @@ updated: 2025-07-09
 
 # Share Progress Flow Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 686ee2bb-67a4-8007-aeea-a7d166eb692b
 > Created: 2025-07-09T21:44:27Z
 > Updated: 2025-07-09T21:44:36Z

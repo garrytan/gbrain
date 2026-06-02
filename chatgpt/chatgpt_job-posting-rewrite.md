@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job posting rewrite
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6902aa62-4150-8322-b9ff-1020331137b8
 > Created: 2025-10-30T00:00:09Z
 > Updated: 2025-10-30T00:03:31Z

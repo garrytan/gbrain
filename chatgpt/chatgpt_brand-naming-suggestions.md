@@ -16,6 +16,8 @@ updated: 2023-02-21
 
 # Brand Naming Suggestions.
 
+**Related:** [[design_ux]]
+
 > Conversation ID: e270eaeb-f8df-4904-85c8-7d1b23e6735a
 > Created: 2023-02-21T22:58:39Z
 > Updated: 2023-02-21T22:58:39Z

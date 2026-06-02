@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Nike Tax Strategy Explained
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 682ce5d2-dcb0-8007-b209-adcfa7ed4e9c
 > Created: 2025-05-20T20:28:03Z
 > Updated: 2025-05-20T20:37:56Z

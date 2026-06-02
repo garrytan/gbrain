@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cat Vomit Exercise Effectiveness
 
+**Related:** [[personal_health]]
+
 > Conversation ID: f005713b-ae8f-44e1-b59c-70bf9c8cbf18
 > Created: 2024-01-14T15:34:52Z
 > Updated: 2024-01-14T23:00:44Z

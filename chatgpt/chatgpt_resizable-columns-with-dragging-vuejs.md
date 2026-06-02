@@ -16,6 +16,8 @@ updated: 2023-05-01
 
 # Resizable Columns with Dragging (Vue.js)
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 41c8ea7b-543c-422f-90d5-b5c5a7d764f3
 > Created: 2023-05-01T18:11:35Z
 > Updated: 2023-05-01T18:12:33Z

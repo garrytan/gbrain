@@ -17,6 +17,8 @@ updated: 2026-05-15
 
 # Agentic OS for Artists
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a05ff24-7be4-83e8-9684-4948d28e123c
 > Created: 2026-05-14T16:58:13Z
 > Updated: 2026-05-15T00:50:48Z

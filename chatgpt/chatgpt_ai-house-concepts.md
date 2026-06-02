@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # AI House Concepts
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6973d9d4-5284-832e-b350-d9e6375e5272
 > Created: 2026-01-23T20:28:04Z
 > Updated: 2026-01-23T20:28:49Z

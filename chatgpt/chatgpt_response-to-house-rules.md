@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Response to house rules
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68b776c5-65d0-832a-b133-1ef46d7cbe36
 > Created: 2025-09-02T22:59:43Z
 > Updated: 2025-09-02T23:06:16Z

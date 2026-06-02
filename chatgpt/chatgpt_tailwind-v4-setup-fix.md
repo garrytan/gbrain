@@ -16,6 +16,8 @@ updated: 2025-09-14
 
 # Tailwind v4 setup fix
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68c7275c-a848-8324-8e0f-beabb5cd9d83
 > Created: 2025-09-14T20:36:45Z
 > Updated: 2025-09-14T20:43:24Z

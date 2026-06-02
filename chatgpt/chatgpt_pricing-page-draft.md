@@ -15,6 +15,8 @@ updated: 2025-08-30
 
 # Pricing page draft
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68b33f27-08b4-8322-93f9-dcf2694ff755
 > Created: 2025-08-30T18:12:57Z
 > Updated: 2025-08-30T18:13:03Z

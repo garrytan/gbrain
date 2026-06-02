@@ -16,6 +16,8 @@ updated: 2026-01-14
 
 # Stop Prop Drilling Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6967d645-4348-832f-8b97-88ed195fe004
 > Created: 2026-01-14T17:45:41Z
 > Updated: 2026-01-14T17:47:05Z

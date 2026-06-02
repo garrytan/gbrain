@@ -15,6 +15,8 @@ updated: 2025-11-17
 
 # IconComposer in Xcode
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 691b5d0d-8fa8-8332-8d29-5b7676ac3ee9
 > Created: 2025-11-17T17:36:18Z
 > Updated: 2025-11-17T17:40:29Z

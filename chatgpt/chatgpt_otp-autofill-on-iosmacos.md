@@ -17,6 +17,8 @@ updated: 2025-12-28
 
 # OTP Autofill on iOS/macOS
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69519d9f-2090-832c-8a48-d39fa6c538e4
 > Created: 2025-12-28T21:14:26Z
 > Updated: 2025-12-28T21:17:55Z

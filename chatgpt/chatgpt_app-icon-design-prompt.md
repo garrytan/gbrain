@@ -16,6 +16,8 @@ updated: 2026-05-16
 
 # App Icon Design Prompt
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a07df90-a11c-83e8-b5f1-a6b9a735c6cd
 > Created: 2026-05-16T03:08:01Z
 > Updated: 2026-05-16T03:09:52Z

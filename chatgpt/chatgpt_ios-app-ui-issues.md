@@ -17,6 +17,8 @@ updated: 2025-06-10
 
 # iOS App UI Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 684784f5-17ac-8007-b9ed-51ce8839a1a2
 > Created: 2025-06-10T01:05:57Z
 > Updated: 2025-06-10T01:44:00Z

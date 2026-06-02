@@ -15,6 +15,8 @@ updated: 2024-04-02
 
 # Muscle Gain Visualization
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 356e553c-f498-49a8-af44-8440572c8cfc
 > Created: 2024-04-02T21:05:40Z
 > Updated: 2024-04-02T21:06:18Z

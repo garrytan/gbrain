@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cursor agents setup issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 694753f0-b1a0-832f-98e5-c55703a3918e
 > Created: 2025-12-21T01:57:05Z
 > Updated: 2025-12-21T01:58:44Z

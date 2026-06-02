@@ -17,6 +17,8 @@ updated: 2026-05-27
 
 # GBrain for Jovie Integration
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a165a0c-757c-83e8-9420-719327319ff1
 > Created: 2026-05-27T02:42:21Z
 > Updated: 2026-05-27T03:07:09Z

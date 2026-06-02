@@ -16,6 +16,8 @@ updated: 2025-12-25
 
 # Vercel Zone File
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 694d9276-da4c-832c-86ae-0a40ed259724
 > Created: 2025-12-25T19:37:37Z
 > Updated: 2025-12-25T19:44:53Z

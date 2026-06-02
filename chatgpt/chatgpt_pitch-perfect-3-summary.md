@@ -15,6 +15,8 @@ updated: 2026-01-07
 
 # Pitch Perfect 3 Summary
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 695df82e-15cc-8332-aace-1f17cb73c96b
 > Created: 2026-01-07T06:07:42Z
 > Updated: 2026-01-07T06:09:14Z

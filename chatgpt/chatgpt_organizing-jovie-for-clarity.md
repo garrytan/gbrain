@@ -15,6 +15,8 @@ updated: 2026-05-25
 
 # Organizing Jovie for Clarity
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a13aa14-838c-83e8-93be-0b9def1c0c44
 > Created: 2026-05-25T01:47:01Z
 > Updated: 2026-05-25T01:58:17Z

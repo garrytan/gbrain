@@ -15,6 +15,8 @@ updated: 2023-12-13
 
 # Sphere Concert Temperature Advice
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 625d9e0a-0264-4dee-9c48-307471501e9a
 > Created: 2023-12-13T02:55:39Z
 > Updated: 2023-12-13T03:53:19Z

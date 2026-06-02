@@ -391,6 +391,8 @@ The actual launcher script lives one level down, so just call it directly:
 
 ```bash
 # make sure the venv prompt is still showing
+
+**Related:** [[design_ux]]
 (venv) timwhite@Tims-Air makehuman % python3 makehuman/makehuman.py      # normal run
 # or, if you want verbose logging
 (venv) timwhite@Tims-Air makehuman % python3 makehuman/makehuman.py --debug

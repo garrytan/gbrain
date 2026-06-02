@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Tirzepatide and Intestinal Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 67c7791c-e6c4-8007-a154-52c4aabf7103
 > Created: 2025-03-04T22:05:17Z
 > Updated: 2025-03-04T22:13:03Z

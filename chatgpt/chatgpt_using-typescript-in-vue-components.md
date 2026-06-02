@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Using TypeScript in Vue Components
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 5d954741-d280-436f-87d7-ec4a6b36ee2c
 > Created: 2022-12-21T22:27:49Z
 > Updated: 2022-12-21T22:27:49Z

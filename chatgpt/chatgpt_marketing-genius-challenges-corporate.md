@@ -15,6 +15,8 @@ updated: 2024-06-21
 
 # Marketing Genius Challenges Corporate
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 094f9d19-36bb-4c43-a6e3-262cc8aeeb84
 > Created: 2024-06-21T23:43:16Z
 > Updated: 2024-06-21T23:44:34Z

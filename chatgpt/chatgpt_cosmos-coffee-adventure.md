@@ -16,6 +16,8 @@ updated: 2024-04-01
 
 # Cosmo's Coffee Adventure
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 60d35213-df18-4f18-b70e-eefe8b3e27a4
 > Created: 2024-04-01T03:08:24Z
 > Updated: 2024-04-01T03:28:40Z

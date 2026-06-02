@@ -16,6 +16,8 @@ updated: 2025-11-17
 
 # App design for body tracking
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6910d287-e4cc-832e-ba78-8d1fde4e064f
 > Created: 2025-11-09T17:44:33Z
 > Updated: 2025-11-17T02:17:52Z

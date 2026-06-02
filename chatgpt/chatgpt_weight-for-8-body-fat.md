@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Weight for 8% Body Fat
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 9a9ac3bc-7301-4e45-aa9f-02a3ee211fe3
 > Created: 2024-01-29T19:12:08Z
 > Updated: 2024-01-29T21:35:23Z

@@ -16,6 +16,8 @@ updated: 2025-07-05
 
 # Offline Sync with Supabase
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 686957dd-439c-8007-bce0-bc770122860b
 > Created: 2025-07-05T16:53:18Z
 > Updated: 2025-07-05T17:07:44Z

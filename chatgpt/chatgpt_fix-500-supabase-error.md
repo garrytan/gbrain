@@ -17,6 +17,8 @@ updated: 2025-03-10
 
 # Fix 500 Supabase Error
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 67ce25f4-948c-8007-a457-5d7c044e21d0
 > Created: 2025-03-09T23:36:20Z
 > Updated: 2025-03-10T00:33:21Z

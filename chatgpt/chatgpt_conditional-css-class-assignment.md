@@ -16,6 +16,8 @@ updated: 2023-06-08
 
 # Conditional CSS Class Assignment.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: c0ff24f1-0a5c-459e-b069-23957ddc5998
 > Created: 2023-06-08T17:10:27Z
 > Updated: 2023-06-08T17:19:49Z

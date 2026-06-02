@@ -16,6 +16,8 @@ updated: 2026-03-03
 
 # Slow Turbopack GitHub Actions
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 69a732d5-0aa0-832a-bb64-8e3d53d3c35b
 > Created: 2026-03-03T19:13:32Z
 > Updated: 2026-03-03T19:15:22Z

@@ -15,6 +15,8 @@ updated: 2024-01-19
 
 # Adjusting Flutter App Loading
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: b16af703-743d-4260-ba4e-ef42fe4c2734
 > Created: 2024-01-19T01:13:32Z
 > Updated: 2024-01-19T01:13:51Z

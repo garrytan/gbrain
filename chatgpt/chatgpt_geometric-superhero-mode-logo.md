@@ -15,6 +15,8 @@ updated: 2023-11-24
 
 # Geometric Superhero Mode Logo
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 4b66df96-11b0-40e9-b458-388339f92255
 > Created: 2023-11-24T04:14:12Z
 > Updated: 2023-11-24T04:15:02Z

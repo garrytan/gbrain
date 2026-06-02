@@ -237,6 +237,8 @@ If you have made changes to your JavaScript or Vue files, remember to recompile 
 ```bash
 npm run dev
 # or
+
+**Related:** [[coding_web_dev]]
 npm run production
 ```
 

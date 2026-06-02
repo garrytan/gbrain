@@ -15,6 +15,8 @@ updated: 2025-12-22
 
 # Tracking work hours system
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 694994d0-67c0-8326-b396-7f6d937bec52
 > Created: 2025-12-22T18:58:25Z
 > Updated: 2025-12-22T18:58:54Z

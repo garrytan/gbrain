@@ -17,6 +17,8 @@ updated: 2026-04-28
 
 # Design System and Workflow
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69f106b6-ac58-83e8-87a3-99681a844ec3
 > Created: 2026-04-28T19:12:55Z
 > Updated: 2026-04-28T20:51:01Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Luxury Travel Video Production
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 9f2eb6fa-4f6d-4275-a4c4-127f6c79b788
 > Created: 2023-02-23T03:33:43Z
 > Updated: 2023-02-23T03:33:43Z

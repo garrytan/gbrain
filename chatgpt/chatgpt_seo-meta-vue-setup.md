@@ -17,6 +17,8 @@ updated: 2024-06-06
 
 # SEO Meta Vue Setup
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 8fd0c11d-a4d4-4abb-80ca-9798f5d8fe72
 > Created: 2024-06-06T06:44:52Z
 > Updated: 2024-06-06T07:16:55Z

@@ -15,6 +15,8 @@ updated: 2026-04-22
 
 # Angel Investor Search
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69e8725f-9aa8-83e8-9145-83192ae7aaca
 > Created: 2026-04-22T07:01:52Z
 > Updated: 2026-04-22T16:47:11Z

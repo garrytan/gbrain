@@ -16,6 +16,8 @@ updated: 2026-01-23
 
 # Upgrade Claude CLI
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6972cc61-ca28-8328-b86a-ab085b412ece
 > Created: 2026-01-23T01:18:26Z
 > Updated: 2026-01-23T06:28:40Z

@@ -17,6 +17,8 @@ updated: 2025-08-26
 
 # Claude file updates
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68ae21eb-4874-832f-af5c-a08f107e3e3f
 > Created: 2025-08-26T21:06:52Z
 > Updated: 2025-08-26T21:30:45Z

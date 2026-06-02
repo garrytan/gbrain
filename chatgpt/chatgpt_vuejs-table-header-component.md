@@ -16,6 +16,8 @@ updated: 2023-02-07
 
 # Vue.js Table Header Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 1a493638-c144-4d82-b36d-fcce03d4e939
 > Created: 2023-02-07T18:43:51Z
 > Updated: 2023-02-07T18:43:51Z

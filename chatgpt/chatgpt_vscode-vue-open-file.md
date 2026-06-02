@@ -15,6 +15,8 @@ updated: 2022-12-23
 
 # VSCode Vue Open File
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 98bf7a98-e758-4727-9639-2f4a65c15d3e
 > Created: 2022-12-23T04:39:27Z
 > Updated: 2022-12-23T04:39:27Z

@@ -15,6 +15,8 @@ updated: 2025-08-21
 
 # Startup ideas for musicians
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68a77d1e-ecd0-8326-9d36-622f1d4f84b3
 > Created: 2025-08-21T20:10:27Z
 > Updated: 2025-08-21T20:10:39Z

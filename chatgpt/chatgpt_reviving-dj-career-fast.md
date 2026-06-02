@@ -16,6 +16,8 @@ updated: 2025-02-26
 
 # Reviving DJ Career Fast
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67bd662d-9204-8007-8f7a-c12d7423419f
 > Created: 2025-02-25T06:41:49Z
 > Updated: 2025-02-26T07:12:45Z

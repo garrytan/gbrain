@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # French 75 Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6833d811-6410-8007-9a67-204979d5b95a
 > Created: 2025-05-26T02:55:14Z
 > Updated: 2025-05-26T02:55:21Z

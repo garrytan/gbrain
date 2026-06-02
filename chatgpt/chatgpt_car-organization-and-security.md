@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Car Organization and Security
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69ed05dd-d308-83e8-a32a-15e11a9e48b1
 > Created: 2026-04-25T18:22:46Z
 > Updated: 2026-04-25T18:23:28Z

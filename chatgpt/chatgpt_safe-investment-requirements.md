@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # SAFE investment requirements
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 69443527-d404-8326-85cf-d92144c9df5a
 > Created: 2025-12-18T17:08:57Z
 > Updated: 2025-12-18T17:09:46Z

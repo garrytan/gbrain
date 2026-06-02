@@ -15,6 +15,8 @@ updated: 2025-07-06
 
 # JVKE Artist Breakdown
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 686ab041-26cc-8007-a486-6632fcaee5e0
 > Created: 2025-07-06T17:20:01Z
 > Updated: 2025-07-06T17:34:33Z

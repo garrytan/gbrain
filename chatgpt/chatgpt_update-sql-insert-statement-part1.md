@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Update SQL INSERT Statement
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 24543f93-e434-4095-8bb2-36cf5548d998
 > Created: 2024-04-18T01:14:02Z
 > Updated: 2024-04-18T02:11:39Z

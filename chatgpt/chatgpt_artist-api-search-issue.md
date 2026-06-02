@@ -16,6 +16,8 @@ updated: 2025-12-15
 
 # Artist API search issue
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 694051cb-8a74-8329-a360-95e7755df36e
 > Created: 2025-12-15T18:22:04Z
 > Updated: 2025-12-15T18:23:08Z

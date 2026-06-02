@@ -16,6 +16,8 @@ updated: 2023-02-26
 
 # Vue.js routing with layouts.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: e96026d0-be43-4eea-b2e7-dc443bf062bf
 > Created: 2023-02-26T01:31:46Z
 > Updated: 2023-02-26T01:31:46Z

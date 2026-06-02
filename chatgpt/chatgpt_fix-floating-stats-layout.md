@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Fix Floating Stats Layout
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68743549-2eb4-8007-9e8c-9d1ae65544ec
 > Created: 2025-07-13T22:38:01Z
 > Updated: 2025-07-13T22:39:37Z

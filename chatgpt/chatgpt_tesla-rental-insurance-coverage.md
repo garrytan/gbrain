@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Tesla Rental Insurance Coverage
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: bd44d7aa-f9b0-4f30-b7de-e16f46ffce57
 > Created: 2024-04-03T23:19:29Z
 > Updated: 2024-04-03T23:19:57Z

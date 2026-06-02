@@ -11,6 +11,8 @@ import random
 import mysql.connector
 
 # Database connection parameters
+
+**Related:** [[coding_mobile]]
 db_config = {
     'user': 'root',  # leave empty if not using a specific username
     'password': 'Letmein',  # leave empty if no password is set

@@ -16,6 +16,8 @@ updated: 2025-10-06
 
 # iPhone upgrade credit score
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68e3f7b8-f478-832a-9262-37caa9bc7d51
 > Created: 2025-10-06T17:09:21Z
 > Updated: 2025-10-06T17:15:06Z

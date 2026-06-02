@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Veganism: Sustainable Diet Choice
 
+**Related:** [[personal_health]]
+
 > Conversation ID: da05daa6-3889-4cb4-b1cf-5b2bf2f80949
 > Created: 2024-06-27T06:19:25Z
 > Updated: 2024-06-27T06:20:11Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Windsurf Credit Efficiency
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 696d4ded-f4b4-832c-82b4-acc9fc739ee7
 > Created: 2026-01-18T21:17:34Z
 > Updated: 2026-01-18T21:22:23Z

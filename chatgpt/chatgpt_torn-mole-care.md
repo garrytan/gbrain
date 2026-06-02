@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Torn Mole Care
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68560215-0a74-8007-887e-01688eb9753e
 > Created: 2025-06-21T00:51:33Z
 > Updated: 2025-06-21T00:53:49Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Interview Rejection Feedback
 
+**Related:** [[personal_life]]
+
 > Conversation ID: a8d8c4e4-21e0-4319-b466-3b0f5994dddb
 > Created: 2023-02-08T04:02:27Z
 > Updated: 2023-02-08T04:02:27Z

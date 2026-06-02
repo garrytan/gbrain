@@ -16,6 +16,8 @@ updated: 2026-06-01
 
 # Solo vs Full Mix
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a1ceec1-8140-83e8-94c0-22b72eb3eb34
 > Created: 2026-06-01T02:30:29Z
 > Updated: 2026-06-01T02:38:53Z

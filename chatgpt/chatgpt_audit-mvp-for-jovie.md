@@ -15,6 +15,8 @@ updated: 2025-08-21
 
 # Audit MVP for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68a6d4f6-db24-832c-b989-07fed656ddab
 > Created: 2025-08-21T08:13:23Z
 > Updated: 2025-08-21T08:13:37Z

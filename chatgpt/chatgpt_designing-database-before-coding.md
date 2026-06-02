@@ -15,6 +15,8 @@ updated: 2022-12-21
 
 # Designing Database Before Coding
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: cb37a375-954c-4197-b44e-23d946a63e02
 > Created: 2022-12-21T03:38:57Z
 > Updated: 2022-12-21T03:38:57Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # NitroPack External Module Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: b1573fcd-42f1-4f63-938d-2abe36657858
 > Created: 2024-06-06T19:33:23Z
 > Updated: 2024-06-06T19:33:37Z

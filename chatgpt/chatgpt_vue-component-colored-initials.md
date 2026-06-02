@@ -16,6 +16,8 @@ updated: 2023-05-06
 
 # Vue Component: Colored Initials
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 12dcefb2-e159-4cd7-a476-e0ecaf1cd55e
 > Created: 2023-05-06T22:57:02Z
 > Updated: 2023-05-06T22:57:19Z

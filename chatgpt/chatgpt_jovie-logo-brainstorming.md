@@ -16,6 +16,8 @@ updated: 2026-04-14
 
 # Jovie logo brainstorming
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69dd7dfe-fc08-83e8-9025-fe671e627a29
 > Created: 2026-04-13T23:36:31Z
 > Updated: 2026-04-14T00:10:16Z

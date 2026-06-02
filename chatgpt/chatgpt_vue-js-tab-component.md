@@ -16,6 +16,8 @@ updated: 2023-01-03
 
 # Vue JS Tab Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 543693de-f047-43f7-8c1f-0c3607cc2eb1
 > Created: 2023-01-03T20:00:17Z
 > Updated: 2023-01-03T20:00:17Z

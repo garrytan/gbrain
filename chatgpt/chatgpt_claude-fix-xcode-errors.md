@@ -16,6 +16,8 @@ updated: 2025-11-23
 
 # Claude fix Xcode errors
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6923588f-93a4-8329-a70d-08363551da40
 > Created: 2025-11-23T18:55:43Z
 > Updated: 2025-11-23T18:56:34Z

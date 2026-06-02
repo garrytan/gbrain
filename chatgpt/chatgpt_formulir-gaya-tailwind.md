@@ -16,6 +16,8 @@ updated: 2024-02-27
 
 # Formulir Gaya Tailwind
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 37f64f22-35a5-4f32-9f95-c062cc763863
 > Created: 2024-02-27T01:19:16Z
 > Updated: 2024-02-27T01:19:46Z

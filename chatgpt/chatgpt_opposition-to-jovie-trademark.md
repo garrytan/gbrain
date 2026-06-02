@@ -16,6 +16,8 @@ updated: 2023-05-17
 
 # Opposition to Jovie Trademark
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 09673217-defb-441d-8240-a046438b0a2f
 > Created: 2023-05-17T19:18:17Z
 > Updated: 2023-05-17T19:44:12Z

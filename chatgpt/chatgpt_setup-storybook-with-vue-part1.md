@@ -17,6 +17,8 @@ updated: 2023-01-21
 
 # Setup Storybook with Vue
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: f6baaa4c-c7e2-4718-8dda-38eda649b486
 > Created: 2023-01-21T19:58:49Z
 > Updated: 2023-01-21T19:58:49Z

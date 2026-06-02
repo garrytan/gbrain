@@ -15,6 +15,8 @@ updated: 2025-05-05
 
 # Bubblegum Factory Logo Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6818054d-9800-8007-b5f0-c8140bbefddd
 > Created: 2025-05-05T00:24:45Z
 > Updated: 2025-05-05T01:09:56Z

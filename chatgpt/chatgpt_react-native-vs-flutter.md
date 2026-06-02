@@ -15,6 +15,8 @@ updated: 2024-01-29
 
 # React Native vs. Flutter
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: e89f6dfc-31e3-4cc4-8d6a-597130b5c85d
 > Created: 2024-01-29T18:30:16Z
 > Updated: 2024-01-29T19:11:49Z

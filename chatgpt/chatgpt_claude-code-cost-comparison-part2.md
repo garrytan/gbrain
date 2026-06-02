@@ -78,6 +78,10 @@ Every approved issue should end with a structured plan, not a chat transcript.
 ```md
 # Plan
 
+**Related:** [[coding_ai]]
+
+**Related:** [[coding_ai_ml]]
+
 ## Outcome
 What user/business result this creates.
 

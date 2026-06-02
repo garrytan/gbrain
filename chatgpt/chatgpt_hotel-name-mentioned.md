@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hotel Name Mentioned
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 695303aa-d490-832a-baa8-62e2105e0b94
 > Created: 2025-12-29T22:41:47Z
 > Updated: 2025-12-29T22:41:54Z

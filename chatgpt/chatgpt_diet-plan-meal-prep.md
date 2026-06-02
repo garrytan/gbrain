@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Diet Plan & Meal Prep
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 7f1b031f-1fe0-4977-a0ad-ad9595e32502
 > Created: 2024-06-05T21:25:39Z
 > Updated: 2024-06-05T23:53:40Z

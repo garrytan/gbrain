@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cheap Car with CarPlay
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6800455c-bba0-8007-bdbe-e21741cc391d
 > Created: 2025-04-17T00:03:40Z
 > Updated: 2025-04-17T00:03:46Z

@@ -17,6 +17,8 @@ updated: 2026-05-29
 
 # YC Pitch Deck Prompt
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a18dd19-b7bc-83e8-995c-1d2151e857eb
 > Created: 2026-05-29T00:26:02Z
 > Updated: 2026-05-29T00:35:17Z

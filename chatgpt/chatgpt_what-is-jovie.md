@@ -15,6 +15,8 @@ updated: 2026-05-17
 
 # What is Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a09f55d-08e8-83e8-b917-b93b40e2c5c8
 > Created: 2026-05-17T17:05:39Z
 > Updated: 2026-05-17T17:05:50Z

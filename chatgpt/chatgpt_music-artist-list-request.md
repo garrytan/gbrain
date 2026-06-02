@@ -15,6 +15,8 @@ updated: 2025-08-28
 
 # Music artist list request
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68afafd9-7f58-8332-8d2f-f56bf25d91a7
 > Created: 2025-08-28T01:24:42Z
 > Updated: 2025-08-28T01:26:36Z

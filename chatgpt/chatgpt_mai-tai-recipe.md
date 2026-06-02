@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Mai Tai Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68538f2b-aa40-8007-acfc-eee576995761
 > Created: 2025-06-19T04:16:43Z
 > Updated: 2025-06-19T04:16:51Z

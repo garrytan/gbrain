@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # LA Film Industry Jobs
 
+**Related:** [[personal_life]]
+
 > Conversation ID: cbef4cc8-121d-48fd-b8b6-9ea9ba443403
 > Created: 2023-11-14T00:03:08Z
 > Updated: 2023-11-14T00:06:37Z

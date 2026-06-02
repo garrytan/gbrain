@@ -15,6 +15,8 @@ updated: 2024-04-05
 
 # Fat Decrease in Android/Gynoid
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 65739cdc-d360-4750-b0ba-26f5add078b7
 > Created: 2024-04-05T17:40:13Z
 > Updated: 2024-04-05T17:50:54Z

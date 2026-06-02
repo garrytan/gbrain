@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Accident Liability and Insurance
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 69c5c87b-9adc-83e8-97f7-81a910918513
 > Created: 2026-03-27T00:03:37Z
 > Updated: 2026-03-28T19:26:27Z

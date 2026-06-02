@@ -17,6 +17,8 @@ updated: 2026-04-10
 
 # Jovie Landing Page Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69d86b38-51c0-83e8-bfca-4ac0975c03d6
 > Created: 2026-04-10T03:15:05Z
 > Updated: 2026-04-10T05:40:23Z

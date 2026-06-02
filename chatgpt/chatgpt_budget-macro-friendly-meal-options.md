@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Budget Macro-Friendly Meal Options
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 682bd5b2-2140-8007-812b-4666839b1ed6
 > Created: 2025-05-20T01:10:44Z
 > Updated: 2025-05-20T01:10:52Z

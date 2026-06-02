@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Midori shot recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68eea99a-c438-8320-b9bc-77422df8b088
 > Created: 2025-10-14T19:50:52Z
 > Updated: 2025-10-14T19:51:00Z

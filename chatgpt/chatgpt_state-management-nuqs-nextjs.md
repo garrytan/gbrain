@@ -16,6 +16,8 @@ updated: 2026-01-13
 
 # State Management Nuqs Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69668155-1540-832a-8eda-058bff7b2fb4
 > Created: 2026-01-13T17:31:10Z
 > Updated: 2026-01-13T17:46:21Z

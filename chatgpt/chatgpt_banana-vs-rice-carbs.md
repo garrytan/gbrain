@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Banana vs. Rice: Carbs.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 17e49099-36ab-4ffb-8d4f-f3cf82cce877
 > Created: 2024-02-06T23:58:56Z
 > Updated: 2024-02-07T20:20:56Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Weight After 8 Weeks
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 0ff56103-c685-4832-9130-f0a664ffc158
 > Created: 2023-11-14T05:08:45Z
 > Updated: 2023-11-14T05:16:18Z

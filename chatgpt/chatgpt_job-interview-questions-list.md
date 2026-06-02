@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job interview questions list
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6931f98c-febc-832e-80b9-60d3c4c119f8
 > Created: 2025-12-04T21:14:01Z
 > Updated: 2025-12-04T21:14:20Z

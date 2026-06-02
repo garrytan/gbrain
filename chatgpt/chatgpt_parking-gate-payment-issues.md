@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Parking Gate Payment Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6972ab4f-c80c-832f-9b81-7bdc7bae58e4
 > Created: 2026-01-22T22:57:20Z
 > Updated: 2026-01-22T23:05:30Z

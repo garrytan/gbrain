@@ -15,6 +15,8 @@ updated: 2025-09-13
 
 # Math language for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68c5d263-2db8-832e-9352-fcbeadd3e882
 > Created: 2025-09-13T20:23:16Z
 > Updated: 2025-09-13T20:26:05Z

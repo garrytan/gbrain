@@ -15,6 +15,8 @@ updated: 2023-12-01
 
 # Surreal Recording Studio 🎶✨
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: c1c14ada-ca71-4614-b096-81310c516a09
 > Created: 2023-12-01T20:01:51Z
 > Updated: 2023-12-01T20:02:07Z

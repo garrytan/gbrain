@@ -15,6 +15,8 @@ updated: 2025-12-03
 
 # Best email provider for Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 692f8460-64e4-832d-851b-1b998f5278f8
 > Created: 2025-12-03T00:29:20Z
 > Updated: 2025-12-03T00:31:19Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job transition message
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 690a5893-2890-832c-b4f8-1e6681d95474
 > Created: 2025-11-04T19:49:11Z
 > Updated: 2025-11-04T19:49:18Z

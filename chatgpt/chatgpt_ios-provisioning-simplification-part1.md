@@ -17,6 +17,8 @@ updated: 2025-07-22
 
 # iOS provisioning simplification
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 687d47a6-7a4c-8326-8f6a-208085f789a9
 > Created: 2025-07-20T19:46:47Z
 > Updated: 2025-07-22T21:26:18Z

@@ -15,6 +15,8 @@ updated: 2025-04-12
 
 # DJ Coachella Headliner
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67fabd8b-ff3c-8007-9c53-d53070894889
 > Created: 2025-04-12T19:22:52Z
 > Updated: 2025-04-12T19:31:32Z

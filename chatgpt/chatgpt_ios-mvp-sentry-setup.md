@@ -17,6 +17,8 @@ updated: 2026-05-25
 
 # iOS MVP Sentry Setup
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6a139a71-1ae4-83e8-a40b-1646f8987e6e
 > Created: 2026-05-25T00:40:39Z
 > Updated: 2026-05-25T00:41:47Z

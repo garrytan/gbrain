@@ -15,6 +15,8 @@ updated: 2026-02-11
 
 # Design Improvement Tips
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 698bea19-9d7c-832e-821d-4aa2c92c27f1
 > Created: 2026-02-11T02:31:57Z
 > Updated: 2026-02-11T02:35:16Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Self-driving cars and traffic
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68757f83-bb28-8007-a434-bd0c2b67e985
 > Created: 2025-07-14T22:12:20Z
 > Updated: 2025-07-14T22:20:23Z

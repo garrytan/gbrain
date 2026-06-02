@@ -16,6 +16,8 @@ updated: 2024-02-07
 
 # Extract Release Data Table
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 8bca5ec7-ed26-4de9-ab5a-e79100b95b4f
 > Created: 2024-02-07T03:24:35Z
 > Updated: 2024-02-07T03:26:30Z

@@ -15,6 +15,8 @@ updated: 2025-06-20
 
 # Lean UX Design Approach
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6854bd7c-7a48-8007-b2d9-54356490c965
 > Created: 2025-06-20T01:46:36Z
 > Updated: 2025-06-20T01:46:44Z

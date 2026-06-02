@@ -17,6 +17,8 @@ updated: 2024-06-10
 
 # Spotify Integrations Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: c2ab2307-1a57-42d1-8436-7a93ef7b8607
 > Created: 2024-06-10T00:03:35Z
 > Updated: 2024-06-10T22:54:39Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Vodka Soda Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: cb2d1e7f-0047-41ff-8ca3-24003e1960a6
 > Created: 2023-12-02T17:29:09Z
 > Updated: 2023-12-03T21:33:34Z

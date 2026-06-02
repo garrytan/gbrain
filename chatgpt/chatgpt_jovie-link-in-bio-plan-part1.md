@@ -17,6 +17,8 @@ updated: 2025-08-03
 
 # Jovie link-in-bio plan
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 688d9f04-bbf4-832c-b3fe-81c1b3f013ad
 > Created: 2025-08-02T05:15:49Z
 > Updated: 2025-08-03T01:53:38Z

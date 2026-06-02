@@ -17,6 +17,8 @@ updated: 2026-02-01
 
 # Tailwind Design System
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 697fc8d1-060c-8325-9fb7-63bb94e20c1b
 > Created: 2026-02-01T21:42:50Z
 > Updated: 2026-02-01T22:23:45Z

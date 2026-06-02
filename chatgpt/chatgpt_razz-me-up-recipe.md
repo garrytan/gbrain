@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Razz Me Up Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6840d423-06d8-8007-aa28-94d7a98a03c2
 > Created: 2025-06-04T23:17:55Z
 > Updated: 2025-06-04T23:17:59Z

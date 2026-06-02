@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Steven Levitan career
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69326878-2198-8329-bef5-870f4442bc86
 > Created: 2025-12-05T05:07:04Z
 > Updated: 2025-12-11T00:03:38Z

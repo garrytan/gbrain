@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Love Phrase Variations
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69ffde90-0b7c-83e8-a4ee-e2ee2c7dddf0
 > Created: 2026-05-10T01:25:41Z
 > Updated: 2026-05-10T01:26:11Z

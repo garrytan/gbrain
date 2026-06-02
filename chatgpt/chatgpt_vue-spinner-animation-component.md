@@ -15,6 +15,8 @@ updated: 2023-02-05
 
 # Vue Spinner Animation Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 109f03bf-26b3-41e4-ad72-6c479aad1e21
 > Created: 2023-02-05T20:43:15Z
 > Updated: 2023-02-05T20:43:15Z

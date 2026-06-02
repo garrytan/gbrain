@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Upgrade loop fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 693f61cf-75d8-832a-a823-1ccc7c6160d1
 > Created: 2025-12-15T01:18:28Z
 > Updated: 2025-12-15T01:18:49Z

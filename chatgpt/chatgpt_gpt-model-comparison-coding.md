@@ -15,6 +15,8 @@ updated: 2025-03-24
 
 # GPT Model Comparison Coding
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 67e0eb8e-6ea0-8007-94c2-a3df0815965a
 > Created: 2025-03-24T05:20:14Z
 > Updated: 2025-03-24T05:23:17Z

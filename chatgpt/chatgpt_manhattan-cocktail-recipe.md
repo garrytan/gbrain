@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Manhattan Cocktail Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: e012a4c3-8730-4037-a9e9-ebb5a9006149
 > Created: 2024-04-20T21:10:47Z
 > Updated: 2024-04-20T21:12:06Z

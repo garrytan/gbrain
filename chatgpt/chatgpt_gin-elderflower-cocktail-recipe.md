@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gin Elderflower Cocktail Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: be03b722-3704-4fbd-886c-175726f69df2
 > Created: 2024-06-29T23:43:31Z
 > Updated: 2024-06-30T00:00:23Z

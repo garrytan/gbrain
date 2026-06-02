@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Planificação de Dieta Renaissance
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 9fd53917-0df8-4b74-a18f-7054cdbda5a0
 > Created: 2023-11-10T06:20:27Z
 > Updated: 2023-11-10T06:24:30Z

@@ -17,6 +17,8 @@ updated: 2024-06-25
 
 # Plan for Jovie App
 
+**Related:** [[jovie-product-strategy]]
+
 > Conversation ID: 358c958f-327c-4d2a-8725-7432a5720030
 > Created: 2024-06-25T03:17:08Z
 > Updated: 2024-06-25T05:57:44Z

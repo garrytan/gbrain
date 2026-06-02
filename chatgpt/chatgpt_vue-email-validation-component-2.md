@@ -17,6 +17,8 @@ updated: 2022-12-22
 
 # Vue Email Validation Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: efeafb68-c1af-41b2-b675-c9c314fb7f45
 > Created: 2022-12-22T21:47:26Z
 > Updated: 2022-12-22T21:47:26Z

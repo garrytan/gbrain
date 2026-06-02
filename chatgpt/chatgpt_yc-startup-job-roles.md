@@ -16,6 +16,8 @@ updated: 2025-10-28
 
 # YC startup job roles
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69003386-7828-832c-88ea-88e6f8012571
 > Created: 2025-10-28T03:08:03Z
 > Updated: 2025-10-28T03:30:58Z

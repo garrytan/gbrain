@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fix Tim White listings.
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 0c550339-605e-4181-9371-626e341c88b8
 > Created: 2024-05-15T16:21:55Z
 > Updated: 2024-05-15T16:22:02Z

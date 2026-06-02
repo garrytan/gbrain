@@ -16,6 +16,8 @@ updated: 2023-02-22
 
 # Vue.js component for contact count.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 1b67f2ae-d521-4753-9b76-a73fe3373b5f
 > Created: 2023-02-22T18:01:17Z
 > Updated: 2023-02-22T18:01:17Z

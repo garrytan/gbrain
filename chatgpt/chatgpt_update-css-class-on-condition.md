@@ -16,6 +16,8 @@ updated: 2022-12-24
 
 # Update CSS Class on Condition
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 47c46c45-05d6-4b83-8bee-04bc07c76ef0
 > Created: 2022-12-24T00:29:37Z
 > Updated: 2022-12-24T00:29:37Z

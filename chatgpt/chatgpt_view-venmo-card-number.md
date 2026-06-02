@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # View Venmo card number
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 693df815-eed4-8329-9ac2-aebfeeb446cf
 > Created: 2025-12-13T23:35:05Z
 > Updated: 2025-12-13T23:35:53Z

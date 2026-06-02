@@ -17,6 +17,8 @@ updated: 2023-05-07
 
 # Vue Router: Defining Routes
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 256ecf2b-f1fd-4d91-a991-35d1a8751b0c
 > Created: 2023-05-07T06:51:44Z
 > Updated: 2023-05-07T06:52:27Z

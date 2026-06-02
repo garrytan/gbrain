@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Best Car for $12k
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68042cec-d384-8007-9711-1b8f1ad4f58e
 > Created: 2025-04-19T23:08:29Z
 > Updated: 2025-04-20T16:44:09Z

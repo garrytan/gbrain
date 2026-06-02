@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Auto PR Fix Workflow
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69616772-5a3c-832b-b6fd-9aeddd8fb195
 > Created: 2026-01-09T20:39:15Z
 > Updated: 2026-01-09T22:21:05Z

@@ -15,6 +15,8 @@ updated: 2023-11-10
 
 # GPT Diet Planner Prompt
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: b1c9a742-426b-43cb-a786-bec48563c3a3
 > Created: 2023-11-10T06:14:15Z
 > Updated: 2023-11-10T06:14:53Z

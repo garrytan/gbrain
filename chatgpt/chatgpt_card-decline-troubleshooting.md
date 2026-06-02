@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Card decline troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 694621ae-d2a4-8329-b3fe-f99c5967b0d4
 > Created: 2025-12-20T04:11:08Z
 > Updated: 2025-12-20T04:11:58Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bartending jobs in Hollywood
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 691f7d67-5e94-8325-b9df-dacb426ebdfb
 > Created: 2025-11-20T20:43:38Z
 > Updated: 2025-11-20T20:43:48Z

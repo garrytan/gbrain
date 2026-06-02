@@ -16,6 +16,8 @@ updated: 2022-12-23
 
 # Extract Input Element to Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 8f8f2b36-0749-4e11-a02d-9178266f2b62
 > Created: 2022-12-23T23:04:48Z
 > Updated: 2022-12-23T23:04:48Z

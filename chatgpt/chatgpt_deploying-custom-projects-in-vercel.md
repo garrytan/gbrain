@@ -15,6 +15,8 @@ updated: 2025-05-18
 
 # Deploying custom projects in Vercel
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 682a1a7d-5ab8-8007-9429-2ab9d4139585
 > Created: 2025-05-18T17:35:57Z
 > Updated: 2025-05-18T17:37:19Z

@@ -15,6 +15,8 @@ updated: 2023-12-26
 
 # Flirty studio musician vibes
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 266872d0-5129-41cc-b0bb-8228f4471353
 > Created: 2023-12-26T18:38:27Z
 > Updated: 2023-12-26T21:28:44Z

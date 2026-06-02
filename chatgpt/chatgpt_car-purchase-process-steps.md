@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Car Purchase Process Steps
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6806a262-d96c-8007-b874-c3592e168786
 > Created: 2025-04-21T19:54:11Z
 > Updated: 2025-04-21T19:56:51Z

@@ -15,6 +15,8 @@ updated: 2025-01-17
 
 # Pioneer DJM-850 Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 678a0cbd-0c9c-8007-a6d1-22fbbc7bece0
 > Created: 2025-01-17T07:54:37Z
 > Updated: 2025-01-17T07:54:42Z

@@ -16,6 +16,8 @@ updated: 2026-05-18
 
 # Right Rail Design Improvement
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a0a9d62-107c-83e8-acda-04e2e6e37128
 > Created: 2026-05-18T05:02:26Z
 > Updated: 2026-05-18T05:13:48Z

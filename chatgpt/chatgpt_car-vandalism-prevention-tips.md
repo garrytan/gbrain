@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Car vandalism prevention tips
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69407590-9a48-8327-8289-dc6c1a418ae3
 > Created: 2025-12-15T20:54:41Z
 > Updated: 2025-12-15T21:00:32Z

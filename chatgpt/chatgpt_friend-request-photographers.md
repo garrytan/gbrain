@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Friend request photographers
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6883de7a-13fc-8333-a476-a31ce70e9493
 > Created: 2025-07-25T19:43:54Z
 > Updated: 2025-07-25T21:02:01Z

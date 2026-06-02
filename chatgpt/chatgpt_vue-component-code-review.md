@@ -15,6 +15,8 @@ updated: 2022-12-22
 
 # Vue component code review
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 06c610d0-d411-4780-96db-2abcf57bf7f3
 > Created: 2022-12-22T02:22:03Z
 > Updated: 2022-12-22T02:22:03Z

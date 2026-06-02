@@ -16,6 +16,8 @@ updated: 2026-01-07
 
 # Landing Page Design Prompt
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 695dadf8-c984-832b-be02-785f89d13291
 > Created: 2026-01-07T00:51:23Z
 > Updated: 2026-01-07T00:53:44Z

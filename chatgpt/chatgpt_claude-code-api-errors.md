@@ -16,6 +16,8 @@ updated: 2025-09-02
 
 # Claude code api errors
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68b75bbc-ae80-8323-a7df-6380fa901408
 > Created: 2025-09-02T21:04:02Z
 > Updated: 2025-09-02T21:04:58Z

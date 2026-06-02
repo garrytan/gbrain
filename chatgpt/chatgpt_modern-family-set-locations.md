@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Modern Family Set Locations
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6a075856-aa70-83e8-9822-519610fbe82f
 > Created: 2026-05-15T17:31:23Z
 > Updated: 2026-05-15T17:33:54Z

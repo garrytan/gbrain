@@ -16,6 +16,8 @@ updated: 2023-01-03
 
 # Vuejs change input loops
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 40fd81c8-494b-449d-b5e6-b88b3ff6c5e3
 > Created: 2023-01-03T01:18:44Z
 > Updated: 2023-01-03T01:18:44Z

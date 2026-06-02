@@ -17,6 +17,8 @@ updated: 2022-12-29
 
 # Vue JS Emoji Picker Modal
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: ee8911a3-b63b-4bf0-ae2d-025d2366e2cf
 > Created: 2022-12-29T04:20:45Z
 > Updated: 2022-12-29T04:20:45Z

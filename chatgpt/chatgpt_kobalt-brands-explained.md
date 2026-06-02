@@ -15,6 +15,8 @@ updated: 2025-08-28
 
 # Kobalt brands explained
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68afd5a7-4124-8333-baed-6b2b4be7e43d
 > Created: 2025-08-28T04:05:59Z
 > Updated: 2025-08-28T04:06:13Z

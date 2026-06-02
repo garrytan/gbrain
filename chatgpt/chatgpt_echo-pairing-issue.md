@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Echo pairing issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68619b3a-cb28-8007-a9f5-c27a72bc12a6
 > Created: 2025-06-29T19:59:55Z
 > Updated: 2025-06-29T20:00:09Z

@@ -15,6 +15,8 @@ updated: 2023-05-19
 
 # Sam Altman's OpenAI Stock
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: aa2aef83-11ba-4417-97ce-68b8219605ec
 > Created: 2023-05-19T15:22:36Z
 > Updated: 2023-05-19T15:22:44Z

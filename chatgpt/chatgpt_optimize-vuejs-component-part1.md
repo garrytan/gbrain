@@ -17,6 +17,8 @@ updated: 2024-06-25
 
 # Optimize Vue.js Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: db581c88-d768-43c7-aa7c-cc777a15e136
 > Created: 2024-06-25T20:01:17Z
 > Updated: 2024-06-25T22:06:47Z

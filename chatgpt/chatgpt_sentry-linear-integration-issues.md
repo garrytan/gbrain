@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Sentry Linear Integration Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69991961-df24-832e-b2be-47cc2334bbc9
 > Created: 2026-02-21T02:33:12Z
 > Updated: 2026-02-21T02:33:40Z

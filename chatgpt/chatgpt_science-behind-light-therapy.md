@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Science Behind Light Therapy
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6953164c-759c-832a-8150-2cedae441339
 > Created: 2025-12-30T00:01:29Z
 > Updated: 2025-12-30T00:05:32Z

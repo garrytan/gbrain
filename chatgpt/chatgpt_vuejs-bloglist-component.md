@@ -17,6 +17,8 @@ updated: 2023-01-05
 
 # Vue.js BlogList Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: eb55c6b7-2e8d-4194-9b22-50bf1ab9b5a0
 > Created: 2023-01-05T01:55:44Z
 > Updated: 2023-01-05T01:55:44Z

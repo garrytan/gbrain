@@ -15,6 +15,8 @@ updated: 2025-08-02
 
 # Futuristic studio description
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 688e594f-9604-8332-a5cc-c9ec102312d0
 > Created: 2025-08-02T18:30:40Z
 > Updated: 2025-08-02T18:35:22Z

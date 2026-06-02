@@ -15,6 +15,8 @@ updated: 2025-08-27
 
 # Sunset Bronson Studios history
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68ae98ff-db20-8328-9f54-87c61b59d583
 > Created: 2025-08-27T05:35:15Z
 > Updated: 2025-08-27T05:35:25Z

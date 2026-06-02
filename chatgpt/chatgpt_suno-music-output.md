@@ -15,6 +15,8 @@ updated: 2025-12-13
 
 # Suno music output
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 693dc403-1abc-832c-95d7-6bbfe3bac3f1
 > Created: 2025-12-13T19:52:35Z
 > Updated: 2025-12-13T19:53:13Z

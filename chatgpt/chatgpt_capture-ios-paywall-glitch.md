@@ -15,6 +15,8 @@ updated: 2025-08-16
 
 # Capture iOS paywall glitch
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 689fd61a-7b7c-8330-bfee-4a3203a0c6d9
 > Created: 2025-08-16T00:52:27Z
 > Updated: 2025-08-16T00:53:44Z

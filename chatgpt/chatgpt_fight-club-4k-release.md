@@ -15,6 +15,8 @@ updated: 2026-03-04
 
 # Fight Club 4K Release
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69a7dc5b-0314-832c-bf20-540d539cff27
 > Created: 2026-03-04T07:16:43Z
 > Updated: 2026-03-04T07:17:33Z

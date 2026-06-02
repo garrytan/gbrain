@@ -16,6 +16,8 @@ updated: 2023-02-12
 
 # Integrate Tailwind CSS in Webpack
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: f9c940af-c884-40c9-99a4-5ed5e52aad4c
 > Created: 2023-02-12T01:07:21Z
 > Updated: 2023-02-12T01:07:21Z

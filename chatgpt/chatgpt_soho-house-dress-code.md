@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Soho House Dress Code
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67df739f-2bb0-8007-88b7-26dcf1d45c2f
 > Created: 2025-03-23T02:36:15Z
 > Updated: 2025-03-23T02:36:24Z

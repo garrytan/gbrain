@@ -15,6 +15,8 @@ updated: 2026-01-21
 
 # Tailwind scrollbar options
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6970603a-38f4-832b-bfa1-0c54c877429b
 > Created: 2026-01-21T05:13:17Z
 > Updated: 2026-01-21T05:14:31Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Optimal Gym Schedule
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 682be1d6-e730-8007-81fb-d9ad7d9c3735
 > Created: 2025-05-20T01:58:47Z
 > Updated: 2025-05-20T02:37:06Z

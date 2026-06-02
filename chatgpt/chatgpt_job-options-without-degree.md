@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job options without degree
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6881618e-dbb0-832d-8b30-22505186fb01
 > Created: 2025-07-23T22:26:24Z
 > Updated: 2025-07-23T22:26:48Z

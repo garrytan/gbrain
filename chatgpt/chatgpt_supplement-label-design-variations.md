@@ -15,6 +15,8 @@ updated: 2023-03-22
 
 # Supplement Label Design Variations
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 08c306cf-793c-4dfa-a417-d150bb6184f6
 > Created: 2023-03-22T03:10:56Z
 > Updated: 2023-03-22T03:10:56Z

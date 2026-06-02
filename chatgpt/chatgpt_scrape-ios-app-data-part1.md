@@ -17,6 +17,8 @@ updated: 2024-04-18
 
 # Scrape iOS App Data
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: a5c37935-a309-4140-9e38-7b208bff3b12
 > Created: 2024-04-10T21:27:05Z
 > Updated: 2024-04-18T01:12:41Z

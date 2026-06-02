@@ -626,6 +626,10 @@ I would tighten it slightly:
 
 # AI marketing agent for music creators
 
+**Related:** [[jovie_music]]
+
+**Related:** [[jovie_product_strategy]]
+
 ## Turn every release into a revenue-driving campaign — automatically.
 
 That is cleaner than “revenue driving campaigns” because **one release → one campaign system**. The plural version feels slightly less precise.

@@ -17,6 +17,8 @@ updated: 2025-08-07
 
 # Vercel toolbar local setup
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68950b6e-1978-8329-8517-914ccad56573
 > Created: 2025-08-07T20:24:15Z
 > Updated: 2025-08-07T20:51:12Z

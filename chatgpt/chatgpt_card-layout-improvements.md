@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Card Layout Improvements
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6874080a-7420-8007-b116-85ed7af36407
 > Created: 2025-07-13T19:24:58Z
 > Updated: 2025-07-13T19:32:13Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job application optimization
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69127c8c-bafc-832e-a10b-47972200f9e4
 > Created: 2025-11-11T00:00:28Z
 > Updated: 2025-11-11T00:04:05Z

@@ -15,6 +15,8 @@ updated: 2025-11-21
 
 # Suno AI overview
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6920dad2-56fc-8326-9a68-e4a44623b5dc
 > Created: 2025-11-21T21:34:12Z
 > Updated: 2025-11-21T21:34:45Z

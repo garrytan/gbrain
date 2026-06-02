@@ -7,6 +7,8 @@ This is the version you hand directly to a designer or engineer to build pixel-p
 
 # **macOS Liquid Glass Toaster Notification — Full Design Spec**
 
+**Related:** [[business_startup]]
+
 ## **1. Purpose**
 A temporary, non-intrusive notification that appears **bottom-right** (default macOS placement), delivering short feedback such as “Copied”, “Saved”, “Link Updated”.
 

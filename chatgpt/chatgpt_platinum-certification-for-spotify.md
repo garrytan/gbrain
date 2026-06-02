@@ -15,6 +15,8 @@ updated: 2024-06-28
 
 # Platinum Certification for Spotify
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: dc430f2d-d395-40e6-bf58-feb6c879bf98
 > Created: 2024-06-28T00:00:08Z
 > Updated: 2024-06-28T00:33:44Z

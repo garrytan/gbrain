@@ -116,6 +116,8 @@ import html  # Import the html module
 
 
 # Database connection parameters
+
+**Related:** [[coding_devops]]
 db_config = {
     'user': 'root',  # leave empty if not using a specific username
     'password': 'Letmein',  # leave empty if no password is set

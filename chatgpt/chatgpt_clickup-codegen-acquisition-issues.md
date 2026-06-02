@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # ClickUp Codegen Acquisition Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6972b8df-05fc-832e-9038-b08f2152da45
 > Created: 2026-01-22T23:56:31Z
 > Updated: 2026-01-22T23:58:53Z

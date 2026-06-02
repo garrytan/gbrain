@@ -16,6 +16,8 @@ updated: 2025-09-01
 
 # Prevent AI component issues
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68b610ab-e860-8331-9523-86fec709f845
 > Created: 2025-09-01T21:31:24Z
 > Updated: 2025-09-01T21:32:45Z

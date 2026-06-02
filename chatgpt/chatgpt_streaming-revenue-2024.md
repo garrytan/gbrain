@@ -15,6 +15,8 @@ updated: 2025-04-04
 
 # Streaming revenue 2024
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67f0512f-1d04-8007-b225-5087193a3ea4
 > Created: 2025-04-04T21:37:51Z
 > Updated: 2025-04-04T21:37:57Z

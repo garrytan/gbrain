@@ -15,6 +15,8 @@ updated: 2026-01-12
 
 # React Dropzone vs Uppy
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69653ea2-f78c-8325-8466-5dd064fb4fef
 > Created: 2026-01-12T18:34:11Z
 > Updated: 2026-01-12T18:44:09Z

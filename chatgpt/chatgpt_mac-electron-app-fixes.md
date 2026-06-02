@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Mac Electron App Fixes
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69fec6b5-b868-83e8-8c19-b752ad7d8ebf
 > Created: 2026-05-09T05:31:34Z
 > Updated: 2026-05-09T06:04:39Z

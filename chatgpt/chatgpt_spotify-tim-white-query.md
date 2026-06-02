@@ -15,6 +15,8 @@ updated: 2026-04-16
 
 # Spotify Tim White Query
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69e06cc0-7a54-83e8-a4bd-10d78949038d
 > Created: 2026-04-16T04:59:53Z
 > Updated: 2026-04-16T04:59:57Z

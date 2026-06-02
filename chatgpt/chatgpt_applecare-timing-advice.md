@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # AppleCare timing advice
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 692e65d0-d35c-832e-946b-934a3cd01650
 > Created: 2025-12-02T04:06:59Z
 > Updated: 2025-12-02T04:07:51Z

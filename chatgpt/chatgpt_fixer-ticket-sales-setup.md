@@ -15,6 +15,8 @@ updated: 2025-09-23
 
 # Fixer ticket sales setup
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68d30d6c-4d54-8325-9933-86c7d0154624
 > Created: 2025-09-23T21:13:47Z
 > Updated: 2025-09-23T21:14:07Z

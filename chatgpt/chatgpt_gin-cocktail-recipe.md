@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gin Cocktail Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: a5f8523b-43d4-4f51-92f6-ca0b15a9c665
 > Created: 2024-08-15T04:34:12Z
 > Updated: 2024-08-15T04:36:10Z

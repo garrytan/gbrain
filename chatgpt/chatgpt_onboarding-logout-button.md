@@ -15,6 +15,8 @@ updated: 2025-12-18
 
 # Onboarding logout button
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69443dd8-85e8-832f-902d-3f8e969ae0fa
 > Created: 2025-12-18T17:46:01Z
 > Updated: 2025-12-18T17:46:50Z

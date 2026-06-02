@@ -15,6 +15,8 @@ updated: 2024-03-20
 
 # Night's Electrifying Urban Adventure
 
+**Related:** [[business_startup]]
+
 > Conversation ID: b9d1b264-e224-41ef-be45-59e09d5dbee7
 > Created: 2024-03-20T23:46:38Z
 > Updated: 2024-03-20T23:47:12Z

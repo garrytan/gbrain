@@ -15,6 +15,8 @@ updated: 2024-07-22
 
 # Mackenzie's Macro Adjustments
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: df77423b-e0bc-4056-ad0b-23d878e1f382
 > Created: 2024-07-22T00:23:19Z
 > Updated: 2024-07-22T00:23:22Z

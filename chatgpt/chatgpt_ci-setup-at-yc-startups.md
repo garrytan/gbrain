@@ -15,6 +15,8 @@ updated: 2025-12-22
 
 # CI setup at YC startups
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69497695-54f0-8327-bbe2-c3647e139e97
 > Created: 2025-12-22T16:49:26Z
 > Updated: 2025-12-22T16:52:04Z

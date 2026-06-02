@@ -15,6 +15,8 @@ updated: 2025-01-24
 
 # XDJ Cables Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67939457-0918-8007-922a-4a3dc2eb7afe
 > Created: 2025-01-24T13:23:35Z
 > Updated: 2025-01-24T13:23:45Z

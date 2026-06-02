@@ -17,6 +17,8 @@ updated: 2024-01-07
 
 # Flutter Health Data Integration
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 1cb47807-2ccf-4fb7-bf32-7b81c17962e3
 > Created: 2024-01-07T03:13:34Z
 > Updated: 2024-01-07T03:19:06Z

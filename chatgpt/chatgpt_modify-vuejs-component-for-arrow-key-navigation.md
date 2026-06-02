@@ -16,6 +16,8 @@ updated: 2022-12-23
 
 # Modify Vue.js component for arrow key navigation
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 9a2ada77-addc-4466-8129-8eb60387efd9
 > Created: 2022-12-23T20:41:54Z
 > Updated: 2022-12-23T20:41:54Z

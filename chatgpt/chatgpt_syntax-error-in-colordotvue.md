@@ -15,6 +15,8 @@ updated: 2023-02-05
 
 # Syntax Error in ColorDot.vue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 586ef6af-b60e-4c6c-b36f-fceae05702bd
 > Created: 2023-02-05T03:38:29Z
 > Updated: 2023-02-05T03:38:29Z

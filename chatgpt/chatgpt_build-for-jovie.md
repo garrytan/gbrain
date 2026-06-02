@@ -16,6 +16,8 @@ updated: 2026-04-29
 
 # Build for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69f146e7-de8c-83e8-8497-bf1b32c1d297
 > Created: 2026-04-28T23:46:48Z
 > Updated: 2026-04-29T00:12:13Z

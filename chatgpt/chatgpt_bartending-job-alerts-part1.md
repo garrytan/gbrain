@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Bartending Job Alerts
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67c7b19d-63ac-8007-8ad5-190ac91e587d
 > Created: 2025-03-05T02:06:21Z
 > Updated: 2026-01-22T17:00:16Z

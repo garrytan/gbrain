@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Career Path Guidance
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67c655a2-d530-8007-8477-bfd97b05a4b1
 > Created: 2025-03-04T01:21:39Z
 > Updated: 2025-03-04T01:22:34Z

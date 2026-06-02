@@ -16,6 +16,8 @@ updated: 2026-04-29
 
 # Model Casting Grid Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69f17247-7d3c-83e8-847c-2a2e56f163b7
 > Created: 2026-04-29T02:51:52Z
 > Updated: 2026-04-29T04:18:31Z

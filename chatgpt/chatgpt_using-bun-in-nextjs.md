@@ -17,6 +17,8 @@ updated: 2025-12-05
 
 # Using Bun in Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69328c56-fb38-8329-80f2-08e079c3b062
 > Created: 2025-12-05T07:40:13Z
 > Updated: 2025-12-05T07:41:26Z

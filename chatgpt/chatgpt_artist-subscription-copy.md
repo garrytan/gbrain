@@ -15,6 +15,8 @@ updated: 2026-01-09
 
 # Artist Subscription Copy
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 696080ed-d918-8327-ae4c-ab856793faa3
 > Created: 2026-01-09T04:15:56Z
 > Updated: 2026-01-09T04:16:05Z

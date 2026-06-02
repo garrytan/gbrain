@@ -15,6 +15,8 @@ updated: 2025-09-03
 
 # Furniture resale pricing
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68b7d629-8b84-8321-887d-f4d57efa27ed
 > Created: 2025-09-03T05:46:18Z
 > Updated: 2025-09-03T05:56:08Z

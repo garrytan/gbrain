@@ -16,6 +16,8 @@ updated: 2024-05-28
 
 # Compelling single release unveiled.
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: ae2fcee9-77d6-4738-8788-a083837ddb8b
 > Created: 2024-05-28T23:30:23Z
 > Updated: 2024-05-28T23:41:41Z

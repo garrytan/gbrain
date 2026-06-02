@@ -15,6 +15,8 @@ updated: 2026-02-06
 
 # Claude Code Teams Overview
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 698533cc-5800-832c-932d-f74e4c035638
 > Created: 2026-02-06T00:20:28Z
 > Updated: 2026-02-06T00:20:35Z

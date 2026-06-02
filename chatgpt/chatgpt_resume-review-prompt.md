@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Resume review prompt
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 687ebcc9-a3f8-832a-903b-abad65ab316c
 > Created: 2025-07-21T22:18:50Z
 > Updated: 2025-07-21T22:18:58Z

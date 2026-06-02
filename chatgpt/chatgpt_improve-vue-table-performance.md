@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Improve Vue table performance
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 1738b73f-4486-4acf-8051-f7d2ffb06927
 > Created: 2022-12-21T17:55:32Z
 > Updated: 2022-12-21T17:55:32Z

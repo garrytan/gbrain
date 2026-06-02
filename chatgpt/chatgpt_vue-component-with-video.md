@@ -15,6 +15,8 @@ updated: 2023-02-25
 
 # Vue component with video.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: f529bcfe-63d2-4d60-9068-85b3d7e58460
 > Created: 2023-02-25T23:01:30Z
 > Updated: 2023-02-25T23:01:30Z

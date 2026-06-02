@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # SBI in Outer Banks
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 697597e7-7a44-8327-b009-c9c4003cdfa0
 > Created: 2026-01-25T04:11:37Z
 > Updated: 2026-01-25T04:12:09Z

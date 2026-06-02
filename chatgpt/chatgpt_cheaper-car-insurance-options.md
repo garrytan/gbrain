@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cheaper car insurance options
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 69407e44-decc-832d-924d-a999ec74fd5d
 > Created: 2025-12-15T21:31:49Z
 > Updated: 2025-12-15T21:32:53Z

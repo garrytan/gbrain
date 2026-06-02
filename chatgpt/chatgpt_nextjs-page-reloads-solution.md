@@ -16,6 +16,8 @@ updated: 2025-12-11
 
 # Next.js page reloads solution
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 693a3bb3-becc-8332-acc5-6b58a23cb949
 > Created: 2025-12-11T03:34:12Z
 > Updated: 2025-12-11T05:24:48Z

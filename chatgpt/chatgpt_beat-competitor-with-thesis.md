@@ -16,6 +16,8 @@ updated: 2025-08-20
 
 # Beat competitor with thesis
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68a55a34-9500-8326-8dff-e96373ea94de
 > Created: 2025-08-20T05:17:03Z
 > Updated: 2025-08-20T05:26:08Z

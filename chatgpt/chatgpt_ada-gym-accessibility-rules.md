@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # ADA Gym Accessibility Rules
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 69b710c5-b860-8320-8466-5d0a06bd7bc7
 > Created: 2026-03-15T20:05:03Z
 > Updated: 2026-03-15T20:07:34Z

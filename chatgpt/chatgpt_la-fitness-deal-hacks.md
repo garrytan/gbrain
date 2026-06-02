@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # LA Fitness Deal Hacks
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 686ed4ee-5870-8007-a40b-8584e4c4e322
 > Created: 2025-07-09T20:45:34Z
 > Updated: 2025-07-09T23:02:44Z
@@ -54,7 +56,8 @@ Find me the cheapest club that I can sign up at.
 
 ## Assistant
 
-Mr. White, the lowest standard Nationwide rate you’ll find in SoCal is **\$39.99/mo** for the Classic plan (plus the \$99 initiation and \$59 annual fees). For example, the Lake Forest club currently offers that exact rate:    
+Mr. White, the lowest standard Nationwide rate you’ll find in SoCal is **\$39.99/mo** for the Classic plan (plus the \$99 initiation and \$59 annual fees). For example, the Lake Forest club currently offers that exact rate: 
+   
 - **Classic/Nationwide**: \$39.99/mo  
 - **Initiation**: \$99  
 - **Annual fee**: \$59 citeturn0search3  

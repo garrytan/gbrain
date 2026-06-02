@@ -16,6 +16,8 @@ updated: 2026-01-08
 
 # Music Marketing Innovation 2024
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 695f2669-edf8-8330-accc-9e22d0d1e94d
 > Created: 2026-01-08T03:37:14Z
 > Updated: 2026-01-08T03:37:59Z

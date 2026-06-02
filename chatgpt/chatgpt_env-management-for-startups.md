@@ -17,6 +17,8 @@ updated: 2025-12-23
 
 # Env Management for Startups
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 694b1d0d-6a80-8325-ac5d-d0d029db9878
 > Created: 2025-12-23T22:51:58Z
 > Updated: 2025-12-23T22:53:13Z

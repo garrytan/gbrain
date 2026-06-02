@@ -15,6 +15,8 @@ updated: 2024-04-25
 
 # Android TV Network Issues
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 82e7e02f-e7e4-49ad-b66e-4b1cd981db60
 > Created: 2024-04-25T01:32:52Z
 > Updated: 2024-04-25T01:33:27Z

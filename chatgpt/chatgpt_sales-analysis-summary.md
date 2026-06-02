@@ -16,6 +16,8 @@ updated: 2025-10-15
 
 # Sales analysis summary
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68ed5d5a-2920-8328-9dcb-b3524cd1f4da
 > Created: 2025-10-13T20:13:31Z
 > Updated: 2025-10-15T23:43:58Z

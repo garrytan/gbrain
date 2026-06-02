@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Mazda glove box parts
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69377d9d-edd4-832c-b31f-7e7f0eb548b8
 > Created: 2025-12-09T01:38:38Z
 > Updated: 2025-12-09T04:11:50Z

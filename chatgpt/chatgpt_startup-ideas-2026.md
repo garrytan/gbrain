@@ -15,6 +15,8 @@ updated: 2026-02-20
 
 # Startup Ideas 2026
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6998e5d8-174c-8330-b46c-fe5c4e8be4d8
 > Created: 2026-02-20T22:53:13Z
 > Updated: 2026-02-20T22:53:19Z

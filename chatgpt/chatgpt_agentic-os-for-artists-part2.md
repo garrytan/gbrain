@@ -16,6 +16,8 @@ The redesign should reuse the page layout, screenshots, cards, and dark/premium 
 
 # 1. Page objective
 
+**Related:** [[jovie_music]]
+
 The homepage needs to communicate three things at once:
 
 **To customers:**  

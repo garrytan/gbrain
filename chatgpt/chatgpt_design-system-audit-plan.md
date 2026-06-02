@@ -16,6 +16,8 @@ updated: 2026-04-11
 
 # Design System Audit Plan
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69d86d12-30b8-83e8-bc6c-b061cb542871
 > Created: 2026-04-10T03:22:59Z
 > Updated: 2026-04-11T03:24:23Z

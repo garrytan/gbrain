@@ -15,6 +15,8 @@ updated: 2025-11-30
 
 # iPhone 11 trade-in value
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 692bb3e0-5388-832e-8d5c-13b2bbe72b76
 > Created: 2025-11-30T03:02:56Z
 > Updated: 2025-11-30T03:03:07Z

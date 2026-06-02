@@ -15,6 +15,8 @@ updated: 2023-11-30
 
 # Max Martin's Taylor Swift Collaboration
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 585c94bd-9318-4c6a-80a8-9cd655934ef4
 > Created: 2023-11-30T02:55:55Z
 > Updated: 2023-11-30T03:57:44Z

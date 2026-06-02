@@ -16,6 +16,8 @@ updated: 2025-07-16
 
 # Fastlane project automation
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68770b9a-ae38-8007-9c7c-94f5489f52d3
 > Created: 2025-07-16T02:16:58Z
 > Updated: 2025-07-16T02:25:56Z

@@ -17,6 +17,8 @@ updated: 2025-08-18
 
 # MVP deployment strategy
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68a25554-5240-8325-89a1-57f45a87f2ee
 > Created: 2025-08-17T22:19:05Z
 > Updated: 2025-08-18T02:31:42Z

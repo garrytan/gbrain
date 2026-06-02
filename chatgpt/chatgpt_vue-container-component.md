@@ -16,6 +16,8 @@ updated: 2023-06-01
 
 # Vue Container Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 22766caf-5da6-4843-9066-934e52add172
 > Created: 2023-06-01T23:13:03Z
 > Updated: 2023-06-01T23:13:55Z

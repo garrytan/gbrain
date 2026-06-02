@@ -16,6 +16,8 @@ updated: 2025-07-24
 
 # Fitness plan adjustment
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6882935a-5824-832d-aeff-3502ddc66674
 > Created: 2025-07-24T20:11:34Z
 > Updated: 2025-07-24T23:19:43Z

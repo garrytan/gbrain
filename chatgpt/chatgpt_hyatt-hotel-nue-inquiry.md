@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Hyatt Hotel NUE Inquiry
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69728af9-2ed8-8330-ada9-22c665cb3aa3
 > Created: 2026-01-22T20:39:21Z
 > Updated: 2026-01-23T18:36:58Z

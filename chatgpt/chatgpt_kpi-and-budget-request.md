@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # KPI and budget request
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68fbfd24-a738-832f-9ab9-b631238f4868
 > Created: 2025-10-24T22:26:46Z
 > Updated: 2025-10-24T22:53:47Z

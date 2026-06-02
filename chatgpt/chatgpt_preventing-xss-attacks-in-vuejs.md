@@ -15,6 +15,8 @@ updated: 2023-01-25
 
 # Preventing XSS Attacks in Vue.js
 
+**Related:** [[coding_web_dev]]
+
 
 > Conversation ID: 8b61123f-f6cd-441d-b696-5e20ca317690
 > Created: 2023-01-25T18:07:33Z

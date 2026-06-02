@@ -17,6 +17,8 @@ updated: 2026-04-22
 
 # Honcho Memory for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69e939cc-58d8-83e8-8c83-0fd1a6c08327
 > Created: 2026-04-22T21:13:07Z
 > Updated: 2026-04-22T22:33:07Z

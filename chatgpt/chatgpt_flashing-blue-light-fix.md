@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Flashing blue light fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 688bc440-49d8-8323-ac08-ce502edff48e
 > Created: 2025-07-31T19:30:27Z
 > Updated: 2025-07-31T19:30:37Z

@@ -15,6 +15,8 @@ updated: 2026-01-14
 
 # Add record to Vercel
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 696815dc-9c40-8325-97e5-bdf9a42e1ad9
 > Created: 2026-01-14T22:17:10Z
 > Updated: 2026-01-14T22:31:35Z

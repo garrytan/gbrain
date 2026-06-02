@@ -17,6 +17,8 @@ updated: 2025-06-21
 
 # Blender Wireframe Generation
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68563517-7130-8007-a8e0-4e0c0bca89cc
 > Created: 2025-06-21T04:29:37Z
 > Updated: 2025-06-21T20:19:03Z

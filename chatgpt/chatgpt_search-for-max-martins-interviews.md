@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Search for Max Martin's Interviews
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 70d5f554-f6f9-45a7-9291-2284844707ce
 > Created: 2023-10-15T16:48:57Z
 > Updated: 2023-10-15T18:11:11Z

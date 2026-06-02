@@ -17,6 +17,8 @@ updated: 2024-05-29
 
 # Electro Artist Tim White
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 9ab7c58c-8c00-4444-afa2-aafc18da0313
 > Created: 2024-05-29T00:51:01Z
 > Updated: 2024-05-29T02:55:12Z

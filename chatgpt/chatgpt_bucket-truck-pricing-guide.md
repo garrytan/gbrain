@@ -15,6 +15,8 @@ updated: 2024-01-19
 
 # Bucket Truck Pricing Guide
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 22908a27-aadd-49f6-996e-f431b85f4d79
 > Created: 2024-01-19T19:53:09Z
 > Updated: 2024-01-19T19:57:39Z

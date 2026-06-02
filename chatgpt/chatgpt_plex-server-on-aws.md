@@ -15,6 +15,8 @@ updated: 2025-07-06
 
 # Plex Server on AWS
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 686ad906-7c54-8007-b311-b9ae26ae3346
 > Created: 2025-07-06T20:13:58Z
 > Updated: 2025-07-06T20:14:11Z

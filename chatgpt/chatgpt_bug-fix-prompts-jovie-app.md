@@ -17,6 +17,8 @@ updated: 2025-12-27
 
 # Bug Fix Prompts Jovie App
 
+**Related:** [[jovie-product-strategy]]
+
 > Conversation ID: 694f63b5-f92c-8328-bb4c-20aa426099a9
 > Created: 2025-12-27T04:42:42Z
 > Updated: 2025-12-27T04:43:23Z

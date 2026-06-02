@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Get Recipe Recommendations.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 0a215d9a-e467-4704-a684-ee2380bb8792
 > Created: 2023-02-23T18:22:30Z
 > Updated: 2023-02-23T18:22:30Z

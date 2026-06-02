@@ -16,6 +16,8 @@ updated: 2026-05-14
 
 # Promptfoo LLM Evaluation
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6a06169d-3a60-83e8-9d58-ee5d214145c5
 > Created: 2026-05-14T18:38:25Z
 > Updated: 2026-05-14T18:38:40Z

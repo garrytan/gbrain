@@ -17,6 +17,8 @@ updated: 2024-01-06
 
 # iOS HealthKit Sync App
 
+**Related:** [[personal_health]]
+
 > Conversation ID: dc4aa7fa-f743-4505-a18d-973d4da8d5c2
 > Created: 2024-01-06T01:25:55Z
 > Updated: 2024-01-06T06:30:46Z

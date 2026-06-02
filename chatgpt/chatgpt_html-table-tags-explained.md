@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # HTML Table Tags Explained
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: ab347b2f-e650-4712-8244-585d44efe62d
 > Created: 2022-12-21T20:40:24Z
 > Updated: 2022-12-21T20:40:24Z

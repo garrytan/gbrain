@@ -15,6 +15,8 @@ updated: 2026-04-29
 
 # Cinematic Studio Photograph
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69f16b32-a934-83e8-86eb-13db8870c6ce
 > Created: 2026-04-29T02:21:39Z
 > Updated: 2026-04-29T02:33:23Z

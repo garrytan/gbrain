@@ -15,6 +15,8 @@ updated: 2026-01-03
 
 # Framer to Linear Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69594f9a-b05c-832e-9332-97f559fbac96
 > Created: 2026-01-03T17:19:30Z
 > Updated: 2026-01-03T17:20:44Z

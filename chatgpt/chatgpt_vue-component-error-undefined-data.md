@@ -16,6 +16,8 @@ updated: 2023-11-30
 
 # Vue Component Error: Undefined Data
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: d0716b00-885b-43ca-8761-bffceb18c2e7
 > Created: 2023-11-30T21:45:56Z
 > Updated: 2023-11-30T21:46:25Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym Identification Request
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 682bedfc-23ac-8007-a1da-aae90432d560
 > Created: 2025-05-20T02:50:36Z
 > Updated: 2025-05-20T02:50:59Z

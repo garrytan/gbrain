@@ -16,6 +16,8 @@ updated: 2026-01-23
 
 # React Hooks Slash Command
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6973cb69-29e0-8326-8305-cee2d9e953f5
 > Created: 2026-01-23T19:26:33Z
 > Updated: 2026-01-23T19:27:06Z

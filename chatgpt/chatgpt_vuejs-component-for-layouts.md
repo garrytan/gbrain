@@ -16,6 +16,8 @@ updated: 2023-01-04
 
 # Vue.js component for layouts
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: eaf3316d-1ec0-4928-9538-ef3788355993
 > Created: 2023-01-04T22:59:03Z
 > Updated: 2023-01-04T22:59:03Z

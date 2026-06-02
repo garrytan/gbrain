@@ -15,6 +15,8 @@ updated: 2026-04-24
 
 # Design Improvement Prompt
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69ebbf02-9928-83e8-8a5a-b4d643f8d97a
 > Created: 2026-04-24T19:06:18Z
 > Updated: 2026-04-24T19:35:07Z

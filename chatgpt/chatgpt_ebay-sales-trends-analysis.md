@@ -15,6 +15,8 @@ updated: 2025-09-21
 
 # eBay sales trends analysis
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68cf880d-ac50-8323-9355-8357cdc777a2
 > Created: 2025-09-21T05:07:26Z
 > Updated: 2025-09-21T05:08:36Z

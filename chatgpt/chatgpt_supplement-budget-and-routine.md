@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Supplement Budget and Routine
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6834db1e-707c-8007-be20-fff22e89523d
 > Created: 2025-05-26T21:20:31Z
 > Updated: 2025-05-26T21:20:38Z

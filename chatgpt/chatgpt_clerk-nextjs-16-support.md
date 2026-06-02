@@ -16,6 +16,8 @@ updated: 2026-01-04
 
 # Clerk Next.js 16 Support
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6959da22-248c-8328-b79f-8b02839d2b28
 > Created: 2026-01-04T03:10:26Z
 > Updated: 2026-01-04T03:11:01Z

@@ -16,6 +16,8 @@ updated: 2025-09-09
 
 # OpenAI UX tools
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68c075c4-81bc-832b-bf50-1f1cf2be99f7
 > Created: 2025-09-09T18:45:25Z
 > Updated: 2025-09-09T18:48:01Z

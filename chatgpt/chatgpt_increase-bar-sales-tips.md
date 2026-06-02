@@ -16,6 +16,8 @@ updated: 2024-08-01
 
 # Increase Bar Sales Tips
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 48fb6765-19ff-4b62-9770-3614e11eb5ae
 > Created: 2024-08-01T20:22:12Z
 > Updated: 2024-08-01T20:33:26Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Budgeting Protein and Brunch
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 681f9591-2308-8007-9c8c-fe4c3ee510d3
 > Created: 2025-05-10T18:06:09Z
 > Updated: 2025-05-10T18:06:42Z

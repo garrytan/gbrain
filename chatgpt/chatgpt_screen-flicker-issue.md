@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Screen Flicker Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69e8000c-f1d4-83e8-be86-8578f977adb8
 > Created: 2026-04-21T22:54:05Z
 > Updated: 2026-04-21T22:56:36Z

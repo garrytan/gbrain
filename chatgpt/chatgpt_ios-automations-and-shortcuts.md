@@ -15,6 +15,8 @@ updated: 2025-05-23
 
 # iOS Automations and Shortcuts
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68310581-5004-8007-a24b-7ecda7189302
 > Created: 2025-05-23T23:32:17Z
 > Updated: 2025-05-23T23:36:36Z

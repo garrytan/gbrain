@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Floating UI fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68b77fbe-2954-8328-bb21-39e0a176bb9d
 > Created: 2025-09-02T23:37:47Z
 > Updated: 2025-09-02T23:38:18Z

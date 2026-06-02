@@ -15,6 +15,8 @@ updated: 2023-11-15
 
 # AI Tools for Laravel Boilerplate
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: da255014-fb04-4723-814a-576dc041f7ae
 > Created: 2023-11-14T09:20:44Z
 > Updated: 2023-11-15T06:26:34Z

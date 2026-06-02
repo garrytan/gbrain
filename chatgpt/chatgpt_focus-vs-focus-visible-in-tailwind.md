@@ -16,6 +16,8 @@ updated: 2025-08-17
 
 # Focus vs focus-visible in Tailwind
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68a16ceb-af3c-832f-882b-4532e88c1a01
 > Created: 2025-08-17T05:47:39Z
 > Updated: 2025-08-17T05:47:44Z

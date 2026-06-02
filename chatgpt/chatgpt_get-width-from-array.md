@@ -16,6 +16,8 @@ updated: 2022-12-23
 
 # Get width from array
 
+**Related:** [[business_startup]]
+
 > Conversation ID: f2c42efd-3488-4e35-9d5c-8f45901163f7
 > Created: 2022-12-23T04:40:59Z
 > Updated: 2022-12-23T04:40:59Z

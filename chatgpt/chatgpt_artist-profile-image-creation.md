@@ -15,6 +15,8 @@ updated: 2025-12-18
 
 # Artist profile image creation
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69433415-fd54-8331-a3da-04473fee6022
 > Created: 2025-12-17T22:52:08Z
 > Updated: 2025-12-18T05:02:46Z

@@ -15,6 +15,8 @@ updated: 2025-06-07
 
 # Xone 92 Master Fader Issue
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6843bf37-673c-8007-a3b1-9027a06f88fa
 > Created: 2025-06-07T04:25:27Z
 > Updated: 2025-06-07T04:25:35Z

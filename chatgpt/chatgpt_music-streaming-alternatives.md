@@ -17,6 +17,8 @@ updated: 2024-05-27
 
 # Music Streaming Alternatives
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: c00acb87-ef78-4aa0-9c8e-7f198a6f79dd
 > Created: 2024-05-27T22:25:45Z
 > Updated: 2024-05-27T22:31:25Z

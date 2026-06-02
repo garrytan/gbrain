@@ -16,6 +16,8 @@ updated: 2023-05-04
 
 # Vue.js component template.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 4f3e51f1-0d81-4cb5-b969-a55ac7829aaf
 > Created: 2023-05-04T06:32:40Z
 > Updated: 2023-05-04T06:56:33Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Large file upload error.
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: c1994b06-b07a-4071-a4e2-2c32c9ec5564
 > Created: 2023-02-23T17:54:00Z
 > Updated: 2023-02-23T17:54:00Z

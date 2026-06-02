@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Korean Phone Number Format
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 99c3cae7-0d71-474e-9176-60a23f52f725
 > Created: 2024-05-23T21:05:48Z
 > Updated: 2024-05-23T21:13:01Z

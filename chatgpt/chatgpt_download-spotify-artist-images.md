@@ -15,6 +15,8 @@ updated: 2025-08-30
 
 # Download Spotify artist images
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68b32ef1-3f80-832e-b355-63a719a0e232
 > Created: 2025-08-30T17:04:29Z
 > Updated: 2025-08-30T17:07:49Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Helicopter Circulation Investigation
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 7883aba6-01be-479b-823d-4edca52c38ba
 > Created: 2024-05-23T00:45:51Z
 > Updated: 2024-05-23T00:46:52Z

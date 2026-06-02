@@ -15,6 +15,8 @@ updated: 2025-06-08
 
 # LogYourBody Favicon Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6845eeac-e08c-8007-a3fa-b47fc1da9884
 > Created: 2025-06-08T20:12:29Z
 > Updated: 2025-06-08T20:13:33Z

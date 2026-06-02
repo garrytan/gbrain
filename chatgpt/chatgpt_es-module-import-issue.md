@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # ES Module Import Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6994e19a-58d4-832a-878c-ada4c5238a28
 > Created: 2026-02-17T21:46:09Z
 > Updated: 2026-02-17T21:46:33Z

@@ -15,6 +15,8 @@ updated: 2025-11-17
 
 # Improve app icon design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 691b50dc-faf0-8327-b580-e6ec8099b2c6
 > Created: 2025-11-17T16:44:18Z
 > Updated: 2025-11-17T16:48:07Z

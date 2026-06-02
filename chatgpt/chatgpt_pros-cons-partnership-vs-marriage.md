@@ -15,6 +15,8 @@ updated: 2024-07-08
 
 # Pros & Cons: Partnership vs Marriage
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 24840fd8-b626-47e4-8c87-73695915b192
 > Created: 2024-07-08T17:35:26Z
 > Updated: 2024-07-08T17:35:52Z

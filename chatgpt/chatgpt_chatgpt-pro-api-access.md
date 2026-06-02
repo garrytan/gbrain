@@ -15,6 +15,8 @@ updated: 2026-01-18
 
 # ChatGPT Pro API Access
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 696d2f12-c3c8-8332-82d5-6293c1162a78
 > Created: 2026-01-18T19:05:55Z
 > Updated: 2026-01-18T19:13:59Z

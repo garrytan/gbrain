@@ -15,6 +15,8 @@ updated: 2026-01-04
 
 # Statsig Startup Program
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 695abceb-6f70-8328-afcd-85e7758d76c8
 > Created: 2026-01-04T19:18:03Z
 > Updated: 2026-01-04T19:18:36Z

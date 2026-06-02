@@ -16,6 +16,8 @@ updated: 2025-07-09
 
 # Setup script for iOS
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 686ed3a2-1418-8007-a0d8-b8dde71d6f23
 > Created: 2025-07-09T20:40:02Z
 > Updated: 2025-07-09T20:40:15Z

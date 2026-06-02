@@ -17,6 +17,8 @@ updated: 2025-12-21
 
 # Tailwind header extraction
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69474a5d-df9c-8332-9459-d13acebeb8cd
 > Created: 2025-12-21T01:16:20Z
 > Updated: 2025-12-21T03:16:37Z

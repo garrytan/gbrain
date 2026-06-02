@@ -15,6 +15,8 @@ updated: 2023-12-02
 
 # SVG Power Button Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: d23ea339-6c56-4afb-bce8-9230c713dbf8
 > Created: 2023-12-02T18:51:15Z
 > Updated: 2023-12-02T18:51:33Z

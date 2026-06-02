@@ -16,6 +16,8 @@ updated: 2026-01-27
 
 # Chaos Testing Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69787b8d-2110-8330-a1b0-316ba95f5d04
 > Created: 2026-01-27T08:47:09Z
 > Updated: 2026-01-27T08:47:16Z

@@ -15,6 +15,8 @@ updated: 2026-01-27
 
 # ChatGPT Changelog January 2026
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69786f42-2024-8331-81ba-796fd7b944f3
 > Created: 2026-01-27T07:54:42Z
 > Updated: 2026-01-27T07:55:16Z

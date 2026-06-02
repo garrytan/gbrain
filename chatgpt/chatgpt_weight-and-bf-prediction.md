@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Weight and BF prediction
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 689503ee-2fdc-832f-ab25-027e44bfdb17
 > Created: 2025-08-07T19:52:17Z
 > Updated: 2025-08-08T03:06:38Z

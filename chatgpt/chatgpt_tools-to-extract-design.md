@@ -15,6 +15,8 @@ updated: 2026-02-20
 
 # Tools to Extract Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6998e1ab-2f78-832a-b3a6-c04ba00e8418
 > Created: 2026-02-20T22:35:23Z
 > Updated: 2026-02-20T22:36:04Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Compare app to Apple Health
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 690ad0a3-0298-8329-b8dd-f191a3bdfa57
 > Created: 2025-11-05T04:21:31Z
 > Updated: 2025-11-05T04:21:57Z

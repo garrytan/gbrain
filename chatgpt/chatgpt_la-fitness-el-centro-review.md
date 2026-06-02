@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # LA Fitness El Centro Review
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68642f0a-c024-8007-854e-7b99c33edad0
 > Created: 2025-07-01T18:55:06Z
 > Updated: 2025-07-01T18:55:27Z

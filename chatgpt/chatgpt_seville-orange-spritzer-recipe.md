@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Seville Orange Spritzer Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6848f220-949c-8007-9f49-1b5b224098e1
 > Created: 2025-06-11T03:04:00Z
 > Updated: 2025-06-11T03:04:28Z

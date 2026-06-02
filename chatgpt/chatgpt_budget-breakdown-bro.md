@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Budget Breakdown Bro
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 67f6e8b3-b364-8007-b1f9-79d38067825a
 > Created: 2025-04-09T21:37:55Z
 > Updated: 2025-04-09T22:14:28Z

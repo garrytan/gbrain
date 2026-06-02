@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Caramel Valentine's Mulled Wine
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 64cec727-70b5-42d2-bd7a-e686319d7a1a
 > Created: 2024-02-01T01:31:59Z
 > Updated: 2024-02-01T05:57:25Z

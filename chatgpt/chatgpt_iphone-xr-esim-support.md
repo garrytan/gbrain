@@ -15,6 +15,8 @@ updated: 2025-07-02
 
 # iPhone XR eSIM Support
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6865af55-07a4-8007-a83b-82c505e59bcb
 > Created: 2025-07-02T22:14:45Z
 > Updated: 2025-07-02T22:15:17Z

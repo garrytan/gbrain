@@ -15,6 +15,8 @@ updated: 2025-02-01
 
 # XDJ Connections Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 679ea05f-5bf0-8007-9959-9f59bc19ca0d
 > Created: 2025-02-01T22:29:51Z
 > Updated: 2025-02-01T22:29:56Z

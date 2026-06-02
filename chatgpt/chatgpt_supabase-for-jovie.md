@@ -15,6 +15,8 @@ updated: 2026-06-01
 
 # Supabase for Jovie
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6a1cea39-4540-83e8-85c0-3e7e40b80585
 > Created: 2026-06-01T02:11:06Z
 > Updated: 2026-06-01T02:11:20Z

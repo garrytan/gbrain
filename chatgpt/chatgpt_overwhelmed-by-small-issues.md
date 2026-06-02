@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Overwhelmed by Small Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6a1a9cb0-8250-83e8-aa8a-77425741a29a
 > Created: 2026-05-30T08:25:18Z
 > Updated: 2026-05-30T08:25:30Z

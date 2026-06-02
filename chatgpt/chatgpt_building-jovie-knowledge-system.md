@@ -17,6 +17,8 @@ updated: 2026-04-28
 
 # Building Jovie Knowledge System
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69f0e5f4-2484-83e8-a167-d4ff6ddfd6e8
 > Created: 2026-04-28T16:53:09Z
 > Updated: 2026-04-28T17:03:38Z

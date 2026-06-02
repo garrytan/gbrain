@@ -15,6 +15,8 @@ updated: 2024-01-29
 
 # Accessing User's Name in iOS
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: bb38a069-f4af-427d-92a5-913e89dbe34d
 > Created: 2024-01-29T23:18:23Z
 > Updated: 2024-01-29T23:18:46Z

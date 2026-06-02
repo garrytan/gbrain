@@ -17,6 +17,8 @@ updated: 2025-12-03
 
 # Feature suggestions for growth
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 692f629a-a4f0-832c-82af-f5a8bbb9fac5
 > Created: 2025-12-02T22:06:14Z
 > Updated: 2025-12-03T21:37:45Z

@@ -16,6 +16,8 @@ updated: 2023-01-08
 
 # Vue.js script for blog
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 8946ee29-7d02-4d08-8669-3e1ddd2ba151
 > Created: 2023-01-08T19:52:32Z
 > Updated: 2023-01-08T19:52:32Z

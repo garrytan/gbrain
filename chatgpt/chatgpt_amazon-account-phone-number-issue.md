@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Amazon account phone number issue
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68f3e99a-0fbc-8325-9618-c1d96bc1ed07
 > Created: 2025-10-18T19:25:14Z
 > Updated: 2025-10-18T19:25:26Z

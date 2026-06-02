@@ -16,6 +16,8 @@ updated: 2025-07-26
 
 # Atomic design structure
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 688461ae-e404-832d-a94c-9eada41ee297
 > Created: 2025-07-26T05:03:43Z
 > Updated: 2025-07-26T05:03:50Z

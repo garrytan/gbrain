@@ -15,6 +15,8 @@ updated: 2025-04-26
 
 # Charlie Jordan DJ Debate
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 680c4e46-7c18-8007-9bd5-fedf8b825043
 > Created: 2025-04-26T03:08:54Z
 > Updated: 2025-04-26T03:10:22Z

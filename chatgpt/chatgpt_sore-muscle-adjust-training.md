@@ -15,6 +15,8 @@ updated: 2023-12-20
 
 # Sore Muscle? Adjust Training
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 584dfbfc-e053-4ee1-811e-4ce8829d7a1c
 > Created: 2023-12-20T21:40:54Z
 > Updated: 2023-12-20T22:39:29Z

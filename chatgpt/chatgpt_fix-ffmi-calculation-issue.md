@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Fix FFMI Calculation Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 05945da3-82d5-4330-93d8-c7fe35ca3311
 > Created: 2024-01-07T07:08:54Z
 > Updated: 2024-01-07T08:13:17Z

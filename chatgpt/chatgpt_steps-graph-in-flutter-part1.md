@@ -17,6 +17,8 @@ updated: 2024-01-22
 
 # Steps Graph in Flutter
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 1865d3b9-d75d-42ec-84ce-827183eae8c5
 > Created: 2024-01-22T08:37:36Z
 > Updated: 2024-01-22T08:47:57Z

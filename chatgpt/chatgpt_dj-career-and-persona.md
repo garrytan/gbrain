@@ -16,6 +16,8 @@ updated: 2025-05-05
 
 # DJ Career and Persona
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 681817a1-b4dc-8007-85fb-8a84cf4920d8
 > Created: 2025-05-05T01:42:58Z
 > Updated: 2025-05-05T01:47:17Z

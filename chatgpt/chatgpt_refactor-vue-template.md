@@ -16,6 +16,8 @@ updated: 2023-01-07
 
 # Refactor Vue template
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 67e23655-d056-4b11-ab71-95a0459f02b9
 > Created: 2023-01-07T00:00:57Z
 > Updated: 2023-01-07T00:00:57Z

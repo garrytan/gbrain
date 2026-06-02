@@ -15,6 +15,8 @@ updated: 2026-02-17
 
 # Improving Artist Page
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6994d4fa-374c-832b-a923-2ce129406481
 > Created: 2026-02-17T20:52:13Z
 > Updated: 2026-02-17T20:52:40Z

@@ -15,6 +15,8 @@ updated: 2026-01-21
 
 # Sentry Startup Overview
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69712aad-c8d4-8329-9f23-5f7c28e8e51d
 > Created: 2026-01-21T19:36:15Z
 > Updated: 2026-01-21T19:37:07Z

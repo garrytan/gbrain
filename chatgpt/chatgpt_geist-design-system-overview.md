@@ -16,6 +16,8 @@ updated: 2025-12-11
 
 # Geist Design System Overview
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 693a6e0d-4064-8329-958d-7879647c83fd
 > Created: 2025-12-11T07:09:01Z
 > Updated: 2025-12-11T07:10:44Z

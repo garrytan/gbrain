@@ -17,6 +17,8 @@ updated: 2025-11-08
 
 # Timeline slider design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 690ec69d-c424-8329-9664-0a5e147f8353
 > Created: 2025-11-08T04:27:34Z
 > Updated: 2025-11-08T04:34:13Z

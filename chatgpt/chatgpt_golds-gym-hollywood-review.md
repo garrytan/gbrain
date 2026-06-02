@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gold's Gym Hollywood Review
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 680be7c8-62c8-8007-80e9-dce0a7919c3e
 > Created: 2025-04-25T19:51:37Z
 > Updated: 2025-04-25T19:54:11Z

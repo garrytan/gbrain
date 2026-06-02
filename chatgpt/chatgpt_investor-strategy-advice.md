@@ -16,6 +16,8 @@ updated: 2026-05-16
 
 # Investor Strategy Advice
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a08ebf3-b76c-83e8-b82f-6a326d27274c
 > Created: 2026-05-16T22:21:08Z
 > Updated: 2026-05-16T22:21:52Z

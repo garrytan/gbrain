@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Extract Vue Components NPM
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 998dd6c6-26b1-474d-a729-a146c52a1f27
 > Created: 2022-12-21T22:32:43Z
 > Updated: 2022-12-21T22:32:43Z

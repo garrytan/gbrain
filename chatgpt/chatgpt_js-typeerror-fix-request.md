@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # JS TypeError Fix Request
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 33142160-7656-44b0-8ac8-011a33a49b05
 > Created: 2023-02-05T20:42:40Z
 > Updated: 2023-02-05T20:42:40Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Fix Inline Style
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 896c280a-1180-4b3a-b4fa-1baae1716dcd
 > Created: 2023-05-24T20:39:35Z
 > Updated: 2023-05-24T20:39:44Z

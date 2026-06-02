@@ -16,6 +16,8 @@ updated: 2025-11-25
 
 # Onboarding design simplification
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69251c6d-dc1c-8331-9ba4-5f30e3744e3a
 > Created: 2025-11-25T03:03:53Z
 > Updated: 2025-11-25T03:05:22Z

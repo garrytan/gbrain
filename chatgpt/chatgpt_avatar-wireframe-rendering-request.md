@@ -16,6 +16,8 @@ updated: 2025-06-09
 
 # Avatar wireframe rendering request
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68476c1e-7720-8007-b5e1-398dd7d1dc73
 > Created: 2025-06-09T23:19:58Z
 > Updated: 2025-06-09T23:38:00Z

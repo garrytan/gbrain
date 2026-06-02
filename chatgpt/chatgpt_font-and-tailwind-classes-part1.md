@@ -17,6 +17,8 @@ updated: 2025-12-18
 
 # Font and Tailwind classes
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 694370b5-511c-832f-be3f-f013b1912428
 > Created: 2025-12-18T03:10:51Z
 > Updated: 2025-12-18T21:13:41Z

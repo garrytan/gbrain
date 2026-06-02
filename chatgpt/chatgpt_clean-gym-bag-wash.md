@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Clean Gym Bag Wash
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6f0fe2fc-5faf-47be-8ffa-c71a8b684e4d
 > Created: 2024-06-08T00:55:46Z
 > Updated: 2024-06-08T00:58:06Z

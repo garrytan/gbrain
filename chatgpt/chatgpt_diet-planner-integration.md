@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Diet Planner Integration
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 1ae22d5e-467d-4b96-8636-57a8a82383d4
 > Created: 2023-12-05T20:42:12Z
 > Updated: 2023-12-05T20:43:34Z

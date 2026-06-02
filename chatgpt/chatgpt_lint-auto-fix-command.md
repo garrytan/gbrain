@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Lint auto fix command
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68c36e79-d4b0-832f-92b6-6ce975591446
 > Created: 2025-09-12T00:51:06Z
 > Updated: 2025-09-12T00:51:20Z

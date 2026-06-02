@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Maintain First Diet Length
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 34f03b09-4115-4436-a2b1-a5041e0bfb5b
 > Created: 2024-02-23T02:51:44Z
 > Updated: 2024-02-23T02:51:56Z

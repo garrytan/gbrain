@@ -16,6 +16,8 @@ updated: 2026-05-15
 
 # RC Deck Design Principles
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a078308-d2d4-83e8-bf2f-ce44951411a6
 > Created: 2026-05-15T20:33:13Z
 > Updated: 2026-05-15T21:36:07Z

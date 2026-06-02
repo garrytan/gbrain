@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Netflix job search
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 692ccdc0-6d00-8329-91f2-c0cfc5daa19b
 > Created: 2025-11-30T23:05:36Z
 > Updated: 2025-11-30T23:06:20Z

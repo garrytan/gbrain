@@ -15,6 +15,8 @@ updated: 2026-05-10
 
 # AWS Credits Application Help
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6a00d3a3-6160-83e8-a0e3-b9ddebace0f4
 > Created: 2026-05-10T18:51:16Z
 > Updated: 2026-05-10T19:18:48Z

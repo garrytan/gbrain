@@ -17,6 +17,8 @@ updated: 2026-05-15
 
 # Onboarding Flow Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a06990d-6dc8-83e8-a919-66a35cceca85
 > Created: 2026-05-15T03:54:54Z
 > Updated: 2026-05-15T05:30:43Z

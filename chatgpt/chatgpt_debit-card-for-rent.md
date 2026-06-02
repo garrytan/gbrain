@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Debit Card for Rent
 
+**Related:** [[personal_life]]
+
 > Conversation ID: d38f78f0-a2cb-4ed7-bd82-8b0cfa429566
 > Created: 2024-01-27T19:41:58Z
 > Updated: 2024-01-29T06:21:27Z

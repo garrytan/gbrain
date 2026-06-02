@@ -15,6 +15,8 @@ updated: 2025-04-11
 
 # Sex Bomb Tattoo Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 67f89710-a834-8007-9f66-be5000bcbddb
 > Created: 2025-04-11T04:14:08Z
 > Updated: 2025-04-11T04:15:15Z

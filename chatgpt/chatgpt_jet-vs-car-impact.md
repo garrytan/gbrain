@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Jet vs. Car Impact
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 30373e50-3ce5-4fe1-bd88-fe5f9d66bdf1
 > Created: 2023-11-10T11:02:31Z
 > Updated: 2023-11-10T12:32:53Z

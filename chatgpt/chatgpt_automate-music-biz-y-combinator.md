@@ -15,6 +15,8 @@ updated: 2026-04-30
 
 # Automate Music Biz Y Combinator
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69f2ce20-9868-83e8-81b9-369e934c70f5
 > Created: 2026-04-30T03:36:01Z
 > Updated: 2026-04-30T04:04:33Z

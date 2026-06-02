@@ -17,6 +17,8 @@ updated: 2026-01-07
 
 # Tailwind H1 Class Breakdown
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 695ec1b5-79b4-8332-950c-03c3d055ef5f
 > Created: 2026-01-07T20:27:57Z
 > Updated: 2026-01-07T20:52:30Z

@@ -16,6 +16,8 @@ updated: 2023-06-01
 
 # Slide-In Elements Animation
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 0c28ee71-fd56-402c-bf7f-f8d1a53229aa
 > Created: 2023-06-01T20:40:21Z
 > Updated: 2023-06-01T20:45:08Z

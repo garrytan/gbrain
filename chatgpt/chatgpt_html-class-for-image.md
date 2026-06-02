@@ -16,6 +16,8 @@ updated: 2023-04-02
 
 # HTML Class for Image.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: f40d66af-55ce-43aa-9933-8c8481f21f2d
 > Created: 2023-04-02T04:46:19Z
 > Updated: 2023-04-02T04:46:23Z

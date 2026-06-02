@@ -16,6 +16,8 @@ updated: 2025-08-22
 
 # Extract design system repo
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68a8e1be-abd0-8332-ac59-3f28fd6ba52d
 > Created: 2025-08-22T21:32:42Z
 > Updated: 2025-08-22T21:35:35Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job role analysis
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 690bb665-790c-8327-936c-c2b6d07aba1f
 > Created: 2025-11-05T20:41:25Z
 > Updated: 2025-11-05T20:41:36Z

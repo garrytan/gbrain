@@ -17,6 +17,8 @@ updated: 2025-12-16
 
 # Slack webhook GitHub Actions
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6941c0ea-32a4-832b-831a-28c496de7a0e
 > Created: 2025-12-16T20:28:27Z
 > Updated: 2025-12-16T20:35:11Z

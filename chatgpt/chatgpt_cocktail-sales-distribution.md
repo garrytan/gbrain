@@ -15,6 +15,8 @@ updated: 2025-09-22
 
 # Cocktail sales distribution
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68d0918b-0cdc-832b-9b43-0350d56f9316
 > Created: 2025-09-22T00:00:47Z
 > Updated: 2025-09-22T00:03:20Z

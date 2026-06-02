@@ -16,6 +16,8 @@ updated: 2022-12-20
 
 # Vue.js MouseTrap Event Handling
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: e37f73dc-11cf-45cc-847d-2d17e3d47c08
 > Created: 2022-12-20T22:48:01Z
 > Updated: 2022-12-20T22:48:01Z

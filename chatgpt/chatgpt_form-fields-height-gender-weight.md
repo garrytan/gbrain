@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Form Fields: Height, Gender, Weight
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6d9cb5a8-e248-4358-bf53-7d4cca35b98e
 > Created: 2023-11-23T07:52:32Z
 > Updated: 2023-11-23T07:52:52Z

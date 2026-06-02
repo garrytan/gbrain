@@ -15,6 +15,8 @@ updated: 2025-02-01
 
 # Yamaha HS5 Studio Monitors
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 679e9a7d-fe64-8007-bead-7a65a64d6860
 > Created: 2025-02-01T22:04:46Z
 > Updated: 2025-02-01T22:04:54Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Car and Motorcycle Transfer
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67d36bb5-1f60-8007-b11e-bf27026a3689
 > Created: 2025-03-13T23:35:17Z
 > Updated: 2025-03-13T23:42:06Z

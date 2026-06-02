@@ -16,6 +16,8 @@ updated: 2026-02-14
 
 # Runway and Fundraising Strategy
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6990dfdf-dd50-8330-a2da-6f21ac797f1e
 > Created: 2026-02-14T20:49:36Z
 > Updated: 2026-02-14T23:25:19Z

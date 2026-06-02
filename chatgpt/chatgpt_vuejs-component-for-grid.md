@@ -17,6 +17,8 @@ updated: 2023-02-25
 
 # Vue.js component for grid.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 13c65105-3fa3-42db-aa06-4b2da35e815c
 > Created: 2023-02-25T23:34:03Z
 > Updated: 2023-02-25T23:34:03Z

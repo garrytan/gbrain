@@ -17,6 +17,8 @@ updated: 2026-05-10
 
 # Automating Feature Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a00c907-fce4-83e8-8bd0-5a2e926cd771
 > Created: 2026-05-10T18:06:00Z
 > Updated: 2026-05-10T18:11:39Z

@@ -16,6 +16,8 @@ updated: 2025-10-16
 
 # Server scheduling laws 90048
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68f03d79-32dc-832f-b6a8-eb5e90b35193
 > Created: 2025-10-16T00:34:49Z
 > Updated: 2025-10-16T00:39:37Z

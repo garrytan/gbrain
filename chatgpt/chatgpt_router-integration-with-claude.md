@@ -16,6 +16,8 @@ updated: 2026-05-30
 
 # Router integration with Claude
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6a1b4801-4328-83e8-9209-46eb3b317760
 > Created: 2026-05-30T20:26:42Z
 > Updated: 2026-05-30T20:31:09Z

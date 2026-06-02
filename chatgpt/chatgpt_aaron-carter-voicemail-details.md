@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Aaron Carter Voicemail Details
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 683dd099-8be8-8007-b071-54b177632197
 > Created: 2025-06-02T16:26:01Z
 > Updated: 2025-06-02T16:29:56Z

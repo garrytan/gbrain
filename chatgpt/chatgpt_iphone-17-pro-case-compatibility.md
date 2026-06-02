@@ -15,6 +15,8 @@ updated: 2025-12-02
 
 # iPhone 17 Pro case compatibility
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 692e3ff2-660c-8332-8d1a-dfd93b552a4e
 > Created: 2025-12-02T01:25:23Z
 > Updated: 2025-12-02T01:25:37Z

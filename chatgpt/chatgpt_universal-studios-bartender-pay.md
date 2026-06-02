@@ -15,6 +15,8 @@ updated: 2024-05-23
 
 # Universal Studios Bartender Pay
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: c4cb4b88-4579-40fb-a13d-eeaffff49e0f
 > Created: 2024-05-23T03:02:33Z
 > Updated: 2024-05-23T03:03:40Z

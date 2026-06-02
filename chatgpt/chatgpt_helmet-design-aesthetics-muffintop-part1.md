@@ -17,6 +17,8 @@ updated: 2025-05-27
 
 # Helmet Design Aesthetics MUFFINTOP
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6832a7a3-aa3c-8007-a0bb-7c0400596b5f
 > Created: 2025-05-25T05:16:19Z
 > Updated: 2025-05-27T01:06:09Z

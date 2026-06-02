@@ -16,6 +16,8 @@ updated: 2023-01-03
 
 # Vue.js Template Syntax
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 374e17b6-72e8-4ce0-8963-89197a3fa8b1
 > Created: 2023-01-03T16:44:24Z
 > Updated: 2023-01-03T16:44:24Z

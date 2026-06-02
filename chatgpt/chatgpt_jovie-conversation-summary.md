@@ -17,6 +17,8 @@ updated: 2026-05-16
 
 # Jovie Conversation Summary
 
+**Related:** [[jovie-product-strategy]]
+
 > Conversation ID: 6a08d7d8-0374-83e8-a7bb-26fa1640dcf8
 > Created: 2026-05-16T20:47:21Z
 > Updated: 2026-05-16T20:56:15Z

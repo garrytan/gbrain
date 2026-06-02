@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Age Display Issue Fixed
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 511830f9-385c-4ab4-926f-9ac11b8c2247
 > Created: 2024-01-07T07:02:00Z
 > Updated: 2024-01-07T07:03:13Z

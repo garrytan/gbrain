@@ -15,6 +15,8 @@ updated: 2024-02-07
 
 # Tim White: Artistic Symphony
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: d93c8f0e-cc75-4ebb-b600-cbc74ac96fac
 > Created: 2024-02-07T02:02:09Z
 > Updated: 2024-02-07T02:05:26Z

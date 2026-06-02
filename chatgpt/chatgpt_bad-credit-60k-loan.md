@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bad Credit $60K Loan
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 7842d26a-2232-4577-836c-9bfe310005e6
 > Created: 2023-12-29T21:14:28Z
 > Updated: 2023-12-30T01:08:46Z

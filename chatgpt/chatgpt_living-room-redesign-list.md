@@ -15,6 +15,8 @@ updated: 2025-03-15
 
 # Living Room Redesign List
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 67d5d078-b5bc-8007-a695-0128653d8763
 > Created: 2025-03-15T19:09:44Z
 > Updated: 2025-03-15T19:33:33Z

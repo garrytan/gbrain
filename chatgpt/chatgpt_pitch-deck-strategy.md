@@ -15,6 +15,8 @@ updated: 2026-05-16
 
 # Pitch Deck Strategy
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a07d983-83a0-83e8-a39a-cd16d0cbf916
 > Created: 2026-05-16T02:42:12Z
 > Updated: 2026-05-16T02:58:58Z

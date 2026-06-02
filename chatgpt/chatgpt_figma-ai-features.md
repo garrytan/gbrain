@@ -15,6 +15,8 @@ updated: 2026-01-16
 
 # Figma AI Features
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 696aab06-72a0-832d-aca7-3f73b0892174
 > Created: 2026-01-16T21:17:59Z
 > Updated: 2026-01-16T21:18:43Z

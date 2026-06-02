@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Corepack pnpm Fixes
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 695d851c-0c20-832e-bfee-4a290e48ed43
 > Created: 2026-01-06T21:56:44Z
 > Updated: 2026-01-06T21:59:53Z

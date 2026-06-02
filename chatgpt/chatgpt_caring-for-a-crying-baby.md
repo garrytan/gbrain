@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Caring for a crying baby
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68c37408-997c-8330-a7a3-d1a19f87e7a2
 > Created: 2025-09-12T01:14:49Z
 > Updated: 2025-09-12T01:14:53Z

@@ -15,6 +15,8 @@ updated: 2025-12-14
 
 # ChatGPT Canvas overview
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 693e50ea-4408-832e-84f9-89de764f79e4
 > Created: 2025-12-14T05:53:46Z
 > Updated: 2025-12-14T05:56:20Z

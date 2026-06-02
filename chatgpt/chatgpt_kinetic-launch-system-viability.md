@@ -15,6 +15,8 @@ updated: 2025-07-05
 
 # Kinetic Launch System Viability
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68695047-f44c-8007-86bf-a8e02585256c
 > Created: 2025-07-05T16:18:16Z
 > Updated: 2025-07-05T16:18:27Z

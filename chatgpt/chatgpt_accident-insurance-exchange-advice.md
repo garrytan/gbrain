@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Accident Insurance Exchange Advice
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 69506bf0-9964-8328-a493-60447f7553f0
 > Created: 2025-12-27T23:30:15Z
 > Updated: 2026-04-09T19:31:32Z

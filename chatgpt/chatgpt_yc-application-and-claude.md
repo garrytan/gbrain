@@ -15,6 +15,8 @@ updated: 2026-03-09
 
 # YC Application and Claude
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69af0cd8-465c-8328-bda0-9ddfc48c8356
 > Created: 2026-03-09T18:09:28Z
 > Updated: 2026-03-09T18:15:15Z

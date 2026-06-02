@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Refactor Vue.js Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 7df2317c-cd88-4595-a090-6bb43ea27c33
 > Created: 2022-12-21T03:10:47Z
 > Updated: 2022-12-21T03:10:47Z

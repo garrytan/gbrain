@@ -15,6 +15,8 @@ updated: 2025-02-22
 
 # DJ Gig Strategy Plan
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67b92d3a-c038-8007-8375-58569359dec9
 > Created: 2025-02-22T01:49:46Z
 > Updated: 2025-02-22T01:50:35Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Phone number request
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68f70191-6afc-8326-bfeb-b069a3410d61
 > Created: 2025-10-21T03:44:26Z
 > Updated: 2025-10-21T03:46:08Z

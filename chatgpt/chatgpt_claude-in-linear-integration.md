@@ -15,6 +15,8 @@ updated: 2025-12-23
 
 # Claude in Linear Integration
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 694ad7f9-f5c8-8333-8007-15e609481c2c
 > Created: 2025-12-23T17:57:15Z
 > Updated: 2025-12-23T17:57:48Z

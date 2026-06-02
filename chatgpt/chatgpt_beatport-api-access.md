@@ -15,6 +15,8 @@ updated: 2026-01-25
 
 # Beatport API Access
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69767504-65d8-8325-8325-2aa1b00a5a98
 > Created: 2026-01-25T19:54:45Z
 > Updated: 2026-01-25T19:55:29Z

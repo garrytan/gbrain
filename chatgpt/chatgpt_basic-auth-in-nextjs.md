@@ -16,6 +16,8 @@ updated: 2025-09-22
 
 # Basic auth in Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68d175dd-0a64-8326-8d0d-6d003f044701
 > Created: 2025-09-22T16:15:29Z
 > Updated: 2025-09-22T16:16:38Z

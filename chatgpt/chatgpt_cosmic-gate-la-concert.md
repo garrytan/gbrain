@@ -15,6 +15,8 @@ updated: 2024-05-24
 
 # Cosmic Gate LA Concert
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6ac5cbd2-fc3e-4bd9-b983-75bded41d3bd
 > Created: 2024-05-24T02:41:48Z
 > Updated: 2024-05-24T02:42:35Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Automated job application setup
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6914e91b-626c-8323-be5e-43e6648800e4
 > Created: 2025-11-12T20:07:59Z
 > Updated: 2025-11-12T21:16:33Z

@@ -17,6 +17,8 @@ updated: 2025-08-07
 
 # Edit Markdoc on Vercel
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68942e29-6224-8324-a7ff-e556abfdafb5
 > Created: 2025-08-07T04:40:46Z
 > Updated: 2025-08-07T08:41:12Z

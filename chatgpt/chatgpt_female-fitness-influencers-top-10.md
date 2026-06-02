@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Female Fitness Influencers: Top 10
 
+**Related:** [[personal_health]]
+
 > Conversation ID: d1c597ee-127b-4b82-99f0-0271eafbf6f3
 > Created: 2023-06-26T23:13:29Z
 > Updated: 2023-06-26T23:15:50Z

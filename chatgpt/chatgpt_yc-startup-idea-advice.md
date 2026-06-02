@@ -16,6 +16,8 @@ updated: 2026-05-16
 
 # YC Startup Idea Advice
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a07957e-1384-83e8-9a26-47a0be316c2a
 > Created: 2026-05-15T21:51:58Z
 > Updated: 2026-05-16T00:39:16Z

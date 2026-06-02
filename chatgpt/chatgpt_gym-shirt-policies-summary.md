@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym Shirt Policies Summary
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68643727-9424-8007-9dc8-ef8a6f9a84ce
 > Created: 2025-07-01T19:29:43Z
 > Updated: 2025-07-01T19:30:49Z

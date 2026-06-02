@@ -15,6 +15,8 @@ updated: 2023-05-05
 
 # CSS class based on variables.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 80b8de29-807d-4e96-9311-b7b6120a96ac
 > Created: 2023-05-05T01:14:39Z
 > Updated: 2023-05-05T01:15:42Z

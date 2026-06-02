@@ -16,6 +16,8 @@ updated: 2025-11-23
 
 # Fixing Swift Errors
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69233efb-c790-8332-aaa8-b98e712fd0f9
 > Created: 2025-11-23T17:06:04Z
 > Updated: 2025-11-23T17:06:26Z

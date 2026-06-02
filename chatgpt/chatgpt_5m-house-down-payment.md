@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # $5M House Down Payment
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69685273-1ae0-8325-8ef5-10fe56207614
 > Created: 2026-01-15T02:36:03Z
 > Updated: 2026-01-15T02:40:26Z

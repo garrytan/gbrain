@@ -15,6 +15,8 @@ updated: 2025-11-22
 
 # Xcode vs TestFlight performance
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69224400-8508-8329-b60e-1e46d51918f5
 > Created: 2025-11-22T23:15:33Z
 > Updated: 2025-11-22T23:15:54Z

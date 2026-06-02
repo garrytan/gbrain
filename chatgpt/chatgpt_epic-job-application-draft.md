@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Epic Job Application Draft
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6a1d048a-be14-83e8-98bb-b62325b31480
 > Created: 2026-06-01T04:03:24Z
 > Updated: 2026-06-01T04:26:41Z

@@ -15,6 +15,8 @@ updated: 2024-06-05
 
 # Update Playlisting Table
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: c11af44d-0f91-4a87-82ba-9c3a502eee78
 > Created: 2024-06-05T18:36:24Z
 > Updated: 2024-06-05T18:37:40Z

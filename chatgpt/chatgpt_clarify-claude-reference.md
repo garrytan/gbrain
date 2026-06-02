@@ -16,6 +16,8 @@ updated: 2025-09-11
 
 # Clarify Claude reference
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68c266fd-bbe4-8327-96ff-872875bc2aca
 > Created: 2025-09-11T06:06:58Z
 > Updated: 2025-09-11T06:07:36Z

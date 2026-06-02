@@ -15,6 +15,8 @@ updated: 2025-06-27
 
 # iPhone Offline Status
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 685ec378-06dc-8007-91c1-7ff3f03141e0
 > Created: 2025-06-27T16:14:48Z
 > Updated: 2025-06-27T16:18:44Z

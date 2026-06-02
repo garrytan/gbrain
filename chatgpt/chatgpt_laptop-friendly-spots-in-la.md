@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Laptop-friendly spots in LA
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6907a2c8-68f8-8333-9411-2ed5f8e77d11
 > Created: 2025-11-02T18:28:25Z
 > Updated: 2025-11-02T18:30:17Z

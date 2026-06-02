@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hotwire mystery hotel info
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69530dc0-7144-8331-8ba6-90973340e6a6
 > Created: 2025-12-29T23:24:55Z
 > Updated: 2025-12-29T23:25:30Z

@@ -16,6 +16,8 @@ updated: 2025-08-10
 
 # Building Playbooks for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6897ece6-ca4c-8327-a8a6-d1a2f7f308b3
 > Created: 2025-08-10T00:51:23Z
 > Updated: 2025-08-10T00:52:07Z

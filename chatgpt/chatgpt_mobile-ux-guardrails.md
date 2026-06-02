@@ -17,6 +17,8 @@ updated: 2026-04-29
 
 # Mobile UX Guardrails
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69f1a74a-5740-83e8-b190-fa37688e455a
 > Created: 2026-04-29T06:38:44Z
 > Updated: 2026-04-29T06:42:59Z

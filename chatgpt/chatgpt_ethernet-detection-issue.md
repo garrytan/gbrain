@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Ethernet Detection Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 67d3abb2-75ac-8007-979b-3eedcd06d5b8
 > Created: 2025-03-14T04:08:18Z
 > Updated: 2025-03-14T04:09:39Z

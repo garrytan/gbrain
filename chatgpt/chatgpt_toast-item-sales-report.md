@@ -15,6 +15,8 @@ updated: 2025-09-22
 
 # Toast item sales report
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68d0a085-d824-832b-85a9-42d0760c9918
 > Created: 2025-09-22T01:04:29Z
 > Updated: 2025-09-22T01:04:35Z

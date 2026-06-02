@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Self-driving car safety
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6851ccee-35c8-8007-8a5e-d8360442b760
 > Created: 2025-06-17T20:15:42Z
 > Updated: 2025-06-17T20:15:59Z

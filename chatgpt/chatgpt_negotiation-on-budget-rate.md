@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Negotiation on Budget Rate
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6834a3be-df84-8007-bea7-85ed21ac12f1
 > Created: 2025-05-26T17:24:15Z
 > Updated: 2025-05-26T17:28:08Z

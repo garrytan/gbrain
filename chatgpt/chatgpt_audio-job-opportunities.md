@@ -15,6 +15,8 @@ updated: 2025-11-21
 
 # Audio job opportunities
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6920dd81-da3c-832b-a703-9248efb034aa
 > Created: 2025-11-21T21:45:41Z
 > Updated: 2025-11-21T21:46:14Z

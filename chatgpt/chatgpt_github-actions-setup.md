@@ -15,6 +15,8 @@ updated: 2025-08-27
 
 # GitHub Actions setup
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68ae6350-2d6c-8330-8d72-f5ec5d2a4065
 > Created: 2025-08-27T01:45:53Z
 > Updated: 2025-08-27T02:00:09Z

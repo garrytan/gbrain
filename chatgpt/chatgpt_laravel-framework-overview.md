@@ -17,6 +17,8 @@ updated: 2025-06-14
 
 # Laravel Framework Overview
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 684db361-db00-8007-9d7e-89d2656f2ba0
 > Created: 2025-06-14T17:37:38Z
 > Updated: 2025-06-14T18:31:00Z

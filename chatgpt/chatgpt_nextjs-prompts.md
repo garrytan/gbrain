@@ -16,6 +16,8 @@ updated: 2025-12-03
 
 # Next.js prompts
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6930b62c-1b44-832e-bd1d-ae0f7346fd9f
 > Created: 2025-12-03T22:14:04Z
 > Updated: 2025-12-03T22:14:42Z

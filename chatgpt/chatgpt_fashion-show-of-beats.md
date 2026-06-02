@@ -15,6 +15,8 @@ updated: 2024-04-01
 
 # Fashion Show of Beats 🎵
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 8c90b47f-4715-4aca-ad22-c2c55a0de3fb
 > Created: 2024-04-01T05:09:28Z
 > Updated: 2024-04-01T05:10:01Z

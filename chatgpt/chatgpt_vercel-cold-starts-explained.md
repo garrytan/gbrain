@@ -15,6 +15,8 @@ updated: 2026-01-28
 
 # Vercel cold starts explained
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 697a577d-c11c-8333-b544-5be5a7427896
 > Created: 2026-01-28T18:37:50Z
 > Updated: 2026-01-28T18:38:26Z

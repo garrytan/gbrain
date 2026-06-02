@@ -15,6 +15,8 @@ updated: 2025-02-01
 
 # Serban Ghenea Studio Monitors
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 679e99de-7888-8007-b103-2d95c42de417
 > Created: 2025-02-01T22:02:06Z
 > Updated: 2025-02-01T22:02:12Z

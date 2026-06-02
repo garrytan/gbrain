@@ -15,6 +15,8 @@ updated: 2026-02-01
 
 # App vs ChatGPT UI
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 697fa578-b09c-832f-9923-f2b08191b6e6
 > Created: 2026-02-01T19:12:15Z
 > Updated: 2026-02-01T19:13:39Z

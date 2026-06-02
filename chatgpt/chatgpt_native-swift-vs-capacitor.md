@@ -16,6 +16,8 @@ updated: 2025-06-22
 
 # Native Swift vs Capacitor
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68585130-bd7c-8007-bb60-c8f571bdfbf9
 > Created: 2025-06-22T18:53:36Z
 > Updated: 2025-06-22T21:10:03Z

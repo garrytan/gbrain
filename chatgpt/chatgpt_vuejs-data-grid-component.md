@@ -16,6 +16,8 @@ updated: 2023-01-11
 
 # VueJS Data Grid Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: e4585739-5c2a-44b6-bdef-e75928060e5c
 > Created: 2023-01-11T20:07:56Z
 > Updated: 2023-01-11T20:07:56Z

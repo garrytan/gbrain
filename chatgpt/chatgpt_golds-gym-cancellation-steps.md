@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gold's Gym cancellation steps
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68853310-a368-832b-b811-a2ce0ab47da1
 > Created: 2025-07-26T19:57:05Z
 > Updated: 2025-07-26T19:57:26Z

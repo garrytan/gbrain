@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Wedding Fail Risk Analysis
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 685626f9-2b90-8007-8e78-897650fe90fc
 > Created: 2025-06-21T03:28:57Z
 > Updated: 2025-06-21T03:29:05Z

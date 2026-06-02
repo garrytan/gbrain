@@ -15,6 +15,8 @@ updated: 2025-11-30
 
 # YC startup prompts
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 692ca73a-e2f0-832c-b146-1f8cf32150a9
 > Created: 2025-11-30T20:21:15Z
 > Updated: 2025-11-30T20:23:32Z

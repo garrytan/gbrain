@@ -16,6 +16,8 @@ updated: 2025-12-20
 
 # GeniusShot brand changes
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69461fde-2ebc-8332-8254-46d875bd6641
 > Created: 2025-12-20T04:02:39Z
 > Updated: 2025-12-20T04:08:17Z

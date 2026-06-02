@@ -15,6 +15,8 @@ updated: 2026-01-23
 
 # Neon Startup Program
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6973fa6c-becc-8327-8b7a-6a5f27910b87
 > Created: 2026-01-23T22:47:09Z
 > Updated: 2026-01-23T22:47:12Z

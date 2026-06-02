@@ -15,6 +15,8 @@ updated: 2025-07-25
 
 # Better alternatives to fastlane
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6882f9b2-b79c-832a-80ba-7427c13df5a9
 > Created: 2025-07-25T03:27:47Z
 > Updated: 2025-07-25T03:27:58Z

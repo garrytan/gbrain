@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Bartending Jobs LA Venues
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67c79fe7-edb0-8007-8f5c-0e95c51845bd
 > Created: 2025-03-05T00:50:48Z
 > Updated: 2025-03-05T00:57:35Z

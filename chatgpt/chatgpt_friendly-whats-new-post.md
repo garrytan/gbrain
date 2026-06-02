@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Friendly "What's New" Post
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 94abc337-ec00-4b2b-8b6a-ad6e0133358d
 > Created: 2023-05-16T16:26:41Z
 > Updated: 2023-05-16T16:30:37Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cheap Carfax Deal Analysis
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 680529f4-72f8-8007-98cd-2230d6aa361d
 > Created: 2025-04-20T17:08:04Z
 > Updated: 2025-04-20T17:08:45Z

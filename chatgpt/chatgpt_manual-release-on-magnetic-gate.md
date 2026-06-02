@@ -16,6 +16,8 @@ updated: 2025-11-26
 
 # Manual release on magnetic gate
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69275e54-c710-8328-92d2-63f074019bd2
 > Created: 2025-11-26T20:09:09Z
 > Updated: 2025-11-26T20:21:45Z

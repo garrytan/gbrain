@@ -16,6 +16,8 @@ updated: 2026-05-23
 
 # Startup Fundraising Advice
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a11e25d-8714-83e8-9ae0-caf66fd2ccf5
 > Created: 2026-05-23T17:28:57Z
 > Updated: 2026-05-23T18:22:48Z

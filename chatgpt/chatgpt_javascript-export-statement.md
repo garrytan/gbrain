@@ -16,6 +16,8 @@ updated: 2023-03-01
 
 # JavaScript Export Statement.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 16793d64-71c1-4b9b-b8bf-97da9417c416
 > Created: 2023-03-01T01:48:56Z
 > Updated: 2023-03-01T01:48:56Z

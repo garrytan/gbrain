@@ -15,6 +15,8 @@ updated: 2025-12-30
 
 # Bicep Growth Limits
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 695352a6-4730-8330-9367-4b35ec55b879
 > Created: 2025-12-30T04:18:47Z
 > Updated: 2025-12-30T04:20:15Z

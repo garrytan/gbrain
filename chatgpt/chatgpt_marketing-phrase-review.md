@@ -16,6 +16,8 @@ updated: 2025-11-19
 
 # Marketing phrase review
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 691a5cd7-aee8-8329-9f62-84b06d22513b
 > Created: 2025-11-16T23:26:11Z
 > Updated: 2025-11-19T19:22:49Z

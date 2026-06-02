@@ -16,6 +16,8 @@ updated: 2026-04-18
 
 # Tipping and Demographics Science
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69e3e968-3990-83e8-b6a3-b9f9e13595d7
 > Created: 2026-04-18T20:28:24Z
 > Updated: 2026-04-18T22:04:04Z

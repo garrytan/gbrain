@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Income Strategy & Budgeting Plan
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 681fb1d0-a91c-8007-ba63-197d1175ba27
 > Created: 2025-05-10T20:06:41Z
 > Updated: 2025-05-11T19:36:31Z

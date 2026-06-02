@@ -15,6 +15,8 @@ updated: 2026-04-29
 
 # Luxury Recording Studio Malibu
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69f17fee-6f28-83e8-baf9-cc09bc5ef202
 > Created: 2026-04-29T03:53:19Z
 > Updated: 2026-04-29T03:55:56Z

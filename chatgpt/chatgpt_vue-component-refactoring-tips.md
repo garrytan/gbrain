@@ -17,6 +17,8 @@ updated: 2023-12-06
 
 # Vue Component Refactoring Tips
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 4d574aad-9e57-4a8d-90b8-2931b8e6c38f
 > Created: 2023-12-06T01:43:05Z
 > Updated: 2023-12-06T03:00:30Z

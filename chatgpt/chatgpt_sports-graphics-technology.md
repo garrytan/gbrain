@@ -15,6 +15,8 @@ updated: 2025-10-28
 
 # Sports graphics technology
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 690033e0-879c-8328-b71a-4678753d3fe2
 > Created: 2025-10-28T03:10:08Z
 > Updated: 2025-10-28T03:12:01Z

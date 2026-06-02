@@ -15,6 +15,8 @@ updated: 2024-03-20
 
 # Rooftop Garden Album Art
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 1bd5dc9a-c2e6-4778-9e39-9864ddfef42e
 > Created: 2024-03-20T23:49:11Z
 > Updated: 2024-03-20T23:50:48Z

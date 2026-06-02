@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # MCP config fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6954aefb-d588-8330-8cbe-cc8c9dae805c
 > Created: 2025-12-31T05:05:04Z
 > Updated: 2025-12-31T05:07:37Z

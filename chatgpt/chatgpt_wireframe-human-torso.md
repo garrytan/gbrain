@@ -15,6 +15,8 @@ updated: 2025-06-17
 
 # Wireframe Human Torso
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6851b94a-22f0-8007-ac4e-f407888890ab
 > Created: 2025-06-17T18:51:54Z
 > Updated: 2025-06-17T19:00:48Z

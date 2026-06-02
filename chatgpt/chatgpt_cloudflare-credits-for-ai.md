@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Cloudflare Credits for AI
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6a0a126f-7c00-83e8-89ed-a0d71df0fbd9
 > Created: 2026-05-17T19:09:37Z
 > Updated: 2026-05-17T19:31:35Z

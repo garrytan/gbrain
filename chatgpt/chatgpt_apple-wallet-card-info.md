@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Apple Wallet Card Info
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6978304c-a58c-8328-b723-753291b1d698
 > Created: 2026-01-27T03:26:05Z
 > Updated: 2026-01-27T05:07:14Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Renamed Drink Recipes
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 010097c0-f1d8-423b-bebb-07ab777bf643
 > Created: 2024-08-13T23:22:58Z
 > Updated: 2024-08-13T23:25:49Z

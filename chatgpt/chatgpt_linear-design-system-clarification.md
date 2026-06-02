@@ -15,6 +15,8 @@ updated: 2026-02-06
 
 # Linear Design System Clarification
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6985454e-3ed8-832b-b8be-b7d1c5c97774
 > Created: 2026-02-06T01:35:11Z
 > Updated: 2026-02-06T01:37:10Z

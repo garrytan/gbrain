@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Celebrating failure argument
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 693b2e48-243c-8325-b4f9-b5a3d41b36cc
 > Created: 2025-12-11T20:49:55Z
 > Updated: 2025-12-11T20:54:20Z

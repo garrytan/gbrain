@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Watermelon Margarita Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: f7f56727-2da1-4fe9-a1be-c45238eacd4b
 > Created: 2024-06-30T00:17:11Z
 > Updated: 2024-06-30T00:34:29Z

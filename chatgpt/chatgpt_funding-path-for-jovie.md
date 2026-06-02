@@ -15,6 +15,8 @@ updated: 2025-09-01
 
 # Funding path for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68b5c88a-a79c-8329-b09e-5f8d99088a68
 > Created: 2025-09-01T16:24:38Z
 > Updated: 2025-09-01T16:25:06Z

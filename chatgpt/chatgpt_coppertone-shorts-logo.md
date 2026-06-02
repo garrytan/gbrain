@@ -15,6 +15,8 @@ updated: 2025-04-18
 
 # Coppertone Shorts Logo
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6801999f-8424-8007-810a-eb22d285fd14
 > Created: 2025-04-18T00:15:27Z
 > Updated: 2025-04-18T00:15:30Z

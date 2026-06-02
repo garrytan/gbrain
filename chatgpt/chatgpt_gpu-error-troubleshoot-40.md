@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # GPU Error: Troubleshoot -40
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 8b51721c-dce3-4446-a7a2-b4496fb1479d
 > Created: 2024-04-01T05:58:19Z
 > Updated: 2024-04-01T05:58:53Z

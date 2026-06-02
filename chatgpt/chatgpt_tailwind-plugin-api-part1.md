@@ -17,6 +17,8 @@ updated: 2026-02-01
 
 # Tailwind Plugin API
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 697fc46a-9894-8331-924a-ab6830f4380a
 > Created: 2026-02-01T21:23:55Z
 > Updated: 2026-02-01T21:28:52Z

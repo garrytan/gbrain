@@ -16,6 +16,8 @@ updated: 2024-06-06
 
 # Install Next.js into existing project
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: dd6e3ad1-47cd-435d-9c26-55752015f3ff
 > Created: 2024-06-06T05:39:49Z
 > Updated: 2024-06-06T05:40:02Z

@@ -17,6 +17,8 @@ updated: 2026-04-29
 
 # Luxury Music Studio Scene
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69f162d3-99bc-83e8-af26-50d7c98cd69e
 > Created: 2026-04-29T01:45:56Z
 > Updated: 2026-04-29T02:36:35Z

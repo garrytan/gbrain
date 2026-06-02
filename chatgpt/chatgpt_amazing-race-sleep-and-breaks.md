@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Amazing Race: Sleep and Breaks
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 14dbb592-3255-4e07-bf5c-88b73cacb9f3
 > Created: 2023-11-18T04:21:49Z
 > Updated: 2023-11-18T06:14:57Z

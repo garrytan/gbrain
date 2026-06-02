@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # 1% of Body Weight
 
+**Related:** [[personal_health]]
+
 > Conversation ID: c71a60ae-b77b-4ef4-b304-5ea04bdc4657
 > Created: 2023-11-07T03:17:07Z
 > Updated: 2023-11-07T19:15:53Z

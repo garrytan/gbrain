@@ -15,6 +15,8 @@ updated: 2026-05-14
 
 # Pre-seed Pitch Deck
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a05238f-fc6c-83e8-ba39-ce836a1993a9
 > Created: 2026-05-14T01:21:20Z
 > Updated: 2026-05-14T01:35:44Z

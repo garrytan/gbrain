@@ -16,6 +16,8 @@ updated: 2025-12-15
 
 # 288px in Tailwind
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6940826d-7a30-8326-9090-7e661eedd7a3
 > Created: 2025-12-15T21:49:34Z
 > Updated: 2025-12-15T22:05:14Z

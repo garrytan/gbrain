@@ -15,6 +15,8 @@ updated: 2025-08-18
 
 # Logo design improvements
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68a34552-358c-8321-ad90-23e1f28479f7
 > Created: 2025-08-18T15:23:13Z
 > Updated: 2025-08-18T15:58:39Z

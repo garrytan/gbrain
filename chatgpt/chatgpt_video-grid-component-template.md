@@ -15,6 +15,8 @@ updated: 2023-02-25
 
 # Video Grid Component Template.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 232eb780-e193-4d41-8151-7d6a0cec2b07
 > Created: 2023-02-25T04:10:47Z
 > Updated: 2023-02-25T04:10:47Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fitness Expert's Evidence-Based Videos
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 3a554f31-02a1-4fd4-9af6-248b4b17f381
 > Created: 2024-05-06T03:12:36Z
 > Updated: 2024-05-06T03:12:41Z

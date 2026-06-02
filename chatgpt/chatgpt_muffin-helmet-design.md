@@ -15,6 +15,8 @@ updated: 2025-05-24
 
 # Muffin Helmet Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6831f3b2-931c-8007-95f0-f02849e40539
 > Created: 2025-05-24T16:28:34Z
 > Updated: 2025-05-24T16:29:44Z

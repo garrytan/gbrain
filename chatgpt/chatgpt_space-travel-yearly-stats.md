@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Space Travel Yearly Stats
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 369b27f7-5114-4d56-ab00-1f94f00053b9
 > Created: 2024-06-29T21:11:21Z
 > Updated: 2024-06-29T21:16:31Z

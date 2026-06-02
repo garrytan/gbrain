@@ -15,6 +15,8 @@ updated: 2024-01-15
 
 # Imodium treats diarrhea.
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 7402d233-c54d-4173-bc75-a101c36402e2
 > Created: 2024-01-14T23:00:48Z
 > Updated: 2024-01-15T04:28:48Z

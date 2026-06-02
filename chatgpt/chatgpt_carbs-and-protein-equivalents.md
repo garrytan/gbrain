@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Carbs and Protein Equivalents
 
+**Related:** [[personal_life]]
+
 > Conversation ID: b306145c-75b2-4bcc-b837-cf41de1c49b2
 > Created: 2023-10-04T20:08:07Z
 > Updated: 2023-10-09T01:32:36Z

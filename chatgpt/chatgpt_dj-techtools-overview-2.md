@@ -15,6 +15,8 @@ updated: 2025-01-20
 
 # DJ TechTools Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 678ede24-dc40-8007-bd76-10e187f7c7fb
 > Created: 2025-01-20T23:37:09Z
 > Updated: 2025-01-20T23:37:11Z

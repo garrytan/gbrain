@@ -15,6 +15,8 @@ updated: 2024-02-28
 
 # DJ Gig Steps
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 7cee2ce3-7bb0-4270-9240-009188c706b9
 > Created: 2024-02-28T09:03:44Z
 > Updated: 2024-02-28T09:04:22Z

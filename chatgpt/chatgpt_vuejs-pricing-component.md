@@ -17,6 +17,8 @@ updated: 2023-03-03
 
 # Vue.js Pricing Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 0e44aa20-ea38-4acf-a5c6-7b6f726c95b6
 > Created: 2023-03-03T06:42:22Z
 > Updated: 2023-03-03T06:42:22Z

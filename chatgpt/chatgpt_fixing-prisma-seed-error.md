@@ -17,6 +17,8 @@ updated: 2025-06-01
 
 # Fixing Prisma Seed Error
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 683b988e-33b0-8007-962e-64b68e5a618a
 > Created: 2025-06-01T00:02:22Z
 > Updated: 2025-06-01T00:52:11Z

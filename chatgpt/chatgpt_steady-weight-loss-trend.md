@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Steady Weight Loss Trend
 
+**Related:** [[personal_health]]
+
 > Conversation ID: a311a1d5-2122-40ab-ad74-99d2d5516d86
 > Created: 2024-05-19T03:27:51Z
 > Updated: 2024-05-19T03:51:46Z

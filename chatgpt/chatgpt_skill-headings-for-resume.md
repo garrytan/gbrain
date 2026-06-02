@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Skill Headings for Resume
 
+**Related:** [[personal_life]]
+
 > Conversation ID: b19d20e2-9ac3-47cd-afd6-f47bc951654a
 > Created: 2023-11-08T20:01:25Z
 > Updated: 2023-11-08T20:07:37Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Effect of Alcohol on Weight
 
+**Related:** [[personal_health]]
+
 > Conversation ID: dccefefc-94ea-4fdf-9962-9342c86c353c
 > Created: 2023-10-31T22:09:12Z
 > Updated: 2023-10-31T22:14:17Z

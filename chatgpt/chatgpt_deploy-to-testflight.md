@@ -15,6 +15,8 @@ updated: 2025-11-22
 
 # Deploy to TestFlight
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 692243b6-f910-832a-a21c-e8bec1ac51f5
 > Created: 2025-11-22T23:14:03Z
 > Updated: 2025-11-22T23:14:28Z

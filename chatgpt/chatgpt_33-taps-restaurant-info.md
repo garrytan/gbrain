@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # 33 Taps restaurant info
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68d72ad9-c810-8322-89cd-fa199cd352d8
 > Created: 2025-09-27T00:07:54Z
 > Updated: 2025-09-27T00:07:58Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Ritz-Carlton Bacara details
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68f85fe5-d2d0-8333-bb6b-8f6d71662567
 > Created: 2025-10-22T04:39:02Z
 > Updated: 2025-10-22T04:39:14Z

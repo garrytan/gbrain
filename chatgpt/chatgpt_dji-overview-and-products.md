@@ -15,6 +15,8 @@ updated: 2025-12-24
 
 # DJI Overview and Products
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 694b8197-e298-8330-b698-3171d911557c
 > Created: 2025-12-24T06:00:56Z
 > Updated: 2025-12-24T06:01:28Z

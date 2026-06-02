@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fix LogYourBody issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 688d944a-f610-8328-93a6-e434c88095f7
 > Created: 2025-08-02T04:30:04Z
 > Updated: 2025-08-02T04:30:44Z

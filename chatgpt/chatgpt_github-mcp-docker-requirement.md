@@ -15,6 +15,8 @@ updated: 2025-09-03
 
 # Github MCP Docker requirement
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68b89605-12b0-8321-b2e2-b5045bdd2852
 > Created: 2025-09-03T19:25:04Z
 > Updated: 2025-09-03T19:25:21Z

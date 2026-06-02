@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Home Maintenance Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 67d1da49-a2d8-8007-aab6-042f3246ad5e
 > Created: 2025-03-12T19:02:33Z
 > Updated: 2025-03-12T19:03:13Z

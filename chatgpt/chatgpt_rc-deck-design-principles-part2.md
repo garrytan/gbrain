@@ -180,6 +180,8 @@ The reason this is attractive: enterprise buyers have budget, urgent need, and e
 
 # Avoid the label / distributor trap
 
+**Related:** [[design_ux]]
+
 Jovie should not take rights, masters, publishing, catalog revenue, or broad creator income.
 
 The safe model:

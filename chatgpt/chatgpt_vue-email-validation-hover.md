@@ -16,6 +16,8 @@ updated: 2022-12-22
 
 # Vue email validation hover
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: cfbc3c6d-eac3-4de3-9184-778ea3fa77d2
 > Created: 2022-12-22T20:18:54Z
 > Updated: 2022-12-22T20:18:54Z

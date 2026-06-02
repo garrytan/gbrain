@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Monitor Thunderbolt Port Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69151e20-6414-832b-9d35-7b6e3e269a62
 > Created: 2025-11-12T23:55:00Z
 > Updated: 2025-11-12T23:58:41Z

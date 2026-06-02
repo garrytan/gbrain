@@ -15,6 +15,8 @@ updated: 2026-05-17
 
 # Logo and Font Balance
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a092131-51b4-83e8-a5c5-8c408ad76ada
 > Created: 2026-05-17T02:00:19Z
 > Updated: 2026-05-17T02:02:01Z

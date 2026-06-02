@@ -15,6 +15,8 @@ updated: 2026-03-10
 
 # Webpack Dev Performance Issue
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69b0a677-8f50-8329-a638-471e4aa24566
 > Created: 2026-03-10T23:17:48Z
 > Updated: 2026-03-10T23:34:33Z

@@ -16,6 +16,8 @@ updated: 2023-05-07
 
 # Create Reusable Vue Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 9ff21d5b-feed-4625-8a85-0ed3d2b71436
 > Created: 2023-05-07T03:54:28Z
 > Updated: 2023-05-07T03:55:31Z

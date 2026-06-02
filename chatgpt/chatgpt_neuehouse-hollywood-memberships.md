@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # NeueHouse Hollywood Memberships
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6840abb1-53ac-8007-a415-dbfa339ca7f6
 > Created: 2025-06-04T20:25:21Z
 > Updated: 2025-06-04T20:47:07Z

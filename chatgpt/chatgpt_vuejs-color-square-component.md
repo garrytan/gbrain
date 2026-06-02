@@ -16,6 +16,8 @@ updated: 2023-02-05
 
 # VueJS Color Square Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: ab0b2ac8-1719-4b2e-9fc5-9643afa39e85
 > Created: 2023-02-05T03:28:36Z
 > Updated: 2023-02-05T03:28:36Z

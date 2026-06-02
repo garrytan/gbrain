@@ -15,6 +15,8 @@ updated: 2025-07-04
 
 # Zenith Brands Overview
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 686832c6-49bc-8007-b58a-60bc968c4fd3
 > Created: 2025-07-04T20:00:06Z
 > Updated: 2025-07-04T20:00:16Z

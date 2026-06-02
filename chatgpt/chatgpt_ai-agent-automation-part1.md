@@ -17,6 +17,8 @@ updated: 2026-04-18
 
 # AI Agent Automation
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69e3bf6d-a260-83e8-80b4-2372f8b53c97
 > Created: 2026-04-18T17:29:18Z
 > Updated: 2026-04-18T18:15:08Z

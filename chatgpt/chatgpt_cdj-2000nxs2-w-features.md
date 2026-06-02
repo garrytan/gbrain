@@ -15,6 +15,8 @@ updated: 2025-01-30
 
 # CDJ-2000NXS2-W Features
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 679ae1ff-644c-8007-b6fb-87c0ca24f6fc
 > Created: 2025-01-30T02:20:47Z
 > Updated: 2025-01-30T02:20:53Z

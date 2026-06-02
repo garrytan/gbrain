@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Property tax and burial
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68729f50-2400-8007-887e-94d695dba62b
 > Created: 2025-07-12T17:45:52Z
 > Updated: 2025-07-12T17:46:00Z

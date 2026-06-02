@@ -17,6 +17,8 @@ updated: 2026-05-10
 
 # Designing World-Class Landing Page
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69ffd7ba-4960-83e8-95f3-b8e3829107e0
 > Created: 2026-05-10T00:58:42Z
 > Updated: 2026-05-10T03:08:47Z

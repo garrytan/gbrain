@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Free Credit Report Guide
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 681435b5-dadc-8007-924b-c0062595c923
 > Created: 2025-05-02T03:02:13Z
 > Updated: 2025-05-02T03:10:02Z

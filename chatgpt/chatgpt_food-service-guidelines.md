@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Food Service Guidelines.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: b1af711f-10b0-4e48-8cec-943a29a2ad13
 > Created: 2023-11-09T07:21:45Z
 > Updated: 2023-11-09T07:52:08Z

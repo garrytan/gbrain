@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Sushi Crash Insurance Claim
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6a19c486-4fc4-83e8-b919-bb7ffcc02357
 > Created: 2026-05-29T16:54:43Z
 > Updated: 2026-05-29T16:56:07Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Minecraft Performance Fixes
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69539385-7348-8333-835e-42837925684e
 > Created: 2025-12-30T08:55:34Z
 > Updated: 2025-12-30T08:56:51Z

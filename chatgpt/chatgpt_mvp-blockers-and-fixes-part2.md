@@ -125,6 +125,8 @@ Got it, Mr. White. Here’s a **single Copilot prompt** you can paste to build S
 
 # Copilot: Implement Stripe Billing (Next.js 15 + Clerk + Supabase)
 
+**Related:** [[coding_troubleshoot]]
+
 **Context / constraints**
 - Framework: **Next.js 15 (App Router)**. Do **not** break SSR for public profile pages.
 - Auth: **Clerk** via `@clerk/nextjs`. Use **server** auth APIs in server code.

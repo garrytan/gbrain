@@ -15,6 +15,8 @@ updated: 2026-03-21
 
 # Apartment Pricing Estimates
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69bee3bf-8068-83e8-8893-981a63693f76
 > Created: 2026-03-21T18:30:51Z
 > Updated: 2026-03-21T18:32:51Z

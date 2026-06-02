@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bodybuilding Show Nutrition Tips
 
+**Related:** [[personal_health]]
+
 > Conversation ID: f0144d17-d42b-476a-aa3a-35ff1655d265
 > Created: 2023-12-31T04:23:22Z
 > Updated: 2023-12-31T20:36:39Z

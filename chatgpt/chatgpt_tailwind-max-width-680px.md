@@ -16,6 +16,8 @@ updated: 2025-12-10
 
 # Tailwind max-width 680px
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6938a606-337c-8328-9af0-6c45089a83ee
 > Created: 2025-12-09T22:43:18Z
 > Updated: 2025-12-10T01:32:53Z

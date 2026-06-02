@@ -15,6 +15,8 @@ updated: 2025-12-14
 
 # Geist design system pricing
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 693f4597-d38c-832d-87b7-24fec533ddb6
 > Created: 2025-12-14T23:17:44Z
 > Updated: 2025-12-14T23:18:28Z

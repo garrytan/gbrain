@@ -16,6 +16,8 @@ updated: 2025-12-08
 
 # T-Mobile iPhone on AT&T
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 693702f6-0ca8-8325-878a-2ba61f80c9f7
 > Created: 2025-12-08T16:55:18Z
 > Updated: 2025-12-08T16:57:11Z

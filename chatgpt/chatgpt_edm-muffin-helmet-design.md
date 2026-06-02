@@ -16,6 +16,8 @@ updated: 2025-05-30
 
 # EDM Muffin Helmet Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6832cf2d-63e0-8007-873f-3bbfe7baae01
 > Created: 2025-05-25T08:05:01Z
 > Updated: 2025-05-30T00:08:41Z

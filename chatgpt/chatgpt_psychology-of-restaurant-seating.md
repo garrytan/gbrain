@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Psychology of restaurant seating
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68ebd4be-950c-8324-98c9-8ddef0363373
 > Created: 2025-10-12T16:18:24Z
 > Updated: 2025-10-12T16:18:39Z

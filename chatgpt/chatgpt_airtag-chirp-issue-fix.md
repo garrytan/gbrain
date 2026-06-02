@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # AirTag Chirp Issue Fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 686da2ae-a2b4-8007-9760-cc8473bd4b04
 > Created: 2025-07-08T22:58:54Z
 > Updated: 2025-07-08T22:59:04Z

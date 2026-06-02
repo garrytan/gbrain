@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym Info and Estimates
 
+**Related:** [[personal_health]]
+
 > Conversation ID: fdcd96f5-cc77-4045-8721-00c0abc9549b
 > Created: 2023-11-09T00:14:25Z
 > Updated: 2023-11-09T02:10:42Z

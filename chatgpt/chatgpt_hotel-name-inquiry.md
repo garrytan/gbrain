@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hotel Name Inquiry
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69530dec-2248-8330-8f0d-cafed1936388
 > Created: 2025-12-29T23:25:32Z
 > Updated: 2025-12-29T23:25:40Z

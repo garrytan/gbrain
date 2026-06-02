@@ -16,6 +16,8 @@ updated: 2025-06-22
 
 # LogYourBody Swift App
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68584fb8-96fc-8007-a44d-98431a2e4b6f
 > Created: 2025-06-22T18:47:20Z
 > Updated: 2025-06-22T18:48:43Z

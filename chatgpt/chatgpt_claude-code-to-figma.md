@@ -16,6 +16,8 @@ updated: 2026-02-24
 
 # Claude Code to Figma
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 699d936e-7fe0-832c-8abd-74dec73afd70
 > Created: 2026-02-24T12:02:55Z
 > Updated: 2026-02-24T12:03:29Z

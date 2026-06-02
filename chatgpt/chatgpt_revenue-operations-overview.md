@@ -15,6 +15,8 @@ updated: 2026-01-12
 
 # Revenue Operations Overview
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 696559eb-1188-8331-a675-604cc8f4bd06
 > Created: 2026-01-12T20:30:35Z
 > Updated: 2026-01-12T20:31:27Z

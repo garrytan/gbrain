@@ -16,6 +16,8 @@ updated: 2025-08-25
 
 # Claude Code command
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68ac879a-155c-8327-91c2-1bc49b993357
 > Created: 2025-08-25T15:56:10Z
 > Updated: 2025-08-25T15:57:07Z

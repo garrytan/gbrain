@@ -16,6 +16,8 @@ updated: 2025-08-07
 
 # 10k MRR plan
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68952326-e5f8-832c-80df-ec1dd47fb5d9
 > Created: 2025-08-07T22:05:41Z
 > Updated: 2025-08-07T23:35:37Z

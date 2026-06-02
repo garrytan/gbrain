@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Credit Union Identity Update
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 67d21e1f-b6d4-8007-b1c1-e692316f9527
 > Created: 2025-03-12T23:52:00Z
 > Updated: 2025-03-12T23:52:05Z

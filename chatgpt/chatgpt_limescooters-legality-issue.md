@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # LimeScooters legality issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 688150a6-e844-8330-906c-01566248a438
 > Created: 2025-07-23T21:14:15Z
 > Updated: 2025-07-23T21:18:58Z

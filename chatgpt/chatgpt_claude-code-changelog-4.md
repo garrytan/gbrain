@@ -15,6 +15,8 @@ updated: 2026-02-25
 
 # Claude Code Changelog
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 699f45cc-91b0-832f-a28f-d3e5f2bf760e
 > Created: 2026-02-25T18:56:18Z
 > Updated: 2026-02-25T18:56:52Z

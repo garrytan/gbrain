@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Budget spending advice
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 687c6e57-c458-8326-b1e1-474507382e37
 > Created: 2025-07-20T04:19:36Z
 > Updated: 2025-07-20T04:37:29Z

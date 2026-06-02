@@ -15,6 +15,8 @@ updated: 2026-04-28
 
 # Cinematic Audience Intelligence Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69f006e7-92f8-83e8-91d5-09403a153d80
 > Created: 2026-04-28T01:01:28Z
 > Updated: 2026-04-28T01:04:55Z

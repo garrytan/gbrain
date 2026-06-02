@@ -15,6 +15,8 @@ updated: 2025-11-25
 
 # Sentry for SwiftUI app
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 692640d0-e244-8327-bcfe-b6ef21354785
 > Created: 2025-11-25T23:51:10Z
 > Updated: 2025-11-25T23:51:25Z

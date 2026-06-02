@@ -17,6 +17,8 @@ updated: 2026-05-21
 
 # Adopting Exa.ai for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a0f4808-8070-83e8-823f-9150f309a8a9
 > Created: 2026-05-21T17:59:37Z
 > Updated: 2026-05-21T18:19:07Z

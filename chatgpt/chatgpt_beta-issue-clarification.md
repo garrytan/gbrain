@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Beta issue clarification
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68688c95-6c6c-8007-8b7d-012a99aaf697
 > Created: 2025-07-05T02:23:17Z
 > Updated: 2025-07-05T02:25:35Z

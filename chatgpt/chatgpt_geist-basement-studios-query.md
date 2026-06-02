@@ -15,6 +15,8 @@ updated: 2026-01-07
 
 # Geist Basement Studios Query
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 695ee5ef-7230-832c-b8f1-eafb845d6ca6
 > Created: 2026-01-07T23:02:07Z
 > Updated: 2026-01-07T23:02:43Z

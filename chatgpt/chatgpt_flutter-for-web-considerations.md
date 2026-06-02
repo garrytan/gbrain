@@ -15,6 +15,8 @@ updated: 2024-01-22
 
 # Flutter for Web: Considerations
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 60a24e8d-d218-4bc9-96a9-4b682b1c764e
 > Created: 2024-01-22T20:42:40Z
 > Updated: 2024-01-22T20:43:33Z

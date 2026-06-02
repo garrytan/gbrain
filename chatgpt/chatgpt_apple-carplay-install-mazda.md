@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Apple CarPlay Install Mazda
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68095d2b-9c50-8007-b91c-4cdfe3853e03
 > Created: 2025-04-23T21:35:40Z
 > Updated: 2025-04-23T21:38:09Z

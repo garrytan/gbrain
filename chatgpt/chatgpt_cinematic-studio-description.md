@@ -15,6 +15,8 @@ updated: 2026-04-29
 
 # Cinematic Studio Description
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69f1725e-5530-83e8-a06a-96c2f7b92d9b
 > Created: 2026-04-29T02:52:15Z
 > Updated: 2026-04-29T06:10:24Z

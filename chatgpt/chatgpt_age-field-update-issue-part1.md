@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Age Field Update Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: c8b4871e-e5b7-4373-bb1a-d10dfaf544f5
 > Created: 2023-11-23T08:58:24Z
 > Updated: 2023-11-23T09:27:06Z

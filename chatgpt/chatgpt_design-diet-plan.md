@@ -15,6 +15,8 @@ updated: 2024-06-24
 
 # Design Diet Plan
 
+**Related:** [[design_ux]]
+
 > Conversation ID: b6381aa6-8a62-4c22-a688-85a449421b4b
 > Created: 2024-06-24T21:33:40Z
 > Updated: 2024-06-24T21:34:20Z

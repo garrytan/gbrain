@@ -16,6 +16,8 @@ updated: 2025-11-22
 
 # Y Combinator advice AI
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6922368a-c1d0-8328-bd2e-e15e749a6fae
 > Created: 2025-11-22T22:19:39Z
 > Updated: 2025-11-22T22:34:21Z

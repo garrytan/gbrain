@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Budget Oliver Peoples Dupes
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68719394-ef70-8007-b2a4-b283f78e5e05
 > Created: 2025-07-11T22:43:33Z
 > Updated: 2025-07-11T22:44:49Z

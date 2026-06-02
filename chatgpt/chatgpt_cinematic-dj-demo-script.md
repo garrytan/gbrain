@@ -17,6 +17,8 @@ updated: 2026-05-18
 
 # Cinematic DJ Demo Script
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a0b639f-7120-83e8-b434-1836512dca65
 > Created: 2026-05-18T19:08:16Z
 > Updated: 2026-05-18T20:20:59Z

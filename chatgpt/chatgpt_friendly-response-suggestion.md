@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Friendly response suggestion
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6938e837-5394-832f-ac2f-7eae23ba5f09
 > Created: 2025-12-10T03:26:10Z
 > Updated: 2025-12-10T03:26:46Z

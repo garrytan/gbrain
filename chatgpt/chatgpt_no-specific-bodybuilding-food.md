@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # No specific bodybuilding food.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 411e889b-32d4-41c5-921e-b25fb7a30104
 > Created: 2024-01-19T18:25:38Z
 > Updated: 2024-01-19T21:05:34Z

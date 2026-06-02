@@ -17,6 +17,8 @@ updated: 2023-04-29
 
 # Vue.js profile picture component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 530029d0-fe75-4786-b54e-f3f66b9a9c42
 > Created: 2023-04-29T21:12:36Z
 > Updated: 2023-04-29T21:14:09Z

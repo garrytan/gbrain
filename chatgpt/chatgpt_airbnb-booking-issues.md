@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Airbnb booking issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 690a8190-1390-8326-8dc4-8298285510da
 > Created: 2025-11-04T22:43:28Z
 > Updated: 2025-11-04T22:50:12Z

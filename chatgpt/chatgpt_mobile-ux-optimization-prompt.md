@@ -17,6 +17,8 @@ updated: 2026-02-15
 
 # Mobile UX Optimization Prompt
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6991ffae-2438-8332-bbca-4a2855a4d9bc
 > Created: 2026-02-15T17:19:25Z
 > Updated: 2026-02-15T17:20:12Z

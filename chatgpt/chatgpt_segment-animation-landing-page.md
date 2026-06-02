@@ -15,6 +15,8 @@ updated: 2026-01-16
 
 # Segment Animation Landing Page
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 696aaad6-5c44-8329-98f0-25c2948c12df
 > Created: 2026-01-16T21:17:10Z
 > Updated: 2026-01-16T21:17:50Z

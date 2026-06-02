@@ -17,6 +17,8 @@ updated: 2026-05-13
 
 # Claude Code Cost Comparison
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6a03a567-3bc0-83e8-b780-0cb7b86d4b36
 > Created: 2026-05-12T22:10:47Z
 > Updated: 2026-05-13T18:07:23Z

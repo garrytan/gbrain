@@ -17,6 +17,8 @@ updated: 2026-05-27
 
 # GBrain Embedding Explanation
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6a16866e-4d84-83e8-aba2-b497d467ddfd
 > Created: 2026-05-27T05:51:57Z
 > Updated: 2026-05-27T05:56:42Z

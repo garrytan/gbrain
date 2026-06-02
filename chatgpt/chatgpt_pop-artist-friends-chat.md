@@ -15,6 +15,8 @@ updated: 2023-11-20
 
 # Pop Artist Friends Chat
 
+**Related:** [[personal_life]]
+
 > Conversation ID: e216af7a-02c9-4d9a-81e5-c699228f4e6b
 > Created: 2023-11-20T07:46:04Z
 > Updated: 2023-11-20T08:23:40Z

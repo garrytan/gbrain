@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Job options for income
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 687b1a87-4424-832d-96c5-d73bfec006d7
 > Created: 2025-07-19T04:09:44Z
 > Updated: 2025-07-19T04:39:23Z

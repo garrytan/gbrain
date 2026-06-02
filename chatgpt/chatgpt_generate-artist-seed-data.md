@@ -17,6 +17,8 @@ updated: 2025-08-20
 
 # Generate artist seed data
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68a564b4-e8fc-832c-9c56-1d3c126ca6fc
 > Created: 2025-08-20T06:01:25Z
 > Updated: 2025-08-20T06:24:03Z

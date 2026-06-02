@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Fix Layout Shifts.
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: c263177c-3bf5-4f4d-8b3f-122336aee666
 > Created: 2024-03-11T22:30:46Z
 > Updated: 2024-03-11T22:59:24Z

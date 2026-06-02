@@ -16,6 +16,8 @@ updated: 2025-05-31
 
 # Album Art in Streaming Era
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 683a81bd-ca94-8007-920a-91128fa4ffd5
 > Created: 2025-05-31T04:12:45Z
 > Updated: 2025-05-31T04:21:56Z

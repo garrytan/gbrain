@@ -15,6 +15,8 @@ updated: 2023-02-05
 
 # "Vue Default Export TypeError"
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: b42ba47c-6a55-49e2-b687-42bff6d61394
 > Created: 2023-02-05T03:25:12Z
 > Updated: 2023-02-05T03:25:12Z

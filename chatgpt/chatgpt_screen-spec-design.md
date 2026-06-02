@@ -16,6 +16,8 @@ updated: 2025-11-19
 
 # Screen spec design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 691d3a32-6a0c-832b-a01e-c9fa2625f0f7
 > Created: 2025-11-19T03:34:24Z
 > Updated: 2025-11-19T18:55:06Z

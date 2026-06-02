@@ -15,6 +15,8 @@ updated: 2025-03-24
 
 # Docker Desktop Overview
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 67e0d5a3-76b8-8007-81c2-dff8927fed03
 > Created: 2025-03-24T03:46:43Z
 > Updated: 2025-03-24T03:46:48Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Location sharing in relationships
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68cb7c7b-5fb8-8326-8aa6-32e577bc5361
 > Created: 2025-09-18T03:29:09Z
 > Updated: 2025-09-18T03:29:18Z

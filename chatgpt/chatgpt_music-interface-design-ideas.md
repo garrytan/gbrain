@@ -16,6 +16,8 @@ updated: 2026-05-05
 
 # Music Interface Design Ideas
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69ed8daa-1c24-83e8-bb98-b06fdd57003b
 > Created: 2026-04-26T03:59:39Z
 > Updated: 2026-05-05T22:50:59Z

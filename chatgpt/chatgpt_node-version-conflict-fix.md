@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Node Version Conflict Fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 697af344-58fc-8330-baf0-83e6256dc18a
 > Created: 2026-01-29T05:42:28Z
 > Updated: 2026-01-29T05:49:30Z

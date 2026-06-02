@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Music Career Tools
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69b60799-1e50-8322-9d79-381cbb83be7f
 > Created: 2026-03-15T01:13:02Z
 > Updated: 2026-03-15T01:13:36Z

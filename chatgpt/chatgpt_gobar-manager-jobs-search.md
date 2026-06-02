@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gobar manager jobs search
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69125b2c-7914-8328-8ab7-a2ac66f01ac9
 > Created: 2025-11-10T21:37:54Z
 > Updated: 2025-11-10T21:38:08Z

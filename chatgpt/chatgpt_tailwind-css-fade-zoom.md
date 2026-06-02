@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Tailwind CSS Fade Zoom
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: a03c466f-546d-4b43-951b-365caf174d70
 > Created: 2022-12-21T07:10:03Z
 > Updated: 2022-12-21T07:10:03Z

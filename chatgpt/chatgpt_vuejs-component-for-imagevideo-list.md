@@ -15,6 +15,8 @@ updated: 2023-02-26
 
 # Vue.js component for image/video list
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 33d7621b-4082-4808-97ba-bb2d498085b0
 > Created: 2023-02-26T00:11:06Z
 > Updated: 2023-02-26T00:11:06Z

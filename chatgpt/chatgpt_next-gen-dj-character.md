@@ -15,6 +15,8 @@ updated: 2025-05-18
 
 # Next-Gen DJ Character
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 682a49eb-3b0c-8007-9d56-41779c76b07b
 > Created: 2025-05-18T20:58:19Z
 > Updated: 2025-05-18T20:58:33Z

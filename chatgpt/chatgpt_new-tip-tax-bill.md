@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # New Tip Tax Bill
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 67bf98ea-f13c-8007-9684-9d9da341d61d
 > Created: 2025-02-26T22:42:51Z
 > Updated: 2025-02-26T22:42:58Z

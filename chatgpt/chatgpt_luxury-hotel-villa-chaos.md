@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Luxury Hotel Villa Chaos.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 38288120-8252-45cd-bcb9-2548edf10342
 > Created: 2024-03-04T04:23:08Z
 > Updated: 2024-03-04T04:38:18Z

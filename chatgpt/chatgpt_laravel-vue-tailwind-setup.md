@@ -15,6 +15,8 @@ updated: 2023-11-14
 
 # Laravel Vue Tailwind Setup
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 41a99f81-3887-4305-9453-b3096ba03bb2
 > Created: 2023-11-14T09:23:37Z
 > Updated: 2023-11-14T22:18:34Z

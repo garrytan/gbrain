@@ -15,6 +15,8 @@ updated: 2024-04-04
 
 # Fast Solo Bouncing Tracks
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 526896e2-d3e7-4938-9d83-f1afe50a19d3
 > Created: 2024-04-04T20:03:41Z
 > Updated: 2024-04-04T20:04:33Z

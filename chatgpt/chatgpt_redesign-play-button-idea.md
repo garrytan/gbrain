@@ -15,6 +15,8 @@ updated: 2026-03-02
 
 # Redesign Play Button Idea
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69a619ee-44a4-8327-9732-924f1908f1bd
 > Created: 2026-03-02T23:15:39Z
 > Updated: 2026-03-02T23:16:53Z

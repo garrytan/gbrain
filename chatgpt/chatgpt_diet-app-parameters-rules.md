@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Diet App Parameters & Rules
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 658768d2-f096-4ef7-bb1b-b9c7c6bb0860
 > Created: 2023-11-08T03:54:59Z
 > Updated: 2023-11-08T03:55:37Z

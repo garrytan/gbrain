@@ -16,6 +16,8 @@ updated: 2023-05-07
 
 # Router-link usage: Vue.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: a281893f-08d0-48ce-842a-874ed8873b2e
 > Created: 2023-05-07T07:06:26Z
 > Updated: 2023-05-07T07:06:43Z

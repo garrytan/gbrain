@@ -15,6 +15,8 @@ updated: 2026-04-07
 
 # Tip Artist CTA Advice
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69d56551-bdc4-83e8-a879-740d2a0e575e
 > Created: 2026-04-07T20:13:44Z
 > Updated: 2026-04-07T20:14:18Z

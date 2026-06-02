@@ -17,6 +17,8 @@ updated: 2026-05-19
 
 # Biggest Failures in Next.js AI
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6a0ce7b1-6678-83e8-b900-57aefb7e41f0
 > Created: 2026-05-19T22:44:14Z
 > Updated: 2026-05-19T22:47:34Z

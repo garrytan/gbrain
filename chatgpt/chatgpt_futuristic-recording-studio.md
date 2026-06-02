@@ -15,6 +15,8 @@ updated: 2023-11-10
 
 # Futuristic Recording Studio
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 3678f23a-f0e2-40c7-9a46-8587026fe900
 > Created: 2023-11-10T06:17:18Z
 > Updated: 2023-11-10T06:18:03Z

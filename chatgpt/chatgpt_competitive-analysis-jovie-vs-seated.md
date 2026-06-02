@@ -15,6 +15,8 @@ updated: 2026-04-15
 
 # Competitive Analysis Jovie vs Seated
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69e01555-7c38-83e8-9e2f-c91286839b51
 > Created: 2026-04-15T22:46:46Z
 > Updated: 2026-04-15T23:41:36Z

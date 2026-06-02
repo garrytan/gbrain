@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Kenan Thompson's Career Highlights
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 8222eb61-85a1-4063-b75f-a03b37c58263
 > Created: 2023-10-25T23:44:06Z
 > Updated: 2023-10-26T04:51:30Z

@@ -15,6 +15,8 @@ updated: 2026-05-27
 
 # Tailscale pricing options
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a166711-ac24-83e8-a05c-760ad26e628e
 > Created: 2026-05-27T03:37:58Z
 > Updated: 2026-05-27T03:38:04Z

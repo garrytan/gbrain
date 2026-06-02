@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Lemonade Pet Insurance Waiting Period
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: e8cc8efe-fa72-4e5a-8f59-92d2ffd8e9b5
 > Created: 2023-10-11T21:00:12Z
 > Updated: 2023-10-12T10:03:44Z

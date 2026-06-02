@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Fixing Bottom Nav Bar
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 687434b6-9668-8007-9ad5-b69c9e063dd1
 > Created: 2025-07-13T22:35:34Z
 > Updated: 2025-07-13T22:35:43Z

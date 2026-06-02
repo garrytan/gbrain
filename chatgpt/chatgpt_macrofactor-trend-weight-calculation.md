@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # MacroFactor trend weight calculation
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 692123c1-ee90-832d-a54e-89e9c04b5f99
 > Created: 2025-11-22T02:45:26Z
 > Updated: 2025-11-22T02:47:22Z

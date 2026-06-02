@@ -15,6 +15,8 @@ updated: 2026-01-31
 
 # Next.js Developer Skills
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 697e7ba0-c124-832a-83cb-05d0fcdf9e28
 > Created: 2026-01-31T22:01:05Z
 > Updated: 2026-01-31T22:01:39Z

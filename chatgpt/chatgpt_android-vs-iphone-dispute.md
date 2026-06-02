@@ -15,6 +15,8 @@ updated: 2025-05-27
 
 # Android vs iPhone Dispute
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68353b2b-5a74-8007-a92c-8484224ad36a
 > Created: 2025-05-27T04:10:19Z
 > Updated: 2025-05-27T04:11:14Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Credit Card Impact
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6963f0f4-df90-832e-ac93-829e77485623
 > Created: 2026-01-11T18:50:50Z
 > Updated: 2026-01-11T18:52:00Z

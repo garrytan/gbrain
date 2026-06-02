@@ -15,6 +15,8 @@ updated: 2025-10-28
 
 # Tip pool disclosure laws
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 69004966-be18-8329-b4e5-6371f27eb22f
 > Created: 2025-10-28T04:41:33Z
 > Updated: 2025-10-28T04:42:43Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Background job setup
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69392170-f684-832c-a90d-0d69598983a9
 > Created: 2025-12-10T07:29:53Z
 > Updated: 2025-12-10T07:56:47Z

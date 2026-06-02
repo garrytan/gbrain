@@ -17,6 +17,8 @@ updated: 2022-12-23
 
 # Improve Vue component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 21624845-784a-4f68-a48e-29856cf408fd
 > Created: 2022-12-23T23:36:34Z
 > Updated: 2022-12-23T23:36:34Z

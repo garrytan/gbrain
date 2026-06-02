@@ -16,6 +16,8 @@ updated: 2024-03-14
 
 # Guitar Tracking with Brent
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 95f93a3c-e6a0-46df-91c3-b25453db4876
 > Created: 2024-03-14T07:42:51Z
 > Updated: 2024-03-14T07:47:52Z

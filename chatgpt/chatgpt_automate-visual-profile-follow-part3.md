@@ -12,6 +12,8 @@ import random
 import time
 
 # Setup WebDriver
+
+**Related:** [[design_ux]]
 service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service)
 

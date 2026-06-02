@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fitness Channel Introduction
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 763d5634-bdaa-49ae-8a66-6722871d2e4e
 > Created: 2023-03-18T21:38:03Z
 > Updated: 2023-03-18T21:38:03Z

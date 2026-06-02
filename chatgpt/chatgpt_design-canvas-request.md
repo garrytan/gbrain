@@ -16,6 +16,8 @@ updated: 2026-05-16
 
 # Design Canvas Request
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a07f534-92fc-83e8-a1cd-bfaa85c30dce
 > Created: 2026-05-16T04:40:21Z
 > Updated: 2026-05-16T14:32:41Z

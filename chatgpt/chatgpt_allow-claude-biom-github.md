@@ -16,6 +16,8 @@ updated: 2026-01-09
 
 # Allow Claude Biom GitHub
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69608de2-525c-8326-82b7-63f88a412bbd
 > Created: 2026-01-09T05:11:06Z
 > Updated: 2026-01-09T05:12:16Z

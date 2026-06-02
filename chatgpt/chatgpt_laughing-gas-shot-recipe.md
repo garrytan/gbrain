@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Laughing Gas Shot Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 66e62ef6-8424-8007-b89d-a1ea8cf812ef
 > Created: 2024-09-15T00:48:54Z
 > Updated: 2024-09-15T00:49:20Z

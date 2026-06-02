@@ -16,6 +16,8 @@ updated: 2023-05-11
 
 # Laravel Mix Configuration.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: d2a51a17-af8d-44a8-921a-244ebbbe3073
 > Created: 2023-05-11T18:23:44Z
 > Updated: 2023-05-11T18:34:04Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Fitness, Fashion, Music, Travel.
 
+**Related:** [[personal_health]]
+
 > Conversation ID: bd30ab45-9856-40f8-9a87-c2afc105ff2e
 > Created: 2024-04-02T19:49:13Z
 > Updated: 2024-04-02T19:52:07Z

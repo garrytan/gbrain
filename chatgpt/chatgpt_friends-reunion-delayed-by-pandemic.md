@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Friends Reunion Delayed by Pandemic
 
+**Related:** [[personal_life]]
+
 > Conversation ID: d8bea130-5b02-4183-a23a-ebf78a622e56
 > Created: 2024-01-28T08:16:09Z
 > Updated: 2024-01-28T19:59:37Z

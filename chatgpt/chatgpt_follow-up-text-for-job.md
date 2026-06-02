@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Follow-Up Text for Job
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 0657672f-588e-4574-80a1-922fff29e7ff
 > Created: 2023-10-03T21:45:44Z
 > Updated: 2023-10-03T21:57:50Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Investigate Instagram Reel
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 69fd523a-1848-83e8-9901-c8b89e5da2bf
 > Created: 2026-05-08T03:02:19Z
 > Updated: 2026-05-08T06:07:50Z

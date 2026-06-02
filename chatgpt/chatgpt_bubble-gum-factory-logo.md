@@ -15,6 +15,8 @@ updated: 2023-10-28
 
 # Bubble Gum Factory Logo
 
+**Related:** [[design_ux]]
+
 > Conversation ID: b947caaa-c1fe-48db-b0e4-c3ab292ba7af
 > Created: 2023-10-28T01:51:24Z
 > Updated: 2023-10-28T02:28:54Z

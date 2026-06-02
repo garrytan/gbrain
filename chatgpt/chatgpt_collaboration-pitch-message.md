@@ -15,6 +15,8 @@ updated: 2025-09-12
 
 # Collaboration pitch message
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68c46dc7-4eac-8331-ae98-c37616873361
 > Created: 2025-09-12T19:04:00Z
 > Updated: 2025-09-12T19:04:07Z

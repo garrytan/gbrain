@@ -17,6 +17,8 @@ updated: 2023-12-05
 
 # Vue.js Body Tracking Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 1e1b848b-2115-48d9-b046-404b8f075fa9
 > Created: 2023-12-05T00:00:49Z
 > Updated: 2023-12-05T01:19:42Z

@@ -15,6 +15,8 @@ updated: 2025-01-20
 
 # CDJ-3000 Hot Cue Guide
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 678ed6b4-52fc-8007-933c-a850e6d0c05e
 > Created: 2025-01-20T23:05:24Z
 > Updated: 2025-01-20T23:05:36Z

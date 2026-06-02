@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bar Crawl Idea Legal Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 695c8c91-5d78-8328-84fb-eed3c441a12c
 > Created: 2026-01-06T04:16:17Z
 > Updated: 2026-01-06T04:16:43Z

@@ -16,6 +16,8 @@ updated: 2025-11-21
 
 # Apple ID fastlane setup
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6920bd55-0c4c-832a-8cce-53718daeb252
 > Created: 2025-11-21T19:28:24Z
 > Updated: 2025-11-21T19:29:07Z

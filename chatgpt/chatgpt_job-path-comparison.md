@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Job path comparison
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68faa5c6-d218-832c-8664-accb2cc4c527
 > Created: 2025-10-23T22:04:06Z
 > Updated: 2025-10-23T22:11:07Z

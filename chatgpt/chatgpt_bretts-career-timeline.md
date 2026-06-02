@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Brett's Career Timeline
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 90772d59-325c-4074-a36f-7bb161124f9a
 > Created: 2024-03-21T05:56:48Z
 > Updated: 2024-03-21T05:57:13Z

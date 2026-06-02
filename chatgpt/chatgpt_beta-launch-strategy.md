@@ -16,6 +16,8 @@ updated: 2025-11-23
 
 # Beta launch strategy
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69237264-5550-832a-9073-1fa06721a106
 > Created: 2025-11-23T20:45:25Z
 > Updated: 2025-11-23T21:18:22Z

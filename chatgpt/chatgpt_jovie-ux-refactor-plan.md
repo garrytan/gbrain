@@ -17,6 +17,8 @@ updated: 2026-05-17
 
 # Jovie UX Refactor Plan
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a0a1f8c-4f38-83e8-9544-9bf264b322c0
 > Created: 2026-05-17T20:14:18Z
 > Updated: 2026-05-17T20:25:07Z

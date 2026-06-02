@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Job search for hosting roles
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 688eaf9b-f00c-832d-9199-c9c2810986b0
 > Created: 2025-08-03T00:38:52Z
 > Updated: 2025-08-03T00:48:58Z

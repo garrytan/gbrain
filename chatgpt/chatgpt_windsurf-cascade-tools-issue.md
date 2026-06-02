@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Windsurf Cascade Tools Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6969c3a4-ff38-8331-9672-6e980c19addb
 > Created: 2026-01-16T04:50:45Z
 > Updated: 2026-01-16T23:38:11Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hotel booking help
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6953030e-4b48-8333-9aab-b652b3bbd11b
 > Created: 2025-12-29T22:39:17Z
 > Updated: 2025-12-29T22:41:41Z

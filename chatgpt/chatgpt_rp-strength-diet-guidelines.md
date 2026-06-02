@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # RP Strength Diet Guidelines
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 49a3d36c-f62d-4eca-a21e-a2a32e687c3f
 > Created: 2023-11-10T03:17:44Z
 > Updated: 2023-11-10T03:28:45Z

@@ -15,6 +15,8 @@ updated: 2023-10-27
 
 # Getting a Publishing Deal
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: ddbea39f-b9bc-4767-aca0-33f99d66e046
 > Created: 2023-10-27T01:31:31Z
 > Updated: 2023-10-27T06:36:08Z

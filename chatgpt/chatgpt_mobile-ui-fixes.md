@@ -15,6 +15,8 @@ updated: 2026-03-01
 
 # Mobile UI Fixes
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69a49a7c-14c8-8333-a66d-ae076d97fd7c
 > Created: 2026-03-01T19:59:02Z
 > Updated: 2026-03-01T20:00:09Z

@@ -15,6 +15,8 @@ updated: 2025-08-24
 
 # Workout schedule adjustment
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68aa29ab-35e8-832b-b7f9-85cb1a71d956
 > Created: 2025-08-23T20:51:25Z
 > Updated: 2025-08-24T01:31:40Z

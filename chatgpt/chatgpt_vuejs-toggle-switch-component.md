@@ -16,6 +16,8 @@ updated: 2023-05-05
 
 # Vue.js toggle switch component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 9f819a90-21b2-461c-b192-7afc71535b5f
 > Created: 2023-05-05T01:23:33Z
 > Updated: 2023-05-05T01:23:50Z

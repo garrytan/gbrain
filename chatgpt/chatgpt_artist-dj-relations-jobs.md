@@ -16,6 +16,8 @@ updated: 2025-03-04
 
 # Artist DJ Relations Jobs
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67c68679-2178-8007-9951-f82da3a15963
 > Created: 2025-03-04T04:50:01Z
 > Updated: 2025-03-04T05:00:05Z

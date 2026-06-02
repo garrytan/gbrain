@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Vea Hotel Newport Beach
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69530f83-f0fc-8325-9e82-9bf945acb7d6
 > Created: 2025-12-29T23:32:21Z
 > Updated: 2025-12-29T23:32:54Z

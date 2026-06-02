@@ -16,6 +16,8 @@ updated: 2026-03-04
 
 # Personal Brand Positioning
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69a7a8d8-0788-832b-becd-7ff04c4cca5b
 > Created: 2026-03-04T03:37:03Z
 > Updated: 2026-03-04T06:28:04Z

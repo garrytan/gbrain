@@ -15,6 +15,8 @@ updated: 2026-01-23
 
 # Claude capabilities overview
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6972c5f8-0860-832a-aa03-6eecf998c6fe
 > Created: 2026-01-23T00:51:04Z
 > Updated: 2026-01-23T00:51:59Z

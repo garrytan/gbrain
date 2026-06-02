@@ -16,6 +16,8 @@ updated: 2024-05-11
 
 # Playlist Proposal for Tim White
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 355fed44-7c0e-4e7c-b3b7-686e636baa69
 > Created: 2024-05-07T20:45:48Z
 > Updated: 2024-05-11T05:22:02Z

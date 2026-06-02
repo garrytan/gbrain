@@ -15,6 +15,8 @@ updated: 2026-05-16
 
 # Marketing AI Concept
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a08c81c-a48c-83e8-be05-8b705e5c800d
 > Created: 2026-05-16T19:40:13Z
 > Updated: 2026-05-16T19:40:47Z

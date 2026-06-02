@@ -16,6 +16,8 @@ updated: 2023-01-11
 
 # Vue Data Grid Cell Component
 
+**Related:** [[coding_web_dev]]
+
 
 > Conversation ID: 38a66b53-a120-4831-a643-2ab9f7c7b666
 > Created: 2023-01-11T20:22:45Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Car Service Reminder
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6834ad65-e370-8007-ab24-3fe27be538c5
 > Created: 2025-05-26T18:05:26Z
 > Updated: 2025-05-26T18:08:23Z

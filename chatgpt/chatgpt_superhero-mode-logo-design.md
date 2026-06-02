@@ -15,6 +15,8 @@ updated: 2023-11-23
 
 # Superhero Mode Logo Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 04840b36-b7e6-4770-ba7a-fc3d3d7478c2
 > Created: 2023-11-23T07:18:10Z
 > Updated: 2023-11-23T07:39:50Z

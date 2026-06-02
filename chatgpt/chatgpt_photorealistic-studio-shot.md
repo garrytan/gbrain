@@ -15,6 +15,8 @@ updated: 2026-04-29
 
 # Photorealistic Studio Shot
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69f1a1fa-80d4-83e8-8740-d16095b7793f
 > Created: 2026-04-29T06:15:23Z
 > Updated: 2026-04-29T06:50:10Z

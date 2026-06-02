@@ -15,6 +15,8 @@ updated: 2025-11-13
 
 # OpenAI iOS tech stack
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69163e20-bb10-8325-94d2-02df274bea1f
 > Created: 2025-11-13T20:23:10Z
 > Updated: 2025-11-13T22:13:57Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # House Rent vs Sell Analysis
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68643ad9-32d8-8007-88c4-8bc9c5a56158
 > Created: 2025-07-01T19:45:29Z
 > Updated: 2025-07-01T19:57:07Z

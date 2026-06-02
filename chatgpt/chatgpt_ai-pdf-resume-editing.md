@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # AI PDF Resume Editing
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6838f288-58f0-8007-8460-078dd2edbc5e
 > Created: 2025-05-29T23:49:28Z
 > Updated: 2025-05-29T23:49:49Z

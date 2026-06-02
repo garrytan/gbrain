@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Best fitness photo apps
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 690fd7bf-e700-8333-abb3-5896ecd3aedb
 > Created: 2025-11-08T23:52:44Z
 > Updated: 2025-11-08T23:53:27Z

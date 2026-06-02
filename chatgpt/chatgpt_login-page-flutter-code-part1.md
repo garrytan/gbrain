@@ -17,6 +17,8 @@ updated: 2024-01-20
 
 # Login Page Flutter Code
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 3e587d44-1e07-48f4-ba05-f2065d188eba
 > Created: 2024-01-20T01:22:05Z
 > Updated: 2024-01-20T20:41:33Z

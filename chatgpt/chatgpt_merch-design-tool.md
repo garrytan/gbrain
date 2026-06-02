@@ -17,6 +17,8 @@ updated: 2026-05-22
 
 # Merch Design Tool
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a1097ab-f6c0-83e8-a28f-2c2f7fed882b
 > Created: 2026-05-22T17:53:51Z
 > Updated: 2026-05-22T17:54:54Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # InnoDB Initialization Error
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: e2f6f968-c8e0-4a2f-81f9-8663e806b158
 > Created: 2023-05-25T18:33:36Z
 > Updated: 2023-05-25T18:33:59Z

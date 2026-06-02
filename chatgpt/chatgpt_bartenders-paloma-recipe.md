@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bartender's Paloma Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: bd57cc5e-8882-43cd-8719-c5e814184e64
 > Created: 2023-11-13T21:34:09Z
 > Updated: 2023-11-13T21:58:42Z

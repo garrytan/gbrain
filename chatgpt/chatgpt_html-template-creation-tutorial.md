@@ -16,6 +16,8 @@ updated: 2024-05-28
 
 # Html Template Creation Tutorial
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: f8b6de4b-41c8-4b5e-9cb0-bedea9a5499c
 > Created: 2024-05-28T02:59:39Z
 > Updated: 2024-05-28T03:00:02Z

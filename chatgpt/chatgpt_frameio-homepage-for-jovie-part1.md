@@ -17,6 +17,8 @@ updated: 2026-04-27
 
 # Frame.io Homepage for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69eefc57-af58-83e8-86ec-f5e9a0744879
 > Created: 2026-04-27T06:04:08Z
 > Updated: 2026-04-27T20:52:54Z

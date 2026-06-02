@@ -15,6 +15,8 @@ updated: 2026-03-07
 
 # Codex Pricing Differences
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69ab77b3-91ac-832f-a9d8-0ddecd72c435
 > Created: 2026-03-07T00:56:30Z
 > Updated: 2026-03-07T03:42:19Z

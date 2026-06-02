@@ -16,6 +16,8 @@ updated: 2025-11-21
 
 # Visual design guidelines
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69200626-bcc8-8328-aee8-2798d48c39bb
 > Created: 2025-11-21T06:29:20Z
 > Updated: 2025-11-21T20:25:03Z

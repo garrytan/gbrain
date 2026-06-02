@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cannot renew AppleCare coverage.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 14dda475-3647-44c0-a37a-c237f0672c95
 > Created: 2024-01-26T21:34:49Z
 > Updated: 2024-01-27T00:23:08Z

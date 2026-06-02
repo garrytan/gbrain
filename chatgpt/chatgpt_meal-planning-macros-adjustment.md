@@ -15,6 +15,8 @@ updated: 2024-07-31
 
 # Meal Planning Macros Adjustment
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: c9a1c6bf-ad92-4f64-9075-78b508156479
 > Created: 2024-07-31T02:39:55Z
 > Updated: 2024-07-31T02:40:52Z

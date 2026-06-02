@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # SimpleCar Prius Subscription
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67ee28a7-2598-8007-a5d1-c6b874f78e1a
 > Created: 2025-04-03T06:20:23Z
 > Updated: 2025-04-03T06:20:30Z

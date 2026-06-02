@@ -15,6 +15,8 @@ updated: 2026-05-26
 
 # GTM Strategy and Deck
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a1539b0-c460-83e8-a827-d17447cf046e
 > Created: 2026-05-26T06:12:06Z
 > Updated: 2026-05-26T07:47:40Z

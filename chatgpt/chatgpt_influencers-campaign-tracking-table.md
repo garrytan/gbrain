@@ -15,6 +15,8 @@ updated: 2024-06-22
 
 # Influencers Campaign Tracking Table
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: f4c5ede2-4507-4d4e-986a-0f4e50d03271
 > Created: 2024-06-22T00:09:23Z
 > Updated: 2024-06-22T00:11:12Z

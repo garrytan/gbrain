@@ -15,6 +15,8 @@ updated: 2026-04-29
 
 # Jovie Desktop Mode Ideas
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69f11f52-41cc-83e8-8e6e-a3ed78590cf9
 > Created: 2026-04-28T20:57:54Z
 > Updated: 2026-04-29T04:08:21Z

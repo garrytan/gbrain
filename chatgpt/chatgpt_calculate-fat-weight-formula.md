@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Calculate Fat Weight Formula
 
+**Related:** [[personal_health]]
+
 > Conversation ID: c1c881ad-7e6a-436f-be1a-4d73b34b9085
 > Created: 2024-01-14T21:25:49Z
 > Updated: 2024-01-14T21:28:22Z

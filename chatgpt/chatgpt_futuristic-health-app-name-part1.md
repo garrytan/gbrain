@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Futuristic Health App Name
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67ce3422-1474-8007-a041-a9e64a694eb4
 > Created: 2025-03-10T00:36:50Z
 > Updated: 2025-03-10T02:55:16Z

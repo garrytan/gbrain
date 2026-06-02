@@ -16,6 +16,8 @@ updated: 2022-12-23
 
 # Vue Emit and Listener
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 962818ec-6f7f-4100-88be-fb763af5bf5a
 > Created: 2022-12-23T22:27:53Z
 > Updated: 2022-12-23T22:27:53Z

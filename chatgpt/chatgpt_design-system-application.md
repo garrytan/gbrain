@@ -15,6 +15,8 @@ updated: 2026-03-01
 
 # Design System Application
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69a4b0dc-884c-832b-9950-a975e535cd1b
 > Created: 2026-03-01T21:34:42Z
 > Updated: 2026-03-01T21:34:57Z

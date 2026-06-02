@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Job fit for systems expert
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69017535-9e18-8330-9581-f30aff90ed02
 > Created: 2025-10-29T02:00:27Z
 > Updated: 2025-10-29T02:19:00Z

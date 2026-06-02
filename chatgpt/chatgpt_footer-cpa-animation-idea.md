@@ -17,6 +17,8 @@ updated: 2026-04-28
 
 # Footer CPA Animation Idea
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69efd159-a238-83e8-8103-984ee74450b2
 > Created: 2026-04-27T21:12:59Z
 > Updated: 2026-04-28T00:17:08Z

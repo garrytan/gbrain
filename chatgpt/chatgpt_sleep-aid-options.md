@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Sleep Aid Options
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6828bb94-6480-8007-826e-fc44fef5d177
 > Created: 2025-05-17T16:41:42Z
 > Updated: 2025-05-17T16:42:42Z

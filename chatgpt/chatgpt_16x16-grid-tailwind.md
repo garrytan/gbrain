@@ -16,6 +16,8 @@ updated: 2026-01-10
 
 # 16x16 Grid Tailwind
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6961d3f9-334c-832a-a94c-ca5f773f5487
 > Created: 2026-01-10T04:22:18Z
 > Updated: 2026-01-10T04:22:56Z

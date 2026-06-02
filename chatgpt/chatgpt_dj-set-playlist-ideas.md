@@ -16,6 +16,8 @@ updated: 2025-02-22
 
 # DJ Set Playlist Ideas
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67b91d12-51a8-8007-8734-825bb8fb64bc
 > Created: 2025-02-22T00:40:50Z
 > Updated: 2025-02-22T01:06:13Z

@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Fix VueJS computed property
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: b096f190-d779-4296-920b-85062e589318
 > Created: 2022-12-21T07:06:09Z
 > Updated: 2022-12-21T07:06:09Z

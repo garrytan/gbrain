@@ -15,6 +15,8 @@ updated: 2025-12-30
 
 # Code Quality Tools for Startups
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69531df0-2ea4-832b-983a-1ed6ca181c3f
 > Created: 2025-12-30T00:33:52Z
 > Updated: 2025-12-30T00:34:28Z

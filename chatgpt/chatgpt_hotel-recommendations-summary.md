@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hotel recommendations summary.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 5ee10396-8ace-44ce-bca1-bfad754ff906
 > Created: 2024-03-26T22:23:02Z
 > Updated: 2024-03-26T22:33:53Z

@@ -16,6 +16,8 @@ updated: 2023-05-20
 
 # Simplified Vue Profile Pic
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: a27cdcaf-bdb1-4d45-91c4-4172665d24ef
 > Created: 2023-05-20T22:40:20Z
 > Updated: 2023-05-20T22:40:43Z

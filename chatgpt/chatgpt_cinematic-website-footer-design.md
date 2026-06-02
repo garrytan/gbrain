@@ -17,6 +17,8 @@ updated: 2026-04-28
 
 # Cinematic Website Footer Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69effc87-db58-83e8-945d-3fa41f93606f
 > Created: 2026-04-28T00:17:12Z
 > Updated: 2026-04-28T00:48:50Z

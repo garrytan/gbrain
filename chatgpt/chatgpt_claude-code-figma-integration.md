@@ -15,6 +15,8 @@ updated: 2026-02-20
 
 # Claude Code Figma Integration
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6998bd7e-f878-8331-84bc-8440a7699054
 > Created: 2026-02-20T20:01:03Z
 > Updated: 2026-02-20T20:01:38Z

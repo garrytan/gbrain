@@ -16,6 +16,8 @@ updated: 2026-01-14
 
 # React Nuqs Library
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6966bd41-d198-832f-852c-5fd5493bb8cc
 > Created: 2026-01-13T21:46:42Z
 > Updated: 2026-01-14T23:31:24Z

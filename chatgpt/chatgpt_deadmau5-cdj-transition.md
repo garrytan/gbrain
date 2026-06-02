@@ -16,6 +16,8 @@ updated: 2025-03-06
 
 # Deadmau5 CDJ Transition
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67c92c42-532c-8007-a536-34a8e8a48fa7
 > Created: 2025-03-06T05:01:54Z
 > Updated: 2025-03-06T05:09:40Z

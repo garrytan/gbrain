@@ -15,6 +15,8 @@ updated: 2025-08-20
 
 # Next.js vs Laravel comparison
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68a5ebbe-5ebc-832c-89fb-38a310c73fe8
 > Created: 2025-08-20T15:40:12Z
 > Updated: 2025-08-20T16:05:30Z

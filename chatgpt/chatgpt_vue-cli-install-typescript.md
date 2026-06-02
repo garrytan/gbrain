@@ -16,6 +16,8 @@ updated: 2023-02-05
 
 # Vue CLI Install & TypeScript
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: bcc5799b-7053-46c8-9d47-6e13cded7af0
 > Created: 2023-02-05T03:41:47Z
 > Updated: 2023-02-05T03:41:47Z

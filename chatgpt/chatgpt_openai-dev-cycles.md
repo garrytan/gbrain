@@ -16,6 +16,8 @@ updated: 2025-11-26
 
 # OpenAI dev cycles
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6927784a-c4b4-832f-b3ef-770212e9a36a
 > Created: 2025-11-26T22:01:00Z
 > Updated: 2025-11-26T22:02:15Z

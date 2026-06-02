@@ -15,6 +15,8 @@ updated: 2024-01-16
 
 # App Disappears on iPhone
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6b720b05-b740-4db7-aef1-3cc96b9dccff
 > Created: 2024-01-16T03:51:44Z
 > Updated: 2024-01-16T03:52:09Z

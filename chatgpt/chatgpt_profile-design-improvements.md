@@ -17,6 +17,8 @@ updated: 2025-08-17
 
 # Profile design improvements
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6898e0a2-bf80-832b-bf24-45ac076a6b1c
 > Created: 2025-08-10T18:10:57Z
 > Updated: 2025-08-17T16:50:41Z

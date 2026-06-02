@@ -16,6 +16,8 @@ updated: 2023-01-22
 
 # Vue Spinner Component Design
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 999f0831-e09f-4481-a93c-477234bb4a64
 > Created: 2023-01-22T20:49:37Z
 > Updated: 2023-01-22T20:49:37Z

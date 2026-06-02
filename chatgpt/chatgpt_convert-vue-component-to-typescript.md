@@ -16,6 +16,8 @@ updated: 2022-12-22
 
 # Convert Vue Component to TypeScript
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 0dcd2bb1-66f2-42bd-a060-0fff5bedfac3
 > Created: 2022-12-22T04:06:53Z
 > Updated: 2022-12-22T04:06:53Z

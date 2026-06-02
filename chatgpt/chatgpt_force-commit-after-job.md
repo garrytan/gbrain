@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Force commit after job
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6935c9b1-985c-8326-b481-250ea2cbf849
 > Created: 2025-12-07T18:38:53Z
 > Updated: 2025-12-07T18:39:50Z

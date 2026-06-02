@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Internet and Phone Options
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6820d886-06b8-8007-abc7-1b52e6605794
 > Created: 2025-05-11T17:04:06Z
 > Updated: 2025-05-11T17:32:28Z

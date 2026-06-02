@@ -16,6 +16,8 @@ updated: 2025-11-17
 
 # iOS app icon design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 691b4a00-f2b4-8333-ac90-764318758ac6
 > Created: 2025-11-17T16:14:57Z
 > Updated: 2025-11-17T16:46:20Z

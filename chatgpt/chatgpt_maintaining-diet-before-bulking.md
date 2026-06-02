@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Maintaining Diet Before Bulking
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 8a980930-6f54-4cd0-a68b-4f0b36ec04d2
 > Created: 2024-01-17T21:18:04Z
 > Updated: 2024-01-17T23:24:10Z

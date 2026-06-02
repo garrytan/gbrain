@@ -15,6 +15,8 @@ updated: 2026-04-01
 
 # Codex and Claude Limitations
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69ccc04a-07ac-83e8-b47f-9c76521a64d7
 > Created: 2026-04-01T06:50:51Z
 > Updated: 2026-04-01T07:04:13Z

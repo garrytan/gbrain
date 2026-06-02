@@ -15,6 +15,8 @@ updated: 2026-02-16
 
 # Angel Investors for Jovie
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 699261e6-f8b4-8329-95f5-c6968907a3cd
 > Created: 2026-02-16T00:17:32Z
 > Updated: 2026-02-16T00:33:17Z

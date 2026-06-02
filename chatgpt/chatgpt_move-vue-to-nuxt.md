@@ -17,6 +17,8 @@ updated: 2024-06-06
 
 # Move Vue to Nuxt
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: c398aa53-52f8-4b10-b006-8974f0a1d5cc
 > Created: 2024-06-06T06:28:57Z
 > Updated: 2024-06-06T06:30:45Z

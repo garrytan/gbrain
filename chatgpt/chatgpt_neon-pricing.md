@@ -15,6 +15,8 @@ updated: 2025-12-22
 
 # Neon pricing
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69497713-5718-832a-b58e-dc38f3b282b4
 > Created: 2025-12-22T16:51:32Z
 > Updated: 2025-12-22T16:52:04Z

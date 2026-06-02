@@ -32,6 +32,8 @@ Here’s a per-environment breakdown of every secret or key you’ll need, plus 
 ### Example `.env.local`
 ```env
 # .env.local (git-ignored)
+
+**Related:** [[coding_web_dev]]
 NEXT_PUBLIC_SUPABASE_URL=https://xyz-dev.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=anon-key-dev
 SUPABASE_SERVICE_ROLE_KEY=service-role-key-dev

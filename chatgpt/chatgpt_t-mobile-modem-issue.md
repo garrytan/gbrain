@@ -15,6 +15,8 @@ updated: 2025-07-22
 
 # T-Mobile modem issue
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 687f0935-ec64-832e-bf55-964a10b6426d
 > Created: 2025-07-22T03:44:54Z
 > Updated: 2025-07-22T03:45:50Z

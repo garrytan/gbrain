@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Cursor snapshot error fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69462e45-7020-8327-ba63-2b7e4f675fea
 > Created: 2025-12-20T05:04:06Z
 > Updated: 2025-12-20T05:04:56Z

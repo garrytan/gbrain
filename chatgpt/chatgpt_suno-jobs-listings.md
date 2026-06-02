@@ -15,6 +15,8 @@ updated: 2025-11-21
 
 # Suno jobs listings
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6920da93-0fdc-8325-ad97-4d3cf627d5f4
 > Created: 2025-11-21T21:33:09Z
 > Updated: 2025-11-21T21:33:31Z

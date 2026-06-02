@@ -17,6 +17,8 @@ updated: 2025-12-22
 
 # Auto-Claude troubleshooting steps
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69498048-00d4-8328-9b09-4cec76d63f4b
 > Created: 2025-12-22T17:31:02Z
 > Updated: 2025-12-22T18:20:26Z

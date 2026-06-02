@@ -15,6 +15,8 @@ updated: 2024-08-02
 
 # Adjusting Recipe Proportions
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 3d21d09d-9282-41f7-a1ec-ba53d2aa61e4
 > Created: 2024-08-02T01:21:58Z
 > Updated: 2024-08-02T01:25:10Z

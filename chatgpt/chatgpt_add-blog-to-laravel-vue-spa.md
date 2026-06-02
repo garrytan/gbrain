@@ -15,6 +15,8 @@ updated: 2023-01-04
 
 # Add Blog to Laravel Vue SPA
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: e5f968aa-d50c-4918-b137-e2e519632510
 > Created: 2023-01-04T22:43:30Z
 > Updated: 2023-01-04T22:43:30Z

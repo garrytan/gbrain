@@ -15,6 +15,8 @@ updated: 2023-05-17
 
 # Contact Avatar Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 7a6b6ee2-c587-417b-be93-4f2c74080b19
 > Created: 2023-05-17T00:03:42Z
 > Updated: 2023-05-17T00:04:02Z

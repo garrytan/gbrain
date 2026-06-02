@@ -15,6 +15,8 @@ updated: 2024-06-04
 
 # Playlist Tracking Table Summary
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: b2f2b165-1046-405a-a2fb-951d65db9d30
 > Created: 2024-06-04T19:55:50Z
 > Updated: 2024-06-04T19:56:10Z

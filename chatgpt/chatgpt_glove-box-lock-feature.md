@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Glove box lock feature
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 693391f1-4ff0-832d-ae24-dc7518d8215c
 > Created: 2025-12-06T02:16:37Z
 > Updated: 2025-12-06T02:18:11Z

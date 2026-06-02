@@ -16,6 +16,8 @@ updated: 2022-12-24
 
 # Fix JavaScript function
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 63490436-db13-4f02-8301-2fcf66897465
 > Created: 2022-12-24T03:04:16Z
 > Updated: 2022-12-24T03:04:16Z

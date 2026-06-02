@@ -16,6 +16,8 @@ updated: 2023-05-25
 
 # Use MariaDB in Laravel Sail
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 1d85b844-d6ad-4df3-95db-c5064f462ecb
 > Created: 2023-05-25T18:34:36Z
 > Updated: 2023-05-25T18:35:45Z

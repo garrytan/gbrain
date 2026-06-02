@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Exercise stock options, tax
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 9aec74d9-8785-4289-9051-0672a3f428b6
 > Created: 2023-05-05T22:53:19Z
 > Updated: 2023-05-05T22:53:30Z

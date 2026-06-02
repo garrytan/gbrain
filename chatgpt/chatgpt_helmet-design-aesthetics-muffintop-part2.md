@@ -1,6 +1,8 @@
 
 # Designing the MUFFINTOP Helmet: Principles and Concept Guide
 
+**Related:** [[design_ux]]
+
 ## Introduction  
 Electronic music performers often create a memorable persona by wearing iconic helmet-style heads – from Marshmello’s smiling marshmallow mask to Deadmau5’s giant mouse head and Daft Punk’s sleek visors. These designs are not random; they draw on proven aesthetic and psychological principles to maximize visual appeal. **MUFFINTOP** will be a new EDM stage persona with a helmet inspired by a blueberry muffin – featuring a rounded “muffin top” with blueberry-like accents, a friendly simple face (a wide upturned smile), and a large rounded black visor for the eyes. The style aims to be minimalist, slightly futuristic, and broadly appealing to adult festival-goers. To achieve this, we need to research and apply design principles related to cuteness, simplicity, proportion, and usability (comfort and visibility on stage). By examining cognitive science and successful examples (Marshmello, Deadmau5, Daft Punk, etc.), we can develop a scientifically grounded design guide for MUFFINTOP’s helmet.
 

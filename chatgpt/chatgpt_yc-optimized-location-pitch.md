@@ -15,6 +15,8 @@ updated: 2026-02-12
 
 # YC Optimized Location Pitch
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 698d403c-9810-8331-8c7d-6db2c6c9b97f
 > Created: 2026-02-12T02:52:22Z
 > Updated: 2026-02-12T04:44:37Z

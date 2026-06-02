@@ -12,6 +12,8 @@ Let me explain clearly and practically — no hand-wave.
 
 # **Why “invite-only + claim link + waitlist” is the right move**
 
+**Related:** [[design_ux]]
+
 ## **1) Your entire GTM is built on *you create profiles for creators proactively***  
 The product is **not a self-signup SaaS**.  
 It’s a **curated ingestion + claim experience**.

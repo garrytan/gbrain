@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # High Usage Investigation
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6a012a40-c31c-83e8-81d2-5262337e882b
 > Created: 2026-05-11T01:00:49Z
 > Updated: 2026-05-11T02:32:24Z

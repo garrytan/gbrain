@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Sleeping in Mazda CX-5
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68927050-e564-8332-b438-f0678d9f0d74
 > Created: 2025-08-05T20:58:34Z
 > Updated: 2025-08-05T21:04:24Z

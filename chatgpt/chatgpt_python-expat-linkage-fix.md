@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Python Expat Linkage Fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6a18e025-3434-83e8-afc6-17c571123de2
 > Created: 2026-05-29T00:39:07Z
 > Updated: 2026-05-29T00:53:26Z

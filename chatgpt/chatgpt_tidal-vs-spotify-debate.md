@@ -15,6 +15,8 @@ updated: 2025-07-06
 
 # Tidal vs Spotify Debate
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 686ab928-48b4-8007-91ae-1edc59fe3b01
 > Created: 2025-07-06T17:58:00Z
 > Updated: 2025-07-06T17:58:07Z

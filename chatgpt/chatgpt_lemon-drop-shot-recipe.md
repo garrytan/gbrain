@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Lemon Drop Shot Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 9a62355d-3b6e-4cd0-b5d4-ee9257211bb5
 > Created: 2023-12-09T03:39:18Z
 > Updated: 2023-12-09T21:13:07Z

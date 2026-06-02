@@ -15,6 +15,8 @@ updated: 2026-04-24
 
 # Profile Redesign for Subscribers
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69eab676-c594-83e8-8d44-d3e4e4bce182
 > Created: 2026-04-24T00:16:56Z
 > Updated: 2026-04-24T03:54:30Z

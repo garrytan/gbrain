@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Workout Shake on Cut
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 5f626133-b425-410c-9ade-3328e55b4e95
 > Created: 2023-11-07T21:44:27Z
 > Updated: 2023-11-07T21:45:24Z

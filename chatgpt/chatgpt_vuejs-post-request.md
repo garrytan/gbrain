@@ -16,6 +16,8 @@ updated: 2023-05-07
 
 # Vue.js POST Request
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 9962fb34-4565-4cbf-97f7-7d67ae570091
 > Created: 2023-05-07T20:53:39Z
 > Updated: 2023-05-07T20:53:57Z

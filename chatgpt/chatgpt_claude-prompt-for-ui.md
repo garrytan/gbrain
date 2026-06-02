@@ -17,6 +17,8 @@ updated: 2025-11-17
 
 # Claude prompt for UI
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 691a8292-f414-8328-bc8d-5416d71cae30
 > Created: 2025-11-17T02:04:03Z
 > Updated: 2025-11-17T02:07:43Z

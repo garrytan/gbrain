@@ -15,6 +15,8 @@ updated: 2024-07-31
 
 # Fitness Tracker Options
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 9a710858-5937-4abb-868e-db3035fa96ba
 > Created: 2024-07-31T03:28:40Z
 > Updated: 2024-07-31T03:30:47Z

@@ -16,6 +16,8 @@ updated: 2026-01-12
 
 # Genius Shot Rebranding Inquiry
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6965699d-1314-8331-98c8-6b9a49b9de79
 > Created: 2026-01-12T21:38:05Z
 > Updated: 2026-01-12T22:02:33Z

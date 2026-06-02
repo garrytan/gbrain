@@ -15,6 +15,8 @@ updated: 2025-12-19
 
 # Startup survival summary
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6945a181-c098-8330-893d-e569535492b9
 > Created: 2025-12-19T19:03:32Z
 > Updated: 2025-12-19T19:08:06Z

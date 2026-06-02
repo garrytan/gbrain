@@ -16,6 +16,8 @@ updated: 2024-06-21
 
 # Style sky button Tailwind
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 038bc7aa-56de-4ee9-ae7b-5c5d2e0b72b4
 > Created: 2024-06-21T06:22:48Z
 > Updated: 2024-06-21T06:23:17Z

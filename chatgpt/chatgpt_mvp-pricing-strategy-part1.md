@@ -17,6 +17,8 @@ updated: 2025-12-02
 
 # MVP pricing strategy
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 692b3e57-1b5c-832a-bbc2-f139f1cebad4
 > Created: 2025-11-29T18:43:11Z
 > Updated: 2025-12-02T19:52:32Z

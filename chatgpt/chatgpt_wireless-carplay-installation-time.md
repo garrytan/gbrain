@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Wireless CarPlay Installation Time
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6812b9ec-86b8-8007-baa2-e6b0b47b7a28
 > Created: 2025-05-01T00:01:48Z
 > Updated: 2025-05-02T00:23:43Z

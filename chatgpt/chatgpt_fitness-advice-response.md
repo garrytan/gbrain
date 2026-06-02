@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fitness advice response
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 688acca7-4948-8333-889c-c64e5ec10916
 > Created: 2025-07-31T01:54:03Z
 > Updated: 2025-07-31T01:54:09Z

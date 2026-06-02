@@ -17,6 +17,8 @@ updated: 2026-05-31
 
 # Jovi Logo Animation Concept
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a1bdcda-99fc-83e8-8632-ce4927aaa8ca
 > Created: 2026-05-31T07:01:49Z
 > Updated: 2026-05-31T07:32:01Z

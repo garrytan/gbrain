@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job application message
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6883ec2e-b4fc-8324-8c9d-7035eead6d59
 > Created: 2025-07-25T20:42:23Z
 > Updated: 2025-07-25T20:42:32Z

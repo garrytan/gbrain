@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Dean Kamen Steve Jobs Segway
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6848c387-3ad8-8007-a98c-ad1271ad6132
 > Created: 2025-06-10T23:45:33Z
 > Updated: 2025-06-10T23:51:32Z

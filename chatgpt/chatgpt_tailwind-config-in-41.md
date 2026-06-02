@@ -16,6 +16,8 @@ updated: 2025-09-16
 
 # Tailwind config in 4.1
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68c97f68-a50c-8332-8f80-befa3f420a91
 > Created: 2025-09-16T15:16:57Z
 > Updated: 2025-09-16T15:21:21Z

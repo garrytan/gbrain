@@ -15,6 +15,8 @@ updated: 2025-07-20
 
 # Vinyl wrap cost inquiry
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 687d2930-ed14-8320-9dc4-774790aaaab0
 > Created: 2025-07-20T17:36:49Z
 > Updated: 2025-07-20T17:42:29Z

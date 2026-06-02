@@ -15,6 +15,8 @@ updated: 2026-01-25
 
 # LinkedIn Investor Strategy
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6975633b-feb8-8331-96e1-e855b5f3a640
 > Created: 2026-01-25T00:26:36Z
 > Updated: 2026-01-25T00:26:51Z

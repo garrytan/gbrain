@@ -205,6 +205,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import random
 
 # Setup logging
+
+**Related:** [[coding_mobile]]
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Initialize Algolia client

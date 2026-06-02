@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # LA gyms with cambered bars
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 69235fdf-d86c-832b-ae42-a71fed84193d
 > Created: 2025-11-23T19:26:53Z
 > Updated: 2025-11-23T19:41:17Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Roy Rogers Recipe Guide
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 66dbc5df-7404-8007-9892-67ec4b5a101b
 > Created: 2024-09-07T03:17:51Z
 > Updated: 2024-09-07T03:17:55Z

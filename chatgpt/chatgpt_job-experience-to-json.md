@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Job experience to JSON
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 691278aa-f5cc-8331-8a39-20075f2ddd93
 > Created: 2025-11-10T23:43:39Z
 > Updated: 2025-11-10T23:44:22Z

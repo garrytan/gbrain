@@ -15,6 +15,8 @@ updated: 2025-12-07
 
 # Fundraising story draft
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6935da66-54ac-8333-8937-2de347d3531e
 > Created: 2025-12-07T19:51:08Z
 > Updated: 2025-12-07T19:52:28Z

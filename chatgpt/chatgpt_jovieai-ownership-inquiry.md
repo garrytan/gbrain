@@ -15,6 +15,8 @@ updated: 2026-02-23
 
 # Jovie.ai Ownership Inquiry
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 699ccafc-cfb0-8328-8be9-ca36348d0226
 > Created: 2026-02-23T21:47:41Z
 > Updated: 2026-02-23T21:48:33Z

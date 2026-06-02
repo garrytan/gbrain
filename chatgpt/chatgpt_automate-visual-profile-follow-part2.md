@@ -524,6 +524,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 import json
 
 # Start a new Selenium browser session
+
+**Related:** [[design_ux]]
 service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service)
 

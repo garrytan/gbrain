@@ -16,6 +16,8 @@ updated: 2024-05-31
 
 # Great Logo Design Experience
 
+**Related:** [[design_ux]]
+
 > Conversation ID: b5c0ab36-0974-4090-bf96-d6f0fbeebbc0
 > Created: 2024-05-31T07:30:43Z
 > Updated: 2024-05-31T08:06:45Z

@@ -17,6 +17,8 @@ updated: 2025-12-20
 
 # Pricing and workflow comparison
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 694610d9-d960-8325-84b3-e40fc0f1bcf2
 > Created: 2025-12-20T02:58:35Z
 > Updated: 2025-12-20T05:19:48Z

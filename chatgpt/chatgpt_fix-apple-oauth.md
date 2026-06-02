@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fix Apple OAuth
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6a00da06-c8bc-83e8-a191-8de588f9504a
 > Created: 2026-05-10T19:18:32Z
 > Updated: 2026-05-10T20:38:07Z

@@ -15,6 +15,8 @@ updated: 2024-07-20
 
 # Server Updates and Drink Adjustments
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: d8a579bf-2e6e-451f-9af8-c98deed588f8
 > Created: 2024-07-20T20:05:11Z
 > Updated: 2024-07-20T20:06:34Z

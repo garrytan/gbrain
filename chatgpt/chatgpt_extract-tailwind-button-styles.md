@@ -16,6 +16,8 @@ updated: 2025-12-15
 
 # Extract tailwind button styles
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 694093b2-8180-8325-8501-e447eda5064a
 > Created: 2025-12-15T23:03:21Z
 > Updated: 2025-12-15T23:35:42Z

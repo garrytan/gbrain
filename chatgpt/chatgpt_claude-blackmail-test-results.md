@@ -15,6 +15,8 @@ updated: 2025-05-26
 
 # Claude Blackmail Test Results
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6834a6ba-7d84-8007-a735-f1cbc0f9ae60
 > Created: 2025-05-26T17:36:58Z
 > Updated: 2025-05-26T17:38:41Z

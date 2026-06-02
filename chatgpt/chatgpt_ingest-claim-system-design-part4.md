@@ -54,6 +54,8 @@ This is the **best possible version to ship on the homepage**:
 
 # **One Profile. Infinite Journeys.**
 
+**Related:** [[design_ux]]
+
 Jovie is a dynamic creator profile that adapts in real time for every visitor — not a static link page. First-time listeners see your music. Returning fans see new drops. Subscribers aren’t asked to subscribe again. The experience evolves based on intent, history, and state, guiding every tap toward listening, subscribing, buying, and long-term fandom — automatically.
 
 **Request Early Access →**

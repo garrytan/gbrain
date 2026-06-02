@@ -16,6 +16,8 @@ updated: 2025-05-13
 
 # Marshmello DJ Helmet Setup
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6822f2c7-9664-8007-87f9-2f63ea707093
 > Created: 2025-05-13T07:20:39Z
 > Updated: 2025-05-13T07:41:03Z

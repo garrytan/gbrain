@@ -15,6 +15,8 @@ updated: 2026-02-02
 
 # SSR Hybrid Approach in Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 698000c8-4624-832d-8e85-bdd15bbd4e00
 > Created: 2026-02-02T01:41:28Z
 > Updated: 2026-02-02T01:42:04Z

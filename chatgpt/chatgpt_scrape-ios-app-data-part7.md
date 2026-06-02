@@ -24,6 +24,8 @@ import random
 import mysql.connector
 
 # Database connection parameters
+
+**Related:** [[coding_mobile]]
 db_config = {
     'user': 'your_username',
     'password': 'your_password',

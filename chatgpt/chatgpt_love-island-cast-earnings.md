@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Love Island Cast Earnings
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 34fb3acb-b9b7-49e1-a2a8-0cb80e773e91
 > Created: 2023-10-28T02:30:23Z
 > Updated: 2023-10-28T03:22:48Z

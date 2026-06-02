@@ -15,6 +15,8 @@ updated: 2026-05-27
 
 # AI iPhone Organization Help
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6a16663a-a3a0-83e8-a2ac-1d17bde38db3
 > Created: 2026-05-27T03:35:23Z
 > Updated: 2026-05-27T03:35:46Z

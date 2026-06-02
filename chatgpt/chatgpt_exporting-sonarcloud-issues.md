@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Exporting SonarCloud Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69538296-ec80-8325-a255-163dbe5c4021
 > Created: 2025-12-30T07:43:25Z
 > Updated: 2025-12-30T07:43:39Z

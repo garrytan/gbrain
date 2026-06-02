@@ -16,6 +16,8 @@ updated: 2025-11-08
 
 # Building software revenue
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 690eb62c-9bac-8330-8116-21799fc27694
 > Created: 2025-11-08T03:17:04Z
 > Updated: 2025-11-08T04:22:27Z

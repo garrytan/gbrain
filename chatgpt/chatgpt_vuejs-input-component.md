@@ -16,6 +16,8 @@ updated: 2023-02-04
 
 # Vue.js Input Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: dec39015-a012-437b-b1bb-a080823aa326
 > Created: 2023-02-04T01:39:49Z
 > Updated: 2023-02-04T01:39:49Z

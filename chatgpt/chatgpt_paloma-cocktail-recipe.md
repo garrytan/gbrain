@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Paloma Cocktail Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: a3e7e50a-8a17-4684-8f9d-f9fefb8459d8
 > Created: 2023-11-06T22:37:28Z
 > Updated: 2023-11-07T00:28:48Z

@@ -16,6 +16,8 @@ updated: 2026-05-16
 
 # Jovie Logo Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a08e719-214c-83e8-a634-00055aef4b28
 > Created: 2026-05-16T21:52:25Z
 > Updated: 2026-05-16T22:07:17Z

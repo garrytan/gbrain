@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Angelina Jolie and Billy Bob Thornton Relationship
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 928bdcd7-af90-429d-9907-f3f0cae2b8af
 > Created: 2023-11-16T08:42:26Z
 > Updated: 2023-11-16T08:58:11Z

@@ -16,6 +16,8 @@ updated: 2024-06-22
 
 # Targeting Music Artists Instagram
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 5c9ad336-7e39-49cd-bcc6-be6046feaae5
 > Created: 2024-06-22T17:36:54Z
 > Updated: 2024-06-22T19:22:08Z

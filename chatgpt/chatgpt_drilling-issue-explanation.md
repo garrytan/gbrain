@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Drilling issue explanation
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69129d05-cdc8-832c-ae3f-a76ca140f545
 > Created: 2025-11-11T02:19:34Z
 > Updated: 2025-11-11T02:23:31Z

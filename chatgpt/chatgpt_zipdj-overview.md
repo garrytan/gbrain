@@ -15,6 +15,8 @@ updated: 2025-06-13
 
 # ZIPDJ Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 684b8c33-1418-8007-a73f-b659f9ccf477
 > Created: 2025-06-13T02:25:55Z
 > Updated: 2025-06-13T02:26:05Z

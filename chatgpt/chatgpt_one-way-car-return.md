@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # One-way car return
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6807e52b-9da0-8007-bfb6-453e4eab7a19
 > Created: 2025-04-22T18:51:24Z
 > Updated: 2025-04-22T18:52:20Z

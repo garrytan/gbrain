@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Debug onboarding issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6901081a-413c-8330-b128-5be7d960bfbf
 > Created: 2025-10-28T18:15:03Z
 > Updated: 2025-10-28T18:16:32Z

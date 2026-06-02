@@ -16,6 +16,8 @@ updated: 2023-05-03
 
 # Shopify code installment pricing
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 50bd77b0-b6ff-4bab-8d8d-5cfb694684d7
 > Created: 2023-05-03T17:44:25Z
 > Updated: 2023-05-03T17:45:48Z

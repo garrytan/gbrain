@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # User Requests Juice Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 7e7e015e-96e7-4d91-a450-63c8e296515d
 > Created: 2024-07-17T03:29:28Z
 > Updated: 2024-07-17T03:29:43Z

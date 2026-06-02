@@ -17,6 +17,8 @@ updated: 2025-08-31
 
 # Admin workflow design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68b49c6a-64a4-832f-a4ef-6bcf5f2501f9
 > Created: 2025-08-31T19:03:06Z
 > Updated: 2025-08-31T19:24:54Z

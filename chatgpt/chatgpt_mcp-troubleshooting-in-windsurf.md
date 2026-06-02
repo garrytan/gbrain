@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # MCP troubleshooting in Windsurf
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69322012-1e00-832f-a799-b0452dd4495f
 > Created: 2025-12-04T23:58:10Z
 > Updated: 2025-12-05T00:36:52Z

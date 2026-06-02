@@ -16,6 +16,8 @@ updated: 2026-01-07
 
 # Extract Tailwind Classes
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 695ec21a-e670-8330-b5d1-7fd64a0a7db7
 > Created: 2026-01-07T20:29:15Z
 > Updated: 2026-01-07T20:54:07Z

@@ -15,6 +15,8 @@ updated: 2026-05-13
 
 # Design Implementation Issue
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a04b254-139c-83e8-8320-3899a1b9015d
 > Created: 2026-05-13T17:18:12Z
 > Updated: 2026-05-13T17:19:34Z

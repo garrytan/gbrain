@@ -16,6 +16,8 @@ updated: 2025-11-19
 
 # iOS app improvement tips
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 691d3253-5ec0-8327-b3b7-cce0687fe4c6
 > Created: 2025-11-19T02:58:39Z
 > Updated: 2025-11-19T03:00:17Z

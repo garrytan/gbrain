@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Workout Photo Caption
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 579b094e-cb10-4a11-a58e-dd9bf02967ca
 > Created: 2024-08-13T20:52:31Z
 > Updated: 2024-08-14T21:15:21Z

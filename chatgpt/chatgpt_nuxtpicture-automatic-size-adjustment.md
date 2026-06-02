@@ -16,6 +16,8 @@ updated: 2024-06-06
 
 # NuxtPicture Automatic Size Adjustment
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: bf3f067d-2d79-4146-9c49-b227aff3a157
 > Created: 2024-06-06T20:23:40Z
 > Updated: 2024-06-06T20:37:17Z

@@ -15,6 +15,8 @@ updated: 2025-11-24
 
 # TestFlight review process
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6923aae4-b830-832d-8235-d7a257409240
 > Created: 2025-11-24T00:46:46Z
 > Updated: 2025-11-24T16:17:45Z

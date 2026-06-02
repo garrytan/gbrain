@@ -17,6 +17,8 @@ updated: 2025-08-29
 
 # AI tools for logo enhancement
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68b21b4c-9efc-832b-a44c-60286fe72bfa
 > Created: 2025-08-29T21:28:52Z
 > Updated: 2025-08-29T23:57:11Z

@@ -16,6 +16,8 @@ updated: 2025-03-10
 
 # Force pnpm on Vercel
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 67ce755e-f6f8-8007-af14-7b93281051d6
 > Created: 2025-03-10T05:15:11Z
 > Updated: 2025-03-10T06:59:31Z

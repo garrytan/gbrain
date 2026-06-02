@@ -15,6 +15,8 @@ updated: 2026-02-23
 
 # GitHub for Startups
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 699cd8b7-ac10-8333-9454-0d5a367193aa
 > Created: 2026-02-23T22:46:18Z
 > Updated: 2026-02-23T22:46:53Z

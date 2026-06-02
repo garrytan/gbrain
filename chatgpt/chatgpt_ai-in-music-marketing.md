@@ -16,6 +16,8 @@ updated: 2026-02-03
 
 # AI in Music Marketing
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6981418e-b1e0-832e-82ba-8e76df2e398f
 > Created: 2026-02-03T00:30:07Z
 > Updated: 2026-02-03T00:41:42Z

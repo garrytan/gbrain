@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Time zone issue fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68d04217-6c3c-832e-8bfb-cdd5a404d63d
 > Created: 2025-09-21T18:21:35Z
 > Updated: 2025-09-21T18:22:08Z

@@ -395,6 +395,8 @@ I’ll write it as if it’s `docs/link_ingestion_and_suggestions.md`.
 
 # Jovi Link Ingestion & Suggestions System
 
+**Related:** [[business_startup]]
+
 ## High-level goals
 
 - Let **users and admins paste any profile/link-in-bio/social URL** and:

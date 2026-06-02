@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Socal Hotel Options
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6952ff6d-0168-832a-bdc0-087b8ad903df
 > Created: 2025-12-29T22:23:41Z
 > Updated: 2025-12-29T22:25:15Z

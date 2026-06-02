@@ -15,6 +15,8 @@ updated: 2026-03-02
 
 # Cannabis Laws in Hollywood
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 69a5dae4-ee6c-832c-be0a-02f653cdf8e0
 > Created: 2026-03-02T18:46:10Z
 > Updated: 2026-03-02T18:46:26Z

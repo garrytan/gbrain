@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Love is Everything
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 980cba1b-387d-4d6e-a179-9e945760610a
 > Created: 2024-05-14T22:33:02Z
 > Updated: 2024-05-14T22:33:16Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Jobs with David Fincher
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67c7c334-38d8-8007-9c55-3e90fe1fc8be
 > Created: 2025-03-05T03:21:24Z
 > Updated: 2025-03-05T03:29:32Z

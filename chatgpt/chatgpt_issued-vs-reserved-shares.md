@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Issued vs Reserved Shares
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6967d31d-a3b4-8329-9c2f-b99a6c099bd9
 > Created: 2026-01-14T17:32:28Z
 > Updated: 2026-01-14T17:32:33Z

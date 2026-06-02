@@ -15,6 +15,8 @@ updated: 2022-12-24
 
 # Vue.js template rendering
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6b395a60-4cd3-475d-bc73-3080ee885eda
 > Created: 2022-12-24T04:43:52Z
 > Updated: 2022-12-24T04:43:52Z

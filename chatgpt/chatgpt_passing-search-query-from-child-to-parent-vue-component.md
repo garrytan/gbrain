@@ -16,6 +16,8 @@ updated: 2022-12-21
 
 # Passing Search Query from Child to Parent Vue Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: c9ce3b56-4abb-4ab9-ac0d-c1b71520a12e
 > Created: 2022-12-21T00:59:28Z
 > Updated: 2022-12-21T00:59:28Z

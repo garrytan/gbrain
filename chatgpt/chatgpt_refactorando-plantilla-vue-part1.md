@@ -17,6 +17,8 @@ updated: 2024-06-07
 
 # Refactorando Plantilla Vue
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: d095dd49-1c5f-4863-97bc-539851c9b913
 > Created: 2024-06-07T19:14:47Z
 > Updated: 2024-06-07T19:39:35Z

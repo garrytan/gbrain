@@ -15,6 +15,8 @@ updated: 2023-10-30
 
 # Colin Farrell & Britney Spears' Heights
 
+**Related:** [[business_startup]]
+
 > Conversation ID: fa7c946a-bb5e-494f-84c6-9e8aff65eb3f
 > Created: 2023-10-29T21:10:41Z
 > Updated: 2023-10-30T01:43:00Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Chingy's Evolving Career Path
 
+**Related:** [[personal_life]]
+
 > Conversation ID: d1c9d61d-71d5-4065-b737-e0ac456c1d30
 > Created: 2024-01-15T17:37:49Z
 > Updated: 2024-01-16T05:27:47Z

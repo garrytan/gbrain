@@ -16,6 +16,8 @@ updated: 2025-12-29
 
 # CI Migration Deployment Gating
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6952c897-e00c-832c-a4d1-e85175dc08a2
 > Created: 2025-12-29T18:30:18Z
 > Updated: 2025-12-29T18:30:49Z

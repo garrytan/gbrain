@@ -16,6 +16,8 @@ updated: 2026-04-30
 
 # Mac Mini Pricing Overview
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69f2dc7a-bccc-83e8-9f5a-16083f85d086
 > Created: 2026-04-30T04:37:15Z
 > Updated: 2026-04-30T04:45:20Z

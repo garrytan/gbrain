@@ -16,6 +16,8 @@ updated: 2025-08-18
 
 # Fix pricing table error
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68a28ecb-361c-832e-8949-982ce9e30933
 > Created: 2025-08-18T02:24:18Z
 > Updated: 2025-08-18T02:25:54Z

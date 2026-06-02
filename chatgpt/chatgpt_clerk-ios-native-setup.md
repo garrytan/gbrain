@@ -16,6 +16,8 @@ updated: 2026-05-28
 
 # Clerk iOS Native Setup
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6a1882f5-7cdc-83e8-b5c3-8f2085902d69
 > Created: 2026-05-28T18:02:05Z
 > Updated: 2026-05-28T19:23:33Z

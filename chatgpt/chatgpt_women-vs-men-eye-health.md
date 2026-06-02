@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Women vs Men Eye Health
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6c16e85b-8204-4e9f-8efa-943b912e3894
 > Created: 2024-09-04T22:21:46Z
 > Updated: 2024-09-04T22:21:55Z

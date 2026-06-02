@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Creatine for Workouts.
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 04a44fa0-d7de-4553-83ad-fd8487b5d010
 > Created: 2023-04-25T22:51:39Z
 > Updated: 2023-04-25T23:09:22Z

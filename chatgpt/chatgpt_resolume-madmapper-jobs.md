@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Resolume MadMapper jobs
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 692a2337-6bdc-8333-a090-d840cfa707a1
 > Created: 2025-11-28T22:33:27Z
 > Updated: 2025-11-28T22:36:43Z

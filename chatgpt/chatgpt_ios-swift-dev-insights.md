@@ -15,6 +15,8 @@ updated: 2025-07-11
 
 # iOS Swift Dev Insights
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 687197d5-6eb8-8007-8f65-e0a662f93f75
 > Created: 2025-07-11T23:01:41Z
 > Updated: 2025-07-11T23:02:24Z

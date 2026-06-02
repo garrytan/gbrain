@@ -16,6 +16,8 @@ updated: 2026-05-28
 
 # Fundraising in Chaos
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a18c3b4-0ae4-83e8-ac15-e9a3caf457b0
 > Created: 2026-05-28T22:42:40Z
 > Updated: 2026-05-28T22:58:08Z

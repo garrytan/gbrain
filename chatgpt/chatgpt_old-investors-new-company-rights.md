@@ -16,6 +16,8 @@ updated: 2025-12-14
 
 # Old investors new company rights
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 693e1255-142c-832b-a46c-55f2416573c7
 > Created: 2025-12-14T01:26:46Z
 > Updated: 2025-12-14T01:45:29Z

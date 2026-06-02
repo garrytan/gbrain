@@ -15,6 +15,8 @@ updated: 2023-02-07
 
 # Tailwind CSS Border Types
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 0e5f01e6-800a-43f4-8ff2-7ff1490a0c37
 > Created: 2023-02-07T21:03:34Z
 > Updated: 2023-02-07T21:03:34Z

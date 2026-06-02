@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Laylo.com Investment Overview
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 69618589-4888-8332-95f5-ece7c8e19d49
 > Created: 2026-01-09T22:47:37Z
 > Updated: 2026-01-09T22:48:41Z

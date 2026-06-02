@@ -15,6 +15,8 @@ updated: 2026-02-01
 
 # Sonarr Read-Only Props
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 697e96ce-833c-8333-9cde-abac09fadcbc
 > Created: 2026-01-31T23:57:23Z
 > Updated: 2026-02-01T00:03:28Z

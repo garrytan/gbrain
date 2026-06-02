@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Capture Email Addresses SQL
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 63e0eebb-3c9a-4d8e-9e1b-25076ff3d380
 > Created: 2023-12-13T00:44:53Z
 > Updated: 2023-12-13T00:45:32Z

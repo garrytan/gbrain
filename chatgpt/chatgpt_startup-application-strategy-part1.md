@@ -16,6 +16,8 @@ updated: 2025-08-08
 
 # Startup application strategy
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68963504-8698-8332-9917-a43c91c90003
 > Created: 2025-08-08T17:38:41Z
 > Updated: 2025-08-08T19:04:24Z

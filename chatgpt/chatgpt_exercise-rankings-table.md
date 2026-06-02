@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Exercise Rankings Table
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67c9087f-c084-8007-828e-23759c25ec35
 > Created: 2025-03-06T02:29:19Z
 > Updated: 2025-03-06T02:37:58Z

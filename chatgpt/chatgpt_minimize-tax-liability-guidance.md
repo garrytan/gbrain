@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Minimize tax liability guidance
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68dbf271-0a00-8324-a852-77a4a41fa428
 > Created: 2025-09-30T15:09:16Z
 > Updated: 2025-09-30T15:11:01Z

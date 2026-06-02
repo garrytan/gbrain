@@ -17,6 +17,8 @@ updated: 2023-12-05
 
 # Create Vue Chart Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: aa8d5d0c-bfe7-4615-afdb-13a194292374
 > Created: 2023-12-05T21:10:20Z
 > Updated: 2023-12-05T21:12:10Z

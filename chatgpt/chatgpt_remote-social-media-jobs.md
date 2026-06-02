@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Remote social media jobs
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 692a2977-9cb0-832b-9a9f-ee44d7297a85
 > Created: 2025-11-28T23:00:08Z
 > Updated: 2025-11-28T23:01:44Z

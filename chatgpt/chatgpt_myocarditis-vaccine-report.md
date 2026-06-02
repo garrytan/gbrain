@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Myocarditis Vaccine Report
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68311407-9e6c-8007-9cfb-68247d9d006c
 > Created: 2025-05-24T00:34:15Z
 > Updated: 2025-05-24T00:34:59Z

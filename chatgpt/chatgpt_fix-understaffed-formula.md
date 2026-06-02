@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Fix understaffed formula
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68e717c9-4ce0-8321-9cb5-cc042ae920d8
 > Created: 2025-10-09T02:03:37Z
 > Updated: 2025-10-09T02:04:24Z

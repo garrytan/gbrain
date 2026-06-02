@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Scarlet Song Resemblance
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 12abd2ac-f455-4441-ba49-0d17e88a1ad5
 > Created: 2024-05-27T22:35:40Z
 > Updated: 2024-05-27T23:13:13Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Modern Family Country Club
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 696ad455-3f24-832d-8087-b53ce7b21a17
 > Created: 2026-01-17T00:14:13Z
 > Updated: 2026-01-17T00:15:00Z

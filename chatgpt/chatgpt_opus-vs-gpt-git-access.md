@@ -17,6 +17,8 @@ updated: 2025-12-09
 
 # Opus vs GPT Git Access
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6937ba91-2d7c-832d-8a75-bcdb860c3c31
 > Created: 2025-12-09T05:58:41Z
 > Updated: 2025-12-09T05:59:52Z

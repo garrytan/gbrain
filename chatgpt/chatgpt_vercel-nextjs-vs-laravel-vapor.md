@@ -15,6 +15,8 @@ updated: 2025-06-22
 
 # Vercel Next.js vs Laravel Vapor
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68582971-b28c-8007-ad82-5807ff7a4281
 > Created: 2025-06-22T16:04:01Z
 > Updated: 2025-06-22T16:04:09Z

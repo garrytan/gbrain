@@ -16,6 +16,8 @@ updated: 2026-01-01
 
 # CDJ Firmware Updates
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67df1cb7-ef50-8007-95ec-d0c9bb1c0de6
 > Created: 2025-03-22T20:25:28Z
 > Updated: 2026-01-01T17:02:15Z

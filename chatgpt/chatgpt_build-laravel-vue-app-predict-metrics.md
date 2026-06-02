@@ -17,6 +17,8 @@ updated: 2023-11-23
 
 # Build Laravel-Vue App: Predict Metrics
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 1c875a9d-03af-45d8-9316-17e8a49e34f4
 > Created: 2023-11-23T06:21:03Z
 > Updated: 2023-11-23T08:41:17Z

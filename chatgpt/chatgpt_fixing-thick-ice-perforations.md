@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Fixing Thick Ice Perforations
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 460fb87e-c7c4-4c1f-969b-23dfa36a34bf
 > Created: 2023-12-14T21:28:48Z
 > Updated: 2023-12-14T21:51:14Z

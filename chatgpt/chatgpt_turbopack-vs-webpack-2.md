@@ -15,6 +15,8 @@ updated: 2026-01-19
 
 # Turbopack vs Webpack
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 696d7990-70c0-832f-8f7d-cc25c4e5c93b
 > Created: 2026-01-19T00:23:45Z
 > Updated: 2026-01-19T03:14:56Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Plan for Diet Phases
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 1913eb9f-045e-484c-915f-09f9bfe7b48e
 > Created: 2023-11-14T04:57:30Z
 > Updated: 2023-11-14T05:07:43Z

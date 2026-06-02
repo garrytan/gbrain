@@ -17,6 +17,8 @@ updated: 2026-05-08
 
 # Artist Profiles Carousel SEO
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69fe377a-a184-83e8-b17c-df594e975fb5
 > Created: 2026-05-08T19:20:27Z
 > Updated: 2026-05-08T20:43:37Z

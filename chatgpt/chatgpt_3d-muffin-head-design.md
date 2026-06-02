@@ -15,6 +15,8 @@ updated: 2025-05-24
 
 # 3D Muffin Head Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6831f41e-4fa4-8007-9c7d-ed14a58b8956
 > Created: 2025-05-24T16:30:22Z
 > Updated: 2025-05-24T17:28:04Z

@@ -17,6 +17,8 @@ updated: 2023-01-22
 
 # Package.json Laravel Vue.js
 
+**Related:** [[coding_web_dev]]
+
 
 > Conversation ID: 88c14130-9641-41ec-8477-23dc5113a7e4
 > Created: 2023-01-22T19:40:00Z

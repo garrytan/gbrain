@@ -15,6 +15,8 @@ updated: 2025-07-14
 
 # Altman OpenAI Salary Fact-check
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6874583e-18ac-8007-be11-c5a8caa03673
 > Created: 2025-07-14T01:07:10Z
 > Updated: 2025-07-14T01:08:50Z

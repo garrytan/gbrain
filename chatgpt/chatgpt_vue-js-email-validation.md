@@ -16,6 +16,8 @@ updated: 2022-12-22
 
 # Vue JS Email Validation
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 3511b5cf-7b09-4014-9fcf-6aa78462efea
 > Created: 2022-12-22T19:17:16Z
 > Updated: 2022-12-22T19:17:16Z

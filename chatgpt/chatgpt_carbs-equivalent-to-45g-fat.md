@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Carbs Equivalent to 45g Fat
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 7ded269e-1e63-4d2a-9a7a-264215bc7674
 > Created: 2023-09-26T11:37:06Z
 > Updated: 2023-09-27T02:50:07Z

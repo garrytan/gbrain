@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Parking Gate Issue 해결
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6833876b-549c-8007-8d87-da34676d2157
 > Created: 2025-05-25T21:11:07Z
 > Updated: 2025-05-25T21:11:26Z

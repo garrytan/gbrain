@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # AI House Interview Strategy
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6a17a221-5264-83e8-bcae-f5fe8c76d1ef
 > Created: 2026-05-28T02:02:15Z
 > Updated: 2026-05-28T16:31:48Z

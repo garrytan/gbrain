@@ -16,6 +16,8 @@ updated: 2023-05-05
 
 # Vue.js label template.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 79893865-53a1-40cb-b37d-eed58224addb
 > Created: 2023-05-05T04:14:43Z
 > Updated: 2023-05-05T04:15:15Z

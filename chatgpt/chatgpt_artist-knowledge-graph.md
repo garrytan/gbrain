@@ -17,6 +17,8 @@ updated: 2026-05-29
 
 # Artist Knowledge Graph
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a1a22aa-0a74-83e8-b2f8-896d83aa76fb
 > Created: 2026-05-29T23:35:38Z
 > Updated: 2026-05-29T23:53:24Z

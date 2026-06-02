@@ -17,6 +17,8 @@ updated: 2026-01-07
 
 # Linear Design System OKLCH
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 695ece54-b8c4-8327-9dfb-5d71e8f4ee18
 > Created: 2026-01-07T21:21:25Z
 > Updated: 2026-01-07T21:26:24Z

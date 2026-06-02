@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Mazda cx-5 sun visor issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68f825fa-1570-832c-8f1c-c77e15429743
 > Created: 2025-10-22T00:32:07Z
 > Updated: 2025-10-22T00:32:14Z

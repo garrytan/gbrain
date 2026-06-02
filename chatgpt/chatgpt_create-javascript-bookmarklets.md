@@ -17,6 +17,8 @@ updated: 2024-05-25
 
 # Create JavaScript Bookmarklets.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: fc3cd833-9f49-4ddc-a496-e3e30b9f3678
 > Created: 2024-05-24T23:52:25Z
 > Updated: 2024-05-25T00:03:09Z

@@ -17,6 +17,8 @@ updated: 2025-07-10
 
 # iOS 26 Liquid Glass Integration
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 686f23ab-5830-8007-ac3e-c9a93fd4def2
 > Created: 2025-07-10T02:21:31Z
 > Updated: 2025-07-10T02:21:56Z

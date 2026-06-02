@@ -15,6 +15,8 @@ updated: 2024-05-25
 
 # Android TV not casting.
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 471917af-548d-4e49-84b0-8610cbaffa79
 > Created: 2024-05-25T05:09:49Z
 > Updated: 2024-05-25T05:09:55Z

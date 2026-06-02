@@ -16,6 +16,8 @@ updated: 2026-05-14
 
 # Closed Loops Brand Rewrite
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a062210-c9fc-83e8-9f70-bf5a8ea78d0a
 > Created: 2026-05-14T19:27:13Z
 > Updated: 2026-05-14T20:17:59Z

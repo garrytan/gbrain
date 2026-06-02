@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Aperol Spritz Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 3648b7b5-2a0f-4ef5-8f7a-b6de6630c0b5
 > Created: 2024-07-27T00:08:47Z
 > Updated: 2024-07-27T00:09:10Z

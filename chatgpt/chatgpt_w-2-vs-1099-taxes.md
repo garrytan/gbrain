@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # W-2 vs 1099 taxes
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68f3e323-98e4-8328-be25-45fc9898f55b
 > Created: 2025-10-18T18:57:41Z
 > Updated: 2025-10-18T18:57:55Z

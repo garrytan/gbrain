@@ -15,6 +15,8 @@ updated: 2026-05-01
 
 # AI Changelog Insights for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69f41bc8-6950-83e8-93d8-27dd2e0b4250
 > Created: 2026-05-01T03:19:37Z
 > Updated: 2026-05-01T03:44:09Z

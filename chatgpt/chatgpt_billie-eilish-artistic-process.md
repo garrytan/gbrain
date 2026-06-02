@@ -16,6 +16,8 @@ updated: 2025-10-28
 
 # Billie Eilish artistic process
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69003af8-c380-8327-a1e6-2ad773964406
 > Created: 2025-10-28T03:39:38Z
 > Updated: 2025-10-28T03:53:43Z

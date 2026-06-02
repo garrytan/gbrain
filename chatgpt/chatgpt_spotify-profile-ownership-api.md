@@ -15,6 +15,8 @@ updated: 2025-12-15
 
 # Spotify profile ownership API
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69405272-2264-8330-9fa5-df29296b745a
 > Created: 2025-12-15T18:24:50Z
 > Updated: 2025-12-15T18:25:33Z

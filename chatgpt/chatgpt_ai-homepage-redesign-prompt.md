@@ -17,6 +17,8 @@ updated: 2025-12-07
 
 # AI homepage redesign prompt
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6934cd2f-2e0c-8328-9031-adb468476003
 > Created: 2025-12-07T00:42:09Z
 > Updated: 2025-12-07T04:05:50Z

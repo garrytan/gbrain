@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # 50 Cent Laugh Bank
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6819047d-d54c-8007-9302-50033d9b514f
 > Created: 2025-05-05T18:33:34Z
 > Updated: 2025-05-05T18:47:56Z

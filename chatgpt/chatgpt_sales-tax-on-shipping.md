@@ -15,6 +15,8 @@ updated: 2026-01-15
 
 # Sales Tax on Shipping
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69697211-668c-8330-b0eb-e07049ec50d5
 > Created: 2026-01-15T23:02:41Z
 > Updated: 2026-01-15T23:03:44Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Spacex Investment Considerations
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 69d98c9c-e0a4-83e8-b952-330adeb2585a
 > Created: 2026-04-10T23:49:49Z
 > Updated: 2026-04-11T00:08:22Z

@@ -17,6 +17,8 @@ updated: 2025-07-10
 
 # LegalGlass iOS Integration
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 686f0809-8c70-8007-b50b-90d9fd7e500f
 > Created: 2025-07-10T00:23:37Z
 > Updated: 2025-07-10T01:17:13Z

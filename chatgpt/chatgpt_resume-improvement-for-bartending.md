@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Resume Improvement for Bartending
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 89d2ebfd-3d3a-4e38-8ad6-0d1b3f19773a
 > Created: 2023-11-08T03:58:15Z
 > Updated: 2023-11-08T06:46:36Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Windsurf update issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69323513-9b28-8333-ab55-6ed626ca8c2f
 > Created: 2025-12-05T01:27:48Z
 > Updated: 2025-12-05T01:29:13Z

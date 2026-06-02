@@ -15,6 +15,8 @@ updated: 2026-04-16
 
 # Design Improvement Suggestions
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69e06743-cdd0-83e8-abfb-8fad0698c62a
 > Created: 2026-04-16T04:36:20Z
 > Updated: 2026-04-16T05:11:13Z

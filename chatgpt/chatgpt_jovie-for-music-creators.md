@@ -16,6 +16,8 @@ updated: 2026-04-25
 
 # Jovie for Music Creators
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69ec1797-c2d8-83e8-8b4c-18f666ce821a
 > Created: 2026-04-25T01:23:36Z
 > Updated: 2026-04-25T03:23:24Z

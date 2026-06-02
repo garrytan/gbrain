@@ -16,6 +16,8 @@ updated: 2024-05-17
 
 # Target Scandinavia for Spotify.
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 0fd1fee1-dea2-4b8c-8c72-2378294b80b9
 > Created: 2024-05-17T19:22:54Z
 > Updated: 2024-05-17T19:25:23Z

@@ -15,6 +15,8 @@ updated: 2026-01-07
 
 # Vercel Geist Sans Usage
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 695edfc5-ab68-832b-a974-07dc715ba594
 > Created: 2026-01-07T22:35:50Z
 > Updated: 2026-01-07T22:36:54Z

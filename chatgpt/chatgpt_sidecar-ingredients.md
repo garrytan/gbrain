@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Sidecar ingredients
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 687862d8-5d8c-8327-9d44-e82babdc4ea7
 > Created: 2025-07-17T02:41:29Z
 > Updated: 2025-07-17T02:41:35Z

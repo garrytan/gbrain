@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Health Metrics App Overview
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 57bd6bc2-0922-4438-8e68-6fd9d69b19a5
 > Created: 2024-01-29T07:35:03Z
 > Updated: 2024-01-29T08:01:08Z

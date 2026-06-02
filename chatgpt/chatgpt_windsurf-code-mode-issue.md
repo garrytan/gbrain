@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Windsurf code mode issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6917ddaf-9b60-832d-8276-acabdcb0a7b0
 > Created: 2025-11-15T01:56:02Z
 > Updated: 2025-11-15T01:56:23Z

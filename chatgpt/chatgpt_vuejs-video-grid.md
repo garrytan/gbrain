@@ -15,6 +15,8 @@ updated: 2023-03-01
 
 # Vue.js video grid
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 7b54e66f-999b-4a8a-ae47-8f6f3b6d0834
 > Created: 2023-03-01T02:10:33Z
 > Updated: 2023-03-01T02:10:33Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Gold's Gym Membership Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68293c0a-6720-8007-bf5e-049f6434c15e
 > Created: 2025-05-18T01:46:50Z
 > Updated: 2025-05-18T02:15:48Z

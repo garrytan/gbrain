@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # YC investment valuation
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 693b46b8-ceec-832d-b121-24f017ec213f
 > Created: 2025-12-11T22:33:29Z
 > Updated: 2025-12-11T22:33:37Z

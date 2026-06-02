@@ -17,6 +17,8 @@ updated: 2026-05-20
 
 # Premium Chat Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a09474c-23bc-83e8-a191-a7d352deb01a
 > Created: 2026-05-17T04:42:52Z
 > Updated: 2026-05-20T04:05:52Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Negroni Recipe Guide
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 681ff946-2d14-8007-9d2a-318a4a720113
 > Created: 2025-05-11T01:11:35Z
 > Updated: 2025-05-11T01:11:49Z

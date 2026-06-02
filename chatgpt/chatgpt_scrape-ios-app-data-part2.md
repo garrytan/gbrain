@@ -37,6 +37,8 @@ Here’s a Python example of how you might accomplish this:
 from algoliasearch.search_client import SearchClient
 
 # Initialize the client
+
+**Related:** [[coding_mobile]]
 client = SearchClient.create('YourApplicationID', 'YourAPIKey')
 index = client.init_index('user-index')
 

@@ -15,6 +15,8 @@ updated: 2025-03-10
 
 # Nuxt vs Laravel for MVP
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 67ce78b6-c3b8-8007-b24e-9f900c3ce988
 > Created: 2025-03-10T05:29:27Z
 > Updated: 2025-03-10T05:31:18Z

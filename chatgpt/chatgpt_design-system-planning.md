@@ -16,6 +16,8 @@ updated: 2026-02-01
 
 # Design System Planning
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 697fdb19-dec0-832d-84ea-d503b12befb4
 > Created: 2026-02-01T23:00:54Z
 > Updated: 2026-02-01T23:04:30Z

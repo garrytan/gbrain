@@ -16,6 +16,8 @@ updated: 2023-02-12
 
 # JS HTML Element Access
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 37da3859-3a9f-4fbe-b41e-f486acb9e6f1
 > Created: 2023-02-12T18:08:31Z
 > Updated: 2023-02-12T18:08:31Z

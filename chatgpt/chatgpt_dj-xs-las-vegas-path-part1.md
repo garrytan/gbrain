@@ -16,6 +16,8 @@ updated: 2025-02-23
 
 # DJ XS Las Vegas Path
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67bab92d-dd08-8007-a675-3a199900987d
 > Created: 2025-02-23T05:59:09Z
 > Updated: 2025-02-23T06:08:23Z

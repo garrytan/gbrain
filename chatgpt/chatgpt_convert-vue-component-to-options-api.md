@@ -15,6 +15,8 @@ updated: 2023-01-13
 
 # Convert Vue Component To Options API
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 315b9cd4-cca2-4a4e-aafd-1550acc5ebe0
 > Created: 2023-01-13T20:09:36Z
 > Updated: 2023-01-13T20:09:36Z

@@ -17,6 +17,8 @@ updated: 2025-07-09
 
 # UX Design Principles
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 686db5ec-978c-8007-a78e-1f447532e4f1
 > Created: 2025-07-09T00:21:00Z
 > Updated: 2025-07-09T02:48:10Z

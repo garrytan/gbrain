@@ -15,6 +15,8 @@ updated: 2025-12-22
 
 # AutoClaude overview
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69497f1c-156c-832d-a7b1-44f720ee1f88
 > Created: 2025-12-22T17:25:48Z
 > Updated: 2025-12-22T17:26:36Z

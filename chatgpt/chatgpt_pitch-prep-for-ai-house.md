@@ -16,6 +16,8 @@ updated: 2026-05-28
 
 # Pitch Prep for AI House
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a189f00-26e4-83e8-95fa-31a2496ed84e
 > Created: 2026-05-28T20:02:06Z
 > Updated: 2026-05-28T20:06:39Z

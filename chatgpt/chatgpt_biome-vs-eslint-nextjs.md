@@ -16,6 +16,8 @@ updated: 2025-12-22
 
 # Biome vs ESLint Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6948dbf0-39e8-8331-ba30-6d938697b973
 > Created: 2025-12-22T05:49:36Z
 > Updated: 2025-12-22T15:24:01Z

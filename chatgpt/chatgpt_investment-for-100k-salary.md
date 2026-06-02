@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Investment for $100K Salary
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: c9942650-d2ce-49d8-84ad-8a0827aa1682
 > Created: 2024-01-10T01:36:59Z
 > Updated: 2024-01-10T01:40:44Z

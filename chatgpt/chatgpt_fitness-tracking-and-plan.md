@@ -16,6 +16,8 @@ updated: 2023-11-16
 
 # Fitness Tracking and Plan
 
+**Related:** [[personal_health]]
+
 > Conversation ID: c3b7f408-3629-4259-afd8-5cb6ff1d5869
 > Created: 2023-11-16T03:09:27Z
 > Updated: 2023-11-16T03:36:21Z

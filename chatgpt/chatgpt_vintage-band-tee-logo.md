@@ -15,6 +15,8 @@ updated: 2024-05-16
 
 # Vintage Band Tee Logo
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 3cea84ef-65e2-4169-b724-4bb4399863e9
 > Created: 2024-05-16T04:01:37Z
 > Updated: 2024-05-16T04:04:16Z

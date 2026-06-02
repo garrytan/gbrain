@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # AC Crackling Troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69a6cf1e-c6c8-832b-9903-afcbaf81fc94
 > Created: 2026-03-03T12:08:10Z
 > Updated: 2026-03-03T19:52:57Z

@@ -15,6 +15,8 @@ updated: 2022-12-21
 
 # Script for Jovie Trailer
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: f3f9bcda-b7cd-41ed-9382-4160ecb2551a
 > Created: 2022-12-21T19:39:56Z
 > Updated: 2022-12-21T19:39:56Z

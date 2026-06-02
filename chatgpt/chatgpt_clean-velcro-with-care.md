@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Clean Velcro with Care
 
+**Related:** [[personal_life]]
+
 > Conversation ID: f72d5712-d56f-4c07-ad08-cfd4df9eae0b
 > Created: 2024-01-20T18:40:09Z
 > Updated: 2024-01-20T20:53:02Z

@@ -16,6 +16,8 @@ updated: 2025-07-09
 
 # iOS App Widgets Ideas
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 686efd4b-6168-8007-934f-d8995a97c455
 > Created: 2025-07-09T23:37:47Z
 > Updated: 2025-07-09T23:41:51Z

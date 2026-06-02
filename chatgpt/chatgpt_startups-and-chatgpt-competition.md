@@ -16,6 +16,8 @@ updated: 2023-11-10
 
 # Startups and ChatGPT Competition
 
+**Related:** [[business_startup]]
+
 > Conversation ID: d1d48608-5d95-4179-9ca2-92dbf192c51f
 > Created: 2023-11-10T11:07:29Z
 > Updated: 2023-11-10T12:32:23Z

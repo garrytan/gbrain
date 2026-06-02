@@ -15,6 +15,8 @@ updated: 2025-07-09
 
 # UI Design Feedback
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 686eff49-6f44-8007-9ae7-2281d7ea974b
 > Created: 2025-07-09T23:46:17Z
 > Updated: 2025-07-09T23:46:23Z

@@ -15,6 +15,8 @@ updated: 2025-04-29
 
 # Camera Tracking in NBA
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68106c51-eb94-8007-afe7-7bc146351ae1
 > Created: 2025-04-29T06:06:10Z
 > Updated: 2025-04-29T06:06:36Z

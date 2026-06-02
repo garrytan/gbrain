@@ -16,6 +16,8 @@ updated: 2026-01-18
 
 # GitHub Actions CI Pricing
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 696c412b-6174-832a-87b6-9bede3a864be
 > Created: 2026-01-18T02:10:51Z
 > Updated: 2026-01-18T02:11:45Z

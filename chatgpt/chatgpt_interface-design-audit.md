@@ -17,6 +17,8 @@ updated: 2026-05-09
 
 # Interface design audit
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69fea145-8198-83e8-aaa6-6bcbe59af236
 > Created: 2026-05-09T02:51:55Z
 > Updated: 2026-05-09T05:00:50Z

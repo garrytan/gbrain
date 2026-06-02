@@ -16,6 +16,8 @@ updated: 2025-09-27
 
 # Next.js commit hooks
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68d73a9a-a248-8328-8bf1-3a014a0ca8da
 > Created: 2025-09-27T01:15:28Z
 > Updated: 2025-09-27T01:16:17Z

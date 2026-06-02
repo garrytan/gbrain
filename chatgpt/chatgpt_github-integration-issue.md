@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # GitHub Integration Issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 697532a4-5c38-8326-af5a-e4011680b62a
 > Created: 2026-01-24T20:59:59Z
 > Updated: 2026-01-24T21:02:09Z

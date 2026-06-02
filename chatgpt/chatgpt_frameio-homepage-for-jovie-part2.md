@@ -48,6 +48,8 @@ That is much stronger.
 
 # Revised homepage spine
 
+**Related:** [[jovie_music]]
+
 ## 1. Hero
 
 **Headline**

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Debugging Switch Statement
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: eb6cb664-4ef8-4015-93db-b923511e0dea
 > Created: 2022-12-21T05:12:17Z
 > Updated: 2022-12-21T05:12:17Z

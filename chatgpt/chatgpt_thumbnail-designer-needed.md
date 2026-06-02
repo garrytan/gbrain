@@ -15,6 +15,8 @@ updated: 2023-04-30
 
 # Thumbnail Designer Needed.
 
+**Related:** [[design_ux]]
+
 > Conversation ID: ffa537e2-f5f7-4294-8b8a-f03690d25cfb
 > Created: 2023-04-30T19:23:49Z
 > Updated: 2023-04-30T19:29:46Z

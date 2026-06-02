@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Tax Withholding for 1099
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 501a5d0e-8cd4-444c-b165-f14b3de77113
 > Created: 2024-08-21T02:02:19Z
 > Updated: 2024-08-21T02:02:48Z

@@ -16,6 +16,8 @@ updated: 2025-07-10
 
 # iOS 26 Features Breakdown
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 686f0411-41f4-8007-bc47-63dc79d1ef03
 > Created: 2025-07-10T00:07:15Z
 > Updated: 2025-07-10T00:23:06Z

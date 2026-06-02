@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Suki Waterhouse in Sonos Ad
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 52c1b618-726a-40b6-a621-2cd970982b9a
 > Created: 2024-06-25T01:03:22Z
 > Updated: 2024-06-25T01:03:29Z

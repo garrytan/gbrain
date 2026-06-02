@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Clowning Before Modern Family
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6972e9de-90d0-8325-8b33-5761e6a28039
 > Created: 2026-01-23T03:24:34Z
 > Updated: 2026-01-23T03:24:54Z

@@ -17,6 +17,8 @@ updated: 2024-01-07
 
 # Flutter Health Tracking App
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: c7c04e92-0b59-487b-8414-c5e06e5c1553
 > Created: 2024-01-07T02:29:01Z
 > Updated: 2024-01-07T02:35:53Z

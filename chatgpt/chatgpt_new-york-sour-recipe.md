@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # New York Sour Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: d4a7164d-68df-49ba-b55a-f48493af0f49
 > Created: 2024-08-11T04:35:21Z
 > Updated: 2024-08-11T04:35:50Z

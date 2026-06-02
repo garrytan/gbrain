@@ -16,6 +16,8 @@ updated: 2025-12-18
 
 # Compare Jovie and Linear
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69436d66-f4c0-8327-9ae6-b87543e4781c
 > Created: 2025-12-18T02:56:42Z
 > Updated: 2025-12-18T03:10:10Z

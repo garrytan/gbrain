@@ -17,6 +17,8 @@ updated: 2025-06-16
 
 # ChatGPT Linear Integration
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68506460-8eb0-8007-becc-c58ee11f27d7
 > Created: 2025-06-16T18:37:20Z
 > Updated: 2025-06-16T18:41:08Z

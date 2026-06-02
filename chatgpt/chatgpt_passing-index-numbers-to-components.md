@@ -16,6 +16,8 @@ updated: 2022-12-22
 
 # Passing Index Numbers to Components
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: cdc1b308-9d8d-4f89-a1c5-22ca1f1d3de0
 > Created: 2022-12-22T19:13:19Z
 > Updated: 2022-12-22T19:13:19Z

@@ -16,6 +16,8 @@ updated: 2025-12-22
 
 # Open auto-claude CLI
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69499235-ed54-832f-8301-338da9b51e8f
 > Created: 2025-12-22T18:47:18Z
 > Updated: 2025-12-22T18:48:18Z

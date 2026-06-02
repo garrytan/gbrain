@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Bar Manager Resume Rewrite
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 683d26f4-9738-8007-b9dc-bdd2755e638b
 > Created: 2025-06-02T04:22:12Z
 > Updated: 2025-06-04T22:31:33Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Camera app troubleshooting steps
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6846f6e7-3b6c-8007-a77f-7e23613bc1c1
 > Created: 2025-06-09T14:59:51Z
 > Updated: 2025-06-09T15:00:28Z

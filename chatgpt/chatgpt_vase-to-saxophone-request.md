@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Vase to Saxophone Request
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69b449b9-5060-8322-890f-7b4330ac1fac
 > Created: 2026-03-13T17:31:01Z
 > Updated: 2026-03-13T17:31:55Z

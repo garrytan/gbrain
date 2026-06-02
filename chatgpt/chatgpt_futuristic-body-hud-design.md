@@ -17,6 +17,8 @@ updated: 2025-06-09
 
 # Futuristic Body HUD Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68473b72-2f1c-8007-a801-65f8b571d126
 > Created: 2025-06-09T19:52:18Z
 > Updated: 2025-06-09T22:46:44Z

@@ -17,6 +17,8 @@ updated: 2025-06-13
 
 # Onboarding UX Redesign Guide
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 684b7c1c-129c-8007-94fb-5a2a6d839927
 > Created: 2025-06-13T01:17:16Z
 > Updated: 2025-06-13T20:36:06Z

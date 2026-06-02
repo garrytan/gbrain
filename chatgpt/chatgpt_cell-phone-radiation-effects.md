@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Cell phone radiation effects
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6886905a-36c8-8322-9b94-0c3dedecb4b1
 > Created: 2025-07-27T20:47:23Z
 > Updated: 2025-07-27T20:56:58Z

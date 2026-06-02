@@ -15,6 +15,8 @@ updated: 2025-10-21
 
 # Tattoo design modification
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68f719fd-51c8-832a-adcf-f88c9ee102e6
 > Created: 2025-10-21T05:28:44Z
 > Updated: 2025-10-21T05:29:36Z

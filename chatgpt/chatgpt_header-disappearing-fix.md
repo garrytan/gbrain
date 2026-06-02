@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Header Disappearing Fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 1211e990-da5f-4df8-9300-27e6d3a807f1
 > Created: 2024-06-07T21:02:37Z
 > Updated: 2024-06-07T21:03:15Z

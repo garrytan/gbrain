@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Unicorn idea for phone.
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: c4600779-bab5-4680-8a86-1d2c1739742a
 > Created: 2024-03-27T19:24:30Z
 > Updated: 2024-03-27T19:33:52Z

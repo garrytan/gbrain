@@ -15,6 +15,8 @@ updated: 2026-01-03
 
 # Music Distribution Challenges
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6959594b-ada8-8327-8c80-93ebbe38c404
 > Created: 2026-01-03T18:00:54Z
 > Updated: 2026-01-03T18:01:22Z

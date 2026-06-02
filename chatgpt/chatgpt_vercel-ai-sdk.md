@@ -16,6 +16,8 @@ updated: 2026-01-24
 
 # Vercel AI SDK
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 69742bda-f414-832e-8dc2-f02059eb1a53
 > Created: 2026-01-24T02:18:03Z
 > Updated: 2026-01-24T02:19:18Z

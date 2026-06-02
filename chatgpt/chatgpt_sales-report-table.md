@@ -15,6 +15,8 @@ updated: 2024-08-23
 
 # Sales Report Table
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 4908190b-5c45-4d71-b1ab-d138c4f82d7f
 > Created: 2024-08-23T23:41:20Z
 > Updated: 2024-08-23T23:46:51Z

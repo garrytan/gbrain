@@ -16,6 +16,8 @@ updated: 2022-12-22
 
 # Add Prop to Vue component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 43c3cb6f-daa4-4fe1-8b39-4c46da5972c1
 > Created: 2022-12-22T03:10:33Z
 > Updated: 2022-12-22T03:10:33Z

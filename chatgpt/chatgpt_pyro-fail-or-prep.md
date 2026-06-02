@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Pyro Fail or Prep?
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 681ec48f-cbf8-8007-8744-45eca8569862
 > Created: 2025-05-10T03:14:24Z
 > Updated: 2025-05-10T03:14:45Z

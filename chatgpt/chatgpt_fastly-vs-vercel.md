@@ -15,6 +15,8 @@ updated: 2026-01-07
 
 # Fastly vs Vercel
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 695da6bd-12e0-832d-aff7-876461a27183
 > Created: 2026-01-07T00:20:13Z
 > Updated: 2026-01-07T00:21:54Z

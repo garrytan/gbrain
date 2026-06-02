@@ -16,6 +16,8 @@ updated: 2022-12-28
 
 # Vue JS Form Template
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 8fd580b8-aa12-4440-afc5-686beb15a807
 > Created: 2022-12-28T22:58:11Z
 > Updated: 2022-12-28T22:58:11Z

@@ -15,6 +15,8 @@ updated: 2025-12-25
 
 # Vercel DNS Setup
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 694d94d0-a044-8327-80b9-d2e148b47166
 > Created: 2025-12-25T19:47:34Z
 > Updated: 2025-12-25T19:48:27Z

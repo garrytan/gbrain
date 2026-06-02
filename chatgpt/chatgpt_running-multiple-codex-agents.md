@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Running multiple Codex agents
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68c6ef67-b398-8323-8609-bce27338b256
 > Created: 2025-09-14T16:38:00Z
 > Updated: 2025-09-14T16:39:50Z

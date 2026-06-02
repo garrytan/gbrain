@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Lighthouse history and technology
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 684ddea6-29a4-8007-b7c6-428bd2931df5
 > Created: 2025-06-14T20:42:14Z
 > Updated: 2025-06-14T20:42:27Z

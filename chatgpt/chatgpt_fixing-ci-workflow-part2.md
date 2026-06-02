@@ -52,6 +52,8 @@ Yep—exactly: **non-blocking on `preview`, blocking on `production`** for both 
 Here’s the clean setup:
 
 # Branch protection
+
+**Related:** [[coding_troubleshoot]]
 - **`preview`:** do **not** mark any AI checks as required.
 - **`production`:** mark a single gate check (below) as **required**.
 

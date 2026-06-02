@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Safari Inn Burbank location
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 0c1ef8c5-bcfe-4ec5-a24d-337e4aa42f41
 > Created: 2024-01-29T04:32:25Z
 > Updated: 2024-01-29T04:48:32Z

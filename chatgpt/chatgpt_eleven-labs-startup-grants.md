@@ -15,6 +15,8 @@ updated: 2026-05-29
 
 # Eleven Labs Startup Grants
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a19cc0b-dd40-83e8-9992-e8ac406f38c7
 > Created: 2026-05-29T17:25:37Z
 > Updated: 2026-05-29T17:25:50Z

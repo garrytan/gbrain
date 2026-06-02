@@ -16,6 +16,8 @@ updated: 2025-08-26
 
 # Vercel vs Supabase functions
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68ae1c98-769c-832e-a467-c89315dab171
 > Created: 2025-08-26T20:44:14Z
 > Updated: 2025-08-26T20:49:18Z

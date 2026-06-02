@@ -5,6 +5,8 @@ To skip empty arrays when inserting records into your MySQL database, you can im
 import json
 
 # Assuming 'record' is the dictionary containing data for each record
+
+**Related:** [[coding_devops]]
 for record in records:
     # Check if 'interests' and 'occupations' fields are empty arrays
     if record['interests'] == '[]':

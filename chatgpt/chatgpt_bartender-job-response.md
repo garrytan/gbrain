@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bartender job response
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6883d49b-c40c-8332-9864-e9e79ede193b
 > Created: 2025-07-25T19:01:49Z
 > Updated: 2025-07-25T19:05:18Z

@@ -16,6 +16,8 @@ updated: 2023-01-07
 
 # Vue JS API Function
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: d0d1ad62-ceeb-4c44-b30e-13c0cefa5ecc
 > Created: 2023-01-07T04:17:07Z
 > Updated: 2023-01-07T04:17:07Z

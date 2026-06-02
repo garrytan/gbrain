@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Tim White Fitness Bio.
 
+**Related:** [[personal_health]]
+
 > Conversation ID: eacf171a-fe1b-4b42-b899-4f6808e79f54
 > Created: 2023-03-18T03:19:34Z
 > Updated: 2023-03-18T03:19:34Z

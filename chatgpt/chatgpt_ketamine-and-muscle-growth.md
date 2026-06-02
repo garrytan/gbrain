@@ -16,6 +16,8 @@ updated: 2025-08-26
 
 # Ketamine and muscle growth
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68acf91d-2fb4-8329-940d-09b4c24a4ab4
 > Created: 2025-08-26T00:00:30Z
 > Updated: 2025-08-26T00:13:22Z

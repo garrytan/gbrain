@@ -15,6 +15,8 @@ updated: 2025-11-30
 
 # Black Friday iPhone deals
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 692a6476-726c-8333-8e28-8e42f0848a64
 > Created: 2025-11-29T03:11:51Z
 > Updated: 2025-11-30T20:16:45Z

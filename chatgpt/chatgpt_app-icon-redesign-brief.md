@@ -15,6 +15,8 @@ updated: 2026-05-16
 
 # App Icon Redesign Brief
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a07e0cf-6564-83e8-9c41-b1afc409c487
 > Created: 2026-05-16T03:13:20Z
 > Updated: 2026-05-16T03:13:23Z

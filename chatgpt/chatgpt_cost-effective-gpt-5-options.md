@@ -15,6 +15,8 @@ updated: 2025-08-08
 
 # Cost effective GPT-5 options
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68955044-9bf0-8322-943d-1553c9affa2e
 > Created: 2025-08-08T01:18:55Z
 > Updated: 2025-08-08T01:27:26Z

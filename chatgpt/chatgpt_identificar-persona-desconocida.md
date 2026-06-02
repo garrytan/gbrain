@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Identificar persona desconocida
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 4588c152-f748-426c-895c-151e30203b97
 > Created: 2024-05-31T02:11:51Z
 > Updated: 2024-05-31T02:12:05Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # AppleCare transfer options
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 692dee76-4f48-832b-b286-5e8e70c2a9c1
 > Created: 2025-12-01T19:38:18Z
 > Updated: 2025-12-01T19:39:15Z

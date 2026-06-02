@@ -16,6 +16,8 @@ updated: 2025-12-15
 
 # Spotify artist detection methods
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 694081b0-5be0-8325-9578-1534bcc117be
 > Created: 2025-12-15T21:46:24Z
 > Updated: 2025-12-15T21:50:04Z

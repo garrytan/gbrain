@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Caption Ideas for Gym
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67e2f406-d760-8007-ba4d-3d7a7e8836a0
 > Created: 2025-03-25T18:20:54Z
 > Updated: 2025-03-25T18:28:02Z

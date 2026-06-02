@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Neon Love Rebellion
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 29bfc8d5-085a-4a35-b80c-ac2c6aa294d0
 > Created: 2024-03-20T23:35:44Z
 > Updated: 2024-03-20T23:37:53Z

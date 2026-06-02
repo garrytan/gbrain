@@ -16,6 +16,8 @@ updated: 2025-09-11
 
 # Featured artists carousel solution
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68c3616b-a840-832e-ae7b-c2fc19369185
 > Created: 2025-09-11T23:55:24Z
 > Updated: 2025-09-11T23:56:09Z

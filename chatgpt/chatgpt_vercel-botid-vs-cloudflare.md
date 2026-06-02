@@ -15,6 +15,8 @@ updated: 2025-12-24
 
 # Vercel BotID vs Cloudflare
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 694b6ea8-b760-832a-8443-4da35841afb8
 > Created: 2025-12-24T04:40:09Z
 > Updated: 2025-12-24T04:41:16Z

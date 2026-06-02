@@ -17,6 +17,8 @@ updated: 2025-07-09
 
 # iOS Dashboard UX Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 686b5f43-874c-8007-b47f-1bd6e3f3281f
 > Created: 2025-07-07T05:46:43Z
 > Updated: 2025-07-09T00:06:03Z

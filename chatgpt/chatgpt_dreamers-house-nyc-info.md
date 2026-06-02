@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Dreamers House NYC Info
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 693efd67-0874-8330-9a40-7b5c6458ed53
 > Created: 2025-12-14T18:09:43Z
 > Updated: 2025-12-14T18:10:28Z

@@ -15,6 +15,8 @@ updated: 2026-01-28
 
 # React 19 Rendering Changes
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69796174-6d04-8329-b2e0-8b32940695f1
 > Created: 2026-01-28T01:08:05Z
 > Updated: 2026-01-28T01:08:55Z

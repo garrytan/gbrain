@@ -17,6 +17,8 @@ updated: 2025-08-04
 
 # Vercel CI deployment advice
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 6891195c-9cf0-8322-943a-f1a879f00d60
 > Created: 2025-08-04T20:34:38Z
 > Updated: 2025-08-04T20:56:42Z

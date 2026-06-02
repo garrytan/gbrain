@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Mochi health subscription rules
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68b8aa0c-eccc-832b-ae2d-6496bb2d0876
 > Created: 2025-09-03T20:51:08Z
 > Updated: 2025-09-03T20:55:47Z

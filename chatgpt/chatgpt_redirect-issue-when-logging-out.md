@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Redirect Issue When Logging Out
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: ebfbe884-8997-4917-83a7-cd4e15155480
 > Created: 2024-01-11T03:37:51Z
 > Updated: 2024-01-11T04:32:38Z

@@ -16,6 +16,8 @@ updated: 2025-05-30
 
 # Muffin Helmet Design Prompt
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6838f9db-59a4-8007-be1e-0b4f577d68e5
 > Created: 2025-05-30T00:20:43Z
 > Updated: 2025-05-30T00:20:54Z

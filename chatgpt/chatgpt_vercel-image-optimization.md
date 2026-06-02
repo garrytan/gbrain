@@ -15,6 +15,8 @@ updated: 2025-08-20
 
 # Vercel image optimization
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68a5ed6f-d5f0-832f-8b1c-c85a6b82f9ae
 > Created: 2025-08-20T15:44:51Z
 > Updated: 2025-08-20T15:45:04Z

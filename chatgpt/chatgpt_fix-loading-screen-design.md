@@ -16,6 +16,8 @@ updated: 2025-09-03
 
 # Fix loading screen design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68b7f328-0510-8332-9c13-77ec3575b44a
 > Created: 2025-09-03T07:50:26Z
 > Updated: 2025-09-03T07:51:05Z

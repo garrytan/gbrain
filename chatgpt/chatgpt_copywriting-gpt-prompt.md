@@ -16,6 +16,8 @@ updated: 2025-11-19
 
 # Copywriting GPT prompt
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 691e16b0-4534-8333-b183-84610e3de5bf
 > Created: 2025-11-19T19:14:27Z
 > Updated: 2025-11-19T19:15:13Z

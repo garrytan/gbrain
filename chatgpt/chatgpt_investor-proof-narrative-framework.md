@@ -15,6 +15,8 @@ updated: 2025-12-10
 
 # Investor-proof narrative framework
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6938efc8-7154-8327-a8ff-e0dd4a2d946d
 > Created: 2025-12-10T03:58:01Z
 > Updated: 2025-12-10T03:58:26Z

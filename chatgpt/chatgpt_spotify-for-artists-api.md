@@ -15,6 +15,8 @@ updated: 2025-12-15
 
 # Spotify for Artists API
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 694081f8-5764-8330-85a8-39294651c7e5
 > Created: 2025-12-15T21:47:36Z
 > Updated: 2025-12-15T21:48:08Z

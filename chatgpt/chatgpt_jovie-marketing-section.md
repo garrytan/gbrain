@@ -15,6 +15,8 @@ updated: 2026-04-29
 
 # Jovie Marketing Section
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69f19f4d-0fd8-83e8-b4f2-2dd0d55c6e1f
 > Created: 2026-04-29T06:03:58Z
 > Updated: 2026-04-29T06:47:58Z

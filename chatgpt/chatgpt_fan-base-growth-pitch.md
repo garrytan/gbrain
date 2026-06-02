@@ -16,6 +16,8 @@ updated: 2025-12-13
 
 # Fan base growth pitch
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 693c8af7-fba4-8330-93b7-4ee4b7ab1785
 > Created: 2025-12-12T21:36:56Z
 > Updated: 2025-12-13T17:30:07Z

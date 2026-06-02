@@ -17,6 +17,8 @@ updated: 2026-01-23
 
 # Cold Start Crashes Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6973e795-c5e4-832b-b141-fe499d31b4c2
 > Created: 2026-01-23T21:26:46Z
 > Updated: 2026-01-23T22:05:37Z

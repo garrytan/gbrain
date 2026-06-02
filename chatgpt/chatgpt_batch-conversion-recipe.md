@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Batch Conversion Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 5141bc6e-8171-4a88-92f9-964f27f968c3
 > Created: 2024-07-19T21:34:21Z
 > Updated: 2024-07-19T21:34:53Z

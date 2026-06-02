@@ -15,6 +15,8 @@ updated: 2026-05-08
 
 # Jovie Artist Profile Visual
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69fe5244-f324-83e8-99a3-1608e649892a
 > Created: 2026-05-08T21:14:45Z
 > Updated: 2026-05-08T21:15:55Z

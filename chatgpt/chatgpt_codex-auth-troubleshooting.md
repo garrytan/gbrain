@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Codex auth troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69efd400-803c-83e8-a9be-982bff4a7031
 > Created: 2026-04-27T21:24:20Z
 > Updated: 2026-04-27T21:24:43Z

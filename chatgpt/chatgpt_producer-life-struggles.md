@@ -15,6 +15,8 @@ updated: 2025-05-24
 
 # Producer Life Struggles
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 68321eb2-21cc-8007-9ee8-f3c52fa6da38
 > Created: 2025-05-24T19:32:02Z
 > Updated: 2025-05-24T19:35:32Z

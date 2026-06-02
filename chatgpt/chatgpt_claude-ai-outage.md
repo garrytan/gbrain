@@ -15,6 +15,8 @@ updated: 2026-03-03
 
 # Claude AI Outage
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69a68296-dd80-8331-9557-65f377323048
 > Created: 2026-03-03T06:41:31Z
 > Updated: 2026-03-03T06:42:23Z

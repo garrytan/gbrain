@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Love's Dreamy Night Sky
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 882c146c-488a-401a-a689-dceb4ceb28c4
 > Created: 2024-05-14T22:34:35Z
 > Updated: 2024-05-14T22:38:08Z

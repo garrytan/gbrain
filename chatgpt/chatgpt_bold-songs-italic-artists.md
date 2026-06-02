@@ -16,6 +16,8 @@ updated: 2024-02-27
 
 # Bold Songs, Italic Artists
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 2a49a683-517c-464b-858e-225fed13ccdd
 > Created: 2024-02-27T00:25:56Z
 > Updated: 2024-02-27T00:26:26Z

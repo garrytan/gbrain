@@ -16,6 +16,8 @@ updated: 2026-01-16
 
 # Marketing Pixels Plan
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 696a9235-3d70-832d-b04f-b9527140dbb8
 > Created: 2026-01-16T19:32:07Z
 > Updated: 2026-01-16T19:32:44Z

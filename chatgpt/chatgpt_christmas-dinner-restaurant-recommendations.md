@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Christmas Dinner Restaurant Recommendations
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 44d4a32a-d0f9-42db-8882-99b1626b1a9f
 > Created: 2023-12-22T23:01:44Z
 > Updated: 2023-12-23T03:06:25Z

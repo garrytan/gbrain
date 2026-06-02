@@ -15,6 +15,8 @@ updated: 2025-02-01
 
 # Pioneer DJ Equipment
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 679ea2de-5898-8007-9524-975fd1bec763
 > Created: 2025-02-01T22:40:30Z
 > Updated: 2025-02-01T22:40:36Z

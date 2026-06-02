@@ -15,6 +15,8 @@ updated: 2025-08-03
 
 # Spotify auth client setup
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 688efba4-ae7c-832c-b418-dca7c01c738c
 > Created: 2025-08-03T06:03:17Z
 > Updated: 2025-08-03T06:03:25Z

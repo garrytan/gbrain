@@ -16,6 +16,8 @@ updated: 2026-01-08
 
 # Claude CLI Path Windows
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69603465-1f38-8326-a280-69fd0e7c82b5
 > Created: 2026-01-08T22:49:19Z
 > Updated: 2026-01-08T22:49:32Z

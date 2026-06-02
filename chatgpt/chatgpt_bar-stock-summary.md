@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bar Stock Summary
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 3ed8e0d2-4761-4cab-be47-23e53c904146
 > Created: 2024-08-16T23:48:54Z
 > Updated: 2024-08-16T23:51:04Z

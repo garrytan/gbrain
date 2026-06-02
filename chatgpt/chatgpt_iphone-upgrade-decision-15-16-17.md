@@ -15,6 +15,8 @@ updated: 2025-05-11
 
 # iPhone Upgrade Decision 15 16 17
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6820d4a8-6d90-8007-8aeb-6374cda6577d
 > Created: 2025-05-11T16:47:36Z
 > Updated: 2025-05-11T16:49:29Z

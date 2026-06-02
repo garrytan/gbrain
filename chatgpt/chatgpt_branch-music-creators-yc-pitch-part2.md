@@ -19,6 +19,8 @@ Each product card becomes a source of truth. Then homepage sections, product pag
 
 # The core model
 
+**Related:** [[business_startup]]
+
 ## 1. Product cards are the atoms
 
 Each product card should define one sellable capability.

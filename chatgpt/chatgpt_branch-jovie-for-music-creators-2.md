@@ -16,6 +16,8 @@ updated: 2026-04-26
 
 # Branch · Jovie for Music Creators
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69ed9c09-3bcc-83e8-9914-d626ae5bb641
 > Created: 2026-04-26T05:00:57Z
 > Updated: 2026-04-26T05:12:46Z

@@ -16,6 +16,8 @@ updated: 2025-12-05
 
 # Header component review
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 69334678-479c-832f-b688-53114c6cd9ce
 > Created: 2025-12-05T20:55:05Z
 > Updated: 2025-12-05T20:55:37Z

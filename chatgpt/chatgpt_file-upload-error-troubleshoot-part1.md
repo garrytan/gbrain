@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # File Upload Error Troubleshoot
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: aff4fb36-fb19-469f-ae93-0949385d35ec
 > Created: 2023-12-02T20:35:55Z
 > Updated: 2023-12-02T21:05:14Z

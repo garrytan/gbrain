@@ -16,6 +16,8 @@ updated: 2026-04-11
 
 # Jovi iOS App Spec
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69d9aaf4-d604-83e8-acba-9d404a883250
 > Created: 2026-04-11T02:00:23Z
 > Updated: 2026-04-11T02:02:50Z

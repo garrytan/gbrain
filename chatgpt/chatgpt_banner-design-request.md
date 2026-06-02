@@ -15,6 +15,8 @@ updated: 2025-06-02
 
 # Banner Design Request
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 683d1b02-d334-8007-9b9e-8335d759225e
 > Created: 2025-06-02T03:31:15Z
 > Updated: 2025-06-02T03:33:24Z

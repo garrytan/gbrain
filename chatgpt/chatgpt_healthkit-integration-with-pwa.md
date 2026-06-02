@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # HealthKit Integration with PWA
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 684612ce-5ac4-8007-806c-284425109411
 > Created: 2025-06-08T22:46:38Z
 > Updated: 2025-06-08T22:46:52Z

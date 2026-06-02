@@ -15,6 +15,8 @@ updated: 2026-01-08
 
 # Best Model for Design Systems
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 695f2245-8478-8329-8e18-9a8fc3cc8946
 > Created: 2026-01-08T03:19:34Z
 > Updated: 2026-01-08T03:20:00Z

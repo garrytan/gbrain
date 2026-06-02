@@ -16,6 +16,8 @@ updated: 2022-12-22
 
 # Store emails in database
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: fd752576-d26e-48f7-b252-11d415ad0bf1
 > Created: 2022-12-22T20:29:06Z
 > Updated: 2022-12-22T20:29:06Z

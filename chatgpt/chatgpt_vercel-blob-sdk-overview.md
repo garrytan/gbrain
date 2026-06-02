@@ -16,6 +16,8 @@ updated: 2025-12-09
 
 # Vercel Blob SDK Overview
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 69388f6e-ab20-832c-8f45-df9a71bb4100
 > Created: 2025-12-09T21:06:55Z
 > Updated: 2025-12-09T21:07:28Z

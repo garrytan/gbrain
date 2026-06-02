@@ -16,6 +16,8 @@ updated: 2026-05-17
 
 # Improve Deck Suggestions
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6a093fcc-e568-83e8-9f9a-ff646f8114e9
 > Created: 2026-05-17T04:10:53Z
 > Updated: 2026-05-17T04:19:14Z

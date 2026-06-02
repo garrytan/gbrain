@@ -15,6 +15,8 @@ updated: 2026-01-16
 
 # Landing Page Design Options
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 696aabea-64f8-8329-a1bf-a509780f6f70
 > Created: 2026-01-16T21:21:46Z
 > Updated: 2026-01-16T21:42:32Z

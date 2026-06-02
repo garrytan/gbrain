@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Adult Job Search Tips
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67c7c853-df4c-8007-b7cf-93beb4d2cf31
 > Created: 2025-03-05T03:43:16Z
 > Updated: 2025-03-05T03:43:20Z

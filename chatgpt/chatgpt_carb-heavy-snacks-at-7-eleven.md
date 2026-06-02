@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Carb-heavy Snacks at 7-Eleven
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 366dfa9c-641a-44bf-a000-11a0f7222ac7
 > Created: 2023-10-06T04:47:24Z
 > Updated: 2023-10-09T01:32:33Z

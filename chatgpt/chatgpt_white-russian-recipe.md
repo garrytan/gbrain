@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # White Russian Recipe
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 5bd15515-04e1-448b-89c5-61ff87418f6a
 > Created: 2024-06-29T22:09:05Z
 > Updated: 2024-06-29T22:30:25Z

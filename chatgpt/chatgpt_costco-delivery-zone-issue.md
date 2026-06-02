@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Costco delivery zone issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68dc4ce8-b6a4-8332-82b0-1245fa6b7e95
 > Created: 2025-09-30T21:35:18Z
 > Updated: 2025-09-30T21:35:25Z

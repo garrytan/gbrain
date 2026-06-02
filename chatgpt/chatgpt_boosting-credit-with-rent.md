@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Boosting Credit with Rent
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 680b1f45-2d94-8007-aafb-f2b8ac657af3
 > Created: 2025-04-25T05:36:05Z
 > Updated: 2025-04-25T05:36:40Z

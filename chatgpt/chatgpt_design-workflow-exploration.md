@@ -17,6 +17,8 @@ updated: 2026-04-24
 
 # Design Workflow Exploration
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69eba59c-22b4-83e8-9521-ee6afce686f9
 > Created: 2026-04-24T17:17:17Z
 > Updated: 2026-04-24T18:42:08Z

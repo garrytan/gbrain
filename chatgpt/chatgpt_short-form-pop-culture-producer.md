@@ -15,6 +15,8 @@ updated: 2023-06-13
 
 # Short-Form Pop Culture Producer
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 0baa7865-6a73-4b7b-8afe-b57dc8ca4ce2
 > Created: 2023-06-13T17:39:24Z
 > Updated: 2023-06-13T17:40:28Z

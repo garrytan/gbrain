@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Resolve "./layouts/App" Error
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 2883200b-7ebc-44ef-a3d4-0de386697f9e
 > Created: 2023-05-12T03:47:22Z
 > Updated: 2023-05-12T03:47:35Z

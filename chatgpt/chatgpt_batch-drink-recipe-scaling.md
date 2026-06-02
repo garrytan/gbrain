@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Batch Drink Recipe Scaling
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 6842fd30-d5b4-8007-ad58-b076d06406f3
 > Created: 2025-06-06T14:37:37Z
 > Updated: 2025-06-06T17:02:12Z

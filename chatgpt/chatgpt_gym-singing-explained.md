@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym Singing Explained
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 695aeba3-379c-832f-9199-76ff5c61e5be
 > Created: 2026-01-04T22:37:29Z
 > Updated: 2026-01-04T22:39:24Z

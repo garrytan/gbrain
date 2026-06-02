@@ -17,6 +17,8 @@ updated: 2026-04-23
 
 # Claude Design Logo Prompt
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69eaa8b7-431c-83e8-9ad7-8e3f850d540a
 > Created: 2026-04-23T23:18:15Z
 > Updated: 2026-04-23T23:59:42Z

@@ -16,6 +16,8 @@ updated: 2025-11-12
 
 # Claude Code slash commands
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6914df43-e0b0-8320-9844-744db64f6bca
 > Created: 2025-11-12T19:26:02Z
 > Updated: 2025-11-12T19:26:37Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Automating lint fixes
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 691e42d7-509c-832e-8454-9afcfe79d279
 > Created: 2025-11-19T22:22:00Z
 > Updated: 2025-11-20T01:38:49Z

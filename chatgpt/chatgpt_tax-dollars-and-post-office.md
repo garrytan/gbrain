@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Tax dollars and post office
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 689672ea-6084-8332-b71e-440332fe2d8f
 > Created: 2025-08-08T21:58:06Z
 > Updated: 2025-08-08T21:59:23Z

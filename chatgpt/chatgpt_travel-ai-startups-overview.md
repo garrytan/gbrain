@@ -16,6 +16,8 @@ updated: 2025-07-16
 
 # Travel AI Startups Overview
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68772869-a6a4-8007-ad29-02191aba6515
 > Created: 2025-07-16T04:19:53Z
 > Updated: 2025-07-16T04:20:35Z

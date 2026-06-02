@@ -15,6 +15,8 @@ updated: 2026-01-30
 
 # Neon Pricing Breakdown
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 697c10e4-db34-8330-8c94-878afb918d16
 > Created: 2026-01-30T02:01:09Z
 > Updated: 2026-01-30T02:01:58Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Trap bar workout plan
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6923cc30-cb24-832a-9cba-930564040035
 > Created: 2025-11-24T03:08:48Z
 > Updated: 2025-11-24T03:18:22Z

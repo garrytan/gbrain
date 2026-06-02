@@ -17,6 +17,8 @@ updated: 2023-05-16
 
 # Vite dynamic import warning.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: df466da2-da96-4d3f-a965-f03c88b3c260
 > Created: 2023-05-16T22:18:52Z
 > Updated: 2023-05-16T22:22:04Z

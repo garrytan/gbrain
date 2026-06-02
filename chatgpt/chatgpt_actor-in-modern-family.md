@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Actor in Modern Family
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69254a59-6084-8329-9093-6e3b96d1af06
 > Created: 2025-11-25T06:19:32Z
 > Updated: 2025-11-25T06:20:33Z

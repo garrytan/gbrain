@@ -17,6 +17,8 @@ updated: 2025-09-07
 
 # Code review system design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68bc8d12-ccd8-832d-baf4-71f252c79356
 > Created: 2025-09-06T19:35:47Z
 > Updated: 2025-09-07T15:31:13Z

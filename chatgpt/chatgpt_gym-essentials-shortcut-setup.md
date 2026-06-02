@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym Essentials Shortcut Setup
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 683a7a77-ac60-8007-ad7d-b82704d7e810
 > Created: 2025-05-31T03:41:43Z
 > Updated: 2025-05-31T03:42:09Z

@@ -16,6 +16,8 @@ updated: 2022-12-22
 
 # Composition API in Vue
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: cf973717-50fc-4be5-b987-579f87968cd0
 > Created: 2022-12-22T01:32:22Z
 > Updated: 2022-12-22T01:32:22Z

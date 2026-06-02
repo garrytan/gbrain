@@ -16,6 +16,8 @@ updated: 2023-05-07
 
 # Create Vue Settings Menu
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: b51b7716-9c7d-47c0-90ef-8d74e7dad8ca
 > Created: 2023-05-07T05:04:15Z
 > Updated: 2023-05-07T05:04:37Z

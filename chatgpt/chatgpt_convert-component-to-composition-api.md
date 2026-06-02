@@ -16,6 +16,8 @@ updated: 2022-12-22
 
 # Convert component to Composition API
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 89c53d6f-5649-480a-a39b-a096cd91dd31
 > Created: 2022-12-22T23:18:43Z
 > Updated: 2022-12-22T23:18:43Z

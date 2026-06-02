@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Post production budget breakdown
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68ab5dbb-4a74-832d-9d4d-91557a9edf91
 > Created: 2025-08-24T18:45:39Z
 > Updated: 2025-08-24T18:58:24Z

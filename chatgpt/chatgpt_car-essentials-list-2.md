@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Car Essentials List
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 681c382a-e2b4-8007-8f73-d4ba08e898f9
 > Created: 2025-05-08T04:50:51Z
 > Updated: 2025-05-08T04:51:03Z

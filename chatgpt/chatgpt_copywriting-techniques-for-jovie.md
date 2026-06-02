@@ -15,6 +15,8 @@ updated: 2026-05-06
 
 # Copywriting Techniques for Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69fa809d-4f10-83e8-835d-ab636e083620
 > Created: 2026-05-05T23:43:26Z
 > Updated: 2026-05-06T00:00:17Z

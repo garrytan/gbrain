@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Her - Hologram Love Movie
 
+**Related:** [[personal_life]]
+
 > Conversation ID: b0590170-c66c-47bf-a602-a4dfcd240857
 > Created: 2023-04-18T00:40:27Z
 > Updated: 2023-04-18T00:44:45Z

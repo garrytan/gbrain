@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Resumen diseño reset
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 694a1e39-7cb8-832c-a47d-d9ed327c3511
 > Created: 2025-12-23T04:44:43Z
 > Updated: 2025-12-23T05:47:48Z

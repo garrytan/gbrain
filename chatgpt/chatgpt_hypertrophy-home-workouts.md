@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Hypertrophy Home Workouts
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 69c02f30-1c10-83e8-bc2e-eda538fddd46
 > Created: 2026-03-22T18:04:37Z
 > Updated: 2026-03-22T18:05:37Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Remote Extension Error Fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69656b56-e6d0-8332-b145-0ab1a9151e03
 > Created: 2026-01-12T21:44:55Z
 > Updated: 2026-01-13T00:13:32Z

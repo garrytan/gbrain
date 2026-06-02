@@ -15,6 +15,8 @@ updated: 2025-12-11
 
 # SpaceX investment growth
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68aa11a1-ef8c-8331-a311-2fa0d910ce5a
 > Created: 2025-08-23T19:08:25Z
 > Updated: 2025-12-11T07:53:47Z

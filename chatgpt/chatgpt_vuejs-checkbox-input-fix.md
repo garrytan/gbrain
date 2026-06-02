@@ -15,6 +15,8 @@ updated: 2022-12-23
 
 # Vue.js Checkbox Input Fix
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 0feb64a3-cee9-47ae-b12a-061a21f7bf49
 > Created: 2022-12-23T23:04:12Z
 > Updated: 2022-12-23T23:04:12Z

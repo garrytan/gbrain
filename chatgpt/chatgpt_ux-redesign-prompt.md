@@ -15,6 +15,8 @@ updated: 2025-08-21
 
 # UX redesign prompt
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68a6db06-e1d8-832e-af3d-2afd683af143
 > Created: 2025-08-21T08:38:36Z
 > Updated: 2025-08-21T08:39:44Z

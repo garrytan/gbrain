@@ -16,6 +16,8 @@ updated: 2023-02-12
 
 # Swipe Right JavaScript Function
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6535e1b2-41d9-4d31-ab83-f2ffe5c81269
 > Created: 2023-02-12T00:57:39Z
 > Updated: 2023-02-12T00:57:39Z

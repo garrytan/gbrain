@@ -16,6 +16,8 @@ updated: 2025-12-15
 
 # Codex API and agent pricing
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 694091fd-fe54-832b-a954-27696cca2637
 > Created: 2025-12-15T22:56:12Z
 > Updated: 2025-12-15T22:58:07Z

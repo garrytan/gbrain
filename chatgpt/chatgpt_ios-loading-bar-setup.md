@@ -16,6 +16,8 @@ updated: 2025-07-02
 
 # iOS Loading Bar Setup
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6864bfb9-3ec8-8007-84ed-d92642af3c0c
 > Created: 2025-07-02T05:12:25Z
 > Updated: 2025-07-02T05:13:34Z

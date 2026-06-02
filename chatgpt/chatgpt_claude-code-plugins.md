@@ -17,6 +17,8 @@ updated: 2026-02-18
 
 # Claude Code Plugins
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 699556aa-ce58-832d-b3b7-1de5067e4aa2
 > Created: 2026-02-18T06:05:36Z
 > Updated: 2026-02-18T17:44:59Z

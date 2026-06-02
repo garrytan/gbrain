@@ -16,6 +16,8 @@ updated: 2025-12-27
 
 # Pre-launch Checklist for Linkin.Bio
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 695021e8-b598-8333-8023-878848aff6d0
 > Created: 2025-12-27T18:14:01Z
 > Updated: 2025-12-27T18:14:38Z

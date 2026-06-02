@@ -16,6 +16,8 @@ updated: 2025-11-15
 
 # ChatGPT vs GPT-5.1 Codex
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6918f712-b6d8-832b-aef5-0817ea4c1966
 > Created: 2025-11-15T21:56:35Z
 > Updated: 2025-11-15T21:58:10Z

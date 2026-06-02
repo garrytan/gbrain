@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # TD Bank Wire Transfer
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6806b25e-dbe4-8007-b1f1-5665d225e60f
 > Created: 2025-04-21T21:02:23Z
 > Updated: 2025-04-21T21:02:57Z

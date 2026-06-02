@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Insomniac Job Opportunities
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67c81650-72e4-8007-bc6a-26e1ec284001
 > Created: 2025-03-05T09:16:00Z
 > Updated: 2025-03-05T09:16:20Z

@@ -15,6 +15,8 @@ updated: 2026-01-28
 
 # YC Requests for Startups
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6979b5e8-1898-8330-9d03-7e34a40d59f0
 > Created: 2026-01-28T07:08:24Z
 > Updated: 2026-01-28T07:08:59Z

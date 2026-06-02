@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Beverly Hills Restaurant Inquiry
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 680403cd-f26c-8007-89fa-c431362bdba1
 > Created: 2025-04-19T20:13:02Z
 > Updated: 2025-04-19T20:17:41Z

@@ -15,6 +15,8 @@ updated: 2025-01-16
 
 # XDJ-1000 Series Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6789059d-d730-8007-9bb5-21de0a558c30
 > Created: 2025-01-16T13:11:58Z
 > Updated: 2025-01-16T13:12:07Z

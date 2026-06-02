@@ -17,6 +17,8 @@ updated: 2024-05-24
 
 # Instagram Link HTML Template
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 8dde67e9-0729-41bc-b32b-4b2044b751a8
 > Created: 2024-05-24T19:35:27Z
 > Updated: 2024-05-24T19:55:41Z

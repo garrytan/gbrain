@@ -16,6 +16,8 @@ updated: 2026-05-01
 
 # Research on SymphonyOS and Jovie
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69f35d46-6c80-83e8-8b96-7ff545a84d53
 > Created: 2026-04-30T13:46:47Z
 > Updated: 2026-05-01T04:02:11Z

@@ -16,6 +16,8 @@ updated: 2026-06-01
 
 # ChatGPT Data Sync
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6a1d0dc4-5b10-83e8-bfb7-8fbea7e9637f
 > Created: 2026-06-01T04:43:08Z
 > Updated: 2026-06-01T04:43:40Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Calculate Diet Phase Stats
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 312a2415-0126-46f6-b670-dd10e0906ecf
 > Created: 2023-12-06T04:28:24Z
 > Updated: 2023-12-06T05:09:22Z

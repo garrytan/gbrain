@@ -17,6 +17,8 @@ updated: 2025-07-25
 
 # Audit Fastlane setup
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 688337bf-ec90-8327-9713-334265336162
 > Created: 2025-07-25T07:52:32Z
 > Updated: 2025-07-25T07:58:08Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Fitness Plan with Phases
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 2fc5597e-c6ef-4f2b-b985-cc543a176872
 > Created: 2023-11-16T02:51:30Z
 > Updated: 2023-11-16T02:53:10Z

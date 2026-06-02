@@ -17,6 +17,8 @@ updated: 2023-02-12
 
 # Chrome Extension Webpack Config
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 329d0337-c739-416e-928d-e73acec3d819
 > Created: 2023-02-12T06:30:15Z
 > Updated: 2023-02-12T06:30:15Z

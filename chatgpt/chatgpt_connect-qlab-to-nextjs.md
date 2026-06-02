@@ -16,6 +16,8 @@ updated: 2025-09-25
 
 # Connect QLab to Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68d5c633-9f6c-8320-ad65-bf7bf345ce26
 > Created: 2025-09-25T22:46:28Z
 > Updated: 2025-09-25T22:47:42Z

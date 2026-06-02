@@ -16,6 +16,8 @@ updated: 2025-11-21
 
 # Fastlane overview
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6920ba66-4a6c-8326-8b9a-1400efc8b962
 > Created: 2025-11-21T19:15:54Z
 > Updated: 2025-11-21T19:16:34Z

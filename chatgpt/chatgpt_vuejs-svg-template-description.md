@@ -16,6 +16,8 @@ updated: 2023-01-08
 
 # Vue.js SVG Template Description
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 1da46c87-dad7-4cc2-b060-dc0910698b5f
 > Created: 2023-01-08T18:15:31Z
 > Updated: 2023-01-08T18:15:31Z

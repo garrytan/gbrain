@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Bartender Job Inquiry
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67f9e3b3-6658-8007-adce-a31f73cb74f3
 > Created: 2025-04-12T03:53:23Z
 > Updated: 2025-04-12T03:55:09Z

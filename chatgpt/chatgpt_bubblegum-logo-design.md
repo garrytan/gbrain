@@ -15,6 +15,8 @@ updated: 2024-05-27
 
 # Bubblegum Logo Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: dea148a4-25a9-46f0-8b30-51af65478c5c
 > Created: 2024-05-27T02:44:46Z
 > Updated: 2024-05-27T02:45:19Z

@@ -16,6 +16,8 @@ updated: 2023-01-03
 
 # Vue OTP component summary
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 51de7e4d-5502-4eca-948a-275d77f26f7d
 > Created: 2023-01-03T01:24:08Z
 > Updated: 2023-01-03T01:24:08Z

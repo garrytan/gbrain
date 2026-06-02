@@ -15,6 +15,8 @@ updated: 2026-01-23
 
 # McDonald's Hot Coffee Lawsuit
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 697310fc-3088-8326-a6cc-4ed818895109
 > Created: 2026-01-23T06:11:08Z
 > Updated: 2026-01-23T06:12:20Z

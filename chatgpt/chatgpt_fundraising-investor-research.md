@@ -15,6 +15,8 @@ updated: 2026-04-21
 
 # Fundraising Investor Research
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69e7f2a5-7eac-83e8-a55f-ffd0c8259919
 > Created: 2026-04-21T21:56:54Z
 > Updated: 2026-04-21T22:59:17Z

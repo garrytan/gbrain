@@ -15,6 +15,8 @@ updated: 2025-12-18
 
 # Spotify profiles Tim White
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 69447689-a4bc-832a-b635-817a1d95cd4a
 > Created: 2025-12-18T21:47:54Z
 > Updated: 2025-12-18T21:48:27Z

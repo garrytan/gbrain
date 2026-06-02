@@ -15,6 +15,8 @@ updated: 2023-03-03
 
 # SaaS Pricing Strategies
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 8a7795ef-4d06-4b71-ba69-4d1b11d7ebd3
 > Created: 2023-03-03T04:16:08Z
 > Updated: 2023-03-03T04:16:08Z

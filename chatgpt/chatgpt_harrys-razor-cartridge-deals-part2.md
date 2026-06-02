@@ -89,6 +89,8 @@ Perfect. Thanks for clarifying, Mr. White — here’s a **clean, corrected budg
 ---
 
 # 📊 Your Clean Budget (Baseline, Oct 2025 onward)
+
+**Related:** [[business_startup]]
 ### 🔒 Fixed Expenses
 - Rent (with Liv): **$800**  
 - Google Fi: **$50**  

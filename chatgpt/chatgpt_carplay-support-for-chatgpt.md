@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # CarPlay Support for ChatGPT
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69d4583b-f3f0-83e8-a1f6-70ac4360540f
 > Created: 2026-04-07T01:05:27Z
 > Updated: 2026-04-07T01:06:44Z

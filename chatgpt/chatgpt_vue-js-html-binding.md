@@ -16,6 +16,8 @@ updated: 2023-01-25
 
 # Vue JS HTML Binding
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 5ddac541-392b-4261-8157-effdea6efeef
 > Created: 2023-01-25T18:16:39Z
 > Updated: 2023-01-25T18:16:39Z

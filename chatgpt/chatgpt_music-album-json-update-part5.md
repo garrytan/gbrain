@@ -974,6 +974,10 @@ Do not commit your `.env` file to version control. Add `.env` to your `.gitignor
 
 ```
 # .gitignore
+
+**Related:** [[jovie_music]]
+
+**Related:** [[music_industry]]
 .env
 ```
 

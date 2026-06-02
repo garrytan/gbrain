@@ -17,6 +17,8 @@ updated: 2025-08-17
 
 # Vercel env setup tips
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 68a0c112-0920-8322-9c66-80141906104a
 > Created: 2025-08-16T17:37:13Z
 > Updated: 2025-08-17T05:21:43Z

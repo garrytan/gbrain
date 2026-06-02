@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Online Insurance Portal Check
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 88396eee-1835-45db-8b8c-19a8e1890e0d
 > Created: 2024-01-07T22:27:38Z
 > Updated: 2024-01-07T22:27:45Z

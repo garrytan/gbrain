@@ -16,6 +16,8 @@ updated: 2025-10-29
 
 # Career Growth Opportunities
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 67bd4d37-ee70-8007-901f-f6c4d4b848a5
 > Created: 2025-02-25T04:55:20Z
 > Updated: 2025-10-29T16:09:20Z

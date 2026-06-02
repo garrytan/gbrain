@@ -15,6 +15,8 @@ updated: 2025-11-28
 
 # Session Studio overview
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 692a134a-c380-832f-ac5b-b4bfe584ac35
 > Created: 2025-11-28T21:25:31Z
 > Updated: 2025-11-28T21:26:03Z

@@ -16,6 +16,8 @@ updated: 2026-04-19
 
 # Artist Profile Page Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69e52142-5660-83e8-b6c5-bd650242c4a1
 > Created: 2026-04-19T18:38:59Z
 > Updated: 2026-04-19T18:46:03Z

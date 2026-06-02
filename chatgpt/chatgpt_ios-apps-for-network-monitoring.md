@@ -16,6 +16,8 @@ updated: 2025-10-17
 
 # iOS apps for network monitoring
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68f2b717-5198-832f-8b64-ccec399aff48
 > Created: 2025-10-17T21:38:14Z
 > Updated: 2025-10-17T21:38:30Z

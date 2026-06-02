@@ -17,6 +17,8 @@ updated: 2023-01-04
 
 # Vue.js Routes Summary
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 3af8fe42-0d0d-4f8c-a5f2-15149510dcc4
 > Created: 2023-01-04T22:55:51Z
 > Updated: 2023-01-04T22:55:51Z

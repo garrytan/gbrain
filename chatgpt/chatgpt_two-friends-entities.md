@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Two Friends Entities
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67b93d74-4988-8007-9532-9678d43d5e4a
 > Created: 2025-02-22T02:59:00Z
 > Updated: 2025-02-22T02:59:07Z

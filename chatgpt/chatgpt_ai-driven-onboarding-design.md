@@ -16,6 +16,8 @@ updated: 2026-04-30
 
 # AI-Driven Onboarding Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69f2a403-b31c-83e8-b37d-b6930925750a
 > Created: 2026-04-30T00:36:22Z
 > Updated: 2026-04-30T04:19:12Z

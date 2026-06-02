@@ -16,6 +16,8 @@ updated: 2026-03-03
 
 # OpenAI and Anthropic Tech
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69a738f1-e18c-8330-95bc-f5916ab428c6
 > Created: 2026-03-03T19:39:32Z
 > Updated: 2026-03-03T19:42:52Z

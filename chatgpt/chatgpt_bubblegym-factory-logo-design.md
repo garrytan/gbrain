@@ -15,6 +15,8 @@ updated: 2024-05-25
 
 # Bubblegym Factory Logo Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 515256dc-af85-45cd-93a5-d3ee9b7e8610
 > Created: 2024-05-25T02:34:28Z
 > Updated: 2024-05-25T02:34:42Z

@@ -17,6 +17,8 @@ updated: 2025-11-17
 
 # SwiftLint and hooks
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 691a6b5c-cfec-8329-83a1-f46cf702f286
 > Created: 2025-11-17T00:25:01Z
 > Updated: 2025-11-17T00:28:18Z

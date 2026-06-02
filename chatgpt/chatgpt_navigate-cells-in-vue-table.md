@@ -16,6 +16,8 @@ updated: 2022-12-22
 
 # Navigate Cells in Vue Table
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: bc61fe12-bb13-4a24-8042-09955da5fe5d
 > Created: 2022-12-22T21:13:03Z
 > Updated: 2022-12-22T21:13:03Z

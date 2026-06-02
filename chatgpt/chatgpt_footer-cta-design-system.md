@@ -17,6 +17,8 @@ updated: 2026-04-27
 
 # Footer CTA Design System
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69efde7b-d190-83e8-b438-e9a67187bac8
 > Created: 2026-04-27T22:09:14Z
 > Updated: 2026-04-27T23:09:06Z

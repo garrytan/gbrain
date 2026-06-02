@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Phone plan options
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68d347b6-c624-8330-bdad-fbc1cbb5764e
 > Created: 2025-09-24T01:21:59Z
 > Updated: 2025-09-24T01:22:10Z

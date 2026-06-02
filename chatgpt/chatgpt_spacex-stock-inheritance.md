@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # SpaceX Stock Inheritance
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6a0a2446-3308-83e8-86ab-856d316c93d3
 > Created: 2026-05-17T20:30:04Z
 > Updated: 2026-05-17T20:30:19Z

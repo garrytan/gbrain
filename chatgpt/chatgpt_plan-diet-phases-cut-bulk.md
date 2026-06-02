@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Plan Diet Phases: Cut-Bulk.
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 47fae44a-309b-448c-9021-223e9f568eb7
 > Created: 2024-04-02T20:48:46Z
 > Updated: 2024-04-02T20:59:43Z

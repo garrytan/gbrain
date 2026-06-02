@@ -15,6 +15,8 @@ updated: 2026-01-05
 
 # OpenAI GitHub Actions
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 695b29ba-7314-8326-8a54-041662a18268
 > Created: 2026-01-05T03:02:18Z
 > Updated: 2026-01-05T03:02:54Z

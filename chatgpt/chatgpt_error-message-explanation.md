@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Error message explanation
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69190bb2-435c-8331-ace8-12e2a827f88d
 > Created: 2025-11-15T23:24:34Z
 > Updated: 2025-11-16T18:53:34Z

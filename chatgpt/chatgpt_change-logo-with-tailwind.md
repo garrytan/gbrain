@@ -16,6 +16,8 @@ updated: 2025-12-16
 
 # Change logo with Tailwind
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6941b4fe-2738-8329-9785-ad311f646b43
 > Created: 2025-12-16T19:37:35Z
 > Updated: 2025-12-16T19:38:21Z

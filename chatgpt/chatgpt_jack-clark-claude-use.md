@@ -17,6 +17,8 @@ updated: 2026-01-15
 
 # Jack Clark Claude Use
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69694091-ef58-8333-8e5d-85ff6daf1159
 > Created: 2026-01-15T19:31:30Z
 > Updated: 2026-01-15T20:37:10Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # LA Fitness dress code
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6917ac38-0bd8-8329-a6bd-740da05dddfe
 > Created: 2025-11-14T22:24:59Z
 > Updated: 2025-11-14T22:25:20Z

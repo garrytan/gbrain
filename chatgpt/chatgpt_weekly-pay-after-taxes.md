@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Weekly pay after taxes
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 692a5528-3f54-8327-82c0-70abbfd5ddb8
 > Created: 2025-11-29T02:06:33Z
 > Updated: 2025-11-29T02:08:32Z

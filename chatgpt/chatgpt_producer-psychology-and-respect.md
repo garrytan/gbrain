@@ -15,6 +15,8 @@ updated: 2026-05-31
 
 # Producer Psychology and Respect
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a1ca729-8dcc-83e8-b0d1-34f872dd34b5
 > Created: 2026-05-31T21:28:54Z
 > Updated: 2026-05-31T21:29:02Z

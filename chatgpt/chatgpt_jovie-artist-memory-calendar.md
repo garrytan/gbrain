@@ -17,6 +17,8 @@ updated: 2026-05-25
 
 # Jovie Artist Memory Calendar
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a139bb4-7b8c-83e8-98d8-bf2eb4cabe63
 > Created: 2026-05-25T00:46:40Z
 > Updated: 2026-05-25T03:36:47Z

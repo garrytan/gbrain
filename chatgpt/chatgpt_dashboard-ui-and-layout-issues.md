@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Dashboard UI and Layout Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 686ee015-1fe0-8007-8586-2a218516a84b
 > Created: 2025-07-09T21:33:09Z
 > Updated: 2025-07-09T22:01:24Z

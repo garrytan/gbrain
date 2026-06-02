@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Soho Warehouse Overview
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 695998d2-960c-832b-bc20-6087858584f7
 > Created: 2026-01-03T22:31:47Z
 > Updated: 2026-01-03T22:32:20Z

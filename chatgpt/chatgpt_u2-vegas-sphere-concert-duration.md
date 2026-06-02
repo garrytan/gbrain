@@ -15,6 +15,8 @@ updated: 2023-12-14
 
 # U2 Vegas Sphere Concert Duration
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 38b5253f-5ff7-4381-a398-091fd8444f0f
 > Created: 2023-12-13T23:33:23Z
 > Updated: 2023-12-14T05:01:28Z

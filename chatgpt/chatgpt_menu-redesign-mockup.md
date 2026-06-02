@@ -15,6 +15,8 @@ updated: 2026-05-20
 
 # Menu Redesign Mockup
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a0d001a-d15c-83e8-aafe-bce98a3a891b
 > Created: 2026-05-20T00:28:45Z
 > Updated: 2026-05-20T00:29:27Z

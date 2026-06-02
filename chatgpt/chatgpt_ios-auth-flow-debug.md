@@ -17,6 +17,8 @@ updated: 2026-05-24
 
 # iOS Auth Flow Debug
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6a132d99-2af8-83e8-8c2d-e976648155bc
 > Created: 2026-05-24T16:57:05Z
 > Updated: 2026-05-24T16:57:40Z

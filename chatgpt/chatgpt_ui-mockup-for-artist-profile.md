@@ -15,6 +15,8 @@ updated: 2026-05-15
 
 # UI Mockup for Artist Profile
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a066e0b-d0e4-83e8-bee9-660b692877f9
 > Created: 2026-05-15T00:51:26Z
 > Updated: 2026-05-15T01:02:46Z

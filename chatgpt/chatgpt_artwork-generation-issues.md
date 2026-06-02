@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Artwork Generation Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6b7fbe99-e051-4e26-867e-edbfdbeaadd0
 > Created: 2024-01-19T01:58:36Z
 > Updated: 2024-01-19T01:59:00Z

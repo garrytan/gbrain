@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Rental Car Expenses Summary
 
+**Related:** [[personal_life]]
+
 > Conversation ID: e2a0afe2-69ac-4c49-b7f7-bb576326be95
 > Created: 2024-08-21T02:40:47Z
 > Updated: 2024-08-21T03:46:43Z

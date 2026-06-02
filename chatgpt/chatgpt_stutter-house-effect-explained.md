@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Stutter House Effect Explained
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 679db812-7aa0-8007-aad8-b055b25f697b
 > Created: 2025-02-01T05:58:42Z
 > Updated: 2025-02-01T05:58:48Z

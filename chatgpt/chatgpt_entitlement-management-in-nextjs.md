@@ -17,6 +17,8 @@ updated: 2026-02-16
 
 # Entitlement Management in Next.js
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 699370e7-5720-8333-ac4b-10cd12caa8ad
 > Created: 2026-02-16T19:35:04Z
 > Updated: 2026-02-16T22:29:51Z

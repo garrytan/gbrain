@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # AL error troubleshooting
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 68e05090-05d8-8325-b028-245232dc0f3d
 > Created: 2025-10-03T22:39:27Z
 > Updated: 2025-10-03T22:39:39Z

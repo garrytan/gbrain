@@ -15,6 +15,8 @@ updated: 2024-05-14
 
 # Album Art Request.
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: ed2c2b9e-78bd-495e-b6ad-22ccbda38cf9
 > Created: 2024-05-14T22:33:50Z
 > Updated: 2024-05-14T22:34:28Z

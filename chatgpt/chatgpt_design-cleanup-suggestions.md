@@ -15,6 +15,8 @@ updated: 2026-02-07
 
 # Design Cleanup Suggestions
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6986c15c-51cc-832c-8584-f9b7e4894007
 > Created: 2026-02-07T04:36:52Z
 > Updated: 2026-02-07T04:37:03Z

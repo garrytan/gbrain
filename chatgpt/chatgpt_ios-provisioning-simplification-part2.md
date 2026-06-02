@@ -117,6 +117,8 @@ Bottom line: nothing here should prevent TestFlight uploads.
 
 ```yaml
 # codeql-analysis.yml
+
+**Related:** [[coding_mobile]]
 strategy:
   matrix:
     include:

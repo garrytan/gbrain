@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Car insurance rate increase
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68d06424-ef0c-8332-9e22-3cf758dd2ad7
 > Created: 2025-09-21T20:46:40Z
 > Updated: 2025-09-21T20:46:47Z

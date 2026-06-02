@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Passenger seatbelt chime fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 688fc144-0bd8-8327-8681-d183fb090265
 > Created: 2025-08-03T20:06:29Z
 > Updated: 2025-08-03T20:17:16Z

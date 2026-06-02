@@ -15,6 +15,8 @@ updated: 2025-12-03
 
 # Best mobile profile UI
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69309da6-e760-832c-951f-fbf33541b6d8
 > Created: 2025-12-03T20:29:27Z
 > Updated: 2025-12-03T20:30:01Z

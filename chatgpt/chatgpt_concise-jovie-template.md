@@ -15,6 +15,8 @@ updated: 2023-05-22
 
 # Concise Jovie Template
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: c933ce39-6aea-4d80-ba69-c73ab1b61537
 > Created: 2023-05-22T20:13:54Z
 > Updated: 2023-05-22T20:14:35Z

@@ -17,6 +17,8 @@ updated: 2024-04-29
 
 # Automate Visual Profile Follow.
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 4678d502-ac9a-4345-a61d-b7f4c1f7a6ff
 > Created: 2024-04-29T20:59:02Z
 > Updated: 2024-04-29T21:26:11Z

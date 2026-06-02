@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Mazda CX-5 CarPlay Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6816a146-21b8-8007-ac49-2a8e1be1a9d7
 > Created: 2025-05-03T23:05:42Z
 > Updated: 2025-05-03T23:06:28Z

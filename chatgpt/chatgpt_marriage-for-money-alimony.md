@@ -15,6 +15,8 @@ updated: 2024-05-30
 
 # Marriage for money alimony.
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 4f0bd1e1-caf2-4989-bb11-b6641a2faf38
 > Created: 2024-05-30T02:55:43Z
 > Updated: 2024-05-30T02:55:47Z

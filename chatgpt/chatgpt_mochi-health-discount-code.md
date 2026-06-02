@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Mochi Health Discount Code
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 67bbd1c8-9cac-8007-84c2-07ab8e514980
 > Created: 2025-02-24T01:56:24Z
 > Updated: 2025-02-24T02:00:05Z

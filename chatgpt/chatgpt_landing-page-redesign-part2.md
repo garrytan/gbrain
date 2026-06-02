@@ -232,6 +232,8 @@ Recent PRs show the product moving toward a broader **AI workspace / operating s
 
 # Final homepage structure
 
+**Related:** [[design_ux]]
+
 ## 1. Hero
 
 **Headline:**  

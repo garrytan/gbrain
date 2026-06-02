@@ -17,6 +17,8 @@ updated: 2026-04-02
 
 # Link-in-Bio Design for Musicians
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69cdc251-77d0-83e8-81f9-55c66fb3d336
 > Created: 2026-04-02T01:12:11Z
 > Updated: 2026-04-02T07:05:25Z

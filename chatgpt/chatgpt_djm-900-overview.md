@@ -15,6 +15,8 @@ updated: 2025-01-30
 
 # DJM-900 Overview
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 679ae73c-cb98-8007-b9ee-4b9c2bc5ebd0
 > Created: 2025-01-30T02:43:09Z
 > Updated: 2025-01-30T02:43:12Z

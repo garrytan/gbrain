@@ -16,6 +16,8 @@ updated: 2026-01-18
 
 # Genius Shot Relaunch
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 696d2c9b-bfe0-8329-b165-1a557d1f1436
 > Created: 2026-01-18T18:55:24Z
 > Updated: 2026-01-18T19:02:00Z

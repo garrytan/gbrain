@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Car Accident Liability 101
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68224db7-e7e8-8007-8763-69b3e91038dc
 > Created: 2025-05-12T19:36:24Z
 > Updated: 2025-05-12T19:37:48Z

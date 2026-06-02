@@ -15,6 +15,8 @@ updated: 2026-01-23
 
 # Vercel Startup Programs
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 6973fab2-878c-8333-8cd4-6e037a0edc22
 > Created: 2026-01-23T22:48:18Z
 > Updated: 2026-01-23T22:48:23Z

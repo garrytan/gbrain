@@ -15,6 +15,8 @@ updated: 2025-04-12
 
 # Love Bomb Tattoo Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 67fad1ea-8228-8007-ab14-508813ea1f91
 > Created: 2025-04-12T20:49:47Z
 > Updated: 2025-04-12T20:52:20Z

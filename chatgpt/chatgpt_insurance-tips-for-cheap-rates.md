@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Insurance Tips for Cheap Rates
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68054f94-c948-8007-bee5-f833ce898913
 > Created: 2025-04-20T19:48:36Z
 > Updated: 2025-04-20T20:12:11Z

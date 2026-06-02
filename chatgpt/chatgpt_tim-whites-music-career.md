@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Tim White's Music Career
 
+**Related:** [[personal_life]]
+
 > Conversation ID: d6f999b0-2018-44dc-bfff-d0b41bbba7ac
 > Created: 2024-03-12T00:31:17Z
 > Updated: 2024-03-12T01:08:16Z

@@ -15,6 +15,8 @@ updated: 2022-12-24
 
 # JavaScript Ternary Operator Fix
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: b079624c-0496-4d99-9027-2d6f16c01adb
 > Created: 2022-12-24T07:12:34Z
 > Updated: 2022-12-24T07:12:34Z

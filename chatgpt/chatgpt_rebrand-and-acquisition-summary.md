@@ -15,6 +15,8 @@ updated: 2025-11-23
 
 # Rebrand and acquisition summary
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 692359b0-c4dc-8326-a8e1-3ed348222832
 > Created: 2025-11-23T19:00:22Z
 > Updated: 2025-11-23T19:03:45Z

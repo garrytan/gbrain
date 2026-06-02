@@ -16,6 +16,8 @@ updated: 2025-05-18
 
 # Next.js vs Nuxt Comparison
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 682a09ff-aae0-8007-9b53-6162f18d8021
 > Created: 2025-05-18T16:25:35Z
 > Updated: 2025-05-18T16:29:18Z

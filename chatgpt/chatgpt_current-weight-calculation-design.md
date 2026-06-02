@@ -17,6 +17,8 @@ updated: 2025-06-15
 
 # Current Weight Calculation Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 684e721c-29d4-8007-83d7-0f1f9ab4f94a
 > Created: 2025-06-15T07:11:24Z
 > Updated: 2025-06-15T18:54:13Z

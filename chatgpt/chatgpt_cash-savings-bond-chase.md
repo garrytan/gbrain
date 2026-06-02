@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cash Savings Bond Chase
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 6803fed8-d310-8007-aabe-436bafe95b66
 > Created: 2025-04-19T19:51:53Z
 > Updated: 2025-04-19T19:53:26Z

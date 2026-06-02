@@ -17,6 +17,8 @@ updated: 2025-06-10
 
 # Generate Shared Secret RevenueCat
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68479884-2a90-8007-af45-c9d13151cd4e
 > Created: 2025-06-10T02:29:24Z
 > Updated: 2025-06-10T05:25:36Z

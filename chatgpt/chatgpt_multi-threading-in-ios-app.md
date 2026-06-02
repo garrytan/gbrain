@@ -17,6 +17,8 @@ updated: 2025-07-07
 
 # Multi-threading in iOS App
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 686b4981-a564-8007-a509-24f58b94e551
 > Created: 2025-07-07T04:13:53Z
 > Updated: 2025-07-07T04:17:25Z

@@ -17,6 +17,8 @@ updated: 2026-05-10
 
 # Design system review
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69ff6d04-3e90-83e8-a1e7-d04cebf99e8f
 > Created: 2026-05-09T17:21:09Z
 > Updated: 2026-05-10T21:38:34Z

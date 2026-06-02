@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Sink Drain Fix
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6838ec5b-54b4-8007-b75a-7a1529da6dbf
 > Created: 2025-05-29T23:23:07Z
 > Updated: 2025-05-29T23:23:43Z

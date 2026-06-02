@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Neon Night Love.
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 3795ed72-8028-4565-b494-1d6680ca98f5
 > Created: 2024-03-20T23:33:58Z
 > Updated: 2024-03-21T01:02:43Z

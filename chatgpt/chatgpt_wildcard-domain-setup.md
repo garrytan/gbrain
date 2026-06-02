@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Wildcard domain setup
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 68af77e6-0fb8-832f-99b5-0f2ebeb64e71
 > Created: 2025-08-27T21:26:08Z
 > Updated: 2025-08-28T00:41:15Z

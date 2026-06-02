@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # LA Female Fitness Influencers
 
+**Related:** [[personal_health]]
+
 > Conversation ID: d221b715-8b49-48b2-9006-cb36138742bc
 > Created: 2023-03-27T19:34:48Z
 > Updated: 2023-03-27T19:35:19Z

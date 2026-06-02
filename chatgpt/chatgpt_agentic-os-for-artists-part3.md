@@ -17,6 +17,8 @@ This gives YC/a16z the right signal without turning the page into an investor pi
 
 # 1. Global rules for today
 
+**Related:** [[jovie_music]]
+
 ## Do
 
 Use this language repeatedly:

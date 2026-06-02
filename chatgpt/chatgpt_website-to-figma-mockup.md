@@ -15,6 +15,8 @@ updated: 2026-02-22
 
 # Website to Figma Mockup
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 699a55ca-62a0-832c-a96d-ee342d5cbc60
 > Created: 2026-02-22T01:03:29Z
 > Updated: 2026-02-22T01:04:47Z

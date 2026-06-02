@@ -15,6 +15,8 @@ updated: 2023-11-30
 
 # Tracking Macros for Today
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: f17d4fb0-c563-43e7-bdee-60a4b2c41f91
 > Created: 2023-11-30T03:57:50Z
 > Updated: 2023-11-30T04:40:07Z

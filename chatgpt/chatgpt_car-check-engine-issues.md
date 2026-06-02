@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Car Check Engine Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6a1cbf54-fc5c-83e8-8107-73fae77184fa
 > Created: 2026-05-31T23:08:44Z
 > Updated: 2026-05-31T23:09:02Z

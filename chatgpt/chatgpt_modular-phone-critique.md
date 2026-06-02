@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Modular phone critique
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68c9f087-e660-832f-b8a0-18a4d702b31a
 > Created: 2025-09-16T23:19:37Z
 > Updated: 2025-09-17T00:15:19Z

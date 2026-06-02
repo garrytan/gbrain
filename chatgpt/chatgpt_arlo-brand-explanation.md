@@ -15,6 +15,8 @@ updated: 2025-10-07
 
 # Arlo brand explanation
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 68e47774-9264-8326-8637-69db8cfff783
 > Created: 2025-10-07T02:14:14Z
 > Updated: 2025-10-07T02:14:20Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Diet Fatigue and Maintenance
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68336847-f3a4-8007-817b-50e05eeadd16
 > Created: 2025-05-25T18:58:16Z
 > Updated: 2025-05-25T19:11:27Z

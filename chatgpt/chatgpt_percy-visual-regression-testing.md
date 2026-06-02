@@ -15,6 +15,8 @@ updated: 2025-12-30
 
 # Percy Visual Regression Testing
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69543afd-89ec-832a-94ea-b76097583047
 > Created: 2025-12-30T20:50:06Z
 > Updated: 2025-12-30T22:50:00Z

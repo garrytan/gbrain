@@ -16,6 +16,8 @@ updated: 2025-08-23
 
 # MVP launch preparation
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 68aa24eb-95c4-8324-8282-17d22950d896
 > Created: 2025-08-23T20:34:21Z
 > Updated: 2025-08-23T20:36:42Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Inheritance tax implications
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68abcc41-8efc-832f-866b-73475b58356a
 > Created: 2025-08-25T02:37:06Z
 > Updated: 2025-08-25T02:37:20Z

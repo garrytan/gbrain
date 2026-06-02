@@ -15,6 +15,8 @@ updated: 2025-01-31
 
 # 12inchSkinz vs DJSkins Pricing
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 679c4a76-9ab8-8007-a63b-9616a38206da
 > Created: 2025-01-31T03:58:46Z
 > Updated: 2025-01-31T03:58:51Z

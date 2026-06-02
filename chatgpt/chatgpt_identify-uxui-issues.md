@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Identify ux/ui issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 690a7de7-dc34-8332-b1eb-972185775afa
 > Created: 2025-11-04T22:28:25Z
 > Updated: 2025-11-04T22:28:48Z

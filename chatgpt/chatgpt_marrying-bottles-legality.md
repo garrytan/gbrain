@@ -15,6 +15,8 @@ updated: 2024-07-27
 
 # Marrying Bottles Legality
 
+**Related:** [[business_startup]]
+
 > Conversation ID: ede55925-5e97-49d2-becc-c3efe25983ab
 > Created: 2024-07-27T22:40:38Z
 > Updated: 2024-07-27T22:40:44Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # PR Auto-Opening Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69ae595b-9af0-8330-9ad0-37b194e9d5b0
 > Created: 2026-03-09T05:23:52Z
 > Updated: 2026-03-09T05:24:03Z

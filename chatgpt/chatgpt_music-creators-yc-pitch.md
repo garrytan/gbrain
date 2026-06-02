@@ -15,6 +15,8 @@ updated: 2026-04-28
 
 # Music Creators YC Pitch
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69eefd26-9a68-83e8-9876-b7c82a8de135
 > Created: 2026-04-27T06:07:35Z
 > Updated: 2026-04-28T01:33:52Z

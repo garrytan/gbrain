@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Pay Off Credit Card
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: cff65a36-05a4-4388-9ba2-6b196675d38b
 > Created: 2023-11-13T00:44:36Z
 > Updated: 2023-11-13T07:36:19Z

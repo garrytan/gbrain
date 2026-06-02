@@ -15,6 +15,8 @@ updated: 2025-04-28
 
 # Copilot AI Income
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 680f0f73-aba4-8007-9440-889875274ca3
 > Created: 2025-04-28T05:17:39Z
 > Updated: 2025-04-28T05:18:49Z

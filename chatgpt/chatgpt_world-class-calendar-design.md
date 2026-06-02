@@ -15,6 +15,8 @@ updated: 2026-04-27
 
 # World Class Calendar Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 69eed7e6-e0ec-83e8-b620-70501fa54361
 > Created: 2026-04-27T03:28:39Z
 > Updated: 2026-04-27T08:44:27Z

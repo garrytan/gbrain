@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Tax implications of SAFE investment
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 693cbe5f-6ed8-832c-82bd-767373fe7d14
 > Created: 2025-12-13T01:16:16Z
 > Updated: 2025-12-13T01:17:23Z

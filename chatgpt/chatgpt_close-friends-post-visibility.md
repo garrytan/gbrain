@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Close Friends Post Visibility
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 681bc9c9-402c-8007-8682-d007186de3e3
 > Created: 2025-05-07T20:59:53Z
 > Updated: 2025-05-07T21:00:16Z

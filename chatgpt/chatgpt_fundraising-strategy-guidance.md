@@ -16,6 +16,8 @@ updated: 2026-04-22
 
 # Fundraising Strategy Guidance
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 69e82fcc-dc18-83e8-8975-03c649efbd5e
 > Created: 2026-04-22T02:17:49Z
 > Updated: 2026-04-22T02:25:15Z

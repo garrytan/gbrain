@@ -15,6 +15,8 @@ updated: 2026-02-24
 
 # Drexel Music Industry Alumni
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 699d5d28-a790-8325-bc68-ba3537e996ed
 > Created: 2026-02-24T08:11:56Z
 > Updated: 2026-02-24T08:33:13Z

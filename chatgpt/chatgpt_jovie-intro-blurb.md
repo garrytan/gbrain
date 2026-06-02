@@ -15,6 +15,8 @@ updated: 2026-05-27
 
 # Jovie Intro Blurb
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6a173b7f-09cc-83e8-afed-c66f68c8b9d3
 > Created: 2026-05-27T18:44:20Z
 > Updated: 2026-05-27T19:04:17Z

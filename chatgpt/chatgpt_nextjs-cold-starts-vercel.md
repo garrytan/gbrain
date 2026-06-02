@@ -16,6 +16,8 @@ updated: 2026-01-28
 
 # Next.js Cold Starts Vercel
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 697a62ac-b67c-832c-a15b-bc1919c98518
 > Created: 2026-01-28T19:25:33Z
 > Updated: 2026-01-28T20:38:52Z

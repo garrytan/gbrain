@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Target Weight for 8% BF
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 1cc2eb3e-8c39-4180-96c7-5cf162b8a077
 > Created: 2024-07-22T18:19:06Z
 > Updated: 2024-07-22T18:19:27Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Escort Tax Filing Process
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 42173665-d3ec-43b4-9de1-05c82ddc3587
 > Created: 2024-03-11T19:36:05Z
 > Updated: 2024-03-11T19:36:34Z

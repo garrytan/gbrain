@@ -15,6 +15,8 @@ updated: 2025-07-05
 
 # Victorious soundtrack studios
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6868b1c0-3a98-8007-88c6-eea1ce0950df
 > Created: 2025-07-05T05:01:52Z
 > Updated: 2025-07-05T05:03:13Z

@@ -15,6 +15,8 @@ updated: 2025-12-22
 
 # Claude desktop worktrees
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69499b71-a274-8325-8747-91fdb99ec993
 > Created: 2025-12-22T19:26:42Z
 > Updated: 2025-12-22T19:27:15Z

@@ -15,6 +15,8 @@ updated: 2025-01-16
 
 # Kaskade Artist Profile
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 678896c8-2698-8007-afe0-cd438f5876aa
 > Created: 2025-01-16T05:19:04Z
 > Updated: 2025-01-16T05:19:14Z

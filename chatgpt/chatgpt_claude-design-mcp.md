@@ -15,6 +15,8 @@ updated: 2026-04-25
 
 # Claude Design MCP
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69ed1e83-3c6c-83e8-90c6-3d8feb918c63
 > Created: 2026-04-25T20:05:23Z
 > Updated: 2026-04-25T20:05:37Z

@@ -17,6 +17,8 @@ updated: 2026-05-29
 
 # Sidebar Design Issues
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a18dfbb-0234-83e8-9b9f-e298dd3ce7d5
 > Created: 2026-05-29T00:37:16Z
 > Updated: 2026-05-29T01:43:51Z

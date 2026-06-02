@@ -16,6 +16,8 @@ updated: 2023-05-24
 
 # Async Method in Vue 3
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 6cd30669-083a-42ce-93a4-e014c8045e42
 > Created: 2023-05-24T16:10:46Z
 > Updated: 2023-05-24T16:11:51Z

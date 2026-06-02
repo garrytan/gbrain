@@ -15,6 +15,8 @@ updated: 2025-02-23
 
 # Snarky DJ Bio Rewrite
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 67bab198-f250-8007-8e80-ab2acd567a14
 > Created: 2025-02-23T05:26:49Z
 > Updated: 2025-02-23T05:31:53Z

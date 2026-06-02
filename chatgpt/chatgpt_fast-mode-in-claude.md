@@ -15,6 +15,8 @@ updated: 2026-02-17
 
 # Fast mode in Claude
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 6993e1e4-58fc-832d-b9f4-7d875fc7d9e1
 > Created: 2026-02-17T03:35:04Z
 > Updated: 2026-02-17T03:35:38Z

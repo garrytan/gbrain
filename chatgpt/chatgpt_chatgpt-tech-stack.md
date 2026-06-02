@@ -15,6 +15,8 @@ updated: 2025-09-14
 
 # ChatGPT tech stack
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 68c6fb86-f908-832b-87e9-89f2ad54f3dc
 > Created: 2025-09-14T17:29:43Z
 > Updated: 2025-09-14T17:31:51Z

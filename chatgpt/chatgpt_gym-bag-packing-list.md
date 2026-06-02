@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Gym Bag Packing List
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 68252ded-2d14-8007-acb8-2a2a2a33829e
 > Created: 2025-05-14T23:57:33Z
 > Updated: 2025-05-14T23:57:56Z

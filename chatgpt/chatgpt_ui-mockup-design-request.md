@@ -15,6 +15,8 @@ updated: 2026-05-20
 
 # UI Mockup Design Request
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6a0d014a-64ac-83e8-a453-f152bea530db
 > Created: 2026-05-20T00:33:15Z
 > Updated: 2026-05-20T00:37:21Z

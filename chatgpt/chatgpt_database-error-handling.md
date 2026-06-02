@@ -17,6 +17,8 @@ updated: 2025-06-15
 
 # Database error handling
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 684d059f-d938-8007-acef-2840d340d2e2
 > Created: 2025-06-14T05:16:16Z
 > Updated: 2025-06-15T01:48:28Z

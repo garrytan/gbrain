@@ -15,6 +15,8 @@ updated: 2024-05-23
 
 # Album Sales 2024: 12 Artists
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 1bb6ff40-46c9-4cd4-bf86-159827e26876
 > Created: 2024-05-23T00:32:54Z
 > Updated: 2024-05-23T00:33:15Z

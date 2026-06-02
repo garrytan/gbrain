@@ -15,6 +15,8 @@ updated: 2024-08-02
 
 # Check Drink Sales Clover
 
+**Related:** [[business_startup]]
+
 > Conversation ID: c25c3680-4323-40c9-98fd-2d3683fc0625
 > Created: 2024-08-02T22:50:22Z
 > Updated: 2024-08-02T22:50:29Z

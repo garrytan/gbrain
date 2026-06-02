@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Eight sleep red light
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 687e9ad8-5e48-832d-963a-7fdb620796a6
 > Created: 2025-07-21T19:54:01Z
 > Updated: 2025-07-21T19:54:20Z

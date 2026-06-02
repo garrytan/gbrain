@@ -16,6 +16,8 @@ updated: 2025-11-14
 
 # Windsurf vs Claude Code
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69168757-b464-832e-8977-e0943f47137f
 > Created: 2025-11-14T01:35:30Z
 > Updated: 2025-11-14T01:43:09Z

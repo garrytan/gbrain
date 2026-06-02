@@ -15,6 +15,8 @@ updated: 2024-07-22
 
 # Tracking Steps While Bartending
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 81d7f749-8f16-4354-87de-a541236aea65
 > Created: 2024-07-22T01:14:13Z
 > Updated: 2024-07-22T01:16:36Z

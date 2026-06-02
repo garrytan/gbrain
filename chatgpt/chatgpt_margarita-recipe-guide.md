@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Margarita Recipe Guide
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 682d4664-3ad0-8007-b962-002318518a00
 > Created: 2025-05-21T03:20:04Z
 > Updated: 2025-05-21T03:20:13Z

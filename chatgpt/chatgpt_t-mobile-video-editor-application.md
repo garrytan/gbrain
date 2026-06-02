@@ -15,6 +15,8 @@ updated: 2025-06-09
 
 # T-Mobile Video Editor Application
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6846fca8-ba64-8007-b72f-a2f315e4df6f
 > Created: 2025-06-09T15:24:24Z
 > Updated: 2025-06-09T15:25:04Z

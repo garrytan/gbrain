@@ -16,6 +16,8 @@ updated: 2022-12-23
 
 # Create Vue Checkbox Component
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: f3c5fcf7-aa0c-4821-bea4-11a6b527146d
 > Created: 2022-12-23T23:06:25Z
 > Updated: 2022-12-23T23:06:25Z

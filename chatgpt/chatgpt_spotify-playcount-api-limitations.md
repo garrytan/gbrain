@@ -15,6 +15,8 @@ updated: 2026-01-26
 
 # Spotify playcount API limitations
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6977bfb5-fd2c-8327-8323-a2a555515375
 > Created: 2026-01-26T19:25:43Z
 > Updated: 2026-01-26T19:26:24Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Job Schedule Advice
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 686ab61d-75ac-8007-addb-75c55915bac5
 > Created: 2025-07-06T17:45:01Z
 > Updated: 2025-07-06T17:45:07Z

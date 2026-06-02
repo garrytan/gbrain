@@ -10,6 +10,8 @@ tags: [chatgpt, import, code]
 ---
 # Fix Syntax Error
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: de26075d-400d-4377-9dcd-5616125b788a
 > Created: 2022-12-21T01:14:02Z
 > Updated: 2022-12-21T01:14:02Z

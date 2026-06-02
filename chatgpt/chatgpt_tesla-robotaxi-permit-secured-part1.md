@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Tesla robotaxi permit secured
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 68aa061e-da3c-8331-b0f3-d33d80d249fe
 > Created: 2025-08-23T18:19:11Z
 > Updated: 2025-08-26T23:32:32Z

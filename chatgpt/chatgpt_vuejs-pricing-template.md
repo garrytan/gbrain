@@ -17,6 +17,8 @@ updated: 2023-03-03
 
 # Vue.js Pricing Template
 
+**Related:** [[business_startup]]
+
 > Conversation ID: 59ac8469-fb20-4b34-95bc-1eac011d1223
 > Created: 2023-03-03T06:50:12Z
 > Updated: 2023-03-03T06:50:12Z

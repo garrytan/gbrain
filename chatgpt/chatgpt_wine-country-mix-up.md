@@ -15,6 +15,8 @@ updated: 2025-12-09
 
 # Wine country mix-up
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6938ab58-2d70-832a-8a0d-56020309fe3e
 > Created: 2025-12-09T23:06:34Z
 > Updated: 2025-12-09T23:08:25Z

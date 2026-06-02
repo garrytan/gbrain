@@ -16,6 +16,8 @@ updated: 2023-02-23
 
 # Vue Fullscreen Video Background.
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 7b945aec-0cb0-4daf-bfc5-827317d3f509
 > Created: 2023-02-23T04:07:53Z
 > Updated: 2023-02-23T04:07:53Z

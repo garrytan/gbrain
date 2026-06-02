@@ -10,6 +10,8 @@ tags: [chatgpt, import, long-form]
 ---
 # Remote job automation options
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 692a5580-4e20-832f-93eb-0614157167c4
 > Created: 2025-11-29T02:08:01Z
 > Updated: 2025-11-29T02:09:46Z

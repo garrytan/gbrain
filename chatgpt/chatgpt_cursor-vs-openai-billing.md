@@ -15,6 +15,8 @@ updated: 2025-12-18
 
 # Cursor vs OpenAI billing
 
+**Related:** [[coding_ai]]
+
 > Conversation ID: 69436a83-b258-832e-9988-3f26ae57c108
 > Created: 2025-12-18T02:44:20Z
 > Updated: 2025-12-18T02:46:08Z

@@ -16,6 +16,8 @@ updated: 2026-02-15
 
 # Vercel Cron Job Costs
 
+**Related:** [[coding_devops]]
+
 > Conversation ID: 69924ba7-449c-8329-8e17-3c95695f161e
 > Created: 2026-02-15T22:42:05Z
 > Updated: 2026-02-15T22:48:48Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # House song counting lyrics
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 680a7117-9504-8007-9676-02504a293cff
 > Created: 2025-04-24T17:12:56Z
 > Updated: 2025-04-24T17:13:26Z

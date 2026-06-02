@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Jobs at Conan
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 69391b0a-255c-832e-bffb-e5e6c28f90bf
 > Created: 2025-12-10T07:02:34Z
 > Updated: 2025-12-10T08:12:13Z

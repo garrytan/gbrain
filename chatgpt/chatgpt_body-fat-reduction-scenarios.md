@@ -15,6 +15,8 @@ updated: 2025-09-28
 
 # Body fat reduction scenarios
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 68d96b48-770c-832e-902d-c18502df0562
 > Created: 2025-09-28T17:07:21Z
 > Updated: 2025-09-28T17:25:33Z

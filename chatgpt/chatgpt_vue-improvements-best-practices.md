@@ -17,6 +17,8 @@ updated: 2024-03-12
 
 # Vue Improvements & Best Practices
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: fa23957d-94af-4fba-bfc2-db3837a2a73d
 > Created: 2024-03-12T05:49:55Z
 > Updated: 2024-03-12T05:55:06Z

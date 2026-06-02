@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Family Style Fest event
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 687be968-63d4-832f-9c82-408ff7f51f46
 > Created: 2025-07-19T18:52:25Z
 > Updated: 2025-07-19T18:52:40Z

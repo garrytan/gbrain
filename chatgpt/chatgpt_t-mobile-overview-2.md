@@ -15,6 +15,8 @@ updated: 2025-11-30
 
 # T-Mobile overview
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 692ca3ff-0574-8332-abe1-0ddc3e2ff942
 > Created: 2025-11-30T20:07:27Z
 > Updated: 2025-11-30T20:08:17Z

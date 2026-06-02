@@ -16,6 +16,8 @@ updated: 2025-07-09
 
 # iOS App Competitor Analysis
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 686de2e9-a534-8007-9cbe-a8a5a4f096ad
 > Created: 2025-07-09T03:32:57Z
 > Updated: 2025-07-09T03:47:31Z

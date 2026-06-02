@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Resume Tips for Bartender
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 1e6792fc-2a2d-4ca0-bb9d-8fecfc211107
 > Created: 2023-11-08T18:09:39Z
 > Updated: 2023-11-08T18:12:25Z

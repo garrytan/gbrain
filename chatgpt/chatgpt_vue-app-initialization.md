@@ -15,6 +15,8 @@ updated: 2023-05-12
 
 # Vue App Initialization
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 7998e2cc-9214-44f9-9344-038f982ca2a2
 > Created: 2023-05-12T07:55:09Z
 > Updated: 2023-05-12T07:56:04Z

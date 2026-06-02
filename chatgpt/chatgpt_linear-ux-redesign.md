@@ -15,6 +15,8 @@ updated: 2025-12-23
 
 # Linear UX Redesign
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 694a2e8f-b018-8329-8c64-f551a365dfd8
 > Created: 2025-12-23T05:54:24Z
 > Updated: 2025-12-23T05:54:56Z

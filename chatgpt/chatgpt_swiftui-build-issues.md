@@ -17,6 +17,8 @@ updated: 2025-11-14
 
 # SwiftUI build issues
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 69178bd9-07f0-8332-aa7c-dc7cb072db61
 > Created: 2025-11-14T20:07:13Z
 > Updated: 2025-11-14T20:18:23Z

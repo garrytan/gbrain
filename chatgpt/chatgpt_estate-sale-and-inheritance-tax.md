@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Estate Sale and Inheritance Tax
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 67fc1abb-62cc-8007-978e-c409aa52fff1
 > Created: 2025-04-13T20:12:43Z
 > Updated: 2025-04-13T20:15:19Z

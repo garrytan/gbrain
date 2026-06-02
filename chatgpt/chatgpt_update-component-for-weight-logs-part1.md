@@ -17,6 +17,8 @@ updated: 2023-11-24
 
 # Update Component for Weight Logs
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 95c8e323-6cf3-4ce1-9d03-dfc460d6567b
 > Created: 2023-11-24T07:41:46Z
 > Updated: 2023-11-24T10:33:35Z

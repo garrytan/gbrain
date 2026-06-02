@@ -17,6 +17,8 @@ updated: 2025-07-11
 
 # Landing Page Section Design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 6870ac1c-2498-8007-81bc-d03d73de5027
 > Created: 2025-07-11T06:15:56Z
 > Updated: 2025-07-11T19:15:41Z

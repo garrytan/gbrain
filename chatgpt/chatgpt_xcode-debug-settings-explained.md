@@ -17,6 +17,8 @@ updated: 2025-07-15
 
 # Xcode Debug Settings Explained
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 6875d943-a318-8007-ae85-a6847ab09ab0
 > Created: 2025-07-15T04:29:55Z
 > Updated: 2025-07-15T07:15:06Z

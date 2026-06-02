@@ -10,6 +10,8 @@ tags: [chatgpt, import, code, long-form]
 ---
 # Barcode Scanners for Diet.
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 6b21f599-7b4a-47b9-ab87-ecfc5ed8299c
 > Created: 2023-04-02T22:31:30Z
 > Updated: 2023-04-02T22:33:05Z

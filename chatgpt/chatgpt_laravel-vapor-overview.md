@@ -15,6 +15,8 @@ updated: 2025-06-16
 
 # Laravel Vapor Overview
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 68504f79-39e4-8007-879f-e4b99355d801
 > Created: 2025-06-16T17:08:09Z
 > Updated: 2025-06-16T17:08:29Z

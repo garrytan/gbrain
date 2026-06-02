@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # A7X3 - Fitness Lifestyle.
 
+**Related:** [[personal_health]]
+
 > Conversation ID: 5d1dc466-2c94-4bd2-9c1b-785ae591ec59
 > Created: 2023-03-21T03:06:42Z
 > Updated: 2023-03-21T03:06:42Z

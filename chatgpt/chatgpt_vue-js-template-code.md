@@ -15,6 +15,8 @@ updated: 2022-12-21
 
 # Vue JS template code
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: 42320d5f-6f81-4714-8166-92d03291ed73
 > Created: 2022-12-21T22:06:13Z
 > Updated: 2022-12-21T22:06:13Z

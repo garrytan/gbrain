@@ -17,6 +17,8 @@ updated: 2025-12-09
 
 # Onboarding name input design
 
+**Related:** [[design_ux]]
+
 > Conversation ID: 693752b0-85d0-8326-85c8-742484bbcb45
 > Created: 2025-12-08T22:35:29Z
 > Updated: 2025-12-09T00:32:09Z

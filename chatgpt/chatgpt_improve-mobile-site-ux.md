@@ -15,6 +15,8 @@ updated: 2025-12-04
 
 # Improve mobile site UX
 
+**Related:** [[coding_mobile]]
+
 > Conversation ID: 693130b0-f8d8-8325-bcb3-8bf89cce9073
 > Created: 2025-12-04T06:56:50Z
 > Updated: 2025-12-04T06:57:11Z

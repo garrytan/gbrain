@@ -16,6 +16,8 @@ updated: 2023-05-17
 
 # ContactAvatar Component Explanation
 
+**Related:** [[coding_web_dev]]
+
 > Conversation ID: d2c62dc7-0cb4-4c64-acd6-2e9e33a78bd4
 > Created: 2023-05-17T00:13:33Z
 > Updated: 2023-05-17T00:15:50Z

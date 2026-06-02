@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Tax savings incorporation timing
 
+**Related:** [[personal_finance]]
+
 > Conversation ID: 693cc615-c004-8328-8fd1-30199a64d8d9
 > Created: 2025-12-13T01:49:10Z
 > Updated: 2025-12-13T01:52:23Z

@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Louder Cars and Efficiency
 
+**Related:** [[personal_life]]
+
 > Conversation ID: 67c287e2-0288-8007-be90-182834411010
 > Created: 2025-03-01T04:06:58Z
 > Updated: 2025-03-01T04:08:20Z

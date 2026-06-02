@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Minimum Wage Industry Issues
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 6832657d-7a94-8007-96ad-b756e629ec2d
 > Created: 2025-05-25T00:34:05Z
 > Updated: 2025-05-25T00:37:19Z

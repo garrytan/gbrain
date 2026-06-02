@@ -15,6 +15,8 @@ updated: 2026-02-08
 
 # Artist Data via API
 
+**Related:** [[jovie_music]]
+
 > Conversation ID: 6988d1e6-5bb8-832b-b7d1-a2aed64f985a
 > Created: 2026-02-08T18:12:09Z
 > Updated: 2026-02-08T18:13:08Z

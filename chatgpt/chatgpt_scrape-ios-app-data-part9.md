@@ -181,6 +181,8 @@ def save_records_to_database(records):
     logging.info(f"Processed {len(records)} records.")
 
 # Ensure the use of the above function within your data processing logic.
+
+**Related:** [[coding_mobile]]
 ```
 
 ### What does this do?

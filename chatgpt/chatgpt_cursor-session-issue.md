@@ -10,6 +10,8 @@ tags: [chatgpt, import]
 ---
 # Cursor session issue
 
+**Related:** [[coding_troubleshoot]]
+
 > Conversation ID: 69755885-2d84-832c-9c60-6f3c68172f1a
 > Created: 2026-01-24T23:40:53Z
 > Updated: 2026-01-24T23:50:07Z
