@@ -43,6 +43,7 @@ export async function runRemediation(
   hooks: RemediationHooks = {},
 ): Promise<RemediationResult> {
   const targetScore = opts.targetScore ?? 90;
+  const extraRemediations = opts.extraRemediations ?? [];
   const maxJobs = opts.maxJobs ?? Infinity;
   const maxUsd = opts.maxUsd;
   const dryRun = opts.dryRun ?? false;
@@ -68,7 +69,7 @@ export async function runRemediation(
   const ctx = await loadRecommendationContext(engine);
 
   // Pre-flight ceiling check via the shared plan computation.
-  const initialPlan = await computeRemediationPlan(engine, { targetScore });
+  const initialPlan = await computeRemediationPlan(engine, { targetScore, extraRemediations });
   if (initialPlan.target_unreachable) {
     hooks.onTargetUnreachable?.(targetScore, initialPlan.max_reachable_score);
     return {
@@ -87,7 +88,7 @@ export async function runRemediation(
   }
 
   const initialHealth = await engine.getHealth();
-  let recs: RemediationStep[] = computeRecommendations(initialHealth, ctx)
+  let recs: RemediationStep[] = computeRecommendations(initialHealth, ctx, extraRemediations)
     .filter((r) => r.status === 'remediable');
   if (recs.length === 0) {
     hooks.onNothingToDo?.(initialHealth.brain_score, targetScore);
@@ -305,7 +306,7 @@ export async function runRemediation(
       // steps with bumped retry suffix (D1).
       if (recs.length === 0 || stepCount >= maxJobs) break;
       const freshHealth = await engine.getHealth();
-      recs = computeRecommendations(freshHealth, ctx).filter((r) => r.status === 'remediable');
+      recs = computeRecommendations(freshHealth, ctx, extraRemediations).filter((r) => r.status === 'remediable');
     }
   };
 

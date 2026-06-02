@@ -110,6 +110,12 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/production-brain-balanced-cost.md",
       },
       {
+        title: "docs/guides/personal-gbrain-10-star-setup.md",
+        description:
+          "End-to-end readiness lane for a personal brain: sync and enrich sources, populate graph/timeline, run cycles, pick cost posture, then cut over to production durability only after proof.",
+        path: "docs/guides/personal-gbrain-10-star-setup.md",
+      },
+      {
         title: "docs/guides/session-goal-discipline.md",
         description:
           "Non-trivial session workflow: audit repo/runtime truth first, name the proof gate early, then set or retune the session goal.",

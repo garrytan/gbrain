@@ -23,6 +23,7 @@ import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-optio
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './core/mcp-client.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
+import { formatEmptyDefaultSourceSearchHint, type SearchSourceHintSummary } from './core/search/empty-source-hint.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -266,6 +267,8 @@ async function main() {
     const result = JSON.parse(JSON.stringify(rawResult));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
+    const sourceHint = await maybeFormatEmptySearchSourceHint(engine, ctx, op.name, result, params, cliOpts);
+    if (sourceHint) process.stderr.write(sourceHint);
     if (op.name === 'query') {
       const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
       await awaitPendingSearchCacheWrites();
@@ -772,6 +775,46 @@ function formatResult(opName: string, result: unknown): string {
     }
     default:
       return JSON.stringify(result, null, 2) + '\n';
+  }
+}
+
+async function maybeFormatEmptySearchSourceHint(
+  engine: BrainEngine,
+  ctx: OperationContext,
+  opName: string,
+  result: unknown,
+  params: Record<string, unknown>,
+  cliOpts: CliOptions,
+): Promise<string | null> {
+  if (opName !== 'search' && opName !== 'query') return null;
+  if (cliOpts.quiet) return null;
+  if (!Array.isArray(result) || result.length > 0) return null;
+  if (ctx.sourceId !== 'default') return null;
+  if (
+    params.source !== undefined ||
+    params.source_id !== undefined ||
+    params.all_sources !== undefined ||
+    process.env.GBRAIN_SOURCE
+  ) {
+    return null;
+  }
+
+  try {
+    const { resolveSourceWithTier } = await import('./core/source-resolver.ts');
+    const resolved = await resolveSourceWithTier(engine, null);
+    if (resolved.source_id !== 'default' || resolved.tier !== 'seed_default') return null;
+
+    const rows = await engine.executeRaw<SearchSourceHintSummary>(
+      `SELECT s.id, COUNT(p.id)::int AS page_count
+         FROM sources s
+         LEFT JOIN pages p ON p.source_id = s.id
+        WHERE COALESCE(s.archived, FALSE) = FALSE
+        GROUP BY s.id
+        ORDER BY (s.id = 'default') DESC, s.id`,
+    );
+    return formatEmptyDefaultSourceSearchHint(opName, rows);
+  } catch {
+    return null;
   }
 }
 

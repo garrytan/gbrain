@@ -1119,6 +1119,13 @@ export interface BrainStats {
 export interface BrainHealth {
   page_count: number;
   embed_coverage: number;
+  /**
+   * Page/timeline freshness lag: pages whose row updated_at is older than at
+   * least one structured timeline entry for that page. This is not filesystem
+   * drift and should not be used to decide whether a source checkout needs
+   * sync. Use source-scoped freshness (`sources.last_commit`, `last_sync_at`,
+   * and `gbrain sources status` / doctor sync_freshness) for that.
+   */
   stale_pages: number;
   /**
    * Islanded pages — zero inbound AND zero outbound links. A hub page

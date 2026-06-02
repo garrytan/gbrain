@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { formatEmptyDefaultSourceSearchHint } from '../src/core/search/empty-source-hint.ts';
 
 function run(args: string[], home: string) {
   const r = spawnSync('bun', ['run', 'src/cli.ts', ...args], {
@@ -56,5 +57,24 @@ describe('T5 — gbrain search dispatch', () => {
       // stats envelope, not a search-results array.
       expect(stdout).toMatch(/total_calls|cache_hit_rate|window_days/);
     });
+  });
+
+  test('empty default source hint names populated source-routing fixes', () => {
+    const hint = formatEmptyDefaultSourceSearchHint('search', [
+      { id: 'default', page_count: 0 },
+      { id: 'agent-fork', page_count: 424 },
+      { id: 'sawyer-hub', page_count: 362 },
+    ]);
+    expect(hint).toContain("empty 'default'");
+    expect(hint).toContain('agent-fork (424 pages)');
+    expect(hint).toContain('gbrain search "<query>" --source <id>');
+    expect(hint).toContain('gbrain sources default <id>');
+  });
+
+  test('empty default source hint stays quiet when no populated sources exist', () => {
+    expect(formatEmptyDefaultSourceSearchHint('search', [
+      { id: 'default', page_count: 0 },
+      { id: 'scratch', page_count: 0 },
+    ])).toBeNull();
   });
 });

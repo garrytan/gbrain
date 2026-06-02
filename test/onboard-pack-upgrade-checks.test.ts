@@ -5,8 +5,12 @@
 // JOIN (F12); manual_only RemediationStep flag round-trips through render.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 import {
   checkPackUpgradeAvailable,
   checkTypeProliferation,
@@ -52,33 +56,69 @@ async function seedPages(types: string[]) {
   }
 }
 
+async function withTempGbrainHome(
+  config: Record<string, unknown> | null,
+  fn: () => Promise<void>,
+) {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-onboard-pack-'));
+  try {
+    if (config) {
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(
+        join(home, '.gbrain', 'config.json'),
+        JSON.stringify(config, null, 2) + '\n',
+        'utf-8',
+      );
+    }
+    await withEnv({ GBRAIN_HOME: home }, fn);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 describe('checkPackUpgradeAvailable', () => {
   it('fires on gbrain-base brain with gbrain-base-v2 available', async () => {
     // Default active pack is gbrain-base; gbrain-base-v2 declares
     // migration_from: {pack: gbrain-base, version: "1.x"}.
-    const result = await checkPackUpgradeAvailable(engine);
-    expect(result.check.name).toBe('pack_upgrade_available');
-    expect(result.check.status).toBe('warn');
-    expect(result.check.message).toContain('gbrain-base-v2');
-    expect(result.remediations.length).toBe(1);
-    expect(result.remediations[0].job).toBe('unify-types');
-    expect(result.remediations[0].protected).toBe(true);
-    expect(result.remediations[0].params.target_pack).toBe('gbrain-base-v2');
+    await withTempGbrainHome(null, async () => {
+      const result = await checkPackUpgradeAvailable(engine);
+      expect(result.check.name).toBe('pack_upgrade_available');
+      expect(result.check.status).toBe('warn');
+      expect(result.check.message).toContain('gbrain-base-v2');
+      expect(result.remediations.length).toBe(1);
+      expect(result.remediations[0].job).toBe('unify-types');
+      expect(result.remediations[0].protected).toBe(true);
+      expect(result.remediations[0].params.target_pack).toBe('gbrain-base-v2');
+    });
+  });
+
+  it('honors home-config schema_pack so active v2 does not warn as base', async () => {
+    await withTempGbrainHome({ engine: 'pglite', schema_pack: 'gbrain-base-v2' }, async () => {
+      const result = await checkPackUpgradeAvailable(engine);
+      expect(result.check.name).toBe('pack_upgrade_available');
+      expect(result.check.status).toBe('ok');
+      expect(result.check.message).toContain('gbrain-base-v2');
+      expect(result.remediations).toHaveLength(0);
+    });
   });
 
   it('manual_only routing via render.ts allowlist (D17)', async () => {
-    const result = await checkPackUpgradeAvailable(engine);
-    const step = result.remediations[0];
-    const rec = toOnboardRecommendation(step);
-    expect(rec.apply_policy).toBe('manual_only');
+    await withTempGbrainHome(null, async () => {
+      const result = await checkPackUpgradeAvailable(engine);
+      const step = result.remediations[0];
+      const rec = toOnboardRecommendation(step);
+      expect(rec.apply_policy).toBe('manual_only');
+    });
   });
 });
 
 describe('checkTypeProliferation (D16 pack-aware ratio)', () => {
   it('returns ok when distinct types under declared+5 threshold', async () => {
     await seedPages(['note', 'meeting', 'slack']);
-    const result = await checkTypeProliferation(engine);
-    expect(result.check.status).toBe('ok');
+    await withTempGbrainHome(null, async () => {
+      const result = await checkTypeProliferation(engine);
+      expect(result.check.status).toBe('ok');
+    });
   });
 
   it('warns when distinct types exceed declared+5', async () => {
@@ -86,9 +126,11 @@ describe('checkTypeProliferation (D16 pack-aware ratio)', () => {
     const types: string[] = [];
     for (let i = 0; i < 32; i++) types.push(`custom-type-${i}`);
     await seedPages(types);
-    const result = await checkTypeProliferation(engine);
-    expect(result.check.status).toBe('warn');
-    expect(result.check.message).toMatch(/32 distinct/);
+    await withTempGbrainHome(null, async () => {
+      const result = await checkTypeProliferation(engine);
+      expect(result.check.status).toBe('warn');
+      expect(result.check.message).toMatch(/32 distinct/);
+    });
   });
 });
 

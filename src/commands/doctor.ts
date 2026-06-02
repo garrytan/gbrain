@@ -68,6 +68,51 @@ export interface Check {
   category?: CheckCategory;
 }
 
+type FrontmatterDoctorSource = {
+  source_id: string;
+  source_path: string;
+  total: number;
+  errors_by_code: Record<string, number | undefined> | Partial<Record<string, number>>;
+  sample: Array<{ path: string; codes: string[] }>;
+  status: 'scanned' | 'partial' | 'skipped';
+  files_scanned: number;
+  db_page_count?: number | null;
+};
+
+function formatFrontmatterCodes(errorsByCode: FrontmatterDoctorSource['errors_by_code']): string {
+  return Object.entries(errorsByCode)
+    .filter(([, v]) => v != null && v > 0)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(', ');
+}
+
+function formatFrontmatterSamples(sample: FrontmatterDoctorSource['sample'], limit = 2): string {
+  if (sample.length === 0) return '';
+  const shown = sample.slice(0, limit).map((item) => `${item.path} (${item.codes.join(',')})`);
+  const extra = sample.length > limit ? `, +${sample.length - limit} more` : '';
+  return `, sample: ${shown.join(', ')}${extra}`;
+}
+
+export function formatFrontmatterSourceMessageForDoctor(src: FrontmatterDoctorSource): string | null {
+  if (src.status === 'skipped') {
+    // `gbrain frontmatter validate` takes a filesystem path, not a source id.
+    return `${src.source_id}: NOT SCANNED (timeout — run \`gbrain frontmatter validate ${src.source_path}\`)`;
+  }
+
+  const sample = formatFrontmatterSamples(src.sample);
+
+  if (src.status === 'partial') {
+    const denom = src.db_page_count != null ? ` (source has ~${src.db_page_count} pages in DB)` : '';
+    const codes = src.total > 0 ? `, ${formatFrontmatterCodes(src.errors_by_code)}` : '';
+    return `${src.source_id}: PARTIAL — scanned ~${src.files_scanned} files${denom}, ${src.total} issue(s) so far${codes}${sample}`;
+  }
+
+  if (src.total === 0) return null;
+
+  const codes = formatFrontmatterCodes(src.errors_by_code);
+  return `${src.source_id}: ${src.total} (${codes})${sample}`;
+}
+
 /**
  * Structured doctor report. Stable shape consumed by:
  *   - gbrain doctor --json (CLI)
@@ -2951,7 +2996,9 @@ export async function checkSyncConsolidation(engine: BrainEngine): Promise<Check
       name: 'sync_consolidation',
       status: 'ok',
       message:
-        `${sourceCount} active sources detected. Recommended cron: ` +
+        `${sourceCount} active sources detected. Approval-safe local refresh: ` +
+        '`gbrain sync --all --no-pull --parallel 4 --workers 4 --skip-failed`. ' +
+        'Remote-refresh cron (runs git pull in source checkouts): ' +
         '`gbrain sync --all --parallel 4 --workers 4 --skip-failed`. ' +
         'If your crontab has separate per-source entries, replace them with one --all line — ' +
         'future sources auto-pick-up without a crontab edit.',
@@ -4955,7 +5002,6 @@ export async function buildChecks(
   const fullContentAudit = args.includes('--content-audit');
   progress.heartbeat('oversized_pages');
   try {
-    const sql = db.getConnection();
     // Read effective bytes_block from the cached effectiveCfg loaded
     // earlier in this doctor run if available; otherwise default.
     // (We re-read here per-check to avoid threading config through
@@ -4964,15 +5010,15 @@ export async function buildChecks(
     const { loadConfig: _loadCfg } = await import('../core/config.ts');
     const _cfg = _loadCfg();
     const bytesBlock = _cfg?.content_sanity?.bytes_block ?? 500_000;
-    const rows = await sql`
+    const rows = await engine.executeRaw<{ slug: string; source_id: string; bytes: number }>(`
       SELECT p.slug, p.source_id,
              octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) AS bytes
       FROM pages p
       WHERE p.deleted_at IS NULL
-        AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > ${bytesBlock}
+        AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > $1
       ORDER BY bytes DESC
       LIMIT 100
-    `;
+    `, [bytesBlock]);
     if (rows.length === 0) {
       checks.push({
         name: 'oversized_pages',
@@ -5001,13 +5047,19 @@ export async function buildChecks(
 
   progress.heartbeat('scraper_junk_pages');
   try {
-    const sql = db.getConnection();
     const { assessContentSanity } = await import('../core/content-sanity.ts');
     const { loadOperatorLiterals } = await import('../core/content-sanity-literals.ts');
     const literals = loadOperatorLiterals();
     const scanLimit = fullContentAudit ? null : 1000;
     const rows = scanLimit
-      ? await sql`
+      ? await engine.executeRaw<{
+          slug: string;
+          source_id: string;
+          title: string;
+          body_head: string;
+          tl_head: string;
+          frontmatter: Record<string, unknown> | null;
+        }>(`
           SELECT p.slug, p.source_id, p.title,
                  LEFT(p.compiled_truth, 2048) AS body_head,
                  LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
@@ -5015,16 +5067,23 @@ export async function buildChecks(
             FROM pages p
            WHERE p.deleted_at IS NULL
            ORDER BY p.updated_at DESC
-           LIMIT ${scanLimit}
-        `
-      : await sql`
+           LIMIT $1
+        `, [scanLimit])
+      : await engine.executeRaw<{
+          slug: string;
+          source_id: string;
+          title: string;
+          body_head: string;
+          tl_head: string;
+          frontmatter: Record<string, unknown> | null;
+        }>(`
           SELECT p.slug, p.source_id, p.title,
                  LEFT(p.compiled_truth, 2048) AS body_head,
                  LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
                  p.frontmatter
             FROM pages p
            WHERE p.deleted_at IS NULL
-        `;
+        `);
     const hits: Array<{ slug: string; matched: string[] }> = [];
     const scanRows = rows as unknown as Array<{ slug: string; source_id: string; title: string; body_head: string; tl_head: string; frontmatter: Record<string, unknown> | null }>;
     for (const r of scanRows) {
@@ -5070,29 +5129,44 @@ export async function buildChecks(
 
   progress.heartbeat('content_sanity_audit_recent');
   try {
-    const { readRecentContentSanityEvents, summarizeContentSanityEvents } =
+    const {
+      readRecentContentSanityEvents,
+      summarizeContentSanityEvents,
+      unacknowledgedContentSanityEvents,
+    } =
       await import('../core/audit/content-sanity-audit.ts');
     const events = readRecentContentSanityEvents(7);
-    if (events.length === 0) {
+    const unacknowledged = unacknowledgedContentSanityEvents(events);
+    const acknowledgedCount = Math.max(0, events.length - unacknowledged.length);
+    if (unacknowledged.length === 0) {
       checks.push({
         name: 'content_sanity_audit_recent',
         status: 'ok',
-        message: 'No content-sanity events in last 7 days (audit JSONL is local to this host; share GBRAIN_AUDIT_DIR for multi-host visibility)',
+        message: events.length === 0
+          ? 'No content-sanity events in last 7 days (audit JSONL is local to this host; share GBRAIN_AUDIT_DIR for multi-host visibility)'
+          : `No unacknowledged content-sanity events in last 7 days (${acknowledgedCount} acknowledged historical row(s) hidden; audit JSONL is local to this host; share GBRAIN_AUDIT_DIR for multi-host visibility)`,
       });
     } else {
-      const summary = summarizeContentSanityEvents(events);
+      const summary = summarizeContentSanityEvents(unacknowledged);
       const topPatterns = summary.top_patterns.slice(0, 3).map(p => `${p.name}=${p.count}`).join(', ');
       const topSources = Object.entries(summary.by_source)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
         .map(([s, n]) => `${s}=${n}`)
         .join(', ');
+      const repeated = summary.repeated_events > 0
+        ? `, unique_source_slugs=${summary.unique_source_slugs}, repeated=${summary.repeated_events}`
+        : `, unique_source_slugs=${summary.unique_source_slugs}`;
+      const topRepeated = summary.top_repeated_source_slugs
+        .slice(0, 2)
+        .map((entry) => `${entry.source_id}/${entry.slug}=${entry.count}x`)
+        .join(', ');
       const status: 'ok' | 'warn' | 'fail' =
-        events.length >= 100 ? 'fail' : events.length >= 10 ? 'warn' : 'ok';
+        unacknowledged.length >= 100 ? 'fail' : unacknowledged.length >= 10 ? 'warn' : 'ok';
       checks.push({
         name: 'content_sanity_audit_recent',
         status,
-        message: `${events.length} events (hard=${summary.by_type.hard_block} soft=${summary.by_type.soft_block} warn=${summary.by_type.warn})${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR.)`,
+        message: `${unacknowledged.length} unacknowledged event(s)${repeated} (hard=${summary.by_type.hard_block} soft=${summary.by_type.soft_block} warn=${summary.by_type.warn})${acknowledgedCount > 0 ? `, acknowledged=${acknowledgedCount}` : ''}${topPatterns ? ', patterns: ' + topPatterns : ''}${topSources ? ', sources: ' + topSources : ''}${topRepeated ? ', repeated: ' + topRepeated : ''}. (Local audit only — multi-host operators set GBRAIN_AUDIT_DIR. Run \`gbrain doctor --acknowledge content_sanity_audit_recent\` to accept the current backlog and surface only new events.)`,
       });
     }
   } catch (err) {
@@ -5176,32 +5250,8 @@ export async function buildChecks(
       // skipped so the user can tell which sources weren't checked.
       const sourceMessages: string[] = [];
       for (const src of report.per_source) {
-        if (src.status === 'skipped') {
-          // Codex adversarial #1: `gbrain frontmatter validate` takes a
-          // filesystem PATH, not a source id. Pre-fix the hint pointed users
-          // at a command that would fail with "no such directory" — breaking
-          // the very remediation path this PR ships to give them.
-          sourceMessages.push(
-            `${src.source_id}: NOT SCANNED (timeout — run \`gbrain frontmatter validate ${src.source_path}\`)`,
-          );
-          continue;
-        }
-        if (src.status === 'partial') {
-          const denom = src.db_page_count != null ? ` (source has ~${src.db_page_count} pages in DB)` : '';
-          const codes = src.total > 0
-            ? `, ${Object.entries(src.errors_by_code).map(([k, v]) => `${k}=${v}`).join(', ')}`
-            : '';
-          sourceMessages.push(
-            `${src.source_id}: PARTIAL — scanned ~${src.files_scanned} files${denom}, ${src.total} issue(s) so far${codes}`,
-          );
-          continue;
-        }
-        // status === 'scanned'
-        if (src.total === 0) continue; // clean source — don't clutter the message
-        const codes = Object.entries(src.errors_by_code)
-          .map(([k, v]) => `${k}=${v}`)
-          .join(', ');
-        sourceMessages.push(`${src.source_id}: ${src.total} (${codes})`);
+        const sourceMessage = formatFrontmatterSourceMessageForDoctor(src);
+        if (sourceMessage) sourceMessages.push(sourceMessage);
       }
       const fixHint = report.partial
         ? `Raise GBRAIN_DOCTOR_FM_TIMEOUT_MS or run \`gbrain frontmatter validate <source>\` directly. Fix issues: \`gbrain frontmatter validate <source> --fix\``
@@ -5987,6 +6037,8 @@ export async function runDoctor(
 ) {
   const jsonOutput = args.includes('--json');
   const locksMode = args.includes('--locks');
+  const acknowledgeIndex = args.indexOf('--acknowledge');
+  const acknowledgeTarget = acknowledgeIndex >= 0 ? args[acknowledgeIndex + 1] : null;
 
   // --locks is a focused diagnostic: it runs the same pg_stat_activity
   // query that `runMigrations` pre-flight uses, prints any idle-in-tx
@@ -5994,6 +6046,46 @@ export async function runDoctor(
   if (locksMode) {
     await runLocksCheck(engine, jsonOutput);
     return;
+  }
+
+  if (acknowledgeIndex >= 0) {
+    if (!acknowledgeTarget || acknowledgeTarget.startsWith('--')) {
+      console.error('Usage: gbrain doctor --acknowledge content_sanity_audit_recent [--json]');
+      process.exit(2);
+    }
+    if (acknowledgeTarget !== 'content_sanity_audit_recent') {
+      console.error(`Unsupported doctor acknowledgement target: ${acknowledgeTarget}`);
+      process.exit(2);
+    }
+    const {
+      readRecentContentSanityEvents,
+      acknowledgeContentSanityEvents,
+    } = await import('../core/audit/content-sanity-audit.ts');
+    const events = readRecentContentSanityEvents(7);
+    const result = acknowledgeContentSanityEvents(events);
+    if (jsonOutput) {
+      console.log(JSON.stringify({
+        acknowledged_check: acknowledgeTarget,
+        recent_events: events.length,
+        acknowledged_keys: result.count,
+        acknowledged_rows: result.acknowledged_rows,
+        summary: result.summary,
+      }, null, 2));
+    } else if (events.length === 0) {
+      console.log('No recent content-sanity events to acknowledge.');
+    } else if (result.count === 0) {
+      console.log('No new content-sanity backlog to acknowledge.');
+    } else {
+      const preview = result.summary
+        .slice(0, 5)
+        .map((entry) => `${entry.source_id}/${entry.slug} (${entry.event_type}, ${entry.rows} row(s))`)
+        .join(', ');
+      console.log(
+        `Acknowledged ${result.count} content-sanity issue key(s) covering ${result.acknowledged_rows} row(s).` +
+        (preview ? ` Top: ${preview}` : ''),
+      );
+    }
+    process.exit(0);
   }
 
   const checks = await buildChecks(engine, args, dbSource);

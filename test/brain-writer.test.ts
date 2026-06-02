@@ -8,6 +8,7 @@ import {
   scanBrainSources,
   BrainWriterError,
 } from '../src/core/brain-writer.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
@@ -38,6 +39,30 @@ describe('autoFixFrontmatter', () => {
     expect(fixes.some(f => f.code === 'NESTED_QUOTES')).toBe(true);
     // Outer wrapper is now single quotes.
     expect(content).toMatch(/^title: '.*'\s*$/m);
+  });
+
+  test('quotes plain YAML scalar titles containing colon-space', () => {
+    const input = `${fence}\ntype: note\ntitle: Self-test: live Control Room runner smoke\n${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    expect(fixes.some(f => f.code === 'YAML_PARSE')).toBe(true);
+    expect(content).toContain("title: 'Self-test: live Control Room runner smoke'");
+    const parsed = parseMarkdown(content, 'test.md', { validate: true });
+    expect(parsed.errors ?? []).toEqual([]);
+  });
+
+  test('quotes long plain YAML scalar values containing colon-space', () => {
+    const input =
+      `${fence}\n` +
+      `type: note\n` +
+      `dirty_state: sawyer-hub closeout surfaces pending commit at receipt time: M REVIEW-BOARD.md, ?? packet.md\n` +
+      `${fence}\n\nbody`;
+    const { content, fixes } = autoFixFrontmatter(input);
+    expect(fixes.some(f => f.code === 'YAML_PARSE')).toBe(true);
+    expect(content).toContain(
+      "dirty_state: 'sawyer-hub closeout surfaces pending commit at receipt time: M REVIEW-BOARD.md, ?? packet.md'",
+    );
+    const parsed = parseMarkdown(content, 'test.md', { validate: true });
+    expect(parsed.errors ?? []).toEqual([]);
   });
 
   test('removes mismatched slug field', () => {

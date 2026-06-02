@@ -13,6 +13,7 @@ import type { BrainEngine } from '../engine.ts';
 import { embed } from '../embedding.ts';
 import { hybridSearch } from './hybrid.ts';
 import type { HybridSearchOpts } from './hybrid.ts';
+import type { SearchMode } from './mode.ts';
 
 // ─────────────────────────────────────────────────────────────────
 // Ground truth types
@@ -44,6 +45,10 @@ export interface EvalConfig {
   /** Human-readable label for this configuration (shown in A/B output). */
   name?: string;
   strategy?: 'keyword' | 'vector' | 'hybrid';
+  /** Override the named search mode bundle for hybrid retrieval. */
+  mode?: SearchMode;
+  /** Scope the eval to one source so daily-use checks match routed search. */
+  source?: string;
   /** Override RRF K constant (default: 60). */
   rrf_k?: number;
   /** Enable multi-query expansion (hybrid only, default: false for eval stability). */
@@ -177,7 +182,7 @@ export async function runEval(
   options: RunEvalOptions = {},
 ): Promise<EvalReport> {
   const strategy = config.strategy ?? 'hybrid';
-  const limit = config.limit ?? Math.max(k * 2, 10);
+  const limit = resolveEvalLimit(config, strategy, k);
 
   const queryResults: QueryResult[] = [];
 
@@ -220,8 +225,9 @@ async function runQuery(
   query: string,
   strategy: 'keyword' | 'vector' | 'hybrid',
   config: EvalConfig,
-  limit: number,
+  limit: number | undefined,
 ): Promise<string[]> {
+  const sourceOpts = config.source ? { sourceId: config.source } : {};
   const dedupOpts = {
     cosineThreshold: config.dedup_cosine_threshold,
     maxTypeRatio: config.dedup_type_ratio,
@@ -229,25 +235,57 @@ async function runQuery(
   };
 
   if (strategy === 'keyword') {
-    const results = await engine.searchKeyword(query, { limit });
+    const results = await engine.searchKeyword(query, {
+      ...sourceOpts,
+      limit: limit ?? DEFAULT_EVAL_LIMIT,
+    });
     return results.map(r => r.slug);
   }
 
   if (strategy === 'vector') {
     const embedding = await embed(query);
-    const results = await engine.searchVector(embedding, { limit });
+    const results = await engine.searchVector(embedding, {
+      ...sourceOpts,
+      limit: limit ?? DEFAULT_EVAL_LIMIT,
+    });
     return results.map(r => r.slug);
   }
 
   // hybrid
-  const hybridOpts: HybridSearchOpts = {
-    limit,
+  const hybridOpts = buildHybridEvalOpts(config, dedupOpts, limit);
+  const results = await hybridSearch(engine, query, hybridOpts);
+  return results.map(r => r.slug);
+}
+
+const DEFAULT_EVAL_LIMIT = 10;
+
+export function resolveEvalLimit(
+  config: EvalConfig,
+  strategy: 'keyword' | 'vector' | 'hybrid',
+  k: number,
+): number | undefined {
+  if (config.limit !== undefined) return config.limit;
+  if (strategy === 'hybrid' && config.mode !== undefined) {
+    // When explicitly comparing mode bundles, let hybridSearch apply the
+    // bundle's native searchLimit so the eval reflects real mode behavior.
+    return undefined;
+  }
+  return Math.max(k * 2, DEFAULT_EVAL_LIMIT);
+}
+
+export function buildHybridEvalOpts(
+  config: EvalConfig,
+  dedupOpts: HybridSearchOpts['dedupOpts'],
+  limit: number | undefined,
+): HybridSearchOpts {
+  return {
+    ...(config.source ? { sourceId: config.source } : {}),
+    ...(config.mode ? { mode: config.mode } : {}),
+    ...(limit !== undefined ? { limit } : {}),
     expansion: config.expand ?? false,
     rrfK: config.rrf_k,
     dedupOpts,
   };
-  const results = await hybridSearch(engine, query, hybridOpts);
-  return results.map(r => r.slug);
 }
 
 /**

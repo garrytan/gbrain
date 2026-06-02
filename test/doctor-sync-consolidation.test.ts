@@ -62,15 +62,18 @@ describe('checkSyncConsolidation (Issue 5)', () => {
     expect(result.message).toMatch(/not applicable/i);
   });
 
-  test('3 active sources → ok with paste-ready `sync --all` command', async () => {
+  test('3 active sources → ok with approval-safe and remote-refresh sync commands', async () => {
     await addSource('default', { local_path: '/tmp/default-brain' });
     await addSource('zion-brain');
     await addSource('media-brain');
     const result = await checkSyncConsolidation(engine);
     expect(result.status).toBe('ok');
     expect(result.message).toMatch(/3 active sources/);
-    // Paste-ready command embedded in message
+    // Paste-ready commands embedded in message: local refresh avoids git pull,
+    // remote refresh opts into the existing pull-capable behavior.
+    expect(result.message).toMatch(/gbrain sync --all --no-pull --parallel 4 --workers 4 --skip-failed/);
     expect(result.message).toMatch(/gbrain sync --all --parallel 4 --workers 4 --skip-failed/);
+    expect(result.message).toMatch(/runs git pull/);
   });
 
   test('2 sources both archived → "not applicable" (archived excluded)', async () => {

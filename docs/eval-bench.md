@@ -39,6 +39,34 @@ gbrain bench publish --from /tmp/captured.ndjson --to ~/.gbrain/baselines/person
 gbrain eval gate --baseline ~/.gbrain/baselines/personal.baseline.ndjson
 ```
 
+### No capture yet? Do a tiny private daily-use qrels check
+
+If `gbrain search stats` and `gbrain eval export` are empty, don't fake a replay
+loop. Create a small ignored qrels file with 5-10 real daily queries, scope it
+to the source you actually use, and compare search modes directly:
+
+```bash
+gbrain eval \
+  --qrels ./reports/network-intelligence/daily-use.qrels.json \
+  --config-a ./reports/network-intelligence/daily-use-conservative.json \
+  --config-b ./reports/network-intelligence/daily-use-balanced.json
+```
+
+Suggested config shape:
+
+```json
+{
+  "name": "daily-balanced",
+  "strategy": "hybrid",
+  "source": "seascape-hub",
+  "mode": "balanced"
+}
+```
+
+Why this path exists: explicit `mode` lets the eval exercise the real mode
+bundle, including its native `searchLimit`, and explicit `source` keeps the
+fixture aligned with routed day-to-day usage instead of all-source search.
+
 ### Privacy posture (D9)
 
 **Public baselines in `gbrain-evals` are hermetic-synthetic ONLY.** Real

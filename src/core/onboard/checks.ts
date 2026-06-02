@@ -253,6 +253,18 @@ export async function checkTimelineCoverage(
   const remediations: RemediationStep[] = [];
   let status: 'ok' | 'warn' | 'fail' = 'ok';
   let message: string;
+  let meetingPages = 0;
+
+  if (coverage < 0.9) {
+    // The extract-timeline-from-meetings handler only walks type='meeting'
+    // pages. If none exist, recommending it is a proven no-op.
+    meetingPages = await safeCount(
+      engine,
+      `SELECT COUNT(*) AS count FROM pages
+         WHERE type = 'meeting'
+           AND deleted_at IS NULL`,
+    );
+  }
 
   // v0.41.18.0: warn-only, never fail. Same posture as entity_link_coverage —
   // the recommendation still surfaces in onboard's plan, but doctor exit
@@ -262,29 +274,37 @@ export async function checkTimelineCoverage(
   } else if (coverage >= 0.7) {
     status = 'warn';
     message = `Coverage ${pct}% ± ${ciPct}% (target 90%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_timeline_from_meetings',
-      job: 'extract-timeline-from-meetings',
-      params: {},
-      severity: 'medium',
-      est_seconds: 240,
-      est_usd_cost: 0,
-      rationale: `Timeline coverage at ${pct}%; meeting-derived entries lift it`,
-      status: 'remediable',
-    }));
+    if (meetingPages > 0) {
+      remediations.push(makeRemediationStep({
+        id: 'onboard.extract_timeline_from_meetings',
+        job: 'extract-timeline-from-meetings',
+        params: {},
+        severity: 'medium',
+        est_seconds: 240,
+        est_usd_cost: 0,
+        rationale: `Timeline coverage at ${pct}%; ${meetingPages} meeting page(s) available for extraction`,
+        status: 'remediable',
+      }));
+    } else {
+      message += '; no typed meeting pages for meeting-derived extraction';
+    }
   } else {
     status = 'warn';
     message = `Coverage ${pct}% ± ${ciPct}% (target 90%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_timeline_from_meetings',
-      job: 'extract-timeline-from-meetings',
-      params: {},
-      severity: 'high',
-      est_seconds: 480,
-      est_usd_cost: 0,
-      rationale: `Timeline coverage at ${pct}%; meeting-derived entries lift it`,
-      status: 'remediable',
-    }));
+    if (meetingPages > 0) {
+      remediations.push(makeRemediationStep({
+        id: 'onboard.extract_timeline_from_meetings',
+        job: 'extract-timeline-from-meetings',
+        params: {},
+        severity: 'high',
+        est_seconds: 480,
+        est_usd_cost: 0,
+        rationale: `Timeline coverage at ${pct}%; ${meetingPages} meeting page(s) available for extraction`,
+        status: 'remediable',
+      }));
+    } else {
+      message += '; no typed meeting pages for meeting-derived extraction';
+    }
   }
   return {
     check: { name: 'timeline_coverage', status, message },
@@ -386,14 +406,15 @@ export async function checkPackUpgradeAvailable(
 ): Promise<OnboardCheckResult> {
   try {
     const { loadActivePack, findPackSuccessors } = await import('../schema-pack/load-active.ts');
+    const { loadConfig } = await import('../config.ts');
     // Read the engine's DB-side schema_pack so a post-unify flip is visible
-    // here even before the file-plane config catches up. Falls through to
-    // file-plane/env/default resolution when unset.
+    // here even before the file-plane config catches up. Pair it with the
+    // normal file/env config so this check matches `gbrain schema active`.
     let dbConfig: string | undefined;
     try {
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* engine.config may not exist on very old brains */ }
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig })
+    const active = await loadActivePack({ cfg: loadConfig(), remote: false, dbConfig })
       .catch(() => null);
     if (!active) {
       return {
@@ -463,11 +484,12 @@ export async function checkTypeProliferation(
   let declared = 15;  // fallback to gbrain-base-v2 default if pack unavailable
   try {
     const { loadActivePack } = await import('../schema-pack/load-active.ts');
+    const { loadConfig } = await import('../config.ts');
     let dbConfig: string | undefined;
     try {
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* tolerate pre-config brains */ }
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig })
+    const active = await loadActivePack({ cfg: loadConfig(), remote: false, dbConfig })
       .catch(() => null);
     if (active) declared = active.manifest.page_types.length;
   } catch {

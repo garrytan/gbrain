@@ -837,6 +837,43 @@ export interface TimelineCandidate {
 // Match: `- **YYYY-MM-DD** | summary` or `- **YYYY-MM-DD** -- summary`
 // or `- **YYYY-MM-DD** - summary` or just `**YYYY-MM-DD** | summary`.
 const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*(.+?)\s*$/;
+// Match dated markdown section headings:
+//   `### 2026-05-09 — Partner context`
+//   `### Partner context (2026-05-09)`
+const TIMELINE_HEADING_PREFIX_RE = /^\s*#{3,6}\s+(\d{4}-\d{2}-\d{2})\s*[|\-–—]+\s*(.+?)\s*$/;
+const TIMELINE_HEADING_SUFFIX_RE = /^\s*#{3,6}\s+(.+?)\s*\((\d{4}-\d{2}-\d{2})\)\s*$/;
+
+function collectTimelineDetail(lines: string[], start: number, opts: { allowListLines?: boolean } = {}): { detail: string; nextIndex: number } {
+  const detailLines: string[] = [];
+  let j = start;
+  while (j < lines.length) {
+    const next = lines[j];
+    if (TIMELINE_LINE_RE.test(next)) break;
+    if (TIMELINE_HEADING_PREFIX_RE.test(next)) break;
+    if (TIMELINE_HEADING_SUFFIX_RE.test(next)) break;
+    if (/^#{1,6}\s/.test(next)) break;
+    if (next.trim().length === 0 && detailLines.length === 0) {
+      j++;
+      continue;
+    }
+    if (next.trim().length === 0 && detailLines.length > 0 && opts.allowListLines === true) {
+      j++;
+      continue;
+    }
+    if (next.trim().length === 0 && detailLines.length > 0) break;
+    if (
+      /^\s+/.test(next) ||
+      (!next.startsWith('-') && !next.startsWith('*') && !next.startsWith('#')) ||
+      (opts.allowListLines === true && !next.startsWith('#'))
+    ) {
+      detailLines.push(next.trim());
+      j++;
+      continue;
+    }
+    break;
+  }
+  return { detail: detailLines.join(' ').trim(), nextIndex: j };
+}
 
 /**
  * Parse timeline entries from content. Looks at:
@@ -855,7 +892,17 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
   while (i < lines.length) {
     const m = TIMELINE_LINE_RE.exec(lines[i]);
     if (!m) {
-      i++;
+      const prefixHeading = TIMELINE_HEADING_PREFIX_RE.exec(lines[i]);
+      const suffixHeading = TIMELINE_HEADING_SUFFIX_RE.exec(lines[i]);
+      const headingDate = prefixHeading?.[1] ?? suffixHeading?.[2];
+      const headingSummary = (prefixHeading?.[2] ?? suffixHeading?.[1])?.trim();
+      if (headingDate && headingSummary && isValidDate(headingDate)) {
+        const { detail, nextIndex } = collectTimelineDetail(lines, i + 1, { allowListLines: true });
+        result.push({ date: headingDate, summary: headingSummary, detail });
+        i = nextIndex;
+      } else {
+        i++;
+      }
       continue;
     }
     const date = m[1];
@@ -866,29 +913,9 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
     }
 
     // Collect optional detail lines (indented, until next date or heading).
-    const detailLines: string[] = [];
-    let j = i + 1;
-    while (j < lines.length) {
-      const next = lines[j];
-      if (TIMELINE_LINE_RE.test(next)) break;
-      if (/^#{1,6}\s/.test(next)) break;
-      if (next.trim().length === 0 && detailLines.length === 0) {
-        // skip leading blank line; if we hit a blank after detail content
-        // and still no new entry, treat detail as ended.
-        j++;
-        continue;
-      }
-      if (next.trim().length === 0 && detailLines.length > 0) break;
-      // Indented continuation lines are detail; flush-left non-list lines too.
-      if (/^\s+/.test(next) || (!next.startsWith('-') && !next.startsWith('*') && !next.startsWith('#'))) {
-        detailLines.push(next.trim());
-        j++;
-        continue;
-      }
-      break;
-    }
-    result.push({ date, summary, detail: detailLines.join(' ').trim() });
-    i = j;
+    const { detail, nextIndex } = collectTimelineDetail(lines, i + 1);
+    result.push({ date, summary, detail });
+    i = nextIndex;
   }
   return result;
 }

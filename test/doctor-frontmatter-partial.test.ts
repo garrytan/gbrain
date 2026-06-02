@@ -17,6 +17,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { formatFrontmatterSourceMessageForDoctor } from '../src/commands/doctor.ts';
 
 const DOCTOR_SOURCE = readFileSync(
   join(__dirname, '..', 'src', 'commands', 'doctor.ts'),
@@ -80,5 +81,58 @@ describe('doctor frontmatter_integrity — load-bearing render strings', () => {
     // The fix hint when partial: raise the timeout OR run validate directly.
     const partialHintMatch = DOCTOR_SOURCE.includes('Raise GBRAIN_DOCTOR_FM_TIMEOUT_MS');
     expect(partialHintMatch).toBe(true);
+  });
+});
+
+describe('doctor frontmatter_integrity — per-source message formatter', () => {
+  test('scanned sources include sample paths and cap extra samples', () => {
+    const message = formatFrontmatterSourceMessageForDoctor({
+      source_id: 'sawyer-hub',
+      source_path: '/Users/sawbeck/Projects/sawyer-hub',
+      total: 5,
+      errors_by_code: { YAML_PARSE: 5 },
+      sample: [
+        { path: 'control-room/active/operator-loop.md', codes: ['YAML_PARSE'] },
+        { path: 'control-room/shipped/receipt.md', codes: ['YAML_PARSE'] },
+        { path: 'notes/private-extra.md', codes: ['YAML_PARSE'] },
+      ],
+      status: 'scanned',
+      files_scanned: 400,
+    });
+
+    expect(message).toBe(
+      'sawyer-hub: 5 (YAML_PARSE=5), sample: control-room/active/operator-loop.md (YAML_PARSE), control-room/shipped/receipt.md (YAML_PARSE), +1 more',
+    );
+  });
+
+  test('clean scanned sources stay omitted from the doctor summary', () => {
+    const message = formatFrontmatterSourceMessageForDoctor({
+      source_id: 'clean-source',
+      source_path: '/tmp/clean-source',
+      total: 0,
+      errors_by_code: {},
+      sample: [],
+      status: 'scanned',
+      files_scanned: 10,
+    });
+
+    expect(message).toBeNull();
+  });
+
+  test('partial sources include samples without losing timeout context', () => {
+    const message = formatFrontmatterSourceMessageForDoctor({
+      source_id: 'partial-source',
+      source_path: '/tmp/partial-source',
+      total: 1,
+      errors_by_code: { MISSING_CLOSE: 1 },
+      sample: [{ path: 'broken.md', codes: ['MISSING_CLOSE'] }],
+      status: 'partial',
+      files_scanned: 25,
+      db_page_count: 200,
+    });
+
+    expect(message).toBe(
+      'partial-source: PARTIAL — scanned ~25 files (source has ~200 pages in DB), 1 issue(s) so far, MISSING_CLOSE=1, sample: broken.md (MISSING_CLOSE)',
+    );
   });
 });

@@ -18,7 +18,9 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { computeRemediationPlan, runRemediation } from '../core/remediation/index.ts';
 import { runAllOnboardChecks } from '../core/onboard/checks.ts';
-import { buildOnboardReport, renderHuman } from '../core/onboard/render.ts';
+import { buildOnboardReport, renderHuman, toOnboardRecommendation } from '../core/onboard/render.ts';
+import { getCliOptions } from '../core/cli-options.ts';
+import type { RemediationStep } from '../core/remediation-step.ts';
 
 function parseInt10(args: string[], flag: string): number | null {
   const i = args.indexOf(flag);
@@ -42,8 +44,9 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
   const jsonOutput = args.includes('--json');
   // v0.42 (T16): --explain extends --check with per-cluster narrative
   // for the pack_upgrade_available recommendation (D5 trust UX delta).
-  // No-op without a pack_upgrade_available finding.
-  const explain = args.includes('--explain');
+  // parseGlobalFlags strips --explain before command dispatch, so honor the
+  // resolved singleton too. No-op without a pack_upgrade_available finding.
+  const explain = args.includes('--explain') || getCliOptions().explain;
   const targetScore = parseInt10(args, '--target-score') ?? 90;
   const maxUsdRaw = parseFloat10(args, '--max-usd');
   const maxUsd = maxUsdRaw === null ? undefined : maxUsdRaw;
@@ -126,17 +129,13 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
   // --auto path: runs through the T2 library orchestrator. Hooks emit CLI
   // progress to stderr; the final result lands as JSON on stdout (or human
   // summary).
+  const runnableExtras = filterRunnableOnboardExtras(extraRemediations, { includePromptRequired: yes });
   const result = await runRemediation(
     engine,
     {
       targetScore,
       maxUsd,
-      // --auto --yes opts into the prompt_required tier too; library
-      // doesn't distinguish auto_apply vs prompt_required, it just runs
-      // every remediation in the plan. The plan-building side (T12 render)
-      // does the tier distinction; for --auto without --yes, the CLI shell
-      // would pre-filter the extras to auto_apply only. For now: pass
-      // everything; CLI documents this is "everything" behavior.
+      extraRemediations: runnableExtras,
     },
     {
       onTargetUnreachable: (target, ceiling) => {
@@ -185,6 +184,18 @@ export async function runOnboard(engine: BrainEngine, args: string[]): Promise<v
     (s) => s.status !== 'completed' && s.status !== 'submitted' && s.status !== 'dry_run',
   );
   if (result.budget_exhausted || anyFailed) process.exit(1);
+}
+
+function filterRunnableOnboardExtras(
+  extras: RemediationStep[],
+  opts: { includePromptRequired: boolean },
+): RemediationStep[] {
+  return extras.filter((step) => {
+    const policy = toOnboardRecommendation(step).apply_policy ?? 'prompt_required';
+    if (policy === 'manual_only') return false;
+    if (policy === 'prompt_required' && !opts.includePromptRequired) return false;
+    return true;
+  });
 }
 
 /**

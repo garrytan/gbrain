@@ -178,6 +178,8 @@ interface ParsedArgs {
   configBPath?: string;
   configB?: EvalConfig;
   strategy?: EvalConfig['strategy'];
+  mode?: EvalConfig['mode'];
+  source?: string;
   rrfK?: number;
   expand?: boolean;
   dedupCosine?: number;
@@ -200,6 +202,8 @@ function parseArgs(args: string[]): ParsedArgs {
       case '--config-a': opts.configAPath = next; i++; break;
       case '--config-b': opts.configBPath = next; i++; break;
       case '--strategy': opts.strategy = next as EvalConfig['strategy']; i++; break;
+      case '--mode': opts.mode = next as EvalConfig['mode']; i++; break;
+      case '--source': opts.source = next; i++; break;
       case '--rrf-k': opts.rrfK = parseInt(next, 10); i++; break;
       case '--expand': opts.expand = true; break;
       case '--no-expand': opts.expand = false; break;
@@ -226,6 +230,8 @@ function buildConfig(opts: ParsedArgs, side: 'a' | 'b'): EvalConfig {
   // CLI flags override config file (only for side A — side B comes entirely from its config file)
   if (side === 'a') {
     if (opts.strategy !== undefined) base.strategy = opts.strategy;
+    if (opts.mode !== undefined) base.mode = opts.mode;
+    if (opts.source !== undefined) base.source = opts.source;
     if (opts.rrfK !== undefined) base.rrf_k = opts.rrfK;
     if (opts.expand !== undefined) base.expand = opts.expand;
     if (opts.dedupCosine !== undefined) base.dedup_cosine_threshold = opts.dedupCosine;
@@ -402,6 +408,8 @@ OPTIONS
   --config-a <path|json>      Config for strategy A (default: hybrid with defaults)
   --config-b <path|json>      Config for strategy B (triggers A/B mode)
   --strategy <s>              Search strategy: hybrid | keyword | vector
+  --mode <name>               Hybrid search mode: conservative | balanced | tokenmax
+  --source <id>               Scope eval queries to one source id
   --rrf-k <n>                 Override RRF K constant (default: 60)
   --expand / --no-expand      Enable/disable multi-query expansion
   --dedup-cosine <f>          Override cosine dedup threshold (default: 0.85)
@@ -425,9 +433,11 @@ QRELS FORMAT
 
 CONFIG FORMAT
   { "name": "rrf-k-30", "strategy": "hybrid", "rrf_k": 30, "expand": false }
+  { "name": "daily-conservative", "strategy": "hybrid", "source": "seascape-hub", "mode": "conservative" }
 
 EXAMPLES
   gbrain eval --qrels ./my-queries.json
+  gbrain eval --qrels ./daily.qrels.json --source seascape-hub --mode conservative
   gbrain eval --qrels ./qrels.json --strategy keyword
   gbrain eval --qrels ./qrels.json --rrf-k 30
   gbrain eval --qrels ./qrels.json --config-a baseline.json --config-b experiment.json

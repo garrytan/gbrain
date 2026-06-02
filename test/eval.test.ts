@@ -6,8 +6,10 @@
 
 import { describe, test, expect } from 'bun:test';
 import {
+  buildHybridEvalOpts,
   precisionAtK,
   recallAtK,
+  resolveEvalLimit,
   mrr,
   ndcgAtK,
   parseQrels,
@@ -240,5 +242,77 @@ describe('parseQrels', () => {
 
   test('throws on unrecognized format', () => {
     expect(() => parseQrels(JSON.stringify({ foo: 'bar' }))).toThrow();
+  });
+});
+
+describe('resolveEvalLimit', () => {
+  test('preserves explicit limit', () => {
+    expect(resolveEvalLimit({ limit: 7 }, 'hybrid', 5)).toBe(7);
+  });
+
+  test('lets explicit hybrid mode use the bundle searchLimit', () => {
+    expect(resolveEvalLimit({ mode: 'balanced' }, 'hybrid', 5)).toBeUndefined();
+  });
+
+  test('keeps legacy fallback for hybrid without explicit mode', () => {
+    expect(resolveEvalLimit({}, 'hybrid', 5)).toBe(10);
+  });
+
+  test('keeps fallback limit for vector evals even when mode is present', () => {
+    expect(resolveEvalLimit({ mode: 'balanced' }, 'vector', 3)).toBe(10);
+  });
+});
+
+describe('buildHybridEvalOpts', () => {
+  test('threads source and mode into hybrid opts', () => {
+    expect(
+      buildHybridEvalOpts(
+        {
+          source: 'seascape-hub',
+          mode: 'balanced',
+          rrf_k: 45,
+          expand: true,
+        },
+        {
+          cosineThreshold: 0.91,
+          maxTypeRatio: 0.5,
+          maxPerPage: 3,
+        },
+        undefined,
+      ),
+    ).toEqual({
+      sourceId: 'seascape-hub',
+      mode: 'balanced',
+      expansion: true,
+      rrfK: 45,
+      dedupOpts: {
+        cosineThreshold: 0.91,
+        maxTypeRatio: 0.5,
+        maxPerPage: 3,
+      },
+    });
+  });
+
+  test('includes limit when one is explicitly resolved', () => {
+    expect(
+      buildHybridEvalOpts(
+        {},
+        {
+          cosineThreshold: undefined,
+          maxTypeRatio: undefined,
+          maxPerPage: undefined,
+        },
+        12,
+      ),
+    ).toEqual({
+      limit: 12,
+      expansion: false,
+      rrfK: undefined,
+      dedupOpts: {
+        cosineThreshold: undefined,
+        maxTypeRatio: undefined,
+        maxPerPage: undefined,
+      },
+    });
   });
 });

@@ -121,7 +121,13 @@ brain is still `pglite` or still on `conservative`, say that plainly and keep
      auditable.
 
 6. **Sync first, then fill the richer layers**
-   - Start with content parity:
+   - Start with content parity. When source checkout writes are not explicitly
+     approved, use the approval-safe local-refresh form:
+     ```bash
+     gbrain sync --all --no-pull --parallel 4 --workers 4 --skip-failed
+     ```
+   - Use the remote-refresh form only when `git pull` inside each registered
+     source checkout is intended:
      ```bash
      gbrain sync --all --parallel 4 --workers 4 --skip-failed
      ```

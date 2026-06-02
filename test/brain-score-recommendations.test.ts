@@ -119,7 +119,7 @@ describe('computeRecommendations', () => {
     expect(recs.find((r) => r.id === 'embed.stale')).toBeUndefined();
   });
 
-  test('stale pages + dead links produce sync + backlinks + extract', () => {
+  test('stale pages do not produce source sync/extract remediations', () => {
     const health = makeHealth({
       stale_pages: 25,
       dead_links: 8,
@@ -127,26 +127,25 @@ describe('computeRecommendations', () => {
     });
     const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const ids = recs.map((r) => r.id);
-    expect(ids).toContain('sync.repo');
+    expect(ids).not.toContain('sync.repo');
     expect(ids).toContain('backlinks.fix');
-    expect(ids).toContain('extract.all');
+    expect(ids).not.toContain('extract.all');
   });
 
-  test('extract.all depends on sync.repo (D14: stable ids)', () => {
+  test('timeline freshness lag alone does not schedule extract.all', () => {
     const health = makeHealth({ stale_pages: 10 });
     const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
-    const extract = recs.find((r) => r.id === 'extract.all');
-    expect(extract?.depends_on).toContain('sync.repo');
+    expect(recs.find((r) => r.id === 'extract.all')).toBeUndefined();
   });
 
-  test('embed.stale depends on sync.repo when sync also needed', () => {
+  test('embed.stale does not depend on timeline freshness lag', () => {
     const health = makeHealth({
       stale_pages: 10,
       missing_embeddings: 100,
     });
     const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const embed = recs.find((r) => r.id === 'embed.stale');
-    expect(embed?.depends_on).toContain('sync.repo');
+    expect(embed?.depends_on).toEqual([]);
   });
 
   test('embed.stale has no sync dependency when nothing stale', () => {
@@ -159,7 +158,7 @@ describe('computeRecommendations', () => {
   test('severity ordering: critical before high before medium', () => {
     const health = makeHealth({
       missing_embeddings: 100,  // critical
-      stale_pages: 80,          // high
+      dead_links: 80,           // high
     });
     const recs = computeRecommendations(health, { repoPath: '/brain', embeddingProviderConfigured: true });
     const critIdx = recs.findIndex((r) => r.severity === 'critical');

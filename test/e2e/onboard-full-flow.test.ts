@@ -13,11 +13,13 @@
 
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { computeRemediationPlan } from '../../src/core/remediation/index.ts';
+import { computeRemediationPlan, runRemediation } from '../../src/core/remediation/index.ts';
 import { captureMetric } from '../../src/core/onboard/impact-capture.ts';
 import { buildOnboardReport, toOnboardRecommendation } from '../../src/core/onboard/render.ts';
-import { runAllOnboardChecks } from '../../src/core/onboard/checks.ts';
+import { checkTimelineCoverage, runAllOnboardChecks } from '../../src/core/onboard/checks.ts';
 import { makeRemediationStep } from '../../src/core/remediation-step.ts';
+import { parseGlobalFlags, setCliOptions, _resetCliOptionsForTest } from '../../src/core/cli-options.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 
 let engine: PGLiteEngine;
 
@@ -98,6 +100,54 @@ describe('onboard E2E — runAllOnboardChecks', () => {
   });
 });
 
+describe('onboard E2E — timeline coverage remediation routing', () => {
+  function timelineEngine(opts: {
+    totalEntities: number;
+    entitiesWithTimeline: number;
+    meetingPages: number;
+  }): BrainEngine {
+    return {
+      kind: 'pglite',
+      executeRaw: async (sql: string) => {
+        if (sql.includes("type = 'meeting'")) {
+          return [{ count: opts.meetingPages }];
+        }
+        if (sql.includes('EXISTS (SELECT 1 FROM timeline_entries')) {
+          return [{ count: opts.entitiesWithTimeline }];
+        }
+        if (sql.includes("type IN ('person', 'company', 'organization', 'entity')")) {
+          return [{ count: opts.totalEntities }];
+        }
+        return [{ count: 0 }];
+      },
+    } as unknown as BrainEngine;
+  }
+
+  test('low timeline coverage does not recommend meeting extraction when no meeting pages exist', async () => {
+    const result = await checkTimelineCoverage(timelineEngine({
+      totalEntities: 10,
+      entitiesWithTimeline: 0,
+      meetingPages: 0,
+    }));
+    expect(result.check.status).toBe('warn');
+    expect(result.check.message).toContain('no typed meeting pages');
+    expect(result.remediations).toHaveLength(0);
+  });
+
+  test('low timeline coverage recommends meeting extraction when meeting pages exist', async () => {
+    const result = await checkTimelineCoverage(timelineEngine({
+      totalEntities: 10,
+      entitiesWithTimeline: 0,
+      meetingPages: 2,
+    }));
+    expect(result.check.status).toBe('warn');
+    expect(result.check.message).not.toContain('no typed meeting pages');
+    expect(result.remediations).toHaveLength(1);
+    expect(result.remediations[0].job).toBe('extract-timeline-from-meetings');
+    expect(result.remediations[0].rationale).toContain('2 meeting page(s)');
+  });
+});
+
 describe('onboard E2E — computeRemediationPlan with extras', () => {
   test('threads extras through computeRecommendations', async () => {
     // Build a synthetic extra remediation. computeRemediationPlan
@@ -128,6 +178,30 @@ describe('onboard E2E — computeRemediationPlan with extras', () => {
     expect(plan.brain_score_target).toBe(90);
     expect(typeof plan.max_reachable_score).toBe('number');
     expect(Array.isArray(plan.plan)).toBe(true);
+  });
+});
+
+describe('onboard E2E — runRemediation with extras', () => {
+  test('dry-run execution plan includes caller-supplied onboard extras', async () => {
+    const extra = makeRemediationStep({
+      id: 'test.synthetic-runner-extra',
+      job: 'test-job',
+      params: {},
+      severity: 'low',
+      est_seconds: 10,
+      est_usd_cost: 0,
+      rationale: 'synthetic runner entry',
+      status: 'remediable',
+    });
+
+    const result = await runRemediation(engine, {
+      targetScore: 0,
+      dryRun: true,
+      extraRemediations: [extra],
+    });
+
+    expect(result.submitted.map((s) => s.id)).toContain('test.synthetic-runner-extra');
+    expect(result.submitted.find((s) => s.id === 'test.synthetic-runner-extra')?.status).toBe('dry_run');
   });
 });
 
@@ -177,5 +251,39 @@ describe('onboard E2E — toOnboardRecommendation tier policy', () => {
     });
     const r = toOnboardRecommendation(step);
     expect(r.apply_policy).toBe('prompt_required');
+  });
+});
+
+describe('onboard CLI — global --explain plumbing', () => {
+  test('parseGlobalFlags strips --explain before onboard sees args', () => {
+    const parsed = parseGlobalFlags(['onboard', '--check', '--explain']);
+    expect(parsed.rest).toEqual(['onboard', '--check']);
+    expect(parsed.cliOpts.explain).toBe(true);
+  });
+
+  test('runOnboard can observe the globally parsed --explain flag', async () => {
+    const parsed = parseGlobalFlags(['onboard', '--check', '--explain']);
+    setCliOptions(parsed.cliOpts);
+    try {
+      const originalWrite = process.stdout.write;
+      let out = '';
+      process.stdout.write = ((chunk: string | Uint8Array) => {
+        out += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+        return true;
+      }) as typeof process.stdout.write;
+      try {
+        const { runOnboard } = await import('../../src/commands/onboard.ts');
+        await runOnboard(engine, parsed.rest);
+      } finally {
+        process.stdout.write = originalWrite;
+      }
+      if (out.includes('unify-types')) {
+        expect(out).toContain('Pack upgrade plan');
+      } else {
+        expect(out).toContain('no pack_upgrade_available recommendation');
+      }
+    } finally {
+      _resetCliOptionsForTest();
+    }
   });
 });

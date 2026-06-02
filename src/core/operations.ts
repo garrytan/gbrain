@@ -4394,7 +4394,7 @@ const run_onboard: Operation = {
 
     const { computeRemediationPlan, runRemediation } = await import('./remediation/index.ts');
     const { runAllOnboardChecks } = await import('./onboard/checks.ts');
-    const { buildOnboardReport } = await import('./onboard/render.ts');
+    const { buildOnboardReport, toOnboardRecommendation } = await import('./onboard/render.ts');
 
     // Per A26: source-scope via sourceScopeOpts(ctx). The recommendation
     // planner is brain-wide today; future extension can scope by reading
@@ -4430,6 +4430,15 @@ const run_onboard: Operation = {
 
     const skippedMissingScope: Array<{ id: string; job: string; reason: string }> = [];
     const allowedExtras = extraRemediations.filter((r) => {
+      const policy = toOnboardRecommendation(r).apply_policy ?? 'prompt_required';
+      if (policy === 'manual_only') {
+        skippedMissingScope.push({ id: r.id, job: r.job, reason: 'manual_only; submit explicitly' });
+        return false;
+      }
+      if (policy === 'prompt_required' && mode !== 'auto-with-prompt') {
+        skippedMissingScope.push({ id: r.id, job: r.job, reason: "requires mode='auto-with-prompt'" });
+        return false;
+      }
       if (canRunProtected) return true;
       if (isProtectedJobName(r.job)) {
         skippedMissingScope.push({ id: r.id, job: r.job, reason: 'requires run_protected_onboard scope' });
@@ -4447,7 +4456,7 @@ const run_onboard: Operation = {
     // typo, the underlying queue.add would reject. Defense-in-depth.
     const result = await runRemediation(
       ctx.engine,
-      { targetScore, maxUsd },
+      { targetScore, maxUsd, extraRemediations: allowedExtras },
       {},
     );
 

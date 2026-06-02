@@ -107,6 +107,16 @@ interface ExtractResult {
   pages_processed: number;
 }
 
+interface PageDateTimelineRow {
+  slug: string;
+  source_id: string;
+  type: string;
+  title: string | null;
+  effective_date: string | Date;
+  effective_date_source: string;
+  updated_at: string | Date;
+}
+
 // --- Shared walker ---
 
 export function walkMarkdownFiles(dir: string): { path: string; relPath: string }[] {
@@ -344,6 +354,17 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   return entries;
 }
 
+export function timelineDateFromEffectiveDate(value: string | Date): string | null {
+  const d = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+export function pageDateTimelineSummary(row: Pick<PageDateTimelineRow, 'title' | 'slug'>): string {
+  const title = row.title?.trim();
+  return title || row.slug;
+}
+
 // --- Main command ---
 
 export interface ExtractOpts {
@@ -501,6 +522,11 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
   // v0.41.18.0 (A11, T8): --from-meetings extracts timeline entries from
   // meeting pages onto each discussed entity. Timeline subcommand only.
   const fromMeetings = args.includes('--from-meetings');
+  // Explicit page-date extractor. It turns pages with non-fallback
+  // effective_date metadata into one structured timeline row on that page.
+  // This is intentionally opt-in so generic timeline extraction does not
+  // silently reinterpret page dates as event claims.
+  const fromPageDates = args.includes('--from-page-dates');
   // v0.41.17.0 (T7, D9): --workers N parsed via the shared validator.
   // Honored on the fs-walk inner loops only; DB-source paths stay
   // serial in v0.41.17.0 (see ExtractOpts.workers doc).
@@ -539,6 +565,7 @@ Extraction (existing):
   gbrain extract <links|timeline> --by-mention --source db
   gbrain extract <links|timeline|all> --ner --source db
   gbrain extract <timeline|all> --from-meetings
+  gbrain extract <timeline|all> --from-page-dates --source db
 
 Inspection (v0.42):
   gbrain extract --explain <kind> [--json]
@@ -614,6 +641,27 @@ Status (v0.42):
     );
     process.exit(2);
   }
+  if (fromPageDates && source === 'fs') {
+    console.error(
+      `--from-page-dates requires --source db (currently --source fs). Re-run as:\n\n` +
+      `  gbrain extract timeline --from-page-dates --source db` +
+      (sourceIdFilter ? ` --source-id ${sourceIdFilter}` : '') +
+      (dryRun ? ' --dry-run' : '') + '\n',
+    );
+    process.exit(2);
+  }
+  if (fromPageDates && subcommand !== 'timeline' && subcommand !== 'all') {
+    console.error(
+      `--from-page-dates is a timeline-pass only. Re-run as 'gbrain extract timeline --from-page-dates' or 'gbrain extract all --from-page-dates'.`,
+    );
+    process.exit(2);
+  }
+  if (fromMeetings && fromPageDates) {
+    console.error(
+      `--from-meetings and --from-page-dates are separate timeline passes. Run them as separate commands so counts stay interpretable.`,
+    );
+    process.exit(2);
+  }
 
   // FS source needs a brain dir. When --dir wasn't passed, resolve from
   // sources(local_path) — same path `gbrain sync` uses — instead of
@@ -661,6 +709,14 @@ Status (v0.42):
         result.pages_processed = r.meetings_scanned;
         if (!jsonMode) {
           console.log(`Timeline from meetings: ${r.entries_created} entries on ${r.entities_touched} entity pages from ${r.meetings_scanned} meetings`);
+        }
+      } else if (fromPageDates) {
+        const r = await extractTimelineFromPageDates(engine, dryRun, jsonMode, typeFilter, since, { sourceIdFilter });
+        result.timeline_entries_created = r.created;
+        result.pages_processed = r.pages;
+        if (!jsonMode) {
+          const label = dryRun ? '(dry run) would create' : 'created';
+          console.log(`Timeline from page dates: ${label} ${r.created} entries from ${r.pages} dated pages`);
         }
       } else if (byMention || ner) {
         // v0.41.18.0 (T7): combined --by-mention + --ner walk shares one
@@ -1238,6 +1294,105 @@ async function extractLinksFromDB(
     }
   }
   return { created, pages: processed, unresolved };
+}
+
+export async function extractTimelineFromPageDates(
+  engine: BrainEngine,
+  dryRun: boolean,
+  jsonMode: boolean,
+  typeFilter: PageType | undefined,
+  since: string | undefined,
+  opts?: { sourceIdFilter?: string },
+): Promise<{ created: number; pages: number }> {
+  const where = [
+    `deleted_at IS NULL`,
+    `effective_date IS NOT NULL`,
+    `effective_date_source IN ('event_date', 'date', 'published', 'filename')`,
+  ];
+  const params: unknown[] = [];
+
+  if (opts?.sourceIdFilter) {
+    params.push(opts.sourceIdFilter);
+    where.push(`source_id = $${params.length}`);
+  }
+  if (typeFilter) {
+    params.push(typeFilter);
+    where.push(`type = $${params.length}`);
+  }
+  if (since) {
+    params.push(since);
+    where.push(`updated_at > $${params.length}::timestamptz`);
+  }
+
+  const rows = await engine.executeRaw<PageDateTimelineRow>(
+    `SELECT slug, source_id, type, title, effective_date, effective_date_source, updated_at
+       FROM pages
+      WHERE ${where.join(' AND ')}
+      ORDER BY source_id, effective_date DESC, slug`,
+    params,
+  );
+
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
+  progress.start('extract.timeline_page_dates', rows.length);
+
+  const dryRunSeen = dryRun ? new Set<string>() : null;
+  const batch: TimelineBatchInput[] = [];
+  let created = 0;
+
+  async function flush() {
+    if (batch.length === 0) return;
+    const snapshot = batch.slice();
+    batch.length = 0;
+    try {
+      created += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_page_dates' });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (jsonMode) {
+        process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
+      } else {
+        console.error(`  batch error (${snapshot.length} page-date timeline rows lost): ${msg}`);
+      }
+    }
+  }
+
+  for (const row of rows) {
+    const date = timelineDateFromEffectiveDate(row.effective_date);
+    if (!date) {
+      progress.tick(1);
+      continue;
+    }
+    const summary = pageDateTimelineSummary(row);
+    const source = `page-effective-date:${row.effective_date_source}`;
+    const detail = `Page: ${row.slug}\nType: ${row.type}\nEffective date source: ${row.effective_date_source}`;
+
+    if (dryRunSeen) {
+      const key = `${row.source_id}::${row.slug}::${date}::${summary}::${source}`;
+      if (!dryRunSeen.has(key)) {
+        dryRunSeen.add(key);
+        if (jsonMode) {
+          process.stdout.write(JSON.stringify({
+            action: 'add_timeline_from_page_date',
+            slug: row.slug,
+            source_id: row.source_id,
+            date,
+            summary,
+            source,
+          }) + '\n');
+        } else {
+          console.log(`  ${row.source_id}/${row.slug}: ${date} — ${summary}`);
+        }
+        created++;
+      }
+    } else {
+      batch.push({ slug: row.slug, source_id: row.source_id, date, source, summary, detail });
+      if (batch.length >= BATCH_SIZE) await flush();
+    }
+    progress.tick(1);
+  }
+
+  await flush();
+  progress.finish();
+  return { created, pages: rows.length };
 }
 
 async function extractTimelineFromDB(

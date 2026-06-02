@@ -53,6 +53,13 @@ export interface RemediationPlan {
 export interface RemediationOpts {
   /** Target brain_score (default: 90). */
   targetScore?: number;
+  /**
+   * Caller-supplied RemediationStep entries to include in the executable plan.
+   * Onboard uses this for checks that live outside the legacy BrainHealth
+   * recommendation generator, such as timeline coverage and schema-pack
+   * onboarding.
+   */
+  extraRemediations?: RemediationStep[];
   /** Cap inner loop iterations (default: Infinity). */
   maxJobs?: number;
   /** USD cap for total plan cost. Pre-flight refuse + mid-run BudgetExhausted gate. */

@@ -129,7 +129,14 @@ type Remediation = RemediationStep;
 export interface RecommendationContext {
   /** Source id this remediation is scoped to (multi-source brains). */
   sourceId?: string;
-  /** Brain repo path on disk (for sync). */
+  /**
+   * Brain repo path on disk for legacy single-source remediations.
+   *
+   * Do not infer sync freshness from BrainHealth.stale_pages. That field is
+   * page/timeline freshness lag, not filesystem/source drift. Source-aware
+   * freshness lives in `gbrain sources status` and doctor's sync_freshness
+   * check, where the code can compare per-source last_commit/last_sync_at.
+   */
   repoPath?: string;
   /** Configured embedding model id (e.g. 'openai:text-embedding-3-large'). */
   embeddingModel?: string;
@@ -192,23 +199,18 @@ export function computeRecommendations(
   const source = ctx.sourceId ?? 'default';
 
   // ---------------------------------------------------------------------
-  // sync.repo — fires when sync hasn't run recently OR pages are stale
+  // Source sync intentionally does NOT key off health.stale_pages.
+  //
+  // BrainHealth.stale_pages means "page row is older than its structured
+  // timeline rows" (for example after a timeline backfill). It does not mean
+  // the checkout on disk has drifted from the DB, and using it here caused
+  // multi-source brains to schedule sync/extract against the legacy
+  // config.sync.repo_path even when the lag came from another source.
+  //
+  // Source freshness must stay source-scoped until this planner grows a
+  // source-aware fan-out input. The existing source-aware surfaces are
+  // `gbrain sources status` and doctor's sync_freshness check.
   // ---------------------------------------------------------------------
-  if (ctx.repoPath && health.stale_pages > 0) {
-    const params = { repoPath: ctx.repoPath, sourceId: ctx.sourceId, noEmbed: true };
-    out.push({
-      id: 'sync.repo',
-      job: 'sync',
-      params,
-      idempotency_key: idemKey(source, 'sync', params),
-      severity: health.stale_pages > 50 ? 'high' : 'medium',
-      est_seconds: Math.min(600, 30 + health.stale_pages * 0.5),
-      est_usd_cost: 0,  // sync is fs+DB only
-      depends_on: [],
-      rationale: `${health.stale_pages} stale page${health.stale_pages === 1 ? '' : 's'} on disk`,
-      status: 'remediable',
-    });
-  }
 
   // ---------------------------------------------------------------------
   // embed.stale — missing embeddings. Critical: invisible to vector search
@@ -236,8 +238,7 @@ export function computeRecommendations(
       severity: 'critical',
       est_seconds: Math.min(3600, 5 + health.missing_embeddings * 0.05),
       est_usd_cost,
-      // sync should run first so embed sees fresh pages.
-      depends_on: ctx.repoPath && health.stale_pages > 0 ? ['sync.repo'] : [],
+      depends_on: [],
       rationale: `${health.missing_embeddings} chunk${health.missing_embeddings === 1 ? '' : 's'} invisible to vector search`,
       status: 'remediable',
     });
@@ -258,27 +259,6 @@ export function computeRecommendations(
       est_usd_cost: 0,
       depends_on: [],
       rationale: `${health.dead_links} dead link${health.dead_links === 1 ? '' : 's'}`,
-      status: 'remediable',
-    });
-  }
-
-  // ---------------------------------------------------------------------
-  // extract.all — runs after sync to materialize links + timeline.
-  // Triggered when sync.repo fires (because sync was set to noEmbed:true,
-  // and noExtract:true after T5 lands → extract job is the materializer).
-  // ---------------------------------------------------------------------
-  if (ctx.repoPath && health.stale_pages > 0) {
-    const params = { mode: 'all', dir: ctx.repoPath };
-    out.push({
-      id: 'extract.all',
-      job: 'extract',
-      params,
-      idempotency_key: idemKey(source, 'extract', params),
-      severity: 'medium',
-      est_seconds: Math.min(600, 30 + health.page_count * 0.01),
-      est_usd_cost: 0,
-      depends_on: ['sync.repo'],
-      rationale: 'Materialize link + timeline edges from fresh pages',
       status: 'remediable',
     });
   }

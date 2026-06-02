@@ -84,6 +84,7 @@ export const BATCH_AUDIT_SITES = [
   'extract.timeline_fs',
   'extract.links_db',
   'extract.timeline_db',
+  'extract.timeline_page_dates',
   'extract.by_mention',
   // operations.ts MCP put_page auto-link path.
   'mcp.put_page.autolink',

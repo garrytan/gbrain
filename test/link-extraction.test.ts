@@ -427,6 +427,37 @@ More prose here.
     const entries = parseTimelineEntries(content);
     expect(entries.length).toBe(2);
   });
+
+  test('parses dated section heading: ### YYYY-MM-DD — summary', () => {
+    const content = `### 2026-05-09 — Partner context
+
+- Routing rules changed.
+- Owner reporting clarified.
+
+### Other heading`;
+    const entries = parseTimelineEntries(content);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({
+      date: '2026-05-09',
+      summary: 'Partner context',
+      detail: '- Routing rules changed. - Owner reporting clarified.',
+    });
+  });
+
+  test('parses dated section heading suffix: ### summary (YYYY-MM-DD)', () => {
+    const content = `### Partner-Side Operating Context (2026-05-09)
+
+Source: partner SMS.
+
+**Decision routing.**
+- Shared decisions: refunds and owner promises.`;
+    const entries = parseTimelineEntries(content);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-05-09');
+    expect(entries[0].summary).toBe('Partner-Side Operating Context');
+    expect(entries[0].detail).toContain('Source: partner SMS.');
+    expect(entries[0].detail).toContain('Shared decisions');
+  });
 });
 
 // ─── isAutoLinkEnabled ─────────────────────────────────────────
@@ -828,4 +859,3 @@ describe("v0.18.0 migration v22 — links_resolution_type", () => {
     expect(v22!.sql).toContain("unqualified");
   });
 });
-

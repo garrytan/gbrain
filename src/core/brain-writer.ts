@@ -116,12 +116,14 @@ export function createFrontmatterBackup(filePath: string, opts: FrontmatterBacku
  * Mechanical auto-repair for the fixable subset of validation codes:
  *   - NULL_BYTES        — strip \x00 characters
  *   - NESTED_QUOTES     — rewrite `"... "inner" ..."` to single-quoted outer
+ *   - YAML_PARSE        — quote plain scalar values containing `: `, the most
+ *                          common fixable YAML parse failure in receipts
  *   - MISSING_CLOSE     — insert `---` before the first heading found inside
  *                          the YAML zone
  *   - SLUG_MISMATCH     — remove `slug:` line (gbrain derives slug from path)
  *
  * Idempotent: running twice is a no-op on already-clean input. Any error class
- * not in the list above is left untouched (e.g. EMPTY_FRONTMATTER, YAML_PARSE,
+ * not in the list above is left untouched (e.g. EMPTY_FRONTMATTER,
  * MISSING_OPEN — those need human review).
  */
 export function autoFixFrontmatter(
@@ -170,12 +172,51 @@ export function autoFixFrontmatter(
     }
   }
 
-  // Both step 3a and step 3 produce NESTED_QUOTES fix records on different
+  // 3. YAML_PARSE — quote plain scalar values that contain colon-space.
+  //    YAML treats `key: value: with colon-space` as a broken mapping unless
+  //    the value is quoted. Keep this deliberately narrow: only single-line
+  //    plain scalars in the frontmatter block, not arrays/objects/block scalars.
+  {
+    const lines = working.split('\n');
+    let firstNonEmpty = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim().length > 0) { firstNonEmpty = i; break; }
+    }
+    if (firstNonEmpty >= 0 && lines[firstNonEmpty].trim() === '---') {
+      let closeIdx = lines.length;
+      for (let i = firstNonEmpty + 1; i < lines.length; i++) {
+        if (lines[i].trim() === '---') { closeIdx = i; break; }
+      }
+      let fixedAny = false;
+      for (let i = firstNonEmpty + 1; i < closeIdx; i++) {
+        const m = lines[i].match(/^(\s*[A-Za-z_][\w-]*\s*:\s*)(.+?)\s*$/);
+        if (!m) continue;
+        const [, prefix, rawValue] = m;
+        const value = rawValue.trim();
+        if (!value.includes(': ')) continue;
+        if (/^['"\[{\|>!&*#]/.test(value)) continue;
+        // Avoid changing inline-comment semantics. Users can quote those by hand.
+        if (/\s#/.test(value)) continue;
+        const escaped = value.replace(/'/g, "''");
+        lines[i] = `${prefix}'${escaped}'`;
+        fixedAny = true;
+      }
+      if (fixedAny) {
+        working = lines.join('\n');
+        fixes.push({
+          code: 'YAML_PARSE',
+          description: 'Quoted plain YAML scalar values containing colon-space',
+        });
+      }
+    }
+  }
+
+  // Both step 4a and step 4 produce NESTED_QUOTES fix records on different
   // patterns. When both fire on the same file, push ONE merged record rather
   // than two — keeps the audit count honest about distinct files affected.
   let nestedQuotesFixed = false;
 
-  // 3a. Canonical-style normalization for `tags:` / `aliases:` flow arrays.
+  // 4a. Canonical-style normalization for `tags:` / `aliases:` flow arrays.
   //     Post-v0.37.5.0 validator (PR #1229), `tags: ["yc", "w2025"]` is already
   //     valid YAML and no longer flagged. This pass rewrites it to the
   //     canonical single-quoted form (`tags: ['yc', 'w2025']`) so disk-side
@@ -239,7 +280,7 @@ export function autoFixFrontmatter(
     }
   }
 
-  // 3. NESTED_QUOTES — rewrite `key: "...inner..."` lines that have 3+ unescaped
+  // 4. NESTED_QUOTES — rewrite `key: "...inner..."` lines that have 3+ unescaped
   //    double-quotes by switching the outer wrapper to single quotes and
   //    leaving inner quotes alone.
   {
@@ -286,7 +327,7 @@ export function autoFixFrontmatter(
     }
   }
 
-  // 4. SLUG_MISMATCH — remove `slug:` line if filePath is provided and the
+  // 5. SLUG_MISMATCH — remove `slug:` line if filePath is provided and the
   //    declared slug doesn't match the path-derived one. Per PR #392 spec,
   //    gbrain derives slug from path; the field shouldn't be in frontmatter.
   if (opts?.filePath) {

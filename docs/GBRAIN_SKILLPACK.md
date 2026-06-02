@@ -79,6 +79,7 @@ How to structure your system.
 | [The Three Search Modes](guides/search-modes.md) | Keyword, hybrid, direct. When to use each |
 | [Brain vs Agent Memory](guides/brain-vs-memory.md) | 3 layers: GBrain (world knowledge), agent memory, session |
 | [Production Brain, Balanced Cost](guides/production-brain-balanced-cost.md) | Canonical production posture: Postgres/Supabase for the real brain, PGLite for scratch, and deliberate cost knobs |
+| [Personal GBrain 10-Star Setup](guides/personal-gbrain-10-star-setup.md) | End-to-end readiness lane for a personal brain: richness first, production durability only after proof |
 | [Session Audit & Goal Discipline](guides/session-goal-discipline.md) | Audit repo/runtime truth first, name the proof gate early, then set or retune the session goal |
 
 ## Integrations
