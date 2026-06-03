@@ -85,6 +85,8 @@ export async function runInit(args: string[]) {
     return initMigrateOnly({ jsonOutput });
   }
 
+  await validateInitSchemaPack(schemaPack, jsonOutput);
+
   // v0.14: AI provider selection.
   // --embedding-model PROVIDER:MODEL (verbose) or --model PROVIDER (shorthand, picks recipe default)
   const embModelIdx = args.indexOf('--embedding-model');
@@ -160,6 +162,31 @@ interface ResolvedAIOptions {
   chat_model?: string;
   /** v0.37 (D9): user opted into deferred embedding setup. */
   noEmbedding?: boolean;
+}
+
+async function validateInitSchemaPack(schemaPack: string, jsonOutput: boolean): Promise<void> {
+  try {
+    const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
+    await loadActivePack({
+      cfg: null,
+      remote: false,
+      perCall: schemaPack,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (jsonOutput) {
+      console.log(JSON.stringify({
+        status: 'error',
+        reason: 'invalid_schema_pack',
+        schema_pack: schemaPack,
+        message,
+      }));
+    } else {
+      console.error(message);
+      console.error('Run `gbrain schema list` to see available packs, or use `gbrain schema init <name>` to create one.');
+    }
+    process.exit(1);
+  }
 }
 
 /**
@@ -1475,17 +1502,19 @@ OPTIONS
                         Model for query expansion (default: anthropic:claude-haiku)
   --chat-model <PROVIDER:MODEL>
                         Default subagent driver (v0.27+)
+  --schema-pack <NAME>  Initial schema pack for new brains (default: gbrain-base-v2)
 
 EXAMPLES
   gbrain init --pglite                      # Local-only, no API keys
   gbrain init --supabase                    # Interactive Supabase setup
   gbrain init --url postgresql://...        # Use a custom Postgres
-  gbrain init --mcp-only --url https://...  # Thin-client mode
+  gbrain init --mcp-only --issuer-url https://... --mcp-url https://.../mcp
+                                            # Thin-client mode
+  gbrain init --schema-pack gbrain-base     # Use the legacy taxonomy
 
 NOTES
-  - Bare \`gbrain init\` in a directory with 1000+ .md files defaults to Supabase
-    interactive setup. With <1000 files (or with --pglite explicitly), defaults
-    to PGLite at ~/.gbrain/brain.pglite.
+  - Bare \`gbrain init\` in a directory with 1000+ .md files prints a Supabase
+    recommendation, but still defaults to PGLite unless --supabase or --url is passed.
   - Existing config is preserved unless --force is passed.
 `.trim());
 }

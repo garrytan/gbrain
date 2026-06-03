@@ -40,6 +40,9 @@ const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'c
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
 const CLI_ONLY_SELF_HELP = new Set([
+  // `gbrain init --help` has a detailed, state-safe help path in runInit.
+  // Keep it reachable instead of the generic CLI-only one-line stub.
+  'init',
   'upgrade', 'post-upgrade', 'check-update',
   'embed', 'config',
   'skillpack', 'skillpack-check',

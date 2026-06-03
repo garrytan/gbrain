@@ -123,6 +123,36 @@ describe('v0.37 T12 — D3 non-TTY no-key fail-loud', () => {
 
 // ============================================================================
 
+describe('init --schema-pack validation', () => {
+  let tmpHome: string;
+
+  beforeAll(() => { tmpHome = makeTempHome(); });
+  afterAll(() => { rmSync(tmpHome, { recursive: true, force: true }); });
+
+  test('unknown schema pack fails before writing config', async () => {
+    const r = await runCli([
+      'init',
+      '--pglite',
+      '--no-embedding',
+      '--schema-pack',
+      'definitely-not-a-pack',
+      '--json',
+    ], {
+      gbrainHome: tmpHome,
+      env: {},
+    });
+
+    expect(r.exitCode).toBe(1);
+    const parsed = JSON.parse(r.stdout.trim().split('\n').pop()!);
+    expect(parsed.reason).toBe('invalid_schema_pack');
+    expect(parsed.schema_pack).toBe('definitely-not-a-pack');
+    expect(parsed.message).toContain('unknown schema pack: definitely-not-a-pack');
+    expect(existsSync(join(tmpHome, '.gbrain', 'config.json'))).toBe(false);
+  }, 60000);
+});
+
+// ============================================================================
+
 describe('v0.37 T12 — D6 regression: bug-reporter no-op keys exit 1 with Levenshtein', () => {
   let tmpHome: string;
 
