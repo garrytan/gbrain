@@ -13,7 +13,7 @@ import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed } from '../embedding.ts';
-import { hasOpenAIApiKey } from '../config.ts';
+import { hasOpenAIApiKey, type GBrainConfig } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { autoDetectDetail } from './intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
@@ -48,6 +48,12 @@ export function applyBacklinkBoost(results: SearchResult[], counts: Map<string, 
 
 export interface HybridSearchOpts extends SearchOpts {
   expansion?: boolean;
+  /**
+   * Already-loaded file/env config from the operation layer. Passing this keeps
+   * hybridSearch from re-reading config.json on every hot-path query when env
+   * vars are absent.
+   */
+  config?: GBrainConfig | null;
   expandFn?: (query: string) => Promise<string[]>;
   /** Override default RRF K constant (default: 60). Lower values boost top-ranked results more. */
   rrfK?: number;
@@ -113,7 +119,7 @@ export async function hybridSearch(
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
   // Skip vector search entirely if no OpenAI key is configured
-  if (!hasOpenAIApiKey()) {
+  if (!hasOpenAIApiKey(opts?.config)) {
     // Apply backlink boost in keyword-only path too. One getBacklinkCounts query
     // per search request; not N+1.
     if (keywordResults.length > 0) {

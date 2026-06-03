@@ -332,7 +332,7 @@ const put_page: Operation = {
     // try/catch around embed only catches; without a key the OpenAI client would
     // attempt 5 retries with exponential backoff (up to ~2 minutes total) before
     // giving up. Detect early.
-    const noEmbed = !hasOpenAIApiKey();
+    const noEmbed = !hasOpenAIApiKey(ctx.config);
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
@@ -701,6 +701,7 @@ const query: Operation = {
       symbolKind: (p.symbol_kind as string) || undefined,
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
+      config: ctx.config,
       onMeta: (m) => { capturedMeta = m; },
     });
     const latency_ms = Date.now() - startedAt;

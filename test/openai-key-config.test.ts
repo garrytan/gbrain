@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { readOpenAIApiKeyFile, resolveOpenAIApiKey } from '../src/core/config.ts';
+import { hasOpenAIApiKey, readOpenAIApiKeyFile, resolveOpenAIApiKey } from '../src/core/config.ts';
 
 const savedEnv = {
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
@@ -102,5 +102,12 @@ describe('OpenAI API key file support', () => {
 
     expect(resolveOpenAIApiKey()).toBe('sk-test-config-file');
     expect(process.env.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  test('uses provided config without loading config.json', () => {
+    process.env.GBRAIN_HOME = 'relative-path-would-throw-if-loaded';
+
+    expect(resolveOpenAIApiKey({ engine: 'pglite', openai_api_key: 'sk-test-config' })).toBe('sk-test-config');
+    expect(hasOpenAIApiKey({ engine: 'pglite', openai_api_key: 'sk-test-config' })).toBe(true);
   });
 });
