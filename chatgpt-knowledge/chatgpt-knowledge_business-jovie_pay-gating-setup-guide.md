@@ -319,8 +319,6 @@ NEXT_PUBLIC_SITE_URL=https://jov.ie
 
 ## 6. Quick sanity checks  
 
-
-
 *(Answer truncated — 3468 chars total)*
 
 ## Question

@@ -134,8 +134,6 @@ Great, give me a slantastic comment about how... That's awesome, it'll show me h
 
 ## Answer
 
-Absolutely. Here are a few **concise, slantastic** takes in that tone:
-
 ---
 
 **1.**  
@@ -265,8 +263,6 @@ Let me know if you want a version tailored to posting in comments or stories.
 This video is of Mark Andreessen, and it's wrongly attributing it to someone else. Can you slam this, uh, ad, and, uh, this social media post, and be like, um, really funny and humorous about it?
 
 ## Answer
-
-Absolutely. Here’s a slantastic, savage roast that’s funny and pointed—without mercy:
 
 ---
 

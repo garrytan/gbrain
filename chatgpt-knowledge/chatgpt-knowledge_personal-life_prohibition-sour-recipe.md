@@ -55,8 +55,6 @@ Give me 20
 
 ## Answer
 
-Sure, here are 20 1920s-themed drink names for a sour cocktail featuring Sour Patch Kids:
-
 1. "Sour Patch Speakeasy"
 2. "Bootlegger's Delight"
 3. "Flapper Sour"

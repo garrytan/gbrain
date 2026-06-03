@@ -25,8 +25,6 @@ we need headline, primary text, description
 
 ## Answer
 
-Sure, here are five options for Facebook ads for your supplements:
-
 Option 1:
 Headline: Boost Your Health Today!
 Primary Text: Improve your overall health with our high-quality supplements. Made with natural ingredients, our supplements are designed to help you feel your best.
@@ -58,8 +56,6 @@ write it just for creatine
 
 ## Answer
 
-Sure, here are five options for Facebook ads specifically for creatine supplements:
-
 Option 1:
 Headline: Boost Your Athletic Performance with Creatine!
 Primary Text: Looking for a natural way to enhance your athletic performance? Our creatine supplements are the perfect addition to your workout routine.
@@ -90,8 +86,6 @@ Description: Our creatine supplements are a must-have for serious athletes and f
 give me some one liners like Unlock your potential
 
 ## Answer
-
-Sure, here are some one-liners:
 
 1. Empower your mind and body.
 2. Discover your inner strength.

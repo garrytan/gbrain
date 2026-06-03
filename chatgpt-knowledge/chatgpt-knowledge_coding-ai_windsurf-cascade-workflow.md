@@ -158,7 +158,6 @@ height: 812
 path: ideation/screenshots/mobile_view.png
 full_page: true
 
-
 *(Answer truncated — 7809 chars total)*
 
 ## Question

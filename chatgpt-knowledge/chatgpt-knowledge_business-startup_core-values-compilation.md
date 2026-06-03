@@ -23,8 +23,6 @@ Based on what you know of me and jovie and yc. Compile a list of top 10 core val
 
 To test if its a good value, evaluate how an AI coding agent would interrupt them and if that would get us to a better or worse result for a product people love quickly.
 
-
-
 ## Answer
 
 Here’s a distilled **Top 10 Core Values for Jovie** — optimized for your goals (YC mindset, AI-first workflow, and product-love focus). I’ve taken inspiration from values at top YC companies (e.g. Stripe, Airbnb, Segment, Rippling, OpenAI) but tuned them to your world: rapid iteration, Apple-level polish, and AI-assisted engineering.
@@ -844,7 +842,6 @@ Want me to rewrite your core values file so this becomes the new #6, replacing t
 ## Question
 
 Solve It Best, Then Solve It Better
-
 
 ## Answer
 

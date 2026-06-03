@@ -69,8 +69,6 @@ give me some 1 liners for our womens activewear category (it's mostly sports bra
 
 ## Answer
 
-Sure, here are some 1 liners for your women's activewear category:
-
 1. "Get ready to slay your workout in our activewear for women."
 2. "Boost your confidence and performance with our stylish sports bras and leggings."
 3. "Take your fitness to the next level with our comfortable and supportive activewear."

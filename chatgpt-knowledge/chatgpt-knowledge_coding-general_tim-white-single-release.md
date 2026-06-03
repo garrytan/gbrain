@@ -387,8 +387,6 @@ can we say shes famous in a less bragging way? like she has a lot of eyes on her
 
 ## Answer
 
-Sure, here are a few ideas to describe her fame in a subtle, less bragging way:
-
 1. "a certain Hollywood personality, who has a significant following"
 2. "a certain Hollywood personality, who is always in the public eye"
 3. "a certain Hollywood personality, well-known in the industry"
@@ -546,8 +544,6 @@ who shall remain nameless
 or whos name you'd surely know and thus will remain nameless
 
 ## Answer
-
-Sure, here is the updated version with the phrase "whose name you'd surely know and thus will remain nameless":
 
 ---
 

@@ -181,8 +181,6 @@ these are great. give me 20 and put them in a table
 
 ## Answer
 
-Sure! Here are 20 themed cocktails for "American Scandals," presented in a table format for your menu:
-
 | **Drink Name**          | **Ingredients**                                                                                 | **Garnish**                 |
 |-------------------------|-------------------------------------------------------------------------------------------------|-----------------------------|
 | JFK Daiquiri            | White Rum, Coconut Water, Pineapple Juice, Lime Juice                                           | Lime wheel                  |
@@ -857,8 +855,6 @@ can we do something with nixon and deepthroat
 
 ## Answer
 
-Sure! Here are the updates to the menu with a Nixon and Deep Throat-inspired drink and shot:
-
 ---
 
 ## Featured Drinks Menu
@@ -1194,8 +1190,6 @@ Absolutely, I'll add "Impeachment Punch" as a peach drink to the list. For the M
 That's not bad. Maybe let's hold that as an option, but give me a couple more.
 
 ## Answer
-
-Sure, here are a few more options:
 
 1. "Conspiracy Margarita"
 2. "Infamous Margarita"

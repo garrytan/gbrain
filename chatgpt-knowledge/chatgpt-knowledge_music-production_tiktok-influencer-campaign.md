@@ -175,7 +175,6 @@ Best regards,
 
 here's an example of an old emial i did
 
-
 It's @timwhite here I'm a singer from NYC.
 
 I'm running a #ThisIsLove challenge on TikTok and would love for you to participate.
@@ -184,7 +183,6 @@ I am a big fan of your TikTok videos and I would love for you to make one to my 
 
 You can make a video here
 https://vm.tiktok.com/Vr9Aba/
-
 
 Let me know what you think! Excited to see what you come up with!
 
@@ -271,8 +269,6 @@ Let me know what you think! Can't wait to see what you create!
 more like this
 
 since you previously used my song this is love in a tiktok video, iw anted to give you the first oppyritnity to.....
-
-
 
 ## Answer
 
@@ -410,8 +406,6 @@ Here’s the link to the song on TikTok: TikTok Song Link. If you join in, I'll 
 
 Let me know what you think! Can't wait to see what you create!
 
-
-
 lets jsut rewrod it a little to make it unique content so a have variations for avoiding spam
 
 ## Answer
@@ -463,8 +457,6 @@ This way, you have a couple of unique variations to avoid spam filters.
 give me a couple more
 
 ## Answer
-
-Sure, here are two more variations:
 
 ---
 

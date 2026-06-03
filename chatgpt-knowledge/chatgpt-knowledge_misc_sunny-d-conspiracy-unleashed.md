@@ -27,8 +27,6 @@ Expand on it and references sunny d in full conspiracy theory fashion worth Ryan
 
 ## Answer
 
-Absolutely. Here's the expanded version in full snarky, conspiracy-tinted, Ryan Reynolds-style glory:
-
 ---
 
 Wrong. The real solution is to *unleash the power of the Son*…  

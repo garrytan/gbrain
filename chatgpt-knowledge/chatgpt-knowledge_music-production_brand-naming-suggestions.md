@@ -23,10 +23,6 @@ Im creating a new brand. I need to call it something. I want a name that isn’t
 
 ## Answer
 
-
-
-Sure, here are some suggestions for a new brand name that meets your criteria:
-
 1. Vyzo
 2. Tylt
 3. Zelio
@@ -55,8 +51,6 @@ Remember to do some research before deciding on a name to make sure it's not alr
 Not bad. Let’s hear some more. Maybe ones that start with a t
 
 ## Answer
-
-Sure, here are some more suggestions that start with the letter T:
 
 1. Tivo
 2. Taza
@@ -149,8 +143,6 @@ Keep going
 
 ## Answer
 
-Sure, here are some more suggestions for a brand name that is 3 syllables or less:
-
 1. Tivo
 2. Lora
 3. Velo
@@ -211,8 +203,6 @@ Maybe let’s try something in Latin. Try something like luxury or sexy or passi
 
 ## Answer
 
-Sure, here are some suggestions for words related to luxury, passion, desire, and love in Latin:
-
 1. Luxuria - meaning luxury, extravagance, or excess
 2. Amor - meaning love or affection
 3. Voluptas - meaning pleasure or sensual delight
@@ -231,8 +221,6 @@ Remember to consider the meaning and connotations of the name, as well as its av
 Now take these root words and make new words using them
 
 ## Answer
-
-Sure, here are some suggestions for new words based on the Latin root words:
 
 1. Luxoria - a luxurious brand or product
 2. Amoria - a brand focused on love or affection
@@ -295,8 +283,6 @@ Make it sound like it’s a brand from a sci-fi movie
 
 ## Answer
 
-Sure, here are some suggestions for new words based on the Latin root words that sound like they're from a sci-fi movie:
-
 1. Luxorion - a high-tech luxury brand from the future
 2. Amorion - a brand of advanced love and relationship technology
 3. Voluptron - a brand of cutting-edge pleasure and entertainment products
@@ -315,8 +301,6 @@ Remember to choose a name that fits your brand identity and story, and that reso
 Make it easier to pronounce 
 
 ## Answer
-
-Sure, here are some simplified versions of the sci-fi inspired brand names that are easier to pronounce:
 
 1. Luxion - a futuristic luxury brand
 2. Amoriax - a brand of advanced love and relationship products

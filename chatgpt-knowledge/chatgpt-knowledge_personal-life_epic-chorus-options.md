@@ -25,7 +25,6 @@ You write epic lyrics.
 
 Give me 10 options for a chrous to complete the following lyrics
 
-
 Verse 1
 I know, it’s not easy
 It’s not fair, yeah this whole life thing
@@ -37,8 +36,6 @@ Pre-chorus
 You dealt me tragedy
 I’ll give you comedy
 We’ll see who’s laughing when the music stop (bass)
-
-
 
 ## Answer
 
@@ -61,8 +58,6 @@ can you give me something that is simple, in a call to action like "walk on"
 
 ## Answer
 
-Sure, here are some options for a simple call to action:
-
 1. Rise up
 2. Stand strong
 3. Keep moving
@@ -79,8 +74,6 @@ Sure, here are some options for a simple call to action:
 use casino references
 
 ## Answer
-
-Sure, here are some options for a chorus that includes casino references:
 
 1. I'll play my cards right, and win this game
 2. No more bets, I'm all in this hand
@@ -99,8 +92,6 @@ but make it a call to action like "walk on" or a simple phrase like "all in"
 
 ## Answer
 
-Sure, here are some options for a casino-themed call to action or simple phrase:
-
 1. Double down
 2. Place your bet
 3. Roll the dice
@@ -117,8 +108,6 @@ Sure, here are some options for a casino-themed call to action or simple phrase:
 give me ssomething with the same sentiment as going all in
 
 ## Answer
-
-Sure, here are some options for a casino-themed phrase with the same sentiment as going all in:
 
 1. Put it all on the line
 2. Bet the farm
@@ -137,8 +126,6 @@ stay in the casino theme
 
 ## Answer
 
-Sure, here are some more options for a casino-themed phrase:
-
 1. Roll the dice and let it ride
 2. Hit me again, I'm feeling lucky
 3. Keep playing until you win
@@ -155,8 +142,6 @@ Sure, here are some more options for a casino-themed phrase:
 give me 10 more
 
 ## Answer
-
-Sure, here are ten additional casino-themed phrases:
 
 1. Stay in the game and play to win
 2. The riskier the bet, the bigger the payout
@@ -175,8 +160,6 @@ give me more
 
 ## Answer
 
-Sure, here are ten more casino-themed phrases:
-
 1. Take control of the game and dominate
 2. The odds are in your favor if you take the risk
 3. The higher the stakes, the greater the reward
@@ -193,8 +176,6 @@ Sure, here are ten more casino-themed phrases:
 give me more synonyms for jackpot
 
 ## Answer
-
-Sure, here are ten more synonyms for "jackpot":
 
 1. Bonanza
 2. Windfall

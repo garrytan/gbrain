@@ -98,8 +98,6 @@ lets try number 1
 
 ## Answer
 
-Sure! Here is an example of how you could refactor the class bindings in the template to make it more concise:
-
 ```
 <template>
   <button
@@ -160,4 +158,3 @@ export default {
         case 'bottom': return 'rounded-b-md';
         case 'all': return 'rounded-md';
         case 'top-left': return 'rounded-tl-md';
-       

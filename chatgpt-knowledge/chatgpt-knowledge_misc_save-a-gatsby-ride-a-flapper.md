@@ -39,8 +39,6 @@ make it wild west
 
 ## Answer
 
-Sure, here are ten different and funny Wild West-themed options:
-
 1. "Save a Cactus, Ride a Cowboy" – Giddy up and prick your fancy!
 2. "Save a Wagon, Ride a Wrangler" – Hitch a ride to adventure!
 3. "Save a Rattlesnake, Ride a Rodeo Star" – It's a wild ride, partner!

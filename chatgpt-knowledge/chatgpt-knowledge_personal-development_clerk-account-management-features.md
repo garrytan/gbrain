@@ -519,7 +519,6 @@ export default () => <SignIn routing="path" path="/sign-in" appearance={jovieThe
 
 // /app/sign-up/page.tsx
 
-
 *(Answer truncated — 4698 chars total)*
 
 ## Question

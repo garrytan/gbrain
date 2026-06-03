@@ -21,7 +21,6 @@ tags: [chatgpt, knowledge, coding-web]
 
 turn the following data into a table
 
-
 DT MODEL MANAGEMENT
 Los Angeles, USA
 
@@ -145,7 +144,6 @@ Los Angeles,
 ## Question
 
 add these
-
 
 Models.com
 Rankings | 
@@ -401,8 +399,6 @@ YANII MODELS
 i need it in a table like before with locations in a cell comma seperated
 
 ## Answer
-
-Sure, here is the list in a table format with locations separated by commas in a single cell:
 
 | Agency Name                    | Location                       |
 |--------------------------------|--------------------------------|

@@ -52,8 +52,6 @@ This table should help your bar staff stay on schedule throughout the event.
 11:00PM servers cut and opening bartender cut
 At close closing bartender cut
 
-
-
 ## Answer
 
 Here's the updated run-of-show table with the additional details:
@@ -102,8 +100,6 @@ This schedule ensures that all staff know their check-in times and responsibilit
 Stacey left trash in the hall. Assuming she didn’t realize the trash room was unlocked. Should remind her.
 
 ## Answer
-
-Certainly. Here is a concise reminder for Stacey:
 
 ---
 

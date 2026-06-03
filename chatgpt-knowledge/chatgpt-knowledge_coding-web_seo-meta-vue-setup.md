@@ -30,7 +30,6 @@ useSeoMeta({
 })
 </script>
 
-
 We need to modify this to contain our set from our site site
 
 <!DOCTYPE html>
@@ -116,7 +115,6 @@ useSeoMeta({
   robots: "index, follow",
 });
 </script>
-
 
 How can I get the favicon cha
 
@@ -235,7 +233,7 @@ Only add the stuff that is custom to this page like the title and description
 
 ## Answer
 
-Sure, here is the updated `TimWhiteBio.vue` page component with only the custom title and description for the Tim White bio page:
+vue` page component with only the custom title and description for the Tim White bio page:
 
 ```vue
 <template>

@@ -759,8 +759,6 @@ export default defineComponent({
 
 ## Answer
 
-Sure! Here is the updated code that centers the profile image, makes it larger, and adds three social links below the artist's name:
-
 ### Template
 
 ```vue
@@ -1451,7 +1449,6 @@ Let's refine the layout and ensure the profile picture is correctly displayed. W
           </h2>
           <ul>
 
-
 *(Answer truncated — 5906 chars total)*
 
 ## Question
@@ -1562,7 +1559,6 @@ import { PencilIcon } from
           <h2
             class="text-3xl font-extrabold text-slate-900 dark:text-jovieDark-100"
           >
-
 
 ## Answer
 
@@ -2454,7 +2450,6 @@ export default {
 In your parent component, you can now use these components as follows:
 
 ```vue
-
 
 *(Answer truncated — 6868 chars total)*
 

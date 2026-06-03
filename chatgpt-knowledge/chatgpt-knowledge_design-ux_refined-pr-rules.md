@@ -21,7 +21,6 @@ tags: [chatgpt, knowledge, design-ux]
 
 Consolidate and refine these rules
 
-
 ## intent
 Run a fast, deterministic **smoke test** before opening a PR. **Always open the PR** afterward (pass or fail) with a structured checklist so it can enter the Merge Queue when ready. Follow **Y Combinator best practices** (ship fast, small diffs, tighten feedback loops), take **Linear**-style design inspiration (clarity, minimalism), and aim for **Apple-level UX polish and copywriting** (concise, humane, on-brand).
 

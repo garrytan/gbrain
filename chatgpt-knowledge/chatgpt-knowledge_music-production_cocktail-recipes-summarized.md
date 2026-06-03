@@ -23,8 +23,6 @@ Please provide me the list of the seven specialty cocktails that we have with al
 
 ## Answer
 
-Sure, here is the list of the seven specialty cocktails along with their ingredients and the amount needed for a single drink:
-
 1. **Sunset Mojito**
    - White rum: 2 oz
    - Fresh lime juice: 1 oz
@@ -156,14 +154,12 @@ Epstein Island Breeze: Vodka, grapefruit juice, cranberry juice. Garnished with 
 
 Lewinsky's Lemonade: Vodka, raspberry liqueur, lemonade.  (1.5 vodka, 1 chambord, 4 lemonade) 
 
-
 Tequila 
 
 Watergate: Tequila, watermelon juice, triple sec, simple, lime juice. Garnished with Sour Patch Watermelon. ( 1.5 tequila, .5 triple sec, .5 simple, .5 lime, 4oz watermelon juice)
 
 Remember the Alamo. Mezcal, pineapple juice, jalapeno, simple. Tajin. 
 ( 1.5 mezcal, .5 triple sec, .5 simple, pineapple, .5 lime juice )
-
 
 Other
 Grand Old Fashioned: Whiskey, bitters, simple syrup. Garnished with an orange slice. 

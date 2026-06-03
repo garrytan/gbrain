@@ -23,8 +23,6 @@ list supplement brands
 
 ## Answer
 
-
-
 Here are some popular supplement brands:
 
 1. Optimum Nutrition
@@ -55,8 +53,6 @@ Please note that this is not an exhaustive list, and there are many other supple
 give me their instagram handles
 
 ## Answer
-
-Sure! Here are the Instagram handles for the supplement brands mentioned:
 
 1. Optimum Nutrition - @optimumnutrition
 2. Garden of Life - @gardenoflife
@@ -138,8 +134,6 @@ NutriGold - @nutrigoldusa
 remove everything before the @ symbol on each line
 
 ## Answer
-
-Sure, here are the usernames for the supplement brands without anything before the "@" symbol:
 
 @optimumnutrition
 @gardenoflife

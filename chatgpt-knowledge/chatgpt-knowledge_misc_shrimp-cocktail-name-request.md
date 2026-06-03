@@ -31,8 +31,6 @@ give me 10 options
 
 ## Answer
 
-Sure, here are ten themed names for the shrimp cocktail:
-
 1. **Roswell Shrimp Cocktail**
 2. **Illuminati Shrimp Delight**
 3. **Area 51 Shrimp Cocktail**
@@ -103,8 +101,6 @@ For the chicken satay, here are some themed names:
 more american
 
 ## Answer
-
-Sure, here are some more American-themed names for the shrimp cocktail and chicken satay:
 
 **Shrimp Cocktail:**
 1. **Founding Fathers' Shrimp**

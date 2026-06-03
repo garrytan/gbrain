@@ -40,8 +40,6 @@ turn it into clean formated html
 
 ## Answer
 
-Sure, here is the HTML code for the blog post formatted for a clean layout:
-
 ```html
 <!DOCTYPE html>
 <html>

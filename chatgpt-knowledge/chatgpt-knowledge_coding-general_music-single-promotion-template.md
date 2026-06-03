@@ -114,7 +114,6 @@ This should make your component more maintainable and ensure it renders as expec
 
 if the date is june 21 we need to change the text to say out now
 
-
 ## Answer
 
 You can use a computed property to dynamically change the text based on the current date. Here's how you can adjust your template and script to achieve this:
@@ -278,8 +277,6 @@ great and finally instead of the <slot></slot> we should show the <div class="mt
 
 ## Answer
 
-Sure, here is the updated template with the `<slot></slot>` replaced by the specified `<div>` containing the "Listen" section with streaming icons:
-
 ```html
 <template>
   <div class="bg-white">
@@ -342,8 +339,6 @@ const today = new Date();
 const releaseDate = new Date('2024-06-21');
 
 const isReleased = computed(() => today >= releaseDate);
-
-
 
 *(Answer truncated — 3648 chars total)*
 

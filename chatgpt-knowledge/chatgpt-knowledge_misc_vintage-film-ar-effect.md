@@ -83,6 +83,4 @@ ok no need to add the word filter or effect. now i have another one that desatur
 
 ## Answer
 
-Sure, here are 20 keywords for your Instagram effect that desaturates the background and keeps the subject in color:
-
 1. Black and white background, color subject, depth filter, pop out effect, background desaturation, color pop, color splash, monochrome background, vibrant subject, background black and white, color foreground, grayscale background, subject in color, standout effect, color separation, depth effect, color isolation, subject highlight, contrast effect, selective color

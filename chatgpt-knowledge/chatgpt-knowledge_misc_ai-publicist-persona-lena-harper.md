@@ -141,8 +141,6 @@ thebubblegumfactory.la is our site
 
 ## Answer
 
-Sure, here is the updated template with the correct website:
-
 ```html
 <template>
   <div class="bg-white py-24 sm:py-32">

@@ -52,8 +52,6 @@ Use the og descriptions
 
 ## Answer
 
-Sure, here are Tim White's core values with the original descriptions:
-
 1. **Be so good they can't ignore you**  
    We’re here to build products that are undeniably good. We work hard every day to be better at that.
 
@@ -70,7 +68,6 @@ Sure, here are Tim White's core values with the original descriptions:
 
 Add:
 Stay alive - you can't win if you're dead. You're not alive if you're dead inside. We measure vet all possible negative outcomes and sideffects of any decision, we mitigate those risks, and we act only when the worst case scenario  doesn't kill us, either physically or mentally. We strive to be fully alive both physically and mentally.
-
 
 ## Answer
 
@@ -839,7 +836,6 @@ Adjust our layout component to hide the menu and buttons on printing
 import Navbar from "@/components/Navbar.vue";
 </script>
 
-
 ## Answer
 
 To adjust the layout component to hide the menu and buttons on printing, you can use Tailwind CSS print utility classes. Here’s how you can update the layout component:
@@ -1191,8 +1187,6 @@ Great now 10, 9, 8, 7, 6, 5, 4, 2, and 1 have great titles but 4 could use work.
 
 ## Answer
 
-Sure, here are 10 potential titles for the fourth core value:
-
 1. **Ideas Over Ego**
 2. **Embrace Brilliance**
 3. **Value Innovation**
@@ -1368,8 +1362,6 @@ And use these font styling
     </div>
   </div>
 
-
-
 ## Answer
 
 Here is the updated Vue component using the specified font styling and Tailwind CSS for print styling:
@@ -1432,8 +1424,6 @@ export default {
 Own it should have a better name. Like STFU & fix it. Or do something about it. But more cooler.
 
 ## Answer
-
-Sure, here are a few cooler suggestions for the "Own it" title:
 
 1. **Take Control**
 2. **Rule Your World**
@@ -1725,8 +1715,6 @@ Um, can we add in to the core values, um, one that will be like, judge intention
 
 ## Answer
 
-Sure, here are 10 cool names for the value related to being kind and projecting positivity:
-
 1. **Radiate Good Vibes**
 2. **Spread the Light**
 3. **Positive Energy Only**
@@ -1896,8 +1884,6 @@ export default {
 Rewrite the judge intention one to be more eloquent and evolved without losing the central theme and idea
 
 ## Answer
-
-Sure, here is a more eloquent and evolved version of the "Judge intention, not action" core value:
 
 ```json
 {

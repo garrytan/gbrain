@@ -91,8 +91,6 @@ That's the best one you've had so far, it's the closest to actually making sense
 
 ## Answer
 
-Sure, here are ten options:
-
 1. "Cocktail Shrimp Tease"
 2. "Naughty Nautical Shrimp"
 3. "Shrimp Seduction Cocktail"
@@ -198,8 +196,6 @@ Use the word cock.
 
 ## Answer
 
-Sure, here are more options incorporating the word "cock":
-
 1. "Revolutionary Cock Shrimp"
 2. "Founding Cocktail"
 3. "Liberty Cock Shrimp"
@@ -241,8 +237,6 @@ How about Kennedy's Shrimp Cock? That's good. I like that. Give me more like tha
 
 ## Answer
 
-Sure, here are more in the same vein:
-
 1. "Kennedy's Shrimp Cock"
 2. "Nixon's Watergate Cock"
 3. "Clinton's Impeachment Shrimp"
@@ -260,8 +254,6 @@ How about making up a word by combining the word shrimp or the word cock with a 
 
 ## Answer
 
-Sure, here are some made-up words combining "shrimp" or "cock" with different suffixes:
-
 1. "Shrimpgasm"
 2. "Cocktailicious"
 3. "Shrimpilicious"
@@ -278,8 +270,6 @@ Sure, here are some made-up words combining "shrimp" or "cock" with different su
 Alright, you clearly suck at naming shrimp cocktails, how about chicken satays?
 
 ## Answer
-
-Sure, here are some provocative and playful names for chicken satays:
 
 1. "Cock-a-Doodle Satay"
 2. "Hen House Heat Satay"
@@ -359,8 +349,6 @@ Yes, that's a fitting name! Here are more options in a similar style:
 Give me 10 more options as alternatives, knowing that I like that one.
 
 ## Answer
-
-Sure, here are ten more provocative and thematic alternatives:
 
 1. "Washington's Wing-on-a-Stick"
 2. "Roosevelt's Rooster-on-a-Stick"
