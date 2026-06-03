@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   GIT_SSRF_FLAGS,
+  SUBMODULE_FLAG,
   parseRemoteUrl,
   RemoteUrlError,
   cloneRepo,
@@ -75,19 +76,25 @@ beforeEach(() => {
 const fakePath = (): string => `${FAKE_GIT_DIR}:${process.env.PATH ?? ''}`;
 
 // ---------------------------------------------------------------------------
-// GIT_SSRF_FLAGS — pinned shape (snapshot test). If a future flag is added,
-// update the expected list here AND verify both cloneRepo + pullRepo pick it
-// up via the GIT_SSRF_FLAGS spread (the codex finding that motivated this).
+// GIT_SSRF_FLAGS — pinned shape (snapshot test). These are TOP-LEVEL `git -c …`
+// options ONLY; they are spread BEFORE the git subcommand. Subcommand options
+// like --no-recurse-submodules must NOT live here — git rejects them as an
+// unknown top-level option. Such flags belong in SUBMODULE_FLAG, appended AFTER
+// the clone/pull subcommand (the codex finding that motivated this).
 // ---------------------------------------------------------------------------
 
 describe('GIT_SSRF_FLAGS', () => {
-  test('exact shape — codex SSRF lockdown', () => {
+  test('exact shape — top-level -c flags only', () => {
     expect([...GIT_SSRF_FLAGS]).toEqual([
       '-c', 'http.followRedirects=false',
       '-c', 'protocol.file.allow=never',
       '-c', 'protocol.ext.allow=never',
-      '--no-recurse-submodules',
     ]);
+  });
+
+  test('SUBMODULE_FLAG is a subcommand option, kept out of the top-level flags', () => {
+    expect(SUBMODULE_FLAG).toBe('--no-recurse-submodules');
+    expect([...GIT_SSRF_FLAGS]).not.toContain(SUBMODULE_FLAG);
   });
 });
 
@@ -232,6 +239,9 @@ describe('cloneRepo', () => {
     // Pin the SSRF flags before the 'clone' verb (codex Q2 invariant).
     expect(argv.slice(0, GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
     expect(argv).toContain('clone');
+    // --no-recurse-submodules must come AFTER the subcommand, else git rejects
+    // it as an unknown top-level option (the codex finding).
+    expect(argv.indexOf(SUBMODULE_FLAG)).toBeGreaterThan(argv.indexOf('clone'));
     expect(argv).toContain('--depth=1');
     expect(argv).toContain('https://example.com/repo');
     expect(argv[argv.length - 1]).toBe(dest);
@@ -309,6 +319,8 @@ describe('pullRepo', () => {
     expect(argv.slice(2, 2 + GIT_SSRF_FLAGS.length)).toEqual([...GIT_SSRF_FLAGS]);
     expect(argv).toContain('pull');
     expect(argv).toContain('--ff-only');
+    // --no-recurse-submodules must come AFTER the subcommand (the codex finding).
+    expect(argv.indexOf(SUBMODULE_FLAG)).toBeGreaterThan(argv.indexOf('pull'));
     rmSync(repo, { recursive: true, force: true });
   });
 
