@@ -65,6 +65,8 @@
     "ci:select-e2e": "bun run scripts/select-e2e.ts",
     "offramp:receipt": "bun run scripts/gbrain-offramp-receipt.ts",
     "offramp:inventory": "bun run scripts/gbrain-offramp-inventory.ts",
+    "offramp:maintain": "bun run scripts/gbrain-offramp-maintain.ts",
+    "offramp:maintain:dry-run": "bun run scripts/gbrain-offramp-maintain.ts --dry-run",
     "typecheck": "tsc --noEmit",
     "check:jsonb": "scripts/check-jsonb-pattern.sh",
     "check:no-double-retry": "scripts/check-no-double-retry.sh",
