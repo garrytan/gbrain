@@ -135,13 +135,11 @@ describe('Recursive Text Chunker', () => {
 });
 
 describe('CJK chunking (v0.32.7)', () => {
-  test('MARKDOWN_CHUNKER_VERSION is 3', async () => {
-    // v0.40.3.0: bumped 2→3 to signal the post-upgrade reembed sweep that
-    // contextual retrieval wrapping is now applied at embed time. Chunk
-    // boundaries themselves are unchanged; the bump forces re-embed for
-    // pages where chunker_version < 3.
+  test('MARKDOWN_CHUNKER_VERSION is 4', async () => {
+    // v4: configured markdown max-char caps change stored chunk boundaries,
+    // so reindex --markdown must revisit pages stamped below 4.
     const mod = await import('../../src/core/chunkers/recursive.ts');
-    expect(mod.MARKDOWN_CHUNKER_VERSION).toBe(3);
+    expect(mod.MARKDOWN_CHUNKER_VERSION).toBe(4);
   });
 
   test('long pure-Chinese paragraph splits into multiple chunks', () => {
@@ -185,6 +183,25 @@ describe('CJK chunking (v0.32.7)', () => {
     expect(chunks.length).toBeGreaterThan(1);
     for (const c of chunks) {
       expect(c.text.length).toBeLessThanOrEqual(6000);
+    }
+  });
+
+  test('default maxChars remains 6000', () => {
+    const text = 'a'.repeat(6500);
+    const chunks = chunkText(text, { chunkSize: 100000, chunkOverlap: 0 });
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0].text.length).toBe(6000);
+    for (const c of chunks) {
+      expect(c.text.length).toBeLessThanOrEqual(6000);
+    }
+  });
+
+  test('configured maxChars enforces <= 2400', () => {
+    const text = 'a'.repeat(7000);
+    const chunks = chunkText(text, { chunkSize: 100000, chunkOverlap: 0, maxChars: 2400 });
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.text.length).toBeLessThanOrEqual(2400);
     }
   });
 

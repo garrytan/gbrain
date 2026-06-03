@@ -10,6 +10,9 @@
 //   - D7 lock acquired during reindex; second reindex receives LOCK_HELD
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -96,6 +99,68 @@ describe('reindex --multimodal command (Phase 3)', () => {
     expect(result.pending_before).toBe(0);
     expect(result.reembedded).toBe(0);
     expect(result.failed).toBe(0);
+  });
+
+  test('splits multimodal embedding requests by GBRAIN_EMBEDDING_BATCH_MAX_TEXTS and preserves row mapping', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-reindex-mm-batch-'));
+    try {
+      await engine.putPage('notes/mm-batch', {
+        type: 'note' as any,
+        title: 'notes/mm-batch',
+        compiled_truth: 'batch body',
+        timeline: '',
+        frontmatter: {},
+      });
+      const pageRows = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM pages WHERE slug = $1`,
+        ['notes/mm-batch'],
+      );
+      const pageId = pageRows[0].id;
+      for (let i = 0; i < 3; i++) {
+        await engine.executeRaw(
+          `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source) VALUES ($1, $2, $3, 'compiled_truth')`,
+          [pageId, i, `chunk-${i}`],
+        );
+      }
+
+      const requestSizes: number[] = [];
+      fetchHandler = async (_url, init) => {
+        const body = JSON.parse(String(init.body ?? '{}')) as { inputs?: unknown[] };
+        const size = body.inputs?.length ?? 0;
+        requestSizes.push(size);
+        return new Response(JSON.stringify({
+          data: Array.from({ length: size }, (_unused, i) => ({
+            embedding: Array.from({ length: 1024 }, () => i + 0.25),
+            index: i,
+          })),
+          model: 'voyage-multimodal-3',
+        }), { status: 200 });
+      };
+
+      await withEnv({
+        GBRAIN_HOME: home,
+        GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: '1',
+      }, async () => {
+        const result = await runReindexMultimodal(engine, { yes: true });
+        expect(result.reembedded).toBe(3);
+      });
+
+      expect(requestSizes).toEqual([1, 1, 1]);
+      const rows = await engine.executeRaw<{ chunk_index: number; has_embedding: boolean }>(
+        `SELECT chunk_index::int, embedding_multimodal IS NOT NULL AS has_embedding
+         FROM content_chunks
+         WHERE page_id = $1
+         ORDER BY chunk_index`,
+        [pageId],
+      );
+      expect(rows).toEqual([
+        { chunk_index: 0, has_embedding: true },
+        { chunk_index: 1, has_embedding: true },
+        { chunk_index: 2, has_embedding: true },
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

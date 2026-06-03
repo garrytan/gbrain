@@ -95,9 +95,78 @@ describe('embedStaleForSource', () => {
     expect(stale).toBe(0);
   });
 
+  test('splits injected embedFn calls by configured embedding_batch_max_texts and preserves chunk indexes', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    await seedPageWithStaleChunks('split-helper', 3);
+    const calls: string[][] = [];
+
+    await withEnv({ GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: '1' }, async () => {
+      const result = await embedStaleForSource(engine, 'default', {
+        embedFn: async (texts) => {
+          calls.push([...texts]);
+          return texts.map((text) => {
+            const v = new Float32Array(1536);
+            v[0] = Number(text.match(/chunk (\d+)/)?.[1] ?? -1);
+            return v;
+          });
+        },
+      });
+      expect(result.embedded).toBe(3);
+    });
+
+    expect(calls.map(call => call.map(text => text.match(/chunk \d of split-helper/)?.[0]))).toEqual([
+      ['chunk 0 of split-helper'],
+      ['chunk 1 of split-helper'],
+      ['chunk 2 of split-helper'],
+    ]);
+    const rows = await engine.executeRaw<{ chunk_index: number; first_dim: number | null }>(
+      `SELECT chunk_index,
+              CASE WHEN embedding IS NULL THEN NULL ELSE (embedding::text::json->>0)::float8 END AS first_dim
+         FROM content_chunks
+        WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = 'default')
+        ORDER BY chunk_index`,
+      ['split-helper'],
+    );
+    expect(rows.map(row => [row.chunk_index, row.first_dim])).toEqual([
+      [0, 0],
+      [1, 1],
+      [2, 2],
+    ]);
+  });
+
+  test('embedding signature invalidation failure fails closed before embedding', async () => {
+    await seedPageWithStaleChunks('needs-invalidation', 2);
+    let embedCalled = false;
+    const failingEngine = new Proxy(engine as any, {
+      get(target, prop, receiver) {
+        if (prop === 'invalidateStaleSignatureEmbeddings') {
+          return async () => {
+            throw new Error('signature invalidation failed');
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+
+    await expect(embedStaleForSource(failingEngine, 'default', {
+      embeddingSignature: 'test:model:1536',
+      embedFn: async (texts) => {
+        embedCalled = true;
+        return fakeEmbedFn(texts);
+      },
+    })).rejects.toThrow('signature invalidation failed');
+
+    expect(embedCalled).toBe(false);
+    const stale = await engine.countStaleChunks({ sourceId: 'default' });
+    expect(stale).toBe(2);
+  });
+
   test('respects batchSize for cursor pagination', async () => {
     await seedPageWithStaleChunks('a', 3);
     await seedPageWithStaleChunks('b', 3);
+    await engine.updatePageContextualRetrievalState('a', 'default', 'title', 'seed-generation');
+    await engine.updatePageContextualRetrievalState('b', 'default', 'title', 'seed-generation');
     let batchCount = 0;
     const result = await embedStaleForSource(engine, 'default', {
       embedFn: fakeEmbedFn,

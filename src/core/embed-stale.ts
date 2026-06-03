@@ -19,7 +19,9 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { ChunkInput } from './types.ts';
-import { embedBatchWithBackoff } from '../commands/embed.ts';
+import { loadConfig, resolveEmbeddingBatchMaxTexts } from './config.ts';
+import { embedTextsInBatches } from './embedding-batch.ts';
+import { createEmbedContextResolver, embedBatchWithBackoff, isPageLevelStale, type EmbedContext } from '../commands/embed.ts';
 
 /** Last visited (page_id, chunk_index) for keyset-resume across runs. */
 export interface StaleCursor {
@@ -76,6 +78,18 @@ export interface EmbedStaleResult {
   aborted: boolean;
 }
 
+function rawEmbedContext(
+  chunks: Array<Pick<ChunkInput, 'chunk_index' | 'chunk_text'>>,
+): EmbedContext {
+  const texts = chunks.map((c) => c.chunk_text);
+  return {
+    texts,
+    tokenCounts: new Map(chunks.map((c, i) => [c.chunk_index, Math.ceil(texts[i].length / 4)])),
+    crMode: null,
+    corpusGeneration: null,
+  };
+}
+
 /**
  * Embed every stale chunk (embedding IS NULL) for a source.
  *
@@ -105,6 +119,8 @@ export async function embedStaleForSource(
   const signal = opts.signal;
   const embedFn = opts.embedFn ?? ((texts, fnOpts) =>
     embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
+  const embeddingBatchMaxTexts = resolveEmbeddingBatchMaxTexts(loadConfig());
+  const contextualEmbed = createEmbedContextResolver(engine);
 
   let afterPageId = opts.cursor?.afterPageId ?? 0;
   let afterChunkIndex = opts.cursor?.afterChunkIndex ?? -1;
@@ -121,13 +137,11 @@ export async function embedStaleForSource(
 
   // v0.41.31: invalidate embeddings stamped under a prior model signature so
   // the NULL cursor below re-embeds them. GRANDFATHER: NULL signature
-  // untouched. Best-effort — a failure here must not abort the backfill.
+  // untouched. This is fail-closed: continuing after a failed invalidation
+  // would leave drifted embeddings outside the NULL cursor while later pages
+  // could be stamped with the current signature.
   if (signature) {
-    try {
-      await engine.invalidateStaleSignatureEmbeddings({ signature, sourceId });
-    } catch {
-      // Non-fatal: fall through to the NULL-only stale loop.
-    }
+    await engine.invalidateStaleSignatureEmbeddings({ signature, sourceId });
   }
 
   for (;;) {
@@ -173,31 +187,48 @@ export async function embedStaleForSource(
       const keySourceId = stale[0]?.source_id ?? sourceId;
       const slug = stale[0].slug;
       try {
-        const embeddings = await embedFn(
-          stale.map((c) => c.chunk_text),
-          { abortSignal: signal },
-        );
+        const page = await engine.getPage(slug, { sourceId: keySourceId });
+        const pageStale = isPageLevelStale(stale, signature);
         const existing = await engine.getChunks(slug, { sourceId: keySourceId });
+        const toEmbed = pageStale ? existing : stale;
+        const embedContext = page
+          ? await contextualEmbed(page, keySourceId, toEmbed)
+          : rawEmbedContext(toEmbed);
+        const embeddings = await embedTextsInBatches(
+          embedContext.texts,
+          embeddingBatchMaxTexts,
+          (texts) => embedFn(texts, { abortSignal: signal }),
+        );
         const staleIdxToEmbedding = new Map<number, Float32Array>();
-        for (let j = 0; j < stale.length; j++) {
-          staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
+        for (let j = 0; j < toEmbed.length; j++) {
+          staleIdxToEmbedding.set(toEmbed[j].chunk_index, embeddings[j]);
         }
         const merged: ChunkInput[] = existing.map((c) => ({
           chunk_index: c.chunk_index,
           chunk_text: c.chunk_text,
           chunk_source: c.chunk_source,
           embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
-          token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+          token_count: embedContext.tokenCounts.get(c.chunk_index) ?? c.token_count ?? Math.ceil(c.chunk_text.length / 4),
         }));
         await engine.upsertChunks(slug, merged, { sourceId: keySourceId });
         // v0.41.31: stamp provenance only when EVERY chunk was stale (fully
         // re-embedded this pass) — a partially-stale page keeps preserved
         // chunks of unknown provenance, so don't claim current. After the
         // invalidate pass above, signature-drifted pages ARE fully stale.
-        if (signature && stale.length === existing.length) {
-          await engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature });
+        if (toEmbed.length === existing.length) {
+          if (embedContext.crMode !== null) {
+            await engine.updatePageContextualRetrievalState(
+              slug,
+              keySourceId,
+              embedContext.crMode,
+              embedContext.corpusGeneration,
+            );
+          }
+          if (signature) {
+            await engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature });
+          }
         }
-        result.embedded += stale.length;
+        result.embedded += toEmbed.length;
         result.pagesProcessed += 1;
       } catch (e: unknown) {
         // Aborted mid-fetch is expected; treat as graceful exit.

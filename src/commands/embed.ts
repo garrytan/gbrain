@@ -1,14 +1,33 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch, currentEmbeddingSignature } from '../core/embedding.ts';
-import type { ChunkInput } from '../core/types.ts';
+import type { ChunkInput, CRMode, Page } from '../core/types.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
-import { loadConfig } from '../core/config.ts';
+import {
+  DEFAULT_EMBEDDING_BATCH_MAX_TEXTS,
+  DEFAULT_MARKDOWN_CHUNK_MAX_CHARS,
+  loadConfig,
+  resolveEmbeddingBatchMaxTexts,
+  resolveMarkdownChunkMaxChars,
+} from '../core/config.ts';
+import { embedTextsInBatches } from '../core/embedding-batch.ts';
 import { slog, serr } from '../core/console-prefix.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
+import { resolveContextualRetrievalMode } from '../core/contextual-retrieval-resolver.ts';
+import {
+  buildContextualPrefix,
+  modeRequiresHaiku,
+  modeRequiresWrapper,
+  sanitizeTitle,
+  wrapChunkForEmbedding,
+} from '../core/embedding-context.ts';
+import { computeCorpusGeneration } from '../core/contextual-retrieval-service.ts';
+import { loadSearchModeConfig, resolveSearchMode } from '../core/search/mode.ts';
+
+export { embedTextsInBatches } from '../core/embedding-batch.ts';
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
@@ -86,6 +105,136 @@ export interface EmbedResult {
   dryRun: boolean;
 }
 
+const CONTEXTUAL_HAIKU_MODEL = 'anthropic:claude-haiku-4-5-20251001';
+
+export type EmbedContext = {
+  texts: string[];
+  tokenCounts: Map<number, number>;
+  crMode: CRMode | null;
+  corpusGeneration: string | null;
+};
+
+export type EmbedContextResolver = (
+  page: Page,
+  sourceId: string,
+  chunks: Array<Pick<ChunkInput, 'chunk_index' | 'chunk_text' | 'chunk_source'>>,
+) => Promise<EmbedContext>;
+
+type EmbedSourcePolicy = {
+  id: string;
+  contextual_retrieval_mode?: string | null;
+  trust_frontmatter_overrides?: boolean;
+};
+
+const MARKDOWN_CHUNK_SOURCES = new Set(['compiled_truth', 'timeline', 'fenced_code']);
+
+function isMarkdownChunkSet(chunks: Array<Pick<ChunkInput, 'chunk_source'>>): boolean {
+  return chunks.some(c => MARKDOWN_CHUNK_SOURCES.has(String(c.chunk_source)));
+}
+
+function rawEmbedContext(
+  chunks: Array<Pick<ChunkInput, 'chunk_index' | 'chunk_text'>>,
+): EmbedContext {
+  const texts = chunks.map(c => c.chunk_text);
+  return {
+    texts,
+    tokenCounts: new Map(chunks.map((c, i) => [c.chunk_index, Math.ceil(texts[i].length / 4)])),
+    crMode: null,
+    corpusGeneration: null,
+  };
+}
+
+export function isPageLevelStale(
+  rows: Array<{ page_contextual_retrieval_mode?: string | null; page_embedding_signature?: string | null }>,
+  signature?: string,
+): boolean {
+  return rows.some(row => row.page_contextual_retrieval_mode === null)
+    || (signature !== undefined && rows.some(row =>
+      row.page_embedding_signature != null && row.page_embedding_signature !== signature
+    ));
+}
+
+async function loadEmbedSourcePolicy(engine: BrainEngine, sourceId: string): Promise<EmbedSourcePolicy> {
+  if (typeof engine.executeRaw !== 'function') {
+    return {
+      id: sourceId,
+      contextual_retrieval_mode: null,
+      trust_frontmatter_overrides: false,
+    };
+  }
+  const rows = await engine.executeRaw<EmbedSourcePolicy>(
+    `SELECT id, contextual_retrieval_mode, trust_frontmatter_overrides
+       FROM sources
+      WHERE id = $1`,
+    [sourceId],
+  );
+  if (Array.isArray(rows) && rows[0]) {
+    return {
+      id: rows[0].id,
+      contextual_retrieval_mode: rows[0].contextual_retrieval_mode ?? null,
+      trust_frontmatter_overrides: rows[0].trust_frontmatter_overrides === true,
+    };
+  }
+  // Older/mocked engines may return null/non-array or have no source row;
+  // keep that explicit legacy seam, but real executeRaw errors fail closed.
+  return {
+    id: sourceId,
+    contextual_retrieval_mode: null,
+    trust_frontmatter_overrides: false,
+  };
+}
+
+export function createEmbedContextResolver(engine: BrainEngine): EmbedContextResolver {
+  let knobsPromise: Promise<ReturnType<typeof resolveSearchMode>> | null = null;
+  const sourcePolicyPromises = new Map<string, Promise<EmbedSourcePolicy>>();
+  const getKnobs = async () => {
+    if (!knobsPromise) {
+      knobsPromise = loadSearchModeConfig(engine).then(resolveSearchMode);
+    }
+    return knobsPromise;
+  };
+  const getSourcePolicy = (sourceId: string) => {
+    let promise = sourcePolicyPromises.get(sourceId);
+    if (!promise) {
+      promise = loadEmbedSourcePolicy(engine, sourceId);
+      sourcePolicyPromises.set(sourceId, promise);
+    }
+    return promise;
+  };
+
+  return async (page, sourceId, chunks) => {
+    if (!isMarkdownChunkSet(chunks)) {
+      return rawEmbedContext(chunks);
+    }
+
+    const knobs = await getKnobs();
+    const source = await getSourcePolicy(sourceId);
+    const resolution = resolveContextualRetrievalMode({
+      pageFrontmatter: page.frontmatter ?? {},
+      source,
+      globalMode: knobs.contextual_retrieval,
+      killSwitchDisabled: knobs.contextual_retrieval_disabled,
+    });
+    // Match importFromContent's inline path: per-chunk synopsis is deferred
+    // to the contextual reindex worker, so direct embed uses title tier.
+    const effectiveCRMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;
+    const prefix =
+      modeRequiresWrapper(effectiveCRMode) && !modeRequiresHaiku(effectiveCRMode)
+        ? buildContextualPrefix(sanitizeTitle(page.title ?? ''), null)
+        : null;
+    const texts = chunks.map(c => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source));
+    return {
+      texts,
+      tokenCounts: new Map(chunks.map((c, i) => [c.chunk_index, Math.ceil(texts[i].length / 4)])),
+      crMode: effectiveCRMode,
+      corpusGeneration:
+        effectiveCRMode === 'none'
+          ? null
+          : computeCorpusGeneration({ crMode: effectiveCRMode, haikuModel: CONTEXTUAL_HAIKU_MODEL }),
+    };
+  };
+}
+
 /**
  * Library-level embed. Throws on validation errors; per-page embed failures
  * are logged to stderr but do not throw (matches the existing CLI semantics
@@ -152,10 +301,15 @@ async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promi
 }
 
 export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promise<EmbedResult> {
+  const config = loadConfig();
+  const markdownChunkMaxChars = resolveMarkdownChunkMaxChars(config);
+  const embeddingBatchMaxTexts = resolveEmbeddingBatchMaxTexts(config);
+  const contextualEmbed = createEmbedContextResolver(engine);
+
   // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
   // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
   if (!opts.dryRun) {
-    assertEmbeddingEnabled(loadConfig());
+    assertEmbeddingEnabled(config);
   }
 
   // v0.41.6.0 D1: preflight embedding credentials. Skipped in dryRun mode
@@ -188,7 +342,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
   if (opts.slugs && opts.slugs.length > 0) {
     for (const s of opts.slugs) {
       try {
-        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId);
+        await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, markdownChunkMaxChars, contextualEmbed, embeddingBatchMaxTexts);
       } catch (e: unknown) {
         serr(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
@@ -200,11 +354,11 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
       batchSize: opts.batchSize,
       priority: opts.priority,
       catchUp: opts.catchUp,
-    });
+    }, contextualEmbed, embeddingBatchMaxTexts);
     return result;
   }
   if (opts.slug) {
-    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId);
+    await embedPage(engine, opts.slug, !!opts.dryRun, result, opts.sourceId, markdownChunkMaxChars, contextualEmbed, embeddingBatchMaxTexts);
     return result;
   }
   throw new Error('No embed target specified. Pass { slug }, { slugs }, { all }, or { stale }.');
@@ -309,6 +463,9 @@ async function embedPage(
   dryRun: boolean,
   result: EmbedResult,
   sourceId?: string,
+  markdownChunkMaxChars: number = DEFAULT_MARKDOWN_CHUNK_MAX_CHARS,
+  contextualEmbed: EmbedContextResolver = createEmbedContextResolver(engine),
+  embeddingBatchMaxTexts: number = DEFAULT_EMBEDDING_BATCH_MAX_TEXTS,
 ) {
   const opts = sourceId ? { sourceId } : undefined;
   const page = await engine.getPage(slug, opts);
@@ -323,12 +480,12 @@ async function embedPage(
   if (chunks.length === 0) {
     const inputs: ChunkInput[] = [];
     if (page.compiled_truth.trim()) {
-      for (const c of chunkText(page.compiled_truth)) {
+      for (const c of chunkText(page.compiled_truth, { maxChars: markdownChunkMaxChars })) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
     if (page.timeline.trim()) {
-      for (const c of chunkText(page.timeline)) {
+      for (const c of chunkText(page.timeline, { maxChars: markdownChunkMaxChars })) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
     }
@@ -364,7 +521,9 @@ async function embedPage(
     return;
   }
 
-  const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+  const pageSourceId = sourceId ?? page.source_id ?? 'default';
+  const embedContext = await contextualEmbed(page, pageSourceId, toEmbed);
+  const embeddings = await embedTextsInBatches(embedContext.texts, embeddingBatchMaxTexts);
   const embeddingMap = new Map<number, Float32Array>();
   for (let j = 0; j < toEmbed.length; j++) {
     embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
@@ -374,7 +533,7 @@ async function embedPage(
     chunk_text: c.chunk_text,
     chunk_source: c.chunk_source,
     embedding: embeddingMap.get(c.chunk_index),
-    token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+    token_count: embedContext.tokenCounts.get(c.chunk_index) ?? c.token_count ?? Math.ceil(c.chunk_text.length / 4),
   }));
 
   await engine.upsertChunks(slug, updated, opts);
@@ -386,7 +545,15 @@ async function embedPage(
   // page is mixed — don't claim it's current. `embed --all` fully re-embeds
   // such a page and then stamps it.
   if (toEmbed.length === chunks.length) {
-    await engine.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+    if (embedContext.crMode !== null) {
+      await engine.updatePageContextualRetrievalState(
+        slug,
+        pageSourceId,
+        embedContext.crMode,
+        embedContext.corpusGeneration,
+      );
+    }
+    await engine.setPageEmbeddingSignature(slug, { sourceId: pageSourceId, signature: currentEmbeddingSignature() });
   }
   result.embedded += toEmbed.length;
   result.pages_processed++;
@@ -405,6 +572,8 @@ async function embedAll(
     priority?: 'recent';
     catchUp?: boolean;
   },
+  contextualEmbed: EmbedContextResolver = createEmbedContextResolver(engine),
+  embeddingBatchMaxTexts: number = DEFAULT_EMBEDDING_BATCH_MAX_TEXTS,
 ) {
   // v0.41.31: current embedding provenance signature. Stamped onto pages
   // when their chunks are (re)embedded so a later model/dimension swap is
@@ -426,7 +595,7 @@ async function embedAll(
   if (staleOnly) {
     // D7: thread sourceId so `gbrain embed --stale --source X` actually scopes.
     // v0.41.18.0 (A13): thread batchSize/priority/catchUp into the stale path.
-    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature);
+    return await embedAllStale(engine, sourceId, dryRun, result, onProgress, staleOpts, signature, contextualEmbed, embeddingBatchMaxTexts);
   }
 
   // v0.31.12: when sourceId is set, scope listPages to that source.
@@ -457,7 +626,7 @@ async function embedAll(
   async function embedOnePage(page: typeof pages[number]) {
     // v0.31.12: thread source_id from the page row so getChunks/upsertChunks
     // target the correct (source_id, slug) row, not the 'default' source.
-    const pageSourceId = page.source_id;
+    const pageSourceId = page.source_id ?? 'default';
     const pageOpts = pageSourceId ? { sourceId: pageSourceId } : undefined;
     const chunks = await engine.getChunks(page.slug, pageOpts);
     const toEmbed = chunks; // staleOnly path handled above via embedAllStale
@@ -481,7 +650,8 @@ async function embedAll(
     }
 
     try {
-      const embeddings = await embedBatch(toEmbed.map(c => c.chunk_text));
+      const embedContext = await contextualEmbed(page, pageSourceId, toEmbed);
+      const embeddings = await embedTextsInBatches(embedContext.texts, embeddingBatchMaxTexts);
       // Build a map of new embeddings by chunk_index
       const embeddingMap = new Map<number, Float32Array>();
       for (let j = 0; j < toEmbed.length; j++) {
@@ -493,11 +663,19 @@ async function embedAll(
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
-        token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+        token_count: embedContext.tokenCounts.get(c.chunk_index) ?? c.token_count ?? Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(page.slug, updated, pageOpts);
       // v0.41.31: stamp embedding provenance so a later model swap is
       // detectable as stale.
+      if (embedContext.crMode !== null) {
+        await engine.updatePageContextualRetrievalState(
+          page.slug,
+          pageSourceId,
+          embedContext.crMode,
+          embedContext.corpusGeneration,
+        );
+      }
       await engine.setPageEmbeddingSignature(page.slug, { sourceId: pageSourceId, signature });
       result.embedded += toEmbed.length;
     } catch (e: unknown) {
@@ -561,6 +739,8 @@ async function embedAllStale(
     catchUp?: boolean;
   },
   signature?: string,
+  contextualEmbed: EmbedContextResolver = createEmbedContextResolver(engine),
+  embeddingBatchMaxTexts: number = DEFAULT_EMBEDDING_BATCH_MAX_TEXTS,
 ) {
   // D7: thread sourceId so source-scoped runs only count + visit
   // that source's NULL embeddings.
@@ -616,10 +796,12 @@ async function embedAllStale(
   // (effectively unbounded) instead of the 30-min default. The AbortController
   // still wraps for SIGINT propagation; just the timer never fires.
   const BUDGET_MS = staleOpts?.catchUp
-    ? Number.MAX_SAFE_INTEGER
+    ? null
     : parseInt(process.env.GBRAIN_EMBED_TIME_BUDGET_MS || `${30 * 60 * 1000}`, 10);
   const budgetController = new AbortController();
-  const budgetTimer = setTimeout(() => budgetController.abort(), BUDGET_MS);
+  const budgetTimer = BUDGET_MS === null
+    ? null
+    : setTimeout(() => budgetController.abort(), BUDGET_MS);
   const budgetSignal = budgetController.signal;
 
   // v0.41.18.0 (A13): --priority recent threads orderBy='updated_desc' to
@@ -642,7 +824,7 @@ async function embedAllStale(
     while (true) {
       if (budgetSignal.aborted) {
         if (!budgetExitNotified) {
-          serr(`\n  [embed] wall-clock budget (${BUDGET_MS}ms) exceeded; exiting cleanly. Re-run picks up via partial index.`);
+          serr(`\n  [embed] wall-clock budget (${BUDGET_MS ?? 'none'}ms) exceeded; exiting cleanly. Re-run picks up via partial index.`);
           budgetExitNotified = true;
         }
         break;
@@ -691,19 +873,35 @@ async function embedAllStale(
         const keySourceId = stale[0]?.source_id ?? 'default';
         const slug = stale[0].slug;
         try {
-          const embeddings = await embedBatchWithBackoff(stale.map(c => c.chunk_text), { abortSignal: budgetSignal });
-          // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
+          const page = await engine.getPage(slug, { sourceId: keySourceId });
+          const pageStale = isPageLevelStale(stale, signature);
+          // Re-fetch existing chunks before embedding so page-level stale rows
+          // (CR NULL or signature drift) can expand from a cursor slice to the
+          // whole page. Otherwise a page split by --batch-size would never hit
+          // the full-page stamp guard below.
           const existing = await engine.getChunks(slug, { sourceId: keySourceId });
+          const toEmbed = pageStale ? existing : stale;
+          if (pageStale && existing.length > stale.length) {
+            result.total_chunks += existing.length - stale.length;
+          }
+          const embedContext = page
+            ? await contextualEmbed(page, keySourceId, toEmbed)
+            : rawEmbedContext(toEmbed);
+          const embeddings = await embedTextsInBatches(
+            embedContext.texts,
+            embeddingBatchMaxTexts,
+            (texts) => embedBatchWithBackoff(texts, { abortSignal: budgetSignal }),
+          );
           const staleIdxToEmbedding = new Map<number, Float32Array>();
-          for (let j = 0; j < stale.length; j++) {
-            staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
+          for (let j = 0; j < toEmbed.length; j++) {
+            staleIdxToEmbedding.set(toEmbed[j].chunk_index, embeddings[j]);
           }
           const merged: ChunkInput[] = existing.map(c => ({
             chunk_index: c.chunk_index,
             chunk_text: c.chunk_text,
             chunk_source: c.chunk_source,
             embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
-            token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
+            token_count: embedContext.tokenCounts.get(c.chunk_index) ?? c.token_count ?? Math.ceil(c.chunk_text.length / 4),
           }));
           await engine.upsertChunks(slug, merged, { sourceId: keySourceId });
           // v0.41.31: stamp provenance after the page's chunks are embedded —
@@ -711,10 +909,18 @@ async function embedAllStale(
           // A partially-stale page keeps preserved chunks of unknown/old
           // provenance, so don't claim it's current. (After invalidate, a
           // signature-drifted page IS fully stale → this stamps it.)
-          if (signature && stale.length === existing.length) {
+          if (signature && toEmbed.length === existing.length) {
+            if (embedContext.crMode !== null) {
+              await engine.updatePageContextualRetrievalState(
+                slug,
+                keySourceId,
+                embedContext.crMode,
+                embedContext.corpusGeneration,
+              );
+            }
             await engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature });
           }
-          result.embedded += stale.length;
+          result.embedded += toEmbed.length;
         } catch (e: unknown) {
           // Budget-fired aborts are expected on the way out; don't spam
           // per-page "Error embedding" lines when we're shutting down.
@@ -745,7 +951,7 @@ async function embedAllStale(
       if (batch.length < PAGE_SIZE) break;
     }
   } finally {
-    clearTimeout(budgetTimer);
+    if (budgetTimer !== null) clearTimeout(budgetTimer);
   }
 
   slog(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);

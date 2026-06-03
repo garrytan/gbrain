@@ -33,6 +33,7 @@ import {
   resetGateway,
 } from '../../src/core/ai/gateway.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../../src/core/chunkers/recursive.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const STUB_DIMS = 1536;
 
@@ -134,7 +135,41 @@ but should NOT mutate what we store as canonical chunk_text.`;
       [slug],
     );
     expect(rows[0].cv).toBe(MARKDOWN_CHUNKER_VERSION);
-    expect(rows[0].cv).toBe(3); // v0.40.3.0 bump
+  });
+
+  test('contextual reindex splits embedding calls by GBRAIN_EMBEDDING_BATCH_MAX_TEXTS and preserves order', async () => {
+    const slug = 'wiki/concepts/batch-limited-reindex';
+    const content = `---
+title: "Batch Limited Reindex"
+type: concept
+---
+
+${Array.from({ length: 8 }, (_, i) => `section-${i} ${'body '.repeat(80)}`).join('\n\n')}`;
+
+    await withEnv({
+      GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: '1',
+      GBRAIN_MARKDOWN_CHUNK_MAX_CHARS: '120',
+    }, async () => {
+      await importFromContent(engine, slug, content, { sourceId: 'default', noEmbed: true });
+      const chunksBefore = await engine.getChunks(slug, { sourceId: 'default' });
+      expect(chunksBefore.length).toBeGreaterThan(1);
+
+      embedderInputs.length = 0;
+      const { reembedPageWithContextualRetrieval } = await import('../../src/core/contextual-retrieval-service.ts');
+      const result = await reembedPageWithContextualRetrieval({
+        engine,
+        pageSlug: slug,
+        sourceId: 'default',
+        globalMode: 'title',
+        killSwitchDisabled: false,
+      });
+
+      expect(result.kind).toBe('success');
+      expect(embedderInputs.length).toBe(chunksBefore.length);
+      expect(embedderInputs.every((call) => call.length === 1)).toBe(true);
+      const flattened = embedderInputs.flat().join('\n');
+      expect(flattened.indexOf('section-0')).toBeLessThan(flattened.indexOf('section-1'));
+    });
   });
 });
 

@@ -4,6 +4,11 @@ import { join } from 'path';
 import { importFile, importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
+import {
+  __setEmbedTransportForTests,
+  configureGateway,
+  resetGateway,
+} from '../src/core/ai/gateway.ts';
 
 const TMP = join(import.meta.dir, '.tmp-import-test');
 
@@ -280,6 +285,40 @@ This is compiled truth content that should be chunked as compiled_truth source.
     expect(tlChunks.length).toBeGreaterThan(0);
   });
 
+  test('uses configured markdown max char cap for compiled_truth and timeline chunks', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const filePath = join(TMP, 'chunk-cap.md');
+    writeFileSync(filePath, `---
+type: concept
+title: Chunk Cap
+---
+
+${'a'.repeat(5200)}
+
+<!-- timeline -->
+
+- 2024-01-01: ${'b'.repeat(5200)}
+`);
+
+    const engine = mockEngine();
+    await withEnv({ GBRAIN_MARKDOWN_CHUNK_MAX_CHARS: '2400' }, async () => {
+      const result = await importFile(engine, filePath, 'concepts/chunk-cap.md', { noEmbed: true });
+      expect(result.status).toBe('imported');
+    });
+
+    const calls = (engine as any)._calls;
+    const chunkCall = calls.find((c: any) => c.method === 'upsertChunks');
+    expect(chunkCall).toBeTruthy();
+    const chunks = chunkCall.args[1];
+    const ctChunks = chunks.filter((c: any) => c.chunk_source === 'compiled_truth');
+    const tlChunks = chunks.filter((c: any) => c.chunk_source === 'timeline');
+    expect(ctChunks.length).toBeGreaterThan(1);
+    expect(tlChunks.length).toBeGreaterThan(1);
+    for (const chunk of [...ctChunks, ...tlChunks]) {
+      expect(chunk.chunk_text.length).toBeLessThanOrEqual(2400);
+    }
+  });
+
   test('handles file with minimal content', async () => {
     const filePath = join(TMP, 'minimal.md');
     writeFileSync(filePath, `---
@@ -341,6 +380,50 @@ Content to chunk but not embed.
       for (const chunk of chunkCall.args[1]) {
         expect(chunk.embedding).toBeUndefined();
       }
+    }
+  });
+
+  test('splits inline markdown embedding calls by GBRAIN_EMBEDDING_BATCH_MAX_TEXTS and preserves order', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const embedderInputs: string[][] = [];
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-test-fake-key-for-stub' },
+    });
+    __setEmbedTransportForTests(async ({ values }: any) => {
+      embedderInputs.push([...values]);
+      return {
+        embeddings: values.map(() => new Array<number>(1536).fill(0.001)),
+        usage: { tokens: 0 },
+      } as any;
+    });
+
+    try {
+      await withEnv({
+        GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: '1',
+        GBRAIN_MARKDOWN_CHUNK_MAX_CHARS: '120',
+      }, async () => {
+        const content = `---
+type: concept
+title: Batch Limited Import
+---
+
+${Array.from({ length: 8 }, (_, i) => `section-${i} ${'body '.repeat(80)}`).join('\n\n')}`;
+
+        const engine = mockEngine();
+        const result = await importFromContent(engine, 'concepts/batch-limited-import', content);
+        expect(result.status).toBe('imported');
+        expect(result.chunks).toBeGreaterThan(1);
+      });
+
+      expect(embedderInputs.length).toBeGreaterThan(1);
+      expect(embedderInputs.every((call) => call.length === 1)).toBe(true);
+      const flattened = embedderInputs.flat().join('\n');
+      expect(flattened.indexOf('section-0')).toBeLessThan(flattened.indexOf('section-1'));
+    } finally {
+      __setEmbedTransportForTests(null);
+      resetGateway();
     }
   });
 

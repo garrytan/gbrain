@@ -42,7 +42,9 @@ beforeEach(async () => {
 
 /**
  * Seed a page with one EMBEDDED chunk (non-null vector) and a given
- * embedding_signature (null → grandfathered legacy state).
+ * embedding_signature (null → grandfathered legacy state). Stamp CR mode so
+ * signature tests isolate signature behavior; individual CR-null tests can
+ * reset contextual_retrieval_mode to NULL explicitly.
  */
 async function seedEmbedded(slug: string, text: string, signature: string | null, sourceId?: string): Promise<void> {
   await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}` }, sourceId ? { sourceId } : undefined);
@@ -57,12 +59,34 @@ async function seedEmbedded(slug: string, text: string, signature: string | null
       WHERE page_id = (SELECT id FROM pages WHERE slug = $2 AND source_id = $3)`,
     [colDim, slug, sourceId ?? 'default'],
   );
+  await engine.updatePageContextualRetrievalState(slug, sourceId ?? 'default', 'title', 'seed-generation');
   if (signature !== null) {
     await engine.setPageEmbeddingSignature(slug, { sourceId, signature });
   }
 }
 
 describe('embedding_signature stale semantics', () => {
+  test('CR-null markdown page is stale even when every chunk already has an embedding', async () => {
+    await seedEmbedded('cr-null', 'abcde', 'test:model:1536');
+    await engine.executeRaw(
+      `UPDATE pages
+          SET contextual_retrieval_mode = NULL,
+              deleted_at = NULL,
+              page_kind = 'markdown'
+        WHERE slug = 'cr-null' AND source_id = 'default'`,
+    );
+
+    expect(await engine.countStaleChunks()).toBe(1);
+    expect(await engine.sumStaleChunkChars()).toBe(5);
+
+    const rows = await engine.listStaleChunks({ batchSize: 10 });
+    expect(rows.map(r => `${r.slug}:${r.chunk_index}`)).toEqual(['cr-null:0']);
+
+    await engine.updatePageContextualRetrievalState('cr-null', 'default', 'title', 'generation');
+    expect(await engine.countStaleChunks()).toBe(0);
+    expect(await engine.listStaleChunks({ batchSize: 10 })).toHaveLength(0);
+  });
+
   test('R-4 GRANDFATHER: NULL signature is never stale', async () => {
     await seedEmbedded('legacy', 'abcde', null); // embedded, NULL signature
     // No NULL embeddings, NULL signature → not stale under any signature.

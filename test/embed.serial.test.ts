@@ -1,4 +1,7 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 // Mock the embedding module BEFORE importing runEmbed, so runEmbed picks up
@@ -7,16 +10,20 @@ import type { BrainEngine } from '../src/core/engine.ts';
 let activeEmbedCalls = 0;
 let maxConcurrentEmbedCalls = 0;
 let totalEmbedCalls = 0;
+let embedBatchTextCalls: string[][] = [];
 // D5: capture per-call opts so tests can assert maxRetries / abortSignal
 // passthrough into the gateway path.
 let lastEmbedBatchOpts: unknown = undefined;
 // D5: pluggable behavior for tests that need to simulate 429s or aborts.
 let embedBatchBehavior: ((texts: string[], opts?: unknown) => Promise<Float32Array[]>) | null = null;
+const TEST_GBRAIN_HOME = mkdtempSync(join(tmpdir(), 'gbrain-embed-serial-home-'));
+let originalGbrainHome: string | undefined;
 
 mock.module('../src/core/embedding.ts', () => ({
   embedBatch: async (texts: string[], opts?: unknown) => {
     activeEmbedCalls++;
     totalEmbedCalls++;
+    embedBatchTextCalls.push([...texts]);
     lastEmbedBatchOpts = opts;
     if (activeEmbedCalls > maxConcurrentEmbedCalls) {
       maxConcurrentEmbedCalls = activeEmbedCalls;
@@ -68,10 +75,25 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   return engine;
 }
 
+beforeAll(() => {
+  originalGbrainHome = process.env.GBRAIN_HOME;
+  process.env.GBRAIN_HOME = TEST_GBRAIN_HOME;
+});
+
+afterAll(() => {
+  if (originalGbrainHome === undefined) {
+    delete process.env.GBRAIN_HOME;
+  } else {
+    process.env.GBRAIN_HOME = originalGbrainHome;
+  }
+  rmSync(TEST_GBRAIN_HOME, { recursive: true, force: true });
+});
+
 beforeEach(() => {
   activeEmbedCalls = 0;
   maxConcurrentEmbedCalls = 0;
   totalEmbedCalls = 0;
+  embedBatchTextCalls = [];
   lastEmbedBatchOpts = undefined;
   embedBatchBehavior = null;
 });
@@ -79,6 +101,8 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.GBRAIN_EMBED_CONCURRENCY;
   delete process.env.GBRAIN_EMBED_TIME_BUDGET_MS;
+  delete process.env.GBRAIN_MARKDOWN_CHUNK_MAX_CHARS;
+  delete process.env.GBRAIN_EMBEDDING_BATCH_MAX_TEXTS;
 });
 
 describe('runEmbed --all (parallel)', () => {
@@ -291,6 +315,91 @@ describe('runEmbedCore --dry-run never calls the embedding model', () => {
     expect(result.pages_processed).toBe(1);
   });
 
+  test('slug fallback chunks compiled_truth and timeline with configured max char cap', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const { withEnv } = await import('./helpers/with-env.ts');
+    let getChunksCalls = 0;
+    let storedChunks: any[] = [];
+    const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
+
+    const engine = mockEngine({
+      getPage: async () => ({
+        slug: 'my-page',
+        compiled_truth: 'a'.repeat(5200),
+        timeline: `- 2026-01-01: ${'b'.repeat(5200)}`,
+      }),
+      getChunks: async () => {
+        getChunksCalls++;
+        return getChunksCalls === 1 ? [] : storedChunks;
+      },
+      upsertChunks: async (slug: string, chunks: any[]) => {
+        upsertCalls.push({ slug, chunks });
+        storedChunks = chunks.map((chunk) => ({ ...chunk, embedded_at: null }));
+      },
+      setPageEmbeddingSignature: async () => {},
+    });
+
+    await withEnv({ GBRAIN_MARKDOWN_CHUNK_MAX_CHARS: '2400' }, async () => {
+      const result = await runEmbedCore(engine, { slug: 'my-page' });
+      expect(result.pages_processed).toBe(1);
+    });
+
+    expect(upsertCalls.length).toBeGreaterThanOrEqual(1);
+    const fallbackChunks = upsertCalls[0].chunks;
+    const compiledTruthChunks = fallbackChunks.filter((c: any) => c.chunk_source === 'compiled_truth');
+    const timelineChunks = fallbackChunks.filter((c: any) => c.chunk_source === 'timeline');
+    expect(compiledTruthChunks.length).toBeGreaterThan(1);
+    expect(timelineChunks.length).toBeGreaterThan(1);
+    for (const chunk of [...compiledTruthChunks, ...timelineChunks]) {
+      expect(chunk.chunk_text.length).toBeLessThanOrEqual(2400);
+    }
+  });
+
+  test('slug path splits provider calls by configured embedding_batch_max_texts and preserves chunk order', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const chunks = [
+      { chunk_index: 0, chunk_text: 'text-0', chunk_source: 'compiled_truth', embedded_at: null, token_count: 2 },
+      { chunk_index: 1, chunk_text: 'text-1', chunk_source: 'compiled_truth', embedded_at: null, token_count: 2 },
+      { chunk_index: 2, chunk_text: 'text-2', chunk_source: 'compiled_truth', embedded_at: null, token_count: 2 },
+    ];
+    const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
+    embedBatchBehavior = async (texts) => texts.map((text) => {
+      const v = new Float32Array(1536);
+      v[0] = Number(text.split('-')[1]);
+      return v;
+    });
+    const engine = mockEngine({
+      getPage: async () => ({
+        slug: 'split-page',
+        source_id: 'default',
+        title: 'Split Page',
+        compiled_truth: 'text',
+        timeline: '',
+        frontmatter: {},
+      }),
+      getChunks: async () => chunks,
+      upsertChunks: async (slug: string, updated: any[]) => {
+        upsertCalls.push({ slug, chunks: updated });
+      },
+      setPageEmbeddingSignature: async () => {},
+    });
+
+    await withEnv({ GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: '1' }, async () => {
+      const result = await runEmbedCore(engine, { slug: 'split-page' });
+      expect(result.embedded).toBe(3);
+    });
+
+    expect(embedBatchTextCalls.map(call => call.map(text => text.match(/text-\d/)?.[0]))).toEqual([['text-0'], ['text-1'], ['text-2']]);
+    expect(totalEmbedCalls).toBe(3);
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0].chunks.map((c: any) => [c.chunk_index, c.embedding?.[0]])).toEqual([
+      [0, 0],
+      [1, 1],
+      [2, 2],
+    ]);
+  });
+
   test('non-dry-run path reports accurate embedded count (regression guard)', async () => {
     const { runEmbedCore } = await import('../src/commands/embed.ts');
     const chunksBySlug = new Map<string, any[]>([
@@ -462,6 +571,464 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     // Both pages get embedded, regardless of embedded_at — that's the --all contract.
     expect(totalEmbedCalls).toBe(2);
     expect(result.embedded).toBe(2);
+  });
+});
+
+describe('runEmbedCore contextual retrieval state', () => {
+  test('--stale embeds existing markdown chunks with title context and stamps the resolved CR mode', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const slug = 'concepts/contextual-stale';
+    const stale = [
+      {
+        slug,
+        chunk_index: 0,
+        chunk_text: 'Body that was re-chunked without embedding.',
+        chunk_source: 'compiled_truth' as const,
+        model: null,
+        token_count: null,
+        source_id: 'default',
+        page_id: 1,
+      },
+    ];
+    const fullChunks = [
+      {
+        chunk_index: 0,
+        chunk_text: 'Body that was re-chunked without embedding.',
+        chunk_source: 'compiled_truth',
+        embedded_at: null,
+        token_count: 11,
+      },
+    ];
+    const engine = mockEngine({
+      countStaleChunks: async () => 1,
+      listStaleChunks: async () => stale,
+      getPage: async () => ({
+        slug,
+        source_id: 'default',
+        title: 'Contextual Stale Page',
+        type: 'concept',
+        compiled_truth: fullChunks[0].chunk_text,
+        timeline: '',
+        frontmatter: {},
+        deleted_at: null,
+      }),
+      getChunks: async () => fullChunks,
+      upsertChunks: async () => {},
+    });
+
+    const result = await runEmbedCore(engine, { stale: true });
+
+    expect(result.embedded).toBe(1);
+    expect(embedBatchTextCalls.length).toBe(1);
+    expect(embedBatchTextCalls[0][0]).toContain('<context>Contextual Stale Page');
+    expect(embedBatchTextCalls[0][0]).toContain('</context>');
+
+    const crCalls = (engine as any)._calls.filter((c: any) => c.method === 'updatePageContextualRetrievalState');
+    expect(crCalls).toHaveLength(1);
+    expect(crCalls[0].args[0]).toBe(slug);
+    expect(crCalls[0].args[1]).toBe('default');
+    expect(crCalls[0].args[2]).toBe('title');
+    expect(crCalls[0].args[3]).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  test('--stale fails closed when source policy lookup errors and does not stamp defaults', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const slug = 'concepts/policy-lookup-fails';
+    const stale = [
+      {
+        slug,
+        chunk_index: 0,
+        chunk_text: 'Body must not be embedded under default CR policy.',
+        chunk_source: 'compiled_truth' as const,
+        model: null,
+        token_count: null,
+        source_id: 'source-db-failure',
+        page_id: 1,
+      },
+    ];
+    const fullChunks = [
+      {
+        chunk_index: 0,
+        chunk_text: 'Body must not be embedded under default CR policy.',
+        chunk_source: 'compiled_truth',
+        embedded_at: null,
+        token_count: 11,
+      },
+    ];
+    const engine = mockEngine({
+      getConfig: async () => null,
+      countStaleChunks: async () => 1,
+      listStaleChunks: async () => stale,
+      executeRaw: async () => {
+        throw new Error('sources lookup unavailable');
+      },
+      getPage: async () => ({
+        slug,
+        source_id: 'source-db-failure',
+        title: 'Policy Lookup Fails',
+        type: 'concept',
+        compiled_truth: fullChunks[0].chunk_text,
+        timeline: '',
+        frontmatter: {},
+        deleted_at: null,
+      }),
+      getChunks: async () => fullChunks,
+      upsertChunks: async () => {},
+    });
+
+    const result = await runEmbedCore(engine, { stale: true });
+
+    expect(result.embedded).toBe(0);
+    expect(embedBatchTextCalls).toHaveLength(0);
+    expect((engine as any)._calls.filter((c: any) => c.method === 'upsertChunks')).toHaveLength(0);
+    expect((engine as any)._calls.filter((c: any) => c.method === 'updatePageContextualRetrievalState')).toHaveLength(0);
+    expect((engine as any)._calls.filter((c: any) => c.method === 'setPageEmbeddingSignature')).toHaveLength(0);
+  });
+
+  test('embed input and stamp honor source-row CR mode and frontmatter trust policy', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const sources = new Map([
+      ['mount-untrusted', { id: 'mount-untrusted', contextual_retrieval_mode: 'none', trust_frontmatter_overrides: false }],
+      ['mount-trusted', { id: 'mount-trusted', contextual_retrieval_mode: 'none', trust_frontmatter_overrides: true }],
+    ]);
+    const pages = new Map([
+      ['mount-untrusted:policy', {
+        slug: 'policy',
+        source_id: 'mount-untrusted',
+        title: 'Untrusted Policy',
+        type: 'concept',
+        compiled_truth: 'untrusted body',
+        timeline: '',
+        frontmatter: { contextual_retrieval: 'title' },
+        deleted_at: null,
+      }],
+      ['mount-trusted:policy', {
+        slug: 'policy',
+        source_id: 'mount-trusted',
+        title: 'Trusted Policy',
+        type: 'concept',
+        compiled_truth: 'trusted body',
+        timeline: '',
+        frontmatter: { contextual_retrieval: 'title' },
+        deleted_at: null,
+      }],
+    ]);
+    const chunks = new Map([
+      ['mount-untrusted:policy', [{ chunk_index: 0, chunk_text: 'untrusted body', chunk_source: 'compiled_truth', embedded_at: null, token_count: null }]],
+      ['mount-trusted:policy', [{ chunk_index: 0, chunk_text: 'trusted body', chunk_source: 'compiled_truth', embedded_at: null, token_count: null }]],
+    ]);
+
+    const engine = mockEngine({
+      getConfig: async () => null,
+      executeRaw: async (_sql: string, params?: unknown[]) => {
+        const source = sources.get(String(params?.[0]));
+        return source ? [source] : [];
+      },
+      getPage: async (slug: string, opts?: { sourceId?: string }) => pages.get(`${opts?.sourceId ?? 'default'}:${slug}`),
+      getChunks: async (slug: string, opts?: { sourceId?: string }) => chunks.get(`${opts?.sourceId ?? 'default'}:${slug}`) ?? [],
+      upsertChunks: async () => {},
+    });
+
+    await runEmbedCore(engine, { slug: 'policy', sourceId: 'mount-untrusted' });
+    await runEmbedCore(engine, { slug: 'policy', sourceId: 'mount-trusted' });
+
+    expect(embedBatchTextCalls).toHaveLength(2);
+    expect(embedBatchTextCalls[0][0]).toBe('untrusted body');
+    expect(embedBatchTextCalls[1][0]).toContain('<context>Trusted Policy');
+    expect(embedBatchTextCalls[1][0]).toContain('trusted body');
+
+    const crCalls = (engine as any)._calls.filter((c: any) => c.method === 'updatePageContextualRetrievalState');
+    expect(crCalls.map((c: any) => [c.args[1], c.args[2], c.args[3]])).toEqual([
+      ['mount-untrusted', 'none', null],
+      ['mount-trusted', 'title', expect.stringMatching(/^[0-9a-f]{16}$/)],
+    ]);
+  });
+
+  test('--stale selects CR-null fully embedded markdown pages and preserves partial-stale page state', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      const dimRows = await engine.executeRaw<{ dim: number }>(
+        `SELECT atttypmod AS dim FROM pg_attribute
+          WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding' AND attnum > 0`,
+      );
+      const colDim = Number(dimRows[0]?.dim);
+      const setEmbedding = (slug: string, indexes: number[]) => engine.executeRaw(
+        `UPDATE content_chunks
+            SET embedding = ('[' || array_to_string(array_fill(0.0::real, ARRAY[$1::int]), ',') || ']')::vector
+          WHERE page_id = (SELECT id FROM pages WHERE slug = $2 AND source_id = 'default')
+            AND chunk_index = ANY($3::int[])`,
+        [colDim, slug, indexes],
+      );
+
+      const crNullSlug = 'concepts/contextual-null-pglite';
+      await engine.putPage(crNullSlug, {
+        type: 'concept',
+        title: 'Contextual Null PGLite',
+        compiled_truth: 'Existing chunks already have embeddings but no CR stamp.',
+        timeline: '',
+        frontmatter: {},
+      });
+      await engine.upsertChunks(crNullSlug, [
+        {
+          chunk_index: 0,
+          chunk_text: 'Existing chunks already have embeddings but no CR stamp.',
+          chunk_source: 'compiled_truth',
+          token_count: 11,
+        },
+        {
+          chunk_index: 1,
+          chunk_text: 'Second embedded chunk also needs CR stamping.',
+          chunk_source: 'compiled_truth',
+          token_count: 10,
+        },
+      ]);
+      await setEmbedding(crNullSlug, [0, 1]);
+      await engine.executeRaw(
+        `UPDATE pages
+            SET contextual_retrieval_mode = NULL,
+                corpus_generation = NULL,
+                embedding_signature = 'test:model:1536'
+          WHERE slug = $1 AND source_id = 'default'`,
+        [crNullSlug],
+      );
+
+      const partialSlug = 'concepts/partial-stale-pglite';
+      await engine.putPage(partialSlug, {
+        type: 'concept',
+        title: 'Partial Stale PGLite',
+        compiled_truth: 'One preserved chunk and one stale chunk.',
+        timeline: '',
+        frontmatter: {},
+      });
+      await engine.upsertChunks(partialSlug, [
+        { chunk_index: 0, chunk_text: 'preserved chunk', chunk_source: 'compiled_truth', token_count: 4 },
+        { chunk_index: 1, chunk_text: 'stale chunk', chunk_source: 'compiled_truth', token_count: 3 },
+      ]);
+      await setEmbedding(partialSlug, [0]);
+      await engine.executeRaw(
+        `UPDATE pages
+            SET contextual_retrieval_mode = 'title',
+                corpus_generation = 'partial-old-generation',
+                embedding_signature = 'test:model:1536'
+          WHERE slug = $1 AND source_id = 'default'`,
+        [partialSlug],
+      );
+
+      const freshSlug = 'concepts/fresh-pglite';
+      await engine.putPage(freshSlug, {
+        type: 'concept',
+        title: 'Fresh PGLite',
+        compiled_truth: 'Already embedded and stamped.',
+        timeline: '',
+        frontmatter: {},
+      });
+      await engine.upsertChunks(freshSlug, [
+        { chunk_index: 0, chunk_text: 'fresh chunk', chunk_source: 'compiled_truth', token_count: 3 },
+      ]);
+      await setEmbedding(freshSlug, [0]);
+      await engine.executeRaw(
+        `UPDATE pages
+            SET contextual_retrieval_mode = 'title',
+                corpus_generation = 'fresh-generation',
+                embedding_signature = 'test:model:1536'
+          WHERE slug = $1 AND source_id = 'default'`,
+        [freshSlug],
+      );
+
+      const result = await runEmbedCore(engine, { stale: true, batchSize: 1 });
+
+      expect(result.embedded).toBe(3);
+      expect(embedBatchTextCalls.flat()).toHaveLength(3);
+
+      const pages = await engine.executeRaw<{ slug: string; mode: string | null; gen: string | null; sig: string | null }>(
+        `SELECT slug,
+                contextual_retrieval_mode AS mode,
+                corpus_generation AS gen,
+                embedding_signature AS sig
+           FROM pages
+          WHERE slug IN ($1, $2, $3) AND source_id = 'default'
+          ORDER BY slug`,
+        [crNullSlug, partialSlug, freshSlug],
+      );
+      const bySlug = new Map(pages.map(p => [p.slug, p]));
+      expect(bySlug.get(crNullSlug)?.mode).toBe('title');
+      expect(bySlug.get(crNullSlug)?.gen).toMatch(/^[0-9a-f]{16}$/);
+      expect(bySlug.get(crNullSlug)?.sig).toBe('test:model:1536');
+      expect(bySlug.get(partialSlug)?.mode).toBe('title');
+      expect(bySlug.get(partialSlug)?.gen).toBe('partial-old-generation');
+      expect(bySlug.get(partialSlug)?.sig).toBe('test:model:1536');
+      expect(bySlug.get(freshSlug)?.gen).toBe('fresh-generation');
+
+      const chunks = await engine.executeRaw<{ slug: string; chunk_index: number; has_embedding: boolean }>(
+        `SELECT p.slug, cc.chunk_index, cc.embedding IS NOT NULL AS has_embedding
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug IN ($1, $2, $3) AND p.source_id = 'default'
+          ORDER BY p.slug, cc.chunk_index`,
+        [crNullSlug, partialSlug, freshSlug],
+      );
+      expect(chunks.every(c => c.has_embedding)).toBe(true);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('PGLite --stale uses source-row CR policy and expands CR-null page before stamping', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      const sourceId = 'source-row-policy-pglite';
+      const slug = 'concepts/source-row-policy-pglite';
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config, contextual_retrieval_mode, trust_frontmatter_overrides)
+         VALUES ($1, $1, '{"federated":true}'::jsonb, 'none', FALSE)
+         ON CONFLICT (id) DO UPDATE
+           SET contextual_retrieval_mode = EXCLUDED.contextual_retrieval_mode,
+               trust_frontmatter_overrides = EXCLUDED.trust_frontmatter_overrides`,
+        [sourceId],
+      );
+      await engine.putPage(slug, {
+        type: 'concept',
+        title: 'Source Row Policy PGLite',
+        compiled_truth: 'First source-row policy chunk.\n\nSecond source-row policy chunk.',
+        timeline: '',
+        frontmatter: { contextual_retrieval: 'title' },
+      }, { sourceId });
+      await engine.upsertChunks(slug, [
+        {
+          chunk_index: 0,
+          chunk_text: 'First source-row policy chunk.',
+          chunk_source: 'compiled_truth',
+          token_count: 7,
+        },
+        {
+          chunk_index: 1,
+          chunk_text: 'Second source-row policy chunk.',
+          chunk_source: 'compiled_truth',
+          token_count: 7,
+        },
+      ], { sourceId });
+      await engine.executeRaw(
+        `UPDATE pages
+            SET contextual_retrieval_mode = NULL,
+                corpus_generation = NULL,
+                embedding_signature = NULL
+          WHERE slug = $1 AND source_id = $2`,
+        [slug, sourceId],
+      );
+
+      embedBatchBehavior = async (texts) => {
+        const beforeStamp = await engine.executeRaw<{ mode: string | null }>(
+          `SELECT contextual_retrieval_mode AS mode FROM pages WHERE slug = $1 AND source_id = $2`,
+          [slug, sourceId],
+        );
+        expect(beforeStamp[0]?.mode).toBeNull();
+        return texts.map(() => new Float32Array(1536));
+      };
+
+      const result = await runEmbedCore(engine, { stale: true, sourceId, batchSize: 1 });
+
+      expect(result.embedded).toBe(2);
+      expect(embedBatchTextCalls).toHaveLength(1);
+      expect(embedBatchTextCalls[0]).toEqual([
+        'First source-row policy chunk.',
+        'Second source-row policy chunk.',
+      ]);
+
+      const pages = await engine.executeRaw<{ mode: string | null; gen: string | null; sig: string | null }>(
+        `SELECT contextual_retrieval_mode AS mode,
+                corpus_generation AS gen,
+                embedding_signature AS sig
+           FROM pages
+          WHERE slug = $1 AND source_id = $2`,
+        [slug, sourceId],
+      );
+      expect(pages[0]?.mode).toBe('none');
+      expect(pages[0]?.gen).toBeNull();
+      expect(pages[0]?.sig).toBe('test:model:1536');
+
+      const chunks = await engine.executeRaw<{ has_embedding: boolean }>(
+        `SELECT cc.embedding IS NOT NULL AS has_embedding
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = $1 AND p.source_id = $2
+          ORDER BY cc.chunk_index`,
+        [slug, sourceId],
+      );
+      expect(chunks.map(c => c.has_embedding)).toEqual([true, true]);
+    } finally {
+      await engine.disconnect();
+    }
+  });
+
+  test('--stale page-level expansion splits provider calls and stores embeddings by chunk_index', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const slug = 'concepts/split-stale-expansion';
+    const stale = [
+      {
+        slug,
+        chunk_index: 0,
+        chunk_text: 'text-0',
+        chunk_source: 'compiled_truth' as const,
+        model: null,
+        token_count: null,
+        source_id: 'default',
+        page_id: 1,
+        page_contextual_retrieval_mode: null,
+      },
+    ];
+    const fullChunks = [
+      { chunk_index: 0, chunk_text: 'text-0', chunk_source: 'compiled_truth', embedded_at: null, token_count: 2 },
+      { chunk_index: 1, chunk_text: 'text-1', chunk_source: 'compiled_truth', embedded_at: null, token_count: 2 },
+      { chunk_index: 2, chunk_text: 'text-2', chunk_source: 'compiled_truth', embedded_at: null, token_count: 2 },
+    ];
+    const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
+    embedBatchBehavior = async (texts) => texts.map((text) => {
+      const v = new Float32Array(1536);
+      v[0] = Number(text.split('-')[1]);
+      return v;
+    });
+    const engine = mockEngine({
+      getConfig: async () => null,
+      countStaleChunks: async () => 1,
+      listStaleChunks: async () => stale,
+      getPage: async () => ({
+        slug,
+        source_id: 'default',
+        title: 'Split Stale Expansion',
+        type: 'concept',
+        compiled_truth: 'text',
+        timeline: '',
+        frontmatter: { contextual_retrieval: 'none' },
+        deleted_at: null,
+      }),
+      getChunks: async () => fullChunks,
+      upsertChunks: async (pageSlug: string, chunks: any[]) => {
+        upsertCalls.push({ slug: pageSlug, chunks });
+      },
+    });
+
+    await withEnv({ GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: '1' }, async () => {
+      const result = await runEmbedCore(engine, { stale: true });
+      expect(result.embedded).toBe(3);
+    });
+
+    expect(embedBatchTextCalls.map(call => call.map(text => text.match(/text-\d/)?.[0]))).toEqual([['text-0'], ['text-1'], ['text-2']]);
+    expect(totalEmbedCalls).toBe(3);
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0].chunks.map((c: any) => [c.chunk_index, c.embedding?.[0]])).toEqual([
+      [0, 0],
+      [1, 1],
+      [2, 2],
+    ]);
   });
 });
 
@@ -710,6 +1277,45 @@ describe('embedAllStale wall-clock budget end-to-end (D3 + D3a)', () => {
     // Total wall-clock should be roughly the budget + the time for in-flight
     // workers to drain (1 worker × 80ms latency). Generous upper bound: 1500ms.
     expect(elapsed).toBeLessThan(1500);
+  });
+
+  test('--catch-up does not install an overflowing wall-clock timer', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    process.env.GBRAIN_EMBED_TIME_BUDGET_MS = '1';
+    process.env.GBRAIN_EMBED_CONCURRENCY = '1';
+    const allRows = Array.from({ length: 3 }, (_, i) => ({
+      slug: `catch-up-${i}`,
+      chunk_index: 0,
+      chunk_text: `catch-up text ${i}`,
+      chunk_source: 'compiled_truth' as const,
+      model: null,
+      token_count: 1,
+      source_id: 'default',
+      page_id: i + 1,
+    }));
+
+    const engine = mockEngine({
+      countStaleChunks: async () => allRows.length,
+      listStaleChunks: async (opts: { afterPageId?: number } = {}) => {
+        const idx = allRows.findIndex(r => r.page_id > (opts.afterPageId ?? 0));
+        return idx === -1 ? [] : [allRows[idx]];
+      },
+      getChunks: async (slug: string) => {
+        const row = allRows.find(r => r.slug === slug);
+        return row ? [{ chunk_index: 0, chunk_text: row.chunk_text, chunk_source: row.chunk_source, embedded_at: null, token_count: 1 }] : [];
+      },
+      upsertChunks: async () => {},
+    });
+    embedBatchBehavior = async (texts) => {
+      await new Promise(r => setTimeout(r, 5));
+      return texts.map(() => new Float32Array(1536));
+    };
+
+    const result = await runEmbedCore(engine, { stale: true, catchUp: true, batchSize: 1 });
+
+    expect(result.embedded).toBe(3);
+    expect(result.pages_processed).toBe(3);
+    expect(totalEmbedCalls).toBe(3);
   });
 });
 

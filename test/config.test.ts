@@ -1,6 +1,13 @@
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { isSensitiveConfigKey, redactConfigValue } from '../src/commands/config.ts';
+import {
+  DEFAULT_EMBEDDING_BATCH_MAX_TEXTS,
+  DEFAULT_MARKDOWN_CHUNK_MAX_CHARS,
+  loadConfig,
+  resolveEmbeddingBatchMaxTexts,
+  resolveMarkdownChunkMaxChars,
+} from '../src/core/config.ts';
 
 // redactUrl is not exported, so we test it by reading the source and
 // reimplementing the regex to verify the pattern, then test via CLI
@@ -105,6 +112,120 @@ describe('redactConfigValue (v0.36.x #892 — set output regression)', () => {
     expect(redactConfigValue('search.mode', 'balanced')).toBe('balanced');
     expect(redactConfigValue('embedding_model', 'voyage:voyage-3-large'))
       .toBe('voyage:voyage-3-large');
+  });
+});
+
+describe('loadConfig — markdown_chunk_max_chars', () => {
+  async function withConfig(config: Record<string, unknown>, env: Record<string, string | undefined>, fn: () => void) {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-cfg-mdchunk-'));
+    try {
+      mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
+      writeFileSync(
+        join(tmpHome, '.gbrain', 'config.json'),
+        JSON.stringify({ engine: 'pglite', database_path: '/tmp/x', ...config }),
+      );
+      await withEnv({ GBRAIN_HOME: tmpHome, GBRAIN_MARKDOWN_CHUNK_MAX_CHARS: undefined, ...env }, fn);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  }
+
+  test('default remains 6000 when unset', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    await withEnv({ GBRAIN_MARKDOWN_CHUNK_MAX_CHARS: undefined }, () => {
+      expect(resolveMarkdownChunkMaxChars(null)).toBe(DEFAULT_MARKDOWN_CHUNK_MAX_CHARS);
+      expect(resolveMarkdownChunkMaxChars({ engine: 'pglite' })).toBe(6000);
+    });
+  });
+
+  test('file config value is accepted', async () => {
+    await withConfig({ markdown_chunk_max_chars: 2400 }, {}, () => {
+      const cfg = loadConfig();
+      expect(cfg?.markdown_chunk_max_chars).toBe(2400);
+      expect(resolveMarkdownChunkMaxChars(cfg)).toBe(2400);
+    });
+  });
+
+  test('env override wins over file config', async () => {
+    await withConfig({ markdown_chunk_max_chars: 4800 }, { GBRAIN_MARKDOWN_CHUNK_MAX_CHARS: '2400' }, () => {
+      const cfg = loadConfig();
+      expect(cfg?.markdown_chunk_max_chars).toBe(2400);
+      expect(resolveMarkdownChunkMaxChars(cfg)).toBe(2400);
+    });
+  });
+
+  test('invalid env value fails loudly', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    await withEnv({ GBRAIN_MARKDOWN_CHUNK_MAX_CHARS: '2400.5' }, () => {
+      expect(() => resolveMarkdownChunkMaxChars(null)).toThrow(/GBRAIN_MARKDOWN_CHUNK_MAX_CHARS must be a positive integer/);
+    });
+  });
+
+  test('invalid file config value fails loudly', async () => {
+    await withConfig({ markdown_chunk_max_chars: 0 }, {}, () => {
+      expect(() => loadConfig()).toThrow(/markdown_chunk_max_chars must be a positive integer/);
+    });
+  });
+});
+
+describe('loadConfig — embedding_batch_max_texts', () => {
+  async function withConfig(config: Record<string, unknown>, env: Record<string, string | undefined>, fn: () => void) {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-cfg-embedbatch-'));
+    try {
+      mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
+      writeFileSync(
+        join(tmpHome, '.gbrain', 'config.json'),
+        JSON.stringify({ engine: 'pglite', database_path: '/tmp/x', ...config }),
+      );
+      await withEnv({ GBRAIN_HOME: tmpHome, GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: undefined, ...env }, fn);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  }
+
+  test('default preserves unsplit provider calls when unset', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    await withEnv({ GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: undefined }, () => {
+      expect(resolveEmbeddingBatchMaxTexts(null)).toBe(DEFAULT_EMBEDDING_BATCH_MAX_TEXTS);
+      expect(resolveEmbeddingBatchMaxTexts({ engine: 'pglite' })).toBe(DEFAULT_EMBEDDING_BATCH_MAX_TEXTS);
+    });
+  });
+
+  test('file config value is accepted', async () => {
+    await withConfig({ embedding_batch_max_texts: 1 }, {}, () => {
+      const cfg = loadConfig();
+      expect(cfg?.embedding_batch_max_texts).toBe(1);
+      expect(resolveEmbeddingBatchMaxTexts(cfg)).toBe(1);
+    });
+  });
+
+  test('env override wins over file config', async () => {
+    await withConfig({ embedding_batch_max_texts: 8 }, { GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: '1' }, () => {
+      const cfg = loadConfig();
+      expect(cfg?.embedding_batch_max_texts).toBe(1);
+      expect(resolveEmbeddingBatchMaxTexts(cfg)).toBe(1);
+    });
+  });
+
+  test('invalid env value fails loudly', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    await withEnv({ GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: '0' }, () => {
+      expect(() => resolveEmbeddingBatchMaxTexts(null)).toThrow(/GBRAIN_EMBEDDING_BATCH_MAX_TEXTS must be a positive integer/);
+    });
+  });
+
+  test('invalid file config value fails loudly', async () => {
+    await withConfig({ embedding_batch_max_texts: 1.5 }, {}, () => {
+      expect(() => loadConfig()).toThrow(/embedding_batch_max_texts must be a positive integer/);
+    });
   });
 });
 

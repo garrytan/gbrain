@@ -141,6 +141,20 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       process.exit(1);
     }
 
+    if (key === 'markdown_chunk_max_chars') {
+      console.error('[config] markdown_chunk_max_chars is a file/env field.');
+      console.error('[config] Set it in ~/.gbrain/config.json or export GBRAIN_MARKDOWN_CHUNK_MAX_CHARS.');
+      console.error('[config] Writing it to the DB via `gbrain config set` would not affect chunking.');
+      process.exit(1);
+    }
+
+    if (key === 'embedding_batch_max_texts') {
+      console.error('[config] embedding_batch_max_texts is a file/env field.');
+      console.error('[config] Set it in ~/.gbrain/config.json or export GBRAIN_EMBEDDING_BATCH_MAX_TEXTS.');
+      console.error('[config] Writing it to the DB via `gbrain config set` would not affect embedding provider call splitting.');
+      process.exit(1);
+    }
+
     // v0.37.10.0 (D6): strict unknown-key rejection with --force escape hatch.
     // Catches the silent-no-op class for namespaced typos like `embedding.provider`,
     // `embedding.model`, `embedding.dimensions` — Levenshtein suggests the canonical

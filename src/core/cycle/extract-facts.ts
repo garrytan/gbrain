@@ -36,6 +36,8 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
+import { loadConfig, resolveEmbeddingBatchMaxTexts } from '../config.ts';
+import { embedTextsInBatches } from '../embedding-batch.ts';
 import {
   runPhantomRedirectPass,
   emptyPhantomPassResult,
@@ -235,7 +237,11 @@ export async function runExtractFacts(
     if (isAvailable('embedding') && extracted.length > 0) {
       try {
         const texts = extracted.map(e => e.fact);
-        const embeddings = await embed(texts);
+        const embeddings = await embedTextsInBatches(
+          texts,
+          resolveEmbeddingBatchMaxTexts(loadConfig()),
+          embed,
+        );
         // Defensive: embed should return one vector per input; if the
         // gateway returns a partial array (provider partial-batch retry
         // returning fewer than requested), only fill what we have.

@@ -53,6 +53,19 @@ export interface GBrainConfig {
    * or the other, never both.
    */
   embedding_disabled?: boolean;
+  /**
+   * Markdown chunk hard character cap. Default remains 6000 via the chunker;
+   * local embedding deployments can lower this without changing chunking logic.
+   * Env override: GBRAIN_MARKDOWN_CHUNK_MAX_CHARS.
+   */
+  markdown_chunk_max_chars?: number;
+  /**
+   * Maximum number of texts sent to the embedding provider per call.
+   * Default is effectively unlimited to preserve existing provider behavior.
+   * Local providers such as Ollama can set this to 1.
+   * Env override: GBRAIN_EMBEDDING_BATCH_MAX_TEXTS.
+   */
+  embedding_batch_max_texts?: number;
   expansion_model?: string;
   /**
    * Default chat model for `gateway.chat()` callers (v0.27+).
@@ -314,6 +327,63 @@ function migrateLegacyEmbeddingConfig(raw: Record<string, unknown>): Record<stri
   return rest;
 }
 
+export const DEFAULT_MARKDOWN_CHUNK_MAX_CHARS = 6000;
+const MARKDOWN_CHUNK_MAX_CHARS_ENV = 'GBRAIN_MARKDOWN_CHUNK_MAX_CHARS';
+export const DEFAULT_EMBEDDING_BATCH_MAX_TEXTS = Number.MAX_SAFE_INTEGER;
+const EMBEDDING_BATCH_MAX_TEXTS_ENV = 'GBRAIN_EMBEDDING_BATCH_MAX_TEXTS';
+
+function validatePositiveSafeInteger(value: unknown, source: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`[config] ${source} must be a positive integer`);
+  }
+  return value;
+}
+
+function parsePositiveSafeIntegerEnv(value: string, envName: string): number {
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new Error(`[config] ${envName} must be a positive integer`);
+  }
+  return validatePositiveSafeInteger(Number(value), envName);
+}
+
+function validateRuntimeTuningConfig<T extends GBrainConfig>(config: T): T {
+  if (config.markdown_chunk_max_chars !== undefined) {
+    config.markdown_chunk_max_chars = validatePositiveSafeInteger(
+      config.markdown_chunk_max_chars,
+      'markdown_chunk_max_chars',
+    );
+  }
+  if (config.embedding_batch_max_texts !== undefined) {
+    config.embedding_batch_max_texts = validatePositiveSafeInteger(
+      config.embedding_batch_max_texts,
+      'embedding_batch_max_texts',
+    );
+  }
+  return config;
+}
+
+export function resolveMarkdownChunkMaxChars(config?: GBrainConfig | null): number {
+  const envValue = process.env[MARKDOWN_CHUNK_MAX_CHARS_ENV];
+  if (envValue !== undefined) {
+    return parsePositiveSafeIntegerEnv(envValue, MARKDOWN_CHUNK_MAX_CHARS_ENV);
+  }
+  if (config?.markdown_chunk_max_chars !== undefined) {
+    return validatePositiveSafeInteger(config.markdown_chunk_max_chars, 'markdown_chunk_max_chars');
+  }
+  return DEFAULT_MARKDOWN_CHUNK_MAX_CHARS;
+}
+
+export function resolveEmbeddingBatchMaxTexts(config?: GBrainConfig | null): number {
+  const envValue = process.env[EMBEDDING_BATCH_MAX_TEXTS_ENV];
+  if (envValue !== undefined) {
+    return parsePositiveSafeIntegerEnv(envValue, EMBEDDING_BATCH_MAX_TEXTS_ENV);
+  }
+  if (config?.embedding_batch_max_texts !== undefined) {
+    return validatePositiveSafeInteger(config.embedding_batch_max_texts, 'embedding_batch_max_texts');
+  }
+  return DEFAULT_EMBEDDING_BATCH_MAX_TEXTS;
+}
+
 /**
  * File-only config loader. Reads ~/.gbrain/config.json and applies the
  * legacy embedding-config migration shim. Does NOT merge env vars, does
@@ -328,13 +398,14 @@ function migrateLegacyEmbeddingConfig(raw: Record<string, unknown>): Record<stri
  * v0.37 fix wave (CDX-5 from round 1). Pinned by test/config-file-only-loader.test.ts.
  */
 export function loadConfigFileOnly(): GBrainConfig | null {
+  let parsed: Record<string, unknown>;
   try {
     const raw = readFileSync(getConfigPath(), 'utf-8');
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return migrateLegacyEmbeddingConfig(parsed) as unknown as GBrainConfig;
+    parsed = JSON.parse(raw) as Record<string, unknown>;
   } catch {
     return null;
   }
+  return validateRuntimeTuningConfig(migrateLegacyEmbeddingConfig(parsed) as unknown as GBrainConfig);
 }
 
 export function loadConfig(): GBrainConfig | null {
@@ -388,6 +459,12 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL
       ? { embedding_image_ocr_model: process.env.GBRAIN_EMBEDDING_IMAGE_OCR_MODEL }
       : {}),
+    ...(process.env[MARKDOWN_CHUNK_MAX_CHARS_ENV] !== undefined
+      ? { markdown_chunk_max_chars: parsePositiveSafeIntegerEnv(process.env[MARKDOWN_CHUNK_MAX_CHARS_ENV]!, MARKDOWN_CHUNK_MAX_CHARS_ENV) }
+      : {}),
+    ...(process.env[EMBEDDING_BATCH_MAX_TEXTS_ENV] !== undefined
+      ? { embedding_batch_max_texts: parsePositiveSafeIntegerEnv(process.env[EMBEDDING_BATCH_MAX_TEXTS_ENV]!, EMBEDDING_BATCH_MAX_TEXTS_ENV) }
+      : {}),
     ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
       ? { remote_mcp: { ...fileConfig.remote_mcp, oauth_client_secret: process.env.GBRAIN_REMOTE_CLIENT_SECRET } }
       : {}),
@@ -427,7 +504,7 @@ export function loadConfig(): GBrainConfig | null {
     };
   }
 
-  return merged as GBrainConfig;
+  return validateRuntimeTuningConfig(merged as GBrainConfig);
 }
 
 /**
@@ -654,6 +731,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embedding_model',
   'embedding_dimensions',
   'embedding_disabled',
+  'markdown_chunk_max_chars',
+  'embedding_batch_max_texts',
   'expansion_model',
   'chat_model',
   'chat_fallback_chain',

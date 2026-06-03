@@ -26,6 +26,10 @@ import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } fr
  * boundaries (delimiters, word counting, maxChars cap) OR the per-chunk
  * embedding shape (wrapper prefix added at embed time).
  *
+ * v4: markdown_chunk_max_chars can lower the maxChars cap used by markdown
+ * import/embed fallback paths. That cap changes stored chunk boundaries, so
+ * `reindex --markdown` must revisit pages stamped with older versions.
+ *
  * v3 (v0.40.3.0): chunks embed with optional contextual retrieval wrapper
  * per Anthropic's published methodology. Wrapper is built JUST IN TIME at
  * embed call; stored `content_chunks.chunk_text` stays canonical. Chunk
@@ -34,7 +38,7 @@ import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } fr
  * post-upgrade reembed sweep. See
  * `src/core/contextual-retrieval-service.ts`.
  */
-export const MARKDOWN_CHUNKER_VERSION = 3;
+export const MARKDOWN_CHUNKER_VERSION = 4;
 
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs

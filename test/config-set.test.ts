@@ -9,12 +9,15 @@
 import { describe, test, expect } from 'bun:test';
 import { KNOWN_CONFIG_KEYS, KNOWN_CONFIG_KEY_PREFIXES } from '../src/core/config.ts';
 import { suggestNearest } from '../src/core/levenshtein.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 describe('KNOWN_CONFIG_KEYS', () => {
   test('contains the canonical embedding keys', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_model');
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_dimensions');
     expect(KNOWN_CONFIG_KEYS).toContain('embedding_disabled');  // v0.37 D9
+    expect(KNOWN_CONFIG_KEYS).toContain('markdown_chunk_max_chars');
+    expect(KNOWN_CONFIG_KEYS).toContain('embedding_batch_max_texts');
     expect(KNOWN_CONFIG_KEYS).toContain('expansion_model');
     expect(KNOWN_CONFIG_KEYS).toContain('chat_model');
   });
@@ -126,4 +129,61 @@ describe('prefix vs known-key gate logic (mirrored from runConfig)', () => {
   test('bug-reporter: embedding.dimensions → "unknown"', () => {
     expect(gate('embedding.dimensions')).toBe('unknown');
   });
+});
+
+describe('runConfig set — file/env-only keys', () => {
+  test('rejects markdown_chunk_max_chars DB write before engine.setConfig', async () => {
+    const { runConfig } = await import('../src/commands/config.ts');
+    const setConfigCalls: Array<{ key: string; value: string }> = [];
+    const engine = {
+      setConfig: async (key: string, value: string) => {
+        setConfigCalls.push({ key, value });
+      },
+    } as unknown as BrainEngine;
+
+    const originalExit = process.exit;
+    let exitCode: number | undefined;
+    process.exit = ((code?: number) => {
+      exitCode = code ?? 0;
+      throw new Error('__process_exit__');
+    }) as typeof process.exit;
+
+    try {
+      await expect(
+        runConfig(engine, ['set', 'markdown_chunk_max_chars', '2400']),
+      ).rejects.toThrow('__process_exit__');
+      expect(exitCode).toBe(1);
+      expect(setConfigCalls).toEqual([]);
+    } finally {
+      process.exit = originalExit;
+    }
+  });
+
+  test('rejects embedding_batch_max_texts DB write before engine.setConfig', async () => {
+    const { runConfig } = await import('../src/commands/config.ts');
+    const setConfigCalls: Array<{ key: string; value: string }> = [];
+    const engine = {
+      setConfig: async (key: string, value: string) => {
+        setConfigCalls.push({ key, value });
+      },
+    } as unknown as BrainEngine;
+
+    const originalExit = process.exit;
+    let exitCode: number | undefined;
+    process.exit = ((code?: number) => {
+      exitCode = code ?? 0;
+      throw new Error('__process_exit__');
+    }) as typeof process.exit;
+
+    try {
+      await expect(
+        runConfig(engine, ['set', 'embedding_batch_max_texts', '1']),
+      ).rejects.toThrow('__process_exit__');
+      expect(exitCode).toBe(1);
+      expect(setConfigCalls).toEqual([]);
+    } finally {
+      process.exit = originalExit;
+    }
+  });
+
 });

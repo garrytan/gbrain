@@ -588,6 +588,10 @@ export interface StaleChunkRow {
   source_id: string;
   /** v0.33.3: page_id for cursor pagination in listStaleChunks. */
   page_id: number;
+  /** Present when page-level staleness, not chunk-level NULL embedding, selected the row. */
+  page_contextual_retrieval_mode?: CRMode | null;
+  /** Present when embedding_signature drift selected or may select the row. */
+  page_embedding_signature?: string | null;
 }
 
 /**

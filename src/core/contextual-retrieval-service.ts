@@ -42,6 +42,8 @@
 import { createHash } from 'crypto';
 import * as fs from 'node:fs';
 import { embedBatch } from './embedding.ts';
+import { loadConfig, resolveEmbeddingBatchMaxTexts } from './config.ts';
+import { embedTextsInBatches } from './embedding-batch.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import {
   buildContextualPrefix,
@@ -398,7 +400,11 @@ async function tryBuildPhase1(opts: {
     );
 
     try {
-      const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+      const embeddings = await embedTextsInBatches(
+        wrappedTexts,
+        resolveEmbeddingBatchMaxTexts(loadConfig()),
+        (texts) => embedBatch(texts, { abortSignal: args.abortSignal }),
+      );
       return {
         kind: 'success',
         embeddedChunks: chunks.map((c, i) => ({
@@ -495,7 +501,11 @@ async function tryBuildPhase1(opts: {
 
   // All chunks synthesized successfully. Single batch embed (D27 P2-2).
   try {
-    const embeddings = await embedBatch(wrappedTexts, { abortSignal: args.abortSignal });
+    const embeddings = await embedTextsInBatches(
+      wrappedTexts,
+      resolveEmbeddingBatchMaxTexts(loadConfig()),
+      (texts) => embedBatch(texts, { abortSignal: args.abortSignal }),
+    );
     return {
       kind: 'success',
       embeddedChunks: chunks.map((c, i) => ({

@@ -2106,18 +2106,23 @@ export class PGLiteEngine implements BrainEngine {
   /**
    * Build the stale-chunk WHERE clause + positional params. embed_skip is
    * always excluded. `signature` widens "stale" to include embedding_signature
-   * drift (NULL grandfathered → never stale). Shared by countStaleChunks +
+   * drift (NULL grandfathered). Active markdown pages whose contextual
+   * retrieval mode is NULL are also stale so embed --stale can stamp CR provenance
+   * after the contextual-retrieval migration. Shared by countStaleChunks +
    * sumStaleChunkChars so they can't drift.
    */
   private buildStaleChunkWhere(opts?: { sourceId?: string; signature?: string }): { where: string; params: unknown[] } {
     const params: unknown[] = [];
     const conds: string[] = [];
+    const staleArms = [
+      `cc.embedding IS NULL`,
+      `(p.deleted_at IS NULL AND p.page_kind = 'markdown' AND p.contextual_retrieval_mode IS NULL)`,
+    ];
     if (opts?.signature !== undefined) {
       params.push(opts.signature);
-      conds.push(`(cc.embedding IS NULL OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $${params.length}))`);
-    } else {
-      conds.push(`cc.embedding IS NULL`);
+      staleArms.push(`(p.embedding_signature IS NOT NULL AND p.embedding_signature <> $${params.length})`);
     }
+    conds.push(`(${staleArms.join(' OR ')})`);
     conds.push(`NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`);
     if (opts?.sourceId !== undefined) {
       params.push(opts.sourceId);
@@ -2210,10 +2215,12 @@ export class PGLiteEngine implements BrainEngine {
         const { rows } = isFirstPage ? await this.db.query(
           `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
                   cc.model, cc.token_count, p.source_id, cc.page_id,
-                  p.updated_at
+                  p.updated_at,
+                  p.contextual_retrieval_mode AS page_contextual_retrieval_mode,
+                  p.embedding_signature AS page_embedding_signature
              FROM content_chunks cc
              JOIN pages p ON p.id = cc.page_id
-            WHERE cc.embedding IS NULL
+            WHERE (cc.embedding IS NULL OR (p.deleted_at IS NULL AND p.page_kind = 'markdown' AND p.contextual_retrieval_mode IS NULL))
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
             LIMIT $1`,
@@ -2221,10 +2228,12 @@ export class PGLiteEngine implements BrainEngine {
         ) : await this.db.query(
           `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
                   cc.model, cc.token_count, p.source_id, cc.page_id,
-                  p.updated_at
+                  p.updated_at,
+                  p.contextual_retrieval_mode AS page_contextual_retrieval_mode,
+                  p.embedding_signature AS page_embedding_signature
              FROM content_chunks cc
              JOIN pages p ON p.id = cc.page_id
-            WHERE cc.embedding IS NULL
+            WHERE (cc.embedding IS NULL OR (p.deleted_at IS NULL AND p.page_kind = 'markdown' AND p.contextual_retrieval_mode IS NULL))
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
               AND (
                 p.updated_at < $1::timestamptz
@@ -2240,10 +2249,12 @@ export class PGLiteEngine implements BrainEngine {
       const { rows } = isFirstPage ? await this.db.query(
         `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
                 cc.model, cc.token_count, p.source_id, cc.page_id,
-                p.updated_at
+                p.updated_at,
+                p.contextual_retrieval_mode AS page_contextual_retrieval_mode,
+                p.embedding_signature AS page_embedding_signature
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
+          WHERE (cc.embedding IS NULL OR (p.deleted_at IS NULL AND p.page_kind = 'markdown' AND p.contextual_retrieval_mode IS NULL))
             AND p.source_id = $1
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
@@ -2252,10 +2263,12 @@ export class PGLiteEngine implements BrainEngine {
       ) : await this.db.query(
         `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
                 cc.model, cc.token_count, p.source_id, cc.page_id,
-                p.updated_at
+                p.updated_at,
+                p.contextual_retrieval_mode AS page_contextual_retrieval_mode,
+                p.embedding_signature AS page_embedding_signature
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
+          WHERE (cc.embedding IS NULL OR (p.deleted_at IS NULL AND p.page_kind = 'markdown' AND p.contextual_retrieval_mode IS NULL))
             AND p.source_id = $1
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             AND (
@@ -2277,10 +2290,12 @@ export class PGLiteEngine implements BrainEngine {
     if (opts?.sourceId === undefined) {
       const { rows } = await this.db.query(
         `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-                cc.model, cc.token_count, p.source_id, cc.page_id
+                cc.model, cc.token_count, p.source_id, cc.page_id,
+                p.contextual_retrieval_mode AS page_contextual_retrieval_mode,
+                p.embedding_signature AS page_embedding_signature
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
+          WHERE (cc.embedding IS NULL OR (p.deleted_at IS NULL AND p.page_kind = 'markdown' AND p.contextual_retrieval_mode IS NULL))
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             AND (cc.page_id, cc.chunk_index) > ($1, $2)
           ORDER BY cc.page_id, cc.chunk_index
@@ -2291,10 +2306,12 @@ export class PGLiteEngine implements BrainEngine {
     }
     const { rows } = await this.db.query(
       `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-              cc.model, cc.token_count, p.source_id, cc.page_id
+              cc.model, cc.token_count, p.source_id, cc.page_id,
+              p.contextual_retrieval_mode AS page_contextual_retrieval_mode,
+              p.embedding_signature AS page_embedding_signature
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NULL
+        WHERE (cc.embedding IS NULL OR (p.deleted_at IS NULL AND p.page_kind = 'markdown' AND p.contextual_retrieval_mode IS NULL))
           AND p.source_id = $1
           AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           AND (cc.page_id, cc.chunk_index) > ($2, $3)

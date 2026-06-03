@@ -429,6 +429,7 @@ describe('PGLiteEngine: stale chunk pagination (D7 + REGRESSION)', () => {
       { chunk_index: 0, chunk_text: 'no embed', chunk_source: 'compiled_truth' },
       { chunk_index: 1, chunk_text: 'has embed', chunk_source: 'compiled_truth', embedding: new Float32Array(CHUNK_EMBED_DIM).fill(0.1) },
     ]);
+    await engine.updatePageContextualRetrievalState('test/stale-a', 'default', 'title', 'seed-generation');
     expect(await engine.countStaleChunks()).toBe(1);
   });
 

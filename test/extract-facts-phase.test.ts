@@ -9,9 +9,14 @@
  * compiled_truth + frontmatter are realistic.
  */
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -174,6 +179,63 @@ describe('runExtractFacts — happy path', () => {
     const r = await runExtractFacts(engine);  // no slugs filter
     expect(r.pagesScanned).toBe(2);
     expect(r.factsInserted).toBe(2);
+  });
+
+  test('splits embedding calls by configured max texts and preserves fact embedding order', async () => {
+    const gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-extract-facts-'));
+    const calls: string[][] = [];
+
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-fake' },
+    });
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+      calls.push([...values]);
+      return {
+        embeddings: values.map((value) => {
+          const firstDim = value === 'Alpha fact' ? 11 : value === 'Beta fact' ? 22 : 33;
+          return Array.from({ length: 1536 }, (_, i) => i === 0 ? firstDim : 0);
+        }),
+      };
+    }) as any);
+
+    try {
+      await putPage('people/alice', FACT_FENCE(
+        `| 1 | Alpha fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |
+| 2 | Beta fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |
+| 3 | Gamma fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+      ));
+
+      await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_EMBEDDING_BATCH_MAX_TEXTS: '1' }, async () => {
+        const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+        expect(r.factsInserted).toBe(3);
+      });
+
+      expect(calls).toEqual([
+        ['Alpha fact'],
+        ['Beta fact'],
+        ['Gamma fact'],
+      ]);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = await (engine as any).db.query(
+        `SELECT fact,
+                CASE WHEN embedding IS NULL THEN NULL ELSE (embedding::text::json->>0)::float8 END AS first_dim
+           FROM facts
+          WHERE source_markdown_slug = 'people/alice'
+          ORDER BY row_num`,
+      );
+      expect(rows.rows.map((row: { fact: string; first_dim: number | null }) => [row.fact, row.first_dim])).toEqual([
+        ['Alpha fact', 11],
+        ['Beta fact', 22],
+        ['Gamma fact', 33],
+      ]);
+    } finally {
+      __setEmbedTransportForTests(null);
+      resetGateway();
+      rmSync(gbrainHome, { recursive: true, force: true });
+    }
   });
 });
 

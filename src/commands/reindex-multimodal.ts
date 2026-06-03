@@ -30,9 +30,11 @@ import { tryAcquireDbLock } from '../core/db-lock.ts';
 import type { DbLockHandle } from '../core/db-lock.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { embedMultimodalSafe } from '../core/ai/gateway.ts';
+import type { MultimodalInput } from '../core/ai/types.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { gbrainPath } from '../core/config.ts';
+import { gbrainPath, loadConfig, resolveEmbeddingBatchMaxTexts } from '../core/config.ts';
+import { embedItemsInBatches } from '../core/embedding-batch.ts';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 // v0.41.15.0 (T9, D9): per-chunk UPDATE workers within each batch.
@@ -78,6 +80,8 @@ export async function runReindexMultimodal(
   engine: BrainEngine,
   opts: ReindexMultimodalOpts,
 ): Promise<ReindexMultimodalResult> {
+  const config = loadConfig();
+  const embeddingBatchMaxTexts = resolveEmbeddingBatchMaxTexts(config);
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('reindex_multimodal', 0);
 
@@ -87,9 +91,7 @@ export async function runReindexMultimodal(
   // here with a paste-ready hint rather than mid-reindex with a vector(N)
   // INSERT error.
   try {
-    const { loadConfig } = await import('../core/config.ts');
-    const cfg = loadConfig();
-    const multimodalModel = cfg?.embedding_multimodal_model;
+    const multimodalModel = config?.embedding_multimodal_model;
     if (multimodalModel) {
       const { resolveSchemaMultimodalDim } = await import('../core/embedding-dim-check.ts');
       const pre = resolveSchemaMultimodalDim({
@@ -251,9 +253,13 @@ export async function runReindexMultimodal(
       // failed_indices surfaced. We persist what succeeded and log what
       // failed for the next run to retry.
       if (!opts.noEmbed) {
-        const result = await embedMultimodalSafe(
+        const embeddings = await embedItemsInBatches<MultimodalInput, Float32Array | undefined>(
           items.map(it => ({ kind: 'text' as const, text: it.text })),
-          { inputType: 'document' },
+          embeddingBatchMaxTexts,
+          async (batch) => {
+            const result = await embedMultimodalSafe(batch, { inputType: 'document' });
+            return result.embeddings;
+          },
         );
         // v0.41.15.0 (T9): per-chunk UPDATE loop wrapped in the sliding
         // pool. JS single-threaded event loop makes reembedded++ /
@@ -271,7 +277,7 @@ export async function runReindexMultimodal(
           workers: writersResolved.workers,
           failureLabel: (it) => String(it.id),
           onItem: async (item, i) => {
-            const vec = result.embeddings[i];
+            const vec = embeddings[i];
             if (vec) {
               const vecLiteral = `[${Array.from(vec).join(',')}]`;
               await sql`

@@ -54,6 +54,13 @@ describe('thin-client routing audit — v0.32 REFUSE additions stay in the table
       expect(setBlock).toContain(`'${command}'`);
     });
 
+    test(`'${command}' is in CLI_ONLY so the dispatch guard can see it`, () => {
+      const setStart = CLI_SOURCE.indexOf('const CLI_ONLY = new Set([');
+      const setEnd = CLI_SOURCE.indexOf(']);', setStart);
+      const setBlock = CLI_SOURCE.slice(setStart, setEnd);
+      expect(setBlock).toContain(`'${command}'`);
+    });
+
     test(`'${command}' has a hint in THIN_CLIENT_REFUSE_HINTS`, () => {
       const hintsStart = CLI_SOURCE.indexOf(
         'const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {',

@@ -8,7 +8,7 @@ import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
-import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
+import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
@@ -26,7 +26,8 @@ import {
   buildContentFlagMarker,
   isQuarantined,
 } from './quarantine.ts';
-import { loadConfig, loadConfigWithEngine } from './config.ts';
+import { loadConfig, loadConfigWithEngine, resolveEmbeddingBatchMaxTexts, resolveMarkdownChunkMaxChars } from './config.ts';
+import { embedTextsInBatches } from './embedding-batch.ts';
 import {
   buildContextualPrefix,
   modeRequiresHaiku,
@@ -371,6 +372,7 @@ export async function importFromContent(
   let pageQuarantined = false;
   let pageFlagged = false;
   let pageFlagReason: 'markup_heavy' | 'oversized' | undefined;
+  let markdownChunkMaxChars = resolveMarkdownChunkMaxChars(null);
   {
     const baseCfg = loadConfig();
     let effectiveCfg = baseCfg;
@@ -384,6 +386,7 @@ export async function importFromContent(
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[gbrain] content-sanity: DB config lift failed (${msg}); falling back to file/env\n`);
     }
+    markdownChunkMaxChars = resolveMarkdownChunkMaxChars(effectiveCfg);
     const cs = effectiveCfg?.content_sanity ?? {};
     // GBRAIN_NO_SANITY=1 fast-path: loadConfig() returns null when
     // there's no `~/.gbrain/config.json` AND no DATABASE_URL env var
@@ -640,12 +643,12 @@ export async function importFromContent(
   const embedSkipped = isEmbedSkipped(parsed.frontmatter) || isQuarantined(parsed.frontmatter);
   if (!embedSkipped) {
     if (parsed.compiled_truth.trim()) {
-      for (const c of chunkText(parsed.compiled_truth)) {
+      for (const c of chunkText(parsed.compiled_truth, { maxChars: markdownChunkMaxChars })) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
     if (parsed.timeline?.trim()) {
-      for (const c of chunkText(parsed.timeline)) {
+      for (const c of chunkText(parsed.timeline, { maxChars: markdownChunkMaxChars })) {
         chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
     }
@@ -704,7 +707,10 @@ export async function importFromContent(
     const wrappedTexts = prefix
       ? chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source))
       : chunks.map((c) => c.chunk_text);
-    const embeddings = await embedBatch(wrappedTexts);
+    const embeddings = await embedTextsInBatches(
+      wrappedTexts,
+      resolveEmbeddingBatchMaxTexts(loadConfig()),
+    );
     for (let i = 0; i < chunks.length; i++) {
       chunks[i].embedding = embeddings[i];
       // token_count tracks the wrapped string length so cost reporting
@@ -1141,7 +1147,10 @@ export async function importCodeFile(
   if (!opts.noEmbed && needsEmbedIndexes.length > 0) {
     try {
       const textsToEmbed = needsEmbedIndexes.map((i) => chunks[i]!.chunk_text);
-      const embeddings = await embedBatch(textsToEmbed);
+      const embeddings = await embedTextsInBatches(
+        textsToEmbed,
+        resolveEmbeddingBatchMaxTexts(loadConfig()),
+      );
       for (let j = 0; j < needsEmbedIndexes.length; j++) {
         const i = needsEmbedIndexes[j]!;
         chunks[i]!.embedding = embeddings[j]!;
