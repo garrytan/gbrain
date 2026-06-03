@@ -131,8 +131,11 @@ for c in "${CHECKS[@]}"; do
         sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
       cap_pid=$!
       wait "$pid" 2>/dev/null
-      kill "$cap_pid" 2>/dev/null
-      wait "$cap_pid" 2>/dev/null
+      rc=$?
+      kill "$cap_pid" 2>/dev/null || true
+      wait "$cap_pid" 2>/dev/null || true
+      echo "$rc" > "$EXIT_FILE"
+      exit 0
     fi
     rc=$?
     echo "$rc" > "$EXIT_FILE"
