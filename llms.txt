@@ -7,7 +7,9 @@ Repo: https://github.com/garrytan/gbrain
 ## Core entry points
 
 - [AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md): Start here if you are not Claude Code. Install order, trust boundary, skill resolver, config/debug/migration pointers.
-- [CLAUDE.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md): Architecture reference. Key files, trust boundaries, engine factory, test layout.
+- [CLAUDE.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md): Orientation + resolver. North Star, two axes, architecture + cross-cutting invariants, the reference map pointing at on-demand docs, and the inline ship IRON RULES.
+- [docs/architecture/KEY_FILES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/KEY_FILES.md): Per-file index for the gbrain repo: what each src/ file does + its load-bearing invariants. The on-demand detail CLAUDE.md's reference map routes to.
+- [docs/architecture/thin-client.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/thin-client.md): The thin-client / remote-MCP / cross-modal routing seam: isThinClient detection, callRemoteTool, SSRF-hardened URL validation, per-command routing.
 - [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md): 9-step agent installation.
 - [skills/RESOLVER.md](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/RESOLVER.md): Skill dispatcher. Read first for any task.
 - [README.md](https://raw.githubusercontent.com/garrytan/gbrain/master/README.md): Project overview, benchmarks, 30-minute setup.
@@ -41,6 +43,11 @@ Repo: https://github.com/garrytan/gbrain
 - [docs/UPGRADING_DOWNSTREAM_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md): Patches for downstream agent skill forks. One section per release.
 - [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version (v0.5.0 - v0.14.1) agent-executable migration instructions.
 - [CHANGELOG.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md): Release-summary voice + itemized changes + self-repair block per version.
+
+## Contributing
+
+- [docs/TESTING.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/TESTING.md): Test command tiers, the test-isolation lint (R1-R4), the canonical PGLite block, withEnv, the E2E DB lifecycle, and the file taxonomy. Maintainer-facing.
+- [docs/RELEASING.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/RELEASING.md): Full release + contributor process: pre-ship test requirements, the CHANGELOG voice + release-summary template, the 'To take advantage of vX' block, version migrations, GitHub Actions SHA refresh, PR conventions, community-PR-wave. (Ship IRON RULES stay inline in CLAUDE.md.)
 
 ## Philosophy
 

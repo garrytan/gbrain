@@ -13,6 +13,7 @@ import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts, HybridSearchMeta } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
+import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
 import {
   resolveAdaptiveReturn,
@@ -72,15 +73,52 @@ export async function stampContentFlags(engine: BrainEngine, results: SearchResu
   }
 }
 
-export async function awaitPendingSearchCacheWrites(): Promise<void> {
-  if (pendingCacheWrites.size === 0) return;
-  await Promise.allSettled([...pendingCacheWrites]);
+/**
+ * v0.42.20.0 — bounded drain (was an unbounded `Promise.allSettled`, codex
+ * confirmed; TODOS retrofit). Mirrors `awaitPendingLastRetrievedWrites`: races
+ * the in-flight cache writes against a timeout and reports leftovers so the
+ * background-work registry can move on to disconnect instead of hanging on a
+ * wedged cache write. Drops the timed-out snapshot's references so a long-lived
+ * process doesn't accumulate forever-pending ghosts.
+ */
+export async function awaitPendingSearchCacheWrites(
+  timeoutMs = 5_000,
+): Promise<{ unfinished: number }> {
+  if (pendingCacheWrites.size === 0) return { unfinished: 0 };
+  const snapshot = [...pendingCacheWrites];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
+  const drain = Promise.allSettled(snapshot).then(() => 'drained' as const);
+  const outcome = await Promise.race([drain, timeout]);
+  if (timer) clearTimeout(timer);
+  if (outcome === 'timeout') {
+    const unfinished = pendingCacheWrites.size;
+    for (const p of snapshot) pendingCacheWrites.delete(p);
+    return { unfinished };
+  }
+  return { unfinished: 0 };
+}
+
+/** Test seam — clears the pending cache-write set so each test starts clean. */
+export function _resetPendingSearchCacheWritesForTests(): void {
+  pendingCacheWrites.clear();
 }
 
 function trackCacheWrite(promise: Promise<unknown>): void {
   pendingCacheWrites.add(promise);
   promise.finally(() => pendingCacheWrites.delete(promise)).catch(() => { /* swallow */ });
 }
+
+// v0.42.20.0 — register as a background-work sink (order 2; no abort — bare
+// cache INSERTs). Drained before CLI disconnect, for BOTH search and query
+// (previously only `query` drained it, and unbounded).
+registerBackgroundWorkDrainer({
+  name: 'search-cache',
+  order: 2,
+  drain: (ms) => awaitPendingSearchCacheWrites(ms),
+});
 /**
  * Backlink boost coefficient. Score is multiplied by (1 + BACKLINK_BOOST_COEF * log(1 + count)).
  * - 0 backlinks: factor = 1.0 (no boost).
@@ -652,6 +690,79 @@ export interface HybridSearchOpts extends SearchOpts {
    * row; everyone else leaves it undefined and pays no cost.
    */
   onMeta?: (meta: HybridSearchMeta) => void;
+  /**
+   * v0.42.20.0 (Fix 3, #1775) INTERNAL — shared query-embed deadline threaded
+   * from `hybridSearchCached` into the inner `hybridSearch` so the cache-lookup
+   * embed and the inner embed share ONE wall-clock budget (worst case ~one
+   * timeout, not two). Direct `hybridSearch` callers leave it undefined and get
+   * a fresh per-call deadline. Not part of the public contract.
+   */
+  _queryEmbedDeadline?: QueryEmbedDeadline;
+}
+
+/**
+ * v0.42.20.0 (Fix 3, #1775) — bound the query-time embed so a stalled provider
+ * (the user's zeroentropy case) fails over to keyword instead of hanging past
+ * the CLI's 10s force-exit. Default 6s leaves headroom under that deadline.
+ */
+const QUERY_EMBED_TIMEOUT_MS = (() => {
+  const n = Number(process.env.GBRAIN_QUERY_EMBED_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 6_000;
+})();
+
+/**
+ * Floor for the remaining shared-deadline budget at each embed call (codex).
+ * The shared deadline is absolute from `hybridSearchCached` entry, so slow
+ * expansion/keyword (or a 6s cache-lookup stall) before the inner embed could
+ * leave ~0 budget and starve a HEALTHY embed into a false keyword-only result.
+ * Flooring guarantees every embed gets at least this long, so a fast healthy
+ * embed (~0.5s) always succeeds. Worst case under a stalled provider on the
+ * cache-miss path: cache-lookup (6s) + inner floor (2s) = 8s, still under the
+ * 10s CLI force-exit.
+ */
+const MIN_QUERY_EMBED_BUDGET_MS = 2_000;
+
+export interface QueryEmbedDeadline {
+  /** Aborts the underlying fetch (clean socket close) when the budget elapses. */
+  signal: AbortSignal;
+  /** Absolute wall-clock deadline (ms epoch) — shared so a second embed sees the elapsed budget. */
+  deadlineAt: number;
+}
+
+export function makeQueryEmbedDeadline(ms = QUERY_EMBED_TIMEOUT_MS): QueryEmbedDeadline {
+  return { signal: AbortSignal.timeout(ms), deadlineAt: Date.now() + ms };
+}
+
+/**
+ * Embed a query bounded by the shared deadline. Two layers: (1) `abortSignal`
+ * aborts the fetch so the socket closes and the process can exit clean; (2) a
+ * `Promise.race` against the REMAINING budget GUARANTEES the await rejects even
+ * if a wedged provider ignores the abort. On rejection the caller's existing
+ * try/catch falls back to keyword. The losing embed promise's late rejection is
+ * swallowed so it never surfaces as an unhandledRejection.
+ */
+export async function embedQueryBounded(
+  text: string,
+  embedOpts: { embeddingModel?: string; dimensions?: number } | undefined,
+  dl: QueryEmbedDeadline,
+): Promise<Float32Array> {
+  const p = embedQuery(text, { ...(embedOpts ?? {}), abortSignal: dl.signal });
+  p.catch(() => { /* swallow the loser's late rejection */ });
+  // Floor the budget so a healthy embed isn't starved when the shared absolute
+  // deadline was mostly consumed by prior work (codex). Still bounded overall.
+  const remaining = Math.max(MIN_QUERY_EMBED_BUDGET_MS, dl.deadlineAt - Date.now());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`query embed deadline ${QUERY_EMBED_TIMEOUT_MS}ms exceeded`)),
+      remaining,
+    );
+  });
+  try {
+    return await Promise.race([p, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function hybridSearch(
@@ -1063,7 +1174,12 @@ export async function hybridSearch(
       const embedOpts = resolvedCol.embeddingModel
         ? { embeddingModel: resolvedCol.embeddingModel, dimensions: resolvedCol.dimensions }
         : undefined;
-      const embeddings = await Promise.all(queries.map(q => embedQuery(q, embedOpts)));
+      // v0.42.20.0 (Fix 3) — bound the query embed. Reuse the shared deadline
+      // threaded from hybridSearchCached (so the cache-lookup embed + this one
+      // share one ~6s budget); direct callers get a fresh deadline. On timeout
+      // the embed throws → the catch below falls back to keyword-only.
+      const embedDl = opts?._queryEmbedDeadline ?? makeQueryEmbedDeadline();
+      const embeddings = await Promise.all(queries.map(q => embedQueryBounded(q, embedOpts, embedDl)));
       queryEmbedding = embeddings[0];
       const textLists = await Promise.all(
         embeddings.map(emb => engine.searchVector(emb, searchOpts)),
@@ -1459,6 +1575,13 @@ export async function hybridSearchCached(
   // attempt it when the cache is enabled AND the gateway has an embedding
   // provider configured.
   let queryEmbedding: Float32Array | null = null;
+  // v0.42.20.0 (Fix 3, #1775) — ONE shared query-embed deadline for the
+  // cache-lookup embed below AND the inner hybridSearch embed (threaded via
+  // opts._queryEmbedDeadline). On a stalled provider the cache-lookup embed
+  // times out (→ cacheStatus 'disabled', fall through), then the inner embed
+  // sees the already-elapsed budget and fails fast → keyword fallback. Worst
+  // case ~one timeout (~6s), comfortably under the CLI 10s force-exit.
+  const queryEmbedDl = makeQueryEmbedDeadline();
   if (!skipCache) {
     try {
       const { isAvailable } = await import('../ai/gateway.ts');
@@ -1470,7 +1593,10 @@ export async function hybridSearchCached(
       const providerProbeCached = resolvedColCached.embeddingModel || undefined;
       if (isAvailable('embedding', providerProbeCached)) {
         // v0.35.0.0+: query-side embedding (cache lookup path).
-        queryEmbedding = await embedQuery(query);
+        // v0.42.20.0 (Fix 3) — bounded by the shared deadline; on timeout this
+        // throws → caught below → cacheStatus 'disabled' → falls through to the
+        // inner hybridSearch (which reuses the same elapsed deadline).
+        queryEmbedding = await embedQueryBounded(query, undefined, queryEmbedDl);
       } else {
         cacheStatus = 'disabled';
       }
@@ -1533,6 +1659,9 @@ export async function hybridSearchCached(
   const userOnMeta = opts?.onMeta;
   const results = await hybridSearch(engine, query, {
     ...opts,
+    // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
+    // doesn't start a fresh 6s budget after the cache-lookup already spent it.
+    _queryEmbedDeadline: queryEmbedDl,
     onMeta: (m) => {
       innerMetaBox.current = m;
       // Do NOT call userOnMeta here — we'll emit a merged meta below

@@ -119,9 +119,15 @@ describe('dream CLI flag wiring', () => {
       expect(dreamSrc).toContain('--drain currently supports only --phase extract_atoms');
     });
 
-    test('drain holds the same cycle lock id (contends with the routine cycle)', () => {
-      expect(dreamSrc).toContain('cycleLockIdFor(resolvedSourceId)');
-      expect(dreamSrc).toContain('withRefreshingLock');
+    test('drain routes through the shared helper with the resolved source (5A)', () => {
+      // v0.42.10.0 (#1685 GAP D / 5A): the lock+batch+count wiring moved into
+      // runExtractAtomsDrainForSource so the CLI, the Minion handler, and
+      // autopilot share ONE drain path. dream threads resolvedSourceId so the
+      // helper picks cycleLockIdFor(resolvedSourceId) — the same lock the routine
+      // cycle holds for that source. The lock-id contract is now pinned in
+      // test/extract-atoms-drain.test.ts ("shared wiring helper holds the cycle lock").
+      expect(dreamSrc).toContain('runExtractAtomsDrainForSource');
+      expect(dreamSrc).toContain('sourceId: resolvedSourceId');
     });
 
     test('drain reports remaining + exits non-zero when incomplete', () => {

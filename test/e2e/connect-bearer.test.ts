@@ -34,7 +34,13 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), 'gbrain-connect-e2e-'));
-    const env = { ...process.env, GBRAIN_HOME: home };
+    // Hermetic PGLite: strip any ambient Postgres URL so `init --pglite` and the
+    // spawned `serve` actually use PGLite. Without this, a dev/CI shell with
+    // DATABASE_URL set leaks it into the subprocess and the brain comes up on
+    // Postgres, breaking the `engine: pglite` assertion.
+    const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: home };
+    delete env.DATABASE_URL;
+    delete env.GBRAIN_DATABASE_URL;
 
     execFileSync('bun', ['run', 'src/cli.ts', 'init', '--pglite', '--no-embedding', '--non-interactive'], {
       cwd: process.cwd(), env, stdio: 'ignore',

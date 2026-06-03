@@ -608,6 +608,15 @@ export interface StalePageRow {
   timeline: string;
   frontmatter: Record<string, unknown>;
   updated_at: Date;
+  /**
+   * Full-precision (microsecond) UTC ISO string of `updated_at`, projected
+   * straight from the DB via `to_char(... AT TIME ZONE 'UTC', '...US"Z"')`.
+   * `updated_at` (a JS `Date`) is millisecond-truncated, so stamping it back as
+   * `links_extracted_at` left the row permanently stale on Postgres (#1768).
+   * `extractStaleFromDB` stamps THIS instead, so `links_extracted_at` equals the
+   * DB `updated_at` exactly and the staleness predicate clears.
+   */
+  updated_at_iso: string;
 }
 
 export interface ChunkInput {
@@ -882,9 +891,11 @@ export interface SearchOpts {
   types?: PageType[];
   exclude_slugs?: string[];
   /**
-   * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/, archive/,
+   * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/,
    * attachments/, .raw/) and the GBRAIN_SEARCH_EXCLUDE env var. Stacks with
    * `exclude_slugs` (exact match) — a row is filtered if it matches either set.
+   * NOTE (issue #1777): `archive/` is NOT hard-excluded; it is demoted (0.5x)
+   * via DEFAULT_SOURCE_BOOSTS so archived content stays findable by default.
    */
   exclude_slug_prefixes?: string[];
   /**

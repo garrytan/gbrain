@@ -19,8 +19,15 @@
 
 import { quarantineFilterFragment } from '../quarantine.ts';
 
-/** Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal. */
-function escapeLikePattern(s: string): string {
+/**
+ * Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal.
+ *
+ * Exported (issue #1777) so callers that build parameterized LIKE clauses with
+ * `ESCAPE '\'` (e.g. the `hidden_by_search_policy` doctor check) reuse this one
+ * escaper instead of re-implementing it. Pair with `ESCAPE '\'` in the SQL so
+ * the backslash this inserts is treated as the escape char, not a literal.
+ */
+export function escapeLikePattern(s: string): string {
   return s.replace(/[%_\\]/g, '\\$&');
 }
 

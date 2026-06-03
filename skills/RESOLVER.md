@@ -82,6 +82,7 @@ This is the dispatcher. Skills are the implementation. **Read the skill file bef
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run" | `skills/maintain/SKILL.md` (dream cycle section) |
 | "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
 | "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain autopilot --install --repo ~/brain` |
+| "Upgrade gbrain", "update gbrain", "gbrain update available", `UPGRADE_AVAILABLE`, "is gbrain up to date" | `skills/gbrain-upgrade/SKILL.md` |
 | Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |
 | "Populate links", "extract links", "backfill graph" | `skills/maintain/SKILL.md` (graph population phase) |
 | "Populate timeline", "extract timeline entries" | `skills/maintain/SKILL.md` (graph population phase) |

@@ -39,6 +39,8 @@ import {
   parseWorkers,
   parseDurationSeconds,
   DEFAULT_PARALLEL_SOURCES,
+  resolveMaxConnections,
+  clampWorkersForConnectionBudget,
 } from '../core/sync-concurrency.ts';
 import {
   tryAcquireDbLock,
@@ -58,8 +60,58 @@ import { getDefaultSourcePath } from '../core/source-resolver.ts';
 // remote staleness path reads a column instead of shelling out to git.
 // lagFromContentMs is the remote/column comparator (buildSyncStatusReport
 // backs the get_status_snapshot MCP op — must NOT shell out to git).
-import { newestCommitMs, lagFromContentMs } from '../core/source-health.ts';
+import { newestCommitMs, commitTimeMs, lagFromContentMs } from '../core/source-health.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
+import {
+  loadOpCheckpoint,
+  recordCompleted,
+  clearOpCheckpoint,
+  resumeFilter,
+  syncFingerprint,
+  type OpCheckpointKey,
+} from '../core/op-checkpoint.ts';
+
+/**
+ * v0.42.x (#1794) -- resumable incremental sync checkpoint.
+ *
+ * Two op-checkpoint rows back one resumable incremental sync, both keyed by
+ * the same syncFingerprint(sourceId, lastCommit):
+ *   - op 'sync'        -> completed_keys = repo-relative file paths drained
+ *   - op 'sync-target' -> completed_keys = [pinnedTargetCommit]
+ *
+ * Splitting the pinned target into its own row keeps the path set free of any
+ * sentinel that could collide with a real filename, and both rows clear
+ * together on full completion. The fingerprint encodes ONLY (sourceId,
+ * lastCommit) -- never the target or live HEAD -- so the checkpoint survives
+ * every killed-and-resumed run while lastCommit..HEAD grows underneath it.
+ */
+const SYNC_CKPT_OP = 'sync';
+const SYNC_TARGET_OP = 'sync-target';
+
+function syncCheckpointKeys(
+  sourceId: string | undefined,
+  lastCommit: string,
+): { paths: OpCheckpointKey; target: OpCheckpointKey } {
+  const fp = syncFingerprint({ sourceId, lastCommit });
+  return {
+    paths: { op: SYNC_CKPT_OP, fingerprint: fp },
+    target: { op: SYNC_TARGET_OP, fingerprint: fp },
+  };
+}
+
+/**
+ * Files flushed to the checkpoint per batch. Larger = fewer JSONB rewrites
+ * (less write amplification on huge backlogs) at the cost of more re-done
+ * import work on a kill (cheap -- content_hash short-circuits the re-import).
+ */
+const SYNC_CHECKPOINT_EVERY_DEFAULT = 1000;
+
+function resolveSyncCheckpointEvery(): number {
+  const raw = process.env.GBRAIN_SYNC_CHECKPOINT_EVERY;
+  if (!raw) return SYNC_CHECKPOINT_EVERY_DEFAULT;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : SYNC_CHECKPOINT_EVERY_DEFAULT;
+}
 
 /**
  * v0.42.7 (#1696, D5): which terminal sync statuses warrant the end-of-sync
@@ -641,6 +693,23 @@ See also:
   console.log(`job_id=${job.id}`);
 }
 
+/**
+ * v0.42.x (#1794, Part B): typed lock-busy error so callers can distinguish a
+ * benign "another sync holds the lock, skip cleanly" from a real failure.
+ * Subclasses Error so existing CLI handlers that print `err.message` keep the
+ * rich `formatLockBusyMessage` text verbatim. The Minion `sync` handler catches
+ * this to mark the job skipped (not failed) — single-flight backpressure: the
+ * cron/autopilot sync defers to the holder instead of erroring + retrying noisily.
+ */
+export class SyncLockBusyError extends Error {
+  readonly lockKey: string;
+  constructor(message: string, lockKey: string) {
+    super(message);
+    this.name = 'SyncLockBusyError';
+    this.lockKey = lockKey;
+  }
+}
+
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   // v0.22.13 CODEX-2: cross-process writer lock prevents two concurrent
   // syncs from racing on the same last_commit anchor (last writer wins,
@@ -675,7 +744,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       return await withRefreshingLock(engine, lockKey, () => performSyncInner(engine, opts));
     } catch (err) {
       if (err instanceof LockUnavailableError) {
-        throw new Error(await formatLockBusyMessage(engine, lockKey));
+        throw new SyncLockBusyError(await formatLockBusyMessage(engine, lockKey), lockKey);
       }
       throw err;
     }
@@ -684,7 +753,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // Legacy global-lock path (single-default-source brains).
   const lockHandle = await tryAcquireDbLock(engine, lockKey);
   if (!lockHandle) {
-    throw new Error(await formatLockBusyMessage(engine, lockKey));
+    throw new SyncLockBusyError(await formatLockBusyMessage(engine, lockKey), lockKey);
   }
   try {
     return await performSyncInner(engine, opts);
@@ -751,7 +820,7 @@ async function runBreakLock(
   sourceId: string,
   opts: { force: boolean; json: boolean; maxAgeSeconds?: number },
 ): Promise<number> {
-  const { inspectLock, deleteLockRow, deleteLockRowIfStale } = await import('../core/db-lock.ts');
+  const { inspectLock, deleteLockRow, deleteLockRowIfStale, classifyHolderLiveness } = await import('../core/db-lock.ts');
   const { hostname } = await import('os');
   const localHost = hostname();
   let snap;
@@ -863,18 +932,19 @@ async function runBreakLock(
     safe = true;
     reason = 'ttl_expired';
   } else {
-    // PID liveness check on local host. process.kill(pid, 0) throws ESRCH
-    // when the PID is dead. Combined with 60s age guard (per outside-voice F7).
-    let alive = true;
-    try { process.kill(snap.holder_pid, 0); }
-    catch { alive = false; }
-    const oldEnough = snap.age_ms >= 60_000;
-    if (!alive && oldEnough) {
+    // PID liveness on local host, via the shared predicate (v0.42 #1780 Gap 3).
+    // Same gate as tryAcquireDbLock's auto-takeover: same-host + provably-dead
+    // (ESRCH) + age >= 60s. EPERM is treated as ALIVE (the PID exists but isn't
+    // ours) — never break a live lock. host is already == localHost here (the
+    // cross-host branch returned above), so classify never yields 'cross_host'.
+    const liveness = classifyHolderLiveness(snap.holder_pid, snap.holder_host, snap.age_ms);
+    if (liveness === 'dead_eligible') {
       safe = true;
       reason = 'pid_dead_age_60s';
-    } else if (!alive && !oldEnough) {
+    } else if (liveness === 'too_young') {
       reason = 'pid_dead_but_lock_too_young';
     } else {
+      // 'alive' | 'unknown' | 'cross_host' (the latter unreachable here).
       reason = 'pid_alive';
     }
   }
@@ -1180,6 +1250,48 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     return performFullSync(engine, repoPath, headCommit, opts);
   }
 
+  // v0.42.x (#1794): resumable incremental sync — resolve the PINNED target.
+  // last_commit advances only at FULL import completion, so a killed run keeps
+  // lastCommit fixed and the checkpoint key stable across every resume even as
+  // the enrich process races HEAD forward underneath us. We drain
+  // `lastCommit..pin`; commits past the pin are a clean next-sync diff (this is
+  // what kills the staleness window — see plan).
+  //   - valid in-flight checkpoint (pin still reachable from HEAD) → resume it.
+  //   - rewrite / force-push (pin no longer an ancestor) → discard, re-pin to HEAD.
+  //   - no checkpoint → pin = HEAD (the normal single-shot case).
+  const ckpt = syncCheckpointKeys(opts.sourceId, lastCommit);
+  const checkpointEvery = resolveSyncCheckpointEvery();
+  let pin = headCommit;
+  let completedPaths: string[] = [];
+  {
+    const storedTargetArr = await loadOpCheckpoint(engine, ckpt.target);
+    const storedTarget = storedTargetArr[0] ?? null;
+    if (storedTarget) {
+      let pinReachable = false;
+      try {
+        git(repoPath, ['merge-base', '--is-ancestor', storedTarget, headCommit]);
+        pinReachable = true;
+      } catch {
+        pinReachable = false;
+      }
+      if (pinReachable) {
+        pin = storedTarget;
+        completedPaths = await loadOpCheckpoint(engine, ckpt.paths);
+        slog(
+          `[sync] resuming checkpoint: ${completedPaths.length} file(s) already done; ` +
+          `draining ${lastCommit.slice(0, 8)}..${pin.slice(0, 8)} (pinned target).`,
+        );
+      } else {
+        slog(
+          `[sync] checkpoint target ${storedTarget.slice(0, 8)} no longer reachable ` +
+          `(history rewritten); restarting against HEAD.`,
+        );
+        await clearOpCheckpoint(engine, ckpt.paths);
+        await clearOpCheckpoint(engine, ckpt.target);
+      }
+    }
+  }
+
   // v0.20.0 Cathedral II Layer 12 (codex SP-1 fix): before returning
   // 'up_to_date' on git-HEAD equality, check the chunker version gate.
   // If sources.chunker_version mismatches CURRENT_CHUNKER_VERSION, force
@@ -1220,8 +1332,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     return result;
   }
 
-  // Diff using git diff (net result, not per-commit)
-  const diffOutput = git(repoPath, ['diff', '--name-status', '-M', `${lastCommit}..${headCommit}`]);
+  // Diff using git diff (net result, not per-commit). v0.42.x (#1794): diff
+  // against the PINNED target, not live HEAD. With a fixed (lastCommit, pin)
+  // both endpoints are stable across every resume, so the manifest is
+  // deterministic and resumeFilter maps cleanly onto completed paths.
+  const diffOutput = git(repoPath, ['diff', '--name-status', '-M', `${lastCommit}..${pin}`]);
   const manifest = buildSyncManifest(diffOutput);
   if (detachedWorkingTreeManifest) {
     manifest.added = unique([...manifest.added, ...detachedWorkingTreeManifest.added]);
@@ -1306,14 +1421,19 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
 
   if (totalChanges === 0) {
-    // Update sync state even with no syncable changes (git advanced)
-    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
+    // Update sync state even with no syncable changes (git advanced). v0.42.x
+    // (#1794): advance to the PINNED target, and clear any checkpoint (a resume
+    // whose remaining range turned out to have no syncable changes still
+    // completes cleanly here).
+    await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(repoPath, pin));
     await engine.setConfig('sync.last_run', new Date().toISOString());
     await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+    await clearOpCheckpoint(engine, ckpt.paths);
+    await clearOpCheckpoint(engine, ckpt.target);
     return {
       status: 'up_to_date',
       fromCommit: lastCommit,
-      toCommit: headCommit,
+      toCommit: pin,
       added: 0, modified: 0, deleted: 0, renamed: 0,
       chunksCreated: 0,
       embedded: 0,
@@ -1325,6 +1445,31 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   if (totalChanges > 100) {
     slog(`Large sync (${totalChanges} files). Importing text, deferring embeddings.`);
   }
+
+  // v0.42.x (#1794): we have real work — persist the PIN now so a crash before
+  // the first path-flush still resumes to THIS target (not re-pin to a newer
+  // HEAD). Idempotent on a resume (the row already holds pin). Never on dry-run
+  // (returned above).
+  await recordCompleted(engine, ckpt.target, [pin]);
+
+  // v0.42.x (#1794): the cross-run completed-path set. Seeded from the loaded
+  // checkpoint so a resume skips already-drained files. `markCompleted` flushes
+  // every `checkpointEvery` additions; on a kill the worst case lost is one
+  // batch of import work (cheap to redo — content_hash short-circuits).
+  const completed = new Set<string>(completedPaths);
+  let sinceFlush = 0;
+  const flushCheckpoint = async (): Promise<void> => {
+    // `[...completed]` is a synchronous snapshot (atomic under concurrent
+    // worker `completed.add`), so a parallel flush can't observe a torn set.
+    await recordCompleted(engine, ckpt.paths, [...completed]);
+  };
+  const markCompleted = async (path: string): Promise<void> => {
+    completed.add(path);
+    if (++sinceFlush >= checkpointEvery) {
+      sinceFlush = 0;
+      await flushCheckpoint();
+    }
+  };
 
   const pagesAffected: string[] = [];
   let chunksCreated = 0;
@@ -1341,10 +1486,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // D-V3-1 invariant: callable ONLY in pre-bookmark phases (pull, delete,
   // rename, import). After the bookmark write at writeSyncAnchor('last_commit'),
   // partial is impossible because extract + embed run to completion.
+  // v0.42.x (#1794): toCommit reports the PINNED target (what this run drains
+  // to), not live HEAD. The checkpoint is flushed periodically inside the loops
+  // (markCompleted), so on abort the banked completed set survives — last_commit
+  // stays at lastCommit (unchanged) and the next run resumes from the checkpoint.
   const partial = (reason: 'timeout' | 'pull_timeout'): SyncResult =>
     buildPartialResult({
       fromCommit: lastCommit,
-      toCommit: headCommit,
+      toCommit: pin,
       filesImported,
       pagesAffected: [...pagesAffected],
       chunksCreated,
@@ -1414,17 +1563,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // OLD per-path loop. The batch engine surface requires sourceId per D5
   // (multi-source-bug-class defense at the type level). Production callers
   // that thread sourceId via resolveSourceWithTier get the new fast path.
-  if (filtered.deleted.length > 0) {
-    progress.start('sync.deletes', filtered.deleted.length);
+  // v0.42.x (#1794): resume-filter the delete set so a resumed run skips paths
+  // already drained in a prior run (deletes are idempotent, but skipping avoids
+  // re-resolving + re-deleting tens of thousands of already-gone pages).
+  const deletesToDo = resumeFilter(filtered.deleted, [...completed]);
+  if (deletesToDo.length > 0) {
+    progress.start('sync.deletes', deletesToDo.length);
     if (opts.sourceId) {
       const sid = opts.sourceId;
       const deleteScopedOpts = { sourceId: sid };
-      for (let i = 0; i < filtered.deleted.length; i += DELETE_BATCH_SIZE) {
+      for (let i = 0; i < deletesToDo.length; i += DELETE_BATCH_SIZE) {
         if (opts.signal?.aborted) {
           progress.finish();
           return partial('timeout');
         }
-        const batch = filtered.deleted.slice(i, i + DELETE_BATCH_SIZE);
+        const batch = deletesToDo.slice(i, i + DELETE_BATCH_SIZE);
 
         // Phase A: batch slug resolution (1 round-trip per batch).
         let pathSlugMap: Map<string, string>;
@@ -1446,6 +1599,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // slugs (paths in filtered.deleted but with no DB row) so
           // downstream extract/embed don't waste lookups.
           pagesAffected.push(...deleted);
+          // v0.42.x (#1794): the whole batch is handled (deleted or already
+          // gone); checkpoint every path so a resume skips it.
+          for (const p of batch) await markCompleted(p);
         } catch (err) {
           // D7 decompose: a transient blip on this batch shouldn't lose all
           // 500 deletes. Fall back to per-slug deletePage for THIS batch
@@ -1455,6 +1611,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             try {
               await engine.deletePage(slugs[j], deleteScopedOpts);
               pagesAffected.push(slugs[j]);
+              await markCompleted(batch[j]);
             } catch (perSlugErr) {
               failedFiles.push({
                 path: batch[j],
@@ -1463,7 +1620,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             }
           }
         }
-        progress.tick(batch.length, `deletes ${Math.min(i + DELETE_BATCH_SIZE, filtered.deleted.length)}/${filtered.deleted.length}`);
+        progress.tick(batch.length, `deletes ${Math.min(i + DELETE_BATCH_SIZE, deletesToDo.length)}/${deletesToDo.length}`);
       }
     } else {
       // Legacy no-sourceId path. The engine batch methods require sourceId
@@ -1471,7 +1628,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // sourceId is unset, fall back to the original per-path loop. Slow
       // but correct; production callers all thread sourceId so this branch
       // is functionally dead post-v0.34.1.
-      for (const path of filtered.deleted) {
+      for (const path of deletesToDo) {
         if (opts.signal?.aborted) {
           progress.finish();
           return partial('timeout');
@@ -1480,6 +1637,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         try {
           await engine.deletePage(slug, deleteOpts);
           pagesAffected.push(slug);
+          await markCompleted(path);
         } catch (err) {
           failedFiles.push({
             path,
@@ -1502,8 +1660,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // + embedding), so the per-iteration updateSlug + importFile loop stays;
   // only the upfront slug-resolve N+1 gets batched. The try/catch around
   // updateSlug for slug-doesn't-exist preserves verbatim.
-  if (filtered.renamed.length > 0) {
-    progress.start('sync.renames', filtered.renamed.length);
+  // v0.42.x (#1794): resume-filter renames on the destination path.
+  const renamesToDo = filtered.renamed.filter(r => !completed.has(r.to));
+  if (renamesToDo.length > 0) {
+    progress.start('sync.renames', renamesToDo.length);
     // v0.18.0+ multi-source: scope updateSlug so the rename only touches the
     // source-A row, not every same-slug row across sources (which would
     // either sweep them all OR violate (source_id, slug) UNIQUE).
@@ -1517,7 +1677,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     const fromSlugByPath = new Map<string, string>();
     if (opts.sourceId) {
       const sid = opts.sourceId;
-      const fromPaths = filtered.renamed.map(r => r.from);
+      const fromPaths = renamesToDo.map(r => r.from);
       for (let i = 0; i < fromPaths.length; i += DELETE_BATCH_SIZE) {
         if (opts.signal?.aborted) {
           progress.finish();
@@ -1536,7 +1696,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       }
     }
 
-    for (const { from, to } of filtered.renamed) {
+    for (const { from, to } of renamesToDo) {
       // v0.41.13.0 (T2 / D-V4-2): per-iteration abort check. Renames call
       // importFile() at line 1173-style sites which can be slow on big files;
       // refactor commits with 200+ renames must respect --timeout.
@@ -1561,6 +1721,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         if (result.status === 'imported') chunksCreated += result.chunks;
       }
       pagesAffected.push(newSlug);
+      await markCompleted(to);
       progress.tick(1, newSlug);
     }
     progress.finish();
@@ -1590,15 +1751,47 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // ones. See src/core/sort-newest-first.ts for the policy.
   sortNewestFirst(addsAndMods);
 
+  // v0.42.x (#1794): resume-filter the import set so a resumed run only
+  // processes files it hasn't already drained. This is the convergence win —
+  // a killed run banks `completed`, the next run skips it (no per-file disk
+  // read or content_hash DB lookup for done files).
+  const importsToDo = resumeFilter(addsAndMods, [...completed]);
+
   // v0.22.13 (PR #490 Q5): one source of truth for the concurrency decision.
   // engine.kind === 'pglite' → forced 1; explicit opts.concurrency wins;
   // auto path returns DEFAULT_PARALLEL_WORKERS only when fileCount > 100.
   const explicitConcurrency = opts.concurrency !== undefined;
-  const effectiveConcurrency = autoConcurrency(engine, addsAndMods.length, opts.concurrency);
-  const runParallel = shouldRunParallel(effectiveConcurrency, addsAndMods.length, explicitConcurrency);
+  let effectiveConcurrency = autoConcurrency(engine, importsToDo.length, opts.concurrency);
+  // v0.42.x (#1794, 4A): clamp the worker fan-out under GBRAIN_MAX_CONNECTIONS
+  // (opt-in; no-op when unset). The parent engine holds ~resolvePoolSize()
+  // connections; each parallel worker opens its own pool of
+  // min(2, resolvePoolSize(2)). When the budget can't fit even one extra
+  // worker, the clamp returns 1 and we fall through to the serial path
+  // (parent pool only). The doctor `pool_budget` nudge covers the case where
+  // the parent pool alone already exceeds the budget.
+  const maxConnections = resolveMaxConnections();
+  if (maxConnections !== undefined && engine.kind !== 'pglite') {
+    const { resolvePoolSize } = await import('../core/db.ts');
+    const parentPool = resolvePoolSize();
+    const perWorkerPool = Math.min(2, resolvePoolSize(2));
+    const clampResult = clampWorkersForConnectionBudget(effectiveConcurrency, {
+      maxConnections,
+      parentPool,
+      perWorkerPool,
+    });
+    if (clampResult.clamped) {
+      serr(
+        `  [sync] GBRAIN_MAX_CONNECTIONS=${maxConnections}: clamped workers ` +
+        `${effectiveConcurrency} -> ${clampResult.workers} ` +
+        `(parent ${parentPool} + ${clampResult.workers}x${perWorkerPool} per-worker).`,
+      );
+    }
+    effectiveConcurrency = clampResult.workers;
+  }
+  const runParallel = shouldRunParallel(effectiveConcurrency, importsToDo.length, explicitConcurrency);
 
-  if (addsAndMods.length > 0) {
-    progress.start('sync.imports', addsAndMods.length);
+  if (importsToDo.length > 0) {
+    progress.start('sync.imports', importsToDo.length);
 
     // Core import logic shared by serial and parallel paths.
     // repoPath is validated non-null at the top of performSyncInner; narrow for TS.
@@ -1606,15 +1799,18 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     async function importOnePath(eng: BrainEngine, path: string): Promise<void> {
       const filePath = join(syncRepoPath, path);
       if (!existsSync(filePath)) {
-        // CODEX-3 (v0.22.13): a file the diff said exists at headCommit but
-        // is gone from disk means the working tree has drifted (someone ran
-        // `git checkout` / `git reset` mid-sync, or the file was deleted
-        // post-diff). Record as a failure so last_commit does NOT advance —
-        // the silent-skip-then-advance pathology was the bug.
-        failedFiles.push({
-          path,
-          error: 'file vanished mid-sync (working tree drifted from headCommit)',
-        });
+        // v0.42.x (#1794, Codex #3): the diff is against the PINNED target, but
+        // importFile reads the live working tree. A file added in lastCommit..pin
+        // that's gone from disk was deleted by a commit AFTER the pin (normal
+        // forward progress from the enrich process). It genuinely doesn't exist
+        // at live HEAD, so there's nothing to import — SKIP and mark it
+        // completed rather than failing the run. The post-loop pin-reachability
+        // gate catches a real history REWRITE (the dangerous drift); a benign
+        // forward delete is handled by the next sync's pin..HEAD diff (which
+        // will show this path deleted). The pre-v0.42 "record as failure" was
+        // correct only when the gate compared HEAD == captured; under pinning a
+        // forward delete must not block.
+        await markCompleted(path);
         progress.tick(1, `skip:${path}`);
         return;
       }
@@ -1639,8 +1835,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // persist. partial() reports this so cron operators see how
           // much actually landed before --timeout fired.
           filesImported++;
+          // v0.42.x (#1794): checkpoint this path so a kill banks it.
+          await markCompleted(path);
         } else if (result.status === 'skipped' && (result as any).error) {
           failedFiles.push({ path, error: String((result as any).error) });
+        } else {
+          // status 'skipped' with no error == content_hash short-circuit
+          // (already imported, unchanged). It IS done for checkpoint purposes,
+          // so mark it completed (matches import-checkpoint's posture).
+          await markCompleted(path);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -1657,7 +1860,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // assertion if config is missing.
       const config = loadConfig();
       if (engine.kind === 'pglite' || !config?.database_url) {
-        for (const path of addsAndMods) {
+        for (const path of importsToDo) {
           // v0.41.13.0 (T2 / D-V3-2): per-iteration abort check. PGLite
           // serial fallback inside the parallel branch (database_url unset).
           if (opts.signal?.aborted) {
@@ -1670,11 +1873,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         const { PostgresEngine } = await import('../core/postgres-engine.ts');
         const { resolvePoolSize } = await import('../core/db.ts');
         const workerPoolSize = Math.min(2, resolvePoolSize(2));
-        const workerCount = Math.min(effectiveConcurrency, addsAndMods.length);
+        const workerCount = Math.min(effectiveConcurrency, importsToDo.length);
         const databaseUrl = config.database_url;
 
         // Q4 (v0.22.13): banner on stderr so stdout stays clean for --json.
-        serr(`  Parallel sync: ${workerCount} workers for ${addsAndMods.length} files`);
+        serr(`  Parallel sync: ${workerCount} workers for ${importsToDo.length} files`);
 
         const workerEngines: InstanceType<typeof PostgresEngine>[] = [];
         try {
@@ -1700,8 +1903,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
                 // naturally (no mid-transaction kill).
                 if (opts.signal?.aborted) break;
                 const idx = queueIndex++;
-                if (idx >= addsAndMods.length) break;
-                await importOnePath(eng, addsAndMods[idx]);
+                if (idx >= importsToDo.length) break;
+                await importOnePath(eng, importsToDo[idx]);
               }
             }),
           );
@@ -1721,7 +1924,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       }
     } else {
       // Serial path (small auto diffs or explicit --workers 1).
-      for (const path of addsAndMods) {
+      for (const path of importsToDo) {
         // v0.41.13.0 (T2 / D-V3-2): per-iteration abort check at the
         // primary serial site.
         if (opts.signal?.aborted) {
@@ -1745,20 +1948,40 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     }
   }
 
-  // CODEX-3 (v0.22.13): head-drift gate. If git HEAD moved during the import
-  // window (someone ran `git checkout` or `git pull` in another terminal /
-  // sibling Conductor workspace), the chunks we just imported reflect a
-  // different tree than `headCommit` claims. Refuse to advance last_commit
-  // so the next sync re-walks against the new HEAD. The lock from CODEX-2
-  // prevents *this* gbrain process from stepping on itself; this gate
-  // catches drift caused by external `git` commands the lock cannot see.
+  // v0.42.x (#1794): bank the final completed set before the gate so a block /
+  // rewrite still persists everything drained this run (the next run resumes).
+  await flushCheckpoint();
+
+  // v0.42.x (#1794, T3): pin-reachability gate, replacing the pre-v0.42 strict
+  // "HEAD == captured" head-drift gate. CODEX-3 originally blocked on ANY HEAD
+  // movement to catch external `git checkout`/`reset` that would make the
+  // imported chunks reflect a different tree. But the #1794 repro has an enrich
+  // process committing to the SAME repo every ~2 min, so the strict gate
+  // blocked every run — a co-equal cause of non-convergence. Under pinning we
+  // drain a FIXED lastCommit..pin range, so:
+  //   - HEAD == pin           → nothing moved; advance.
+  //   - HEAD is descendant of pin (forward progress) → SAFE. The new commits
+  //     are outside this run's range and get picked up by the next sync's
+  //     pin..HEAD diff. Advance to pin.
+  //   - pin NOT an ancestor of HEAD (history REWRITE / reset / force-push) →
+  //     the tree we imported against is gone. Block; do not advance.
   try {
     const currentHead = git(repoPath, ['rev-parse', 'HEAD']);
-    if (currentHead !== headCommit) {
-      failedFiles.push({
-        path: '<head>',
-        error: `git HEAD drifted during sync: captured ${headCommit.slice(0, 8)}, now ${currentHead.slice(0, 8)}`,
-      });
+    if (currentHead !== pin) {
+      let pinStillReachable = false;
+      try {
+        git(repoPath, ['merge-base', '--is-ancestor', pin, currentHead]);
+        pinStillReachable = true;
+      } catch {
+        pinStillReachable = false;
+      }
+      if (!pinStillReachable) {
+        failedFiles.push({
+          path: '<head>',
+          error: `git history rewritten during sync: pinned target ${pin.slice(0, 8)} is no longer an ancestor of HEAD ${currentHead.slice(0, 8)}`,
+        });
+      }
+      // else: forward progress (enrich committed on top) — safe, advance to pin.
     }
   } catch (e) {
     // rev-parse failure is itself a drift signal (worktree disappeared).
@@ -1776,7 +1999,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // the failed files. Escape hatches: --skip-failed acknowledges the
   // current set, --retry-failed re-parses before running the normal sync.
   if (failedFiles.length > 0) {
-    recordSyncFailures(failedFiles, headCommit);
+    recordSyncFailures(failedFiles, pin);
     // Emit structured summary grouped by error code so the operator
     // can see *why* files failed, not just how many.
     const codeBreakdown = formatCodeBreakdown(failedFiles);
@@ -1788,12 +2011,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         `'gbrain sync --skip-failed' to acknowledge and move on.`,
       );
       // Update last_run + repo_path (progress on infra) but NOT last_commit.
+      // v0.42.x (#1794): the checkpoint is INTENTIONALLY left in place — the
+      // banked `completed` set (flushed above) lets the next run skip the files
+      // already drained and re-attempt only the failures.
       await engine.setConfig('sync.last_run', new Date().toISOString());
       await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
       return {
         status: 'blocked_by_failures',
         fromCommit: lastCommit,
-        toCommit: headCommit,
+        toCommit: pin,
         added: filtered.added.length,
         modified: filtered.modified.length,
         deleted: filtered.deleted.length,
@@ -1815,14 +2041,31 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
 
   // Update sync state AFTER all changes succeed (source-scoped when
-  // opts.sourceId is set, global config otherwise).
-  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', headCommit, newestCommitMs(repoPath));
+  // opts.sourceId is set, global config otherwise). v0.42.x (#1794): advance to
+  // the PINNED target (not live HEAD) — commits past the pin are the next
+  // sync's pin..HEAD diff. `commitTimeMs(pin)` stamps newest_content_at against
+  // the commit we actually drained to. `last_sync_at` is bumped HERE and ONLY
+  // here (inside writeSyncAnchor) — never on a killed partial — so the
+  // autopilot scheduler never sees a stuck source as "fresh".
+  await writeSyncAnchor(engine, opts.sourceId, 'last_commit', pin, commitTimeMs(repoPath, pin));
   await engine.setConfig('sync.last_run', new Date().toISOString());
   await writeSyncAnchor(engine, opts.sourceId, 'repo_path', repoPath);
   // v0.20.0 Cathedral II Layer 12: persist the chunker version we just
   // finished with so the next sync's up_to_date gate respects it. Only
   // source-scoped syncs track this (see readChunkerVersion for rationale).
   await writeChunkerVersion(engine, opts.sourceId, String(CHUNKER_VERSION));
+  // v0.42.x (#1794): import drained the full lastCommit..pin range — the anchor
+  // is advanced and both checkpoint rows clear here. CONVERGENCE CONTRACT: sync
+  // convergence == IMPORT convergence. Downstream (extract/facts/embed below)
+  // is DELIBERATELY decoupled from the anchor: it is size-gated (inline only for
+  // small syncs) and otherwise handled by its own resumable sweeps
+  // (extract --stale watermark, embed --stale / embed-backfill, the extract_facts
+  // + conversation_facts_backfill cycle phases). Coupling a 44k-page facts/embed
+  // pass into the anchor gate would re-introduce the exact non-convergence this
+  // fix exists to kill. A kill mid-downstream just means the banked pages get
+  // their links/embeddings/facts from the next stale sweep.
+  await clearOpCheckpoint(engine, ckpt.paths);
+  await clearOpCheckpoint(engine, ckpt.target);
 
   // Log ingest
   await engine.logIngest({
@@ -1832,13 +2075,30 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     summary: `Sync: +${filtered.added.length} ~${filtered.modified.length} -${filtered.deleted.length} R${filtered.renamed.length}, ${chunksCreated} chunks, ${elapsed}ms`,
   });
 
-  // Auto-extract links + timeline (always, extraction is cheap CPU).
+  // Auto-extract links + timeline (cheap CPU, but skip-inline for LARGE syncs).
   // Thread opts.sourceId so the extract phase reconciles edges + timeline
   // entries against the right source — pre-fix (Data R1 HIGH 1) this phase
   // bypassed sourceId entirely and the bare-slug subquery in addTimelineEntry
   // (Data R1 HIGH 2) crashed with 21000 in multi-source brains.
+  //
+  // v0.42.x (#1794, T4): size-gate inline extract on `totalChanges <= 100`
+  // (same threshold as noEmbed). A large sync (the #1794 case) would otherwise
+  // run links+timeline extraction over tens of thousands of pages inline,
+  // re-coupling a slow pass into the just-decoupled convergence path. Instead we
+  // leave `links_extracted_at` UNSTAMPED so the resumable `extract --stale`
+  // watermark sweep (run by the autopilot cycle / on demand) picks the pages
+  // up. For resumed large syncs, pagesAffected holds only THIS run's slugs, but
+  // the stale sweep scans the whole source, so banked-across-runs pages are
+  // covered regardless.
   const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
-  if (!opts.noExtract && pagesAffected.length > 0) {
+  if (!opts.noExtract && totalChanges > 100 && pagesAffected.length > 0) {
+    slog(
+      `  Large sync: deferring link/timeline extraction. ` +
+      `Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' ` +
+      `(or let the autopilot cycle's extract phase sweep it).`,
+    );
+  }
+  if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
     try {
       const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted } = await import('./extract.ts');
       const linksCreated = await extractLinksForSlugs(engine, repoPath, pagesAffected, extractOpts);
@@ -2086,6 +2346,85 @@ async function performFullSync(
     embedded,
     pagesAffected: [],
   };
+}
+
+/**
+ * Grace window (seconds) between the watchdog's SIGTERM and SIGKILL. SIGTERM
+ * gives a responsive loop a clean shutdown; SIGKILL is the starvation backstop.
+ */
+export const HARD_DEADLINE_GRACE_SEC = 30;
+
+export interface HardDeadlineResolution {
+  deadlineMs: number;
+  graceMs: number;
+  /** Where the deadline came from (for the armed-log line + tests). */
+  reason: string;
+}
+
+/**
+ * Resolve the out-of-band hard-deadline for a `gbrain sync` invocation (#1633).
+ * Pure + argv/env-only so it runs BEFORE `connectEngine` (so a connect-phase hang
+ * is also bounded — `timeout-layer-vs-connectengine` learning). DB-plane config
+ * (`gbrain config set`) is unreadable pre-connect, so the operator knob is the
+ * `GBRAIN_SYNC_MAX_RUNTIME_SECONDS` env var; bare cron is covered by the non-TTY
+ * default. Returns null when no watchdog should arm (TTY interactive with no
+ * flag, or an explicit opt-out / 0).
+ *
+ * Precedence: --no-hard-deadline > --hard-deadline > --timeout(non-all) > env >
+ * non-TTY default (3600s) > none.
+ */
+export function resolveSyncHardDeadline(
+  args: string[],
+  opts: { isTty: boolean; env?: Record<string, string | undefined>; defaultNonTtySec?: number },
+): HardDeadlineResolution | null {
+  const env = opts.env ?? {};
+  const graceMs = HARD_DEADLINE_GRACE_SEC * 1000;
+  const mk = (sec: number, reason: string): HardDeadlineResolution | null =>
+    sec > 0 ? { deadlineMs: sec * 1000, graceMs, reason } : null;
+
+  if (args.includes('--no-hard-deadline')) return null;
+
+  const hardStr = args.find((a, i) => args[i - 1] === '--hard-deadline');
+  if (hardStr !== undefined) {
+    // Throws on a bad value (cli.ts surfaces it + exits 1) — same posture as --timeout.
+    const sec = parseDurationSeconds(hardStr, '--hard-deadline');
+    return mk(sec ?? 0, 'flag:--hard-deadline');
+  }
+
+  // --timeout auto-arms a hard backstop at timeout(+grace), but ONLY single-source.
+  // For --all, per-source budgets don't collapse to one wall-clock; fall through.
+  const isAll = args.includes('--all');
+  const timeoutStr = args.find((a, i) => args[i - 1] === '--timeout');
+  if (timeoutStr !== undefined && !isAll) {
+    const sec = parseDurationSeconds(timeoutStr, '--timeout');
+    if (sec && sec > 0) return mk(sec, 'flag:--timeout');
+  }
+
+  const envRaw = env.GBRAIN_SYNC_MAX_RUNTIME_SECONDS;
+  if (envRaw !== undefined && envRaw !== '') {
+    const n = Number(envRaw);
+    if (Number.isFinite(n)) return mk(n, 'env:GBRAIN_SYNC_MAX_RUNTIME_SECONDS'); // n<=0 disables
+  }
+
+  if (!opts.isTty) return mk(opts.defaultNonTtySec ?? 3600, 'default:non-tty');
+
+  return null;
+}
+
+/**
+ * Compose 1..N AbortSignals into one (CQ2). Undefined inputs are dropped; the
+ * result aborts when ANY input aborts. Returns a single signal directly (no
+ * wrapper), `undefined` when nothing is set. Used at both performSync call sites
+ * so the SIGINT graceful-cancel signal and the per-source `--timeout` signal
+ * compose without duplicating `AbortSignal.any` logic.
+ */
+export function composeAbortSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal | undefined {
+  const live = signals.filter((s): s is AbortSignal => s !== undefined);
+  if (live.length === 0) return undefined;
+  if (live.length === 1) return live[0];
+  return AbortSignal.any(live);
 }
 
 export async function runSync(engine: BrainEngine, args: string[]) {
@@ -2567,6 +2906,13 @@ See also:
     };
     const perSourceResults: PerSourceResult[] = [];
 
+    // #1633 (Part B): one shared SIGINT controller for the whole --all fan-out.
+    // process-cleanup.ts doesn't own SIGINT, so without this Ctrl-C hard-cuts the
+    // run and can leak per-source locks; here it aborts every in-flight source so
+    // each performSync returns `partial` + releases its lock cleanly.
+    const allInterrupt = new AbortController();
+    const onAllSigint = () => { try { allInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
+
     const runOne = async (src: typeof sources[number]): Promise<SyncResult> => {
       const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
       // D18: parallel path defers embed; auto-enqueue embed-backfill after.
@@ -2602,7 +2948,7 @@ See also:
         sourceId: src.id,
         strategy: cfg.strategy,
         concurrency,
-        signal: controller?.signal,
+        signal: composeAbortSignals(allInterrupt.signal, controller?.signal),
       };
       // v0.40.6.0 (D6): wrap performSync in withSourcePrefix so every slog /
       // serr line emitted from inside the sync code path gets prefixed with
@@ -2681,6 +3027,8 @@ See also:
       ? Math.min(activeSources.length, maxSources ?? 8)
       : 1;
 
+    process.on('SIGINT', onAllSigint);
+    try {
     if (parallelEligible) {
       const { pMapAllSettled } = await import('../core/parallel.ts');
       const cap = effectiveParallel;
@@ -2753,6 +3101,9 @@ See also:
         }
       }
     }
+    } finally {
+      process.off('SIGINT', onAllSigint);
+    }
 
     const okCount = perSourceResults.filter((r) => r.status === 'ok').length;
     const errCount = perSourceResults.filter((r) => r.status === 'error').length;
@@ -2802,10 +3153,17 @@ See also:
     ? setTimeout(() => singleSourceController!.abort(), timeoutSeconds * 1000)
     : undefined;
   singleSourceTimer?.unref?.();
+  // #1633 (Part B): graceful SIGINT cancel. process-cleanup.ts owns SIGTERM
+  // (lock release + exit) and the watchdog owns the hard deadline; SIGINT is
+  // deliberately left to callers, so Ctrl-C during a long sync aborts the
+  // in-flight import cleanly (performSync returns `partial`, bookmark unadvanced,
+  // lock released by its own finally) instead of a hard cut.
+  const singleSourceInterrupt = new AbortController();
+  const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
   const opts: SyncOpts = {
     repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, sourceId,
     strategy: strategyArg, concurrency,
-    signal: singleSourceController?.signal,
+    signal: composeAbortSignals(singleSourceInterrupt.signal, singleSourceController?.signal),
   };
 
   // Bug 9 — --retry-failed: before running normal sync, clear acknowledgment
@@ -2826,10 +3184,12 @@ See also:
     // v0.41.13.0 (T6): try/finally clears the single-source timer so it
     // doesn't fire after performSync resolves OR throws.
     let result: SyncResult;
+    process.on('SIGINT', onSingleSourceSigint);
     try {
       result = await performSync(engine, opts);
     } finally {
       if (singleSourceTimer !== undefined) clearTimeout(singleSourceTimer);
+      process.off('SIGINT', onSingleSourceSigint);
     }
     printSyncResult(result);
     // v0.42.7 (#1696, D5): extraction-lag nudge after a completed single-source

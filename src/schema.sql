@@ -407,8 +407,11 @@ CREATE INDEX IF NOT EXISTS idx_code_edges_symbol_to
 -- ============================================================
 -- links: cross-references between pages
 -- ============================================================
--- Provenance model (v0.13):
---   link_source       — 'markdown' | 'frontmatter' | 'manual' | NULL
+-- Provenance model (v0.13, extended issue #972):
+--   link_source       — 'markdown' | 'frontmatter' | 'manual' | 'wikilink-resolved' | NULL
+--                       'wikilink-resolved' is the opt-in
+--                       (link_resolution.global_basename) basename-match
+--                       provenance — see issue #972 / migration v113.
 --                       (NULL = legacy row written before v0.13; unknown source)
 --   origin_page_id    — for link_source='frontmatter', the page whose YAML
 --                       frontmatter created this edge; scopes reconciliation
@@ -427,7 +430,9 @@ CREATE TABLE IF NOT EXISTS links (
   -- v0.41.18.0: 'mentions' added for auto-linked body-text mentions
   -- (gbrain extract links --by-mention). Filtered OUT of backlink-count
   -- for search ranking; only counts toward orphan-ratio + graph traversal.
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions')),
+  -- v0.40.8.2 (#972): 'wikilink-resolved' added for opt-in global-basename
+  -- wikilink resolution (bare [[name]] resolved by slug tail).
+  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions', 'wikilink-resolved')),
   -- v0.41.18.0: nullable link_kind distinguishes "plain body mention" from
   -- "verb-pattern-derived typed link" within link_source='mentions'.
   -- Codex finding #12 design: keep link_source stable; add link_kind

@@ -27,7 +27,6 @@ import type { BrainEngine } from '../core/engine.ts';
 import {
   runCycle,
   ALL_PHASES,
-  cycleLockIdFor,
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
@@ -452,15 +451,11 @@ async function runDrain(
   resolvedSourceId: string | undefined,
   brainDir: string | null,
 ): Promise<void> {
-  const { withRefreshingLock, LockUnavailableError } = await import('../core/db-lock.ts');
-  const { runPhaseExtractAtoms, countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
-  const { runExtractAtomsDrain } = await import('../core/cycle/extract-atoms-drain.ts');
+  const { LockUnavailableError } = await import('../core/db-lock.ts');
+  const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
+  const { runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
 
   const extractionSourceId = resolvedSourceId ?? 'default';
-  // undefined → legacy 'gbrain-cycle' lock, exactly what the unscoped routine
-  // cycle holds; a real source → 'gbrain-cycle:<id>'. Either way the drain and
-  // the routine cycle for THIS source genuinely contend (Codex #9).
-  const lockId = cycleLockIdFor(resolvedSourceId);
 
   // Dry-run: preview the backlog without holding the lock or extracting.
   if (opts.dryRun) {
@@ -479,26 +474,16 @@ async function runDrain(
 
   let result;
   try {
-    result = await runExtractAtomsDrain(
-      {
-        withLock: (work) => withRefreshingLock(engine, lockId, work, { ttlMinutes: 5 }),
-        runBatch: async () => {
-          const r = await runPhaseExtractAtoms(engine, {
-            sourceId: extractionSourceId,
-            dryRun: false,
-            brainDir: brainDir ?? undefined,
-          });
-          const d = (r.details ?? {}) as Record<string, unknown>;
-          return { extracted: Number(d.atoms_extracted ?? 0), skipped: Number(d.duplicates_skipped ?? 0) };
-        },
-        countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),
-        now: Date.now,
-        onBatch: opts.json ? undefined : ({ batch, extracted, remaining }) => {
-          process.stderr.write(`[drain] batch ${batch}: +${extracted} atom(s), ~${remaining ?? '?'} remaining\n`);
-        },
+    // DECISION 5A: the lock/batch/count wiring lives in the shared helper so
+    // the CLI path, the Minion handler, and autopilot's auto-drain can't drift.
+    result = await runExtractAtomsDrainForSource(engine, {
+      sourceId: resolvedSourceId,
+      windowSeconds: opts.windowSeconds,
+      brainDir: brainDir ?? undefined,
+      onBatch: opts.json ? undefined : ({ batch, extracted, remaining }) => {
+        process.stderr.write(`[drain] batch ${batch}: +${extracted} atom(s), ~${remaining ?? '?'} remaining\n`);
       },
-      { windowMs: opts.windowSeconds * 1000 },
-    );
+    });
   } catch (e) {
     if (e instanceof LockUnavailableError) {
       if (opts.json) {

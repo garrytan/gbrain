@@ -505,6 +505,26 @@ describe('runLockRenewalTick: reconnect-once dep (issue #1678)', () => {
     expect(state.consecutiveFailures).toBe(1);
   });
 
+  // CODEX impl review #2 (#1685 GAP B): the tick must thread the triggering
+  // renewLock error to reconnect, so PostgresEngine.reconnect can classify a
+  // CONNECTION_ENDED pooler reap as reap_detected (not reconnect_other) for
+  // pool_reap_health. Pin the threading.
+  test('reconnect receives the triggering renewLock error', async () => {
+    const audit = freshAudit();
+    const renewErr = new Error('write CONNECTION_ENDED');
+    let received: unknown = 'NOT_CALLED';
+    const deps: LockRenewalDeps = {
+      renewLock: async () => { throw renewErr; },
+      audit: audit.sink,
+      now: () => 1000,
+      setTimeout: makeFakeTimer().setTimeout,
+      reconnect: async (ctx?: { error?: unknown }) => { received = ctx?.error; },
+    };
+    const result = await runLockRenewalTick(deps, makeState({ lastSuccessfulRenewalAt: 0 }));
+    expect(result).toEqual({ kind: 'ok' });
+    expect(received).toBe(renewErr);
+  });
+
   test('a reconnect throw is swallowed — tick still returns ok (no unhandledRejection class)', async () => {
     const audit = freshAudit();
     const deps: LockRenewalDeps = {

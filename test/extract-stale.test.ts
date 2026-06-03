@@ -178,6 +178,37 @@ describe('gbrain extract --stale', () => {
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 
+  test('CRITICAL (#1768): microsecond updated_at clears after --stale (no permanent lag)', async () => {
+    // Repro of #1768: extractStaleFromDB used to stamp page.updated_at.toISOString()
+    // (a JS Date, millisecond-truncated). The DB updated_at keeps microseconds, so
+    // `updated_at > links_extracted_at` stayed true forever and links_extraction_lag
+    // was stuck at 100% on Postgres. We inject a microsecond updated_at explicitly so
+    // the precision gap is deterministic regardless of the engine's now() granularity.
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) advises [Acme](companies/acme).'));
+    // Microsecond-precision updated_at, recent (after LINK_EXTRACTOR_VERSION_TS) so the
+    // version arm doesn't fire — the edited arm is what must clear.
+    await engine.executeRaw(`UPDATE pages SET updated_at = '2026-06-02 08:18:58.999166+00'`);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(2);
+
+    await runExtract(engine, ['--stale']);
+    // Fixed: links_extracted_at stamped at the EXACT microsecond updated_at, so the
+    // edited arm clears. Pre-fix this stayed at 2 (the bug).
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+
+    // And it stays cleared on a re-run (the "no matter how many times I re-run" symptom).
+    await runExtract(engine, ['--stale']);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+
+    // The stamp itself carries microsecond precision (not millisecond-truncated).
+    const stamp = await stampOf('companies/acme');
+    expect(stamp).not.toBeNull();
+    const usRows = await engine.executeRaw<{ eq: boolean }>(
+      `SELECT links_extracted_at >= updated_at AS eq FROM pages WHERE slug = 'companies/acme'`,
+    );
+    expect(usRows[0]?.eq).toBe(true);
+  });
+
   test('CDX-4 (D2): a link-flush throw aborts the sweep and leaves pages UNSTAMPED', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) founded [Acme](companies/acme).'));

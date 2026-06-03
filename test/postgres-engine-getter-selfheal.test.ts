@@ -40,4 +40,28 @@ describe('PostgresEngine.sql getter self-heal (issue #1678)', () => {
     (e as unknown as { _sql: unknown })._sql = fakeSql;
     expect(e.sql as unknown).toBe(fakeSql);
   });
+
+  // #1471: the getter self-heal is INTENTIONALLY gated to instance style. A
+  // module-style engine with a null _sql must fall through to the loud legacy
+  // db.getConnection() error, NOT the instance "reaped pool" self-heal. Post
+  // ownership-fix, the module singleton never goes null via a borrower
+  // disconnect, so a null module singleton signals a genuine bug we want loud
+  // (never connected, or a real owner-side teardown) rather than papered over.
+  it('module-style + null _sql falls through to the loud legacy error, not the instance self-heal', () => {
+    const e = new PostgresEngine();
+    (e as unknown as { _connectionStyle: string })._connectionStyle = 'module';
+    (e as unknown as { _sql: unknown })._sql = null;
+
+    let thrown: unknown;
+    try {
+      void e.sql; // delegates to db.getConnection(), which throws (no module connect)
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeDefined();
+    const msg = (thrown as Error).message;
+    // The intentional asymmetry: module style keeps the legacy loud message.
+    expect(msg).toContain('No database connection');
+    expect(msg).not.toContain('instance connection pool');
+  });
 });

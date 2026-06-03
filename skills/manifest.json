@@ -170,6 +170,11 @@
       "description": "Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments"
     },
     {
+      "name": "gbrain-upgrade",
+      "path": "gbrain-upgrade/SKILL.md",
+      "description": "Keep gbrain current: act on the UPGRADE_AVAILABLE marker per self_upgrade.mode (notify prompt or silent auto)"
+    },
+    {
       "name": "book-mirror",
       "path": "book-mirror/SKILL.md",
       "description": "Take any book (EPUB/PDF), produce a personalized chapter-by-chapter analysis with two-column tables: left = chapter summary, right = how it applies to you based on brain context. Output: brain page + PDF."

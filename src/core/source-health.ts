@@ -134,6 +134,38 @@ export function newestCommitMs(localPath: string | null): number | null {
 }
 
 /**
+ * Committer time of a SPECIFIC commit SHA, in epoch ms, or `null` when not
+ * determinable (non-git path, unknown/garbage sha, git unavailable, timeout).
+ * Sibling of `newestCommitMs`, but pinned to an arbitrary commit instead of
+ * HEAD — used by the resumable incremental sync (#1794) to stamp
+ * `sources.newest_content_at` against the PINNED target commit the run drained
+ * to, not whatever HEAD happens to be (HEAD may have moved past the pin via a
+ * concurrent committer). For the pin == HEAD case this equals `newestCommitMs`.
+ *
+ * Fail-open: every error path returns `null`. Shell-injection-safe
+ * (execFileSync array args), matching the `newestCommitMs` / git-head.ts posture.
+ */
+export function commitTimeMs(localPath: string | null, sha: string | null): number | null {
+  if (!localPath || !sha) return null;
+  try {
+    const out = execFileSync('git', ['-C', localPath, 'show', '-s', '--format=%ct', sha], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (!out) return null;
+    // `git show -s --format=%ct <sha>` prints only the committer epoch for the
+    // resolved commit; take the first line in case the sha resolves to an
+    // annotated-tag-ish ref that prints extra lines.
+    const first = out.split('\n')[0]?.trim();
+    const ms = Number(first) * 1000;
+    return Number.isFinite(ms) ? ms : null;
+  } catch {
+    return null; // not a git repo / unknown sha / git unavailable / timeout
+  }
+}
+
+/**
  * Commit-relative lag in seconds from a STORED content timestamp (the
  * `newest_content_at` column), for REMOTE consumers that cannot shell out:
  *   - `null` when `lastSyncMs` is unknown.

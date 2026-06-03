@@ -21,7 +21,7 @@
  *     rotation (via configureGateway()) invalidates stale entries.
  */
 
-import { embed as aiEmbed, embedMany, generateObject, generateText } from 'ai';
+import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -52,6 +52,42 @@ import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
+
+// ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
+//
+// Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
+// socket makes an `await` never settle — which hangs `gbrain capture`/`search`
+// and, on PGLite, pins the single-writer lock. The AI SDK's `maxRetries` only
+// fires on a SETTLED error; a half-open socket never settles. So we bound at the
+// SDK CALL layer: default an `abortSignal` into every generateText / generateObject
+// / embed call. This (1) covers EVERY provider — including `native-anthropic`
+// (the default chat model + the facts:absorb Haiku), which the AI SDK forwards
+// the signal to as `fetch(url, {signal})`; and (2) bounds the WHOLE call incl.
+// internal retries, not one attempt. Direct-`fetch` paths (multimodal) get the
+// signal explicitly. Rerank is already bounded by its recipe `default_timeout_ms`.
+function resolveAiTimeoutMs(envVar: string, fallback: number): number {
+  const raw = process.env[envVar];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+/** chat / expansion / OCR — generous; only catches true hangs (non-streaming generateText). */
+const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_000);
+/** embed sub-batch (per SDK call, NOT per whole import). */
+const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_000);
+/** multimodal per request. */
+const AI_MULTIMODAL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_MULTIMODAL_TIMEOUT_MS', 60_000);
+
+/**
+ * Compose a caller signal with a default wall-clock timeout. When the caller
+ * supplies its own (Fix 3's 6s query deadline, the facts queue's shutdown abort,
+ * a budget signal), `AbortSignal.any` makes whichever fires FIRST win — so a
+ * shorter caller deadline always takes precedence over the default backstop.
+ */
+function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return caller ? AbortSignal.any([caller, timeout]) : timeout;
+}
 
 const MAX_CHARS = 8000;
 // v0.36.0.0 (D3 + D4): ZeroEntropy zembed-1 at 1280d via Matryoshka is the
@@ -1440,10 +1476,11 @@ async function embedSubBatch(
       model,
       values: texts,
       providerOptions: providerOpts,
-      // v0.33.4: caller-supplied abortSignal + maxRetries passthrough.
-      // Undefined fields are ignored by the AI SDK so the call shape stays
-      // identical for production callers that don't opt in.
-      ...(opts?.abortSignal !== undefined && { abortSignal: opts.abortSignal }),
+      // v0.42.20.0 — default a per-SUB-BATCH embed timeout (codex #3: bounding
+      // once at embed() top would cap a whole multi-batch import; this is the
+      // per-SDK-call scope). Composes with a caller signal (Fix 3's 6s query
+      // deadline) — shorter wins.
+      abortSignal: withDefaultTimeout(opts?.abortSignal, AI_EMBED_TIMEOUT_MS),
       ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
     });
 
@@ -1503,12 +1540,16 @@ export async function embedOne(text: string): Promise<Float32Array> {
  */
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number },
+  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
 ): Promise<Float32Array> {
   const [v] = await embed([text], {
     inputType: 'query',
     embeddingModel: opts?.embeddingModel,
     dimensions: opts?.dimensions,
+    // v0.42.20.0 (Fix 3) — forward a caller deadline so the query-time embed
+    // can be bounded BELOW the CLI force-exit; composes with the gateway embed
+    // default via withDefaultTimeout (shorter wins).
+    abortSignal: opts?.abortSignal,
   });
   return v;
 }
@@ -1642,6 +1683,9 @@ export async function embedMultimodal(
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch
+        // bypasses the SDK abortSignal).
+        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
     } catch (err) {
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${parsed.modelId})`);
@@ -1784,6 +1828,8 @@ async function embedMultimodalOpenAICompat(
           [authResult.headerName]: authResult.token,
         },
         body: JSON.stringify(body),
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch).
+        signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
     } catch (err) {
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
@@ -2034,6 +2080,9 @@ export async function expand(query: string): Promise<string[]> {
     const result = await generateObject({
       model,
       schema: ExpansionSchema,
+      // v0.42.20.0 (codex P0) — expansion had NO abortSignal; same stalled-socket
+      // class as chat. Default the chat timeout.
+      abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
       prompt: [
         'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents.',
         'Return ONLY the JSON object. Do NOT include the original query in the result.',
@@ -2084,6 +2133,8 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
   const base64 = imageBytes.toString('base64');
   const result = await generateText({
     model,
+    // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
+    abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
     messages: [
       {
         role: 'system',
@@ -2175,6 +2226,52 @@ export interface ChatToolDef {
   description: string;
   /** JSON Schema for tool input. */
   inputSchema: Record<string, unknown>;
+}
+
+/**
+ * Convert gbrain's provider-neutral ChatMessage[] into AI SDK v6 ModelMessage[].
+ *
+ * The original code passed `opts.messages as any` straight to generateText,
+ * which worked on AI SDK v4/v5 but v6 tightened ModelMessage validation:
+ *   - tool results must be a `role: 'tool'` message (gbrain pushes them as
+ *     `role: 'user'` with tool-result blocks), and
+ *   - each tool-result `output` must be a structured `{ type, value }` part,
+ *     not a bare value.
+ * Without this conversion every multi-turn tool loop (skillopt rollouts AND
+ * production subagent jobs) throws "messages do not match the ModelMessage[]
+ * schema" the moment the model calls a tool. Surfaced by the SkillOpt eval.
+ */
+export function toModelMessages(messages: ChatMessage[]): unknown[] {
+  return messages.map((m) => {
+    if (typeof m.content === 'string') return { role: m.role, content: m.content };
+    const blocks = m.content;
+    if (blocks.some((b) => b.type === 'tool-result')) {
+      // v6: tool results ride on a dedicated `tool` role with structured output.
+      return {
+        role: 'tool' as const,
+        content: blocks
+          .filter((b): b is Extract<ChatBlock, { type: 'tool-result' }> => b.type === 'tool-result')
+          .map((b) => ({
+            type: 'tool-result' as const,
+            toolCallId: b.toolCallId,
+            toolName: b.toolName,
+            output: b.isError
+              ? { type: 'error-text' as const, value: typeof b.output === 'string' ? b.output : JSON.stringify(b.output) }
+              : (typeof b.output === 'string'
+                ? { type: 'text' as const, value: b.output }
+                : { type: 'json' as const, value: (b.output ?? null) as never }),
+          })),
+      };
+    }
+    return {
+      role: m.role,
+      content: blocks.map((b) => {
+        if (b.type === 'text') return { type: 'text' as const, text: b.text };
+        if (b.type === 'tool-call') return { type: 'tool-call' as const, toolCallId: b.toolCallId, toolName: b.toolName, input: b.input };
+        return b;
+      }),
+    };
+  });
 }
 
 export interface ChatResult {
@@ -2528,7 +2625,12 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tools = (opts.tools ?? []).reduce((acc, t) => {
     acc[t.name] = {
       description: t.description,
-      inputSchema: { jsonSchema: t.inputSchema } as any,
+      // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
+      // `{jsonSchema}` object — the bare object makes asSchema() treat it as a
+      // thunk and call schema(), throwing "schema is not a function". Wrap the
+      // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
+      // through the real toolLoop (skillopt rollouts + subagent jobs).
+      inputSchema: jsonSchema(t.inputSchema as any),
     };
     return acc;
   }, {} as Record<string, any>);
@@ -2558,10 +2660,12 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const result = await generateText({
       model,
       system: opts.system,
-      messages: opts.messages as any,
+      messages: toModelMessages(opts.messages) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? 4096,
-      abortSignal: opts.abortSignal,
+      // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
+      // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
+      abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
       providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
     });
 

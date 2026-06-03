@@ -130,27 +130,6 @@ describe('classifyWorkerExit', () => {
 // --- Mock-based tests for reconnect logic ---
 
 describe('PostgresEngine reconnect behavior', () => {
-  it('reconnect flag prevents concurrent reconnections', async () => {
-    // Simulate the _reconnecting guard
-    let reconnecting = false;
-    let reconnectCount = 0;
-
-    async function reconnect() {
-      if (reconnecting) return;
-      reconnecting = true;
-      try {
-        reconnectCount++;
-        await new Promise(r => setTimeout(r, 10));
-      } finally {
-        reconnecting = false;
-      }
-    }
-
-    // Fire 3 concurrent reconnects — only 1 should run
-    await Promise.all([reconnect(), reconnect(), reconnect()]);
-    expect(reconnectCount).toBe(1);
-  });
-
   it('executeRaw retry does not infinite-loop on persistent connection failure', async () => {
     // Simulate: first call fails (connection error), reconnect succeeds,
     // but retry also fails with a NON-connection error
@@ -310,7 +289,10 @@ describe('Eng-review D3 — executeRaw has no per-call retry wrapper', () => {
 
   it('PostgresEngine.reconnect() still exists for supervisor-driven recovery', () => {
     const src = readFileSync(resolve('src/core/postgres-engine.ts'), 'utf-8');
-    expect(src).toContain('async reconnect()');
+    // v0.42.10.0 (#1685 GAP B): reconnect() gained an optional ctx param so it
+    // can classify the triggering error for the pool-recovery audit. Match the
+    // prefix so both `reconnect()` and `reconnect(ctx?)` satisfy the contract.
+    expect(src).toContain('async reconnect(');
     expect(src).toContain('await this.disconnect()');
   });
 

@@ -109,6 +109,92 @@ describe('extractEntityRefs', () => {
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
   });
+
+  // ─── issue #972: generic `[[bare-name]]` wikilinks (pass 2c) ─────────────
+
+  test('tags bare wikilinks with needsResolution flag', () => {
+    const refs = extractEntityRefs(
+      'See [[Fast-Weigh]] and [[2026-05-07-cost-plan-rosa-pilot]] for context.',
+    );
+    expect(refs.length).toBe(2);
+    expect(refs.every(r => r.needsResolution === true)).toBe(true);
+    expect(refs.map(r => r.slug).sort()).toEqual([
+      '2026-05-07-cost-plan-rosa-pilot',
+      'Fast-Weigh',
+    ]);
+    // dir is empty string when the bare wikilink has no `/`
+    for (const r of refs) {
+      expect(r.dir).toBe('');
+    }
+  });
+
+  test('does NOT double-emit when DIR_PATTERN wikilink also passes 2b', () => {
+    // [[people/alice]] matches 2b (DIR_PATTERN-gated). 2c must NOT emit
+    // a duplicate ref. [[Fast-Weigh]] only matches 2c (no DIR_PATTERN).
+    const refs = extractEntityRefs('See [[people/alice]] and [[Fast-Weigh]].');
+    const aliceRefs = refs.filter(r => r.slug === 'people/alice');
+    const wikiRefs = refs.filter(r => r.slug === 'Fast-Weigh');
+    expect(aliceRefs.length).toBe(1);
+    expect(aliceRefs[0].needsResolution).toBeUndefined();
+    expect(wikiRefs.length).toBe(1);
+    expect(wikiRefs[0].needsResolution).toBe(true);
+  });
+
+  test('skips qualified-syntax tokens (those belong to 2a)', () => {
+    // [[wiki:topics/ai]] looks like 2a's qualified shape — even though
+    // it wouldn't satisfy DIR_PATTERN, 2c must not claim it either
+    // (the leading `:` is the qualified-syntax tell).
+    const refs = extractEntityRefs('See [[wiki:topics/ai]] and [[bare-name]].');
+    const bare = refs.find(r => r.slug === 'bare-name');
+    expect(bare).toBeDefined();
+    expect(bare!.needsResolution).toBe(true);
+    const wrongQualified = refs.filter(
+      r => r.slug.includes(':') && r.needsResolution === true,
+    );
+    expect(wrongQualified.length).toBe(0);
+  });
+
+  test('a wikilink inside a markdown-link label is inert (codex P2a)', () => {
+    // `[see [[acme]]](companies/acme.md)` must NOT spawn a stray generic
+    // basename ref for the inner `[[acme]]`. Pass-1 can't match the nested
+    // brackets, so the label-wikilink span is masked out of pass 2c.
+    const refs = extractEntityRefs('[see [[acme]]](companies/acme.md)');
+    expect(refs.filter(r => r.needsResolution)).toEqual([]);
+    // But an independent bare wikilink on the same line still emits.
+    const refs2 = extractEntityRefs('[Acme](companies/acme) and bare [[acme]] here.');
+    expect(refs2.find(r => r.slug === 'companies/acme' && !r.needsResolution)).toBeDefined();
+    expect(refs2.find(r => r.slug === 'acme' && r.needsResolution)).toBeDefined();
+  });
+
+  test('strips .md suffix from bare wikilinks', () => {
+    const refs = extractEntityRefs('See [[struktura.md]] for context.');
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('struktura');
+    expect(refs[0].needsResolution).toBe(true);
+  });
+
+  test('extracts display name from [[slug|Display]] shape', () => {
+    const refs = extractEntityRefs('See [[struktura|The Project]] for details.');
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('struktura');
+    expect(refs[0].name).toBe('The Project');
+    expect(refs[0].needsResolution).toBe(true);
+  });
+
+  test('strips #anchor from bare wikilinks', () => {
+    const refs = extractEntityRefs('Jump to [[notes#section-2]].');
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('notes');
+    expect(refs[0].needsResolution).toBe(true);
+  });
+
+  test('skips bare wikilinks inside fenced code blocks', () => {
+    const refs = extractEntityRefs(
+      '```\nThis is a code block with [[fake-link]] inside.\n```\nReal: [[real-link]].',
+    );
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('real-link');
+  });
 });
 
 // ─── extractPageLinks ──────────────────────────────────────────
@@ -180,6 +266,187 @@ describe('extractPageLinks', () => {
     );
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
     expect(aliceLink!.linkType).toBe('attended');
+  });
+
+  // ─── issue #972: bare wikilink → resolver.resolveBasenameMatches ─────────
+
+  test('bare wikilink drops silently when globalBasename flag is OFF', async () => {
+    // Resolver that WOULD resolve, but we never reach it because the
+    // flag is off — this is the back-compat invariant.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async () => ['projects/struktura'],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/knowledge-graph',
+      'This relates to [[struktura]].',
+      {}, 'concept', resolver,
+      // opts.globalBasename omitted (= false)
+    );
+    expect(candidates.find(c => c.targetSlug === 'projects/struktura')).toBeUndefined();
+    expect(candidates).toEqual([]);
+  });
+
+  test('bare wikilink emits one candidate per basename match when flag ON', async () => {
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) => {
+        if (name === 'struktura') return ['projects/struktura', 'archive/struktura'];
+        return [];
+      },
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/knowledge-graph',
+      'This relates to [[struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    const targets = candidates.map(c => c.targetSlug).sort();
+    expect(targets).toEqual(['archive/struktura', 'projects/struktura']);
+    // Both edges stamped with the new edge type + provenance.
+    for (const c of candidates) {
+      expect(c.linkType).toBe('wikilink_basename');
+      expect(c.linkSource).toBe('wikilink-resolved');
+    }
+  });
+
+  test('bare wikilink with single basename match emits one candidate', async () => {
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['projects/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/knowledge-graph',
+      'See [[struktura]] for details.',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates.length).toBe(1);
+    expect(candidates[0].targetSlug).toBe('projects/struktura');
+    expect(candidates[0].linkType).toBe('wikilink_basename');
+  });
+
+  test('basename self-link is dropped (codex P2c)', async () => {
+    // `[[struktura]]` on the page concepts/struktura resolves back to itself —
+    // the self-loop must be dropped.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['concepts/struktura', 'projects/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/struktura',                      // the page being processed
+      'See [[struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    // Only the OTHER match survives; no self-edge to concepts/struktura.
+    expect(candidates.map(c => c.targetSlug)).toEqual(['projects/struktura']);
+  });
+
+  test('aliased wikilink resolves the TARGET, not the display text (codex #972)', async () => {
+    // `[[struktura|the project]]` must resolve basename `struktura`, never
+    // the alias "the project". Regression for the codex-caught bug where
+    // extractPageLinks resolved ref.name (display) instead of ref.slug.
+    const seen: string[] = [];
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) => {
+        seen.push(name);
+        return name === 'struktura' ? ['projects/struktura'] : [];
+      },
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/knowledge-graph',
+      'This relates to [[struktura|the project]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(seen).toContain('struktura');
+    expect(seen).not.toContain('the project');
+    expect(candidates.map(c => c.targetSlug)).toEqual(['projects/struktura']);
+  });
+
+  test('bare wikilink with zero basename matches drops silently (no dangling row)', async () => {
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async () => [],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'Mention [[never-existed]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates.find(c => c.targetSlug === 'never-existed')).toBeUndefined();
+    expect(candidates).toEqual([]);
+  });
+
+  test('bare wikilink resolution does not interfere with DIR_PATTERN wikilinks', async () => {
+    // 2b refs (people/alice) take the verb-inferred type;
+    // 2c refs (struktura) take wikilink_basename. Same call.
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) =>
+        name === 'struktura' ? ['projects/struktura'] : [],
+    };
+    const { candidates } = await extractPageLinks(
+      'concepts/x',
+      '[[people/alice]] is the lead. The work is [[struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    const alice = candidates.find(c => c.targetSlug === 'people/alice');
+    const strk = candidates.find(c => c.targetSlug === 'projects/struktura');
+    expect(alice).toBeDefined();
+    expect(alice!.linkType).not.toBe('wikilink_basename'); // verb-inferred
+    expect(strk).toBeDefined();
+    expect(strk!.linkType).toBe('wikilink_basename');
+  });
+
+  test('opts.skipFrontmatter suppresses the frontmatter pass', async () => {
+    // Real resolver shape that WOULD resolve frontmatter source: too,
+    // but skipFrontmatter blocks the path entirely.
+    const resolver: SlugResolver = {
+      resolve: async (name) =>
+        name === 'meetings/2026-01-15' ? 'meetings/2026-01-15' : null,
+    };
+    const fm = { source: 'meetings/2026-01-15' };
+    const withFm = await extractPageLinks(
+      'docs/x', 'plain content', fm, 'person', resolver,
+      { skipFrontmatter: false },
+    );
+    const withoutFm = await extractPageLinks(
+      'docs/x', 'plain content', fm, 'person', resolver,
+      { skipFrontmatter: true },
+    );
+    expect(withFm.candidates.find(c => c.linkType === 'source')).toBeDefined();
+    expect(withoutFm.candidates.find(c => c.linkType === 'source')).toBeUndefined();
+    // Issue #972 (codex P2e): skipFrontmatter must return an empty unresolved
+    // list (the pass is skipped entirely), never undefined.
+    expect(withoutFm.unresolved).toEqual([]);
+  });
+
+  test('skipFrontmatter suppresses unresolved frontmatter refs too (codex P2e)', async () => {
+    // A frontmatter field the resolver CANNOT resolve normally populates
+    // `unresolved`; with skipFrontmatter the whole pass is gone so it's [].
+    const resolver: SlugResolver = { resolve: async () => null };
+    const fm = { key_people: ['Nobody Known'] };
+    const withFm = await extractPageLinks(
+      'companies/acme', 'plain content', fm, 'company', resolver,
+      { skipFrontmatter: false },
+    );
+    const withoutFm = await extractPageLinks(
+      'companies/acme', 'plain content', fm, 'company', resolver,
+      { skipFrontmatter: true },
+    );
+    expect(withFm.unresolved.length).toBeGreaterThan(0);   // pass ran, ref unresolved
+    expect(withoutFm.unresolved).toEqual([]);              // pass skipped
+  });
+
+  test('globalBasename does nothing when resolver lacks resolveBasenameMatches', async () => {
+    // The frontmatter-only synthetic resolver doesn't implement basename
+    // lookup. Make sure we don't blow up — just drop the bare ref.
+    const resolver: SlugResolver = { resolve: async () => null };
+    const { candidates } = await extractPageLinks(
+      'concepts/x', 'See [[struktura]].',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    expect(candidates).toEqual([]);
   });
 });
 
@@ -728,6 +995,149 @@ describe('makeResolver — fallback chain', () => {
     const engine = makeFakeEngine([]);
     const r = makeResolver(engine, { mode: 'batch' });
     expect(await r.resolve('Nonexistent Person', 'people')).toBeNull();
+  });
+
+  // ─── issue #972: resolveBasenameMatches ───────────────────────────────
+
+  // Extended fake engine that also implements `getAllSlugs` so
+  // resolveBasenameMatches has something to walk.
+  function makeFakeEngineWithSlugs(slugs: string[]): BrainEngine {
+    const lookup = new Set(slugs);
+    let getAllCalls = 0;
+    const engine = {
+      async getPage(slug: string) {
+        return lookup.has(slug) ? { slug } as any : null;
+      },
+      async findByTitleFuzzy() { return null; },
+      async searchKeyword() { return []; },
+      async getAllSlugs() {
+        getAllCalls++;
+        return new Set(slugs);
+      },
+    } as unknown as BrainEngine;
+    (engine as any)._counts = () => ({ getAllCalls });
+    return engine;
+  }
+
+  test('resolveBasenameMatches: exact tail hit returns the slug', async () => {
+    const engine = makeFakeEngineWithSlugs([
+      'projects/struktura',
+      'people/alice',
+    ]);
+    const r = makeResolver(engine);
+    expect(await r.resolveBasenameMatches!('struktura')).toEqual(['projects/struktura']);
+  });
+
+  test('resolveBasenameMatches: multi-match returns ALL hits', async () => {
+    const engine = makeFakeEngineWithSlugs([
+      'projects/struktura',
+      'archive/struktura',
+      'notes/struktura',
+    ]);
+    const r = makeResolver(engine);
+    const out = await r.resolveBasenameMatches!('struktura');
+    expect(out.sort()).toEqual([
+      'archive/struktura',
+      'notes/struktura',
+      'projects/struktura',
+    ]);
+  });
+
+  test('resolveBasenameMatches: case-insensitive fallback', async () => {
+    const engine = makeFakeEngineWithSlugs(['companies/fast-weigh']);
+    const r = makeResolver(engine);
+    // Raw `Fast-Weigh` does not match the lowercase tail, but the
+    // lowercased+slugified key does — both should hit.
+    expect(await r.resolveBasenameMatches!('fast-weigh')).toEqual(['companies/fast-weigh']);
+    expect(await r.resolveBasenameMatches!('Fast-Weigh')).toContain('companies/fast-weigh');
+  });
+
+  test('resolveBasenameMatches: no matches returns []', async () => {
+    const engine = makeFakeEngineWithSlugs(['projects/struktura']);
+    const r = makeResolver(engine);
+    expect(await r.resolveBasenameMatches!('never-existed')).toEqual([]);
+  });
+
+  test('resolveBasenameMatches: scopes the index by sourceId (codex #972)', async () => {
+    // Regression: a bare [[struktura]] in source A must NOT resolve to a
+    // same-tail page in source B. makeResolver({sourceId}) must pass the
+    // scope to getAllSlugs so the index only contains the source's slugs.
+    let sawOpts: any;
+    const bySource: Record<string, string[]> = {
+      'src-a': ['projects/struktura'],
+      'src-b': ['archive/struktura'],
+    };
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy() { return null; },
+      async searchKeyword() { return []; },
+      async getAllSlugs(opts?: { sourceId?: string }) {
+        sawOpts = opts;
+        const sid = opts?.sourceId;
+        return new Set(sid ? (bySource[sid] ?? []) : Object.values(bySource).flat());
+      },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch', sourceId: 'src-a' });
+    const out = await r.resolveBasenameMatches!('struktura');
+    expect(sawOpts).toEqual({ sourceId: 'src-a' });
+    expect(out).toEqual(['projects/struktura']);          // src-a only
+    expect(out).not.toContain('archive/struktura');        // no cross-source
+  });
+
+  test('resolveBasenameMatches: no sourceId stays brain-wide (back-compat)', async () => {
+    let sawOpts: any = 'unset';
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy() { return null; },
+      async searchKeyword() { return []; },
+      async getAllSlugs(opts?: { sourceId?: string }) {
+        sawOpts = opts;
+        return new Set(['projects/struktura', 'archive/struktura']);
+      },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch' });
+    const out = await r.resolveBasenameMatches!('struktura');
+    expect(sawOpts).toBeUndefined();                        // unscoped call
+    expect(out.sort()).toEqual(['archive/struktura', 'projects/struktura']);
+  });
+
+  test('resolveBasenameMatches: empty input returns []', async () => {
+    const engine = makeFakeEngineWithSlugs(['projects/struktura']);
+    const r = makeResolver(engine);
+    expect(await r.resolveBasenameMatches!('')).toEqual([]);
+    expect(await r.resolveBasenameMatches!('   ')).toEqual([]);
+  });
+
+  test('resolveBasenameMatches: index built once, reused across calls', async () => {
+    const engine = makeFakeEngineWithSlugs([
+      'projects/struktura',
+      'archive/struktura',
+    ]);
+    const r = makeResolver(engine);
+    await r.resolveBasenameMatches!('struktura');
+    await r.resolveBasenameMatches!('struktura');
+    await r.resolveBasenameMatches!('struktura');
+    // Single getAllSlugs() call across three resolveBasenameMatches calls.
+    expect((engine as any)._counts().getAllCalls).toBe(1);
+  });
+
+  test('resolveBasenameMatches: degrades gracefully when getAllSlugs missing', async () => {
+    // Test seam for engines that don't implement getAllSlugs (legacy / mocks).
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy() { return null; },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine);
+    expect(await r.resolveBasenameMatches!('struktura')).toEqual([]);
+  });
+
+  test('resolveBasenameMatches: handles top-level slugs (no `/`)', async () => {
+    const engine = makeFakeEngineWithSlugs(['struktura', 'notes/struktura']);
+    const r = makeResolver(engine);
+    // Both should match because basename of `struktura` is `struktura`.
+    const out = await r.resolveBasenameMatches!('struktura');
+    expect(out.sort()).toEqual(['notes/struktura', 'struktura']);
   });
 });
 

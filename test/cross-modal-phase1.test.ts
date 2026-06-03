@@ -136,13 +136,14 @@ describe('D2 — knobsHash differs across cross-modal knob values', () => {
     return resolveSearchMode({ mode: 'balanced' });
   }
 
-  test('KNOBS_HASH_VERSION is 6 (v=4 graph_signals + schema-pack; v=5 contextual_retrieval; v=6 alias_resolved; cross-modal still appended)', () => {
+  test('KNOBS_HASH_VERSION is 9 (cross-modal still appended; 8→9 archive-demote #1777)', () => {
     // v0.35 ladder: 1→2 reranker, 2→3 floor_ratio. v0.36 piggybacks on v=3
     // with 7 cross-modal knobs + column/provider context. v0.40.4 (salem) +
     // v0.39 T21 (master) bump to v=4 for graph_signals + schema-pack fields.
     // v0.40.3.0 D8 bumps to v=5 (sequenced behind salem's v=4 graph-signals).
     // v0.41.22.0 (type-unification): 5→6 for alias_resolved post-fusion boost.
-    expect(KNOBS_HASH_VERSION).toBe(8);
+    // T2: 6→7 title_boost. v0.42.3.0: 7→8 autocut. issue #1777: 8→9 archive/ demote.
+    expect(KNOBS_HASH_VERSION).toBe(9);
   });
 
   test('flipping unified_multimodal changes the hash', () => {

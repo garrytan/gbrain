@@ -96,12 +96,50 @@ export interface GBrainConfig {
        */
       max_usd?: number;
     };
+    /**
+     * v0.42.x (#1685 GAP D) — extract_atoms backlog auto-drain. Default ON so a
+     * pack-gated silent backlog never piles up unseen; daily-spend-capped so the
+     * Haiku spend stays bounded. Read via the DB plane (`engine.getConfig`) at
+     * each autopilot tick. Disable with `gbrain config set autopilot.auto_drain.enabled false`.
+     */
+    auto_drain?: {
+      /** Master switch. Default true. */
+      enabled?: boolean;
+      /** Per-drain wallclock budget in seconds. Default 120. */
+      window_seconds?: number;
+      /** Backlog must exceed this to trigger a drain. Default 25. */
+      threshold?: number;
+      /** Daily spend cap (USD); bounds drains/day = floor(cap / ~$0.30). Default 2.0. */
+      max_usd_per_day?: number;
+    };
   };
   eval?: {
     /** false disables capture entirely. Defaults to true. */
     capture?: boolean;
     /** false disables PII scrubbing before insert. Defaults to true. */
     scrub_pii?: boolean;
+  };
+
+  /**
+   * v0.42 — self-upgrade settings (file plane; read on the hot path before any
+   * DB connect, so it must live here, not the DB plane). `mode` is the only
+   * knob most users touch: `notify` (default — emit a marker + 4-option prompt),
+   * `auto` (silent quiet-hours/idle upgrade; opt-in), `off` (never check).
+   * The rest are state the self-upgrade machinery manages.
+   */
+  self_upgrade?: {
+    mode?: 'auto' | 'notify' | 'off';
+    /** Set true once the upgrade-time consent prompt has been shown. */
+    mode_prompted?: boolean;
+    /** Quiet-hours window for the autopilot silent channel. */
+    quiet_hours?: { start?: number; end?: number; tz?: string };
+    /** Versions that failed a prior auto-upgrade; never auto-retried. */
+    failed_versions?: string[];
+    /** Pre-swap breadcrumb so a crash-on-launch version is attributable. */
+    attempting_version?: string;
+    /** Epoch ms of the last auto-channel check (24h throttle). */
+    last_check_ts?: number;
+    last_applied_version?: string;
   };
 
   /**
@@ -733,9 +771,20 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'mcp.publish_skills',
   'mcp.publish_skills_prompted',
   'mcp.skills_dir',
+  // Self-upgrade (v0.42; file plane, read on the hot path)
+  'self_upgrade.mode',
+  'self_upgrade.mode_prompted',
+  'self_upgrade.quiet_hours',
+  'self_upgrade.failed_versions',
+  'self_upgrade.attempting_version',
+  'self_upgrade.last_check_ts',
+  'self_upgrade.last_applied_version',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
+  // Link resolution (issue #972)
+  'link_resolution',
+  'link_resolution.global_basename',
 ];
 
 /**
@@ -752,6 +801,8 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'provider_base_urls.', // per-provider base URL overrides
   'content_sanity.',    // v0.41 content-sanity tunables
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
+  'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
+  'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
 ];
 
 export function saveConfig(config: GBrainConfig): void {

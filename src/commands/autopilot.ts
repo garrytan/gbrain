@@ -22,8 +22,21 @@ import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
-import { loadConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
+import { loadConfig, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
+import { VERSION } from '../version.ts';
+import {
+  canSelfUpdate,
+  decideSelfUpgrade,
+  isCacheFresh,
+  readUpdateCache,
+  reconcileBreadcrumb,
+  resolveSelfUpgradeMode,
+} from '../core/self-upgrade.ts';
+import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
+import { detectInstallMethod } from './upgrade.ts';
+import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
+import { inspectLock } from '../core/db-lock.ts';
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -116,6 +129,180 @@ export function shouldSpawnAutopilotWorker(args: string[]): boolean {
   return !args.includes('--no-worker');
 }
 
+// ── Self-upgrade silent channel (v0.42; opt-in, supervisor-relaunch) ─────────
+
+/**
+ * Reconcile the pre-swap breadcrumb at daemon boot (the post-swap attribution
+ * gate). If we're running the version we attempted, the swap+relaunch worked;
+ * if not, the new binary failed to launch and we record it as a known-bad
+ * version so the auto channel never retries it. Best-effort.
+ */
+function reconcileSelfUpgradeAtBoot(): void {
+  try {
+    const cfg = loadConfig();
+    if (!cfg) return;
+    const { state, transition } = reconcileBreadcrumb(cfg.self_upgrade, VERSION);
+    if (!transition) return;
+    cfg.self_upgrade = state;
+    saveConfig(cfg);
+    logSelfUpgrade({
+      channel: 'autopilot',
+      action: 'apply',
+      current: VERSION,
+      outcome: transition === 'applied' ? 'applied' : 'failed',
+      reason:
+        transition === 'applied'
+          ? 'breadcrumb matched running version'
+          : 'crash-on-launch: attempted version != running version (recorded known-bad)',
+    });
+    if (transition === 'applied') {
+      console.log(`[autopilot] self-upgrade confirmed: now running ${VERSION}.`);
+    } else {
+      console.error('[autopilot] self-upgrade did not take (running an older version); recorded known-bad.');
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Conservative idle: no cycle running AND (Postgres) no active/waiting jobs.
+ * Any ambiguity / error → NOT idle (we'd rather skip an upgrade window). */
+async function computeAutopilotIdle(engine: BrainEngine, engineType: string): Promise<boolean> {
+  try {
+    const cycle = await inspectLock(engine, 'gbrain-cycle');
+    if (cycle) return false; // a cycle (sync/extract/embed/...) is running
+    if (engineType === 'postgres') {
+      const rows = await (engine as any).executeRaw?.(
+        `SELECT count(*)::int AS n FROM minion_jobs WHERE status IN ('active','waiting')`,
+      );
+      const busy = Number((rows as Array<{ n: number }>)?.[0]?.n ?? 0);
+      return busy === 0;
+    }
+    return true; // pglite: no separate worker queue; cycle-lock-free is the signal
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The autopilot silent self-upgrade channel. Opt-in (`self_upgrade.mode=auto`).
+ * Fires only when behind + idle + in quiet hours + the install can self-update
+ * and the target isn't known-bad. On apply: write the breadcrumb, run
+ * `gbrain upgrade --swap-only` (fast; defers post-upgrade to the relaunch),
+ * then unlink the autopilot lock and exit(0) so the supervisor relaunches the
+ * new binary (no in-process re-exec — Bun has no execve). Never throws.
+ */
+async function attemptAutopilotSelfUpgrade(
+  engine: BrainEngine,
+  engineType: string,
+  lockPath: string,
+): Promise<void> {
+  try {
+    const cfg = loadConfig();
+    if (!cfg) return;
+    if (resolveSelfUpgradeMode(cfg) !== 'auto') return;
+
+    // latestVersion from the shared cache; refresh when stale (TTL throttles fetch).
+    let entry = readUpdateCache();
+    if (!entry || !isCacheFresh(entry, Date.now())) {
+      try {
+        const { refreshUpdateCache } = await import('./check-update.ts');
+        await refreshUpdateCache();
+        entry = readUpdateCache();
+      } catch {
+        /* fail-open */
+      }
+    }
+    if (!entry || entry.marker.kind !== 'upgrade_available' || !entry.marker.latest) return;
+    const latestVersion = entry.marker.latest;
+
+    const idle = await computeAutopilotIdle(engine, engineType);
+    const qh = cfg.self_upgrade?.quiet_hours;
+    const tz = qh?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const verdict = evaluateQuietHours({ start: qh?.start ?? 23, end: qh?.end ?? 8, tz }, new Date());
+    const installMethod = detectInstallMethod();
+
+    const decision = decideSelfUpgrade({
+      mode: 'auto',
+      channel: 'autopilot',
+      currentVersion: VERSION,
+      latestVersion,
+      failedVersions: cfg.self_upgrade?.failed_versions ?? [],
+      idle,
+      inQuietHours: verdict !== 'allow',
+      canSelfUpdate: canSelfUpdate(installMethod),
+      throttledByInterval: false, // cache TTL is the fetch throttle
+    });
+
+    if (decision.action !== 'apply') {
+      if (['unsupported_install', 'known_bad'].includes(decision.action)) {
+        logSelfUpgrade({
+          channel: 'autopilot',
+          action: decision.action,
+          current: VERSION,
+          latest: latestVersion,
+          outcome: 'skipped',
+          reason: decision.reason,
+        });
+      }
+      return;
+    }
+
+    // Apply. Breadcrumb first so a crash-on-launch is attributable.
+    cfg.self_upgrade = { ...(cfg.self_upgrade ?? {}), attempting_version: latestVersion };
+    saveConfig(cfg);
+    logSelfUpgrade({ channel: 'autopilot', action: 'apply', current: VERSION, latest: latestVersion, reason: decision.reason });
+    console.log(`[autopilot] self-upgrade: applying ${VERSION} -> ${latestVersion} (idle, quiet hours).`);
+
+    try {
+      execSync('gbrain upgrade --swap-only', {
+        stdio: 'inherit',
+        timeout: 300_000,
+        env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+      });
+    } catch (e) {
+      const fresh = loadConfig();
+      if (fresh) {
+        const failed = new Set(fresh.self_upgrade?.failed_versions ?? []);
+        failed.add(latestVersion);
+        fresh.self_upgrade = { ...(fresh.self_upgrade ?? {}), failed_versions: [...failed] };
+        delete fresh.self_upgrade.attempting_version;
+        saveConfig(fresh);
+      }
+      logSelfUpgrade({
+        channel: 'autopilot',
+        action: 'apply',
+        current: VERSION,
+        latest: latestVersion,
+        outcome: 'failed',
+        error: e instanceof Error ? e.message : String(e),
+      });
+      console.error(`[autopilot] self-upgrade swap failed; staying on ${VERSION}.`);
+      return;
+    }
+
+    // Swap done + smoke-verified by `upgrade --swap-only`. Exit cleanly so the
+    // supervisor relaunches the NEW binary, which reconciles the breadcrumb.
+    logSelfUpgrade({
+      channel: 'autopilot',
+      action: 'apply',
+      current: VERSION,
+      latest: latestVersion,
+      outcome: 'applied',
+      reason: 'swapped; exiting for supervisor relaunch',
+    });
+    console.log('[autopilot] self-upgrade swapped; exiting for relaunch.');
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      /* already gone */
+    }
+    process.exit(0);
+  } catch {
+    /* the self-upgrade channel must never break the tick */
+  }
+}
+
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
@@ -185,6 +372,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   const engineType = cfg?.engine ?? 'pglite';
   const useMinionsDispatch = mode !== 'off' && engineType === 'postgres' && !forceInline;
   const spawnManagedWorker = useMinionsDispatch && !noWorker;
+
+  // v0.42 self-upgrade: if a prior tick swapped the binary and exited for
+  // relaunch, we're now the relaunched process — reconcile the breadcrumb so a
+  // crash-on-launch is recorded known-bad and a success is confirmed.
+  reconcileSelfUpgradeAtBoot();
 
   let stopping = false;
   let childSupervisor: ChildWorkerSupervisor | null = null;
@@ -365,6 +557,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       }
     }
 
+    // v0.42 self-upgrade silent channel (opt-in self_upgrade.mode=auto). Runs
+    // each tick; cache TTL throttles the actual GitHub fetch. On apply it swaps
+    // + exits for supervisor relaunch (never returns). No-op unless mode=auto.
+    await attemptAutopilotSelfUpgrade(engine, engineType, lockPath);
+
     // --no-worker peer-liveness probe (v0.19.1). Runs every cycle, cheap
     // (single SELECT). See NO_WORKER_WARN_TICKS comment above for caveats.
     if (noWorker && useMinionsDispatch) {
@@ -486,6 +683,115 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           }
         } catch (e) {
           logError('dispatch.freshness-gate', e);
+        }
+
+        // ── #1685 GAP D: per-source extract_atoms auto-drain ───────────────
+        // The silent-backlog incident: a pack that doesn't declare extract_atoms
+        // never runs the phase in the routine cycle, so the atom backlog grows
+        // invisibly. Auto-submit a bounded, PROTECTED drain per source when the
+        // backlog exceeds the threshold AND the active pack doesn't declare the
+        // phase. Default-ON, daily-spend-capped, time-sloted key so a new slot
+        // opens each UTC day (CODEX #1/#2/#3, DECISION 3C). Postgres-only —
+        // PGLite has no multi-process worker to run the job.
+        if (engine.kind === 'postgres') {
+          try {
+            const enabled = (await engine.getConfig('autopilot.auto_drain.enabled')) !== 'false';
+            if (enabled) {
+              const { packDeclaresPhase } = await import('../core/cycle.ts');
+              // packDeclaresPhase reads the active pack (brain-wide, not
+              // per-source). If the pack declares extract_atoms the routine
+              // cycle already drains it for every source — nothing to do.
+              const declares = await packDeclaresPhase(engine, 'extract_atoms');
+              if (!declares) {
+                const parsePosInt = (v: string | null, d: number): number => {
+                  if (v == null) return d;
+                  const n = parseInt(v, 10);
+                  return Number.isFinite(n) && n > 0 ? n : d;
+                };
+                const parseNonNegFloat = (v: string | null, d: number): number => {
+                  if (v == null) return d;
+                  const n = parseFloat(v);
+                  return Number.isFinite(n) && n >= 0 ? n : d;
+                };
+                const threshold = parsePosInt(await engine.getConfig('autopilot.auto_drain.threshold'), 25);
+                const windowSeconds = parsePosInt(await engine.getConfig('autopilot.auto_drain.window_seconds'), 120);
+                const maxUsdPerDay = parseNonNegFloat(await engine.getConfig('autopilot.auto_drain.max_usd_per_day'), 2.0);
+                // Each drain run is BudgetTracker-capped at ~$0.30; bound the
+                // brain-wide daily count instead of a real-time spend ledger.
+                const PER_RUN_USD = 0.3;
+                const maxJobsToday = Math.max(0, Math.floor(maxUsdPerDay / PER_RUN_USD));
+                const utcDay = new Date().toISOString().slice(0, 10);
+
+                let submittedToday = 0;
+                try {
+                  const rows = await engine.executeRaw<{ cnt: number }>(
+                    `SELECT count(*)::int AS cnt FROM minion_jobs WHERE name = 'extract-atoms-drain' AND created_at >= $1::timestamptz`,
+                    [`${utcDay}T00:00:00Z`],
+                  );
+                  submittedToday = rows[0]?.cnt ?? 0;
+                } catch {
+                  // count is best-effort; treat as 0 (cap still bounds submits this tick).
+                }
+
+                if (submittedToday < maxJobsToday) {
+                  const { loadAllSources } = await import('../core/sources-load.ts');
+                  const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
+                  const sources = await loadAllSources(engine);
+                  for (const src of sources) {
+                    if (submittedToday >= maxJobsToday) break; // brain-wide daily cap (fairness)
+                    if (!src.local_path) continue;
+                    const backlog = await countExtractAtomsBacklog(engine, src.id);
+                    if (backlog === null || backlog <= threshold) continue;
+                    // Time-sloted key (CODEX #2): a static key would block the
+                    // source FOREVER once the first job completes. A new UTC-day
+                    // slot reopens it each day.
+                    const idemKey = `autopilot-extract-atoms-drain:${src.id}:${utcDay}`;
+                    try {
+                      // CODEX (impl review #4): DO NOT use maxWaiting here — it
+                      // coalesces by (name, queue), NOT by source, so source B's
+                      // submit would return source A's waiting row, B would never
+                      // queue, and the cap counter would over-count. The per-source
+                      // idempotency key is the correct dedup. Pre-check it so we
+                      // submit + count only genuinely-new sources (queue.add returns
+                      // the existing row on an idempotency hit with no created flag,
+                      // which would otherwise over-count the daily cap). The
+                      // single-instance autopilot lock + the unique idempotency
+                      // index make this pre-check race-free.
+                      const dupe = await engine.executeRaw<{ one: number }>(
+                        `SELECT 1 AS one FROM minion_jobs WHERE idempotency_key = $1 LIMIT 1`,
+                        [idemKey],
+                      );
+                      if (dupe.length > 0) continue; // already queued/drained for this source today
+                      const job = await queue.add(
+                        'extract-atoms-drain',
+                        { sourceId: src.id, window: windowSeconds, repoPath: src.local_path },
+                        {
+                          queue: 'default',
+                          idempotency_key: idemKey,
+                          max_attempts: 1,
+                          timeout_ms: timeoutMs,
+                        },
+                        { allowProtectedSubmit: true },
+                      );
+                      submittedToday++;
+                      if (jsonMode) {
+                        process.stderr.write(JSON.stringify({
+                          event: 'dispatched', job_id: job.id, mode: 'auto-drain',
+                          source_id: src.id, backlog,
+                        }) + '\n');
+                      } else {
+                        console.log(`[dispatch] job #${job.id} extract-atoms-drain (auto-drain: ${src.id}; backlog=${backlog})`);
+                      }
+                    } catch (e) {
+                      logError('dispatch.auto-drain', e);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            logError('dispatch.auto-drain-gate', e);
+          }
         }
 
         // Cheap path: engine.getHealth() is a single SQL count query.
@@ -899,15 +1205,30 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
   }
 }
 
-function installSystemd(wrapperPath: string, repoPath: string) {
-  const unit = `[Unit]
+/**
+ * Generate the gbrain-autopilot systemd user unit.
+ *
+ * v0.42: `Restart=always` (was `on-failure`). The self-upgrade silent channel
+ * does swap-only + `exit(0)` and relies on the supervisor to relaunch the new
+ * binary — there is no in-process re-exec (Bun has no `execve`). `on-failure`
+ * would NOT relaunch on a clean exit, silently killing the daemon after it
+ * upgraded itself. `StartLimitIntervalSec`/`StartLimitBurst` cap a clean-exit
+ * respawn storm (systemd's analog to the launchd `ThrottleInterval=60`).
+ *
+ * Exported so the v0.42 migration can recognize the prior generated shape and
+ * rewrite existing `on-failure` units in place.
+ */
+export function generateSystemdUnit(wrapperPath: string): string {
+  return `[Unit]
 Description=GBrain Autopilot
 After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
 ExecStart=${wrapperPath}
-Restart=on-failure
+Restart=always
 RestartSec=30
 StandardOutput=append:%h/.gbrain/autopilot.log
 StandardError=append:%h/.gbrain/autopilot.err
@@ -915,6 +1236,62 @@ StandardError=append:%h/.gbrain/autopilot.err
 [Install]
 WantedBy=default.target
 `;
+}
+
+/**
+ * v0.42 migration: rewrite an existing `Restart=on-failure` autopilot systemd
+ * unit to `Restart=always` so the self-upgrade silent channel's clean
+ * exit-for-relaunch actually respawns. HARD-GUARDED: only rewrites a unit that
+ * matches the known gbrain-generated shape (never a hand-edited one), only
+ * user-level units (never system, never needs root), Linux only. Idempotent:
+ * a no-op once already `Restart=always`. Best-effort; called from runPostUpgrade.
+ */
+export function migrateSystemdUnitToRestartAlways(): { rewritten: boolean; reason: string } {
+  if (process.platform !== 'linux') return { rewritten: false, reason: 'not-linux' };
+  let unitPath: string;
+  try {
+    unitPath = systemdUnitPath();
+  } catch {
+    return { rewritten: false, reason: 'no-unit-path' };
+  }
+  if (!existsSync(unitPath)) return { rewritten: false, reason: 'no-unit' };
+  let content: string;
+  try {
+    content = readFileSync(unitPath, 'utf8');
+  } catch {
+    return { rewritten: false, reason: 'unreadable' };
+  }
+  if (!content.includes('Restart=on-failure')) {
+    return { rewritten: false, reason: 'already-migrated' };
+  }
+  // Hard guard: must look like OUR generated unit, not a hand-edited one.
+  const execMatch = content.match(/ExecStart=(\S+)/);
+  const looksGenerated =
+    content.includes('Description=GBrain Autopilot') &&
+    content.includes('StandardOutput=append:%h/.gbrain/autopilot.log') &&
+    !!execMatch;
+  if (!looksGenerated) {
+    process.stderr.write(
+      '[gbrain] autopilot systemd unit looks hand-edited; NOT rewriting Restart=on-failure. ' +
+        'Set Restart=always manually so self-upgrade relaunch works.\n',
+    );
+    return { rewritten: false, reason: 'hand-edited' };
+  }
+  try {
+    writeFileSync(unitPath, generateSystemdUnit(execMatch![1]));
+    try {
+      execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
+    } catch {
+      /* daemon-reload best-effort */
+    }
+    return { rewritten: true, reason: 'rewritten' };
+  } catch (e) {
+    return { rewritten: false, reason: e instanceof Error ? e.message : 'write-failed' };
+  }
+}
+
+function installSystemd(wrapperPath: string, repoPath: string) {
+  const unit = generateSystemdUnit(wrapperPath);
   try {
     const unitPath = systemdUnitPath();
     mkdirSync(join(process.env.HOME || '', '.config', 'systemd', 'user'), { recursive: true });

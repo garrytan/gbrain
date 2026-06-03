@@ -9,10 +9,13 @@
  */
 
 import { describe, it, expect } from 'bun:test';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   runExtractAtomsDrain,
   type ExtractAtomsDrainDeps,
 } from '../src/core/cycle/extract-atoms-drain.ts';
+import { isProtectedJobName, PROTECTED_JOB_NAMES } from '../src/core/minions/protected-names.ts';
 
 function seq(values: Array<number | null>): () => Promise<number | null> {
   let i = 0;
@@ -104,5 +107,30 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
     );
     expect(result.stopped).toBe('max_batches');
     expect(batches).toBe(4);
+  });
+});
+
+// #1685 GAP D (CODEX #1) — the auto-drain Minion job burns Haiku, so it must be
+// PROTECTED: no MCP/OAuth-scoped caller can submit it; only trusted local
+// callers (autopilot, explicit CLI with --allow-protected) can.
+describe('extract-atoms-drain protected-name membership', () => {
+  it('extract-atoms-drain is PROTECTED', () => {
+    expect(isProtectedJobName('extract-atoms-drain')).toBe(true);
+    expect(PROTECTED_JOB_NAMES.has('extract-atoms-drain')).toBe(true);
+  });
+});
+
+// #1685 GAP D / 5A — the shared wiring helper is the single drain path. The
+// "drain holds the same cycle lock id as the routine cycle" contract (moved out
+// of dream.ts in the 5A refactor) lives here now.
+describe('shared wiring helper holds the cycle lock (5A)', () => {
+  const src = readFileSync(
+    join(import.meta.dir, '../src/core/cycle/extract-atoms-drain.ts'),
+    'utf8',
+  );
+  it('runExtractAtomsDrainForSource uses cycleLockIdFor(opts.sourceId) + withRefreshingLock', () => {
+    expect(src).toContain('runExtractAtomsDrainForSource');
+    expect(src).toContain('cycleLockIdFor(opts.sourceId)');
+    expect(src).toContain('withRefreshingLock(engine, lockId');
   });
 });

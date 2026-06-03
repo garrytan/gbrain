@@ -49,46 +49,42 @@ describe.skipIf(skip)('v0.41.25.0 db-singleton shared-recovery regressions (#157
     tmpAuditDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-1570-e2e-'));
   });
 
-  test('CASE 1: shared singleton survives mid-operation disconnect via retry reconnect', async () => {
-    // Reproduce the dream-cycle scenario: caller A is mid-batch, caller B
-    // disconnects the module singleton, caller A's NEXT attempt enters
-    // retry and the reconnect callback rebuilds the singleton before the
-    // retry's fn fires. This is the symptom-fix contract we ship.
-    await db.connect({ database_url: DATABASE_URL! });
+  test('CASE 1: a borrower disconnect leaves the shared singleton ALIVE — no reconnect needed (#1471 ownership fix)', async () => {
+    // The dream-cycle scenario: caller A is mid-batch, caller B (a probe engine
+    // that BORROWED the singleton) disconnects. Pre-#1471, B's disconnect
+    // cascaded to db.disconnect() and nulled the singleton for A, so A's next
+    // call threw "connect() has not been called" and only batchRetry's reconnect
+    // could recover (and sync/synthesize, which never enter batchRetry, stayed
+    // broken). Post-#1471, B is a borrower (it joined the singleton beforeAll
+    // created) and its disconnect is a no-op — the singleton survives WITHOUT
+    // any reconnect, which is what protects the non-batch phases.
+    await db.connect({ database_url: DATABASE_URL! }); // already up from beforeAll → no-op
 
     const engineA = new PostgresEngine();
-    await engineA.connect({ database_url: DATABASE_URL! });
+    await engineA.connect({ database_url: DATABASE_URL! }); // borrows
     const engineB = new PostgresEngine();
-    await engineB.connect({ database_url: DATABASE_URL! });
+    await engineB.connect({ database_url: DATABASE_URL! }); // borrows
 
     // Sanity: both engines share the live singleton.
     expect((await engineA.sql`SELECT 1 as ok`)[0].ok).toBe(1);
     expect((await engineB.sql`SELECT 1 as ok`)[0].ok).toBe(1);
 
-    // Engine B disconnects mid-operation (the "offending caller" scenario).
-    // This nulls the module singleton for engine A too.
+    // Engine B (a borrower) disconnects mid-operation. The bug fix: this MUST
+    // NOT null the singleton engine A is still using.
     await engineB.disconnect();
 
-    // Engine A's direct unsafe call will throw — proving the bug class
-    // exists at the engine.sql layer.
-    let directThrew = false;
-    try {
-      await engineA.sql`SELECT 1`;
-    } catch {
-      directThrew = true;
-    }
-    expect(directThrew).toBe(true);
+    // Engine A's direct call now SUCCEEDS (pre-fix it threw). This is the
+    // inverted assertion — the path that used to "prove the bug exists" now
+    // proves the bug is gone. No reconnect, no retry: just works.
+    const afterBorrowerDisconnect = await engineA.sql`SELECT 1 as ok`;
+    expect(afterBorrowerDisconnect[0].ok).toBe(1);
 
-    // The retry layer's reconnect callback recovers. We exercise it via
-    // engine.reconnect() directly (which is what batchRetry's injected
-    // reconnect callback calls). After reconnect, engine A's next call
-    // succeeds.
+    // Defense-in-depth: reconnect() still works on a borrower (re-borrows the
+    // still-live singleton) — the genuine-transient-drop recovery path is intact.
     await engineA.reconnect();
-    const afterRecovery = await engineA.sql`SELECT 1 as ok`;
-    expect(afterRecovery[0].ok).toBe(1);
+    expect((await engineA.sql`SELECT 1 as ok`)[0].ok).toBe(1);
 
-    // Cleanup
-    await engineA.disconnect();
+    await engineA.disconnect(); // borrower no-op; singleton torn down by afterAll
   });
 
   test('CASE 2: diagnostic audit records every mid-process disconnect call', async () => {

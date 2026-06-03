@@ -2358,7 +2358,10 @@ export class PGLiteEngine implements BrainEngine {
     params.push(opts.batchSize);
     const limitIdx = params.length;
     const { rows } = await this.db.query(
-      `SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at
+      // #1768: engine parity — project the same deterministic full-µs UTC string
+      // as postgres-engine.ts so extractStaleFromDB stamps the exact updated_at.
+      `SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at,
+              to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
          FROM pages
          WHERE ${where}${afterClause}
          ORDER BY id

@@ -16,6 +16,39 @@ gbrain doctor --json | jq '.checks[] | select(.name == "queue_health")'
 - **waiting-depth**: any per-name queue deeper than 10 (override via
   `GBRAIN_QUEUE_WAITING_THRESHOLD`). Signals a missing `maxWaiting`.
 
+## The worker is alive but wedged (dead pool)
+
+The nastiest stall: the worker process is *running* (passes `ps` / `kill -0` /
+container health), but its DB connection died (common behind a transaction
+pooler) and never came back, so it claims no jobs and finishes nothing. Jobs
+pile up with **0 active**. Liveness checks all pass; nothing crashes.
+
+As of v0.42.22.0 this self-heals — you usually won't have to do anything:
+
+- **The worker exits on its own dead pool.** Under a supervisor, the worker's
+  DB-liveness probe runs and self-exits (`db_dead`) after ~3 minutes; the
+  supervisor respawns it with a fresh pool.
+- **The supervisor restarts a worker that stops making progress.** If a queue
+  has claimable work, **0 live-lock active jobs**, and no completions for 15
+  minutes while the child is alive, the supervisor restarts it (covers stuck
+  handlers too, not just dead pools). Tune with `--wedge-restart-minutes` /
+  `--wedge-restart-checks` on `gbrain jobs supervisor` (0 disables).
+
+The signal is loud now — check either:
+
+```bash
+gbrain jobs stats --queue default          # prints a WEDGED QUEUE line
+gbrain doctor --json | jq '.checks[] | select(.name == "wedged_queue")'
+```
+
+`wedged_queue` is a per-queue health **error** (0 active_healthy + waiting > 0 +
+stale completions). Manual fix if you ever need it:
+
+```bash
+gbrain jobs supervisor stop && gbrain jobs supervisor start   # fresh pool
+gbrain jobs retry <id>                                        # dead-lettered jobs
+```
+
 ## Triage commands
 
 ```bash

@@ -139,6 +139,13 @@ export function rowToStalePage(row: Record<string, unknown>): StalePageRow {
     timeline: (row.timeline as string | null) ?? '',
     frontmatter: (fm == null ? {} : (typeof fm === 'string' ? JSON.parse(fm) : fm)) as Record<string, unknown>,
     updated_at: new Date(row.updated_at as string),
+    // #1768: full-µs UTC string projected by the SELECT (`updated_at_iso`).
+    // Fallback derives an ISO string from the Date — NEVER String(Date), which
+    // yields "Mon Jun 02 2026 …" that `::timestamptz` misparses. Pre-#1768
+    // callers that don't project the column still get a valid (ms) ISO value.
+    updated_at_iso: row.updated_at_iso != null
+      ? String(row.updated_at_iso)
+      : new Date(row.updated_at as string).toISOString(),
   };
 }
 

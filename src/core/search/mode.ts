@@ -698,7 +698,15 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // global cache cold-miss on upgrade — EVERY query_cache row invalidates,
 // including conservative/no-reranker calls where autocut is a no-op (the hash
 // is global, not per-mode). Refills within cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 8;
+//
+// bump 8→9 (issue #1777): `archive/` moved from DEFAULT_HARD_EXCLUDES to a 0.5
+// source-boost demote. The source-boost / hard-exclude policy is NOT part of the
+// knobs hash, so without a version bump cached rows would keep returning the old
+// archive-excluded result set for up to cache.ttl_seconds. Bumping forces the fix
+// to take effect immediately (one-time global cache cold-miss on upgrade; refills
+// within cache.ttl_seconds). Same cache-key-contamination convention as the
+// autocut / title_boost / graph_signals bumps above.
+export const KNOBS_HASH_VERSION = 9;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The

@@ -168,8 +168,15 @@ export interface LockRenewalDeps {
    * and could refresh a lock after the worker already gave it up (two holders).
    * Absent on engines without a pool (PGLite) and in the legacy tests; the
    * no-reconnect path behaves exactly as before.
+   *
+   * v0.42.12.0 (#1685 GAP B, CODEX impl review #2): accepts an optional ctx so
+   * the tick can thread the triggering renewLock error. PostgresEngine.reconnect
+   * classifies it — a CONNECTION_ENDED renewLock failure (the common pooler
+   * idle-reap) is then audited as `reap_detected`, not `reconnect_other`, so
+   * `pool_reap_health` actually fires for the #1678 incident pattern. The widened
+   * (optional-param) signature stays back-compatible with no-arg test mocks.
    */
-  reconnect?: () => Promise<void>;
+  reconnect?: (ctx?: { error?: unknown }) => Promise<void>;
 }
 
 /**
@@ -258,7 +265,9 @@ export async function runLockRenewalTick(
       const reconnect = deps.reconnect;
       try {
         await Promise.race([
-          reconnect(),
+          // Thread the triggering renewLock error (CODEX impl review #2) so the
+          // engine can classify a CONNECTION_ENDED pooler reap as `reap_detected`.
+          reconnect({ error: err }),
           new Promise<never>((_, reject) => {
             deps.setTimeout(
               () => reject(new Error(`reconnect timed out after ${state.knobs.callTimeoutMs}ms`)),

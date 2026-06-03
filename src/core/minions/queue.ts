@@ -498,12 +498,28 @@ export class MinionQueue {
   }
 
   /** Get job statistics. */
-  async getStats(opts?: { since?: Date }): Promise<{
+  async getStats(opts?: { since?: Date; queue?: string }): Promise<{
     by_status: Record<string, number>;
     by_type: Array<{ name: string; total: number; completed: number; failed: number; dead: number; avg_duration_ms: number | null }>;
     queue_health: { waiting: number; active: number; stalled: number };
+    /**
+     * issue #1801 — QUEUE-SCOPED wedge signature for the `jobs stats` WEDGED
+     * line. by_status/by_type/queue_health above stay GLOBAL (dashboard
+     * overview); this block is scoped to one queue (default 'default') because
+     * a wedge is per-queue — a healthy worker on one queue must not mask a
+     * wedged one (Codex #14/#15). `active_healthy` counts only live-lock active
+     * rows so an expired-lock row (worker died mid-job) does NOT mask the wedge.
+     */
+    wedge: {
+      queue: string;
+      active_healthy: number;
+      waiting: number;
+      last_completed_at: string | null;
+      minutes_since_completion: number | null;
+    };
   }> {
     const since = opts?.since ?? new Date(Date.now() - 86400000);
+    const wedgeQueue = opts?.queue ?? 'default';
 
     // Status counts
     const statusRows = await this.engine.executeRaw<{ status: string; count: string }>(
@@ -539,6 +555,23 @@ export class MinionQueue {
     );
     const stalled = parseInt(stalledRows[0]?.count ?? '0', 10);
 
+    // issue #1801 — queue-scoped wedge signature (one query, one queue).
+    const wedgeRows = await this.engine.executeRaw<{
+      active_healthy: string;
+      waiting: string;
+      last_completed: string | null;
+    }>(
+      `SELECT
+         count(*) FILTER (WHERE status = 'active' AND lock_until > now())::text AS active_healthy,
+         count(*) FILTER (WHERE status = 'waiting')::text AS waiting,
+         max(updated_at) FILTER (WHERE status = 'completed')::text AS last_completed
+       FROM minion_jobs
+       WHERE queue = $1`,
+      [wedgeQueue],
+    );
+    const wr = wedgeRows[0] ?? { active_healthy: '0', waiting: '0', last_completed: null };
+    const wedgeLastCompleted = wr.last_completed ? new Date(wr.last_completed) : null;
+
     return {
       by_status,
       by_type,
@@ -546,6 +579,15 @@ export class MinionQueue {
         waiting: by_status['waiting'] ?? 0,
         active: by_status['active'] ?? 0,
         stalled,
+      },
+      wedge: {
+        queue: wedgeQueue,
+        active_healthy: parseInt(wr.active_healthy ?? '0', 10),
+        waiting: parseInt(wr.waiting ?? '0', 10),
+        last_completed_at: wr.last_completed,
+        minutes_since_completion: wedgeLastCompleted
+          ? Math.round((Date.now() - wedgeLastCompleted.getTime()) / 60_000)
+          : null,
       },
     };
   }

@@ -2,6 +2,810 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.23.0] - 2026-06-03
+
+**`gbrain jobs work` and `gbrain jobs supervisor` take a `--nice <n>` flag that lowers the background job tree's CPU scheduling priority without cutting concurrency.** When the Minions worker pool runs at full width (sync, embed, extract, subagent fans), it can drive a machine's load average high enough to starve your interactive shell. Dropping concurrency throws away throughput. Niceness is the right lever: keep full concurrency, run at low priority, and the work finishes just as fast when the box is idle while yielding politely when it's busy. In the real incident that drove this, reniceing the tree took load from ~7 to ~3 with no measurable throughput loss.
+
+### What changed
+
+- **`--nice <n>` on `gbrain jobs work` and `gbrain jobs supervisor`** (POSIX `-20`..`19`; positive = nicer/lower priority). Also reads `GBRAIN_NICE` (the flag wins over the env var).
+- **Propagates down the whole tree.** The supervisor renices itself and passes `--nice` to the worker it spawns; OS niceness inherits to the worker's own children (shell jobs, subagents) automatically.
+- **Effective niceness is observable.** `gbrain jobs stats` and `gbrain jobs supervisor status --json` report the live worker + supervisor niceness, and a new `supervisor_niceness` check in `gbrain doctor` surfaces it as structured data — warning when what you asked for isn't what's running (negative nice without privilege, or an OS `RLIMIT_NICE` clamp).
+
+## To take advantage of v0.42.23.0
+
+`gbrain upgrade`, then start your worker or supervisor with `--nice 10` (or set `GBRAIN_NICE=10`). Confirm with `gbrain jobs stats` or `gbrain doctor` — both report the effective value, and `ps -o ni` will agree. Positive values need no privilege; negative values (raising priority) need root. This is distinct from the concurrency / inflight cap and composes with it: `--nice` tunes *priority*, concurrency tunes *width*.
+
+### For contributors
+
+New `src/core/minions/niceness.ts` (`applyNiceness` re-reads the effective value in both the success and failure paths, so a denied renice records the real inherited value, not null), `worker-registry.ts` (live workers self-register under `gbrainPath('workers')`, brain-isolated, with `ESRCH`/`EPERM`-aware pruning and a pid-reuse start-time guard), and `supervisor-pid.ts` (shared PID-file reader, dedupes the status/doctor/stats copies). `buildWorkerArgs` was extracted from the supervisor for unit testing. Eng review + Codex outside-voice both cleared the plan; Codex caught the detached-supervisor renice-ordering bug and the `parseInt("3.5")` gap. Closes #1815.
+## [0.42.22.0] - 2026-06-03
+
+**A background worker whose database connection quietly dies no longer sits there alive-but-doing-nothing for hours. Your brain keeps processing jobs instead of silently stalling overnight.**
+
+Here's the failure this fixes. You run the job supervisor (`gbrain jobs supervisor`), which babysits a worker process that chews through your queue: syncs, embeds, the nightly cycle. Behind a connection pooler (the common Supabase setup), the worker's database connection can get dropped and never come back. The worker process stays *running* the whole time. It just can't talk to the database anymore, so it claims no jobs and finishes nothing. Jobs pile up. Nothing crashes, nothing alerts. One brain sat like this for about 15 hours: 57 jobs waiting, zero being worked, the supervisor logging the same "no recent completions" line once a minute and doing nothing about it. The only fix was noticing by hand and killing the whole process tree so a fresh one could start with a working connection.
+
+The reason every safety net missed it: they all check whether the process is *alive*, and it was. A worker that's running but wedged passes every liveness check, every `ps`, every container health probe. What nobody was checking was whether it's making *forward progress*.
+
+This release adds that check, in two independent layers so one covers the other:
+
+- **The worker now notices its own dead connection.** It already had a "can I reach the database?" heartbeat, but that heartbeat was switched off whenever a supervisor was watching (on the theory the supervisor had it covered). It didn't. Now the heartbeat runs under supervision too: a worker whose pool is dead exits on its own within about three minutes, and the supervisor restarts it with a fresh connection.
+- **The supervisor now watches forward progress, not just liveness.** If a queue has work the worker can handle, nothing is actively being worked, and nothing has completed for 15 minutes while the worker claims to be alive, the supervisor treats the worker as wedged and restarts it. This catches every cause of a stall, not just dead connections (a genuinely stuck job handler, a deadlock, anything).
+
+And the stall is now loud instead of buried. `gbrain jobs stats` prints a `WEDGED QUEUE` line, and `gbrain doctor` reports a `wedged_queue` health error with the fix command, so you catch it in the daily check instead of 15 hours later.
+
+### How to use it
+
+Nothing to configure. `gbrain upgrade`, restart your supervisor, done. The watchdog is on by default with conservative thresholds. If you want to tune it:
+
+```
+# minutes of no-forward-progress before the supervisor restarts a wedged worker (default 15; 0 disables)
+gbrain jobs supervisor --wedge-restart-minutes 15
+# consecutive checks that must agree before acting (default 3)
+gbrain jobs supervisor --wedge-restart-checks 3
+```
+
+### What you'd see
+
+| | Before | After |
+|---|---|---|
+| Worker pool dies, process stays up | sits idle forever (15h observed) | self-exits in ~3 min, supervisor respawns with a fresh pool |
+| A job handler genuinely hangs | invisible to the supervisor | restarted after 15 min of no progress |
+| You check `gbrain jobs stats` | "57 waiting, 0 active" with no flag | loud `WEDGED QUEUE` line + fix command |
+| `gbrain doctor` | silent (the remote check was even querying the wrong column) | `wedged_queue` health error, grouped per queue |
+
+### What we caught before shipping
+
+An independent review of the plan found real bugs in the first draft that would have let the fix itself fail in the same way it was meant to prevent:
+
+- The supervisor's existing "force kill" path was a silent no-op. It guarded on "did we already send a signal" instead of "is the process still alive," so the follow-up `SIGKILL` after an ignored `SIGTERM` never actually fired. That bug was already present in the existing shutdown path; it's fixed here too.
+- A worker that died mid-job leaves a stale "active" row behind. The first draft would have read that stale row as "something's being worked" and suppressed the restart forever. The watchdog now only counts jobs holding a live lock.
+- The restart is now accounted as a deliberate self-heal, so a recurring wedge can't slowly burn through the crash budget and take the whole supervisor down. After a few futile restarts in a window it stops restarting and just alerts, because at that point a restart clearly isn't the fix.
+
+This release coexists with the v0.42.16.0 doctor self-heal work (OOM-loop detection, pool-reap health); the two cover different failure modes and run side by side.
+
+## To take advantage of v0.42.22.0
+
+`gbrain upgrade`, then restart your job supervisor so the new watchdog is in effect:
+
+```
+gbrain jobs supervisor stop && gbrain jobs supervisor start
+```
+
+Verify: `gbrain doctor` should show a `wedged_queue` check (it reads `ok` on a healthy queue). If you ever see it go to a health error, the fix is the same stop/start above, plus `gbrain jobs retry <id>` on any dead-lettered jobs.
+
+### For contributors
+- `child-worker-supervisor.ts`: `killChild` now gates on `exitCode/signalCode === null` (liveness) instead of `.killed` (the v0.42.16-era no-op bug, also fixing the `shutdown()` drain); new `restartCurrentChild(graceMs)` captures the child ref and SIGTERM→grace→SIGKILLs *that* ref (never the respawn); a new `wedge_restart` cause flows through the exit classifier and `supervisor-audit.ts` `CLEAN_EXIT_CAUSES` so it's not counted as a crash.
+- `supervisor.ts`: progress watchdog in `healthCheck()` + new exported `queryWedgeSignals(engine, queue, handlerNames)` (name+queue-scoped, `active_healthy` = live-lock only, due-delayed counted); runtime handler-name derivation via a throwaway `registerBuiltinHandlers` worker (new `quiet` opt) so the wedge scopes to actually-claimable names with zero duplicated constant; startup-grace + `wedgeRestartLoopBudget` knobs.
+- `worker.ts`: DB-liveness probe un-gated under `GBRAIN_SUPERVISED`; stall detection stays supervised-off.
+- `doctor.ts`: standalone per-queue `wedged_queue` check (local + remote) + `state`→`status` fix on the remote `queue_health` SQL (it errored every run and silently returned "No queue activity").
+- `queue.ts`/`jobs.ts`: queue-scoped `getStats` wedge block + `jobs stats` WEDGED line.
+- Tests: `supervisor-wedge`, `worker-supervised-db-probe`, `doctor-wedged-queue`, `queue-getstats-wedge`, plus `child-worker-supervisor` additions (behavioral restart coverage + PGLite SQL semantics for every reviewed edge case + structural regression guards). Plan went through eng review + a Codex outside-voice pass; all 16 findings folded in.
+
+## [0.42.21.0] - 2026-06-02
+
+**Your nightly `gbrain dream` stops silently losing every database phase.** If you run gbrain on Postgres (local or Supabase), the dream cycle has been quietly failing: the `lint` and `backlinks` phases work, then `sync`, `synthesize`, `embed`, and the rest all blow up with `No database connection: connect() has not been called`. The extract phase reports "created 0 links" while actually dropping every row. Run the same phases one at a time in separate commands and they all work — only the full cycle breaks. The result: your brain quietly stops staying up to date, and the cycle leaves a stuck lock behind.
+
+The cause turned out to be a single sentence of logic. The dream cycle opens one long-lived database connection and reuses it for the whole run. But along the way, small helper steps (the lint config probe, doctor checks) briefly open their own connection handle. When those short-lived helpers finished and closed *their* handle, they were actually closing the *shared* connection the rest of the cycle still needed. Every later phase then found the connection gone.
+
+This release teaches gbrain who actually owns the shared connection. Only the engine that opened it is allowed to close it; the short-lived helpers leave it alone. The fix lands automatically:
+
+```
+gbrain upgrade
+gbrain dream --dir <your-brain>   # every DB phase now reports ✓, lock releases cleanly
+```
+
+Nothing to configure. If your dream cycle was the broken kind, it just starts working.
+
+### Under the hood
+
+The shared connection is the module-level `sql` singleton in `src/core/db.ts`. It was only ever nulled by `db.disconnect()` — postgres.js auto-reconnects its own internal pool and never touches our reference — so the singleton going null mid-cycle was always a "borrower" engine's disconnect cascading into `db.disconnect()`, never an idle-pooler drop. `PostgresEngine.disconnect()` called `db.disconnect()` for any `_connectionStyle === 'module'` engine with no check for whether that engine actually created the singleton.
+
+The fix adds an ownership token. `db.connect()` now returns whether THIS call created the singleton — decided atomically inside `connect()`, since there is no `await` between its `if (sql)` null-check and the synchronous `sql = postgres(...)` assignment, so two connects can't both claim creation. `PostgresEngine` stores that as `_ownsModuleSingleton` and only calls `db.disconnect()` when it owns the connection; borrowers clear their own marker and leave the shared pool alone. Two adjacent hardenings landed in the same pass: `db.disconnect()` now snapshots and nulls `sql` *before* awaiting `end()` (so a concurrent connect can't join a pool that's already closing), and `reconnect()` uses a shared in-flight promise so concurrent callers await the same reconnect instead of racing a half-rebuilt pool.
+
+Earlier partial fixes addressed symptoms: v0.41.27.0's retry-with-reconnect rescued the batch-write phases (extract) but not `sync`/`synthesize`, which don't go through the retry path; v0.42.5.0 stopped the lint phase from being a borrower but left the structural hole open for every other helper. This closes the hole at the source.
+
+### To take advantage of v0.42.21.0
+
+`gbrain upgrade` applies this automatically — there are no migrations or config to set. To confirm it took:
+
+1. Run a cycle and watch the phases:
+   ```bash
+   gbrain dream --dir <your-brain> --dry-run
+   ```
+   Every DB phase should report `✓`, not `✗ ... connect() has not been called`.
+2. Confirm no stuck lock:
+   ```bash
+   psql <your-db> -c "SELECT count(*) FROM gbrain_cycle_locks;"   # expect 0
+   ```
+3. If a DB phase still fails, please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and the cycle's stderr.
+
+### Itemized changes
+
+- **`gbrain dream` on Postgres completes every phase.** The module-singleton ownership fix (`_ownsModuleSingleton` in `src/core/postgres-engine.ts`, `db.connect()` returning the creator token in `src/core/db.ts`) means a short-lived probe engine's `disconnect()` can no longer null the shared connection the cycle is using. Closes #1404, #1471, #1619 (and the symptom tracked in #1570/#1535).
+- **Connection teardown is concurrency-safe.** `db.disconnect()` snapshots + nulls the singleton before awaiting `end()`; `PostgresEngine.reconnect()` shares one in-flight `_reconnectPromise` so concurrent callers await it instead of racing.
+- **Tests:** new `test/postgres-engine-singleton-ownership.test.ts` (source-level guardrails for the ownership contract), an expanded DB-gated behavioral matrix in `test/e2e/postgres-engine-disconnect-idempotency.test.ts` (owner/borrower, creation-not-role, symmetric CLI-exit, owner-reconnect-with-live-borrower), a module-style asymmetry case in `test/postgres-engine-getter-selfheal.test.ts`, and the #1570 shared-recovery regression updated to assert the fixed contract.
+
+### For contributors
+
+This is the canonical landing for a long-standing class with ~15 competing community PRs and zero merged. Thanks to **@nullhex-io** (#1651) and **@joelwp** (#1667) — the ownership-flag approach that shipped, and to **@BrendanGahan**, **@xaviroblessarries**, and the other #1471 reporters for the precise root-cause walkthroughs. Three follow-ups are filed in `TODOS.md` (connection-lifecycle hardening under concurrent module connects, facts-queue drain on the dream/fall-through paths, stale ConnectionManager refresh after reconnect) — all pre-existing and not reachable in current gbrain.
+## [0.42.20.0] - 2026-06-03
+
+**Three ways GBrain could freeze or go silent are fixed.** This release closes a
+reliability cluster around how GBrain shuts down a command and talks to AI
+providers. If you've seen `gbrain capture` hang forever, `gbrain dream` print
+"connect() has not been called" on Postgres, or `gbrain search` return nothing
+and then say "engine.disconnect() did not return within 10000ms" — those are all
+fixed.
+
+What was happening, in plain terms:
+
+- **`gbrain capture` froze and locked you out (#1762).** On a longer page,
+  capture finishes, prints the receipt, then kicks off a small background job to
+  extract facts. On the embedded PGLite database, GBrain was closing the database
+  *while that job was still running*, which spun the close into a 100%-CPU loop
+  that never returned and held the database lock open. Every later `gbrain`
+  command then died with "Timed out waiting for PGLite lock" until you killed the
+  stuck process. Now GBrain waits for that background work to finish (or cleanly
+  cancels it) before closing the database.
+- **`gbrain dream` failed mid-cycle on Postgres (#1745).** A brief connection
+  blip made GBrain rebuild its shared database connection — but the rebuild
+  yanked the connection out from under other work happening at the same time, so
+  the `sync`, `synthesize`, and link-extraction phases threw "connect() has not
+  been called" and produced zero pages every cycle. Now a blip recovers without
+  tearing down the shared connection (Postgres heals dead sockets on its own).
+- **`gbrain search` / `query` went silent (#1775, regression from 0.22.8).**
+  Search now blends keyword + vector results, which means it embeds your query
+  first. If your embedding provider stalled (one user's did), the embed never
+  came back, so search never fell through to keyword results and the command
+  timed out with no output. Now the query-embed is time-bounded (~6 seconds, well
+  under the exit watchdog), so a stalled provider falls back to keyword results
+  instead of hanging.
+
+**Under the hood, one unifying change makes this whole class of bug harder to
+reintroduce:**
+
+- **Every background write is now drained before exit.** GBrain has four
+  "fire-and-forget" sinks that write to the database after a command returns its
+  answer (last-retrieved tracking, fact extraction, the search cache, and eval
+  capture). Each had independently caused or risked the lock-pin. They now
+  register with one background-work registry that GBrain drains on every exit
+  path. A fifth sink added later auto-participates — no one has to remember it.
+- **Every outbound AI call has a timeout.** Chat, expansion, embeddings, OCR,
+  and multimodal calls now carry a default wall-clock deadline (configurable via
+  `GBRAIN_AI_CHAT_TIMEOUT_MS` / `GBRAIN_AI_EMBED_TIMEOUT_MS` /
+  `GBRAIN_AI_MULTIMODAL_TIMEOUT_MS`). A stalled provider socket can no longer
+  hang a command forever. This covers the default Anthropic path too, not just
+  OpenAI-compatible providers.
+
+Nothing changes in how you use GBrain. These are all teardown/reliability fixes.
+
+Credit: @ElliotDrel diagnosed the corrected #1762 root cause (the un-drained
+facts queue, not the originally-suspected missing teardown contract) and wrote
+the first fix in PR #1763, which this release incorporates and hardens. Thanks to
+the #1745 and #1775 reporters for the precise repros.
+
+### To take advantage of v0.42.20.0
+
+`gbrain upgrade` is all you need — these are runtime fixes, no migration or
+schema change. After upgrading:
+
+1. If `gbrain capture` was hanging on PGLite, it now returns to the shell and the
+   next command runs without "Timed out waiting for PGLite lock".
+2. If `gbrain dream` was printing "connect() has not been called" on Postgres,
+   run `gbrain dream` again and check `synth_pages > 0`.
+3. If `gbrain search` returned nothing, it now returns ranked keyword results
+   within a few seconds even when your embedding provider is down. Tune the
+   query-embed deadline with `GBRAIN_QUERY_EMBED_TIMEOUT_MS` (default 6000) if
+   your provider is reliably slower.
+
+### Itemized changes
+
+- **`src/core/background-work.ts` (NEW):** process background-work registry —
+  `registerBackgroundWorkDrainer`, `drainAllBackgroundWorkForCliExit`, a
+  `Map<name, drainer>` (idempotent registration), explicit `(order, name)` drain
+  order (facts first for the live-engine window), and an awaited `abort()` for
+  stragglers. `__registerDrainerForTest` test seam.
+- **Four sinks register drainers:** `facts/queue.ts` (order 0, `abort` =
+  `shutdown()` which cancels a hung facts:absorb Haiku), `last-retrieved.ts`
+  (order 1), `search/hybrid.ts` (order 2, with `awaitPendingSearchCacheWrites`
+  now bounded — was an unbounded `Promise.allSettled`), `eval-capture.ts`
+  (order 3, new `awaitPendingEvalCaptures` + tracked `captureEvalCandidate`).
+- **`src/cli.ts`:** both the op-dispatch finally AND `handleCliOnly`'s finally
+  call `drainAllBackgroundWorkForCliExit()` before `engine.disconnect()`;
+  `handleCliOnly` gains the force-exit defense (the drain is the causal fix, the
+  timer is secondary). Op-dispatch's error path converts `process.exit(1)` →
+  `exitCode + return` so the finally still drains + disconnects on error.
+- **`src/core/ai/gateway.ts`:** `withDefaultTimeout(caller, ms)` composes a
+  default deadline with any caller signal (`AbortSignal.any`, shorter wins),
+  threaded into `chat()` (`generateText`), `expand()` (`generateObject` — was
+  unbounded), `generateOcrText()` (was unbounded), and the per-sub-batch embed
+  call; multimodal direct fetches get a per-request timeout. Per-touchpoint
+  defaults: chat 300s, embed/multimodal 60s. `embedQuery` accepts + forwards
+  `abortSignal`.
+- **`src/core/postgres-engine.ts`:** `reconnect()` branches on connection style.
+  Module-singleton engines re-establish idempotently via `db.connect()` +
+  refresh the ConnectionManager read pool, never `db.disconnect()` (no null
+  window). Instance pools keep teardown+recreate.
+- **`src/core/search/hybrid.ts`:** one shared `QueryEmbedDeadline` (default 6s,
+  `GBRAIN_QUERY_EMBED_TIMEOUT_MS`) threaded into both the cache-lookup embed and
+  the inner embed via `embedQueryBounded` (abortSignal aborts the socket;
+  `Promise.race` guarantees the await rejects even if the provider ignores the
+  abort) → the existing keyword fallback engages.
+- **Tests:** `test/core/background-work.test.ts`, `test/search/query-embed-deadline.test.ts`,
+  `test/eval-capture-drain.test.ts`, a `gbrain capture` exit-cleanly case in
+  `test/e2e/pglite-cli-exit.serial.test.ts`, the `#1745` reconnect E2E in
+  `test/e2e/postgres-reconnect-singleton.test.ts`, and updated structural
+  assertions in `test/fix-wave-structural.test.ts`.
+
+#### Deferred (follow-ups, not in this release)
+- Decouple the op-dispatch force-exit timer so it wraps `disconnect()` only and
+  fix its misleading message.
+- Convert `runSync`'s ~20 internal `process.exit` sites to `exitCode + return`
+  for graceful drain on sync error exits (today they avoid the hang by skipping
+  disconnect; worst case is a transient PGLite stale-lock that self-heals).
+- A gateway-level idle-timeout (vs absolute) for streaming chat.
+## [0.42.19.0] - 2026-06-02
+
+**`gbrain skillopt --write-capture` rollouts now get full tool schemas, closing the last gap in the AI SDK v6 tool-loop fix.** The v6 fix that got agent loops working again on non-Anthropic providers (DeepSeek, Qwen, Groq, local models) shipped in v0.42.11.0 — but it fixed only one of the two places skillopt builds tool definitions. The `--write-capture` path (the virtual put_page/submit_job/file_upload registry the optimizer uses to test write-flavored skills) still handed the model a stripped-down schema with `enum`, `default`, and `items` dropped, so the optimizer couldn't see a tool's allowed values and proposed invalid calls. Both builders now use the same shared mapper.
+
+### What changed
+
+- **SkillOpt write-capture schema fidelity** (`src/core/skillopt/write-capture.ts`): the virtual-write tool builder now uses the shared `paramDefToSchema` mapper, matching the `rollout.ts` builder fixed in v0.42.11.0. `enum`/`default`/`items` survive into the schema the model sees.
+- **Regression hardening for the v6 fix** (`test/ai/gateway-tools-schema.test.ts`): a real-AI-SDK integration test (`generateText` + `MockLanguageModelV3`, no network) pins that the tool schema + tool-result message shapes the gateway produces are accepted by AI SDK v6 — with guards that the pre-fix bare-`{jsonSchema}` object AND the raw-tool-result-in-a-user-message shape both throw. The kind of test the original fix lacked, so the convergent v6 fix can't silently regress.
+- **SkillOpt schema-metadata test** (`test/skillopt/rollout-schema.test.ts`): asserts `enum` survives in BOTH the rollout and write-capture tool builders.
+
+Closes the remaining surface of #1782 / #1764. The core fix was a convergent effort — credit michaeladair44, justemu, and JE4NVRG for the original diagnoses and patches.
+## [0.42.18.0] - 2026-06-03
+
+**A scheduled `gbrain sync` can no longer spin forever and pile up dead processes, and `gbrain doctor` stops showing "100% of pages need link extraction" right after you ran the thing that's supposed to fix it.**
+
+Two unrelated bugs, both reported from real Postgres/Supabase brains, both fixed here.
+
+The first one is the scary one. A `gbrain sync --source <id>` fired from cron could get stuck in a busy loop, peg a CPU core, and ignore `Ctrl-C` and `kill` (only `kill -9` stopped it). When the cron parent exited, the stuck sync was left orphaned, and the next cron tick spawned another. One reporter woke up to 13 of them, 24+ hours old, thrashing a 16 GB Mac mini down to 121 MB free. The root cause: when a sync spins on synchronous work, it starves its own event loop, so the SIGTERM handler and `--timeout` that gbrain already had could never actually run.
+
+The fix is a watchdog that runs on a separate OS thread and kills the process from outside the starved loop. On a non-interactive run (cron), gbrain now arms a hard deadline by default (1 hour), sends SIGTERM at the deadline for a clean exit, and SIGKILL shortly after if the process is too wedged to respond. A runaway sync now dies on its own instead of piling up. Sync is resumable, so a deadline-hit run just picks up next tick.
+
+- **Default on for cron, off for you at the keyboard.** Interactive (TTY) syncs stay unbounded. Tune the cron deadline with `GBRAIN_SYNC_MAX_RUNTIME_SECONDS=N`, set a one-off with `gbrain sync --hard-deadline 600`, or opt out with `--no-hard-deadline`. `gbrain sync --source x --timeout 300` now also arms the hard backstop automatically.
+- **`Ctrl-C` is clean now too.** Hitting Ctrl-C during a long sync returns a partial result and releases the lock through the normal path, instead of a hard cut that could leave the sync lock stuck until its TTL expired.
+- **The spin itself isn't root-caused yet** (it needs a live reproduction; the leading suspect is a pathological regex in a schema pack's link rules, already partly mitigated). The watchdog makes the *symptom* impossible. A `[sync-watchdog]` heartbeat line in your logs, plus the existing `[gbrain phase]` lines, will pinpoint where the next one hangs.
+
+The second fix: on Postgres, `gbrain doctor`'s `links_extraction_lag` check was permanently stuck at 100%. You'd run `gbrain extract --stale`, it would stamp every page as extracted, and the check would still say every page needs extraction. The stamp was being truncated to millisecond precision while the database kept microseconds, so "last extracted" always looked a hair older than "last updated." Now the stamp carries full microsecond precision and the check clears the moment extraction runs. (Postgres-only; the health score stops being dragged down by a check that could never pass.)
+
+## To take advantage of v0.42.18.0
+
+`gbrain upgrade` is all that's required — both fixes are automatic. Two things worth knowing:
+
+1. **Scheduled (non-interactive) syncs now have a 1-hour hard deadline by default.** If you run a legitimately long sync from cron (e.g. a first import of a very large brain), raise it: `GBRAIN_SYNC_MAX_RUNTIME_SECONDS=14400 gbrain sync ...` (4h), pass `gbrain sync --hard-deadline <seconds>`, or opt out with `--no-hard-deadline`. Interactive runs at your keyboard are unbounded as before.
+2. **Verify the link-extraction fix (Postgres):** `gbrain extract --stale` then `gbrain doctor` — the `links_extraction_lag` check should now read near 0% and stay there on a re-run (it was stuck at 100%).
+
+### For contributors
+- New reusable primitive `src/core/process-watchdog.ts` (Bun worker-thread self-kill, `eval:true` so it survives `bun --compile`); `resolveSyncHardDeadline` + `composeAbortSignals` in `sync.ts`; watchdog armed in `cli.ts` before `connectEngine` (bounds connect-phase hangs). #1768 fix threads a full-µs `updated_at_iso` (projected via `to_char(... AT TIME ZONE 'UTC', '…US"Z"')`) into `StalePageRow`; the `markPagesExtractedBatch` SQL is unchanged so the version-arm / CDX-1 tests stay green. New tests: `test/process-watchdog.test.ts` (+ `.serial`), `test/sync-hard-deadline.test.ts`, and a deterministic µs regression in `test/extract-stale.test.ts`. Eng review + Codex outside-voice both cleared the plan (Codex empirically validated the worker-self-kill on Bun 1.3.13).
+## [0.42.17.0] - 2026-06-03
+
+**A huge `gbrain sync` can no longer get stuck forever losing all its progress when it's killed partway through.** If your brain suddenly grows by tens of thousands of pages (say a background process is enriching one page per commit, all night long), the next sync has a giant backlog to import. If that sync gets killed before it finishes — a session timeout, a laptop sleep, anything — it used to throw away **everything** it had done and start over from zero. The next hour the backlog was even bigger, so it got killed again, and again. It could never catch up. This release makes sync **resumable**: a killed sync banks what it imported, and the next run picks up where it left off. It converges.
+
+Two related things were quietly making it worse, both fixed here:
+
+- **Sync used to give up the moment a new commit landed during the run.** If something else was committing to the same repo while sync worked (exactly the "enriching all night" case), sync saw the moving target and aborted with "blocked." Now sync locks onto a fixed target snapshot, drains to it, and lets the new commits land in the next run. Normal forward progress no longer blocks anything.
+- **A big sync would hammer your database connection pool.** On a small pooler (Supabase's 20-client default) a single sync could exhaust the slots and starve its own retries. New opt-in `GBRAIN_MAX_CONNECTIONS` caps a sync's footprint, and `gbrain doctor` nudges you to lower `GBRAIN_POOL_SIZE` when the math doesn't fit.
+
+You don't have to do anything — `gbrain sync` is resumable by default. Two knobs if you want them:
+
+```
+# How often progress is banked (files between checkpoint flushes; default 1000)
+export GBRAIN_SYNC_CHECKPOINT_EVERY=1000
+
+# Cap a single sync's DB connections on a low-cap pooler (opt-in; off by default)
+export GBRAIN_MAX_CONNECTIONS=16
+```
+
+What you'd see on a 44,000-file backlog, killed at 16% three times:
+
+| | Before | After |
+|---|---|---|
+| Progress kept after a kill | 0% (full re-walk) | banked up to the last checkpoint |
+| New commits during the sync | blocks the whole run | ignored this run, picked up next run |
+| Does it ever finish? | no — backlog outran every attempt | yes — each run banks real progress |
+
+Things to know about: the sync bookmark (`last_commit`) still only advances when the import fully completes, so a killed sync correctly looks "stale" and gets retried. For large syncs, link/timeline/embedding extraction is deferred to the resumable `gbrain extract --stale` / `gbrain embed --stale` sweeps (and the autopilot cycle) instead of running inline — that keeps a 44K-page extraction pass from re-blocking the import. Small syncs are unchanged: they still extract and embed inline.
+
+### Itemized changes
+
+- **Resumable incremental sync (`src/commands/sync.ts`).** `performSyncInner` now drives the import loop against a **pinned target commit** held in a DB checkpoint (`op_checkpoints`, two rows keyed by `syncFingerprint(sourceId, lastCommit)`). Each batch of imported files is flushed to the checkpoint; a killed/aborted/blocked run banks the completed set and leaves `last_commit` unchanged. The next run resume-filters the diff against the banked set and continues. `last_commit` (and `last_sync_at`) advance only at full import completion, then both checkpoint rows clear.
+- **Pinned target eliminates the staleness window.** The checkpoint pins the target commit at the first run and drains `lastCommit..pin`; completion advances to the pin (not live HEAD), so commits landing after the pin are a clean next-sync diff and never get skipped. A history rewrite (pin no longer an ancestor of HEAD) discards the checkpoint and re-pins.
+- **Forward-progress head gate.** The pre-existing strict "HEAD == captured" head-drift gate (which blocked on any concurrent commit) is replaced by a pin-reachability check: forward progress is safe; only a real rewrite blocks.
+- **`commitTimeMs(localPath, sha)`** added to `src/core/source-health.ts` — stamps `newest_content_at` against the pinned commit.
+- **`syncFingerprint({ sourceId, lastCommit })`** added to `src/core/op-checkpoint.ts` — keyed on the anchor (never HEAD) so the checkpoint survives a growing backlog.
+- **Connection-budget clamp (`src/core/sync-concurrency.ts`).** New `resolveMaxConnections()` + `clampWorkersForConnectionBudget()`; opt-in via `GBRAIN_MAX_CONNECTIONS`, no-op when unset (existing brains unchanged). `gbrain doctor` gains a `pool_budget` check that warns when the parent pool leaves no room for a worker.
+- **Vanished-on-disk added files are skipped, not failed.** A file added in the diff but deleted from disk by a commit after the pin (normal forward delete) is skipped and checkpointed instead of blocking the run.
+- **Cleaner single-flight backpressure.** `performSync` throws a typed `SyncLockBusyError`; the Minion `sync` handler catches it and marks the job *skipped* (not failed), so a cron/autopilot tick that hits a held lock defers to the holder without polluting the failed-job/crash metrics.
+- **Tests.** `test/sync-resumable-import.serial.test.ts` (13 cases): convergence regression, resume-skips-checkpointed, pinned-target/forward-drift, history-rewrite re-pin, `last_sync_at` not bumped on a blocked run + good-file banking, vanished-file skip, dry-run/empty-diff, plus pure-helper coverage for the fingerprint, clamp, and pool-budget math.
+
+## [0.42.16.0] - 2026-06-02
+
+**`gbrain doctor` now tells you the brain is OOM-looping in one line, ranks every
+problem by root cause, auto-drains stuck atom backlogs, and flags a thrashing DB
+pool — so you never have to grep a worker log to learn why the brain is
+unhealthy.**
+
+When a worker dies in a loop, the loud errors used to all point at the database
+(connection dropped, lock-renewal-failed) while the real cause — the worker
+running out of memory and getting drained by its own watchdog — scrolled by once
+and got buried. Finding it took hours. The fixes that stop the loop shipped in
+v0.42.5.0; this release makes the cause the first thing you see, and self-heals
+the cases that don't need a human.
+
+Run `gbrain doctor`. If a worker is OOM-looping you now get one line:
+`[FAIL] worker_oom_loop → Worker OOM-looping: cap=8192MB, 12 watchdog kills/24h →
+raise --max-rss`. The top of the report is a new "Top issues (ranked by cause)"
+block that puts root causes above downstream noise — the connection and queue
+errors that are really just symptoms get tagged "(likely downstream of
+worker_oom_loop)" instead of competing for your attention.
+
+### How to use it
+
+```
+gbrain doctor                 # human report, cause-ranked at the top
+gbrain doctor --json | jq .top_issues   # ranked issues for your agent to act on
+gbrain config set autopilot.auto_drain.enabled false   # opt out of auto-drain
+```
+
+### What's new
+
+- **`worker_oom_loop` doctor check** — the single authoritative OOM-loop signal.
+  It unions both worker modes: supervised workers (from the supervisor audit) and
+  bare `gbrain jobs work` workers (from the job table's watchdog-abort rows), so
+  it can't miss either. Names the memory cap (or the auto-sized default when the
+  breaker didn't stamp one) and the fix. Stays silent on brains that never OOM'd.
+- **Cause-ranked doctor output** + a `top_issues` array in `gbrain doctor --json`
+  so an agent acts on the root cause without re-deriving the ranking. A downstream
+  link is asserted ONLY for known, real cause→effect edges (e.g. queue aborts are
+  caused by the OOM kill) — never guessed from two checks happening to fail at the
+  same time.
+- **`pool_reap_health` check** — warns when a transaction-mode pooler is thrashing
+  (many socket reaps per hour) and fails when reconnects are actually failing
+  ("not auto-recovering"). The recovered-vs-stuck split no other signal expressed.
+- **Autopilot auto-drains a stuck `extract_atoms` backlog** on a cadence when your
+  schema pack doesn't declare the phase — the silent backlog that used to grow for
+  weeks with zero signal. Default on, bounded by a per-day spend cap, submitted as
+  a protected job so no remote/MCP caller can trigger the Haiku spend.
+
+### Things to know after upgrade
+
+- The new checks are quiet on a healthy brain — they only surface during a real
+  incident.
+- `autopilot.auto_drain` defaults on with a $2/day cap (~6 drains/day). It fires
+  only when the backlog exceeds 25 pages AND your pack doesn't declare
+  `extract_atoms` (i.e. the routine cycle isn't already handling it). Tune via
+  `autopilot.auto_drain.{enabled,threshold,window_seconds,max_usd_per_day}`.
+
+Evidence + the mechanical foundation this builds on: #1678 / #1735.
+
+### Itemized changes
+
+- `src/commands/doctor.ts` — new `computeWorkerOomLoopCheck` (unions supervisor
+  `rss_watchdog` crashes + `minion_jobs` watchdog-aborts; cap from the breaker
+  alert or `resolveDefaultMaxRssMb()` fallback) and `computePoolReapHealthCheck`;
+  cause-ranked "Top issues" header in `outputResults`; `top_issues` on
+  `DoctorReport` (additive, schema_version stays 2); the `supervisor` causeStr now
+  shows `rss=N (see worker_oom_loop)`; the `queue_health` watchdog message
+  cross-references `worker_oom_loop`.
+- `src/core/doctor-cause-rank.ts` (NEW) — pure `rankIssues` + root/symptom tiers +
+  evidence-gated `downstream_of` (real edges only) + a drift guard exported for
+  the test.
+- `src/core/audit/pool-recovery-audit.ts` (NEW) — reap/reconnect audit on the
+  shared audit-writer; error summaries redacted via `redactConnectionInfo`.
+- `src/core/postgres-engine.ts` — `reconnect()` accepts the triggering error and
+  records `reap_detected` (CONNECTION_ENDED) vs `reconnect_other`, then
+  `reconnect_succeeded`/`reconnect_failed`, so only true pooler reaps are labeled.
+- `src/core/retry.ts` + `src/core/retry-matcher.ts` — the retry reconnect callback
+  threads the error; new `isConnectionEndedError` classifier.
+- `src/core/cycle/extract-atoms-drain.ts` — new `runExtractAtomsDrainForSource`
+  shared helper (one drain path for the CLI `--drain`, the Minion handler, and
+  autopilot); `src/commands/dream.ts` refactored to call it.
+- `src/commands/jobs.ts` — `extract-atoms-drain` Minion handler;
+  `src/core/minions/protected-names.ts` adds it to `PROTECTED_JOB_NAMES`.
+- `src/commands/autopilot.ts` — per-source auto-drain submission with a UTC-day
+  time-sloted idempotency key + daily cap; `src/core/config.ts` adds
+  `autopilot.auto_drain.*` config + the `autopilot.` key prefix.
+- `src/core/minions/handlers/supervisor-audit.ts` — `readRecentSupervisorEvents`
+  reads current + previous ISO week so a 24h window can't lose a week-boundary
+  loop.
+- `src/core/doctor-categories.ts` — registers `worker_oom_loop` + `pool_reap_health`
+  under ops.
+- Tests: `test/doctor-cause-rank.test.ts`, `test/doctor-worker-oom-loop.test.ts`,
+  `test/doctor-pool-reap-health.test.ts`, `test/audit/pool-recovery-audit.test.ts`,
+  `test/extract-atoms-drain-handler.test.ts`, `test/autopilot-auto-drain-wiring.test.ts`,
+  plus extensions to `test/extract-atoms-drain.test.ts`.
+## [0.42.15.0] - 2026-06-02
+
+**Commands print real data when you run them from a subagent, a pipe, or cron, not just when you have a terminal.** A handful of gbrain commands quietly changed what they printed based on whether a terminal was attached. Run them from a coding agent, a `| cat` pipe, or a cron job and you'd get JSON when you wanted human text, or nothing useful at all. The read commands (`get`, `list`, `search`, `query`) were already fine; this fixes the ones that weren't.
+
+The clearest case was `gbrain jobs watch`. In a terminal you got the live dashboard; piped or from a subagent you got an endless stream of JSON with no way to a human view. Now the rule is simple and the same for every command: **human output by default, JSON only when you pass `--json`.** A terminal still controls cosmetics (the live cursor-managed dashboard, colors), never the data.
+
+```
+gbrain jobs watch                 # terminal: live dashboard. piped: one human snapshot, then exits.
+gbrain jobs watch --json          # one JSON snapshot (machine-readable)
+gbrain jobs watch --follow        # stream continuously (human, or JSONL with --json)
+```
+
+`jobs watch` split into two independent knobs: `--json` picks the format, `--follow` picks the cadence. Non-interactive runs print one snapshot and exit (clean for capture), so a subagent that just wants the current queue state gets it in one shot instead of a loop it has to kill.
+
+### What else changed
+
+- **`gbrain reindex --code` refusal is now readable.** When it declines to spend money re-embedding without `--yes` in a non-interactive shell, it now prints a plain-English refusal instead of a JSON error blob (JSON only with `--json`). The safety behavior is unchanged: it still refuses and exits 2 rather than spending unconfirmed.
+- **The eval commands stop hiding why they did less work.** `gbrain eval cross-modal` and `gbrain eval takes-quality` run fewer cycles non-interactively (a deliberate cost guard). They already printed the cycle count; now the line says *why* it's low and how to change it: `cycles: 1 (non-interactive default; --cycles N for more)`. Same for the `$1` budget default on `gbrain eval suspected-contradictions` (`--budget-usd N to raise`).
+
+Nothing here changes a TTY/interactive session: the live `jobs watch` dashboard, prompts, and your normal terminal output are all identical.
+
+## To take advantage of v0.42.15.0
+
+`gbrain upgrade` is all you need. There's no migration and no schema change.
+
+1. **Update:**
+   ```bash
+   gbrain upgrade
+   ```
+2. **Verify the fix:** run a command non-interactively and confirm you get real output.
+   ```bash
+   gbrain jobs watch </dev/null | cat        # one human snapshot, exits 0
+   gbrain jobs watch --json </dev/null | cat # one JSON line
+   ```
+3. **If you scripted `gbrain jobs watch` for a JSON stream non-interactively,** add `--json --follow` to keep the old streaming behavior. (For scripting, `gbrain jobs stats --json` / `gbrain jobs list --json` remain the cleaner surfaces.)
+4. **If anything looks wrong,** file an issue at https://github.com/garrytan/gbrain/issues with the command you ran and what you saw.
+## [0.42.14.0] - 2026-06-02
+
+**Two zero-config gaps closed: code-* queries now tell you whether the graph is built, and `gbrain init` tells you up front when your embedding key is missing.**
+
+Ask `gbrain code-callers foo` and get nothing back, and until now you had no way to know whether that meant "this symbol genuinely has no callers" or "the code graph isn't built yet." Same for `code-def`, `code-refs`, `code-callees`. An agent would see `count: 0` and confidently conclude "no callers" while the source was still indexing or had never been synced. This release adds a typed readiness field so the empty answer is honest.
+
+```
+gbrain code-callers parseMarkdown --json
+# count: 0, status: "not_built", ready: false   → no code indexed; run `gbrain sync`
+# count: 0, status: "indexing",  ready: false   → edges still resolving; retry after `gbrain dream`
+# count: 0, status: "ready",     ready: true    → genuinely no callers, trust it
+```
+
+`count: 0 + ready: true` means "genuinely none." `ready: false` means "ask later." Both the CLI and the MCP tools (`code_def`, `code_refs`, `code_callers`, `code_callees`) carry the field; human output prints a one-line hint telling you exactly what to run. `code-def`/`code-refs` are ready as soon as code is synced (their data is set at chunk time); `code-callers`/`code-callees` also report `indexing` until the call graph is resolved.
+
+**`gbrain init` now checks your embedding key before first sync.** Before, init happily saved `--embedding-model openai:...` without ever checking the key was set; then your first `gbrain sync` imported every page but embedded zero of them, and search came back empty. Now init runs a free config check (is the key present, for any provider?) plus a tiny test embed (does the key actually work?) and warns loudly if either fails:
+
+```
+Heads up: embedding is configured but not ready.
+Model "openai:text-embedding-3-large" needs OPENAI_API_KEY — not set in your shell or ~/.gbrain/config.json.
+```
+
+Init still exits 0 so deferred setup keeps working. The check correctly sees keys set in `~/.gbrain/config.json` (not just the shell), and `--no-embedding` or the new `--skip-embed-check` skip it.
+
+**Crashed cycle locks self-heal faster.** If a `gbrain dream`/sync process crashed while holding the cycle lock, the next run waited out the full 30-minute TTL. Now, when the dead holder is on the same machine and provably gone, the lock is reclaimed automatically after a 60-second grace (a guard against PID reuse). Cross-host locks stay TTL-only. `gbrain sync --break-lock` got the same liveness fix — it no longer treats a permission-denied probe (a live process you don't own) as dead.
+
+## To take advantage of v0.42.14.0
+
+`gbrain upgrade` handles everything — no schema migration in this release.
+
+1. **Readiness:** `gbrain code-callers <symbol> --json` and read the new `status` / `ready` fields. `ready: false` means wait and retry; `ready: true` with `count: 0` means genuinely none.
+2. **Init check:** next time you run `gbrain init` with an embedding model, a missing or invalid key warns immediately. Set the key and re-run `gbrain sync`, or pass `--no-embedding` to defer.
+3. **Lock self-heal is automatic** — nothing to configure.
+
+If anything looks off, file an issue with the output of `gbrain doctor`: https://github.com/garrytan/gbrain/issues
+
+### Itemized changes
+
+- **`src/core/code-graph-readiness.ts` (new)** — `resolveCodeReadiness(engine, {kind, count, sourceId?, allSources?})` returns `{status: 'not_built' | 'indexing' | 'ready' | 'unknown', ready, has_code, pending_edges}`. `count > 0` short-circuits to `ready` with no query; on empty it runs `EXISTS` probes (no `page_kind` index needed; the pending probe rides the partial `idx_content_chunks_edges_backfill`). `kind: 'symbol'` (code-def/refs) is 2-state and brain-wide; `kind: 'edge'` (callers/callees) is 3-state and source-scoped, with the pending predicate mirroring the resolver (`edges_backfilled_at IS NULL OR < EDGE_EXTRACTOR_VERSION_TS`) so a resolver-version bump doesn't falsely report `ready`. Scope matches the result query's `deleted_at` posture; any DB error returns `unknown` (fail-open). `readinessHint()` renders the human one-liner.
+- **`src/commands/code-def.ts`, `code-refs.ts`, `code-callers.ts`, `code-callees.ts`** — each JSON envelope gains `status` + `ready`; human output prints the hint when not ready. callers/callees pass their resolved `sourceId` / `allSources`; def/refs query brain-wide.
+- **`src/core/operations.ts`** — the four `code_*` MCP op handlers stamp `status` + `ready` on their result envelopes.
+- **`src/core/init-embed-check.ts` (new)** — `runInitEmbedCheck()` builds the effective env (process.env + file-plane `openai/anthropic/zeroentropy_api_key` + `--key`), reconfigures the gateway via `buildGatewayConfig`, runs `diagnoseEmbedding` (config-only), then a best-effort `liveTestEmbed` (1 token, 5s `AbortController` timeout, never throws). Init-specific warning names `--no-embedding` / `--skip-embed-check`.
+- **`src/core/ai/build-gateway-config.ts` (new)** — `buildGatewayConfig` extracted from `src/cli.ts` (which now re-exports it) so core modules reuse it without importing the CLI entrypoint. Folds file-plane API keys + provider base URLs into the gateway config; `process.env` wins.
+- **`src/commands/init.ts`** — new `--skip-embed-check` flag (also `GBRAIN_INIT_SKIP_EMBED_CHECK=1`); replaces the prior ZeroEntropy-only warning in both the PGLite and Postgres paths with the generalized check; `embedding_check {ok, reason?, live_ok?}` added to the `--json` success envelope; help text updated.
+- **`src/core/db-lock.ts`** — `tryAcquireDbLock` adds same-host dead-pid auto-takeover (guarded `DELETE WHERE id=$1 AND holder_pid=$2` + one normal-upsert retry returning the standard handle). New exported `classifyHolderLiveness` / `isHolderDeadLocally` (injectable `process.kill` seam; `HOLDER_TAKEOVER_GRACE_MS = 60_000`; EPERM classified as `alive`, never reclaimed). TTL-expired locks stay the upsert's job; cross-host stays TTL-only.
+- **`src/commands/sync.ts`** — `runBreakLock`'s safe path consumes the shared `classifyHolderLiveness` predicate, fixing the prior bug where any `process.kill` throw (including EPERM) counted the holder as dead.
+- **Tests** — `test/code-graph-readiness.test.ts` (11), `test/db-lock-auto-takeover.test.ts` (11), `test/init-embed-check.test.ts` (9, hermetic via the gateway embed-transport seam + `withEnv`), plus readiness-envelope cases added to `test/e2e/code-intel-mcp-ops-pglite.test.ts`. Closes #1780.
+## [0.42.13.0] - 2026-06-02
+
+**Pages under `archive/` are findable again.** If you committed a note to your brain under `archive/` (old conversation exports, prior-system logs, notes you filed away), GBrain was embedding it and graphing it but then hiding it from every search. You would search for an exact phrase you knew was in the page, get nothing back, and conclude the page did not exist. It did. A hardcoded list was quietly dropping the whole `archive/` subtree from results unless you knew to pass a special flag.
+
+The rule should be simple: if it is committed to your brain, it should be findable. So `archive/` is no longer hidden. It is now ranked a bit lower than your curated content (essays, concepts, people) so old archived material does not crowd out your best pages, but it shows up. A genuinely strong match in `archive/` can still rise to the top when the reranker says it is the best answer.
+
+`test/`, `attachments/`, and `.raw/` stay hidden. Those are real noise.
+
+You do not need to do anything. Re-run a search that used to come up empty:
+
+```
+gbrain search "<a phrase you know is in an archived page>"
+```
+
+New `gbrain doctor` check `hidden_by_search_policy` reports how many pages are still withheld from default search by the remaining exclude prefixes, so an empty result is never silently a policy decision again:
+
+```
+gbrain doctor --json    # look for the hidden_by_search_policy check
+```
+
+**What you would see in a search for "widget"** when `concepts/widget-pattern` and `archive/old/widget-2020` both match:
+
+| Page | Before | After |
+|---|---|---|
+| `concepts/widget-pattern` | returned (rank 1) | returned (rank 1) |
+| `archive/old/widget-2020` | **withheld** | returned (rank 2, demoted) |
+| `test/fixtures/widget` | withheld | withheld |
+
+**Things to watch after upgrade:** the search result cache gets a one-time full refresh on first use (the exclude-policy change is folded into the cache key so stale archive-excluded results can not be served); it refills within an hour. If you run the contradictions probe, archived pages now classify in its `bulk` source tier instead of `other` — archive is bulk-ish historical content, so that is the right bucket.
+
+## To take advantage of v0.42.13.0
+
+`gbrain upgrade` handles this automatically. There is no migration. If a search that should return an archived page still comes up empty after upgrade:
+
+1. **Confirm the page is in the brain and chunked:**
+   ```bash
+   gbrain doctor --json    # hidden_by_search_policy lists what's withheld by prefix
+   ```
+   `archive/` should NOT appear in that list. `test/` / `attachments/` / `.raw/` may.
+2. **Re-run the search:**
+   ```bash
+   gbrain search "<phrase from the archived page>"
+   ```
+3. **If it still misses,** the page may genuinely have no chunks (never embedded). Run `gbrain embed --stale`, then search again.
+4. **If something looks wrong,** file an issue: https://github.com/garrytan/gbrain/issues with your `gbrain doctor` output and the query.
+
+### Itemized changes
+
+- `archive/` removed from `DEFAULT_HARD_EXCLUDES` and added to `DEFAULT_SOURCE_BOOSTS` at `0.5` (`src/core/search/source-boost.ts`). Findable by default, ranked below curated content. The demote is a prior applied in the SQL/fusion layer; the cross-encoder reranker can still promote a strongly-matching archive page that survives the demote into the rerank candidate window.
+- New `gbrain doctor` check `hidden_by_search_policy` (`src/commands/doctor.ts`, wired into both the local and remote/thin-client paths; `src/core/doctor-categories.ts`). Counts chunked pages withheld by each active exclude prefix in one SQL query, reusing the canonical `resolveHardExcludes` + `buildVisibilityClause` + `escapeLikePattern` so the count mirrors what search actually filters. `ok` for intentional default excludes (with a prescriptive, agent-readable message), `warn` only when a non-default `GBRAIN_SEARCH_EXCLUDE` prefix is hiding pages.
+- `KNOBS_HASH_VERSION` bumped 8 to 9 (`src/core/search/mode.ts`). The search-exclude policy is not part of the cache key, so the bump is what invalidates archive-excluded `query_cache` rows on upgrade. One-time global cache cold-miss; refills within `cache.ttl_seconds`.
+- `escapeLikePattern` is now exported from `src/core/search/sql-ranking.ts` (was test-only) so the doctor check escapes env-supplied prefixes with `ESCAPE '\'` instead of re-implementing it.
+- Docs + comment sweep: `docs/architecture/RETRIEVAL.md`, `src/core/types.ts`, `src/core/postgres-engine.ts` no longer describe `archive/` as a default hard-exclude.
+
+### For contributors
+
+- Verified on both PGLite (in-memory e2e) and real Postgres (seeded container smoke): archive findable + demoted below curated, `test/`/`.raw/`/`attachments/` still hidden, the new doctor SQL runs clean on both engines.
+- Side-effect documented above: adding `archive/: 0.5` to `DEFAULT_SOURCE_BOOSTS` reclassifies archive pages in the contradictions probe's source-tier breakdown (`src/core/eval-contradictions/cross-source.ts`) from `other` to `bulk` (boost < 0.95). Benign; no code change.
+## [0.42.12.0] - 2026-06-02
+
+**GBrain now keeps itself current the way your coding agent already keeps gstack current: it rides every invocation.** Until now, a gbrain install would quietly drift. You'd run an old binary against a newer brain schema, `gbrain doctor` would mutter about it, and nobody would act. There was no nudge at the moment you'd actually see it.
+
+Now every `gbrain` command is a heartbeat. On a new release it prints a one-line nudge to stderr, and `gbrain self-upgrade` applies it. This works the same on Claude Code, Codex, OpenClaw, Hermes, and Perplexity, because they all run gbrain. No cron to install, no per-agent setup, no capability detection. The check is cache-read-only on the hot path, so `gbrain search` is not one millisecond slower; the actual network refresh happens detached in the background and never blocks a command.
+
+Default is **notify** (a nudge, never a surprise upgrade). If you run an always-on install (an OpenClaw daemon, or the `gbrain serve` host behind a thin client) and want it hands-off, opt in once:
+
+```
+gbrain config set self_upgrade.mode auto
+```
+
+In `auto` mode the autopilot daemon applies upgrades silently, but only during quiet hours, only when the brain is idle (no running jobs, no in-flight requests), and only after a post-upgrade `gbrain doctor` passes. A release that fails doctor is recorded and never retried.
+
+What you'd see, by agent kind:
+
+| Agent | What happens | Default |
+|---|---|---|
+| Claude Code / Codex | nudge on stderr, you run `gbrain self-upgrade` | notify |
+| OpenClaw / Hermes daemon | nudge; set `auto` for hands-off | notify |
+| `gbrain serve` host | nudge; set `auto` for hands-off (idle-gated) | notify |
+| Perplexity / thin client | nudge is informational; the server self-upgrades | n/a |
+
+The `binary` install method (the compiled standalone) now does a **real atomic self-update** on macOS-arm64 and Linux-x64: it downloads the published release asset, smoke-tests it, then atomically renames it over the running binary. Any failure leaves your old binary untouched. There is no half-written-binary brick path. Other platforms degrade to a notify nudge.
+
+Things worth knowing: this is the same TLS-plus-GitHub trust model `gbrain upgrade` already used. Signature verification is a deliberate follow-up (tracked in TODOS), which is why `auto` stays opt-in rather than a default. The auto-update guide reversed its old "never auto-upgrade" stance to document the opt-in path and its gates.
+
+### To take advantage of v0.42.12.0
+
+`gbrain upgrade` does this automatically. After it, every invocation nudges you when a release lands.
+
+1. **Nothing required for the nudge** — it rides your next `gbrain` command.
+2. **Hands-off on an always-on install:** `gbrain config set self_upgrade.mode auto`
+3. **Turn it off entirely:** `gbrain config set self_upgrade.mode off`
+4. **Verify:**
+   ```bash
+   gbrain self-upgrade --check-only --json
+   gbrain doctor --json | grep self_upgrade_health
+   ```
+5. If anything looks wrong, file an issue with `gbrain doctor` output and `~/.gbrain/upgrade-errors.jsonl`.
+
+### Itemized changes
+
+- **`gbrain self-upgrade [--check-only] [--force] [--json]`** — the universal entry point both the agent skill and the silent channel call.
+- **Invocation marker** baked into CLI startup (cache-read-only, detached single-flight refresh, skip-set + recursion guard) and surfaced on the `get_brain_identity` MCP response.
+- **Autopilot silent channel** (opt-in `auto`): swap-only + breadcrumb + exit-for-relaunch. `installSystemd` now writes `Restart=always` (a clean exit must relaunch the new binary, since Bun has no `execve`); `gbrain upgrade` rewrites an existing `Restart=on-failure` unit in place (only when it matches the generated template; hand-edited units are left alone).
+- **Atomic binary self-update** (`src/core/binary-self-update.ts`) for macOS-arm64 / Linux-x64; `gbrain upgrade --swap-only` for the daemon fast path.
+- **`gbrain doctor` → `self_upgrade_health`**: mode, whether you're behind, recent failures.
+- **New `gbrain-upgrade` agent skill** mirroring the inline upgrade flow, wired into the resolver. The notify prompt now shows **what's new** (the changelog between your version and the new one, surfaced by `gbrain self-upgrade --check-only --json`), not just version numbers.
+- **Agent integration:** `setup` injects a self-upgrade marker protocol into AGENTS.md so interactive agents (Claude Code, Codex) act on the `UPGRADE_AVAILABLE` stderr marker; the daily HEARTBEAT beat routes through the skill for cron-cadence agents (OpenClaw, Hermes); `auto`-mode daemons ride the autopilot tick.
+- Config plane: `self_upgrade.mode` (`auto`/`notify`/`off`, default notify) plus quiet-hours and state keys, all file-plane so the hot path needs no DB.
+- New tests: pure decision matrix, atomic-cache/snooze, marker grammar, a real-HTTP-server binary-swap E2E, and a network-stubbed refresh-orchestration test.
+
+#### For contributors
+
+- `src/core/semver.ts` extracted from `check-update.ts` (re-exported for back-compat) to break an import cycle with the self-upgrade module.
+## [0.42.11.0] - 2026-06-03
+
+**Self-improving skills can no longer cheat. When you run `gbrain skillopt` to let
+a skill rewrite itself, it now has to prove the change actually helps on a set of
+tasks it wasn't optimized against — and for the skills gbrain ships, it won't
+overwrite them in place unless you hand it that independent check.**
+
+Here is the problem. `gbrain skillopt` treats a skill's SKILL.md as something it
+can edit and re-score against a benchmark, keeping edits that score higher. The
+trap: an edit can score higher on its own benchmark while quietly getting worse at
+the real job (classic "teaching to the test"). Until now the safety net for that —
+a held-out check — was documented but never actually wired in, the run's report
+showed a fake baseline score of 0, and a "final test" score was never computed. So
+you couldn't tell from the receipt whether a skill genuinely improved.
+
+This release makes the loop honest. Pass `--held-out <file.jsonl>` (a set of tasks
+with different IDs than your benchmark) and a candidate that climbs the benchmark
+but slips on the held-out set is refused. The run report now records the real
+baseline score and a real test-set score, so "did this skill get better" is a
+number you can read. `--no-mutate` finally writes the proposed rewrite to disk for
+review (it was a stub), and `--max-runtime-min` is actually enforced.
+
+For the ~47 skills gbrain ships, the bar is higher: mutating one in place now
+*requires* `--held-out` with at least 5 independent tasks. Without it you get a
+`proposed.md` to review instead of a silent overwrite. The held-out file must use
+task IDs disjoint from the benchmark — point it at a copy of the benchmark and the
+run refuses, because an overlapping check can't catch overfitting.
+
+The `run_skillopt` MCP tool got a security tighten in the same pass: it validates
+the skill name and confines benchmark/held-out paths to the skills directory for
+remote callers, so an admin token can't read arbitrary host files through it.
+
+## To take advantage of v0.42.11.0
+
+`gbrain upgrade` is all you need — these are behavior changes to an existing
+command, no migration.
+
+1. **Optimize a user skill with the new safety net:**
+   ```bash
+   gbrain skillopt my-skill --held-out skills/my-skill/held-out.jsonl
+   ```
+   The held-out file is the same JSONL shape as the benchmark, with task IDs that
+   do NOT appear in the benchmark.
+2. **Optimize a bundled (shipped) skill in place** — now requires the held-out
+   check; otherwise it writes `proposed.md` for review:
+   ```bash
+   gbrain skillopt brain-ops --allow-mutate-bundled --held-out skills/brain-ops/held-out.jsonl
+   ```
+3. **Read the honest receipt:** `gbrain skillopt ... --json` now reports
+   `baseline_sel_score`, `best_sel_score`, `baseline_test_score`, and `test_score`.
+
+### Itemized changes
+
+#### Added
+- **Held-out validation gate (F11) is now wired into the optimizer loop.** `--held-out <path>`
+  (CLI), `held_out_path` (background job + `run_skillopt` MCP op), and `heldOutPath`
+  (batch/fleet) load an independent task set; the gate runs at checkpoint acceptance
+  and blocks any candidate whose held-out score regresses below baseline. Previously
+  `runHeldOutGate` existed but nothing called it.
+- **Final-test eval.** After optimization, the best skill and the baseline are scored
+  on the held-out test split; receipts now carry `test_score` + `baseline_test_score`.
+- **Shared `scoreSkillOnTasks` primitive** (`validate-gate.ts`) used by the baseline
+  eval, final-test, held-out gate, and external eval harnesses so they can't drift.
+
+#### Changed
+- **Bundled-skill mutation requires a non-empty held-out set (>=5 tasks).** Enforced in
+  core mutation policy (`assertBundledMutationHeldOut`), so it fires for every entry
+  point — CLI, batch, fleet, background job, and the `run_skillopt` MCP op. Without it,
+  the run hard-refuses (exit 2) and points you at `proposed.md`.
+- **Held-out must be independent of the benchmark.** A held-out file sharing task IDs
+  with the benchmark is rejected (an overlapping check can't catch overfitting).
+- **Honest receipts.** `baseline_sel_score` is the real measured baseline (was hardcoded
+  to 0).
+- **`run_skillopt` MCP op hardening:** validates `skill_name` is kebab-case and confines
+  caller-supplied benchmark/held-out paths to the skills directory for remote callers.
+
+#### Fixed
+- **Multi-turn tool loops work again.** Any agent loop that calls a tool and feeds the
+  result back (`gbrain skillopt` rollouts AND production background subagent jobs) was
+  crashing the moment the model called a tool, with "messages do not match the
+  ModelMessage[] schema". The shipped AI SDK had tightened its message + tool-schema
+  validation; the gateway now wraps tool schemas correctly and converts tool results into
+  the structured shape the SDK expects, so the loop round-trips. Surfaced end-to-end by the
+  SkillOpt real-LLM eval — the kind of bug only running the feature against a live model
+  catches.
+- **Budget-capped Haiku runs no longer score a silent zero.** Claude Haiku 4.5's
+  canonical (dateless) model id was missing from the pricing table, so any cost-capped run
+  on Haiku (`gbrain skillopt --max-cost`, eval harnesses) hit "no pricing entry" on the
+  first model call of every rollout, which the validation gate then swallowed as a `0`
+  score — a pricing crash that looked exactly like a real "0 out of N" measurement. The
+  pricing entry is added, and the gate now re-throws budget/pricing errors loudly instead
+  of recording a hollow zero. Surfaced by the SkillOpt real-LLM eval.
+- **The optimizer now knows what the scorer rewards.** `gbrain skillopt`'s reflect step
+  was only shown a pass/fail score and the agent's transcript, never the benchmark's
+  success criteria — so on a skill judged by structure (e.g. "must include a Confidence:
+  line") it proposed plausible-but-off edits that never satisfied the check, every
+  candidate scored 0, the validation gate rejected them all, and the skill never changed.
+  The reflect prompt now includes a plain-English description of exactly how the output is
+  scored, with an instruction to satisfy it through genuine content, not empty keywords.
+  In an end-to-end run this took a deficient skill from 0.00 to 1.00 on a held-out set it
+  never trained on. Reward-hacking is still defended by the independent held-out gate.
+  Surfaced by the SkillOpt real-LLM eval.
+- **`--no-mutate` now writes `proposed.md`** with the winning rewrite (was a stub that
+  wrote nothing).
+- **`--max-runtime-min` is enforced** via a wall-clock deadline between optimization steps.
+
+### For contributors
+- Eval-internal ablation knobs on `runSkillOpt` (not exposed on the CLI): `reflectMode`
+  (`'both'`/`'failure-only'`), `disableValidationGate`, and `optimizerMode`
+  (`'reflect'`/`'one-shot-rewrite'`), recorded in the receipt + audit for replayability.
+  These drive the SkillOpt benchmark suite in the sibling `gbrain-evals` repo.
+- New tests: `test/skillopt/rollout.test.ts`, held-out + one-shot-rewrite unit cases, and
+  e2e coverage for the held-out gate (block/allow), bundled enforcement, no-mutate write,
+  runtime deadline, receipt honesty, and no-DB-pollution.
+- **CLAUDE.md restructured into a thin orientation + resolver (592KB → 39KB).** The per-file
+  index, command surface, test discipline, thin-client routing, and the verbose release
+  process moved to on-demand docs (`docs/architecture/KEY_FILES.md`, `docs/TESTING.md`,
+  `docs/architecture/thin-client.md`, `docs/RELEASING.md`); CLAUDE.md keeps the North Star,
+  architecture + cross-cutting invariants, the IRON RULES, and a reference map that routes to
+  the detail. Per-file entries are now current-state only — release history lives in
+  CHANGELOG + git. `scripts/check-key-files-current-state.sh` (wired into `bun run verify`)
+  fails the build if append-only version narration returns to the reference docs or CLAUDE.md
+  grows past its cap, so the bloat cannot recur. The llms bundle drops from ~740KB to ~204KB.
+  `scripts/ci-cache-hash.sh` now keeps the relocated policy docs test-affecting so a change to
+  them still invalidates the CI cache.
+
+## [0.42.10.0] - 2026-06-02
+
+**Wikilinks like `[[struktura]]` that point at pages in another folder finally connect.** Until now, if you wrote `[[struktura]]` in `concepts/knowledge-graph.md` and the actual page lived at `projects/struktura.md`, GBrain silently dropped the link from its graph. Obsidian users saw a dense web of connections in their vault and a thin, broken graph inside GBrain. The issue reporter had 71 wikilinks across 20 pages — GBrain captured 12.
+
+This release adds an **opt-in mode** that resolves bare wikilinks by basename match. Turn it on with one command and the missing edges show up.
+
+```
+gbrain config set link_resolution.global_basename true
+gbrain extract links
+```
+
+`gbrain doctor` scans your brain on every run and tells you what you'd gain. If five or more bare wikilinks would resolve under the new mode, you'll see a paste-ready hint:
+
+```
+link_resolution_opportunity: 47 of 60 bare wikilinks (78%) would resolve to
+24 distinct page(s) under global_basename mode.
+Enable with: gbrain config set link_resolution.global_basename true
+```
+
+The mode covers every place wikilinks get resolved: `gbrain extract links` (both the filesystem-walk path that the issue reporter hit by default, and the database path that the autopilot cycle uses), and the auto-link step that runs every time an agent writes a page through `put_page`. Same flag, all three surfaces.
+
+### How it handles ambiguity
+
+If `[[struktura]]` matches two pages — say `projects/struktura.md` and `archive/struktura.md` — GBrain emits **one edge to each**, both tagged with a new `wikilink_basename` link type. No silent winner-takes-all, no arbitrary first-wins choice. You can audit and prune the dual-match cases via:
+
+```
+gbrain graph-query concepts/knowledge-graph --type wikilink_basename
+```
+
+This is a deliberate departure from the issue's original proposal (which suggested dropping ambiguous matches with a warning). The graph layer is supposed to capture relationships, not editorialize about them.
+
+### Why opt-in (and why this default is safe)
+
+The default stays off, so existing brains get zero behavior change on upgrade. The bug class this fix opens — a `[[review]]` accidentally linking to some `topics/review` page that exists for unrelated reasons — is real, and turning it on globally would change every existing user's graph in ways they didn't ask for. Doctor surfaces the opportunity; the user decides.
+
+For brains that flip the flag on, all newly extracted edges carry a distinct `link_source = 'wikilink-resolved'` provenance tag, so you can later distinguish basename-resolved edges from your hand-written markdown links.
+
+### What this means
+
+If you write in the Obsidian convention (flat-namespace, globally-unique basenames, bare `[[wikilinks]]` everywhere), your GBrain graph has been wrong. Flip the flag and run extract once — the missing edges show up immediately.
+
+If you don't use bare wikilinks, doctor will tell you so (`No bare wikilinks found`) and you can keep ignoring this knob.
+
+Closes https://github.com/garrytan/gbrain/issues/972.
+
+### Itemized changes
+
+- `src/core/link-extraction.ts` — three new exports:
+  - `WIKILINK_BASENAME_LINK_TYPE = 'wikilink_basename'` — the edge-type constant used by every path that emits basename-resolved edges. Adapted from PR #1233's regex (which was the kernel of the resolver-side fix).
+  - `isGlobalBasenameEnabled(engine)` — single source of truth for the
+    flag read. Order: env `GBRAIN_LINK_RESOLUTION_GLOBAL_BASENAME` → DB
+    config `link_resolution.global_basename` → default false.
+  - `WIKILINK_GENERIC_RE` — generic Obsidian-shape wikilink regex for the `[[bare-name]]` pass that falls outside `DIR_PATTERN`. `EntityRef` gains an optional `needsResolution` flag tagged onto refs from this pass so downstream callers know to route them through the resolver instead of treating them as canonical slugs.
+- `SlugResolver` interface gains an optional `resolveBasenameMatches(name): Promise<string[]>` method. Returns ALL slugs whose basename matches — multi-match by design. `makeResolver(engine)` implements this with a lazy-built basename → `string[]` index (single `engine.getAllSlugs()` call per resolver instance) covering raw + lowercase + slugified key variants.
+- `extractPageLinks` gains two options. `opts.globalBasename` routes `needsResolution: true` refs through `resolveBasenameMatches`, emitting one candidate per match tagged `linkType: 'wikilink_basename'` + `linkSource: 'wikilink-resolved'`. `opts.skipFrontmatter` replaces the pre-issue-#972 `nullResolver` pattern — callers can now pass the real resolver everywhere AND independently gate the frontmatter pass, which is necessary because the bare-wikilink path needs `resolveBasenameMatches` on the real resolver.
+- `src/commands/extract.ts` — DB-source `extractLinksFromDB` and FS-source `extractLinksFromFile` / `extractLinksFromDir` / `extractLinksForSlugs` thread `globalBasename` (read once per extract run via `isGlobalBasenameEnabled`). FS-source adds two new exported helpers — `resolveBasenameMatchesFromSlugs(name, allSlugs): string[]` and `resolveSlugAll(fileDir, relTarget, allSlugs, opts): string[]`. `resolveSlug` stays single-match for back-compat; `resolveSlugAll` wraps it with the basename-fallback. Stable sort: shorter slug first, then lexical.
+- `src/core/operations.ts:put_page` — auto-link path now reads the flag and passes `globalBasename` through to `extractPageLinks`. Newly-written pages get basename edges when the flag is on.
+- `src/commands/doctor.ts` — new `link_resolution_opportunity` check. Full scan with a 60s budget, heartbeat-reported. Severity: skipped when flag already on; ok when no bare wikilinks; ok with explanation when bare wikilinks present but none match; **warn with paste-ready hint when ≥5 would resolve AND ≥20% of bare wikilinks have matches**. Threshold tuned to surface real opportunities without flagging brains that only have a handful of unresolvable refs. Wired into both `buildChecks` (local doctor) and `doctorReportRemote` (thin-client) for parity.
+- Migration v113 (`links_link_source_widen_for_wikilink_basename`) widens the `links_link_source_check` constraint to accept `'wikilink-resolved'` as a valid `link_source`. Idempotent — DROP IF EXISTS + ADD CONSTRAINT.
+- `src/schema.sql` + regenerated `src/core/schema-embedded.ts` + `src/core/pglite-schema.ts` carry the widened constraint for fresh installs so first-init brains start with the right shape.
+- New CHECK constraint value adds `'wikilink-resolved'` alongside `'markdown'`, `'frontmatter'`, `'manual'`.
+- `KNOWN_CONFIG_KEYS` (in `src/core/config.ts`) adds `'link_resolution'` and `'link_resolution.global_basename'` so `gbrain config set ...` accepts the new key without `--force`.
+- Tests: 38 new cases pinning the contract. `test/link-extraction.test.ts` adds 17 cases covering `WIKILINK_GENERIC_RE` shape (anchor / display / strip / escape paths), the `extractEntityRefs` pass-2c no-double-emit invariant, `resolveBasenameMatches` multi-match + index-built-once + missing-`getAllSlugs` degradation, and the `extractPageLinks` opt routing under both flag states. `test/extract-fs.test.ts` adds 11 cases for the pure-function helpers (`resolveBasenameMatchesFromSlugs`, `resolveSlugAll`) plus 3 round-trip tests of the issue's exact repro inside a PGLite brain. `test/doctor.test.ts` adds 7 cases for the new doctor check (skip / ok / warn paths + the cross-surface wiring source-grep). `test/e2e/global-basename-pglite.test.ts` adds 7 end-to-end cases against an in-memory PGLite brain covering FS-source, DB-source, and put_page auto-link paths under both flag states.
+- PR #1233 from @rayers contributed the kernel of the resolver-side approach (the generic wikilink regex + slug-tail index pattern). This PR keeps that mechanism, makes it opt-in via the new config flag, replaces the first-write-wins lookup with multi-match return, and extends the coverage to the FS-source path that the issue's repro actually hits.
+
 ## [0.42.8.0] - 2026-06-01
 
 **Scraped junk stops landing in your brain as if it were real content, and when something looks off, your agent gets told instead of being left to guess.**
@@ -1535,6 +2339,7 @@ behavior for an automated caller, set `gbrain config set search.mcp_keyword_only
 - A page represented by its weakest chunk in vector search (the incident).
 - Same-slug pages in different sources collapsing in per-page pooling and the
   alias hop (source-isolation).
+
 ## [0.41.33.0] - 2026-05-29
 
 **`gbrain search` and `query` can now return a tight, intent-sized set of
@@ -1775,6 +2580,7 @@ doctor` warns about a partial migration:
   `test/doctor.test.ts` (T1 untracked-folders headline bug, T2 remote-never-shells-out trust
   boundary), `test/sync-all-parallel.test.ts` (column-path staleness).
 - **CI tooling** — `scripts/ship-remote-tests.sh` + `workflow_dispatch` on `test.yml`.
+
 ## [0.41.31.0] - 2026-05-30
 
 **Your nightly `gbrain sync --all` cron stops getting blocked. It used to

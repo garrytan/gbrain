@@ -321,6 +321,27 @@ export function mentionsFingerprint(p: {
 }
 
 /**
+ * v0.42.x (#1794) — Fingerprint for resumable incremental `sync`. Completed
+ * keys are repo-relative file PATHS (add/modify/delete/rename-to) drained so
+ * far; a reserved sentinel entry also carries the pinned target commit (see
+ * sync.ts).
+ *
+ * The key deliberately encodes ONLY `(sourceId, lastCommit)` — NOT the target
+ * or live HEAD. `lastCommit` is the anchor, which the resumable sync advances
+ * only at full completion, so the fingerprint is stable across every killed-
+ * and-resumed run while the backlog (lastCommit..HEAD) grows underneath it.
+ * Keying on HEAD would mint a fresh checkpoint each hour as the enrich process
+ * commits, defeating resume — the exact bug this fix exists to kill.
+ */
+export function syncFingerprint(p: { sourceId?: string; lastCommit: string }): string {
+  return fingerprint({
+    mode: 'sync',
+    source: p.sourceId ?? 'default',
+    lastCommit: p.lastCommit,
+  });
+}
+
+/**
  * Cycle's purge phase calls this to drop stale checkpoints. 7-day TTL is
  * deliberately generous — any reasonable long-running op finishes inside
  * that window, and the row is cheap (few KB).

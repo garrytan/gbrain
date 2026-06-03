@@ -26,6 +26,11 @@ export const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
   // https://platform.claude.com/docs/en/about-claude/models/overview (verified 2026-05-10).
   'claude-opus-4-7':            { input:  5.00, output: 25.00 },
   'claude-sonnet-4-6':          { input:  3.00, output: 15.00 },
+  // Both the dateless canonical id (TIER_DEFAULTS / aliases / every caller uses
+  // this) AND the dated snapshot. The dateless entry was missing pre-v0.42.9.0,
+  // so a budget-capped Haiku run (skillopt with --max-cost, eval harnesses) hit
+  // BudgetTracker no_pricing and every rollout silently scored 0.
+  'claude-haiku-4-5':           { input:  1.00, output:  5.00 },
   'claude-haiku-4-5-20251001':  { input:  1.00, output:  5.00 },
   // Older but still frequently aliased
   'claude-opus-4-6':            { input:  5.00, output: 25.00 },

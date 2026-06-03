@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'bun:test';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -466,6 +466,145 @@ esac
         );
         expect(wdBackoffs.length).toBeGreaterThan(0);
       } finally {
+        h.cleanup();
+      }
+    });
+  });
+
+  describe('issue #1801 — restartCurrentChild + killChild liveness fix', () => {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    // ESRCH = no such process (dead). EPERM = process exists but we can't
+    // signal it (alive) — under `bun test` a spawned child can land in a state
+    // where kill(pid,0) reports EPERM, so treat anything-but-ESRCH as alive.
+    const isAlive = (pid: number): boolean => {
+      try { process.kill(pid, 0); return true; }
+      catch (e) { return (e as NodeJS.ErrnoException)?.code !== 'ESRCH'; }
+    };
+
+    // Worker that IGNORES SIGTERM and sleeps, so only SIGKILL can stop it.
+    function makeSigtermIgnorer(name: string): Harness {
+      return makeHarness(name, "trap '' TERM\nsleep 30");
+    }
+
+    async function startInBackground(h: Harness): Promise<{
+      sup: ChildWorkerSupervisor;
+      events: ChildSupervisorEvent[];
+      firstPid: number;
+      stop: () => Promise<void>;
+    }> {
+      const events: ChildSupervisorEvent[] = [];
+      let stopping = false;
+      let resolveSpawn: (pid: number) => void;
+      const firstSpawn = new Promise<number>((r) => { resolveSpawn = r; });
+      const sup = new ChildWorkerSupervisor({
+        cliPath: h.workerScript,
+        args: [],
+        maxCrashes: 100,
+        _backoffFloorMs: 5,
+        isStopping: () => stopping,
+        onMaxCrashesExceeded: () => { stopping = true; },
+        onEvent: (e) => {
+          events.push(e);
+          if (e.kind === 'worker_spawned') resolveSpawn(e.pid);
+        },
+      });
+      const runPromise = sup.run();
+      const firstPid = await firstSpawn;
+      const stop = async () => {
+        stopping = true;
+        // SIGKILL-retry until run() returns (children ignore SIGTERM).
+        for (let i = 0; i < 60; i++) {
+          sup.killChild('SIGKILL');
+          const done = await Promise.race([
+            runPromise.then(() => true),
+            sleep(50).then(() => false),
+          ]);
+          if (done) return;
+        }
+        await runPromise;
+      };
+      return { sup, events, firstPid, stop };
+    }
+
+    // Structural regression for Codex #1: killChild MUST gate on liveness
+    // (exitCode/signalCode === null), NOT on `.killed`. `.killed` flips true the
+    // moment a signal is *sent*, so a `!this._child.killed` guard makes a
+    // follow-up SIGKILL (after an ignored SIGTERM) a silent no-op — the bug that
+    // left the existing shutdown() drain unable to force-kill a stuck worker.
+    // (The SIGTERM→SIGKILL behavior is exercised end-to-end by the
+    // restartCurrentChild test below + standalone repros; a live-process
+    // assertion that a SIGTERM-ignoring child survives is unreliable under the
+    // `bun test` runtime, so the no-regression contract is pinned structurally.)
+    it('killChild gates on liveness, not .killed (Codex #1 regression)', () => {
+      const src = readFileSync(
+        join(import.meta.dir, '..', 'src', 'core', 'minions', 'child-worker-supervisor.ts'),
+        'utf8',
+      );
+      const killChildBody = src.slice(
+        src.indexOf('killChild(signal: NodeJS.Signals)'),
+        src.indexOf('awaitChildExit('),
+      );
+      // Strip comment lines so the doc note explaining the OLD bug (which names
+      // `.killed`) doesn't trip the negative assertion — we check the CODE.
+      const code = killChildBody
+        .split('\n')
+        .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+        .join('\n');
+      expect(code).toContain('exitCode === null');
+      expect(code).toContain('signalCode === null');
+      // The buggy `.killed` guard must be gone from the code.
+      expect(code).not.toContain('.killed');
+    });
+
+    it('restartCurrentChild SIGKILLs the captured child, respawns, labels wedge_restart, leaves crashCount=0', async () => {
+      const h = makeSigtermIgnorer('restart-current');
+      const ctx = await startInBackground(h);
+      try {
+        const oldPid = ctx.firstPid;
+        await ctx.sup.restartCurrentChild(150); // SIGTERM ignored → SIGKILL after 150ms
+        await sleep(400); // let the old child exit + run() respawn (ms:0 wedge backoff)
+
+        expect(isAlive(oldPid)).toBe(false); // captured child killed
+
+        const spawns = ctx.events.filter((e) => e.kind === 'worker_spawned');
+        expect(spawns.length).toBeGreaterThanOrEqual(2); // respawned
+
+        const wedgeExit = ctx.events.find(
+          (e) => e.kind === 'worker_exited' && e.likelyCause === 'wedge_restart',
+        );
+        expect(wedgeExit).toBeDefined();
+        if (wedgeExit && wedgeExit.kind === 'worker_exited') {
+          expect(wedgeExit.crashCount).toBe(0); // Codex #3 — not counted as a crash
+        }
+
+        const wedgeBackoff = ctx.events.find(
+          (e) => e.kind === 'backoff' && e.reason === 'wedge_restart',
+        );
+        expect(wedgeBackoff).toBeDefined();
+        if (wedgeBackoff && wedgeBackoff.kind === 'backoff') {
+          expect(wedgeBackoff.ms).toBe(0); // immediate respawn
+        }
+
+        // Codex #2 — the respawned child is alive and was NOT killed by a stale
+        // timer aimed at the old child.
+        expect(ctx.sup.childAlive).toBe(true);
+      } finally {
+        await ctx.stop();
+        h.cleanup();
+      }
+    });
+
+    it('repeated wedge restarts never trip max_crashes (crashCount stays 0)', async () => {
+      const h = makeSigtermIgnorer('restart-no-crash');
+      const ctx = await startInBackground(h);
+      try {
+        for (let i = 0; i < 3; i++) {
+          await ctx.sup.restartCurrentChild(120);
+          await sleep(300);
+        }
+        expect(ctx.sup.crashCount).toBe(0); // three self-heals, zero crashes
+      } finally {
+        await ctx.stop();
         h.cleanup();
       }
     });

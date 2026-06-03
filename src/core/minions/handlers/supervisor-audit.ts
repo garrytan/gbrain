@@ -118,16 +118,47 @@ export function readSupervisorEvents(opts: { sinceMs?: number } = {}): Superviso
 }
 
 /**
+ * Cross-week supervisor read for windows that can straddle a Monday boundary
+ * (issue #1685, CODEX #7). The single-file `readSupervisorEvents` above can lose
+ * a Sunday-night OOM loop when read on Monday because it only opens the current
+ * ISO-week file. This variant delegates to the shared writer's `readRecent`,
+ * which walks current + previous week (the same prev-week walk db-disconnect and
+ * the other audits already use), then applies an hour-precision cutoff.
+ *
+ * Used by `worker_oom_loop` in doctor.ts so the OOM-loop verdict can't silently
+ * miss a week-boundary incident. The legacy `readSupervisorEvents` keeps its
+ * single-file semantics so the existing `supervisor` check's assertions don't
+ * shift (and PR #1688, concurrently editing that check, doesn't conflict).
+ */
+export function readRecentSupervisorEvents(
+  hours = 24,
+  now: Date = new Date(),
+): SupervisorEmission[] {
+  const days = hours / 24;
+  const events = writer.readRecent(days, now);
+  const cutoff = now.getTime() - hours * 3_600_000;
+  return events.filter((e) => {
+    if (!e.event || !e.ts) return false;
+    const t = Date.parse(e.ts);
+    return !Number.isFinite(t) || t >= cutoff;
+  });
+}
+
+/**
  * Denylist of clean-exit `likely_cause` values. Anything not in this set —
  * including future unrecognized values — counts as a crash. Matches the
  * domain asymmetry: clean exits are explicit (the worker exited because we
- * asked it to); crashes are an open catch-all. If a future maintainer adds a
+ * asked it to); crashes are an open catch-all. `wedge_restart` (issue #1801)
+ * is a deliberate supervisor self-heal of an alive-but-wedged worker — counted
+ * as clean here so doctor / `jobs supervisor status` don't inflate the crash
+ * count on self-heals; the wedge itself surfaces via the
+ * `restarting_wedged_worker` / `wedge_restart_loop` health_warn instead. If a future maintainer adds a
  * new `likely_cause` upstream in `child-worker-supervisor.ts` (e.g.
  * `lock_lost`, `panic`), the doctor surfaces it by default instead of
  * silently underreporting — denylist semantics close the bug class this
  * helper was added to fix.
  */
-const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown']);
+const CLEAN_EXIT_CAUSES = new Set(['clean_exit', 'graceful_shutdown', 'wedge_restart']);
 
 /**
  * Per-cause crash bucket shape returned by `summarizeCrashes()`. Bucket names

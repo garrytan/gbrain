@@ -258,7 +258,9 @@ CREATE TABLE IF NOT EXISTS links (
   -- v0.41.18.0: 'mentions' added for auto-linked body-text mentions
   -- (gbrain extract links --by-mention). Filtered OUT of backlink-count
   -- for search ranking; only counts toward orphan-ratio + graph traversal.
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions')),
+  -- v0.40.8.2 (#972): 'wikilink-resolved' added for opt-in global-basename
+  -- wikilink resolution. See src/schema.sql for full rationale.
+  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions', 'wikilink-resolved')),
   -- v0.41.18.0 (codex finding #12): nullable link_kind distinguishes
   -- "plain body mention" from "verb-pattern-derived typed link" within
   -- link_source='mentions'. See src/schema.sql for full rationale.

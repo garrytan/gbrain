@@ -3,6 +3,7 @@ import {
   buildSourceFactorCase,
   buildHardExcludeClause,
   buildVisibilityClause,
+  escapeLikePattern as topLevelEscapeLikePattern,
   __test__,
 } from '../src/core/search/sql-ranking.ts';
 import {
@@ -241,7 +242,7 @@ describe('resolveHardExcludes', () => {
     const r = resolveHardExcludes(undefined, ['test/'], undefined);
     expect(r).not.toContain('test/');
     // Other defaults still present.
-    expect(r).toContain('archive/');
+    expect(r).toContain('attachments/');
   });
 
   test('env GBRAIN_SEARCH_EXCLUDE adds to the union', () => {
@@ -252,6 +253,40 @@ describe('resolveHardExcludes', () => {
   test('include subtracts from env-supplied excludes too', () => {
     const r = resolveHardExcludes(undefined, ['envdir/'], 'envdir/');
     expect(r).not.toContain('envdir/');
+  });
+});
+
+// issue #1777 — archive/ moved from hard-exclude to a 0.5 source-boost demote.
+describe('archive demote (issue #1777)', () => {
+  test('archive/ is NOT a default hard-exclude (regression guard)', () => {
+    expect(DEFAULT_HARD_EXCLUDES).not.toContain('archive/');
+    // The genuine-noise prefixes stay excluded.
+    expect(DEFAULT_HARD_EXCLUDES).toContain('test/');
+    expect(DEFAULT_HARD_EXCLUDES).toContain('attachments/');
+    expect(DEFAULT_HARD_EXCLUDES).toContain('.raw/');
+  });
+
+  test('resolveHardExcludes() never includes archive/ by default', () => {
+    expect(resolveHardExcludes()).not.toContain('archive/');
+  });
+
+  test('archive/ is demoted to 0.5 in the boost map', () => {
+    expect(DEFAULT_SOURCE_BOOSTS['archive/']).toBe(0.5);
+    expect(resolveBoostMap()['archive/']).toBe(0.5);
+  });
+
+  test('buildSourceFactorCase emits an archive/ demote branch', () => {
+    const sql = buildSourceFactorCase('p.slug', resolveBoostMap(), undefined);
+    expect(sql).toContain("WHEN p.slug LIKE 'archive/%' THEN 0.5");
+  });
+
+  test('detail=high bypasses the source factor (archive ranks normally)', () => {
+    expect(buildSourceFactorCase('p.slug', resolveBoostMap(), 'high')).toBe('1.0');
+  });
+
+  test('escapeLikePattern is exported at top level (CV-3a contract)', () => {
+    expect(typeof topLevelEscapeLikePattern).toBe('function');
+    expect(topLevelEscapeLikePattern('a_b%c\\d')).toBe('a\\_b\\%c\\\\d');
   });
 });
 

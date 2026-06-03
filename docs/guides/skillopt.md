@@ -87,8 +87,9 @@ proposal (this lives in v0.42 follow-up; v1 emits the audit event).
 | `--judge-model MODEL` | tier.reasoning | Scores rollouts |
 | `--patch \| --rewrite` | patch | Edit ops only vs. full rewrites |
 | `--dry-run` | off | Cost preview, no LLM calls |
-| `--no-mutate` | off | Write proposed.md, don't replace SKILL.md |
-| `--allow-mutate-bundled` | off | Required to mutate gbrain-bundled skills |
+| `--no-mutate` | off | Write proposed.md, don't replace SKILL.md (no held-out needed) |
+| `--allow-mutate-bundled` | off | Required to mutate gbrain-bundled skills in place — ALSO requires `--held-out` (>=5 rows) or the run hard-refuses |
+| `--held-out <path>` | — | Independent test set (same JSONL shape as the benchmark, task IDs disjoint from it). A candidate that beats the benchmark but regresses on the held-out set is refused. Required for in-place bundled mutation. |
 | `--max-cost-usd N` | 5.00 | Hard cap; preflight refuses if exceeded |
 | `--max-runtime-min N` | 30 | Wall-clock cap |
 | `--force` | off | Bypass dirty-working-tree refusal |
@@ -123,7 +124,8 @@ refuses to start when the estimate exceeds `--max-cost-usd`.
 | Validation gate is mandatory | D12 (paper) | Accepting LLM judge noise as improvement |
 | Frontmatter mutation forbidden | D5 | Routing surface drift (`check-resolvable` regression) |
 | Per-skill DB lock | D14 | Two concurrent runs corrupting history/versions |
-| Bundled-skill gate | D16 | Auto-mutating skills shipped with gbrain |
+| Bundled-skill gate | D16 | Auto-mutating skills shipped with gbrain (in-place mutation requires `--allow-mutate-bundled` + a `--held-out` set of >=5 benchmark-disjoint tasks; else hard-refuse + proposed.md) |
+| Held-out gate | F11 | Accepting a candidate that overfits its own benchmark — `--held-out` refuses a candidate whose held-out score regresses below baseline |
 | Bootstrap review sentinel | D15 | Self-referential benchmark gaming |
 | Read-only tool sandbox in rollouts | D13 | Optimization runs writing junk pages to your brain |
 | History-intent-first atomic commit | D8 | Half-written SKILL.md on crash |

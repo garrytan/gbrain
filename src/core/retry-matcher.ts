@@ -116,6 +116,21 @@ export function isRetryableConnError(err: unknown): boolean {
 }
 
 /**
+ * issue #1685 (CODEX #8): is this error specifically a POOLER REAP — postgres.js's
+ * library-level `CONNECTION_ENDED` code (the transaction-mode pooler dropping an
+ * idle socket between ticks)? Narrower than `isRetryableConnError`, which also
+ * matches 08xxx SQLSTATEs, network blips, and auth races. Used by
+ * `PostgresEngine.reconnect()` to label the pool-recovery audit honestly so a
+ * generic reconnect isn't mis-recorded as a reap.
+ */
+export function isConnectionEndedError(err: unknown): boolean {
+  const code = getCode(err);
+  if (code === 'CONNECTION_ENDED') return true;
+  const msg = getMessage(err);
+  return /CONNECTION_ENDED/i.test(msg);
+}
+
+/**
  * Convenience: is this error retryable for ANY reason (connection drop OR
  * statement timeout)? Backfill uses this — callers that need finer-grained
  * dispatch (different backoff per kind) call the dedicated predicates.
