@@ -1912,6 +1912,24 @@ export interface BrainEngine {
     opts?: { signal?: AbortSignal },
   ): Promise<T[]>;
 
+  /**
+   * Like `executeRaw`, but routes through the DIRECT (session-mode) pool when
+   * dual-pool is active (Supabase: port 5432), falling back to the read pool
+   * otherwise. Use this for the Minion lock hot-path (`claim`/`renewLock`):
+   * those statements heartbeat a lock over many seconds, and the
+   * transaction-mode pooler (port 6543) recycles connections per-transaction,
+   * which surfaces as `CONNECTION_ENDED` mid-heartbeat → orphaned locks →
+   * silent worker wedge. The direct session pool holds the connection open for
+   * the life of the worker, so heartbeats survive. Single-statement UPDATEs
+   * only — same idempotency contract as `executeRaw`. On PGLite (no pooler)
+   * this is identical to `executeRaw`.
+   */
+  executeRawDirect<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]>;
+
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 5 populates, Layer 7 consumes)
   // ============================================================
