@@ -58,11 +58,13 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.stdout + r.stderr).toMatch(/schema|active|list|show|validate|use/i);
   });
 
-  test('schema list shows gbrain-base bundled', () => {
+  test('schema list shows bundled packs, including gbrain-base-v2', () => {
     const r = gbrain(['schema', 'list']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('Bundled packs:');
     expect(r.stdout).toContain('gbrain-base');
+    expect(r.stdout).toContain('gbrain-recommended');
+    expect(r.stdout).toContain('gbrain-base-v2');
   });
 
   test('schema show gbrain-base prints manifest details', () => {
@@ -85,6 +87,24 @@ describe('gbrain schema CLI (Phase C)', () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('✓');
     expect(r.stdout).toContain('valid manifest');
+  });
+
+  test('schema show gbrain-base-v2 prints manifest details', () => {
+    const r = gbrain(['schema', 'show', 'gbrain-base-v2']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('gbrain-base-v2 v1.0.0');
+    expect(r.stdout).toContain('Page types (15)');
+    expect(r.stdout).toContain('Link verbs (14)');
+    expect(r.stdout).toContain('tweet :: media');
+    expect(r.stdout).toContain('note :: concept');
+  });
+
+  test('schema validate gbrain-base-v2 passes', () => {
+    const r = gbrain(['schema', 'validate', 'gbrain-base-v2']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('✓');
+    expect(r.stdout).toContain('valid manifest');
+    expect(r.stdout).toContain('Page types: 15');
   });
 
   test('schema active reports default resolution', () => {
@@ -134,6 +154,16 @@ describe('gbrain schema use (Phase C, gap-fill T3)', () => {
     expect(existsSync(cfgPath)).toBe(true);
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
     expect(cfg.schema_pack).toBe('gbrain-base');
+  });
+
+  test('writes bundled gbrain-base-v2 schema_pack to ~/.gbrain/config.json', () => {
+    const r = gbrain(['schema', 'use', 'gbrain-base-v2'], { GBRAIN_HOME: home });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Active schema pack set to: gbrain-base-v2');
+    const cfgPath = join(home, '.gbrain', 'config.json');
+    expect(existsSync(cfgPath)).toBe(true);
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));
+    expect(cfg.schema_pack).toBe('gbrain-base-v2');
   });
 
   test('preserves pre-existing config fields when writing schema_pack', () => {
