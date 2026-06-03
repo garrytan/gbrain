@@ -1,53 +1,57 @@
 import { createHash } from 'crypto';
-import type { BrainEngine } from './engine.ts';
-import type { Operation, OperationContext } from './operations.ts';
-import { getConnectorDefinition, type ConnectorDefinition } from './connectors/connector-registry.ts';
+import { type ConnectorDefinition, getConnectorDefinition } from './connectors/connector-registry.ts';
 import {
   CREDENTIAL_PROVIDER_PRIORITY,
-  createCredentialReference,
   type CredentialHealthStatus,
   type CredentialProvider,
   type CredentialReferenceRecord,
   type CredentialRotationStatus,
+  createCredentialReference,
 } from './connectors/credential-refs.ts';
+import type { BrainEngine } from './engine.ts';
+import type { Operation, OperationContext } from './operations.ts';
 import { recordMemoryMutationEvent } from './services/memory-mutation-ledger-service.ts';
 import {
-  CONSENT_STATES,
-  SOURCE_KINDS,
-  applySourcePolicyOverrides,
-  getDefaultSourcePolicy,
-  isSourceConsentState,
-  isSourceKind,
-  type SourcePolicy,
-  type SourcePolicyOverride,
-  type SourceConsentState,
-  type SourceKind,
-} from './source-registry/source-policy.ts';
-import type {
-  PromptInjectionFlagRecord,
-  RawIngestInput,
-  RawIngestPolicy,
-  RawIngestPlan,
-  SecretDetectionRecord,
-  SourceChunkRecord,
-  SourceItemEventRecord,
-  SourceItemRecord,
-  SourceOriginEvent,
-} from './source-registry/raw-ingest.ts';
-import type { MemoryMutationOperationName } from './types.ts';
-import type {
-  RawAccessPolicy,
-  RawAccessRequest,
-} from './source-registry/raw-access-ledger.ts';
-import {
-  evaluateRawSourceAccess,
   buildSourceStatusEvent,
+  evaluateRawSourceAccess,
   previewRawSourceIngest,
   registerSource,
   resolveSourceRegistryPolicy,
   type SourceRecord,
   type SourceStatusEventRecord,
 } from './services/source-registry-service.ts';
+import type {
+  RawAccessPolicy,
+  RawAccessRequest,
+} from './source-registry/raw-access-ledger.ts';
+import type {
+  RawIngestInput,
+  RawIngestPolicy,
+  SourceChunkRecord,
+  SourceItemEventRecord,
+  SourceItemRecord,
+  SourceOriginEvent,
+} from './source-registry/raw-ingest.ts';
+import {
+  insertSourceItemEvent,
+  mapSourceItem,
+  persistRawIngestPlan,
+  readSourceItemByExternalId,
+  readSourceItemChunks,
+} from './source-registry/raw-ingest-store.ts';
+import {
+  applySourcePolicyOverrides,
+  CONSENT_STATES,
+  getDefaultSourcePolicy,
+  isSourceConsentState,
+  isSourceKind,
+  SOURCE_KINDS,
+  type SourceConsentState,
+  type SourceKind,
+  type SourcePolicy,
+  type SourcePolicyOverride,
+} from './source-registry/source-policy.ts';
+import type { MemoryMutationOperationName } from './types.ts';
 
 type OperationErrorCtor = new (
   code: 'invalid_params',
@@ -1343,23 +1347,6 @@ function rawIngestPolicyFromResolved(
   };
 }
 
-async function persistRawIngestPlan(engine: BrainEngine, plan: RawIngestPlan): Promise<void> {
-  await upsertSourceItem(engine, plan.item);
-  await deleteRawIngestChildRecords(engine, plan.item.id);
-  for (const chunk of plan.chunks) {
-    await insertSourceChunk(engine, chunk);
-  }
-  for (const event of plan.events) {
-    await insertSourceItemEvent(engine, event);
-  }
-  for (const detection of plan.secret_detections) {
-    await insertSecretDetection(engine, detection);
-  }
-  for (const flag of plan.prompt_injection_flags) {
-    await insertPromptInjectionFlag(engine, flag);
-  }
-}
-
 async function recordConnectorFailure(
   deps: { OperationError: OperationErrorCtor },
   ctx: OperationContext,
@@ -1664,286 +1651,6 @@ async function updateConnectorSuccessHealth(
   throw new Error('connector success operations require a SQL-backed engine');
 }
 
-async function upsertSourceItem(engine: BrainEngine, item: SourceItemRecord): Promise<void> {
-  const candidate = engine as QueryableEngine;
-  const values = [
-    item.id,
-    item.source_id,
-    item.external_id,
-    item.origin_event,
-    item.locator,
-    item.title,
-    item.source_created_at,
-    item.source_updated_at,
-    item.ingested_at,
-    item.content_hash,
-    JSON.stringify(item.metadata_json),
-    item.raw_copy_mode,
-    item.raw_copy_ref,
-    item.sensitivity_level,
-    item.ingest_status,
-    item.retention_policy_id,
-  ];
-  if (candidate.database) {
-    candidate.database.query(`
-      INSERT INTO source_items (
-        id, source_id, external_id, origin_event, locator, title, source_created_at, source_updated_at,
-        ingested_at, content_hash, metadata_json, raw_copy_mode, raw_copy_ref, sensitivity_level,
-        ingest_status, retention_policy_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source_id, external_id) DO UPDATE SET
-        origin_event = excluded.origin_event,
-        locator = excluded.locator,
-        title = excluded.title,
-        source_created_at = excluded.source_created_at,
-        source_updated_at = excluded.source_updated_at,
-        ingested_at = excluded.ingested_at,
-        content_hash = excluded.content_hash,
-        metadata_json = excluded.metadata_json,
-        raw_copy_mode = excluded.raw_copy_mode,
-        raw_copy_ref = excluded.raw_copy_ref,
-        sensitivity_level = excluded.sensitivity_level,
-        ingest_status = excluded.ingest_status,
-        retention_policy_id = excluded.retention_policy_id
-    `).run(...values);
-    return;
-  }
-  if (candidate.sql?.unsafe) {
-    await candidate.sql.unsafe(`
-      INSERT INTO source_items (
-        id, source_id, external_id, origin_event, locator, title, source_created_at, source_updated_at,
-        ingested_at, content_hash, metadata_json, raw_copy_mode, raw_copy_ref, sensitivity_level,
-        ingest_status, retention_policy_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16)
-      ON CONFLICT(source_id, external_id) DO UPDATE SET
-        origin_event = excluded.origin_event,
-        locator = excluded.locator,
-        title = excluded.title,
-        source_created_at = excluded.source_created_at,
-        source_updated_at = excluded.source_updated_at,
-        ingested_at = excluded.ingested_at,
-        content_hash = excluded.content_hash,
-        metadata_json = excluded.metadata_json,
-        raw_copy_mode = excluded.raw_copy_mode,
-        raw_copy_ref = excluded.raw_copy_ref,
-        sensitivity_level = excluded.sensitivity_level,
-        ingest_status = excluded.ingest_status,
-        retention_policy_id = excluded.retention_policy_id
-    `, values);
-    return;
-  }
-  if (candidate.db) {
-    await candidate.db.query(`
-      INSERT INTO source_items (
-        id, source_id, external_id, origin_event, locator, title, source_created_at, source_updated_at,
-        ingested_at, content_hash, metadata_json, raw_copy_mode, raw_copy_ref, sensitivity_level,
-        ingest_status, retention_policy_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16)
-      ON CONFLICT(source_id, external_id) DO UPDATE SET
-        origin_event = excluded.origin_event,
-        locator = excluded.locator,
-        title = excluded.title,
-        source_created_at = excluded.source_created_at,
-        source_updated_at = excluded.source_updated_at,
-        ingested_at = excluded.ingested_at,
-        content_hash = excluded.content_hash,
-        metadata_json = excluded.metadata_json,
-        raw_copy_mode = excluded.raw_copy_mode,
-        raw_copy_ref = excluded.raw_copy_ref,
-        sensitivity_level = excluded.sensitivity_level,
-        ingest_status = excluded.ingest_status,
-        retention_policy_id = excluded.retention_policy_id
-    `, values);
-    return;
-  }
-  throw new Error('raw ingest operations require a SQL-backed engine');
-}
-
-async function deleteRawIngestChildRecords(engine: BrainEngine, sourceItemId: string): Promise<void> {
-  const candidate = engine as QueryableEngine;
-  if (candidate.database) {
-    candidate.database.query('DELETE FROM source_item_events WHERE source_item_id = ?').run(sourceItemId);
-    candidate.database.query('DELETE FROM prompt_injection_flags WHERE source_item_id = ?').run(sourceItemId);
-    candidate.database.query('DELETE FROM secret_detections WHERE source_item_id = ?').run(sourceItemId);
-    candidate.database.query('DELETE FROM source_chunks WHERE source_item_id = ?').run(sourceItemId);
-    return;
-  }
-  const sql = [
-    'DELETE FROM source_item_events WHERE source_item_id = $1',
-    'DELETE FROM prompt_injection_flags WHERE source_item_id = $1',
-    'DELETE FROM secret_detections WHERE source_item_id = $1',
-    'DELETE FROM source_chunks WHERE source_item_id = $1',
-  ];
-  if (candidate.sql?.unsafe) {
-    for (const statement of sql) await candidate.sql.unsafe(statement, [sourceItemId]);
-    return;
-  }
-  if (candidate.db) {
-    for (const statement of sql) await candidate.db.query(statement, [sourceItemId]);
-    return;
-  }
-  throw new Error('raw ingest operations require a SQL-backed engine');
-}
-
-async function insertSourceChunk(engine: BrainEngine, chunk: SourceChunkRecord): Promise<void> {
-  const candidate = engine as QueryableEngine;
-  const values = [
-    chunk.id,
-    chunk.source_item_id,
-    chunk.chunk_index,
-    chunk.chunk_hash,
-    chunk.chunk_text,
-    chunk.redacted_text,
-    chunk.token_count,
-    chunk.parser_version,
-    chunk.extractor_version,
-    JSON.stringify(chunk.sensitivity_flags),
-    chunk.prompt_injection_risk,
-    chunk.secret_risk,
-    chunk.created_at,
-    chunk.expires_at,
-  ];
-  if (candidate.database) {
-    candidate.database.query(`
-      INSERT INTO source_chunks (
-        id, source_item_id, chunk_index, chunk_hash, chunk_text, redacted_text, token_count,
-        parser_version, extractor_version, sensitivity_flags, prompt_injection_risk, secret_risk,
-        created_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(...values);
-    return;
-  }
-  if (candidate.sql?.unsafe) {
-    await candidate.sql.unsafe(`
-      INSERT INTO source_chunks (
-        id, source_item_id, chunk_index, chunk_hash, chunk_text, redacted_text, token_count,
-        parser_version, extractor_version, sensitivity_flags, prompt_injection_risk, secret_risk,
-        created_at, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
-    `, values);
-    return;
-  }
-  if (candidate.db) {
-    await candidate.db.query(`
-      INSERT INTO source_chunks (
-        id, source_item_id, chunk_index, chunk_hash, chunk_text, redacted_text, token_count,
-        parser_version, extractor_version, sensitivity_flags, prompt_injection_risk, secret_risk,
-        created_at, expires_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
-    `, values);
-    return;
-  }
-  throw new Error('raw ingest operations require a SQL-backed engine');
-}
-
-async function insertSourceItemEvent(engine: BrainEngine, event: SourceItemEventRecord): Promise<void> {
-  const candidate = engine as QueryableEngine;
-  const values = [event.id, event.source_item_id, event.event_type, '{}', event.created_at];
-  if (candidate.database) {
-    candidate.database.query(`
-      INSERT INTO source_item_events (id, source_item_id, event_type, metadata_json, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(...values);
-    return;
-  }
-  if (candidate.sql?.unsafe) {
-    await candidate.sql.unsafe(`
-      INSERT INTO source_item_events (id, source_item_id, event_type, metadata_json, created_at)
-      VALUES ($1, $2, $3, $4::jsonb, $5)
-    `, values);
-    return;
-  }
-  if (candidate.db) {
-    await candidate.db.query(`
-      INSERT INTO source_item_events (id, source_item_id, event_type, metadata_json, created_at)
-      VALUES ($1, $2, $3, $4::jsonb, $5)
-    `, values);
-    return;
-  }
-  throw new Error('raw ingest operations require a SQL-backed engine');
-}
-
-async function insertSecretDetection(engine: BrainEngine, detection: SecretDetectionRecord): Promise<void> {
-  const candidate = engine as QueryableEngine;
-  const values = [
-    detection.id,
-    detection.source_item_id,
-    detection.source_chunk_id,
-    detection.secret_type,
-    detection.secret_hash,
-    detection.confidence,
-    detection.redaction_status,
-    detection.purge_plan_status,
-    detection.created_at,
-  ];
-  if (candidate.database) {
-    candidate.database.query(`
-      INSERT INTO secret_detections (
-        id, source_item_id, source_chunk_id, secret_type, secret_hash, confidence,
-        redaction_status, purge_plan_status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(...values);
-    return;
-  }
-  if (candidate.sql?.unsafe) {
-    await candidate.sql.unsafe(`
-      INSERT INTO secret_detections (
-        id, source_item_id, source_chunk_id, secret_type, secret_hash, confidence,
-        redaction_status, purge_plan_status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    `, values);
-    return;
-  }
-  if (candidate.db) {
-    await candidate.db.query(`
-      INSERT INTO secret_detections (
-        id, source_item_id, source_chunk_id, secret_type, secret_hash, confidence,
-        redaction_status, purge_plan_status, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    `, values);
-    return;
-  }
-  throw new Error('raw ingest operations require a SQL-backed engine');
-}
-
-async function insertPromptInjectionFlag(engine: BrainEngine, flag: PromptInjectionFlagRecord): Promise<void> {
-  const candidate = engine as QueryableEngine;
-  const values = [
-    flag.id,
-    flag.source_item_id,
-    flag.source_chunk_id,
-    flag.flag_type,
-    flag.risk,
-    flag.evidence_hash,
-    flag.created_at,
-  ];
-  if (candidate.database) {
-    candidate.database.query(`
-      INSERT INTO prompt_injection_flags (
-        id, source_item_id, source_chunk_id, flag_type, risk, evidence_hash, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(...values);
-    return;
-  }
-  if (candidate.sql?.unsafe) {
-    await candidate.sql.unsafe(`
-      INSERT INTO prompt_injection_flags (
-        id, source_item_id, source_chunk_id, flag_type, risk, evidence_hash, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-    `, values);
-    return;
-  }
-  if (candidate.db) {
-    await candidate.db.query(`
-      INSERT INTO prompt_injection_flags (
-        id, source_item_id, source_chunk_id, flag_type, risk, evidence_hash, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-    `, values);
-    return;
-  }
-  throw new Error('raw ingest operations require a SQL-backed engine');
-}
-
 async function listSourceInspectionRows(
   engine: BrainEngine,
   filters: SourceInspectionFilters,
@@ -2087,33 +1794,6 @@ async function readAllSourceRecords(engine: BrainEngine): Promise<SourceRecord[]
   return rows.map(normalizeSourceRecord);
 }
 
-async function readSourceItemByExternalId(
-  engine: BrainEngine,
-  sourceId: string,
-  externalId: string,
-): Promise<SourceItemRecord | null> {
-  const candidate = engine as QueryableEngine;
-  const sql = `
-    SELECT id, source_id, external_id, origin_event, locator, title, source_created_at, source_updated_at,
-           ingested_at, content_hash, metadata_json, raw_copy_mode, raw_copy_ref, sensitivity_level,
-           ingest_status, retention_policy_id
-    FROM source_items
-    WHERE source_id = ? AND external_id = ?
-  `;
-  if (candidate.database) {
-    const row = candidate.database.query<Record<string, unknown>>(sql).get(sourceId, externalId);
-    return row ? normalizeSourceItemRecord(row) : null;
-  }
-  const pgSql = sql.replace('?', '$1').replace('?', '$2');
-  const rows = candidate.sql?.unsafe
-    ? await candidate.sql.unsafe(pgSql, [sourceId, externalId])
-    : candidate.db
-      ? (await candidate.db.query(pgSql, [sourceId, externalId])).rows
-      : null;
-  if (!rows) throw new Error('source item inspection operations require a SQL-backed engine');
-  return rows[0] ? normalizeSourceItemRecord(rows[0]) : null;
-}
-
 async function listSourceItems(
   engine: BrainEngine,
   input: SourceItemsListInput,
@@ -2139,36 +1819,13 @@ async function listSourceItems(
 
   const items: Array<SourceItemRecord & { chunks?: SourceChunkRecord[] }> = [];
   for (const row of rows) {
-    const item = normalizeSourceItemRecord(row);
+    const item = mapSourceItem(row);
     items.push(input.include_chunks ? {
       ...item,
-      chunks: await readSourceChunks(engine, item.id),
+      chunks: await readSourceItemChunks(engine, item.id),
     } : item);
   }
   return { source_id: input.source_id, items };
-}
-
-async function readSourceChunks(engine: BrainEngine, sourceItemId: string): Promise<SourceChunkRecord[]> {
-  const candidate = engine as QueryableEngine;
-  const sql = `
-    SELECT id, source_item_id, chunk_index, chunk_hash, chunk_text, redacted_text, token_count,
-           parser_version, extractor_version, sensitivity_flags, prompt_injection_risk, secret_risk,
-           created_at, expires_at
-    FROM source_chunks
-    WHERE source_item_id = ?
-    ORDER BY chunk_index ASC, id ASC
-  `;
-  if (candidate.database) {
-    return candidate.database.query<Record<string, unknown>>(sql).all(sourceItemId).map(normalizeSourceChunkRecord);
-  }
-  const pgSql = sql.replace('?', '$1');
-  const rows = candidate.sql?.unsafe
-    ? await candidate.sql.unsafe(pgSql, [sourceItemId])
-    : candidate.db
-      ? (await candidate.db.query(pgSql, [sourceItemId])).rows
-      : null;
-  if (!rows) throw new Error('source chunk inspection operations require a SQL-backed engine');
-  return rows.map(normalizeSourceChunkRecord);
 }
 
 async function readFullSourceRecord(engine: BrainEngine, sourceId: string): Promise<SourceRecord | null> {
@@ -2457,46 +2114,6 @@ function normalizeCredentialReference(row: Record<string, unknown>): CredentialR
     health_status: String(row.health_status ?? ''),
     created_at: dateString(row.created_at),
     updated_at: dateString(row.updated_at),
-  };
-}
-
-function normalizeSourceItemRecord(row: Record<string, unknown>): SourceItemRecord {
-  return {
-    id: String(row.id),
-    source_id: String(row.source_id),
-    external_id: String(row.external_id),
-    origin_event: originEventValue(row.origin_event),
-    locator: nullableString(row.locator),
-    title: String(row.title ?? ''),
-    source_created_at: nullableDateString(row.source_created_at),
-    source_updated_at: nullableDateString(row.source_updated_at),
-    ingested_at: dateString(row.ingested_at),
-    content_hash: String(row.content_hash),
-    metadata_json: jsonRecord(row.metadata_json),
-    raw_copy_mode: String(row.raw_copy_mode),
-    raw_copy_ref: nullableString(row.raw_copy_ref),
-    sensitivity_level: String(row.sensitivity_level ?? 'normal'),
-    ingest_status: sourceItemStatus(row.ingest_status),
-    retention_policy_id: nullableString(row.retention_policy_id),
-  };
-}
-
-function normalizeSourceChunkRecord(row: Record<string, unknown>): SourceChunkRecord {
-  return {
-    id: String(row.id),
-    source_item_id: String(row.source_item_id),
-    chunk_index: Number(row.chunk_index),
-    chunk_hash: String(row.chunk_hash),
-    chunk_text: String(row.chunk_text),
-    redacted_text: String(row.redacted_text ?? ''),
-    token_count: Number(row.token_count ?? 0),
-    parser_version: String(row.parser_version),
-    extractor_version: String(row.extractor_version ?? ''),
-    sensitivity_flags: jsonStringArray(row.sensitivity_flags),
-    prompt_injection_risk: promptInjectionRisk(row.prompt_injection_risk),
-    secret_risk: secretRisk(row.secret_risk),
-    created_at: dateString(row.created_at),
-    expires_at: nullableDateString(row.expires_at),
   };
 }
 
@@ -3166,34 +2783,6 @@ function jsonStringArray(value: unknown): string[] {
     }
   }
   return [];
-}
-
-function originEventValue(value: unknown): SourceOriginEvent {
-  const raw = String(value);
-  if (SOURCE_ORIGIN_EVENTS.includes(raw as SourceOriginEvent)) {
-    return raw as SourceOriginEvent;
-  }
-  throw new Error(`stored source item has invalid origin_event: ${raw}`);
-}
-
-function sourceItemStatus(value: unknown): SourceItemRecord['ingest_status'] {
-  const status = String(value);
-  if (status === 'pending' || status === 'ready' || status === 'failed' || status === 'revoked' || status === 'purged') {
-    return status;
-  }
-  throw new Error(`stored source item has invalid ingest_status: ${status}`);
-}
-
-function promptInjectionRisk(value: unknown): SourceChunkRecord['prompt_injection_risk'] {
-  const risk = String(value);
-  if (risk === 'none' || risk === 'flagged' || risk === 'quarantined') return risk;
-  throw new Error(`stored source chunk has invalid prompt_injection_risk: ${risk}`);
-}
-
-function secretRisk(value: unknown): SourceChunkRecord['secret_risk'] {
-  const risk = String(value);
-  if (risk === 'none' || risk === 'flagged' || risk === 'detected' || risk === 'redacted') return risk;
-  throw new Error(`stored source chunk has invalid secret_risk: ${risk}`);
 }
 
 function stableId(prefix: string, ...parts: string[]): string {

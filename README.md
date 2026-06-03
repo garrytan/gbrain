@@ -741,8 +741,9 @@ has no placeholder tests and covers fresh install, task resume, routing, scope
 denial, promotion provenance, supersession, rejection, canonical-first retrieval,
 precision degradation, code-claim verification, export boundaries, retrieval
 traces, brain-loop audit, interaction-linked writes, nullable interaction IDs,
-and candidate status event auditing. Scenario-aware memory request planning has
-focused unit and operation coverage alongside the scenario suite.
+candidate status event auditing, and agent-session memory loop authority.
+Scenario-aware memory request planning has focused unit and operation coverage
+alongside the scenario suite.
 
 ## Documentation Map
 

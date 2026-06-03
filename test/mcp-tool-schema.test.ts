@@ -79,4 +79,40 @@ describe('MCP tool schema metadata', () => {
     expect(tool.description).toBeUndefined();
     expect(tool.annotations).toBeUndefined();
   });
+
+  test('compact schemas omit bare object array item hints while preserving scalar item hints', () => {
+    const tool = operationToMcpTool(operation({
+      params: {
+        object_items: {
+          type: 'array',
+          items: { type: 'object' },
+        },
+        string_items: {
+          type: 'array',
+          items: { type: 'string' },
+        },
+      },
+    }), { compact: true });
+
+    expect((tool.inputSchema.properties as any).object_items.items).toBeUndefined();
+    expect((tool.inputSchema.properties as any).string_items.items).toEqual({ type: 'string' });
+  });
+
+  test('compact schemas can omit oversized enum hints while full schemas keep them', () => {
+    const op = operation({
+      params: {
+        audit_filter: {
+          type: 'string',
+          enum: ['one', 'two'],
+          compactEnum: false,
+        },
+      },
+    });
+
+    const fullTool = operationToMcpTool(op);
+    const compactTool = operationToMcpTool(op, { compact: true });
+
+    expect((fullTool.inputSchema.properties as any).audit_filter.enum).toEqual(['one', 'two']);
+    expect((compactTool.inputSchema.properties as any).audit_filter.enum).toBeUndefined();
+  });
 });

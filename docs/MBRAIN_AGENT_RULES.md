@@ -43,11 +43,10 @@ Use the lightest lookup:
 
 `search`/`query` chunks and Memory Inbox `candidate_signals` are both pointers,
 not answer evidence; `read_context` is the canonical evidence boundary before
-factual claims. If canonical reads do not support an answer but
-`candidate_signals` exist, say canonical evidence is absent or different and
-that Memory Inbox has non-canonical signals. Do not use them as answer-grounding
-truth; use candidate/review operations to inspect, promote, reject, or supersede
-them. For known selectors or slugs, go directly to `read_context` or `get_page`.
+factual claims. If required reads miss but `candidate_signals` exist, say
+canonical evidence is absent/different and Memory Inbox has non-canonical signals.
+Use candidate/review ops to inspect, promote, reject, or supersede them.
+For known selectors or slugs, go directly to `read_context` or `get_page`.
 Stop once you have enough context.
 
 ## 3. Route Durable Writeback
@@ -69,6 +68,13 @@ skip the write.
 
 Never write transient task mechanics, private chain-of-thought, or generic facts
 that do not belong in the user's knowledge graph.
+
+## Agent Session Memory
+
+Use `preview_agent_session_memory` before apply. Use
+`capture_agent_session_memory` with `apply: true` only with source refs and an
+acceptable route. Default `write_mode: candidate_only`; direct personal/profile
+writes need preflight. File/envelope capture is a wrapper, not canonical authority.
 
 ## 4. Filing Rules
 

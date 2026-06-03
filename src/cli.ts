@@ -142,6 +142,21 @@ const AUTO_PROMOTE_CLI_SPEC: Operation = {
   cliHints: { name: 'auto-promote' },
 };
 
+const AGENT_SESSION_CLI_SPEC: Operation = {
+  name: 'agent_session',
+  description: 'Preview or capture a JSON agent-session envelope file through governed memory operations.',
+  params: {
+    action: { type: 'string', required: true, description: 'preview or capture', enum: ['preview', 'capture'] },
+    file: { type: 'string', required: true, description: 'Path to a JSON capture envelope' },
+    json: { type: 'boolean', description: 'Emit JSON output' },
+    apply: { type: 'boolean', description: 'Apply governed writeback for capture mode' },
+    dry_run: { type: 'boolean', description: 'Preview capture mode without mutation' },
+    write_mode: { type: 'string', description: 'candidate_only or direct_personal_when_allowed', enum: ['candidate_only', 'direct_personal_when_allowed'] },
+  },
+  handler: noopHandler,
+  cliHints: { name: 'agent-session', positional: ['action'] },
+};
+
 const SYNC_CLI_SPEC: Operation = {
   name: 'sync_brain',
   description: 'Sync git repo to brain (incremental). CLI also supports a watch-mode extension for repeated polling.',
@@ -167,6 +182,7 @@ const CLI_ONLY_SPECS: Partial<Record<string, Operation>> = {
   migrate: MIGRATE_CLI_SPEC,
   'memory-report': MEMORY_REPORT_CLI_SPEC,
   'auto-promote': AUTO_PROMOTE_CLI_SPEC,
+  'agent-session': AGENT_SESSION_CLI_SPEC,
   'setup-agent': SETUP_AGENT_CLI_SPEC,
 };
 
@@ -206,6 +222,7 @@ const DIRECT_ENGINE_COMMANDS: Record<string, CliEngineLoader> = {
   doctor: async () => (await import('./commands/doctor.ts')).runDoctor,
   'memory-report': async () => (await import('./commands/memory-report.ts')).runMemoryReport,
   'auto-promote': async () => (await import('./commands/auto-promote.ts')).runAutoPromoteCommand,
+  'agent-session': async () => (await import('./commands/agent-session.ts')).runAgentSession,
   migrate: async () => (await import('./commands/migrate-engine.ts')).runMigrateEngine,
   subbrain: async () => (await import('./commands/subbrain.ts')).runSubbrain,
 };
@@ -513,6 +530,7 @@ SETUP
   integrations [subcommand]          Manage integration recipes
   connectors [list|show]             Inspect personal data connector definitions
   memory-report [--json]             Show the memory review report surface
+  agent-session preview|capture      Preview or capture a JSON agent-session envelope file
 
 PAGES
   get <slug>                         Read a page

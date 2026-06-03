@@ -13,9 +13,17 @@ export function paramToMcpSchema(
   return {
     type: schemaTypes.length === 1 ? schemaTypes[0] : schemaTypes,
     ...(param.description && !options.compact ? { description: param.description } : {}),
-    ...(param.enum ? { enum: param.enum } : {}),
-    ...(param.items ? { items: paramToMcpSchema(param.items, options) } : {}),
+    ...(param.enum && (!options.compact || param.compactEnum !== false) ? { enum: param.enum } : {}),
+    ...(param.items && shouldIncludeItemsSchema(param.items, options)
+      ? { items: paramToMcpSchema(param.items, options) }
+      : {}),
   };
+}
+
+function shouldIncludeItemsSchema(param: ParamDef, options: McpToolSchemaOptions): boolean {
+  if (!options.compact) return true;
+  const types = Array.isArray(param.type) ? param.type : [param.type];
+  return !(types.length === 1 && types[0] === 'object' && !param.enum && !param.items && !param.nullable);
 }
 
 export function operationToMcpTool(op: Operation, options: McpToolSchemaOptions = {}): {

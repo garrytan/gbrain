@@ -3,9 +3,9 @@ import { createHash } from 'crypto';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import type { BrainEngine } from '../src/core/engine.ts';
 import { createCredentialReference } from '../src/core/connectors/credential-refs.ts';
-import { operations, type Operation, type OperationContext } from '../src/core/operations.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { type Operation, type OperationContext, operations } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
@@ -119,6 +119,40 @@ describe('source registry operations', () => {
     expect(getOperation('register_source').mutating).toBe(true);
     expect(getOperation('ingest_connector_item').mutating).toBe(true);
     expect(getOperation('list_sources').mutating).toBe(false);
+  });
+
+  test('preview raw ingest redacts session-capture chunks after raw ingest store extraction', async () => {
+    const harness = await createSqliteHarness('raw-store-extraction');
+    try {
+      const registered = await getOperation('register_source').handler(harness.ctx(), {
+        source_kind: 'codex_session',
+        display_name: 'Codex Sessions',
+        locator: 'codex://sessions',
+        consent_state: 'granted',
+        now: '2026-06-03T01:00:00.000Z',
+      }) as any;
+
+      const preview = await getOperation('preview_raw_ingest').handler(harness.ctx(), {
+        source_id: registered.source.id,
+        external_id: 'session-1/event-1',
+        origin_event: 'session_capture',
+        title: 'Agent session event',
+        chunk_texts: ['The user pasted sk-testsecret1234567890 and asked to remember a preference.'],
+        parser_version: 'agent-session:v1',
+        policy: {
+          consent_state: 'granted',
+          enabled: true,
+          raw_copy_mode: 'metadata_chunks',
+          automatic_canonical_write_authority: 'candidate',
+        },
+        now: '2026-06-03T01:01:00.000Z',
+      }) as any;
+
+      expect(preview.chunks[0].redacted_text).toContain('[REDACTED:openai_api_key]');
+      expect(preview.secret_detections).toHaveLength(1);
+    } finally {
+      await harness.cleanup();
+    }
   });
 
   for (const [label, createHarness] of [

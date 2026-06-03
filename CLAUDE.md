@@ -13,6 +13,8 @@ available in local mode versus what must fail with honest guidance.
 ## Key files
 
 - `src/core/operations.ts` — Contract-first operation definitions (the foundation)
+- `src/core/operations-agent-session-memory.ts` — Agent/session memory preview and capture operations
+- `src/core/operations-agent-session-activation.ts` — Agent-session activation planning operation
 - `src/core/engine.ts` — Pluggable engine interface (BrainEngine)
 - `src/core/postgres-engine.ts` — Postgres + pgvector implementation
 - `src/core/sqlite-engine.ts` — SQLite engine for local/offline mode
@@ -20,6 +22,16 @@ available in local mode versus what must fail with honest guidance.
 - `src/core/offline-profile.ts` — Honest capability gating for local/offline mode
 - `src/core/embedding/provider.ts` — Local embedding runtime integration + availability reporting
 - `src/core/db.ts` — Postgres connection management, schema initialization
+- `src/core/services/agent-session-memory-service.ts` — Agent session normalization, source refs, and redacted capture planning
+- `src/core/services/agent-session-compression-service.ts` — Zero-LLM agent session compression and bounded summaries
+- `src/core/services/agent-session-classifier-service.ts` — MBrain-native profile/episode/procedure/task/no-write signal classification
+- `src/core/services/agent-session-writeback-service.ts` — Governed Memory Inbox routing and preflighted direct personal writes for session signals
+- `src/core/services/agent-session-activation-service.ts` — Authority-labelled activation artifacts for session-derived memory
+- `src/core/services/agent-session-capture-envelope-service.ts` — Hook-friendly JSON/JSONL envelope normalization for session capture
+- `src/core/services/agent-session-activation-planner-service.ts` — Authority-aware activation planning for future agent sessions
+- `src/core/services/agent-session-maintenance-service.ts` — Session-derived candidate review and recurrence maintenance helpers
+- `src/commands/agent-session.ts` — File-based preview/capture command for real session payloads
+- `src/core/source-registry/raw-ingest-store.ts` — SQL-backed raw ingest persistence helper for source items, chunks, redaction, and flags
 - `src/core/import-file.ts` — importFromFile + importFromContent (chunk + embed + tags)
 - `src/core/sync.ts` — Pure sync functions (manifest parsing, filtering, slug conversion)
 - `src/core/storage.ts` — Pluggable storage interface (S3, Supabase Storage, local)
@@ -67,7 +79,7 @@ Deterministic brain-quality tools (no LLM calls, no DB connection, engine-agnost
 
 `bun test` runs the repo test suite. Unit tests run without a database. Postgres-backed E2E coverage skips gracefully when `DATABASE_URL` is not set.
 
-Unit tests include `test/sqlite-engine.test.ts` (SQLite engine parity), `test/local-offline.test.ts` (offline profile + local embedding/rewrite semantics), `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts` (chunking), `test/sync.test.ts` (sync logic), `test/parity.test.ts` (operations contract parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config resolution), `test/files.test.ts` / `test/file-migration.test.ts` / `test/file-resolver.test.ts` (storage + file handling), `test/import-file.test.ts` / `test/import-resume.test.ts` (import pipeline), `test/upgrade.test.ts`, `test/doctor.test.ts`, `test/migrate.test.ts`, `test/setup-branching.test.ts`, `test/slug-validation.test.ts`, `test/storage.test.ts`, `test/supabase-admin.test.ts`, `test/yaml-lite.test.ts`, and `test/check-update.test.ts`. Auto-promote unit tests: `test/auto-promote/{runner-policy-promotion,verdict,config,candidate-selector,prompt,cli-executor,verdict-cache,promote-gate,service,dream-phase,cli,digest}.test.ts`; migration v48 adds the `auto_promote_verdicts` verdict-cache table (Postgres/PGLite and SQLite).
+Unit tests include `test/sqlite-engine.test.ts` (SQLite engine parity), `test/local-offline.test.ts` (offline profile + local embedding/rewrite semantics), `test/markdown.test.ts` (frontmatter parsing), `test/chunkers/recursive.test.ts` (chunking), `test/sync.test.ts` (sync logic), `test/parity.test.ts` (operations contract parity), `test/cli.test.ts` (CLI structure), `test/config.test.ts` (config resolution), `test/files.test.ts` / `test/file-migration.test.ts` / `test/file-resolver.test.ts` (storage + file handling), `test/import-file.test.ts` / `test/import-resume.test.ts` (import pipeline), `test/upgrade.test.ts`, `test/doctor.test.ts`, `test/migrate.test.ts`, `test/setup-branching.test.ts`, `test/slug-validation.test.ts`, `test/storage.test.ts`, `test/supabase-admin.test.ts`, `test/yaml-lite.test.ts`, and `test/check-update.test.ts`. Agent-session follow-up tests: `test/agent-session-capture-envelope-service.test.ts`, `test/agent-session-cli.test.ts`, `test/agent-session-activation-planner-service.test.ts`, `test/agent-session-activation-operations.test.ts`, `test/agent-session-maintenance-service.test.ts`, and `test/scenarios/s33-agent-session-memory-loop.test.ts`. Auto-promote unit tests: `test/auto-promote/{runner-policy-promotion,verdict,config,candidate-selector,prompt,cli-executor,verdict-cache,promote-gate,service,dream-phase,cli,digest}.test.ts`; migration v48 adds the `auto_promote_verdicts` verdict-cache table (Postgres/PGLite and SQLite).
 
 E2E tests (`test/e2e/`): Run against real Postgres+pgvector. Require `DATABASE_URL`.
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys)
