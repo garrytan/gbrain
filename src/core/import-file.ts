@@ -1224,11 +1224,18 @@ export async function importCodeFile(
         const idx = findChunkForOffset(e.callSiteByteOffset, content, rangeList);
         if (idx == null) continue;
         const from = rangeList[idx]!;
-        if (!from.id || !from.symbol_name_qualified) continue;
+        // Need a real chunk id to anchor the edge. We used to ALSO require a
+        // non-null symbol_name_qualified, which silently dropped every call
+        // site living in an unnamed/merged chunk (common in .js/.mjs files
+        // that chunk by size, not by symbol) — losing real call edges. Now we
+        // keep the edge and fall back to a file-scoped from-identity so the
+        // call site is still recorded and can resolve its callee.
+        if (!from.id) continue;
+        const fromQualified = from.symbol_name_qualified ?? `${slug}`;
         edgeInputs.push({
           from_chunk_id: from.id,
           to_chunk_id: null,
-          from_symbol_qualified: from.symbol_name_qualified,
+          from_symbol_qualified: fromQualified,
           to_symbol_qualified: e.toSymbol,
           edge_type: e.edgeType,
           // Thread the source so source-scoped reads (code-callers/callees with

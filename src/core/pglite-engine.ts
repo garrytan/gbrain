@@ -4827,6 +4827,13 @@ export class PGLiteEngine implements BrainEngine {
       `DELETE FROM code_edges_symbol WHERE from_chunk_id = ANY($1::int[])`,
       [chunkIds],
     );
+    // Reset the resolver watermark so the next edges-backfill re-walks these
+    // chunks (parity with the postgres engine). Without it, re-chunked chunks
+    // keep a fresh watermark and edges-backfill skips them → edges stay unresolved.
+    await this.db.query(
+      `UPDATE content_chunks SET edges_backfilled_at = NULL WHERE id = ANY($1::int[])`,
+      [chunkIds],
+    );
   }
 
   async getCallersOf(
