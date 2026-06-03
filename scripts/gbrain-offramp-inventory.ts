@@ -50,6 +50,15 @@ export function summarizeRows(rows: ListRow[]): InventorySummary {
   };
 }
 
+export function parseListOutput(raw: string): ListRow[] {
+  return raw
+    .split('\n')
+    .map((line) => line.replace(/\r$/, ''))
+    .filter((line) => line.length > 0)
+    .map(parseListRow)
+    .filter((row): row is ListRow => row !== null);
+}
+
 export function collectDefaultInventory(limit = 2000): InventorySummary {
   const result = spawnSync(
     'bun',
@@ -66,14 +75,7 @@ export function collectDefaultInventory(limit = 2000): InventorySummary {
     throw new Error(`gbrain list failed for default source:\n${result.stderr || result.stdout}`);
   }
 
-  const rows = (result.stdout || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map(parseListRow)
-    .filter((row): row is ListRow => row !== null);
-
-  return summarizeRows(rows);
+  return summarizeRows(parseListOutput(result.stdout || ''));
 }
 
 function parseLimitArg(args: string[]): number {

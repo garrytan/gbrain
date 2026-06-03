@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  parseListOutput,
   parseListRow,
   summarizeRows,
 } from '../scripts/gbrain-offramp-inventory.ts';
@@ -17,6 +18,19 @@ describe('gbrain-offramp-inventory helpers', () => {
       updated: '2026-06-03',
       title: 'Seascape operations OS',
     });
+  });
+
+  test('parseListOutput keeps rows whose title field is empty', () => {
+    const rows = parseListOutput('slug\ttype\t2026-06-03\t\n');
+
+    expect(rows).toEqual([
+      {
+        slug: 'slug',
+        type: 'type',
+        updated: '2026-06-03',
+        title: '',
+      },
+    ]);
   });
 
   test('summarizeRows groups by top-level directory and page type', () => {
@@ -50,5 +64,10 @@ describe('gbrain-offramp-inventory helpers', () => {
       'design-doc': 1,
       transcript: 2,
     });
+    expect(summary.sampleSlugs).toEqual([
+      'transcripts/claude-code/_unattributed/session-a',
+      'transcripts/claude-code/_unattributed/session-b',
+      'design-docs/gbrain/phase-2b-dream-wiring',
+    ]);
   });
 });
