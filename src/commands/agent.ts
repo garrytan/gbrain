@@ -74,8 +74,9 @@ SUBMITTING
     --follow                     Tail status until terminal (default on TTY)
     --detach                     Submit + print job id, exit immediately
 
-  Flags after \`run\` up to the first unrecognized token are parsed; the
-  remainder is the prompt. Use \`--\` to explicitly terminate flag parsing.
+  Flags may appear anywhere after \`run\` (before or after the prompt); the
+  non-flag tokens form the prompt. Use \`--\` to terminate flag parsing so
+  the remainder is treated as literal prompt text.
 
 VIEWING
   gbrain agent logs <job_id>
@@ -107,11 +108,24 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
     follow: process.stdout.isTTY === true,
     detach: false,
   };
+  const rest: string[] = [];
   let i = 0;
   while (i < args.length) {
     const a = args[i];
-    if (a === '--') { i++; break; }
-    if (!isKnownFlag(a!)) break;
+    if (a === '--') {
+      // Explicit terminator: everything after `--` is literal prompt text,
+      // even if it looks like a flag.
+      rest.push(...args.slice(i + 1));
+      break;
+    }
+    if (!isKnownFlag(a!)) {
+      // Positional token → part of the prompt. Keep scanning so flags that
+      // appear AFTER the prompt (e.g. `agent run "x" --detach`) are still
+      // consumed instead of leaking into the prompt string (#1738).
+      rest.push(a!);
+      i++;
+      continue;
+    }
     switch (a) {
       case '--subagent-def': flags.subagentDef = args[++i]; i++; break;
       case '--model':        flags.model = args[++i]; i++; break;
@@ -126,7 +140,7 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
         throw new Error(`unknown flag: ${a}. Run \`gbrain agent run --help\` for usage.`);
     }
   }
-  return { flags, rest: args.slice(i) };
+  return { flags, rest };
 }
 
 export async function runAgentRun(engine: BrainEngine, args: string[]): Promise<void> {
