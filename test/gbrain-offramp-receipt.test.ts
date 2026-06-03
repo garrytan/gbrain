@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  collectReceiptFromCommandOutput,
   extractLastJsonBlock,
   summarizeReceipt,
 } from '../scripts/gbrain-offramp-receipt.ts';
@@ -20,9 +21,9 @@ describe('gbrain-offramp-receipt helpers', () => {
   test('summarizeReceipt surfaces active source, default backlog, autopilot state, max reachable score, and recommended commands', () => {
     const summary = summarizeReceipt({
       activeSource: {
-        source_id: 'gbrain',
+        source_id: 'source-alpha',
         tier: 'local_path',
-        detail: '/Users/sawbeck/gbrain',
+        detail: '/Users/sawbeck/not-the-canonical-id',
         resolver_chain: ['local_path'],
       },
       features: {
@@ -37,6 +38,14 @@ describe('gbrain-offramp-receipt helpers', () => {
             pitch: '7800 chunks invisible to semantic search. One command fixes it.',
             command: 'gbrain embed --stale',
             auto_fixable: true,
+          },
+          {
+            id: 'no-integrations',
+            priority: 2,
+            title: 'Set Up Integrations',
+            pitch: 'Integrations available.',
+            command: 'gbrain integrations list',
+            auto_fixable: false,
           },
         ],
       },
@@ -152,6 +161,22 @@ describe('gbrain-offramp-receipt helpers', () => {
             rationale: '469 stale pages on disk',
             status: 'remediable',
           },
+          {
+            step: 3,
+            id: 'extract.all',
+            job: 'extract',
+            params: {
+              mode: 'all',
+              dir: '/Users/sawbeck/gbrain',
+            },
+            idempotency_key: 'default:extract:5e632fac',
+            severity: 'medium',
+            est_seconds: 69.88,
+            est_usd_cost: 0,
+            depends_on: ['sync.repo'],
+            rationale: 'Materialize link + timeline edges from fresh pages',
+            status: 'remediable',
+          },
         ],
         est_total_seconds: 659.5,
         est_total_usd_cost: 0,
@@ -159,7 +184,7 @@ describe('gbrain-offramp-receipt helpers', () => {
       },
     });
 
-    expect(summary.activeSource).toBe('gbrain');
+    expect(summary.activeSource).toBe('source-alpha');
     expect(summary.brainScore).toBe(37);
     expect(summary.defaultSource).toEqual({
       sourceId: 'default',
@@ -177,7 +202,114 @@ describe('gbrain-offramp-receipt helpers', () => {
     expect(summary.maxReachableScore).toBe(73);
     expect(summary.recommendedCommands).toEqual([
       'gbrain embed --stale',
+      'gbrain integrations list',
       'gbrain sync /Users/sawbeck/gbrain --no-embed',
+      'gbrain extract all /Users/sawbeck/gbrain',
     ]);
+  });
+
+  test('collectReceiptFromCommandOutput preserves canonical source_id and complete command list from stubbed CLI output', async () => {
+    const outputs = new Map<string, string>([
+      ['sources current --json', JSON.stringify({
+        source_id: 'default',
+        tier: 'seed_default',
+        detail: '/Users/sawbeck/gbrain',
+        resolver_chain: ['flag', 'seed_default'],
+      })],
+      ['features --json', JSON.stringify({
+        version: '0.41.36.0',
+        scan_ts: '2026-06-03T21:26:56.760Z',
+        brain_score: 37,
+        recommendations: [
+          { command: 'gbrain embed --stale' },
+          { command: 'gbrain integrations list' },
+        ],
+      })],
+      ['status --json', JSON.stringify({
+        schema_version: 1,
+        generated_at: '2026-06-03T21:26:57.674Z',
+        mode: 'local',
+        sync: {
+          schema_version: 1,
+          generated_at: '2026-06-03T21:26:57.720Z',
+          sources: [
+            {
+              source_id: 'default',
+              pages: 1889,
+              chunks_total: 7800,
+              chunks_unembedded: 7800,
+              embedding_coverage_pct: 0,
+            },
+          ],
+          unacknowledged_failures: 128,
+        },
+        queue: {
+          waiting: 4,
+        },
+        autopilot: {
+          installed: true,
+          running: false,
+        },
+      })],
+      ['doctor --remediation-plan --json', [
+        '[doctor] planning remediation',
+        JSON.stringify({
+          schema_version: 2,
+          brain_score_current: 37,
+          brain_score_target: 90,
+          max_reachable_score: 73,
+          target_unreachable: true,
+          plan: [
+            {
+              job: 'embed',
+              params: { stale: true },
+            },
+            {
+              job: 'sync',
+              params: { repoPath: '/Users/sawbeck/gbrain', noEmbed: true },
+            },
+            {
+              job: 'extract',
+              params: { mode: 'all', dir: '/Users/sawbeck/gbrain' },
+            },
+          ],
+          blocked: [],
+        }),
+      ].join('\n')],
+    ]);
+
+    const summary = await collectReceiptFromCommandOutput((args) => {
+      const key = args.join(' ');
+      const output = outputs.get(key);
+      if (!output) {
+        throw new Error(`Unexpected command: ${key}`);
+      }
+      return output;
+    });
+
+    expect(summary).toEqual({
+      activeSource: 'default',
+      brainScore: 37,
+      defaultSource: {
+        sourceId: 'default',
+        pages: 1889,
+        chunksTotal: 7800,
+        chunksUnembedded: 7800,
+        embeddingCoveragePct: 0,
+      },
+      unacknowledgedFailures: 128,
+      autopilot: {
+        installed: true,
+        running: false,
+        waiting: 4,
+      },
+      maxReachableScore: 73,
+      recommendedCommands: [
+        'gbrain embed --stale',
+        'gbrain integrations list',
+        'gbrain sync /Users/sawbeck/gbrain --no-embed',
+        'gbrain extract all /Users/sawbeck/gbrain',
+      ],
+    });
   });
 });

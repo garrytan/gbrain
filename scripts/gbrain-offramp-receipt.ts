@@ -3,6 +3,10 @@
 import { execFileSync } from 'child_process';
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+type CommandOutputOptions = {
+  allowTrailingText?: boolean;
+};
+type CommandOutputRunner = (args: string[], opts?: CommandOutputOptions) => string | Promise<string>;
 
 type ReceiptInputs = {
   activeSource: any;
@@ -31,14 +35,16 @@ type ReceiptSummary = {
   recommendedCommands: string[];
 };
 
-function runGbrainJson(args: string[], opts?: { allowTrailingText?: boolean }): any {
-  const stdout = execFileSync('bun', ['run', 'gbrain', ...args], {
+function runGbrainCommandOutput(args: string[]): string {
+  return execFileSync('bun', ['run', 'gbrain', ...args], {
     cwd: process.cwd(),
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+}
 
-  const text = opts?.allowTrailingText ? extractLastJsonBlock(stdout) : stdout.trim();
+function parseJsonOutput(raw: string, opts?: CommandOutputOptions): any {
+  const text = opts?.allowTrailingText ? extractLastJsonBlock(raw) : raw.trim();
   return JSON.parse(text);
 }
 
@@ -121,13 +127,12 @@ function formatPlanCommand(step: any): string | null {
   return null;
 }
 
-function uniqueCommands(commands: Array<string | null | undefined>, max = 2): string[] {
+function uniqueCommands(commands: Array<string | null | undefined>): string[] {
   const deduped: string[] = [];
 
   for (const command of commands) {
     if (!command || deduped.includes(command)) continue;
     deduped.push(command);
-    if (deduped.length >= max) break;
   }
 
   return deduped;
@@ -142,7 +147,10 @@ export function summarizeReceipt(inputs: ReceiptInputs): ReceiptSummary {
   const remediationCommands = (inputs.remediationPlan?.plan ?? []).map(formatPlanCommand);
 
   return {
-    activeSource: inputs.activeSource?.detail ? inputs.activeSource.detail.split('/').pop() ?? inputs.activeSource.source_id ?? null : inputs.activeSource?.source_id ?? null,
+    activeSource:
+      typeof inputs.activeSource?.source_id === 'string'
+        ? inputs.activeSource.source_id
+        : null,
     brainScore: typeof inputs.features?.brain_score === 'number' ? inputs.features.brain_score : null,
     defaultSource: defaultSource
       ? {
@@ -170,17 +178,24 @@ export function summarizeReceipt(inputs: ReceiptInputs): ReceiptSummary {
   };
 }
 
-export async function collectReceipt(): Promise<ReceiptSummary> {
+export async function collectReceiptFromCommandOutput(runCommandOutput: CommandOutputRunner): Promise<ReceiptSummary> {
   const inputs: ReceiptInputs = {
-    activeSource: runGbrainJson(['sources', 'current', '--json']),
-    features: runGbrainJson(['features', '--json']),
-    status: runGbrainJson(['status', '--json']),
-    remediationPlan: runGbrainJson(['doctor', '--remediation-plan', '--json'], {
-      allowTrailingText: true,
-    }),
+    activeSource: parseJsonOutput(await runCommandOutput(['sources', 'current', '--json'])),
+    features: parseJsonOutput(await runCommandOutput(['features', '--json'])),
+    status: parseJsonOutput(await runCommandOutput(['status', '--json'])),
+    remediationPlan: parseJsonOutput(
+      await runCommandOutput(['doctor', '--remediation-plan', '--json'], {
+        allowTrailingText: true,
+      }),
+      { allowTrailingText: true },
+    ),
   };
 
   return summarizeReceipt(inputs);
+}
+
+export async function collectReceipt(): Promise<ReceiptSummary> {
+  return collectReceiptFromCommandOutput((args) => runGbrainCommandOutput(args));
 }
 
 function renderText(summary: ReceiptSummary): string {
@@ -196,7 +211,7 @@ function renderText(summary: ReceiptSummary): string {
     `Brain score: ${summary.brainScore ?? 'unknown'}`,
     `Default backlog: ${defaultBacklog}`,
     `Unacknowledged failures: ${summary.unacknowledgedFailures}`,
-    `Autopilot running: ${summary.autopilot.running ? 'yes' : 'no'}`,
+    `Autopilot: installed=${summary.autopilot.installed ? 'yes' : 'no'}, running=${summary.autopilot.running ? 'yes' : 'no'}, waiting=${summary.autopilot.waiting}`,
     `Max reachable score: ${summary.maxReachableScore ?? 'unknown'}`,
     'Recommended commands:',
     commands,
