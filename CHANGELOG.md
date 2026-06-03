@@ -2,6 +2,35 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.11.0] - 2026-06-03
+
+**Local Ollama embedding backfills can now run as a durable host operation instead of an all-or-nothing blast.**
+
+This release adds two file/env-only operator controls:
+
+```bash
+GBRAIN_MARKDOWN_CHUNK_MAX_CHARS=2400
+GBRAIN_EMBEDDING_BATCH_MAX_TEXTS=1
+```
+
+`markdown_chunk_max_chars` caps Markdown chunk size at import/reindex time, with a default of 6000 chars. `embedding_batch_max_texts` caps how many texts are sent to the embedder per provider call, with no cap by default. Both values are positive safe integers, are accepted from `~/.gbrain/config.json` or environment variables, and are intentionally rejected by `gbrain config set` because they are host/runtime deployment controls rather than shared DB config.
+
+The batch cap now applies across the user-facing embedding paths that can hit a local model provider: `gbrain embed` by slug/all/stale, stale source backfills, Markdown/code import, contextual-retrieval reindexing, multimodal reindexing, and fact extraction. This lets a shared host run Ollama `nomic-embed-text` safely with `--batch-size 1` and `GBRAIN_EMBEDDING_BATCH_MAX_TEXTS=1` while keeping existing high-throughput providers unchanged.
+
+Contextual-retrieval stale detection is stricter. If contextual retrieval mode/signature changes or a page-level contextual-retrieval stamp is missing, `gbrain embed --stale` expands the stale page to all existing chunks and rewraps embedder input using the same policy as import. Source policy lookup fails closed before embedding so a bad source/config read cannot silently leave stale embeddings in place.
+
+Thin clients also now refuse `gbrain pages ...` locally the same way they already refuse other local-only data-mutating command groups. This keeps remote clients from trying commands like `pages purge-deleted` against an inactive local corpus.
+
+### Itemized changes
+
+- `src/core/config.ts` adds `markdown_chunk_max_chars` and `embedding_batch_max_texts`, including env overrides, defaults, validation, and known-key registration.
+- `src/core/chunkers/recursive.ts` accepts the Markdown chunk cap and bumps `MARKDOWN_CHUNKER_VERSION` so changed chunking policy marks existing chunks stale.
+- `src/core/embedding-batch.ts` centralizes provider-call batching for text and item embeddings.
+- `src/commands/embed.ts`, `src/core/embed-stale.ts`, `src/core/import-file.ts`, `src/core/contextual-retrieval-service.ts`, `src/commands/reindex-multimodal.ts`, and `src/core/cycle/extract-facts.ts` route multi-text embedding calls through the batch cap.
+- PGLite/Postgres stale-chunk queries include page-level contextual-retrieval metadata and select Markdown pages whose contextual retrieval mode has not yet been stamped.
+- `src/cli.ts` adds `pages` to the CLI-only thin-client refusal table.
+- Tests cover config/env validation, DB-write rejection for host-only knobs, chunk cap behavior, batch splitting/order preservation, contextual-retrieval stale expansion, multimodal and fact-extraction batching, and thin-client routing.
+
 ## [0.42.10.0] - 2026-06-02
 
 **Wikilinks like `[[struktura]]` that point at pages in another folder finally connect.** Until now, if you wrote `[[struktura]]` in `concepts/knowledge-graph.md` and the actual page lived at `projects/struktura.md`, GBrain silently dropped the link from its graph. Obsidian users saw a dense web of connections in their vault and a thin, broken graph inside GBrain. The issue reporter had 71 wikilinks across 20 pages — GBrain captured 12.
