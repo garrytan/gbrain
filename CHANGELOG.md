@@ -4,6 +4,8 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-03
+
 ### Added
 
 - **MBrain can now auto-promote eligible Memory Inbox candidates into canonical memory — no per-candidate clicking.**
@@ -91,6 +93,14 @@ All notable changes to MBrain will be documented in this file.
   `mbrain integrations doctor` now evaluates a constrained health-check DSL
   for environment variables, alternative credentials, local URLs, and heartbeat
   freshness, making community recipes safer to inspect and run.
+- **Release agents now get full-suite confidence much faster.** `bun run test`
+  runs the unit suite through balanced parallel shards, CI shard selection stays
+  deterministic and inspectable, and fresh PGLite setup skips repeated migration
+  work. The coverage stays intact while local and CI feedback loops stop feeling
+  like a coffee break.
+- **Version metadata now reports `0.11.1`.** `VERSION`, `package.json`,
+  `skills/manifest.json`, and `openclaw.plugin.json` are aligned so the CLI,
+  skills manifest, and plugin bundle describe the same release.
 
 ## [0.11.0] - 2026-05-26
 
