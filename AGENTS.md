@@ -120,3 +120,7 @@ use generic placeholders (`alice-example`, `acme-example`, `fund-a`).
 
 If you are a fork, regenerate `llms.txt` + `llms-full.txt` with your own URL base before
 publishing: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork/main bun run build:llms`.
+
+For Sawyer's local `gbrain` work, `garrytan/gbrain` is not the default shipping target.
+Default to Sawyer's fork and local runtime. Do not create upstream PRs to `garrytan/gbrain`
+unless Sawyer explicitly asks for an upstream shot.
