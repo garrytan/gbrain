@@ -145,6 +145,48 @@ describe('Codex Responses SSE parsing', () => {
     });
   });
 
+  test('throws when stream ends before response.completed', async () => {
+    const truncated = [
+      'event: response.output_text.delta\n',
+      'data: {"type":"response.output_text.delta","delta":"partial"}\n\n',
+    ].join('');
+
+    let caught: unknown = null;
+    try {
+      await parseCodexResponsesStream(new Response(truncated, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }), {
+        providerId: 'openai-codex',
+        modelId: 'gpt-5.5',
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(AITransientError);
+    expect((caught as Error).message).toContain('ended before response.completed');
+    expect((caught as Error).message).toContain('text_chars=7');
+  });
+
+  test('throws when a 200 response has no SSE events', async () => {
+    let caught: unknown = null;
+    try {
+      await parseCodexResponsesStream(new Response('', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }), {
+        providerId: 'openai-codex',
+        modelId: 'gpt-5.5',
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(AITransientError);
+    expect((caught as Error).message).toContain('events=0');
+  });
+
   test('redacts bearer material from stream errors', async () => {
     let caught: unknown = null;
     try {

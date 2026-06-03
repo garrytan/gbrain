@@ -284,6 +284,12 @@ export async function parseCodexResponsesStream(
   });
 
   const text = textParts.join('');
+  if (!completed) {
+    throw new AITransientError(
+      `OpenAI Codex Responses stream ended before response.completed (events=${eventCount}, text_chars=${text.length}).`,
+    );
+  }
+
   const normalizedUsage = usage ?? {
     input_tokens: 0,
     output_tokens: 0,
