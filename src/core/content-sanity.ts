@@ -376,14 +376,20 @@ export function assessContentSanity(opts: {
   // doesn't repeat the lowercase per literal.
   const bodyHead = body.slice(0, SCAN_HEAD_BYTES);
   const bodyHeadLower = bodyHead.toLowerCase();
-  const titleLower = opts.title.toLowerCase();
+  // Defend against non-string titles. YAML coerces an all-digit / leading-"+"
+  // title (e.g. a contact named by a bare phone number, slug "33384818832")
+  // to a number, so `opts.title` can be a number at runtime despite the
+  // declared `string` type. Calling `.toLowerCase()` on it throws and aborts
+  // the entire sync run. Normalize once and reuse.
+  const title = typeof opts.title === 'string' ? opts.title : String(opts.title ?? '');
+  const titleLower = title.toLowerCase();
 
   const junk_pattern_matches: string[] = [];
   for (const p of BUILT_IN_JUNK_PATTERNS) {
     const scope = p.applies_to ?? 'both';
     let matched = false;
     if (scope === 'title' || scope === 'both') {
-      if (p.pattern.test(opts.title)) matched = true;
+      if (p.pattern.test(title)) matched = true;
     }
     if (!matched && (scope === 'body' || scope === 'both')) {
       if (p.pattern.test(bodyHead)) matched = true;

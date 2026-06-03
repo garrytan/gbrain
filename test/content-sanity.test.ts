@@ -640,3 +640,31 @@ describe('assessContentSanity — confidence split (Q1=A)', () => {
     expect(r.shouldFlag).toBe(false);
   });
 });
+
+// ─── NON-STRING TITLE (regression) ────────────────────────────
+// YAML coerces an all-digit / leading-"+" title (e.g. a contact named by a
+// bare phone number, slug "33384818832") to a number, so `title` can arrive
+// as a number at runtime despite the declared `string` type. The assessor
+// must not call `.toLowerCase()` / `.test()` on a non-string, or the whole
+// sync run aborts with "opts.title.toLowerCase is not a function".
+describe('assessContentSanity — non-string title (regression)', () => {
+  test('numeric title does not crash', () => {
+    expect(() =>
+      assessContentSanity({
+        compiled_truth: 'x',
+        timeline: '',
+        title: 33384818832 as unknown as string,
+      }),
+    ).not.toThrow();
+  });
+
+  test('null / undefined title does not crash', () => {
+    expect(() =>
+      assessContentSanity({
+        compiled_truth: 'x',
+        timeline: '',
+        title: undefined as unknown as string,
+      }),
+    ).not.toThrow();
+  });
+});
