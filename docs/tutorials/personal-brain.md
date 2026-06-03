@@ -86,12 +86,11 @@ Save this token. You'll need it for the AlphaClaw setup.
 
 AlphaClaw is the setup harness that manages OpenClaw deployment.
 
-1. Go to [alphaclaw.com](https://alphaclaw.com)
+1. [Deploy AlphaClaw to Render](https://render.com/deploy?repo=https://github.com/chrysb/openclaw-render-template) (one click). Set `SETUP_PASSWORD` when prompted.
 2. Enter your **workspace repo** (not the brain repo): `your-org/myagent`
 3. Select "Use existing" if the repo already exists
 4. Enter your GitHub PAT from Step 2
 5. Enter your Telegram bot token from Step 3
-6. Deploy
 
 Render will build a Docker container with the harness. First deploy takes about 5 minutes.
 
