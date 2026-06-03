@@ -303,6 +303,22 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
   }
 }
 
+/**
+ * Resolve the embedding model label (`provider:model`) to stamp onto
+ * `content_chunks.model`, so each chunk records the model that actually
+ * produced its vector instead of the gateway default (#1717). Returns
+ * undefined if the gateway is unconfigured; callers then fall back to the
+ * chunk's existing model rather than mislabeling it.
+ */
+async function resolveEmbeddingModelLabel(): Promise<string | undefined> {
+  try {
+    const { getEmbeddingModel } = await import('../core/ai/gateway.ts');
+    return getEmbeddingModel();
+  } catch {
+    return undefined;
+  }
+}
+
 async function embedPage(
   engine: BrainEngine,
   slug: string,
@@ -369,11 +385,16 @@ async function embedPage(
   for (let j = 0; j < toEmbed.length; j++) {
     embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
   }
+  // #1717: label each (re)embedded chunk with the model that actually
+  // produced its vector. Preserved chunks (not re-embedded this pass) keep
+  // their existing model so a mixed-model page isn't relabeled wholesale.
+  const embedModelLabel = await resolveEmbeddingModelLabel();
   const updated: ChunkInput[] = chunks.map(c => ({
     chunk_index: c.chunk_index,
     chunk_text: c.chunk_text,
     chunk_source: c.chunk_source,
     embedding: embeddingMap.get(c.chunk_index),
+    model: embeddingMap.has(c.chunk_index) && embedModelLabel ? embedModelLabel : c.model,
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
@@ -487,12 +508,16 @@ async function embedAll(
       for (let j = 0; j < toEmbed.length; j++) {
         embeddingMap.set(toEmbed[j].chunk_index, embeddings[j]);
       }
+      // #1717: stamp the resolved embedding model on (re)embedded chunks;
+      // preserve the existing model on chunks left untouched.
+      const embedModelLabel = await resolveEmbeddingModelLabel();
       // Preserve ALL chunks, only update embeddings for stale ones
       const updated: ChunkInput[] = chunks.map(c => ({
         chunk_index: c.chunk_index,
         chunk_text: c.chunk_text,
         chunk_source: c.chunk_source,
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
+        model: embeddingMap.has(c.chunk_index) && embedModelLabel ? embedModelLabel : c.model,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
       await engine.upsertChunks(page.slug, updated, pageOpts);
@@ -698,11 +723,15 @@ async function embedAllStale(
           for (let j = 0; j < stale.length; j++) {
             staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
           }
+          // #1717: label the re-embedded (stale) chunks with the resolved
+          // model; preserve the existing model on the non-stale chunks.
+          const embedModelLabel = await resolveEmbeddingModelLabel();
           const merged: ChunkInput[] = existing.map(c => ({
             chunk_index: c.chunk_index,
             chunk_text: c.chunk_text,
             chunk_source: c.chunk_source,
             embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
+            model: staleIdxToEmbedding.has(c.chunk_index) && embedModelLabel ? embedModelLabel : c.model,
             token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
           }));
           await engine.upsertChunks(slug, merged, { sourceId: keySourceId });

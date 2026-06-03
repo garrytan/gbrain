@@ -759,3 +759,43 @@ describe('embedAllStale --source threading (D7)', () => {
     expect((firstCallOpts as { sourceId?: string }).sourceId).toBe('media-corpus');
   });
 });
+
+// #1717: content_chunks.model must record the model that actually produced
+// each vector, not the gateway default. Kept last in the file so the
+// configureGateway() call here doesn't leak into the other tests' state.
+describe('content_chunks.model labeling (#1717)', () => {
+  test('stamps the resolved embedding model on re-embedded chunks, preserves it on untouched chunks', async () => {
+    const { runEmbedCore } = await import('../src/commands/embed.ts');
+    const { configureGateway } = await import('../src/core/ai/gateway.ts');
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-test' },
+    });
+
+    let upserted: any[] | undefined;
+    // Chunk 0 is stale (no embedding) → gets re-embedded this pass.
+    // Chunk 1 is already embedded with a DIFFERENT model → must be preserved,
+    // not relabeled to the current model.
+    const chunks = [
+      { chunk_index: 0, chunk_text: 'a', chunk_source: 'compiled_truth', embedded_at: null, model: 'zeroentropyai:zembed-1', token_count: 1 },
+      { chunk_index: 1, chunk_text: 'b', chunk_source: 'compiled_truth', embedded_at: '2026-01-01', model: 'voyage:voyage-3', token_count: 1 },
+    ];
+    const engine = mockEngine({
+      getPage: async () => ({ slug: 'notes/x', compiled_truth: 'a', timeline: '', source_id: 'default' }),
+      getChunks: async () => chunks,
+      upsertChunks: async (_slug: string, c: any[]) => { upserted = c; },
+      setPageEmbeddingSignature: async () => null,
+    });
+
+    await runEmbedCore(engine, { slugs: ['notes/x'] });
+
+    expect(upserted).toBeDefined();
+    const byIdx = Object.fromEntries(upserted!.map(c => [c.chunk_index, c]));
+    // Re-embedded chunk carries the model that produced its vector (was
+    // mislabeled with DEFAULT_EMBEDDING_MODEL before the fix).
+    expect(byIdx[0].model).toBe('openai:text-embedding-3-large');
+    // Untouched chunk keeps its original model — no wholesale relabel.
+    expect(byIdx[1].model).toBe('voyage:voyage-3');
+  });
+});
