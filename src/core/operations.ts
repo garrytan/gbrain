@@ -69,6 +69,7 @@ export type ErrorCode =
   | 'rate_limited'      // v0.31: gateway rate-limit upstream
   | 'extraction_failed' // v0.31: facts extractor failed (refusal, parse, abort)
   | 'fact_not_found'    // v0.31: forget_fact / recall on unknown id
+  | 'rich_page_overwrite_blocked' // put_page guard: agent overwrite of a substantial page without force=true
   // eslint-disable-next-line @typescript-eslint/ban-types
   | (string & {});      // OPEN union for forward-compat (eE7 / D13)
 
@@ -607,6 +608,14 @@ const get_page: Operation = {
   cliHints: { name: 'get', positional: ['slug'] },
 };
 
+/**
+ * Threshold (chars of compiled_truth) at/above which a page counts as "rich"
+ * for the put_page overwrite guard. Agent/remote callers are blocked from
+ * overwriting a page with >= this many chars unless they pass force=true.
+ * Exported so the regression test can assert the exact boundary.
+ */
+export const RICH_PAGE_MIN_CHARS = 100;
+
 const put_page: Operation = {
   name: 'put_page',
   description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
@@ -622,6 +631,7 @@ const put_page: Operation = {
     source_kind: { type: 'string', required: false, description: 'Ingestion channel taxonomy (capture-cli | put_page | webhook | …). Remote callers: SERVER-STAMPED, client value ignored.' },
     source_uri: { type: 'string', required: false, description: 'Original URI/path/message-id the event carried. Remote callers: SERVER-STAMPED null.' },
     ingested_via: { type: 'string', required: false, description: 'Richer label paired with source_kind. Remote callers: SERVER-STAMPED.' },
+    force: { type: 'boolean', required: false, description: 'Override the rich-page overwrite guard. Agent/remote callers are blocked from overwriting a page that already has substantial content (>= ~100 chars) unless force=true. Trusted local CLI callers are never constrained. Default false.' },
   },
   mutating: true,
   scope: 'write',
@@ -686,6 +696,32 @@ const put_page: Operation = {
         if (!slug.startsWith(prefix) || slug.length === prefix.length) {
           throw new OperationError('permission_denied', `put_page via subagent must write under '${prefix}...'`);
         }
+      }
+    }
+
+    // Rich-page overwrite guard (agent-facing callers only). Runs BEFORE the
+    // dry-run short-circuit so a preview surfaces the same rejection.
+    //
+    // Why: a "helpful upsert" instinct leads agents to overwrite a page that
+    // already holds substantial content with their own "improved" version,
+    // discarding prior work. Prompt-level guidance ("read the page first, don't
+    // overwrite a rich page") does not reliably hold; enforcing at the tool
+    // boundary makes overwrite an explicit, opt-in act (force=true) rather than
+    // an accident. The thrown error names add_timeline_entry / add_link / force
+    // so a blocked agent has a clear path forward.
+    //
+    // FAIL-CLOSED: trusted local CLI callers set ctx.remote === false and are
+    // exempt; anything else (stdio MCP, HTTP MCP, subagent) is treated as
+    // remote (matches the CV6 / v0.26.9 F7b trust posture used elsewhere here).
+    if (ctx.remote !== false && p.force !== true) {
+      const existing = await ctx.engine.getPage(slug, ctx.sourceId ? { sourceId: ctx.sourceId } : undefined);
+      if (existing && existing.compiled_truth && existing.compiled_truth.length >= RICH_PAGE_MIN_CHARS) {
+        throw new OperationError(
+          'rich_page_overwrite_blocked',
+          `Page '${slug}' already has ${existing.compiled_truth.length} chars of content. Overwriting it via put_page would discard that content.`,
+          'Use add_timeline_entry for new dated facts, add_link for new relationships, or pass force=true to deliberately overwrite.',
+          'skills/signal-detector/SKILL.md',
+        );
       }
     }
 
