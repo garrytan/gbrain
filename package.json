@@ -63,6 +63,7 @@
     "ci:local": "bash scripts/ci-local.sh",
     "ci:local:diff": "bash scripts/ci-local.sh --diff",
     "ci:select-e2e": "bun run scripts/select-e2e.ts",
+    "offramp:receipt": "bun run scripts/gbrain-offramp-receipt.ts",
     "typecheck": "tsc --noEmit",
     "check:jsonb": "scripts/check-jsonb-pattern.sh",
     "check:no-double-retry": "scripts/check-no-double-retry.sh",
