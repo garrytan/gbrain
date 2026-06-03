@@ -110,6 +110,10 @@ const CALL_CONFIG: Partial<Record<SupportedCodeLanguage, CallConfig>> = {
   go:         { callNodeTypes: new Set(['call_expression']), calleeFieldName: 'function' },
   rust:       { callNodeTypes: new Set(['call_expression', 'method_call_expression']), calleeFieldName: 'function' },
   java:       { callNodeTypes: new Set(['method_invocation']), calleeFieldName: 'name' },
+  // bash: a `command` node's callee is its `command_name` / first child —
+  // there's no `function` field, so calleeFieldName is omitted and
+  // extractCalleeName falls back to the command-name path below.
+  bash:       { callNodeTypes: new Set(['command']) },
 };
 
 /**
@@ -120,7 +124,22 @@ const CALL_CONFIG: Partial<Record<SupportedCodeLanguage, CallConfig>> = {
  * null to skip the edge.
  */
 function extractCalleeName(node: any, cfg: CallConfig): string | null {
-  const callee = cfg.calleeFieldName ? node.childForFieldName(cfg.calleeFieldName) : null;
+  let callee = cfg.calleeFieldName ? node.childForFieldName(cfg.calleeFieldName) : null;
+  // bash (no calleeFieldName): the invoked command is the `command_name`
+  // child (or the first named child). `foo --flag` → callee 'foo'.
+  if (!callee && !cfg.calleeFieldName) {
+    callee = node.childForFieldName?.('name')
+      ?? node.namedChildren?.[0]
+      ?? null;
+    if (callee) {
+      // command_name wraps a word; descend to the word/identifier text.
+      const word = callee.namedChildren?.[0] ?? callee;
+      const text = (word.text ?? callee.text ?? '') as string;
+      // strip a leading path (./script.sh → script.sh stays; we keep basename-ish)
+      const last = text.split('/').pop() ?? text;
+      return sanitizeIdent(last);
+    }
+  }
   if (!callee) return null;
 
   // Unwrap common wrappers until we hit an identifier-shaped node.

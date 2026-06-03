@@ -9,6 +9,7 @@
 import { describe, test, expect } from 'bun:test';
 import { chunkCodeTextFull } from '../src/core/chunkers/code.ts';
 import { findChunkForOffset } from '../src/core/chunkers/edge-extractor.ts';
+import { bareSymbolName } from '../src/core/chunkers/symbol-resolver.ts';
 
 describe('Layer 5 (A1) — TypeScript call extraction', () => {
   test('captures direct function calls', async () => {
@@ -162,5 +163,62 @@ describe('Layer 5 (A1) — unknown language ships zero edges', () => {
     const src = 'module TestBench; end module;';
     const result = await chunkCodeTextFull(src, 'src/tb.vhd');
     expect(result.edges).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.42 code-graph fixes (helmsman): arrow-const defs, bash calls, bare-name.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('v0.42 — arrow/const function definitions are typed as function', () => {
+  test('export const Foo = () => {} → symbolType function (so code-def finds it)', async () => {
+    const src = `export const useTheme = () => ({ color: 'x' });`;
+    const result = await chunkCodeTextFull(src, 'src/theme.ts');
+    const def = result.chunks.find(c => c.metadata.symbolName === 'useTheme');
+    expect(def).toBeDefined();
+    expect(def!.metadata.symbolType).toBe('function');
+  });
+
+  test('const Bar = function(){} → symbolType function', async () => {
+    const src = `const Bar = function () { return 1; };`;
+    const result = await chunkCodeTextFull(src, 'src/bar.js');
+    const def = result.chunks.find(c => c.metadata.symbolName === 'Bar');
+    expect(def).toBeDefined();
+    expect(def!.metadata.symbolType).toBe('function');
+  });
+
+  test('const N = 5 stays NON-function (no false positives)', async () => {
+    const src = `const N = 5;`;
+    const result = await chunkCodeTextFull(src, 'src/n.ts');
+    const def = result.chunks.find(c => c.metadata.symbolName === 'N');
+    if (def) expect(def.metadata.symbolType).not.toBe('function');
+  });
+});
+
+describe('v0.42 — bareSymbolName (cross-file resolution key)', () => {
+  test('strips :: namespace (Class::method → method)', () => {
+    expect(bareSymbolName('Foo::bar')).toBe('bar');
+  });
+  test('strips import-module namespace (react::useTheme → useTheme)', () => {
+    expect(bareSymbolName('react::useTheme')).toBe('useTheme');
+  });
+  test('strips . namespace (Foo.bar → bar)', () => {
+    expect(bareSymbolName('BrainEngine.searchKeyword')).toBe('searchKeyword');
+  });
+  test('strips ruby # method delim (Admin::Users#render → render)', () => {
+    expect(bareSymbolName('Admin::Users#render')).toBe('render');
+  });
+  test('bare name passes through unchanged', () => {
+    expect(bareSymbolName('parseInput')).toBe('parseInput');
+  });
+});
+
+describe('v0.42 — bash call extraction', () => {
+  test('captures command invocations in a shell script', async () => {
+    const src = `#!/usr/bin/env bash\nmyfunc() { echo hi; }\nmyfunc\ngit status\n`;
+    const result = await chunkCodeTextFull(src, 'scripts/run.sh');
+    const syms = result.edges.map(e => e.toSymbol);
+    // 'myfunc' and/or 'git' should be captured as call edges now (was [] before).
+    expect(syms.length).toBeGreaterThan(0);
   });
 });

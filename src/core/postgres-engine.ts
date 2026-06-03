@@ -5032,6 +5032,11 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     await sql`DELETE FROM code_edges_chunk WHERE from_chunk_id = ANY(${chunkIds}::int[]) OR to_chunk_id = ANY(${chunkIds}::int[])`;
     await sql`DELETE FROM code_edges_symbol WHERE from_chunk_id = ANY(${chunkIds}::int[])`;
+    // Reset the resolver watermark so the next edges-backfill re-walks these
+    // chunks. Without this, re-chunked chunks keep their old (fresh) watermark
+    // and edges-backfill reports "0 walked" — leaving the newly-extracted
+    // edges permanently unresolved after a reindex.
+    await sql`UPDATE content_chunks SET edges_backfilled_at = NULL WHERE id = ANY(${chunkIds}::int[])`;
   }
 
   async getCallersOf(
