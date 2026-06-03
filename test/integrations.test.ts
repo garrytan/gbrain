@@ -1414,6 +1414,7 @@ echo "git $*" >> "${commandLog}"
 if [ "$1" = "-C" ]; then
   shift 2
 fi
+if [ "$1 $2 $3" = "remote get-url --push" ]; then echo "git@github.com:meghendra6/mbrain.git"; exit 0; fi
 case "$1 $2" in
   "rev-parse --show-toplevel") echo "${repoDir}"; exit 0 ;;
   "remote get-url") echo "git@github.com:meghendra6/mbrain.git"; exit 0 ;;

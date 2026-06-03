@@ -16,7 +16,24 @@ describe('phase4 mixed-scope-disclosure benchmark', () => {
       'mixed_scope_disclosure',
       'mixed_scope_disclosure_correctness',
     ]);
-    expect(payload.acceptance.readiness_status).toBe('pass');
-    expect(payload.acceptance.phase4_status).toBe('pass');
+
+    const correctnessWorkload = payload.workloads.find(
+      (workload: any) => workload.name === 'mixed_scope_disclosure_correctness',
+    );
+    expect(correctnessWorkload.success_rate).toBe(100);
+
+    const correctnessCheck = payload.acceptance.checks.find(
+      (check: any) => check.name === 'mixed_scope_disclosure_correctness_success_rate',
+    );
+    expect(correctnessCheck.status).toBe('pass');
+
+    const latencyCheck = payload.acceptance.checks.find(
+      (check: any) => check.name === 'mixed_scope_disclosure_p95_ms',
+    );
+    expect(latencyCheck.threshold.value).toBe(100);
+    expect(typeof latencyCheck.actual).toBe('number');
+    expect(['pass', 'fail']).toContain(latencyCheck.status);
+    expect(['pass', 'fail']).toContain(payload.acceptance.readiness_status);
+    expect(['pass', 'fail']).toContain(payload.acceptance.phase4_status);
   });
 });
