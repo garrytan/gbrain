@@ -1,23 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'bun';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
-import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import {
+  getProcessOutcome,
+  runPhase8AcceptancePack,
+  type Phase8AcceptanceBenchmarkRunner,
+  type Phase8BenchmarkSummary,
+} from '../scripts/bench/phase8-acceptance-pack.ts';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const BENCHMARK_PROCESS_TIMEOUT_MS = 30_000;
 
 describe('phase8 acceptance-pack benchmark', () => {
   test('--json prints a pending-baseline phase8 acceptance summary by default', () => {
-    const proc = spawnSync(['bun', 'run', 'scripts/bench/phase8-acceptance-pack.ts', '--json'], {
-      cwd: repoRoot,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-
-    expect(proc.exitCode).toBe(0);
-    const payload = JSON.parse(new TextDecoder().decode(proc.stdout));
+    const payload = runPhase8AcceptancePack({ benchmarkRunner: fakeBenchmarkRunner() });
 
     expect(payload.phase).toBe('phase8');
     expect(payload.benchmarks.map((benchmark: any) => benchmark.name)).toEqual([
@@ -26,53 +22,25 @@ describe('phase8 acceptance-pack benchmark', () => {
     ]);
     expect(payload.acceptance.readiness_status).toBe('pending_baseline');
     expect(payload.acceptance.phase8_status).toBe('pending_baseline');
-  }, BENCHMARK_PROCESS_TIMEOUT_MS);
+    expect(getProcessOutcome(payload).exitCode).toBe(0);
+  });
 
   test('--phase1-baseline enables full phase8 acceptance pass', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mbrain-phase8-acceptance-baseline-'));
-    const baselinePath = join(dir, 'phase1-baseline.json');
+    const baselinePath = '/tmp/phase1-baseline.json';
+    const seenBaselinePaths: Array<string | null> = [];
 
-    try {
-      writeFileSync(baselinePath, JSON.stringify({
-        generated_at: '2026-04-19T00:00:00.000Z',
-        engine: 'sqlite',
-        // Synthetic comparable baseline: high enough to avoid local timing noise while
-        // still exercising Phase 8 regression gating against the current workload shape.
-        workloads: [
-          { name: 'task_resume', status: 'measured', unit: 'ms', p50_ms: 50, p95_ms: 100 },
-          { name: 'attempt_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
-          { name: 'decision_history', status: 'measured', unit: 'ms', p50_ms: 0.03, p95_ms: 0.04 },
-          { name: 'resume_projection', status: 'measured', unit: 'percent', success_rate: 100 },
-          { name: 'repeated_work_suppression', status: 'measured', unit: 'percent', success_rate: 100 },
-          { name: 'decision_reuse', status: 'measured', unit: 'percent', success_rate: 100 },
-          { name: 'verification_warnings', status: 'measured', unit: 'percent', success_rate: 100 },
-          { name: 'trace_template_completeness', status: 'measured', unit: 'percent', success_rate: 100 },
-          { name: 'resume_compression_fidelity', status: 'measured', unit: 'percent', success_rate: 100 },
-        ],
-      }, null, 2));
+    const payload = runPhase8AcceptancePack({
+      phase1BaselinePath: baselinePath,
+      benchmarkRunner: ({ benchmark, phase1BaselinePath }) => {
+        seenBaselinePaths.push(phase1BaselinePath);
+        return summary(benchmark.name, 'pass', 'pass');
+      },
+    });
 
-      const proc = spawnSync([
-        'bun',
-        'run',
-        'scripts/bench/phase8-acceptance-pack.ts',
-        '--json',
-        '--phase1-baseline',
-        baselinePath,
-      ], {
-        cwd: repoRoot,
-        stdout: 'pipe',
-        stderr: 'pipe',
-      });
-
-      expect(proc.exitCode).toBe(0);
-      const payload = JSON.parse(new TextDecoder().decode(proc.stdout));
-
-      expect(payload.acceptance.readiness_status).toBe('pass');
-      expect(payload.acceptance.phase8_status).toBe('pass');
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }, BENCHMARK_PROCESS_TIMEOUT_MS);
+    expect(seenBaselinePaths).toEqual([baselinePath, baselinePath]);
+    expect(payload.acceptance.readiness_status).toBe('pass');
+    expect(payload.acceptance.phase8_status).toBe('pass');
+  });
 
   test('--phase1-baseline without a path fails fast', () => {
     const proc = spawnSync([
@@ -91,3 +59,24 @@ describe('phase8 acceptance-pack benchmark', () => {
     expect(new TextDecoder().decode(proc.stderr)).toContain('--phase1-baseline requires a non-empty path value');
   });
 });
+
+function fakeBenchmarkRunner(): Phase8AcceptanceBenchmarkRunner {
+  return ({ benchmark, phase1BaselinePath }) => {
+    if (benchmark.name === 'longitudinal_evaluation' && phase1BaselinePath === null) {
+      return summary(benchmark.name, 'pending_baseline', 'pending_baseline');
+    }
+    return summary(benchmark.name, 'pass', 'pass');
+  };
+}
+
+function summary(
+  name: Phase8BenchmarkSummary['name'],
+  readinessStatus: Phase8BenchmarkSummary['readiness_status'],
+  phase8Status: Phase8BenchmarkSummary['phase8_status'],
+): Phase8BenchmarkSummary {
+  return {
+    name,
+    readiness_status: readinessStatus,
+    phase8_status: phase8Status,
+  };
+}

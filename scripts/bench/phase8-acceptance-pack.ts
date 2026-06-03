@@ -2,71 +2,119 @@
 
 import { spawnSync } from 'bun';
 
-type Phase8Status = 'pass' | 'fail' | 'pending_baseline';
+export type Phase8Status = 'pass' | 'fail' | 'pending_baseline';
 
-interface Phase8BenchmarkSummary {
+export interface Phase8BenchmarkSummary {
   name: string;
   readiness_status: Phase8Status;
   phase8_status: Phase8Status;
 }
 
-const rawArgs = process.argv.slice(2);
-const args = new Set(rawArgs);
-let phase1BaselinePath: string | null = null;
-
-try {
-  phase1BaselinePath = getFlagValue(rawArgs, '--phase1-baseline');
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+export interface Phase8AcceptanceBenchmark {
+  name: 'longitudinal_evaluation' | 'dream_cycle';
+  path: string;
+  extraArgs: (phase1BaselinePath: string | null) => string[];
 }
 
-if (args.has('--help')) {
-  console.log('Usage: bun run scripts/bench/phase8-acceptance-pack.ts [--json] [--phase1-baseline <path>]');
-  process.exit(0);
+export interface Phase8AcceptanceRunnerInput {
+  benchmark: Phase8AcceptanceBenchmark;
+  phase1BaselinePath: string | null;
 }
 
-const summaries = [
-  runBenchmark({
+export type Phase8AcceptanceBenchmarkRunner = (input: Phase8AcceptanceRunnerInput) => Phase8BenchmarkSummary;
+
+export interface Phase8AcceptancePackPayload {
+  generated_at: string;
+  engine: string;
+  phase: 'phase8';
+  benchmarks: Phase8BenchmarkSummary[];
+  acceptance: ReturnType<typeof evaluatePhase8Acceptance>;
+}
+
+export const PHASE8_ACCEPTANCE_BENCHMARKS: readonly Phase8AcceptanceBenchmark[] = [
+  {
     name: 'longitudinal_evaluation',
     path: 'scripts/bench/phase8-longitudinal-evaluation.ts',
-    extraArgs: phase1BaselinePath ? ['--phase1-baseline', phase1BaselinePath] : [],
-  }),
-  runBenchmark({
+    extraArgs: (phase1BaselinePath) => phase1BaselinePath ? ['--phase1-baseline', phase1BaselinePath] : [],
+  },
+  {
     name: 'dream_cycle',
     path: 'scripts/bench/phase8-dream-cycle.ts',
-    extraArgs: [],
-  }),
-];
-const acceptance = evaluatePhase8Acceptance(summaries);
+    extraArgs: () => [],
+  },
+] as const;
 
-const payload = {
-  generated_at: new Date().toISOString(),
-  engine: 'sqlite',
-  phase: 'phase8',
-  benchmarks: summaries,
-  acceptance,
-};
+export function runPhase8AcceptancePack(input: {
+  phase1BaselinePath?: string | null;
+  benchmarkRunner?: Phase8AcceptanceBenchmarkRunner;
+} = {}): Phase8AcceptancePackPayload {
+  const phase1BaselinePath = input.phase1BaselinePath ?? null;
+  const benchmarkRunner = input.benchmarkRunner ?? runBenchmark;
+  const summaries = PHASE8_ACCEPTANCE_BENCHMARKS.map((benchmark) =>
+    benchmarkRunner({ benchmark, phase1BaselinePath })
+  );
+  const acceptance = evaluatePhase8Acceptance(summaries);
 
-console.log(JSON.stringify(payload, null, 2));
+  return {
+    generated_at: new Date().toISOString(),
+    engine: 'sqlite',
+    phase: 'phase8',
+    benchmarks: summaries,
+    acceptance,
+  };
+}
 
-if (acceptance.phase8_status === 'fail') {
-  process.exit(1);
+export function getProcessOutcome(payload: Phase8AcceptancePackPayload): { stdout: string; exitCode: number } {
+  return {
+    stdout: JSON.stringify(payload, null, 2),
+    exitCode: payload.acceptance.phase8_status === 'fail' ? 1 : 0,
+  };
+}
+
+async function main(): Promise<void> {
+  const rawArgs = process.argv.slice(2);
+  const args = new Set(rawArgs);
+  let phase1BaselinePath: string | null = null;
+
+  try {
+    phase1BaselinePath = getFlagValue(rawArgs, '--phase1-baseline');
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
+  if (args.has('--help')) {
+    console.log('Usage: bun run scripts/bench/phase8-acceptance-pack.ts [--json] [--phase1-baseline <path>]');
+    process.exit(0);
+  }
+
+  const payload = runPhase8AcceptancePack({ phase1BaselinePath });
+  const outcome = getProcessOutcome(payload);
+  console.log(outcome.stdout);
+
+  if (outcome.exitCode !== 0) {
+    process.exit(outcome.exitCode);
+  }
 }
 
 function runBenchmark(input: {
-  name: string;
-  path: string;
-  extraArgs: string[];
+  benchmark: Phase8AcceptanceBenchmark;
+  phase1BaselinePath: string | null;
 }): Phase8BenchmarkSummary {
-  const proc = spawnSync(['bun', 'run', input.path, '--json', ...input.extraArgs], {
+  const proc = spawnSync([
+    'bun',
+    'run',
+    input.benchmark.path,
+    '--json',
+    ...input.benchmark.extraArgs(input.phase1BaselinePath),
+  ], {
     stdout: 'pipe',
     stderr: 'pipe',
   });
 
   if (proc.exitCode !== 0) {
     return {
-      name: input.name,
+      name: input.benchmark.name,
       readiness_status: 'fail',
       phase8_status: 'fail',
     };
@@ -78,20 +126,20 @@ function runBenchmark(input: {
     const phase8Status = normalizeStatus(parsed?.acceptance?.phase8_status);
     const rawReadinessStatus = normalizeStatus(parsed?.acceptance?.readiness_status);
     return {
-      name: input.name,
+      name: input.benchmark.name,
       readiness_status: phase8Status === 'pending_baseline' ? 'pending_baseline' : rawReadinessStatus,
       phase8_status: phase8Status,
     };
   } catch {
     return {
-      name: input.name,
+      name: input.benchmark.name,
       readiness_status: 'fail',
       phase8_status: 'fail',
     };
   }
 }
 
-function evaluatePhase8Acceptance(summaries: Phase8BenchmarkSummary[]) {
+export function evaluatePhase8Acceptance(summaries: Phase8BenchmarkSummary[]) {
   const hasFailure = summaries.some((summary) =>
     summary.readiness_status === 'fail' || summary.phase8_status === 'fail'
   );
@@ -138,4 +186,8 @@ function getFlagValue(args: string[], flag: string): string | null {
     throw new Error(`${flag} requires a non-empty path value.`);
   }
   return value;
+}
+
+if (import.meta.main) {
+  await main();
 }
