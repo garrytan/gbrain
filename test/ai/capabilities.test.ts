@@ -37,6 +37,10 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.supportsThinking).toBe(false);
   });
 
+  it('throws for unknown strict Codex model ids', () => {
+    expect(() => getProviderCapabilities('openai-codex:not-gpt-5.5')).toThrow(/not listed/);
+  });
+
   it('throws for unknown provider', () => {
     expect(() => getProviderCapabilities('madeup-provider:foo')).toThrow();
   });
@@ -68,6 +72,14 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
 
   it('returns unusable:no_tools for OpenAI Codex plan chat', () => {
     expect(classifyCapabilities('openai-codex:gpt-5.5')).toBe('unusable:no_tools');
+  });
+
+  it('keeps native non-strict configured models capability-classified', () => {
+    expect(classifyCapabilities('openai:gpt-5.5')).toBe('degraded:no_caching');
+  });
+
+  it('returns unknown for unknown strict Codex model ids', () => {
+    expect(classifyCapabilities('openai-codex:not-gpt-5.5')).toBe('unknown');
   });
 
   it('returns unknown for unrecognized providers', () => {

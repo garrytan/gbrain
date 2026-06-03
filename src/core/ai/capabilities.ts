@@ -81,12 +81,17 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     );
   }
 
-  // For native providers, the model must be in the recipe's allow-list. For
-  // openai-compatible recipes (litellm, ollama, llama-server), arbitrary model
-  // ids are accepted because the gateway behind the proxy decides what's real.
-  // We don't error here — `assertTouchpoint` already enforces this at gateway
-  // boundary; this function returns capabilities for whatever the user asked
-  // for, on the assumption it'll be validated elsewhere.
+  const supportedModels = chat.models ?? [];
+  const enforceModelAllowlist =
+    recipe.tier === 'codex-responses'
+    || recipe.implementation === 'codex-responses'
+    || recipe.enforce_model_allowlist === true;
+  if (enforceModelAllowlist && supportedModels.length > 0 && !supportedModels.includes(parsed.modelId)) {
+    throw new AIConfigError(
+      `Model "${parsed.modelId}" is not listed for ${recipe.name} chat.`,
+      `Known models: ${supportedModels.join(', ')}. Use one of these or add it to the recipe (or add an alias).`,
+    );
+  }
 
   return {
     supportsToolCalling: chat.supports_tools === true,
