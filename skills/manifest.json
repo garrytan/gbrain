@@ -195,6 +195,11 @@
       "description": "Deduplicate and synthesize raw concept stubs into a tiered intellectual map (T1 Canon to T4 Riff), tracing idea evolution across sources over time."
     },
     {
+      "name": "explainer-breaker",
+      "path": "explainer-breaker/SKILL.md",
+      "description": "Build the strongest brain-grounded explanation for an idea, thesis, plan, or claim, then break it into assumptions, gaps, contradictions, and a safer claim boundary."
+    },
+    {
       "name": "perplexity-research",
       "path": "perplexity-research/SKILL.md",
       "description": "Brain-augmented web research via Perplexity plus Opus; surfaces what is NEW vs already-known about a topic by cross-referencing against the brain first."

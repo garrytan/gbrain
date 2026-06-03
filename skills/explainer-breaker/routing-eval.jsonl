@@ -1,0 +1,13 @@
+// Routing eval fixtures for skills/explainer-breaker.
+// Positive cases include trigger language in natural sentences. Negative and
+// adjacent cases keep neighboring skills reachable.
+{"intent":"Please explain and break this thesis about acme-example before I write it up","expected_skill":"explainer-breaker"}
+{"intent":"Run an idea breaker pass on this plan and show the safer claim boundary","expected_skill":"explainer-breaker"}
+{"intent":"Can you audit this idea against my brain and identify the evidence gaps?","expected_skill":"explainer-breaker"}
+{"intent":"I need to stress test this thesis before I send the memo","expected_skill":"explainer-breaker"}
+{"intent":"Find the load-bearing assumptions in my claim about widget-co","expected_skill":"explainer-breaker"}
+{"intent":"Give me an explanation audit: strongest case first, then what would break it","expected_skill":"explainer-breaker"}
+{"intent":"What is the strongest case against this claim, using my brain as context?","expected_skill":"explainer-breaker"}
+{"intent":"Can you tell me about acme-example from the brain?","expected_skill":"query"}
+{"intent":"Please trace idea evolution across my notes about founder mode","expected_skill":"concept-synthesis"}
+{"intent":"Can you verify this academic claim about the cited study?","expected_skill":"academic-verify"}
