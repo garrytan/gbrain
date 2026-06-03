@@ -163,6 +163,31 @@ describe('CLI dispatch integration', () => {
     }
   });
 
+  test('providers verify --help reaches verifier-specific help without running readiness', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'providers', 'verify', '--help'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+      const exitCode = await proc.exited;
+      expect(stdout).toContain('gbrain providers verify — provider rollout readiness gate');
+      expect(stdout).toContain('GBRAIN_OPENAI_CODEX_LIVE=1');
+      expect(stdout).toContain('--offline');
+      expect(stdout).toContain('--live');
+      expect(stdout).not.toContain('Result: READY');
+      expect(stdout).not.toContain('Usage: gbrain providers');
+      expect(stderr).toBe('');
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('doctor --help short-circuits CLI-only dispatch without diagnostics', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
     try {

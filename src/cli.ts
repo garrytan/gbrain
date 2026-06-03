@@ -45,7 +45,7 @@ const CLI_ONLY_SELF_HELP = new Set([
   'skillpack', 'skillpack-check',
   'integrations', 'friction',
   'frontmatter', 'check-resolvable',
-  'models',
+  'models', 'providers',
   'cache',
   'brainstorm', 'lsd',
   // v0.41.20.0 skillopt's detailed HELP constant lives in
