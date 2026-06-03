@@ -265,6 +265,25 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(inserts[0]!.params[9]).toBe('market'); // domain
   });
 
+  test('dry-run extracts but does not write proposals or receipts', async () => {
+    const pages = [buildPage({ slug: 'wiki/dry-run', body: 'This product bet will be obvious in a year.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [
+      { claim_text: 'This product bet will be obvious in a year', kind: 'bet', holder: 'brain', weight: 0.7 },
+    ];
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor, dryRun: true });
+
+    expect(result.status).toBe('ok');
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_scanned).toBe(1);
+    expect(details.cache_misses).toBe(1);
+    expect(details.proposals_inserted).toBe(0);
+
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO extract_receipts'))).toHaveLength(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO extract_rollups'))).toHaveLength(0);
+  });
+
   test('cache hit: page already in take_proposals is skipped', async () => {
     const body = 'A page that was already processed.';
     const pages = [buildPage({ slug: 'wiki/old-page', body })];
