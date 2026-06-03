@@ -253,7 +253,7 @@ async function main() {
       console.warn(
         `[cli] engine.disconnect() did not return within ${DISCONNECT_HARD_DEADLINE_MS}ms — force-exiting`,
       );
-      // v0.42.11.0 (codex): honor an exit code an errored op already set —
+      // v0.42.20.0 (codex): honor an exit code an errored op already set —
       // a bare process.exit(0) here would mask a failed op as success if the
       // drain/disconnect then hangs.
       process.exit(process.exitCode ?? 0);
@@ -275,7 +275,7 @@ async function main() {
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
   } catch (e: unknown) {
-    // v0.42.11.0 (codex D4): on error, set exitCode + return so the `finally`
+    // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
     // STILL runs (drains every background-work sink + disconnects). A bare
     // process.exit(1) here would skip the finally → skip the drain + disconnect
     // (leaves facts/cache/eval-capture writes racing teardown). The finally's
@@ -288,7 +288,7 @@ async function main() {
     }
     process.exitCode = 1;
   } finally {
-    // v0.42.11.0 — drain ALL fire-and-forget sinks (facts, last-retrieved,
+    // v0.42.20.0 — drain ALL fire-and-forget sinks (facts, last-retrieved,
     // search-cache, eval-capture) via the background-work registry BEFORE
     // disconnect, so a PGLite db.close() can't race in-flight work into the
     // re-pump busy-loop (#1762). facts drains first (order 0) so its abort-path
@@ -1751,7 +1751,7 @@ async function handleCliOnly(command: string, args: string[]) {
       }
     }
   } finally {
-    // v0.42.11.0 (#1762) — the CLI_ONLY path (which owns `gbrain capture`)
+    // v0.42.20.0 (#1762) — the CLI_ONLY path (which owns `gbrain capture`)
     // lacked the op-dispatch drain-before-disconnect contract. `put_page` fires
     // a fire-and-forget facts:absorb job AFTER printing the receipt; on a
     // multi-chunk page that job is in flight when this finally tears the engine

@@ -1,5 +1,5 @@
 /**
- * v0.42.11.0 (Fix 3, #1775) — query-embed deadline unit tests.
+ * v0.42.20.0 (Fix 3, #1775) — query-embed deadline unit tests.
  *
  * The regression: `search`/`query` default to cheap-hybrid, which embeds the
  * query. A stalled embedding provider made the embed `await` never settle, so

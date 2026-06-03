@@ -20,7 +20,7 @@
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 
-describe('v0.42.11.0 — search-cache drained via the background-work registry', () => {
+describe('v0.42.20.0 — search-cache drained via the background-work registry', () => {
   // Supersedes the v0.36.1.x #1125 query-only drain: search-cache now registers
   // a registry drainer (drained for BOTH search and query, bounded), and cli.ts
   // drains the whole registry rather than calling awaitPendingSearchCacheWrites
@@ -123,7 +123,7 @@ describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => 
   });
 });
 
-describe('v0.42.11.0 — background-work registry drains every sink before disconnect', () => {
+describe('v0.42.20.0 — background-work registry drains every sink before disconnect', () => {
   // Supersedes the v0.41.8.0 #1247/#1269/#1290 per-call last-retrieved drain:
   // last-retrieved is now one of four registry sinks; cli.ts drains the whole
   // registry (drainAllBackgroundWorkForCliExit) before disconnect on BOTH the

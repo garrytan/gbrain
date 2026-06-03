@@ -53,7 +53,7 @@ import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 
-// ---- Gateway-wide AI-HTTP timeout (v0.42.11.0, #1762/#1775) ----
+// ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
 // Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
 // socket makes an `await` never settle — which hangs `gbrain capture`/`search`
@@ -1476,7 +1476,7 @@ async function embedSubBatch(
       model,
       values: texts,
       providerOptions: providerOpts,
-      // v0.42.11.0 — default a per-SUB-BATCH embed timeout (codex #3: bounding
+      // v0.42.20.0 — default a per-SUB-BATCH embed timeout (codex #3: bounding
       // once at embed() top would cap a whole multi-batch import; this is the
       // per-SDK-call scope). Composes with a caller signal (Fix 3's 6s query
       // deadline) — shorter wins.
@@ -1546,7 +1546,7 @@ export async function embedQuery(
     inputType: 'query',
     embeddingModel: opts?.embeddingModel,
     dimensions: opts?.dimensions,
-    // v0.42.11.0 (Fix 3) — forward a caller deadline so the query-time embed
+    // v0.42.20.0 (Fix 3) — forward a caller deadline so the query-time embed
     // can be bounded BELOW the CLI force-exit; composes with the gateway embed
     // default via withDefaultTimeout (shorter wins).
     abortSignal: opts?.abortSignal,
@@ -1683,7 +1683,7 @@ export async function embedMultimodal(
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
-        // v0.42.11.0 (codex #4) — per-request multimodal timeout (direct fetch
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch
         // bypasses the SDK abortSignal).
         signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
@@ -1828,7 +1828,7 @@ async function embedMultimodalOpenAICompat(
           [authResult.headerName]: authResult.token,
         },
         body: JSON.stringify(body),
-        // v0.42.11.0 (codex #4) — per-request multimodal timeout (direct fetch).
+        // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch).
         signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
       });
     } catch (err) {
@@ -2080,7 +2080,7 @@ export async function expand(query: string): Promise<string[]> {
     const result = await generateObject({
       model,
       schema: ExpansionSchema,
-      // v0.42.11.0 (codex P0) — expansion had NO abortSignal; same stalled-socket
+      // v0.42.20.0 (codex P0) — expansion had NO abortSignal; same stalled-socket
       // class as chat. Default the chat timeout.
       abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
       prompt: [
@@ -2133,7 +2133,7 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
   const base64 = imageBytes.toString('base64');
   const result = await generateText({
     model,
-    // v0.42.11.0 (codex) — OCR is a 5th unbounded generateText entry point.
+    // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
     abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
     messages: [
       {
@@ -2612,7 +2612,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       messages: opts.messages as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? 4096,
-      // v0.42.11.0 — default a chat timeout (composes with the caller's signal,
+      // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
       providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,

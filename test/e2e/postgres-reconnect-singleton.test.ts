@@ -1,5 +1,5 @@
 /**
- * E2E for #1745 (v0.42.11.0): module-mode reconnect() must NOT tear down the
+ * E2E for #1745 (v0.42.20.0): module-mode reconnect() must NOT tear down the
  * shared module singleton.
  *
  * The bug: a transient blip triggers withRetry's reconnect callback →

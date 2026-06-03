@@ -1388,29 +1388,29 @@ Three items deferred:
   call site.
 
 - [x] **Retrofit `awaitPendingSearchCacheWrites` with a bounded timeout.**
-  DONE in v0.42.11.0 (#1762 reliability wave): `awaitPendingSearchCacheWrites`
+  DONE in v0.42.20.0 (#1762 reliability wave): `awaitPendingSearchCacheWrites`
   is now bounded (`Promise.race` + leftover count), matching
   `awaitPendingLastRetrievedWrites`.
 
 - [x] **Extract a shared drain abstraction once a third fire-and-forget surface
-  appears.** DONE in v0.42.11.0: rule-of-four was met (last-retrieved, facts,
+  appears.** DONE in v0.42.20.0: rule-of-four was met (last-retrieved, facts,
   search-cache, eval-capture), so `src/core/background-work.ts` (a registry, not
   a per-surface factory) is the single drain owner; each sink registers a
   drainer and CLI exit calls `drainAllBackgroundWorkForCliExit`.
 
-- [ ] **(v0.42.11.0 follow-up) Convert `runSync`'s ~20 internal `process.exit`
+- [ ] **(v0.42.20.0 follow-up) Convert `runSync`'s ~20 internal `process.exit`
   sites to `exitCode + return`.** Today those error/cost-gate paths skip the
   background-work drain + graceful disconnect (they avoid the #1762 hang by
   skipping disconnect entirely; worst case is a transient PGLite stale-lock that
   self-heals via stale-reclaim). The common sync SUCCESS path already drains via
   handleCliOnly's finally. Convert for graceful drain on sync error exits.
 
-- [ ] **(v0.42.11.0 follow-up) Decouple the op-dispatch force-exit timer** so it
+- [ ] **(v0.42.20.0 follow-up) Decouple the op-dispatch force-exit timer** so it
   wraps `engine.disconnect()` only (it's armed before the handler today, doubling
   as a blanket handler watchdog) and fix its misleading "engine.disconnect() did
   not return…" message that fires even when the handler (not disconnect) was slow.
 
-- [ ] **(v0.42.11.0 follow-up) Gateway idle-timeout (vs absolute) for streaming
+- [ ] **(v0.42.20.0 follow-up) Gateway idle-timeout (vs absolute) for streaming
   chat.** `withDefaultTimeout` uses an absolute `AbortSignal.timeout`; a streaming
   generation actively producing tokens past the chat default (300s) would abort.
   Non-streaming `generateText` makes this low-risk today; revisit if a real

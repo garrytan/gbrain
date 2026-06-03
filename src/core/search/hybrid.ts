@@ -74,7 +74,7 @@ export async function stampContentFlags(engine: BrainEngine, results: SearchResu
 }
 
 /**
- * v0.42.11.0 — bounded drain (was an unbounded `Promise.allSettled`, codex
+ * v0.42.20.0 — bounded drain (was an unbounded `Promise.allSettled`, codex
  * confirmed; TODOS retrofit). Mirrors `awaitPendingLastRetrievedWrites`: races
  * the in-flight cache writes against a timeout and reports leftovers so the
  * background-work registry can move on to disconnect instead of hanging on a
@@ -111,7 +111,7 @@ function trackCacheWrite(promise: Promise<unknown>): void {
   promise.finally(() => pendingCacheWrites.delete(promise)).catch(() => { /* swallow */ });
 }
 
-// v0.42.11.0 — register as a background-work sink (order 2; no abort — bare
+// v0.42.20.0 — register as a background-work sink (order 2; no abort — bare
 // cache INSERTs). Drained before CLI disconnect, for BOTH search and query
 // (previously only `query` drained it, and unbounded).
 registerBackgroundWorkDrainer({
@@ -691,7 +691,7 @@ export interface HybridSearchOpts extends SearchOpts {
    */
   onMeta?: (meta: HybridSearchMeta) => void;
   /**
-   * v0.42.11.0 (Fix 3, #1775) INTERNAL — shared query-embed deadline threaded
+   * v0.42.20.0 (Fix 3, #1775) INTERNAL — shared query-embed deadline threaded
    * from `hybridSearchCached` into the inner `hybridSearch` so the cache-lookup
    * embed and the inner embed share ONE wall-clock budget (worst case ~one
    * timeout, not two). Direct `hybridSearch` callers leave it undefined and get
@@ -701,7 +701,7 @@ export interface HybridSearchOpts extends SearchOpts {
 }
 
 /**
- * v0.42.11.0 (Fix 3, #1775) — bound the query-time embed so a stalled provider
+ * v0.42.20.0 (Fix 3, #1775) — bound the query-time embed so a stalled provider
  * (the user's zeroentropy case) fails over to keyword instead of hanging past
  * the CLI's 10s force-exit. Default 6s leaves headroom under that deadline.
  */
@@ -1174,7 +1174,7 @@ export async function hybridSearch(
       const embedOpts = resolvedCol.embeddingModel
         ? { embeddingModel: resolvedCol.embeddingModel, dimensions: resolvedCol.dimensions }
         : undefined;
-      // v0.42.11.0 (Fix 3) — bound the query embed. Reuse the shared deadline
+      // v0.42.20.0 (Fix 3) — bound the query embed. Reuse the shared deadline
       // threaded from hybridSearchCached (so the cache-lookup embed + this one
       // share one ~6s budget); direct callers get a fresh deadline. On timeout
       // the embed throws → the catch below falls back to keyword-only.
@@ -1575,7 +1575,7 @@ export async function hybridSearchCached(
   // attempt it when the cache is enabled AND the gateway has an embedding
   // provider configured.
   let queryEmbedding: Float32Array | null = null;
-  // v0.42.11.0 (Fix 3, #1775) — ONE shared query-embed deadline for the
+  // v0.42.20.0 (Fix 3, #1775) — ONE shared query-embed deadline for the
   // cache-lookup embed below AND the inner hybridSearch embed (threaded via
   // opts._queryEmbedDeadline). On a stalled provider the cache-lookup embed
   // times out (→ cacheStatus 'disabled', fall through), then the inner embed
@@ -1593,7 +1593,7 @@ export async function hybridSearchCached(
       const providerProbeCached = resolvedColCached.embeddingModel || undefined;
       if (isAvailable('embedding', providerProbeCached)) {
         // v0.35.0.0+: query-side embedding (cache lookup path).
-        // v0.42.11.0 (Fix 3) — bounded by the shared deadline; on timeout this
+        // v0.42.20.0 (Fix 3) — bounded by the shared deadline; on timeout this
         // throws → caught below → cacheStatus 'disabled' → falls through to the
         // inner hybridSearch (which reuses the same elapsed deadline).
         queryEmbedding = await embedQueryBounded(query, undefined, queryEmbedDl);
@@ -1659,7 +1659,7 @@ export async function hybridSearchCached(
   const userOnMeta = opts?.onMeta;
   const results = await hybridSearch(engine, query, {
     ...opts,
-    // v0.42.11.0 (Fix 3) — share the query-embed deadline so the inner embed
+    // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,
     onMeta: (m) => {

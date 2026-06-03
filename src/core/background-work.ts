@@ -1,5 +1,5 @@
 /**
- * v0.42.11.0 (#1762 / #1745 / #1775 reliability wave) — process background-work
+ * v0.42.20.0 (#1762 / #1745 / #1775 reliability wave) — process background-work
  * registry. Single source of truth for "drain every fire-and-forget sink before
  * the CLI exits / disconnects."
  *

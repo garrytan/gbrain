@@ -159,7 +159,7 @@ export async function captureEvalCandidate(
   ctx: CaptureContext,
   opts: { scrub_pii?: boolean } = {},
 ): Promise<void> {
-  // v0.42.11.0 — track the fire-and-forget promise so the background-work
+  // v0.42.20.0 — track the fire-and-forget promise so the background-work
   // registry can drain it before CLI disconnect. Callers still `void` this; the
   // returned promise is back-compat for any awaiter. The async DB write
   // (logEvalCandidate) is the same lock-pin / disconnect-race class as the other
@@ -190,7 +190,7 @@ async function doCaptureEvalCandidate(
   }
 }
 
-// v0.42.11.0 — bounded drain + registration (mirrors last-retrieved). The 4th
+// v0.42.20.0 — bounded drain + registration (mirrors last-retrieved). The 4th
 // fire-and-forget DB-write sink (codex caught this one missing from the
 // registry). order 3, no abort (bare INSERT, nothing to hard-stop).
 const pendingEvalCaptures = new Set<Promise<unknown>>();

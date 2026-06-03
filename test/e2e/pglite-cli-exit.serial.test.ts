@@ -227,7 +227,7 @@ describe('v0.41.8.0 — PGLite CLI read commands exit cleanly (#1247/#1269/#1290
   }, 30_000);
 });
 
-describe('v0.42.11.0 — gbrain capture (CLI_ONLY) exits cleanly + frees the lock (#1762)', () => {
+describe('v0.42.20.0 — gbrain capture (CLI_ONLY) exits cleanly + frees the lock (#1762)', () => {
   test('multi-chunk capture exits 0 within 25s AND a later command runs lock-free', async () => {
     // The #1762 repro: capture on a multi-chunk page enqueues a fire-and-forget
     // facts:absorb job, then handleCliOnly's finally disconnects mid-job →

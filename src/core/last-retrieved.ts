@@ -126,7 +126,7 @@ export function _peekPendingLastRetrievedWritesForTests(): number {
   return pendingLastRetrievedWrites.size;
 }
 
-// v0.42.11.0 — register as a background-work sink (order 1; no abort — bare
+// v0.42.20.0 — register as a background-work sink (order 1; no abort — bare
 // UPDATEs, nothing to hard-stop). Drained before CLI disconnect.
 registerBackgroundWorkDrainer({
   name: 'last-retrieved',

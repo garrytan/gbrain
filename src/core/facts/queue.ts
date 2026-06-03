@@ -256,7 +256,7 @@ export function __resetFactsQueueForTests(): void {
   _singleton = null;
 }
 
-// v0.42.11.0 — register as a background-work sink (order 0 — drained FIRST so
+// v0.42.20.0 — register as a background-work sink (order 0 — drained FIRST so
 // its abort-path DB logIngest gets the freshest live-engine window). `abort` =
 // shutdown(): sets shuttingDown=true (pump short-circuits) + fires internalAbort
 // (the facts:absorb job forwards it to gateway.chat, cancelling a hung Haiku the

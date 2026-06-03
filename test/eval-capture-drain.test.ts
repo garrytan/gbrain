@@ -1,5 +1,5 @@
 /**
- * v0.42.11.0 (#1762) — eval-capture is the 4th fire-and-forget DB-write sink the
+ * v0.42.20.0 (#1762) — eval-capture is the 4th fire-and-forget DB-write sink the
  * background-work registry drains before CLI disconnect. `captureEvalCandidate`
  * is `void`-ed by the search/query op handlers; its async `logEvalCandidate`
  * write is the same lock-pin / disconnect-race class as the other sinks. These

@@ -1,5 +1,5 @@
 /**
- * v0.42.11.0 (#1762) — background-work registry unit tests.
+ * v0.42.20.0 (#1762) — background-work registry unit tests.
  *
  * Pure, no DB / no engine: drives the registry via the __registerDrainerForTest
  * seam. Pins the contracts the reliability wave depends on:

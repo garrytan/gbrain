@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.42.11.0] - 2026-06-03
+## [0.42.20.0] - 2026-06-03
 
 **Three ways GBrain could freeze or go silent are fixed.** This release closes a
 reliability cluster around how GBrain shuts down a command and talks to AI
@@ -58,7 +58,7 @@ facts queue, not the originally-suspected missing teardown contract) and wrote
 the first fix in PR #1763, which this release incorporates and hardens. Thanks to
 the #1745 and #1775 reporters for the precise repros.
 
-### To take advantage of v0.42.11.0
+### To take advantage of v0.42.20.0
 
 `gbrain upgrade` is all you need — these are runtime fixes, no migration or
 schema change. After upgrading:

@@ -4777,7 +4777,7 @@ export class PostgresEngine implements BrainEngine {
   /**
    * Reconnect the engine after a transient connection blip.
    *
-   * v0.42.11.0 (#1745): branch on connection style.
+   * v0.42.20.0 (#1745): branch on connection style.
    *
    * - INSTANCE pools (worker engines, `poolSize` set) own their `_sql` — tearing
    *   it down and rebuilding is correct and isolated; nobody else shares it.
