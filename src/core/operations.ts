@@ -16,7 +16,7 @@ import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
-import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
@@ -991,9 +991,14 @@ async function runAutoLink(
     : {};
 
   // Live-mode resolver: per-put throwaway cache, pg_trgm + optional search.
-  const resolver = makeResolver(engine, { mode: 'live' });
+  // Issue #972 (codex [P1]): pass sourceId so basename resolution stays
+  // within this page's source — no cross-source basename edges.
+  const resolver = makeResolver(engine, { mode: 'live', sourceId: opts?.sourceId });
+  // Issue #972: opt-in bare-wikilink basename resolution. Off by default.
+  const globalBasename = await isGlobalBasenameEnabled(engine);
   const { candidates, unresolved } = await extractPageLinks(
     slug, fullContent, parsed.frontmatter, parsed.type, resolver,
+    { globalBasename },
   );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
@@ -1040,10 +1045,17 @@ async function runAutoLink(
       l => l.link_source === 'frontmatter' && l.origin_slug === slug,
     );
 
-    // Reconcilable outgoing edges: markdown + our own frontmatter edges.
-    // Manual edges (link_source='manual') are NEVER touched by reconciliation.
+    // Reconcilable outgoing edges: markdown + our own frontmatter edges +
+    // basename-resolved wikilinks (issue #972). Manual edges
+    // (link_source='manual') are NEVER touched by reconciliation.
+    // 'wikilink-resolved' MUST be reconcilable (codex outside-voice [P1]):
+    // auto-link writes these; if it weren't here, a basename edge would
+    // survive after the wikilink is deleted from the page OR the
+    // link_resolution.global_basename flag is turned off (out no longer
+    // includes it, so the stale-removal loop below must be allowed to drop it).
     const reconcilableOut = existingOut.filter(
       l => l.link_source === 'markdown' || l.link_source == null ||
+           l.link_source === 'wikilink-resolved' ||
            (l.link_source === 'frontmatter' && l.origin_slug === slug),
     );
 

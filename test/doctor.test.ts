@@ -1159,6 +1159,164 @@ describe('v0.40.4 — graph_signals_coverage check', () => {
   });
 });
 
+// ─── issue #972 — link_resolution_opportunity check ───────────────────────
+
+describe('issue #972 — link_resolution_opportunity check', () => {
+  const { PGLiteEngine } = require('../src/core/pglite-engine.ts');
+  const { checkLinkResolutionOpportunity } = require('../src/commands/doctor.ts');
+
+  let engine: any;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' });
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    if (engine) await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await engine.executeRaw(`DELETE FROM links`);
+    await engine.executeRaw(`DELETE FROM pages`);
+    await engine.executeRaw(
+      `DELETE FROM config WHERE key = 'link_resolution.global_basename'`,
+    );
+  });
+
+  test('skipped silently when flag is already enabled', async () => {
+    await engine.setConfig('link_resolution.global_basename', 'true');
+    // Even with bare wikilinks that would resolve, the check returns ok
+    // because the user is already opted in — no hint to surface.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[struktura]] and [[struktura]] and [[struktura]].',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('already enabled');
+  });
+
+  test('empty brain → ok with explanation', async () => {
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('empty');
+  });
+
+  test('no bare wikilinks → ok', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice',
+      compiled_truth: 'Met [Bob](people/bob).', timeline: '',
+    });
+    await engine.putPage('people/bob', {
+      type: 'person', title: 'Bob', compiled_truth: '', timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('No bare wikilinks');
+  });
+
+  test('bare wikilinks present but none match → ok', async () => {
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[never-existed]] and [[also-not-here]].',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('none have basename matches');
+  });
+
+  test('≥5 would-resolve AND ≥20% ratio → warn with paste-ready hint', async () => {
+    // 5 distinct bare wikilinks, all resolving = 100% ratio.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/eeva', {
+      type: 'project', title: 'Eeva', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('companies/fast-weigh', {
+      type: 'company', title: 'Fast-Weigh', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/rosa', {
+      type: 'project', title: 'Rosa', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/dragon', {
+      type: 'project', title: 'Dragon', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/wiki-index', {
+      type: 'concept', title: 'Wiki',
+      compiled_truth: 'See [[struktura]], [[eeva]], [[Fast-Weigh]], [[rosa]], [[dragon]] for context.',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('5 of 5');
+    expect(check.message).toContain('100%');
+    expect(check.message).toContain(
+      'gbrain config set link_resolution.global_basename true',
+    );
+  });
+
+  test('<5 would-resolve → ok without warning (below threshold)', async () => {
+    // Only 2 bare wikilinks resolve → below the 5-link floor.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/eeva', {
+      type: 'project', title: 'Eeva', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[struktura]] and [[eeva]] for context.',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('below the 20% / 5-link threshold');
+  });
+
+  test('counts slugified-only matches (shared matcher, codex #972 DRY)', async () => {
+    // `[[Fast Weigh]]` (space) only resolves to `companies/fast-weigh` via the
+    // slugified key. Pre-consolidation the doctor index keyed raw+lower only
+    // and would have reported "none have basename matches"; the shared matcher
+    // adds the slugified key so the estimate matches what extraction resolves.
+    await engine.putPage('companies/fast-weigh', {
+      type: 'company', title: 'Fast-Weigh', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[Fast Weigh]] for context.', timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    // 1/1 resolves (below the 5-link warn floor → ok) but it DID resolve.
+    expect(check.message).toContain('1/1');
+    expect(check.message).toContain('would resolve');
+    expect(check.message).not.toContain('none have basename matches');
+  });
+
+  test('check is wired into runDoctor AND doctorReportRemote (source-grep)', async () => {
+    const source = await Bun.file(
+      new URL('../src/commands/doctor.ts', import.meta.url),
+    ).text();
+    // Local buildChecks path.
+    expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine, progress\)/);
+    // Thin-client doctorReportRemote path.
+    expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine\)/);
+    // Heartbeat label registered.
+    expect(source).toContain("progress.heartbeat('link_resolution_opportunity')");
+    // Issue #972 (T3): scan is bounded to a most-recent sample, not a full
+    // per-page getPage walk.
+    expect(source).toMatch(/ORDER BY id DESC LIMIT \$\{?SAMPLE_LIMIT\}?|ORDER BY id DESC LIMIT 1000/);
+    expect(source).not.toMatch(/await engine\.getPage\(ref\.slug/);
+  });
+});
+
 describe('v0.42 (#1699) — quarantined_pages + flagged_pages checks', () => {
   test('both checks are wired into buildChecks (source-grep)', async () => {
     const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();

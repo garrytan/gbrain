@@ -2,6 +2,70 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.10.0] - 2026-06-02
+
+**Wikilinks like `[[struktura]]` that point at pages in another folder finally connect.** Until now, if you wrote `[[struktura]]` in `concepts/knowledge-graph.md` and the actual page lived at `projects/struktura.md`, GBrain silently dropped the link from its graph. Obsidian users saw a dense web of connections in their vault and a thin, broken graph inside GBrain. The issue reporter had 71 wikilinks across 20 pages — GBrain captured 12.
+
+This release adds an **opt-in mode** that resolves bare wikilinks by basename match. Turn it on with one command and the missing edges show up.
+
+```
+gbrain config set link_resolution.global_basename true
+gbrain extract links
+```
+
+`gbrain doctor` scans your brain on every run and tells you what you'd gain. If five or more bare wikilinks would resolve under the new mode, you'll see a paste-ready hint:
+
+```
+link_resolution_opportunity: 47 of 60 bare wikilinks (78%) would resolve to
+24 distinct page(s) under global_basename mode.
+Enable with: gbrain config set link_resolution.global_basename true
+```
+
+The mode covers every place wikilinks get resolved: `gbrain extract links` (both the filesystem-walk path that the issue reporter hit by default, and the database path that the autopilot cycle uses), and the auto-link step that runs every time an agent writes a page through `put_page`. Same flag, all three surfaces.
+
+### How it handles ambiguity
+
+If `[[struktura]]` matches two pages — say `projects/struktura.md` and `archive/struktura.md` — GBrain emits **one edge to each**, both tagged with a new `wikilink_basename` link type. No silent winner-takes-all, no arbitrary first-wins choice. You can audit and prune the dual-match cases via:
+
+```
+gbrain graph-query concepts/knowledge-graph --type wikilink_basename
+```
+
+This is a deliberate departure from the issue's original proposal (which suggested dropping ambiguous matches with a warning). The graph layer is supposed to capture relationships, not editorialize about them.
+
+### Why opt-in (and why this default is safe)
+
+The default stays off, so existing brains get zero behavior change on upgrade. The bug class this fix opens — a `[[review]]` accidentally linking to some `topics/review` page that exists for unrelated reasons — is real, and turning it on globally would change every existing user's graph in ways they didn't ask for. Doctor surfaces the opportunity; the user decides.
+
+For brains that flip the flag on, all newly extracted edges carry a distinct `link_source = 'wikilink-resolved'` provenance tag, so you can later distinguish basename-resolved edges from your hand-written markdown links.
+
+### What this means
+
+If you write in the Obsidian convention (flat-namespace, globally-unique basenames, bare `[[wikilinks]]` everywhere), your GBrain graph has been wrong. Flip the flag and run extract once — the missing edges show up immediately.
+
+If you don't use bare wikilinks, doctor will tell you so (`No bare wikilinks found`) and you can keep ignoring this knob.
+
+Closes https://github.com/garrytan/gbrain/issues/972.
+
+### Itemized changes
+
+- `src/core/link-extraction.ts` — three new exports:
+  - `WIKILINK_BASENAME_LINK_TYPE = 'wikilink_basename'` — the edge-type constant used by every path that emits basename-resolved edges. Adapted from PR #1233's regex (which was the kernel of the resolver-side fix).
+  - `isGlobalBasenameEnabled(engine)` — single source of truth for the
+    flag read. Order: env `GBRAIN_LINK_RESOLUTION_GLOBAL_BASENAME` → DB
+    config `link_resolution.global_basename` → default false.
+  - `WIKILINK_GENERIC_RE` — generic Obsidian-shape wikilink regex for the `[[bare-name]]` pass that falls outside `DIR_PATTERN`. `EntityRef` gains an optional `needsResolution` flag tagged onto refs from this pass so downstream callers know to route them through the resolver instead of treating them as canonical slugs.
+- `SlugResolver` interface gains an optional `resolveBasenameMatches(name): Promise<string[]>` method. Returns ALL slugs whose basename matches — multi-match by design. `makeResolver(engine)` implements this with a lazy-built basename → `string[]` index (single `engine.getAllSlugs()` call per resolver instance) covering raw + lowercase + slugified key variants.
+- `extractPageLinks` gains two options. `opts.globalBasename` routes `needsResolution: true` refs through `resolveBasenameMatches`, emitting one candidate per match tagged `linkType: 'wikilink_basename'` + `linkSource: 'wikilink-resolved'`. `opts.skipFrontmatter` replaces the pre-issue-#972 `nullResolver` pattern — callers can now pass the real resolver everywhere AND independently gate the frontmatter pass, which is necessary because the bare-wikilink path needs `resolveBasenameMatches` on the real resolver.
+- `src/commands/extract.ts` — DB-source `extractLinksFromDB` and FS-source `extractLinksFromFile` / `extractLinksFromDir` / `extractLinksForSlugs` thread `globalBasename` (read once per extract run via `isGlobalBasenameEnabled`). FS-source adds two new exported helpers — `resolveBasenameMatchesFromSlugs(name, allSlugs): string[]` and `resolveSlugAll(fileDir, relTarget, allSlugs, opts): string[]`. `resolveSlug` stays single-match for back-compat; `resolveSlugAll` wraps it with the basename-fallback. Stable sort: shorter slug first, then lexical.
+- `src/core/operations.ts:put_page` — auto-link path now reads the flag and passes `globalBasename` through to `extractPageLinks`. Newly-written pages get basename edges when the flag is on.
+- `src/commands/doctor.ts` — new `link_resolution_opportunity` check. Full scan with a 60s budget, heartbeat-reported. Severity: skipped when flag already on; ok when no bare wikilinks; ok with explanation when bare wikilinks present but none match; **warn with paste-ready hint when ≥5 would resolve AND ≥20% of bare wikilinks have matches**. Threshold tuned to surface real opportunities without flagging brains that only have a handful of unresolvable refs. Wired into both `buildChecks` (local doctor) and `doctorReportRemote` (thin-client) for parity.
+- Migration v113 (`links_link_source_widen_for_wikilink_basename`) widens the `links_link_source_check` constraint to accept `'wikilink-resolved'` as a valid `link_source`. Idempotent — DROP IF EXISTS + ADD CONSTRAINT.
+- `src/schema.sql` + regenerated `src/core/schema-embedded.ts` + `src/core/pglite-schema.ts` carry the widened constraint for fresh installs so first-init brains start with the right shape.
+- New CHECK constraint value adds `'wikilink-resolved'` alongside `'markdown'`, `'frontmatter'`, `'manual'`.
+- `KNOWN_CONFIG_KEYS` (in `src/core/config.ts`) adds `'link_resolution'` and `'link_resolution.global_basename'` so `gbrain config set ...` accepts the new key without `--force`.
+- Tests: 38 new cases pinning the contract. `test/link-extraction.test.ts` adds 17 cases covering `WIKILINK_GENERIC_RE` shape (anchor / display / strip / escape paths), the `extractEntityRefs` pass-2c no-double-emit invariant, `resolveBasenameMatches` multi-match + index-built-once + missing-`getAllSlugs` degradation, and the `extractPageLinks` opt routing under both flag states. `test/extract-fs.test.ts` adds 11 cases for the pure-function helpers (`resolveBasenameMatchesFromSlugs`, `resolveSlugAll`) plus 3 round-trip tests of the issue's exact repro inside a PGLite brain. `test/doctor.test.ts` adds 7 cases for the new doctor check (skip / ok / warn paths + the cross-surface wiring source-grep). `test/e2e/global-basename-pglite.test.ts` adds 7 end-to-end cases against an in-memory PGLite brain covering FS-source, DB-source, and put_page auto-link paths under both flag states.
+- PR #1233 from @rayers contributed the kernel of the resolver-side approach (the generic wikilink regex + slug-tail index pattern). This PR keeps that mechanism, makes it opt-in via the new config flag, replaces the first-write-wins lookup with multi-match return, and extends the coverage to the FS-source path that the issue's repro actually hits.
 ## [0.42.8.0] - 2026-06-01
 
 **Scraped junk stops landing in your brain as if it were real content, and when something looks off, your agent gets told instead of being left to guess.**
@@ -1535,6 +1599,7 @@ behavior for an automated caller, set `gbrain config set search.mcp_keyword_only
 - A page represented by its weakest chunk in vector search (the incident).
 - Same-slug pages in different sources collapsing in per-page pooling and the
   alias hop (source-isolation).
+
 ## [0.41.33.0] - 2026-05-29
 
 **`gbrain search` and `query` can now return a tight, intent-sized set of
@@ -1775,6 +1840,7 @@ doctor` warns about a partial migration:
   `test/doctor.test.ts` (T1 untracked-folders headline bug, T2 remote-never-shells-out trust
   boundary), `test/sync-all-parallel.test.ts` (column-path staleness).
 - **CI tooling** — `scripts/ship-remote-tests.sh` + `workflow_dispatch` on `test.yml`.
+
 ## [0.41.31.0] - 2026-05-30
 
 **Your nightly `gbrain sync --all` cron stops getting blocked. It used to
