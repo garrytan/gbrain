@@ -34,6 +34,57 @@ export interface DbLockHandle {
 const DEFAULT_TTL_MINUTES = 30;
 
 /**
+ * Probe whether a process is alive on the local machine.
+ *
+ * `process.kill(pid, 0)` is the canonical Unix liveness check: signal 0 is a
+ * no-op send that only validates the target.
+ *   - returns normally → process exists (live holder).
+ *   - ESRCH            → no such process (dead; safe to take over).
+ *   - EPERM            → exists but we can't signal it (real holder; alive).
+ *
+ * pid <= 0 is treated as dead: pid 0 would signal the whole process group,
+ * and a corrupt/empty holder_pid row should be reclaimable.
+ *
+ * #480: a SIGKILL / OOM / power-off holder leaves a full-TTL row behind, so
+ * without a liveness probe every acquirer skips for up to the full TTL.
+ */
+export function isPidAliveLocal(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: unknown) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code === 'ESRCH') return false;
+    if (err.code === 'EPERM') return true;
+    throw err;
+  }
+}
+
+/**
+ * Decide whether the current process should take over a held lock whose TTL
+ * has NOT yet expired. Pure + injectable so tests don't fork processes.
+ *
+ *   - holder on a different host → skip (can't probe; trust the TTL).
+ *   - holder on this host and alive (or EPERM) → skip (real live holder).
+ *   - holder on this host and dead (ESRCH) → acquire (zombie row).
+ *
+ * #480 follow-up to PR #477: same bug family as the autopilot file-lock fix,
+ * but for the DB row in gbrain_cycle_locks (shared by cycle + sync + migrate
+ * lock ids, so this one helper covers all three surfaces).
+ */
+export function decideLockAcquisition(opts: {
+  holderPid: number;
+  holderHost: string;
+  currentHost: string;
+  isPidAlive?: (pid: number) => boolean;
+}): 'acquire' | 'skip' {
+  if (opts.holderHost !== opts.currentHost) return 'skip';
+  const probe = opts.isPidAlive ?? isPidAliveLocal;
+  return probe(opts.holderPid) ? 'skip' : 'acquire';
+}
+
+/**
  * Try to acquire a named DB lock.
  *
  * Returns a handle on success. Returns `null` if another live holder has
@@ -80,7 +131,8 @@ export async function tryAcquireDbLock(
     // `gbrain sync --break-lock --max-age <s>` uses last_refreshed_at (not
     // acquired_at) to identify wedged-but-alive holders without stealing
     // healthy long-running holders that are actively refreshing.
-    const rows: Array<{ id: string }> = await sql`
+    // Step 1: standard UPSERT — succeeds for a fresh row OR a TTL-expired holder.
+    let rows: Array<{ id: string }> = await sql`
       INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
       VALUES (${lockId}, ${pid}, ${host}, NOW(), NOW() + ${ttl}::interval, NOW())
       ON CONFLICT (id) DO UPDATE
@@ -92,7 +144,38 @@ export async function tryAcquireDbLock(
         WHERE gbrain_cycle_locks.ttl_expires_at < NOW()
       RETURNING id
     `;
-    if (rows.length === 0) return null;
+    if (rows.length === 0) {
+      // #480: row is held and TTL not expired. Probe the holder — a dead
+      // same-host PID (SIGKILL/OOM/power-off) is a zombie row we can take
+      // over now instead of waiting out the full TTL.
+      const held: Array<{ holder_pid: number; holder_host: string }> = await sql`
+        SELECT holder_pid, holder_host FROM gbrain_cycle_locks WHERE id = ${lockId}
+      `;
+      const h = held[0];
+      if (
+        !h ||
+        decideLockAcquisition({
+          holderPid: Number(h.holder_pid),
+          holderHost: h.holder_host,
+          currentHost: host,
+        }) === 'skip'
+      ) {
+        return null;
+      }
+      // Take over, guarded by the observed holder_pid + host so a racing
+      // acquirer between SELECT and UPDATE doesn't get stomped.
+      rows = await sql`
+        UPDATE gbrain_cycle_locks
+          SET holder_pid = ${pid},
+              holder_host = ${host},
+              acquired_at = NOW(),
+              ttl_expires_at = NOW() + ${ttl}::interval,
+              last_refreshed_at = NOW()
+        WHERE id = ${lockId} AND holder_pid = ${h.holder_pid} AND holder_host = ${h.holder_host}
+        RETURNING id
+      `;
+      if (rows.length === 0) return null; // lost the takeover race
+    }
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await sql`
         DELETE FROM gbrain_cycle_locks
@@ -125,7 +208,8 @@ export async function tryAcquireDbLock(
   if (engine.kind === 'pglite' && maybePGLite.db) {
     const db = maybePGLite.db;
     const ttl = `${ttlMinutes} minutes`;
-    const { rows } = await db.query(
+    // Step 1: standard UPSERT — succeeds for a fresh row OR a TTL-expired holder.
+    let { rows } = await db.query(
       `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
        VALUES ($1, $2, $3, NOW(), NOW() + $4::interval, NOW())
        ON CONFLICT (id) DO UPDATE
@@ -138,7 +222,37 @@ export async function tryAcquireDbLock(
        RETURNING id`,
       [lockId, pid, host, ttl],
     );
-    if (rows.length === 0) return null;
+    if (rows.length === 0) {
+      // #480: held row, TTL not expired. Probe the holder — same dance as the
+      // postgres branch. PGLite is single-writer in normal use, but the lock
+      // row is shared across concurrent processes, so a zombie holder_pid
+      // from a crashed sibling still needs reclaiming.
+      const held = (await db.query(
+        `SELECT holder_pid, holder_host FROM gbrain_cycle_locks WHERE id = $1`,
+        [lockId],
+      )).rows as Array<{ holder_pid: number; holder_host: string }>;
+      const h = held[0];
+      if (
+        !h ||
+        decideLockAcquisition({
+          holderPid: Number(h.holder_pid),
+          holderHost: h.holder_host,
+          currentHost: host,
+        }) === 'skip'
+      ) {
+        return null;
+      }
+      rows = (await db.query(
+        `UPDATE gbrain_cycle_locks
+            SET holder_pid = $2, holder_host = $3, acquired_at = NOW(),
+                ttl_expires_at = NOW() + $4::interval,
+                last_refreshed_at = NOW()
+          WHERE id = $1 AND holder_pid = $5 AND holder_host = $6
+         RETURNING id`,
+        [lockId, pid, host, ttl, h.holder_pid, h.holder_host],
+      )).rows;
+      if (rows.length === 0) return null; // lost the takeover race
+    }
     const deregister = registerCleanup(`db-lock:${lockId}`, async () => {
       await db.query(
         `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2`,
