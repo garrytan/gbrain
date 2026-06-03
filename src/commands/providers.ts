@@ -448,14 +448,14 @@ function runOpenAICodexOfflineReadiness(modelArg: string): VerifyCheck[] {
       });
       const url = new URL(request.url);
       const hostname = normalizedHost(request.url);
-      const routeHostOk = hostname === 'chatgpt.com';
+      const routeHostOk = hostname !== null && !isPublicOpenAIBaseURL(request.url);
       const publicOpenAIHostOk = !isPublicOpenAIBaseURL(verifyBaseURL) && !isPublicOpenAIBaseURL(request.url);
       streamRouteOk = body.stream === true
         && body.store === false
         && request.body.stream === true
         && request.body.store === false
         && routeHostOk
-        && url.pathname.endsWith('/backend-api/codex/responses')
+        && url.pathname.endsWith('/responses')
         && publicOpenAIHostOk;
       requestUsesCodexAuthOnly = request.headers.Authorization === `Bearer ${VERIFY_FIXTURE_CODEX_ACCESS_TOKEN}`
         && !Object.values(request.headers).some(value => value.includes(VERIFY_FIXTURE_PUBLIC_OPENAI_API_KEY));
@@ -467,8 +467,8 @@ function runOpenAICodexOfflineReadiness(modelArg: string): VerifyCheck[] {
   checks.push(verifyCheck(
     'streaming route separation',
     streamRouteOk,
-    'request builder forces stream=true/store=false and targets ChatGPT Codex /responses, not public OpenAI.',
-    'Codex request builder did not prove forced streaming/store=false on the ChatGPT Codex route.',
+    'request builder forces stream=true/store=false and targets a non-public Codex Responses /responses route.',
+    'Codex request builder did not prove forced streaming/store=false on a non-public Codex Responses route.',
   ));
 
   let toolsRejected = false;

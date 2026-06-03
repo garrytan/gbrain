@@ -1,19 +1,12 @@
 import type { Recipe } from '../types.ts';
 
-/**
- * OpenAI Codex via the ChatGPT/Codex plan, not the public OpenAI API.
- *
- * Commit 1 intentionally registers metadata only. Auth and streaming transport
- * land in later commits, so provider readiness remains pending even though the
- * recipe has no public API key requirement.
- */
 export const openaiCodex: Recipe = {
   id: 'openai-codex',
   name: 'OpenAI Codex (ChatGPT plan)',
   tier: 'codex-responses',
   implementation: 'codex-responses',
   base_url_default: 'https://chatgpt.com/backend-api/codex',
-  // Auth is resolved by the future Codex auth source, not OPENAI_API_KEY.
+  // Auth is resolved from Codex-plan credentials, not OPENAI_API_KEY.
   auth_env: {
     required: [],
     optional: ['OPENAI_CODEX_ACCESS_TOKEN'],
@@ -27,8 +20,8 @@ export const openaiCodex: Recipe = {
       supports_subagent_loop: false,
       supports_prompt_cache: false,
       // Plan-billed metadata only. Leave per-token API prices undefined so
-      // the budget tracker does not treat Codex as ordinary metered $0 before
-      // plan-billing semantics land.
+      // the budget tracker does not treat Codex as ordinary metered $0 public
+      // OpenAI API usage.
       price_last_verified: '2026-06-02',
       billing: {
         mode: 'plan-billed',
@@ -38,5 +31,5 @@ export const openaiCodex: Recipe = {
     },
   },
   setup_hint:
-    'Uses ChatGPT/Codex plan auth, not OPENAI_API_KEY. Transport/auth are pending in this feature; text chat only, no embeddings/tools/subagent loop.',
+    'Uses ChatGPT/Codex plan auth, not OPENAI_API_KEY. Uses the Codex Responses streaming transport; text chat only, no embeddings/tools/subagent loop.',
 };

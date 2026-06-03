@@ -49,16 +49,18 @@ embedding/tool/subagent surface.
 Safer rollout options:
 
 ```bash
-# Chat-only / reasoning-scoped rollout
- gbrain config set models.chat openai-codex:gpt-5.5
+# Chat-only gateway rollout
+gbrain config set chat_model openai-codex:gpt-5.5
 
-# Or, for a one-off command that accepts a model flag
- gbrain takes extract --from-pages --model openai-codex:gpt-5.5 --max-pages 5 --yes
+# One-off chat provider smoke without changing config
+gbrain providers test --touchpoint chat --model openai-codex:gpt-5.5
 ```
 
-Keep subagent/minion/tool-running tiers on a tool-capable model. The resolver
-will gate Codex out of `tier.subagent`, but scoped config is still clearer and
-less surprising than a global default flip.
+For extraction/takes/minion workflows, verify the command explicitly accepts a
+model override and does not require tools, structured output, embeddings, or
+subagent loops before pointing it at Codex. The resolver will gate Codex out of
+`tier.subagent`, but scoped config is still clearer and less surprising than a
+global default flip.
 
 ## Verify offline readiness
 
@@ -75,7 +77,7 @@ The offline gate checks:
 
 - recipe/model identity and allow-listing
 - auth redaction with fixture credentials
-- forced streaming request shape and ChatGPT Codex route separation
+- forced streaming request shape and non-public Codex Responses route separation
 - text-only / no-tools / no-subagent capability guard
 - no `OPENAI_API_KEY` fallback
 - plan-billed metadata without public API pricing

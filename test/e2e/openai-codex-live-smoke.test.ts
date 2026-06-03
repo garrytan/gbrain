@@ -152,6 +152,29 @@ describe('openai-codex readiness smoke', () => {
     });
   });
 
+  test('providers verify --offline accepts non-public Codex proxy base URL override', async () => {
+    await withTempHome(async (home) => {
+      const result = await runCli(
+        ['providers', 'verify', '--model', 'openai-codex:gpt-5.5', '--offline'],
+        {
+          gbrainHome: home,
+          env: {
+            OPENAI_API_KEY: OFFLINE_PUBLIC_KEY,
+            OPENAI_CODEX_BASE_URL: 'http://codex-proxy.example.test/v1',
+          },
+        },
+      );
+
+      expect(result.timedOut).toBe(false);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('✓ streaming route separation');
+      expect(result.stdout).toContain('non-public Codex Responses /responses route');
+      expect(result.stdout).toContain('Result: READY (offline invariants passed).');
+      expect(result.stderr).toBe('');
+      expectNoSecrets(result.stdout + result.stderr, [OFFLINE_PUBLIC_KEY]);
+    });
+  });
+
   test('providers verify --live is refused unless GBRAIN_OPENAI_CODEX_LIVE=1', async () => {
     await withTempHome(async (home) => {
       const result = await runCli(
