@@ -41,6 +41,7 @@
     "eval:autocut": "bun test test/search/autocut-eval.test.ts",
     "test:full": "bun run verify && bash scripts/run-unit-parallel.sh && bun run test:slow && ([ -n \"$DATABASE_URL\" ] && bash scripts/run-e2e.sh || echo '[test:full] skipped E2E (no DATABASE_URL); run docker-compose -f docker-compose.ci.yml up + bun run test:e2e to include' 1>&2)",
     "verify": "bash scripts/run-verify-parallel.sh",
+    "verify:openai-codex": "bun src/cli.ts providers verify --model openai-codex:gpt-5.5 --offline && bun test test/ai/recipe-openai-codex.test.ts test/ai/codex-auth.test.ts test/ai/codex-responses-stream.test.ts test/ai/openai-codex-gateway.test.ts test/ai/capabilities.test.ts test/ai/model-resolver-openai-codex.test.ts test/core/budget/budget-tracker.test.ts test/providers.test.ts test/commands/providers-openai-codex.test.ts test/ai/build-gateway-config.test.ts test/e2e/openai-codex-live-smoke.test.ts && bun test --max-concurrency=1 --timeout=60000 test/model-config.serial.test.ts",
     "check:source-config-leak": "scripts/check-source-config-leak.sh",
     "check:no-pii-agent-voice": "scripts/check-no-pii-in-agent-voice.sh",
     "check:synthetic-corpus-privacy": "scripts/check-synthetic-corpus-privacy.sh",

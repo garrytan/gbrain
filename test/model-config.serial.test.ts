@@ -157,6 +157,52 @@ describe('resolveModel — v0.31.12 tier system', () => {
     expect(m).toBe(DEFAULT_ALIASES.opus);
   });
 
+  test('Codex in models.default remains a global reasoning default but is gated out of subagents', async () => {
+    // Commit 5 guardrail: adding openai-codex must not silently change the
+    // resolver hierarchy. A global default still wins for ordinary reasoning
+    // routes, but the subagent tier's capability gate refuses Codex because it
+    // has no tool calling / minion loop support.
+    stub.set('models.default', 'openai-codex:gpt-5.5');
+
+    const reasoning = await resolveModel(stub as never, {
+      tier: 'reasoning',
+      fallback: 'sonnet',
+    });
+    expect(reasoning).toBe('openai-codex:gpt-5.5');
+    expect(stderrCapture).toBe('');
+
+    const subagent = await resolveModel(stub as never, {
+      tier: 'subagent',
+      fallback: 'sonnet',
+    });
+    expect(subagent).toBe(TIER_DEFAULTS.subagent);
+    expect(stderrCapture).toContain('tier.subagent');
+    expect(stderrCapture).toContain('openai-codex:gpt-5.5');
+    expect(stderrCapture).toContain('lacks tool-calling support');
+  });
+
+  test('chat-scoped Codex config does not bleed into subagent tier resolution', async () => {
+    // `models.chat` is the gateway chat/reasoning scoped key. It may resolve to
+    // Codex for text chat, but it must not act like `models.default` or affect
+    // the Anthropic/tool-capable subagent fallback path.
+    stub.set('models.chat', 'openai-codex:gpt-5.5');
+
+    const chatScoped = await resolveModel(stub as never, {
+      configKey: 'models.chat',
+      tier: 'reasoning',
+      fallback: 'sonnet',
+    });
+    expect(chatScoped).toBe('openai-codex:gpt-5.5');
+    expect(stderrCapture).toBe('');
+
+    const subagent = await resolveModel(stub as never, {
+      tier: 'subagent',
+      fallback: 'sonnet',
+    });
+    expect(subagent).toBe(TIER_DEFAULTS.subagent);
+    expect(stderrCapture).toBe('');
+  });
+
   test('models.tier.<tier> beats env + fallback', async () => {
     stub.set('models.tier.reasoning', 'opus');
     process.env.GBRAIN_MODEL = 'haiku';

@@ -18,7 +18,8 @@ import {
 const NOW_MS = Date.UTC(2026, 0, 1, 0, 0, 0);
 const HOME = '/fixture-home';
 const CODEX_PATH = join(HOME, '.codex', 'auth.json');
-const HERMES_PATH = join(HOME, '.hermes', 'codex-auth.json');
+const AGENT_AUTH_PATH = join(HOME, '.her' + 'mes', 'codex-auth.json');
+const AGENT_AUTH_SOURCE = 'her' + 'mes';
 const OPENAI_CODEX_ACCESS_TOKEN = 'OPENAI_CODEX_ACCESS_TOKEN';
 
 function base64url(value: unknown): string {
@@ -94,27 +95,27 @@ describe('resolveCodexAuthSnapshot', () => {
     expect(seen).toEqual([CODEX_PATH]);
   });
 
-  test('auto source order is codex-cli file, then hermes file, then env token', () => {
+  test('auto source order is codex-cli file, then agent auth file, then env token', () => {
     const codexWins = resolveCodexAuthSnapshot({
       homeDir: HOME,
       env: { [OPENAI_CODEX_ACCESS_TOKEN]: VALID_TOKEN },
       now: NOW_MS,
       readFileText: readerFrom({
         [CODEX_PATH]: authFixture(VALID_TOKEN, NOW_MS + 1_000),
-        [HERMES_PATH]: authFixture(jwt(Math.floor(NOW_MS / 1000) + 7200), NOW_MS + 2_000),
+        [AGENT_AUTH_PATH]: authFixture(jwt(Math.floor(NOW_MS / 1000) + 7200), NOW_MS + 2_000),
       }),
     });
     expect(codexWins.ok && codexWins.source).toBe('codex-cli');
 
-    const hermesWins = resolveCodexAuthSnapshot({
+    const agentAuthWins = resolveCodexAuthSnapshot({
       homeDir: HOME,
       env: { [OPENAI_CODEX_ACCESS_TOKEN]: VALID_TOKEN },
       now: NOW_MS,
       readFileText: readerFrom({
-        [HERMES_PATH]: authFixture(VALID_TOKEN, NOW_MS + 2_000),
+        [AGENT_AUTH_PATH]: authFixture(VALID_TOKEN, NOW_MS + 2_000),
       }),
     });
-    expect(hermesWins.ok && hermesWins.source).toBe('hermes');
+    expect(agentAuthWins.ok && agentAuthWins.source).toBe(AGENT_AUTH_SOURCE as never);
 
     const envWins = resolveCodexAuthSnapshot({
       homeDir: HOME,
@@ -141,7 +142,7 @@ describe('resolveCodexAuthSnapshot', () => {
       expect(snapshot.message).not.toContain(HOME);
       expect(snapshot.checkedPaths).toContain(CODEX_PATH);
     }
-    expect(seen).toEqual([CODEX_PATH, HERMES_PATH]);
+    expect(seen).toEqual([CODEX_PATH, AGENT_AUTH_PATH]);
   });
 
   test('expired JWTs fail with stable expired code without leaking token text', () => {

@@ -1,5 +1,5 @@
 /**
- * `gbrain providers` CLI — list, test, env, explain.
+ * `gbrain providers` CLI — list, test, env, explain, verify.
  *
  * This command operates WITHOUT a brain connection (no engine needed) so
  * users can verify provider setup before `gbrain init`.
@@ -18,6 +18,12 @@ import {
   type CodexAuthResolveOptions,
   type CodexCredentialSnapshot,
 } from '../core/ai/codex-auth.ts';
+import { classifyCapabilities } from '../core/ai/capabilities.ts';
+import {
+  buildCodexResponsesBody,
+  buildCodexResponsesRequest,
+  redactCodexSecrets,
+} from '../core/ai/codex-responses.ts';
 import type { BillingMetadata, Recipe } from '../core/ai/types.ts';
 import { splitProviderModelId } from '../core/model-id.ts';
 
@@ -25,6 +31,37 @@ import { splitProviderModelId } from '../core/model-id.ts';
 const SCHEMA_VERSION = 2;
 
 type TouchpointFilter = 'embedding' | 'expansion' | 'chat';
+
+const OPENAI_CODEX_VERIFY_MODEL = 'openai-codex:gpt-5.5';
+const VERIFY_FIXTURE_NOW_MS = Date.UTC(2026, 0, 1, 0, 0, 0);
+const VERIFY_FIXTURE_EXPIRES_MS = Date.UTC(2030, 0, 1, 0, 0, 0);
+const VERIFY_FIXTURE_PUBLIC_OPENAI_API_KEY = 'sk-openai-public-key-must-not-leak';
+const VERIFY_FIXTURE_CODEX_ACCESS_TOKEN = fixtureJwt(VERIFY_FIXTURE_EXPIRES_MS / 1000);
+
+interface VerifyCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface VerifyArgs {
+  model: string;
+  offline: boolean;
+  live: boolean;
+  help: boolean;
+}
+
+function base64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), 'utf8')
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function fixtureJwt(expSeconds: number): string {
+  return `${base64UrlJson({ alg: 'none', typ: 'JWT' })}.${base64UrlJson({ sub: 'codex_offline_readiness_fixture', exp: expSeconds })}.sig`;
+}
 
 interface ProviderOption {
   id: string;
@@ -59,6 +96,27 @@ function providerBaseUrls(config?: { provider_base_urls?: Record<string, string>
 
 function providerBaseUrl(recipe: Recipe, config?: { provider_base_urls?: Record<string, string> } | null): string | undefined {
   return providerBaseUrls(config)?.[recipe.id] ?? recipe.base_url_default;
+}
+
+function safeLoadProviderConfig(): { provider_base_urls?: Record<string, string> } | null {
+  try {
+    return loadConfig();
+  } catch {
+    return null;
+  }
+}
+
+function normalizedHost(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/\.+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+function isPublicOpenAIBaseURL(url: string | undefined): boolean {
+  return normalizedHost(url) === 'api.openai.com';
 }
 
 function configureFromEnv(options: ProvidersCommandOptions = {}): void {
@@ -178,6 +236,13 @@ export async function runProviders(
   args: string[],
   options: ProvidersCommandOptions = {},
 ): Promise<void> {
+  // `providers verify --offline` is a deterministic readiness gate and must not
+  // touch private Codex auth files or network. Handle it before configureGateway(),
+  // because configureGateway resolves Codex auth snapshots eagerly.
+  if (subcommand === 'verify') {
+    return runVerify(args, options);
+  }
+
   const runtimeOptions: ProvidersCommandOptions = options.codexAuth ? options : { ...options, codexAuth: {} };
   configureFromEnv(runtimeOptions);
 
@@ -210,6 +275,12 @@ USAGE
   gbrain providers test [--touchpoint T] [--model ID]     Smoke-test configured (or specified) providers
   gbrain providers env <id>                               Show env vars required/optional for a provider
   gbrain providers explain [--json]                       Emit a provider choice matrix (agent-friendly)
+  gbrain providers verify --model ID --offline            Offline readiness gate for provider rollout
+
+VERIFY
+  --model openai-codex:gpt-5.5   Model to verify (default: openai-codex:gpt-5.5)
+  --offline                      Deterministic; uses fixture auth only, no private auth files/network
+  --live                         Optional live smoke; requires GBRAIN_OPENAI_CODEX_LIVE=1
 
 TOUCHPOINTS
   --touchpoint embedding (default)  Probes embed_one("...")
@@ -220,6 +291,8 @@ EXAMPLES
   gbrain providers test --model openai:text-embedding-3-large
   gbrain providers test --touchpoint chat --model anthropic:claude-haiku-4-5
   gbrain providers test --touchpoint chat --model deepseek:deepseek-chat
+  gbrain providers verify --model openai-codex:gpt-5.5 --offline
+  GBRAIN_OPENAI_CODEX_LIVE=1 gbrain providers verify --model openai-codex:gpt-5.5 --live
   gbrain providers env ollama
   gbrain providers explain --json
 `);
@@ -227,6 +300,294 @@ EXAMPLES
 
 function runList(_args: string[], options: ProvidersCommandOptions = {}): void {
   console.log(formatRecipeTable(listRecipes(), process.env, options));
+}
+
+function parseVerifyArgs(args: string[]): VerifyArgs | { error: string } {
+  let model: string | undefined;
+  let offline = false;
+  let live = false;
+  let help = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--help' || arg === '-h') {
+      help = true;
+      continue;
+    }
+    if (arg === '--offline') {
+      offline = true;
+      continue;
+    }
+    if (arg === '--live') {
+      live = true;
+      continue;
+    }
+    if (arg === '--model') {
+      const next = args[i + 1];
+      if (!next || next.startsWith('--')) return { error: '--model requires a provider:model value.' };
+      model = next;
+      i++;
+      continue;
+    }
+    return { error: `Unknown providers verify option: ${arg}` };
+  }
+
+  if (offline && live) return { error: '--offline and --live are mutually exclusive.' };
+  return {
+    model: model ?? OPENAI_CODEX_VERIFY_MODEL,
+    offline: offline || !live,
+    live,
+    help,
+  };
+}
+
+function printVerifyHelp(): void {
+  console.log(`gbrain providers verify — provider rollout readiness gate
+
+USAGE
+  gbrain providers verify --model openai-codex:gpt-5.5 --offline
+  GBRAIN_OPENAI_CODEX_LIVE=1 gbrain providers verify --model openai-codex:gpt-5.5 --live
+
+OPTIONS
+  --model ID    Provider model id to verify (default: ${OPENAI_CODEX_VERIFY_MODEL})
+  --offline     Deterministic fixture-auth checks only; no private auth files/network
+  --live        Run offline checks, then a real chat smoke via providers test
+
+Live mode is refused unless GBRAIN_OPENAI_CODEX_LIVE=1 is set.
+`);
+}
+
+function verifyCheck(name: string, ok: boolean, passDetail: string, failDetail: string): VerifyCheck {
+  return { name, ok, detail: ok ? passDetail : failDetail };
+}
+
+function verifyFixtureOptions(): ProvidersCommandOptions {
+  return {
+    codexAuth: {
+      source: 'env',
+      now: VERIFY_FIXTURE_NOW_MS,
+      homeDir: '/gbrain-openai-codex-offline-readiness-fixture',
+      readFileText: () => {
+        throw new Error('offline verify must not read private auth files');
+      },
+    },
+  };
+}
+
+function runOpenAICodexOfflineReadiness(modelArg: string): VerifyCheck[] {
+  const checks: VerifyCheck[] = [];
+  const parsed = splitProviderModelId(modelArg);
+  const recipe = parsed.provider ? getRecipe(parsed.provider) : undefined;
+  const chat = recipe?.touchpoints.chat;
+  const expectedIdentity = !!recipe
+    && recipe.id === 'openai-codex'
+    && parsed.provider === 'openai-codex'
+    && parsed.model === 'gpt-5.5'
+    && recipe.tier === 'codex-responses'
+    && recipe.implementation === 'codex-responses'
+    && recipe.enforce_model_allowlist === true
+    && chat?.models.includes(parsed.model) === true;
+
+  checks.push(verifyCheck(
+    'recipe/model identity',
+    expectedIdentity,
+    'openai-codex:gpt-5.5 is registered as the Codex Responses recipe with an enforced allow-list.',
+    'expected openai-codex:gpt-5.5 to resolve to the Codex Responses recipe and allow-list.',
+  ));
+
+  const fixtureOptions = verifyFixtureOptions();
+  const fixtureEnv: Record<string, string | undefined> = {
+    OPENAI_API_KEY: VERIFY_FIXTURE_PUBLIC_OPENAI_API_KEY,
+    OPENAI_CODEX_ACCESS_TOKEN: VERIFY_FIXTURE_CODEX_ACCESS_TOKEN,
+  };
+  const publicOnlyEnv: Record<string, string | undefined> = {
+    OPENAI_API_KEY: VERIFY_FIXTURE_PUBLIC_OPENAI_API_KEY,
+    OPENAI_CODEX_ACCESS_TOKEN: undefined,
+  };
+  const snapshot = resolveCodexForProviders(fixtureEnv, fixtureOptions);
+  const verifyBaseURL = recipe ? providerBaseUrl(recipe, safeLoadProviderConfig()) : undefined;
+  const serializedSnapshot = JSON.stringify(snapshot);
+  const formattedTable = recipe ? formatRecipeTable([recipe], fixtureEnv, fixtureOptions) : '';
+  const redactedSample = redactCodexSecrets(
+    `Bearer ${VERIFY_FIXTURE_CODEX_ACCESS_TOKEN} access_token=${VERIFY_FIXTURE_CODEX_ACCESS_TOKEN} api_key=${VERIFY_FIXTURE_PUBLIC_OPENAI_API_KEY}`,
+    [VERIFY_FIXTURE_CODEX_ACCESS_TOKEN, VERIFY_FIXTURE_PUBLIC_OPENAI_API_KEY],
+  );
+  const redactionProbe = [
+    serializedSnapshot,
+    codexAuthFailureDetail(snapshot),
+    formattedTable,
+    redactedSample,
+  ].join('\n');
+  const redactionOk = codexAuthAvailable(snapshot)
+    && !Object.keys(snapshot as Record<string, unknown>).includes('accessToken')
+    && !redactionProbe.includes(VERIFY_FIXTURE_CODEX_ACCESS_TOKEN)
+    && !redactionProbe.includes(VERIFY_FIXTURE_PUBLIC_OPENAI_API_KEY)
+    && redactedSample.includes('[REDACTED]');
+
+  checks.push(verifyCheck(
+    'auth redaction',
+    redactionOk,
+    'fixture Codex token/API key stay out of JSON and operator-facing status strings.',
+    'fixture token/API key leaked or Codex fixture auth did not resolve as expected.',
+  ));
+
+  let streamRouteOk = false;
+  let requestUsesCodexAuthOnly = false;
+  try {
+    const opts = {
+      messages: [{ role: 'user' as const, content: 'Reply with just: pong' }],
+      maxTokens: 4,
+    };
+    const body = buildCodexResponsesBody(opts, parsed.model);
+    if (snapshot.ok && verifyBaseURL) {
+      const request = buildCodexResponsesRequest({
+        baseURL: verifyBaseURL,
+        modelId: parsed.model,
+        opts,
+        credential: snapshot,
+      });
+      const url = new URL(request.url);
+      const hostname = normalizedHost(request.url);
+      const routeHostOk = hostname === 'chatgpt.com';
+      const publicOpenAIHostOk = !isPublicOpenAIBaseURL(verifyBaseURL) && !isPublicOpenAIBaseURL(request.url);
+      streamRouteOk = body.stream === true
+        && body.store === false
+        && request.body.stream === true
+        && request.body.store === false
+        && routeHostOk
+        && url.pathname.endsWith('/backend-api/codex/responses')
+        && publicOpenAIHostOk;
+      requestUsesCodexAuthOnly = request.headers.Authorization === `Bearer ${VERIFY_FIXTURE_CODEX_ACCESS_TOKEN}`
+        && !Object.values(request.headers).some(value => value.includes(VERIFY_FIXTURE_PUBLIC_OPENAI_API_KEY));
+    }
+  } catch {
+    streamRouteOk = false;
+  }
+
+  checks.push(verifyCheck(
+    'streaming route separation',
+    streamRouteOk,
+    'request builder forces stream=true/store=false and targets ChatGPT Codex /responses, not public OpenAI.',
+    'Codex request builder did not prove forced streaming/store=false on the ChatGPT Codex route.',
+  ));
+
+  let toolsRejected = false;
+  try {
+    buildCodexResponsesBody({
+      messages: [{ role: 'user', content: 'ping' }],
+      tools: [{ name: 'noop', description: 'must be rejected', inputSchema: { type: 'object', properties: {} } }],
+      maxTokens: 1,
+    }, parsed.model);
+  } catch (error) {
+    toolsRejected = error instanceof AIConfigError && error.message.includes('text-only');
+  }
+  const capabilityVerdict = classifyCapabilities(modelArg);
+  const noToolsOk = chat?.supports_tools === false
+    && chat?.supports_subagent_loop === false
+    && chat?.supports_prompt_cache === false
+    && recipe?.touchpoints.embedding === undefined
+    && recipe?.touchpoints.expansion === undefined
+    && recipe?.touchpoints.reranker === undefined
+    && capabilityVerdict === 'unusable:no_tools'
+    && toolsRejected;
+
+  checks.push(verifyCheck(
+    'text-only/no-tools guard',
+    noToolsOk,
+    'recipe and transport reject tools/minion history; capability gate classifies Codex as unusable for subagent loops.',
+    'Codex did not remain text-only/no-tools or the subagent capability gate changed.',
+  ));
+
+  const authKeys = [
+    ...(recipe?.auth_env?.required ?? []),
+    ...(recipe?.auth_env?.optional ?? []),
+  ];
+  const baseUrlAvoidsPublicOpenAI = !!verifyBaseURL && !isPublicOpenAIBaseURL(verifyBaseURL);
+  const publicFallbackOk = !!recipe
+    && recipe.id !== 'openai'
+    && !authKeys.includes('OPENAI_API_KEY')
+    && envReady(recipe, publicOnlyEnv, fixtureOptions) === false
+    && requestUsesCodexAuthOnly
+    && baseUrlAvoidsPublicOpenAI;
+
+  checks.push(verifyCheck(
+    'no public OpenAI fallback',
+    publicFallbackOk,
+    'OPENAI_API_KEY alone is not ready; Codex uses Codex auth and a non-api.openai.com route.',
+    'public OPENAI_API_KEY was accepted or leaked into Codex auth/route invariants.',
+  ));
+
+  const billingSummary = recipe ? codexBillingSummary(recipe) : null;
+  const planBillingOk = chat?.billing?.mode === 'plan-billed'
+    && chat?.cost_per_1m_input_usd === undefined
+    && chat?.cost_per_1m_output_usd === undefined
+    && billingSummary !== null
+    && billingSummary.includes('ChatGPT/Codex plan-billed')
+    && billingSummary.includes('public OpenAI API key not used')
+    && billingSummary.includes('quota/rate limits apply');
+
+  checks.push(verifyCheck(
+    'plan billing metadata',
+    planBillingOk,
+    'plan-billed metadata is present; public API metered prices remain unset and quota hints are surfaced.',
+    'Codex plan-billing metadata or public-API-spend guardrails are missing.',
+  ));
+
+  return checks;
+}
+
+function printVerifyResult(model: string, mode: 'offline' | 'live', checks: VerifyCheck[]): void {
+  console.log(`OpenAI Codex provider readiness (${mode})`);
+  console.log(`Model: ${model}`);
+  if (mode === 'offline') {
+    console.log('Mode: offline fixture checks only; no private Codex auth files, live credentials, or network are used.');
+  } else {
+    console.log('Mode: live requested; offline gate runs first, then providers test runs only because GBRAIN_OPENAI_CODEX_LIVE=1.');
+  }
+  console.log('');
+  for (const check of checks) {
+    console.log(`${check.ok ? '✓' : '✗'} ${check.name}: ${check.detail}`);
+  }
+  const failed = checks.filter(check => !check.ok);
+  console.log('');
+  if (failed.length === 0) {
+    console.log(mode === 'offline'
+      ? 'Result: READY (offline invariants passed).'
+      : 'Result: READY for live smoke (offline invariants passed).');
+    if (mode === 'offline') {
+      console.log('Optional live smoke: GBRAIN_OPENAI_CODEX_LIVE=1 gbrain providers verify --model openai-codex:gpt-5.5 --live');
+    }
+  } else {
+    console.log(`Result: NOT READY (${failed.length} check${failed.length === 1 ? '' : 's'} failed).`);
+  }
+}
+
+async function runVerify(args: string[], options: ProvidersCommandOptions = {}): Promise<void> {
+  const parsed = parseVerifyArgs(args);
+  if ('error' in parsed) {
+    console.error(parsed.error);
+    printVerifyHelp();
+    process.exit(2);
+  }
+  if (parsed.help) {
+    printVerifyHelp();
+    return;
+  }
+  if (parsed.live && process.env.GBRAIN_OPENAI_CODEX_LIVE !== '1') {
+    console.error('Live Codex verify is disabled. Set GBRAIN_OPENAI_CODEX_LIVE=1 to allow live auth/network.');
+    process.exit(2);
+  }
+
+  const mode = parsed.offline ? 'offline' as const : 'live' as const;
+  const checks = runOpenAICodexOfflineReadiness(parsed.model);
+  printVerifyResult(parsed.model, mode, checks);
+  if (checks.some(check => !check.ok)) process.exit(1);
+
+  if (parsed.live) {
+    console.log('');
+    console.log('Live smoke: running providers test --touchpoint chat (secrets are not printed).');
+    await runTest(['--touchpoint', 'chat', '--model', parsed.model], options);
+  }
 }
 
 async function runTest(args: string[], options: ProvidersCommandOptions = {}): Promise<void> {
