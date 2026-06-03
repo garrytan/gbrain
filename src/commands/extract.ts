@@ -1531,7 +1531,18 @@ async function extractStaleFromDB(
       // landing between this SELECT and the stamp advances updated_at past the
       // stamped value, so the page stays stale and re-extracts next run instead
       // of being marked fresh-with-stale-content.
-      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: page.updated_at.toISOString() });
+      //
+      // BUT the stamp must also clear the version-staleness clause
+      // (`links_extracted_at < versionTs`). A page whose updated_at predates
+      // versionTs would otherwise be stamped below the threshold and read as
+      // stale forever — a permanent re-extract loop that never clears the lag.
+      // GREATEST(updated_at, versionTs) preserves the race semantics (a real
+      // future edit advances updated_at > versionTs >= stamp → re-extracts)
+      // while lifting old pages to the threshold so they clear.
+      const stampIso = page.updated_at.getTime() >= Date.parse(versionTs)
+        ? page.updated_at.toISOString()
+        : versionTs;
+      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: stampIso });
     }
 
     // Flush NON-swallowing (CDX-4): a throw here propagates out of the sweep so
