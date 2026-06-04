@@ -641,8 +641,8 @@ export async function chunkCodeTextFull(
       // here so chunk headers say "table users" not "statement users".
       const typeNode = (nestableNode ?? node);
       const symbolType = (typeNode.type === 'statement' && typeNode.namedChildCount === 1)
-        ? normalizeSymbolType(typeNode.namedChild(0).type)
-        : normalizeSymbolType(typeNode.type);
+        ? normalizeSymbolType(typeNode.namedChild(0).type, typeNode.namedChild(0))
+        : normalizeSymbolType(typeNode.type, typeNode);
 
       if (nestableNode && symbolName && nestedConfig) {
         const before = chunks.length;
@@ -940,7 +940,7 @@ function emitNestedScoped(
 ): void {
   const name = extractSymbolName(node);
   if (!name) return;
-  const symbolType = normalizeSymbolType(node.type);
+  const symbolType = normalizeSymbolType(node.type, node);
   const { parents, leaves } = collectImmediateNestedChildren(node, config);
 
   // Parent scope-header chunk: declaration + member digest.
@@ -967,7 +967,7 @@ function emitNestedScoped(
   // Leaf children: methods / functions / fields.
   for (const leaf of leaves) {
     const leafName = extractSymbolName(leaf);
-    const leafType = normalizeSymbolType(leaf.type);
+    const leafType = normalizeSymbolType(leaf.type, leaf);
     const leafText = source.slice(leaf.startIndex, leaf.endIndex).trim();
     if (!leafText) continue;
     chunks.push(buildChunk({
@@ -1062,6 +1062,24 @@ function extractSymbolName(node: any): string | null {
     if (nested) return nested;
   }
 
+  // TS/JS/TSX: `const Foo = () => {…}` / `let Bar = function(){…}`.
+  // export_statement reaches the lexical_declaration via the `declaration`
+  // recursion above; here we descend lexical_declaration/variable_declaration
+  // into their variable_declarator child and read its `name` field.
+  // EXACT node.type equality only — a substring/endsWith test would wrongly
+  // match Go's `var_declaration`/`const_declaration`, function_declaration, etc.
+  if (node.type === 'lexical_declaration' || node.type === 'variable_declaration') {
+    for (const child of node.namedChildren) {
+      if (child.type === 'variable_declarator') {
+        const nameNode = child.childForFieldName('name');
+        if (nameNode?.text?.trim()) {
+          const v = sanitize(nameNode.text);
+          if (v) return v;
+        }
+      }
+    }
+  }
+
   for (const child of node.namedChildren) {
     if (child.type.endsWith('identifier') || child.type === 'constant') {
       const v = sanitize(child.text);
@@ -1110,7 +1128,38 @@ function extractSqlSymbolName(inner: any): string | null | undefined {
   return undefined;
 }
 
-function normalizeSymbolType(type: string): string {
+/**
+ * Map a tree-sitter node type to a canonical symbol_type. The optional
+ * `node` lets us look at the initializer of a `const`/`let`/`var` binding:
+ * `const Foo = () => {}` / `const Bar = function(){}` (the dominant modern
+ * JS/TS/React form) is a FUNCTION definition, not a generic "lexical
+ * declaration". Without this, those defs land symbol_type='lexical
+ * declaration', which code-def's DEF_TYPES allowlist filters out — so
+ * `code-def Foo` returns 0 even though the symbol exists. Detecting the
+ * arrow/function initializer here makes arrow-style defs first-class.
+ */
+function normalizeSymbolType(type: string, node?: any): string {
+  // const/let/var Foo = () => {}  |  = function(){}  → 'function'
+  // Also unwrap `export const Foo = () => {}` (export_statement → declaration).
+  if (node && (type === 'lexical_declaration' || type === 'variable_declaration' ||
+               type === 'export_statement')) {
+    let decl = node;
+    if (type === 'export_statement') {
+      decl = node.childForFieldName?.('declaration') ?? decl;
+    }
+    const dt = decl?.type;
+    if (dt === 'lexical_declaration' || dt === 'variable_declaration') {
+      for (const child of decl.namedChildren ?? []) {
+        if (child.type === 'variable_declarator') {
+          const value = child.childForFieldName?.('value');
+          const vt = value?.type;
+          if (vt === 'arrow_function' || vt === 'function' || vt === 'function_expression' || vt === 'generator_function') {
+            return 'function';
+          }
+        }
+      }
+    }
+  }
   if (type.includes('function') || type === 'method' || type === 'singleton_method') return 'function';
   if (type.includes('class')) return 'class';
   if (type.includes('interface')) return 'interface';
