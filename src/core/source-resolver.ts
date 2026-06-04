@@ -127,9 +127,66 @@ export async function resolveSourceId(
     return globalDefault;
   }
 
+  // 5.5. Single-non-default-source convenience (v0.41.13, #1434).
+  //      When NO brain_default is set AND exactly one registered source has
+  //      local_path set AND it isn't 'default', route there. This closes
+  //      the "532 silent edit failures" bug class where users with a single
+  //      Vault-mounted source ran `gbrain sync` without --source and routed
+  //      to source_id='default' (which held 0 pages). Conservative: fires
+  //      only when there's literally one option — multi-source brains still
+  //      require explicit --source or sources.default.
+  //
+  //      Placed AFTER brain_default per codex review: a user who explicitly
+  //      set sources.default has stated intent, that wins over auto-routing.
+  const soleNonDefault = await pickSoleNonDefaultSource(engine);
+  if (soleNonDefault) return soleNonDefault;
+
   // 6. Fallback: the seeded 'default' source. Always exists post-migration
   //    v16 so this is a safe terminal.
   return 'default';
+}
+
+/**
+ * Returns the id of the SINGLE registered non-default source with a
+ * local_path, when exactly one such row exists. Returns null when:
+ *   - zero non-default sources are registered (fresh install)
+ *   - 2+ non-default sources are registered (ambiguous — user must pick)
+ *   - the only non-default source has a NULL local_path (no on-disk shape)
+ *   - the only registered source IS 'default'
+ *
+ * Excludes archived sources (`archived = false`) so a soft-deleted source
+ * doesn't auto-resolve. Shared by `resolveSourceId` and `resolveSourceWithTier`
+ * so the heuristic can't drift between the two entry points.
+ */
+async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | null> {
+  // archived column was added in v34 (v0.26.5). Older brains may not have
+  // it — fall back to the un-archived query in that case via try/catch.
+  let rows: Array<{ id: string }>;
+  try {
+    rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default' AND archived = false`,
+    );
+  } catch {
+    rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default'`,
+    );
+  }
+  if (rows.length === 1) return rows[0].id;
+  return null;
+}
+
+/**
+ * Format the one-line stderr nudge that fires when source resolution falls
+ * through to the `sole_non_default` tier. Returns null when suppressed via
+ * `GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1` (CI / scripted-pipeline ergonomics).
+ *
+ * Single source of truth so the wording stays consistent across every CLI
+ * dispatch site that fires the nudge (sync, import, extract, etc.). Callers
+ * print to stderr; this helper just builds the line.
+ */
+export function formatSoleNonDefaultNudge(sourceId: string): string | null {
+  if (process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE === '1') return null;
+  return `[gbrain] routing to source '${sourceId}' (sole non-default source registered; pass --source to override).`;
 }
 
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {
@@ -195,6 +252,7 @@ export const SOURCE_TIER_NAMES = [
   'dotfile',
   'local_path',
   'brain_default',
+  'sole_non_default',
   'seed_default',
 ] as const;
 export type SourceTier = typeof SOURCE_TIER_NAMES[number];
@@ -262,6 +320,18 @@ export async function resolveSourceWithTier(
   if (globalDefault && isValidSourceId(globalDefault)) {
     await assertSourceExists(engine, globalDefault);
     return { source_id: globalDefault, tier: 'brain_default', detail: 'sources.default config' };
+  }
+
+  // 5.5. Single-non-default-source convenience (v0.41.13, #1434).
+  //      See resolveSourceId for the design rationale. Same helper, same
+  //      precedence (AFTER brain_default).
+  const soleNonDefault = await pickSoleNonDefaultSource(engine);
+  if (soleNonDefault) {
+    return {
+      source_id: soleNonDefault,
+      tier: 'sole_non_default',
+      detail: `only non-default registered source with local_path`,
+    };
   }
 
   // 6. Fallback: seeded 'default' source.

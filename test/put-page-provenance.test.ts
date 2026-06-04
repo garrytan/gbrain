@@ -27,12 +27,36 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { OperationError } from '../src/core/operations.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 
 const putPageOp = operations.find((o) => o.name === 'put_page')!;
 
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // Hermeticity guard (cross-file gateway-state leak class — see CLAUDE.md
+  // "Test-isolation lint and helpers"). put_page embeds via the gateway.
+  // A sibling file in the same shard can leave the gateway configured with
+  // a live provider/key (e.g. OpenAI + a CI placeholder `sk-test`); the
+  // weight-based shard bin-packing reshuffles which files share a process,
+  // so we cannot rely on a benign neighbor. Pin the gateway to legacy
+  // OpenAI/1536 (so initSchema builds a 1536-d column) AND stub the embed
+  // transport so put_page's embed never touches the network — these tests
+  // assert provenance columns, not embeddings. A dummy key is required in
+  // the gateway env because instantiateEmbedding builds the OpenAI client
+  // (which checks for a key) BEFORE the stubbed transport is reached; the
+  // stub then intercepts the actual call, so the key never leaves the
+  // process. Reset in afterAll so this file doesn't leak onward.
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env, OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-test-stub' },
+  });
+  __setEmbedTransportForTests(async ({ values }: any) => ({
+    embeddings: values.map(() => new Array(1536).fill(0)),
+    usage: { tokens: 0 },
+  }) as any);
+
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -40,6 +64,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  __setEmbedTransportForTests(null);
+  resetGateway();
 });
 
 beforeEach(async () => {

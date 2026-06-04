@@ -11,6 +11,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { ChunkInput } from '../src/core/types.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -21,6 +22,18 @@ function basisEmbedding(idx: number, dim = 1536): Float32Array {
 }
 
 beforeAll(async () => {
+  // v0.41.5.0+: DEFAULT_EMBEDDING_DIMENSIONS is 1280 (ZE Matryoshka). This test
+  // inserts 1536-dim unit vectors below. Without pinning, initSchema() sizes
+  // content_chunks.embedding at vector(1280) and the upserts throw
+  // "expected 1280 dimensions, not 1536". The local fast loop hides this when
+  // a prior test in the shard pre-configured the gateway at 1536d; CI shards
+  // hit it cold. Pin to 1536d so this file is hermetic.
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-fake' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -74,6 +87,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 describe('searchKeyword — types filter', () => {

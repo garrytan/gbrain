@@ -27,6 +27,16 @@ export type Implementation =
 export interface EmbeddingTouchpoint {
   models: string[];
   default_dims: number;
+  /**
+   * Optional fixed native dimensions keyed by model id. Use this when one
+   * recipe exposes multiple fixed-width models under the same provider
+   * (e.g. Ollama ships 384d, 768d, and 1024d embedding models).
+   *
+   * When present, callers should prefer this map over `default_dims` for
+   * explicit `provider:model` selections. `default_dims` remains the
+   * provider-level fallback and the shorthand `--model <provider>` choice.
+   */
+  fixed_dims_by_model?: Record<string, number>;
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
@@ -186,6 +196,20 @@ export interface RerankerTouchpoint {
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
   max_payload_bytes: number;
+  /**
+   * Override the rerank URL path. Defaults to '/models/rerank' (ZeroEntropy's
+   * legacy path; ZE-compatible-wire-shape providers like llama.cpp set
+   * '/v1/rerank').
+   */
+  path?: string;
+  /**
+   * Recipe-level timeout fallback for `gateway.rerank()` and search-mode
+   * resolution. Caller's `input.timeoutMs` and `search.reranker.timeout_ms`
+   * config still win when set. Used to give CPU-only local rerankers (e.g.
+   * llama.cpp serving Qwen3-Reranker-4B) headroom for first-call warmup
+   * without forcing every user to discover the config key.
+   */
+  default_timeout_ms?: number;
 }
 
 export interface ChatTouchpoint {

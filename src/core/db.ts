@@ -159,13 +159,27 @@ export function getConnection(): ReturnType<typeof postgres> {
   return sql;
 }
 
-export async function connect(config: EngineConfig): Promise<void> {
+/**
+ * Connect the module-level singleton. Returns `true` iff THIS call created the
+ * singleton, `false` if it joined an existing one.
+ *
+ * #1471 ownership: the create-vs-join decision is made HERE, atomically. There
+ * is no `await` between the `if (sql)` null-check below and the synchronous
+ * `sql = postgres(url, opts)` assignment, so two concurrent module connects
+ * cannot both observe `sql === null` and both create. Callers store the return
+ * as their ownership token (`PostgresEngine._ownsModuleSingleton`); only the
+ * creator may later tear the singleton down. Borrowers (probe engines created
+ * while the singleton already exists) get `false` and must NOT disconnect it.
+ *
+ * Back-compat: callers that ignore the return value are unaffected.
+ */
+export async function connect(config: EngineConfig): Promise<boolean> {
   if (sql) {
     // Warn if a different URL is passed — the old connection is still in use
     if (config.database_url && connectedUrl && config.database_url !== connectedUrl) {
       console.warn('[gbrain] connect() called with a different database_url but a connection already exists. Using existing connection.');
     }
-    return;
+    return false; // joined an existing singleton — caller is a borrower
   }
 
   const url = config.database_url;
@@ -212,6 +226,7 @@ export async function connect(config: EngineConfig): Promise<void> {
     connectedUrl = url;
 
     await setSessionDefaults(sql);
+    return true; // we created the singleton — caller is the owner
   } catch (e: unknown) {
     sql = null;
     connectedUrl = null;
@@ -225,11 +240,25 @@ export async function connect(config: EngineConfig): Promise<void> {
 }
 
 export async function disconnect(): Promise<void> {
-  if (sql) {
-    await sql.end();
-    sql = null;
-    connectedUrl = null;
-  }
+  // v0.41.25.0 (#1570) — instrument every disconnect call site so v0.41.26
+  // can identify the caller that's nulling the module singleton mid-cycle.
+  // Best-effort: audit failure must never block the actual disconnect.
+  // The audit module is lazy-imported to keep db.ts cold-path-free for
+  // tools that import db without ever calling disconnect.
+  try {
+    const { logDbDisconnect } = await import('./audit/db-disconnect-audit.ts');
+    // db.ts is always the module-singleton path by construction; no
+    // instance-pool callers go through here.
+    logDbDisconnect('postgres', 'module');
+  } catch { /* best-effort; never block disconnect on audit failure */ }
+  // #1471 (codex #6): snapshot + null the singleton BEFORE awaiting end(), so a
+  // concurrent module connect() can't observe a non-null `sql` mid-teardown and
+  // join a pool that's already closing. Mirrors the v0.41.8.0 PGLite-disconnect
+  // snapshot+early-null pattern.
+  const s = sql;
+  sql = null;
+  connectedUrl = null;
+  if (s) await s.end();
 }
 
 export async function initSchema(): Promise<void> {

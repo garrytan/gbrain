@@ -1,4 +1,15 @@
 /**
+ * v0.41.13.0 T17 retrofit note: eval-suspected-contradictions has a
+ * sampling+judge shape (sample top-K query pairs, judge via LLM, persist
+ * to cache + runs tables). The `src/core/progressive-batch/` primitive's
+ * trial→ramp→full stage model fits the run loop but the sampling probe
+ * lives at a different layer (before the loop, deciding which pairs to
+ * judge). Routing through the primitive requires a sampling-stage-aware
+ * design pass that didn't fit this PR. The existing `maybePromptForCostBeforeProbe`
+ * helper (cost-prompt.ts, D23-deprecated) covers the pre-flight cost
+ * confirmation; primitive's stage-report subsumes it in v0.41.14.0+.
+ * Filed in TODOS.md.
+ *
  * `gbrain eval suspected-contradictions` — v0.32.6 contradiction probe CLI.
  *
  * Three sub-subcommands:
@@ -51,6 +62,12 @@ interface ParsedFlags {
   judge?: string;
   limit?: number;
   budgetUsd: number;
+  /**
+   * #1784: true when --budget-usd was passed explicitly. The TTY-derived
+   * default ($5 TTY / $1 non-TTY) is overwritten in-place, so explicitness
+   * can't be inferred post-hoc — track it here to annotate the banner.
+   */
+  budgetUsdExplicit: boolean;
   output?: string;
   maxPairChars: number;
   sampling: 'deterministic' | 'score-first';
@@ -67,7 +84,7 @@ interface ParsedFlags {
   help: boolean;
 }
 
-function parseFlags(args: string[]): ParsedFlags {
+export function parseFlags(args: string[]): ParsedFlags {
   // Sub-subcommand: first positional that doesn't start with --
   let sub: 'run' | 'trend' | 'review' = 'run';
   const rest: string[] = [];
@@ -88,6 +105,7 @@ function parseFlags(args: string[]): ParsedFlags {
     // judge intentionally undefined here — resolved in runRun via resolveModel
     // so config keys + tier defaults govern. CLI --judge flag wins when set.
     budgetUsd: isTty ? 5 : 1,
+    budgetUsdExplicit: false,
     maxPairChars: 1500,
     sampling: 'deterministic',
     noCache: false,
@@ -111,7 +129,7 @@ function parseFlags(args: string[]): ParsedFlags {
     else if (arg === '--top-k') f.topK = Number.parseInt(next(), 10);
     else if (arg === '--judge') f.judge = next();
     else if (arg === '--limit') f.limit = Number.parseInt(next(), 10);
-    else if (arg === '--budget-usd') f.budgetUsd = Number.parseFloat(next());
+    else if (arg === '--budget-usd') { f.budgetUsd = Number.parseFloat(next()); f.budgetUsdExplicit = true; }
     else if (arg === '--output') f.output = next();
     else if (arg === '--max-pair-chars') f.maxPairChars = Number.parseInt(next(), 10);
     else if (arg === '--sampling') {
@@ -253,8 +271,13 @@ async function runRun(engine: BrainEngine, f: ParsedFlags): Promise<void> {
     fallback: 'anthropic:claude-haiku-4-5',
   });
 
+  // #1784: annotate the budget when it's the silent non-TTY default ($1) so the
+  // 5-vs-1 difference isn't a surprise to pipe / cron / subagent callers.
+  const budgetSuffix = (process.stdout.isTTY !== true && !f.budgetUsdExplicit)
+    ? ' (non-interactive default; --budget-usd N to raise)'
+    : '';
   console.error(
-    `Contradiction probe: ${queries.length} queries, top-${f.topK}, judge=${judgeModel}, budget=$${f.budgetUsd.toFixed(2)}.`,
+    `Contradiction probe: ${queries.length} queries, top-${f.topK}, judge=${judgeModel}, budget=$${f.budgetUsd.toFixed(2)}${budgetSuffix}.`,
   );
 
   // v0.34 / Lane C: cost-estimate prompt — TTY-only Ctrl-C window before

@@ -1,0 +1,97 @@
+# gbrain-creator — content-creator lens pack
+#
+# v0.41 lens packs wave. Declares the atom + concept lifecycle that the
+# downstream your OpenClaw agent ran via its own crons pre-v0.41:
+#
+#   - `atom` page type (NEW to base v0.40 — first introduced here):
+#     single-source extractive primitive from transcripts/meetings/articles.
+#     The `extract_atoms` cycle phase produces these via a Haiku 3-check
+#     quality gate (truism reject, punchline test, entity-page test).
+#
+#   - `concept` page type (already in gbrain-base seed): the synthesize_concepts
+#     phase aggregates atoms by topic cluster, tiers T1-T4 by composite_score,
+#     and writes voice-gated T1 Canon narratives via Sonnet.
+#
+# Cron consolidation: this pack's phases run inside the standard
+# `gbrain dream` cycle. No separate OpenClaw-side cron required.
+#
+# Calibration: declares `concept_themes` domain using the `cluster_summary`
+# aggregator (descriptive rollup, not Brier — concepts don't have binary
+# outcomes to score against). When this pack is active OR the gbrain-everything
+# meta-pack is active, calibration_profile produces a concept_themes scorecard
+# with tier counts and dominant topics.
+#
+# Frontmatter validators (atom_type closed 11-value enum, virality_score
+# 0-100, emotional_register, tweetable, sensitivity, lesson, source_quote,
+# draft_angles JSONB) are enforced today INSIDE extract_atoms.ts and read
+# from this manifest at runtime via D11. A richer per-page-type
+# frontmatter_validators contract on PageTypeSchema is a v0.42 follow-up
+# (filed in TODOS.md). For v0.41, the enum lives in code with a comment
+# pointing at the eventual manifest surface.
+
+api_version: gbrain-schema-pack-v1
+name: gbrain-creator
+version: 1.0.0
+description: "Content-creator lens. Atoms (single-source extractive nuggets) and concepts (aggregated themes T1-T4). Drives extract_atoms + synthesize_concepts cycle phases. When active, every gbrain dream tick walks recent transcripts/meetings/articles and produces tweetable atoms + tier-promoted concepts. Retires your OpenClaw's parallel atom-pipeline-coordinator cron."
+gbrain_min_version: 0.41.0
+extends: gbrain-base
+borrow_from: []
+
+# Atom + concept inherit takes_kinds from gbrain-base (fact, take, bet, hunch).
+# Creator-pack-specific kinds (e.g. `extracted`) are deferred — atoms are not
+# claims, they're evidentiary extractions; concepts aggregate atoms not takes.
+# takes_kinds intentionally omitted (inherits from base).
+
+# Pack-specific page types. `concept` already exists in gbrain-base seed; we
+# don't re-declare it here (the registry merges parent + child page_types).
+# `atom` is net-new to base.
+page_types:
+  - name: atom
+    primitive: concept
+    path_prefixes:
+      - atoms/
+    aliases: []
+    # extractable: false — atoms ARE the extraction output, not a source for
+    # further fact extraction. extract_facts skips them. extract_atoms skips
+    # them too (imported_from frontmatter marker handles the greenfield case;
+    # the type itself signals "leaf node, no further derivation").
+    extractable: false
+    # expert_routing: false — atoms don't surface in whoknows/find_experts.
+    # Concepts (parent type from base) carry the routing weight for content
+    # discovery; atoms are content-creator-internal raw material.
+    expert_routing: false
+
+# v0.41 T3: phase participation. The runCycle orchestrator gates pack-
+# flavored phases on this list. Pre-existing 17 core phases ALWAYS run
+# regardless of this declaration — `phases:` is additive, not subtractive.
+phases:
+  - extract_atoms
+  - synthesize_concepts
+
+# v0.41 T3: calibration domain declarations. Each entry binds a per-pack
+# scorecard bucket to one of the 4 v1 aggregator kinds. Domain names are
+# open strings (third-party packs add new domains without a gbrain release);
+# aggregator algorithms are the closed AggregatorKind enum (safe SQL stays
+# in code per T3 codex refinement of D6).
+calibration_domains:
+  - name: concept_themes
+    aggregator: cluster_summary
+    page_types:
+      - concept
+
+# Filing rules — date-bucketed atoms (mirrors your OpenClaw's existing layout
+# at ~/git/brain/atoms/{YYYY-MM-DD}/{slug}.md so greenfield migration lands
+# pages in their canonical locations). Concepts flat-filed per base seed.
+filing_rules:
+  - kind: atom
+    directory: atoms/
+    examples:
+      - atoms/2026-05-24/renders-vs-physical-proof
+      - atoms/2026-05-24/ai-compliance-headwinds
+    description: "Single-source extractive nuggets. Date-bucketed by extraction date (NOT source date — multiple atoms from one meeting all land in the day they were extracted). extract_atoms cycle phase writes here."
+  - kind: concept
+    directory: concepts/
+    examples:
+      - concepts/ai-agents
+      - concepts/founder-psychology
+    description: "Aggregated themes T1-T4 by composite_score (mention_count × distinct_months × breadth). synthesize_concepts writes here. T1 Canon concepts carry Sonnet-synthesized narratives gated by the same voice_gate as calibration_profile."

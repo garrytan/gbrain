@@ -1,3 +1,7 @@
+// Routing eval fixtures for skills/skillpack-harvest.
+// Positive cases: every intent contains a trigger substring (the
+// trigger set was broadened from 5 to 10 in v0.41.11 per
+// kylma-code's PR #1331 to cover realistic user phrasings).
 {"intent": "lift this skill back into gbrain so others can use it", "expected_skill": "skillpack-harvest"}
 {"intent": "publish my fork-only skill upstream", "expected_skill": "skillpack-harvest"}
 {"intent": "share this skill with the gbrain bundle", "expected_skill": "skillpack-harvest"}
@@ -5,3 +9,16 @@
 {"intent": "promote this skill to gbrain so neuromancer can scaffold it", "expected_skill": "skillpack-harvest"}
 {"intent": "I want this skill in the gbrain bundle", "expected_skill": "skillpack-harvest"}
 {"intent": "move my custom skill into the gbrain core", "expected_skill": "skillpack-harvest"}
+// Negative cases (v0.41.11): the broader trigger set contains generic
+// substrings ("publish this skill to gbrain", "skill upstream",
+// "gbrain bundle", "into the gbrain core") that could match unrelated
+// user intents under substring routing. expected_skill=null asserts
+// NO specific skill (skillpack-harvest OR any other) matches these.
+// "save this report as PDF" and "share this article with the channel"
+// were considered but excluded: they trip idea-ingest's existing "save
+// this" / "share" triggers (real overlap, but a v0.42+ idea-ingest
+// concern — out of scope for #1451's structural fix).
+{"intent": "publish this report to the team", "expected_skill": null}
+{"intent": "promote my role on LinkedIn", "expected_skill": null}
+{"intent": "bundle these screenshots into a deck", "expected_skill": null}
+{"intent": "lift weights at the gym", "expected_skill": null}

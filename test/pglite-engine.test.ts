@@ -11,10 +11,27 @@ import type { PageInput, ChunkInput } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
 
+// Embedding dim the engine actually created `content_chunks.embedding` at.
+// Captured AFTER initSchema so tests use the same width the column was
+// created with — initSchema reads from `gw.getEmbeddingDimensions()` if
+// the gateway is configured (potentially leaked from another shard-6 test
+// file in the same bun process) and falls back to DEFAULT_EMBEDDING_DIMENSIONS
+// (currently 1280) otherwise. Hard-coding 1536 here would explode under any
+// gateway config, including the new ZE default.
+let CHUNK_EMBED_DIM = 0;
+
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({}); // in-memory
   await engine.initSchema();
+  // Probe the actual column width so test data matches whatever shard order
+  // happened to land us with.
+  const r = await (engine as any).db.query(
+    `SELECT atttypmod FROM pg_attribute
+       WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'`
+  );
+  // pgvector stores dim in atttypmod directly (no -4 offset like varchar).
+  CHUNK_EMBED_DIM = (r.rows[0] as { atttypmod: number }).atttypmod;
 });
 
 afterAll(async () => {
@@ -211,7 +228,7 @@ describe('PGLiteEngine: Search', () => {
   });
 
   test('searchVector returns empty when no embeddings', async () => {
-    const fakeEmbedding = new Float32Array(1536);
+    const fakeEmbedding = new Float32Array(CHUNK_EMBED_DIM);
     const results = await engine.searchVector(fakeEmbedding);
     expect(results.length).toBe(0);
   });
@@ -382,7 +399,7 @@ describe('PGLiteEngine: Chunks', () => {
 
   test('getChunksWithEmbeddings returns embedding data', async () => {
     await engine.putPage('test/embed', testPage);
-    const embedding = new Float32Array(1536).fill(0.1);
+    const embedding = new Float32Array(CHUNK_EMBED_DIM).fill(0.1);
     await engine.upsertChunks('test/embed', [
       { chunk_index: 0, chunk_text: 'With embedding', chunk_source: 'compiled_truth', embedding },
     ]);
@@ -410,7 +427,7 @@ describe('PGLiteEngine: stale chunk pagination (D7 + REGRESSION)', () => {
     await engine.putPage('test/stale-a', testPage);
     await engine.upsertChunks('test/stale-a', [
       { chunk_index: 0, chunk_text: 'no embed', chunk_source: 'compiled_truth' },
-      { chunk_index: 1, chunk_text: 'has embed', chunk_source: 'compiled_truth', embedding: new Float32Array(1536).fill(0.1) },
+      { chunk_index: 1, chunk_text: 'has embed', chunk_source: 'compiled_truth', embedding: new Float32Array(CHUNK_EMBED_DIM).fill(0.1) },
     ]);
     expect(await engine.countStaleChunks()).toBe(1);
   });

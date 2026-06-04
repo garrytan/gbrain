@@ -27,6 +27,7 @@
  */
 
 import { detectTini } from './spawn-helpers.ts';
+import { resolveDefaultMaxRssMb } from './rss-default.ts';
 import {
   ChildWorkerSupervisor,
   type ChildSupervisorEvent,
@@ -79,8 +80,41 @@ export interface SupervisorOpts {
   /** JSON mode: emit JSONL events on stderr, reserve stdout for data payloads. Default: false. */
   json: boolean;
   /** RSS threshold (MB) passed to the spawned worker as `--max-rss N`.
-   *  Default: 2048. Set to 0 to spawn the worker without a watchdog. */
+   *  When omitted, the constructor auto-sizes cgroup-aware via
+   *  resolveDefaultMaxRssMb() (issue #1678) instead of a flat default.
+   *  Set to 0 to spawn the worker without a watchdog. */
   maxRssMb: number;
+  /** Niceness (issue #1815) the operator requested via `--nice` / `GBRAIN_NICE`,
+   *  or undefined to inherit. When set, the worker is spawned with `--nice N` so
+   *  it re-applies the value (the supervisor itself is reniced by the CLI layer,
+   *  before construction). The apply RESULT is computed in jobs.ts and passed in
+   *  here purely so the `started` audit event records what actually happened —
+   *  the supervisor does not call setPriority. */
+  nice_requested?: number;
+  /** Effective niceness of the supervisor process after its own renice attempt. */
+  nice_effective?: number;
+  /** Error string if the supervisor's own renice failed (e.g. EPERM). */
+  nice_error?: string;
+  /**
+   * issue #1801 — progress watchdog. When a child is alive but makes no forward
+   * progress on claimable work for this many minutes (waiting_claimable > 0 and
+   * active_healthy == 0 across `wedgeRestartChecks` consecutive health checks),
+   * the supervisor forcibly restarts it so the respawn rebuilds a fresh DB pool.
+   * Set to 0 to DISABLE the wedge watchdog. Default: 15.
+   */
+  wedgeRestartMinutes: number;
+  /** Consecutive wedged health checks required before a restart fires (hysteresis). Default: 3. */
+  wedgeRestartChecks: number;
+  /** Max wedge restarts inside `wedgeRestartLoopWindowMs` before the supervisor
+   *  stops restarting and emits `wedge_restart_loop` (alert-only — a dead-pool
+   *  wedge resolves in one restart; a loop means restart isn't the fix). Default: 3. */
+  wedgeRestartLoopBudget: number;
+  /** Sliding window for the wedge-restart loop breaker, ms. Default: 30 min. */
+  wedgeRestartLoopWindowMs: number;
+  /** After a (re)spawn, suppress wedge evaluation for this long so a fresh
+   *  worker gets a fair claim window before the wedge clock applies (the DB's
+   *  last_completed is still stale right after a restart). Default: 2× healthInterval. */
+  startupGraceMs: number;
   /** Optional event sink (Lane C audit writer). Called for every lifecycle event. */
   onEvent?: (event: SupervisorEmission) => void;
   /**
@@ -108,7 +142,44 @@ const DEFAULTS: Omit<SupervisorOpts, 'cliPath'> = {
   allowShellJobs: false,
   json: false,
   maxRssMb: 2048,
+  // issue #1801 progress-watchdog defaults. Conservative: a dead-pool wedge is
+  // caught faster by the worker's own DB probe (fix #2, ~3 min); this 15-min
+  // watchdog is the cause-agnostic backstop for non-DB wedges (stuck handler,
+  // deadlock) so it deliberately fires slower to avoid racing fix #2.
+  wedgeRestartMinutes: 15,
+  wedgeRestartChecks: 3,
+  wedgeRestartLoopBudget: 3,
+  wedgeRestartLoopWindowMs: 30 * 60_000,
+  startupGraceMs: 120_000, // overridden to 2× healthInterval in the constructor
 };
+
+/**
+ * Build the argv the supervisor uses to spawn `gbrain jobs work`. Extracted from
+ * runSuperviseLoop so it's unit-testable (issue #1815, Codex). Appends `--nice N`
+ * when the operator requested a niceness, alongside the existing concurrency /
+ * queue / max-rss flags. The spawned worker re-applies the niceness to itself;
+ * niceness also inherits to the worker's own children automatically.
+ */
+export function buildWorkerArgs(
+  opts: Pick<SupervisorOpts, 'concurrency' | 'queue' | 'maxRssMb' | 'nice_requested'>,
+): string[] {
+  const args = [
+    'jobs', 'work',
+    '--concurrency', String(opts.concurrency),
+    '--queue', opts.queue,
+  ];
+  if (opts.maxRssMb > 0) {
+    args.push('--max-rss', String(opts.maxRssMb));
+  }
+  if (opts.nice_requested !== undefined) {
+    args.push('--nice', String(opts.nice_requested));
+  }
+  return args;
+}
+
+/** Grace before SIGKILL when restarting a wedged child — reuses the 35s
+ *  shutdown() drain window (issue #1801, D3). */
+const WEDGE_RESTART_GRACE_MS = 35_000;
 
 /** Calculate backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s cap. */
 export function calculateBackoffMs(crashCount: number): number {
@@ -125,6 +196,69 @@ function isProcessAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * issue #1801 — queue + name-scoped wedge signals. Exported (with the SQL) so
+ * the FILTER semantics are testable against a real engine (PGLite) without
+ * spinning a supervisor process:
+ *   - `activeHealthy` counts only LIVE-lock active rows, so an expired-lock
+ *     active row (a worker that died mid-job) does NOT mask the wedge (Codex #6).
+ *   - `waitingClaimable` counts waiting OR due-delayed (delay_until <= now) rows
+ *     whose name the worker can claim — due-delayed because a dead pool means
+ *     promoteDelayed never ran (Codex #5/#7).
+ *   - `lastCompletedClaimable` is freshness of progress on claimable names only.
+ */
+export interface WedgeSignals {
+  stalled: number;
+  activeHealthy: number;
+  waiting: number;
+  waitingClaimable: number;
+  lastCompleted: Date | null;
+  lastCompletedClaimable: Date | null;
+}
+
+export async function queryWedgeSignals(
+  engine: BrainEngine,
+  queue: string,
+  handlerNames: string[],
+): Promise<WedgeSignals> {
+  const rows = await engine.executeRaw<{
+    stalled: string;
+    active_healthy: string;
+    waiting: string;
+    waiting_claimable: string;
+    last_completed: string | null;
+    last_completed_claimable: string | null;
+  }>(
+    `SELECT
+       count(*) FILTER (WHERE status = 'active' AND lock_until < now())::text AS stalled,
+       count(*) FILTER (WHERE status = 'active' AND lock_until > now())::text AS active_healthy,
+       count(*) FILTER (WHERE status = 'waiting')::text AS waiting,
+       count(*) FILTER (WHERE (status = 'waiting'
+                          OR (status = 'delayed' AND delay_until <= now()))
+                         AND name = ANY($2::text[]))::text AS waiting_claimable,
+       max(updated_at) FILTER (WHERE status = 'completed')::text AS last_completed,
+       max(updated_at) FILTER (WHERE status = 'completed'
+                               AND name = ANY($2::text[]))::text AS last_completed_claimable
+     FROM minion_jobs
+     WHERE queue = $1`,
+    [queue, handlerNames],
+  );
+  const row = rows[0] ?? {
+    stalled: '0', active_healthy: '0', waiting: '0',
+    waiting_claimable: '0', last_completed: null, last_completed_claimable: null,
+  };
+  return {
+    stalled: parseInt(row.stalled ?? '0', 10),
+    activeHealthy: parseInt(row.active_healthy ?? '0', 10),
+    waiting: parseInt(row.waiting ?? '0', 10),
+    waitingClaimable: parseInt(row.waiting_claimable ?? '0', 10),
+    lastCompleted: row.last_completed ? new Date(row.last_completed) : null,
+    lastCompletedClaimable: row.last_completed_claimable
+      ? new Date(row.last_completed_claimable)
+      : null,
+  };
 }
 
 /** Exit codes for documented agent branching. */
@@ -154,10 +288,43 @@ export class MinionSupervisor {
   private sigintListener: (() => void) | null = null;
   private lockAcquired = false;
   private consecutiveHealthFailures = 0;
+  // issue #1801 progress-watchdog state.
+  /** Job names the spawned worker can actually claim. Derived once at start()
+   *  from registerBuiltinHandlers so the wedge scopes to real claimable work
+   *  (no false-positive on unhandled names). Empty = watchdog inert. */
+  private handlerNames: string[] = [];
+  /** Consecutive health checks that saw the wedge condition. */
+  private consecutiveWedgedChecks = 0;
+  /** Timestamps of recent wedge restarts (loop-breaker window). */
+  private wedgeRestartTimestamps: number[] = [];
+  /** Whether the `wedge_restart_loop` give-up alert has already fired for the
+   *  current exhausted window — so it emits once, not every health tick. Re-arms
+   *  when a real restart fires again (window drained below budget). */
+  private wedgeLoopAlerted = false;
+  /** True while a restartCurrentChild() is in flight (suppresses re-escalation). */
+  private escalationInFlight = false;
+  /** Wall-clock of the most recent child spawn (startup-grace anchor). */
+  private childStartedAt: number | null = null;
 
   constructor(engine: BrainEngine, opts: Partial<SupervisorOpts> & { cliPath: string }) {
     this.engine = engine;
     this.opts = { ...DEFAULTS, ...opts };
+
+    // issue #1678 (Codex #4): when the caller didn't pin an explicit cap,
+    // auto-size cgroup-aware instead of the flat DEFAULTS.maxRssMb footgun.
+    // The CLI (jobs.ts supervisor) already resolves this and passes a concrete
+    // number; this covers direct-API / programmatic construction so the
+    // standalone supervisor never silently runs on the old 2048 default.
+    if (opts.maxRssMb === undefined) {
+      this.opts.maxRssMb = resolveDefaultMaxRssMb();
+    }
+
+    // issue #1801: default the startup grace to 2× the health interval so a
+    // freshly (re)spawned worker gets at least two health ticks to claim work
+    // before the wedge clock can fire. Honors an explicit override.
+    if (opts.startupGraceMs === undefined) {
+      this.opts.startupGraceMs = this.opts.healthInterval * 2;
+    }
 
     // Detect tini for zombie reaping. Resolved once at construction so we
     // don't shell out on every respawn. Belt-and-suspenders with the
@@ -175,6 +342,35 @@ export class MinionSupervisor {
    */
   get isTiniDetected(): boolean {
     return this.tiniPath !== '';
+  }
+
+  /**
+   * @internal Test seams for the issue #1801 wedge watchdog. The escalation
+   * state machine (counter / thresholds / startup grace / loop budget) is hard
+   * to exercise via the real spawn loop, so tests inject a fake child supervisor
+   * + wedge state and drive a single health check directly.
+   */
+  _setChildSupervisorForTests(
+    cs: Pick<ChildWorkerSupervisor, 'childAlive' | 'inBackoff' | 'restartCurrentChild'>,
+  ): void {
+    this.childSupervisor = cs as unknown as ChildWorkerSupervisor;
+  }
+  /** @internal */
+  _setWedgeStateForTests(s: { handlerNames?: string[]; childStartedAt?: number | null }): void {
+    if (s.handlerNames !== undefined) this.handlerNames = s.handlerNames;
+    if (s.childStartedAt !== undefined) this.childStartedAt = s.childStartedAt;
+  }
+  /** @internal Run one health check (the timer body) synchronously. */
+  async _healthCheckOnceForTests(): Promise<void> {
+    await this.healthCheck();
+  }
+  /** @internal */
+  get _consecutiveWedgedChecksForTests(): number {
+    return this.consecutiveWedgedChecks;
+  }
+  /** @internal */
+  get _wedgeRestartCountForTests(): number {
+    return this.wedgeRestartTimestamps.length;
   }
 
   /**
@@ -263,10 +459,54 @@ export class MinionSupervisor {
       concurrency: this.opts.concurrency,
       queue: this.opts.queue,
       max_crashes: this.opts.maxCrashes,
+      // Niceness (issue #1815): record requested + effective so doctor/status can
+      // surface a failed renice even for a detached supervisor whose stderr is gone.
+      ...(this.opts.nice_requested !== undefined ? { nice_requested: this.opts.nice_requested } : {}),
+      ...(this.opts.nice_effective !== undefined ? { nice_effective: this.opts.nice_effective } : {}),
+      ...(this.opts.nice_error ? { nice_error: this.opts.nice_error } : {}),
     });
 
-    // 6. Run the supervise loop (respawn on crash, bounded by maxCrashes).
+    // 6. Derive the claimable job-name set for the wedge watchdog (issue #1801).
+    //    Done before the loop so the first health check can scope correctly.
+    await this.deriveHandlerNames();
+
+    // 7. Run the supervise loop (respawn on crash, bounded by maxCrashes).
     await this.runSuperviseLoop();
+  }
+
+  /**
+   * issue #1801: derive the exact set of job names the spawned worker can claim,
+   * by running the real `registerBuiltinHandlers` against a throwaway worker (never
+   * started — no timers, no DB) and reading `registeredNames`. Zero duplication vs
+   * a hand-maintained constant, and it auto-tracks every future handler (Codex
+   * #16). Lazy-imported to avoid the supervisor.ts ↔ jobs.ts / worker.ts import
+   * cycle. On any failure the watchdog stays inert (empty names → waiting_claimable
+   * is always 0 → no restart) rather than risk a misscoped kill — the worker's own
+   * DB probe (fix #2) still covers the dead-pool case.
+   */
+  private async deriveHandlerNames(): Promise<void> {
+    try {
+      const [{ MinionWorker }, { registerBuiltinHandlers }] = await Promise.all([
+        import('./worker.ts'),
+        import('../../commands/jobs.ts'),
+      ]);
+      const probe = new MinionWorker(this.engine, {
+        queue: this.opts.queue,
+        healthCheckInterval: 0,
+      });
+      // `shell` is always registered regardless of allowShellJobs (the env only
+      // gates execution), so registeredNames is a static set — `quiet` just
+      // suppresses the informational startup lines during derivation.
+      await registerBuiltinHandlers(probe, this.engine, { quiet: true });
+      this.handlerNames = [...probe.registeredNames];
+    } catch (e) {
+      this.handlerNames = [];
+      this.emit('health_warn', {
+        reason: 'wedge_watchdog_inert',
+        error: e instanceof Error ? e.message : String(e),
+        queue: this.opts.queue,
+      });
+    }
   }
 
   /** Unified shutdown path. Reason becomes the audit event name; exitCode is process exit. */
@@ -403,14 +643,7 @@ export class MinionSupervisor {
    * so JSONL audit consumers see byte-compatible output.
    */
   private async runSuperviseLoop(): Promise<void> {
-    const workerArgs = [
-      'jobs', 'work',
-      '--concurrency', String(this.opts.concurrency),
-      '--queue', this.opts.queue,
-    ];
-    if (this.opts.maxRssMb > 0) {
-      workerArgs.push('--max-rss', String(this.opts.maxRssMb));
-    }
+    const workerArgs = buildWorkerArgs(this.opts);
 
     // Build child env. Explicit handling for GBRAIN_ALLOW_SHELL_JOBS:
     // inherit only when caller opts in, otherwise strip from the clone.
@@ -421,9 +654,10 @@ export class MinionSupervisor {
       delete env.GBRAIN_ALLOW_SHELL_JOBS;
     }
     // Signal to the child worker that it's running under a supervisor.
-    // The worker's self-health-check (DB probes, stall detection) is
-    // redundant when the supervisor already provides these — setting
-    // this env var causes the worker to skip its own health timer.
+    // issue #1801: the worker's DB-liveness probe STILL runs under supervision
+    // (it's the only "is MY pool dead" signal; the supervisor watches a
+    // different connection). This env var only makes the worker skip its STALL
+    // detection — the supervisor's progress watchdog owns forward-progress.
     env.GBRAIN_SUPERVISED = '1';
 
     this.childSupervisor = new ChildWorkerSupervisor({
@@ -456,10 +690,16 @@ export class MinionSupervisor {
   private relayChildEvent(event: ChildSupervisorEvent): void {
     switch (event.kind) {
       case 'worker_spawned':
+        // issue #1801: anchor the startup grace + reset the wedge counter so a
+        // fresh child is judged on its own forward progress, not the prior
+        // (possibly wedged) one's stale DB state.
+        this.childStartedAt = Date.now();
+        this.consecutiveWedgedChecks = 0;
         this.emit('worker_spawned', {
           pid: event.pid >= 0 ? event.pid : undefined,
           cli_path: this.opts.cliPath,
           ...(event.tini ? { tini: true } : {}),
+          ...(this.opts.nice_requested !== undefined ? { nice: this.opts.nice_requested } : {}),
         });
         return;
 
@@ -502,6 +742,11 @@ export class MinionSupervisor {
           count: event.count,
           window_ms: event.windowMs,
           queue: this.opts.queue,
+          // issue #1678 (A3): the supervisor knows the --max-rss it spawned
+          // with; name it in the OOM-loop alert so the operator's fix
+          // ("raise --max-rss") is one glance away. Peak RSS stays in the
+          // worker's own stderr line (the supervisor never sees it).
+          ...(event.reason === 'rss_watchdog_loop' ? { max_rss_mb: this.opts.maxRssMb } : {}),
         });
         return;
     }
@@ -522,35 +767,22 @@ export class MinionSupervisor {
     this.healthInFlight = true;
 
     try {
-      // Blocker 2+3+6: single FILTER query scoped to this.opts.queue.
-      // 'stalled' = active jobs whose lock_until has passed (matches
-      // queue.ts:848 handleStalled() definition — same set that the queue
-      // itself will requeue/dead-letter on next tick).
-      const rows = await this.engine.executeRaw<{
-        stalled: string;
-        waiting: string;
-        last_completed: string | null;
-      }>(
-        `SELECT
-           count(*) FILTER (WHERE status = 'active' AND lock_until < now())::text AS stalled,
-           count(*) FILTER (WHERE status = 'waiting')::text AS waiting,
-           max(updated_at) FILTER (WHERE status = 'completed')::text AS last_completed
-         FROM minion_jobs
-         WHERE queue = $1`,
-        [this.opts.queue],
-      );
+      const sig = await queryWedgeSignals(this.engine, this.opts.queue, this.handlerNames);
 
       // Reset consecutive failure counter on successful health check
       this.consecutiveHealthFailures = 0;
 
-      const row = rows[0] ?? { stalled: '0', waiting: '0', last_completed: null };
-      const stalledCount = parseInt(row.stalled ?? '0', 10);
-      const waitingCount = parseInt(row.waiting ?? '0', 10);
-      const lastCompleted = row.last_completed ? new Date(row.last_completed) : null;
+      const stalledCount = sig.stalled;
+      const activeHealthyCount = sig.activeHealthy;
+      const waitingCount = sig.waiting;
+      const waitingClaimableCount = sig.waitingClaimable;
 
       const now = Date.now();
-      const minutesSinceCompletion = lastCompleted
-        ? Math.round((now - lastCompleted.getTime()) / 60_000)
+      const minutesSinceCompletion = sig.lastCompleted
+        ? Math.round((now - sig.lastCompleted.getTime()) / 60_000)
+        : null;
+      const minutesSinceClaimable = sig.lastCompletedClaimable
+        ? Math.round((now - sig.lastCompletedClaimable.getTime()) / 60_000)
         : null;
 
       // F2 (per-threshold warns) — each is a distinct health_warn with reason.
@@ -581,6 +813,43 @@ export class MinionSupervisor {
           reason: 'worker_not_alive',
           queue: this.opts.queue,
         });
+      }
+
+      // issue #1801 — progress watchdog. A child that is ALIVE but makes no
+      // forward progress on claimable work is invisible to liveness checks
+      // (the dead-pool zombie that caused the 15h halt). Restart it so the
+      // respawn rebuilds a fresh DB pool.
+      //
+      //   - active_healthy === 0 is the real guard: a worker mid-job holds a
+      //     live lock (active_healthy > 0) and resets the counter; an expired-
+      //     lock active row does NOT suppress (Codex #6).
+      //   - waiting_claimable > 0: there is work THIS worker could claim
+      //     (name-scoped; incl. due-delayed) (Codex #5/#7).
+      //   - claimable progress is stale (or never happened) past the window.
+      //   - startup grace: a freshly (re)spawned worker gets a fair claim
+      //     window before the wedge clock applies (Codex #9/#10).
+      const childAgeMs = this.childStartedAt !== null ? now - this.childStartedAt : 0;
+      const pastStartupGrace = childAgeMs > this.opts.startupGraceMs;
+      const claimableStale =
+        minutesSinceClaimable === null || minutesSinceClaimable > this.opts.wedgeRestartMinutes;
+      const wedged =
+        this.opts.wedgeRestartMinutes > 0 &&
+        waitingClaimableCount > 0 &&
+        activeHealthyCount === 0 &&
+        claimableStale &&
+        workerAlive &&
+        !inBackoff &&
+        !this.stopping &&
+        !this.escalationInFlight &&
+        pastStartupGrace;
+
+      if (wedged) {
+        this.consecutiveWedgedChecks++;
+        if (this.consecutiveWedgedChecks >= this.opts.wedgeRestartChecks) {
+          await this.escalateWedgedWorker(waitingClaimableCount, minutesSinceClaimable);
+        }
+      } else {
+        this.consecutiveWedgedChecks = 0;
       }
     } catch (e) {
       this.consecutiveHealthFailures++;
@@ -620,6 +889,71 @@ export class MinionSupervisor {
       }
     } finally {
       this.healthInFlight = false;
+    }
+  }
+
+  /**
+   * issue #1801: forcibly restart an alive-but-wedged child. Bounded by a
+   * sliding-window loop budget — a dead-pool wedge resolves in exactly one
+   * restart (fresh process ⇒ fresh pool), so repeated restarts inside the
+   * window mean restart isn't the fix (e.g. a deterministically-failing
+   * handler); switch to alert-only via `wedge_restart_loop` instead of
+   * thrashing. The kill mechanics live in ChildWorkerSupervisor.restartCurrentChild
+   * (owns child identity + the intentional-restart crash accounting).
+   *
+   * Awaited inside healthCheck()'s try, so `healthInFlight` keeps the next
+   * health tick from overlapping the ~grace-bounded restart, and
+   * `escalationInFlight` keeps the wedge predicate from re-firing.
+   */
+  private async escalateWedgedWorker(
+    waitingClaimable: number,
+    minutesSinceCompletion: number | null,
+  ): Promise<void> {
+    const cs = this.childSupervisor;
+    if (!cs) return;
+
+    const now = Date.now();
+    this.wedgeRestartTimestamps = this.wedgeRestartTimestamps.filter(
+      (t) => t > now - this.opts.wedgeRestartLoopWindowMs,
+    );
+    // `>=` so the budget is a real ceiling (the Nth restart is the last allowed,
+    // not the N+1th) — issue #1801 Codex #13.
+    if (this.wedgeRestartTimestamps.length >= this.opts.wedgeRestartLoopBudget) {
+      // Give up restarting (restart isn't fixing it). Alert ONCE on entry to
+      // the exhausted state — without this flag the wedge predicate re-fires
+      // every health tick for the whole window and floods the audit log with
+      // identical `wedge_restart_loop` warns. Reset the counter so the predicate
+      // doesn't busy-spin; the flag re-arms below once a real restart fires
+      // again (window drained below budget).
+      if (!this.wedgeLoopAlerted) {
+        this.wedgeLoopAlerted = true;
+        this.emit('health_warn', {
+          reason: 'wedge_restart_loop',
+          count: this.wedgeRestartTimestamps.length,
+          window_ms: this.opts.wedgeRestartLoopWindowMs,
+          waiting_claimable: waitingClaimable,
+          queue: this.opts.queue,
+        });
+      }
+      this.consecutiveWedgedChecks = 0;
+      return;
+    }
+
+    this.wedgeLoopAlerted = false; // re-arm: window has room, we're restarting
+    this.wedgeRestartTimestamps.push(now);
+    this.consecutiveWedgedChecks = 0;
+    this.escalationInFlight = true;
+    this.emit('health_warn', {
+      reason: 'restarting_wedged_worker',
+      waiting_claimable: waitingClaimable,
+      minutes_since_completion: minutesSinceCompletion,
+      consecutive_wedged_checks: this.opts.wedgeRestartChecks,
+      queue: this.opts.queue,
+    });
+    try {
+      await cs.restartCurrentChild(WEDGE_RESTART_GRACE_MS);
+    } finally {
+      this.escalationInFlight = false;
     }
   }
 }

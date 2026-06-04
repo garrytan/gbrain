@@ -65,6 +65,15 @@ export const DEFAULT_BYTES_WARN = 50_000;
  *  not searchable until manually re-embedded or split. */
 export const DEFAULT_BYTES_BLOCK = 500_000;
 
+/** Default max markup ratio. When the prose pass runs (warn-tier window,
+ *  `prose_check_enabled`, non-code page) and `markup_ratio` exceeds this,
+ *  the page is FLAGGED (`content_flag: markup_heavy`) — it stays fully
+ *  searchable, the agent just gets a "looks like boilerplate" warning.
+ *  Conservative on purpose: a false positive costs a one-line note, not a
+ *  vanished page. Operator override via `content_sanity.max_markup_ratio`
+ *  or `GBRAIN_MAX_MARKUP_RATIO`. */
+export const DEFAULT_MAX_MARKUP_RATIO = 0.85;
+
 /** Tag added to the start of `reasons` and to error messages so
  *  `src/core/sync.ts:classifyErrorCode` can group hard-blocks under one
  *  code without needing a structured field in the failure shape. The
@@ -73,9 +82,10 @@ export const PAGE_JUNK_PATTERN_CODE = 'PAGE_JUNK_PATTERN';
 
 export type SanityTripReason =
   | 'oversize_warn'      // informational: bytes > bytes_warn but page lands normally
-  | 'oversize_block'     // soft-block: write with frontmatter.embed_skip
-  | 'junk_pattern'       // hard-block: throw ContentSanityBlockError
-  | 'literal_substring'; // hard-block: operator-supplied literal hit
+  | 'oversize_block'     // soft-block + flag: write with frontmatter.embed_skip + content_flag
+  | 'high_markup'        // flag: write normally + content_flag (markup_heavy); stays searchable
+  | 'junk_pattern'       // quarantine (or reject): high-confidence junk
+  | 'literal_substring'; // quarantine (or reject): operator-supplied literal hit
 
 export interface JunkPattern {
   /** Stable identifier surfaced in error messages, audit JSONL, and
@@ -109,21 +119,42 @@ export interface ContentSanityResult {
   junk_pattern_matches: string[];
   /** Names of operator literals that matched (zero or more). */
   literal_substring_matches: string[];
-  /** Ordered list of trip reasons. `oversize` first when present,
-   *  then `junk_pattern`, then `literal_substring`. Stable across
-   *  releases so consumers can pattern-match. */
+  /** Prose character count after markup stripping. Only computed when the
+   *  prose pass ran (warn-tier window, prose_check_enabled, non-code page);
+   *  `null` otherwise. Reported for audit/doctor visibility — NOT a trigger
+   *  on its own (low-prose alone never quarantines or flags). */
+  prose_chars: number | null;
+  /** Markup:total ratio in [0, 1]. `null` when the prose pass didn't run.
+   *  Drives `high_markup` when it exceeds the effective `max_markup_ratio`. */
+  markup_ratio: number | null;
+  /** Ordered list of trip reasons. `oversize` first when present, then
+   *  `high_markup`, then `junk_pattern`, then `literal_substring`. Stable
+   *  across releases so consumers can pattern-match. */
   reasons: SanityTripReason[];
   /** Human-readable messages per reason. Each prefixed with the stable
    *  code token (`PAGE_JUNK_PATTERN:` or `PAGE_OVERSIZED:`) so the
    *  caller can compose them into an error message that `classifyErrorCode`
    *  picks up via regex. */
   reason_messages: string[];
-  /** True when any junk pattern or operator literal matched. Caller
-   *  should throw `ContentSanityBlockError` when this is set. Note that
-   *  oversize alone does NOT trigger this — that's a soft-block. */
+  /** True when high-confidence junk fired (built-in pattern OR operator
+   *  literal). The caller chooses quarantine (hide) vs reject (throw) via
+   *  `junk_disposition`. Does NOT fire on `high_markup` (that's a flag, not
+   *  a hide) or on oversize alone (that's a soft-block). */
+  shouldQuarantine: boolean;
+  /** Back-compat alias for `shouldQuarantine`. The 5 pre-v0.42 consumers
+   *  read `shouldHardBlock`; keep it identical so they compile unchanged. */
   shouldHardBlock: boolean;
-  /** True when oversize without hard-block. Caller should write the
-   *  page with `frontmatter.embed_skip` set so the embedder skips. */
+  /** True for the fuzzy/oversize "warn the agent, keep it usable" tier:
+   *  `high_markup` (page stays searchable) OR oversize-soft-block. NOT set
+   *  when `shouldQuarantine` (quarantine hides the page; a flag would be
+   *  invisible). `flag_reason` names which. */
+  shouldFlag: boolean;
+  /** Which flag tier fired: `markup_heavy` (in-window markup-ratio) or
+   *  `oversized` (> bytes_block). `null` when `shouldFlag` is false. The
+   *  two are mutually exclusive (the prose pass only runs below block). */
+  flag_reason: 'markup_heavy' | 'oversized' | null;
+  /** True when oversize without quarantine. Caller writes the page with
+   *  `frontmatter.embed_skip` set so the embedder skips. */
   shouldSkipEmbed: boolean;
 }
 
@@ -150,6 +181,25 @@ export const BUILT_IN_JUNK_PATTERNS: ReadonlyArray<JunkPattern> = Object.freeze(
     pattern: /cloudflare ray id:/i,
     applies_to: 'body',
   },
+  // Interstitial "checking your browser" / JS-challenge gates. These are
+  // the exact shapes that motivated issue #1699 — a Cloudflare browser
+  // check ingested as if it were the article. Title OR body so we catch
+  // both the bare-title scrape and the full interstitial dump.
+  {
+    name: 'cloudflare_checking_browser',
+    pattern: /checking your browser before/i,
+    applies_to: 'both',
+  },
+  {
+    name: 'cf_browser_verification',
+    pattern: /cf[-_]browser[-_]verification/i,
+    applies_to: 'both',
+  },
+  {
+    name: 'enable_javascript_cookies',
+    pattern: /enable javascript and cookies to continue/i,
+    applies_to: 'both',
+  },
   // Generic 403 / blocked-access pages.
   {
     name: 'access_denied',
@@ -163,10 +213,34 @@ export const BUILT_IN_JUNK_PATTERNS: ReadonlyArray<JunkPattern> = Object.freeze(
     applies_to: 'both',
   },
   // Bare error-page titles. Anchored so the title is exclusively the
-  // error code — a thoughtful page ABOUT 404 errors won't trip.
+  // error phrase — a thoughtful page ABOUT 404 errors or one titled
+  // "How to Handle Access Denied Errors" won't trip.
+  //
+  // v0.41.13 (supersedes PR #1561): expanded from bare numeric codes
+  // + "page not found" to also catch Cloudflare/WAF challenge
+  // titles ("Forbidden", "Access Denied", "Service Unavailable",
+  // "Robot Check", "Verify You Are Human"). Deliberately drops PR
+  // #1561's bare-`error` matcher (would false-positive on
+  // legitimate taxonomy pages titled "Error"). 232+ scraper pages
+  // motivating this change (202+ from straylight-brain).
   {
     name: 'error_page_title',
-    pattern: /^(403|404|500|502|503|error \d{3}|page not found)\s*$/i,
+    pattern: /^(403|404|500|502|503|error \d{3}|page not found|forbidden|access denied|service unavailable|robot check|verify you are human)\s*$/i,
+    applies_to: 'title',
+  },
+  // Cloudflare challenge title (companion to the body-scoped
+  // `cloudflare_just_a_moment` pattern above, which requires both
+  // phrase + URL). The title alone is a sufficient signal because
+  // legitimate pages don't title themselves "Just a moment...".
+  //
+  // v0.41.13: distinct name from `error_page_title` so audit JSONL
+  // (`~/.gbrain/audit/content-sanity-YYYY-Www.jsonl`) and doctor's
+  // `content_sanity_audit_recent` aggregation stay diagnosable.
+  // PR #1561 reused the `error_page_title` name and collapsed audit
+  // signal; we don't.
+  {
+    name: 'cloudflare_challenge_title',
+    pattern: /^just a moment\.{0,3}$/i,
     applies_to: 'title',
   },
 ]);
@@ -192,12 +266,69 @@ export class ContentSanityBlockError extends Error {
   }
 }
 
+/** Result of the prose-vs-markup pass. `markup_ratio` is the fraction of
+ *  the body (with code excluded from BOTH numerator and denominator) that
+ *  is markup syntax rather than prose. High ratio = nav/boilerplate shape. */
+export interface ProseAssessment {
+  prose_chars: number;
+  total_chars: number;
+  markup_ratio: number;
+}
+
+// Pattern set for `assessProse`. Code (fenced + inline) is stripped FIRST
+// and excluded from the denominator entirely (Codex #2 — a code-heavy doc
+// must not read as high-markup). The remaining strips count toward markup.
+const FENCED_CODE_RE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
+const INLINE_CODE_RE = /`[^`\n]*`/g;
+const HTML_TAG_RE = /<\/?[a-z][^>]*>/gi;
+const MD_IMAGE_RE = /!\[[^\]]*\]\([^)]*\)/g;
+// Keep anchor text, drop the URL: [text](url) -> text
+const MD_LINK_RE = /\[([^\]]*)\]\([^)]*\)/g;
+// Line-leading structural markers: headings, list bullets, blockquotes,
+// table pipes/separators, hr rules, emphasis runs.
+const MD_STRUCT_RE = /^[ \t]*(#{1,6}\s|[-*+]\s|>\s|\|.*\||[-=]{3,}\s*$|\d+\.\s)/gm;
+const MD_EMPHASIS_RE = /[*_~]{1,3}/g;
+const TABLE_PIPE_RE = /\|/g;
+
 /**
- * Assess a parsed page against the size + junk-pattern surface.
+ * Pure prose-vs-markup assessment. Strips code (excluded from the ratio),
+ * then measures how much of the REMAINING content is markup syntax vs real
+ * sentences. Returns a ratio in [0, 1]; high = boilerplate/nav shape.
+ *
+ * Deliberately conservative + cheap. NOT a parser — a heuristic. The whole
+ * point is to FLAG (warn the agent), not to hide, so precision matters less
+ * than catching the obvious nav-blob shape without nuking legit prose.
+ */
+export function assessProse(body: string): ProseAssessment {
+  // Code excluded from the denominator (Codex #2): a code doc isn't junk.
+  const noCode = body.replace(FENCED_CODE_RE, ' ').replace(INLINE_CODE_RE, ' ');
+  const total_chars = noCode.replace(/\s+/g, '').length;
+  if (total_chars === 0) {
+    return { prose_chars: 0, total_chars: 0, markup_ratio: 0 };
+  }
+  // Strip markup constructs to leave (approximately) prose. Order matters:
+  // images before links (image syntax is a superset), links before emphasis.
+  const prose = noCode
+    .replace(MD_IMAGE_RE, ' ')
+    .replace(MD_LINK_RE, '$1')
+    .replace(HTML_TAG_RE, ' ')
+    .replace(MD_STRUCT_RE, ' ')
+    .replace(TABLE_PIPE_RE, ' ')
+    .replace(MD_EMPHASIS_RE, ' ');
+  const prose_chars = prose.replace(/\s+/g, '').length;
+  // Clamp: stripping can never produce MORE chars than the denominator, but
+  // guard against pathological inputs so the ratio stays in [0, 1].
+  const ratio = Math.min(1, Math.max(0, (total_chars - prose_chars) / total_chars));
+  return { prose_chars, total_chars, markup_ratio: ratio };
+}
+
+/**
+ * Assess a parsed page against the size + junk-pattern + prose surface.
  *
  * Pure function — same inputs always produce the same outputs. Caller
- * decides what to do with the result (throw on shouldHardBlock, set
- * embed_skip frontmatter on shouldSkipEmbed, write normally otherwise).
+ * decides disposition (quarantine/reject on shouldQuarantine, content_flag
+ * on shouldFlag, embed_skip on shouldSkipEmbed, write normally otherwise).
+ * Disposition precedence is the CALLER's job: quarantine > flag.
  *
  * The body bytes input is `compiled_truth + timeline` (Codex r2 #7
  * fix: pages can have huge timeline sections that would evade a
@@ -214,6 +345,14 @@ export function assessContentSanity(opts: {
   bytes_warn?: number;
   /** Effective block threshold; defaults to DEFAULT_BYTES_BLOCK. */
   bytes_block?: number;
+  /** Effective max markup ratio; defaults to DEFAULT_MAX_MARKUP_RATIO. */
+  max_markup_ratio?: number;
+  /** Master switch for the prose/markup pass. Default true (caller may
+   *  pass the resolved `content_sanity.prose_check_enabled`). */
+  prose_check_enabled?: boolean;
+  /** Page kind. `'code'` is exempt from the prose pass (Codex #2 — code
+   *  pages legitimately read as high-markup). */
+  page_kind?: string;
   /** Operator-supplied literal substrings loaded from
    *  `~/.gbrain/junk-substrings.txt` via `src/core/content-sanity-literals.ts`.
    *  Empty array (default) means built-ins only. */
@@ -221,6 +360,8 @@ export function assessContentSanity(opts: {
 }): ContentSanityResult {
   const bytes_warn = opts.bytes_warn ?? DEFAULT_BYTES_WARN;
   const bytes_block = opts.bytes_block ?? DEFAULT_BYTES_BLOCK;
+  const max_markup_ratio = opts.max_markup_ratio ?? DEFAULT_MAX_MARKUP_RATIO;
+  const prose_check_enabled = opts.prose_check_enabled !== false;
 
   // Bytes measured against the parsed body (compiled_truth + timeline).
   // Buffer.byteLength counts UTF-8 bytes the same way the doctor's
@@ -267,14 +408,46 @@ export function assessContentSanity(opts: {
     }
   }
 
+  // Prose/markup pass — ONLY in the warn-tier window (bytes_warn < bytes
+  // <= bytes_block), only when enabled, only for non-code pages. Tiny legit
+  // pages (stubs, atoms, daily notes) never enter it, so they can't be
+  // flagged on low prose; the O(n) markup-strip cost is paid only on
+  // already-suspicious medium pages; oversize pages are handled by the
+  // soft-block path so the prose pass would be redundant there.
+  let prose_chars: number | null = null;
+  let markup_ratio: number | null = null;
+  let high_markup = false;
+  const inProseWindow = bytes > bytes_warn && bytes <= bytes_block;
+  if (prose_check_enabled && inProseWindow && opts.page_kind !== 'code') {
+    const prose = assessProse(body);
+    prose_chars = prose.prose_chars;
+    markup_ratio = prose.markup_ratio;
+    high_markup = markup_ratio > max_markup_ratio;
+  }
+
   const reasons: SanityTripReason[] = [];
   const reason_messages: string[] = [];
-  const shouldHardBlock =
+  // High-confidence junk → quarantine (hide) or reject. The fuzzy markup
+  // signal does NOT contribute here (Q1=A — it flags, it doesn't hide).
+  const shouldQuarantine =
     junk_pattern_matches.length > 0 || literal_substring_matches.length > 0;
+  // Oversize-without-quarantine → soft-block (don't embed). When BOTH
+  // oversize and junk fire (the 890K Cloudflare dump), quarantine wins.
+  const shouldSkipEmbed = oversize && !shouldQuarantine;
+  // Flag (warn the agent, keep usable) for the fuzzy/oversize tier — but
+  // NOT when quarantining (a hidden page's flag is invisible). markup_heavy
+  // and oversized are mutually exclusive (prose pass only runs below block).
+  const shouldFlag = !shouldQuarantine && (high_markup || shouldSkipEmbed);
+  const flag_reason: 'markup_heavy' | 'oversized' | null = !shouldFlag
+    ? null
+    : high_markup
+      ? 'markup_heavy'
+      : 'oversized';
 
   // Reason ordering: block-level oversize first (so a soft-block that
-  // ALSO hits a junk pattern documents both), then junk_pattern, then
-  // literal. Warn-level oversize emitted only when no block-level fired.
+  // ALSO hits a junk pattern documents both), then high_markup, then
+  // junk_pattern, then literal. Warn-level oversize emitted only when no
+  // block-level fired.
   if (oversize) {
     reasons.push('oversize_block');
     reason_messages.push(`PAGE_OVERSIZED: body ${bytes} bytes exceeds ${bytes_block} byte block threshold`);
@@ -285,6 +458,12 @@ export function assessContentSanity(opts: {
     // check can surface flow-rate signal ("operators crossing warn often").
     reasons.push('oversize_warn');
     reason_messages.push(`PAGE_OVERSIZE_WARN: body ${bytes} bytes exceeds ${bytes_warn} byte warn threshold`);
+  }
+  if (high_markup) {
+    reasons.push('high_markup');
+    reason_messages.push(
+      `PAGE_MARKUP_HEAVY: markup ratio ${markup_ratio!.toFixed(2)} exceeds ${max_markup_ratio} (flag, not hide)`,
+    );
   }
   if (junk_pattern_matches.length > 0) {
     reasons.push('junk_pattern');
@@ -304,13 +483,15 @@ export function assessContentSanity(opts: {
     oversize,
     junk_pattern_matches,
     literal_substring_matches,
+    prose_chars,
+    markup_ratio,
     reasons,
     reason_messages,
-    // shouldSkipEmbed: oversize past block threshold but NOT also hard-block.
-    // When BOTH fire (the 890K Cloudflare dump case), hard-block wins and
-    // the page never lands. Embed-skip is reserved for the legitimate
-    // large-content case.
-    shouldHardBlock,
-    shouldSkipEmbed: oversize && !shouldHardBlock,
+    shouldQuarantine,
+    // Back-compat alias: the 5 pre-v0.42 consumers read shouldHardBlock.
+    shouldHardBlock: shouldQuarantine,
+    shouldFlag,
+    flag_reason,
+    shouldSkipEmbed,
   };
 }

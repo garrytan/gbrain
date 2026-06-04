@@ -25,6 +25,7 @@ import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
 import { resolveModel } from '../model-config.ts';
+import { normalizeModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
 
@@ -61,8 +62,9 @@ export async function getFactsExtractionModel(engine?: BrainEngine): Promise<str
     fallback: 'anthropic:claude-sonnet-4-6',
   });
   // resolveModel returns bare model ids when resolving via tier defaults; ensure
-  // the result keeps a provider prefix so gateway.chat() can route it.
-  return resolved.includes(':') ? resolved : `anthropic:${resolved}`;
+  // the result keeps a provider prefix so gateway.chat() can route it (and slash
+  // form normalizes to colon — #1698).
+  return normalizeModelId(resolved);
 }
 
 export const ALL_EXTRACT_KINDS: readonly FactKind[] = [

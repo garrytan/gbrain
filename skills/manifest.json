@@ -170,6 +170,11 @@
       "description": "Post-restart smoke tests + auto-fix for gbrain and OpenClaw environments"
     },
     {
+      "name": "gbrain-upgrade",
+      "path": "gbrain-upgrade/SKILL.md",
+      "description": "Keep gbrain current: act on the UPGRADE_AVAILABLE marker per self_upgrade.mode (notify prompt or silent auto)"
+    },
+    {
       "name": "book-mirror",
       "path": "book-mirror/SKILL.md",
       "description": "Take any book (EPUB/PDF), produce a personalized chapter-by-chapter analysis with two-column tables: left = chapter summary, right = how it applies to you based on brain context. Output: brain page + PDF."
@@ -238,6 +243,16 @@
       "name": "eiirp",
       "path": "eiirp/SKILL.md",
       "description": "Everything In Its Right Place — post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
+    },
+    {
+      "name": "schema-unify",
+      "path": "schema-unify/SKILL.md",
+      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain → assess → propose → apply → sync → verify → commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
+    },
+    {
+      "name": "skill-optimizer",
+      "path": "skill-optimizer/SKILL.md",
+      "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
     }
   ],
   "dependencies": {

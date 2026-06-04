@@ -585,6 +585,378 @@ describe('v0.32.4 — sync_freshness check', () => {
   });
 });
 
+// ============================================================================
+// v0.41.27.0 — sync_freshness git short-circuit (D4 + D6 + D7)
+// ============================================================================
+// Doctor learns to skip the staleness warning when a git-backed source has no
+// new commits since the last sync AND working tree is clean AND chunker
+// version matches. Trust boundary preserved via opts.localOnly (D4); count
+// math fixed with three buckets that sum to sources.length (D6); narrowed
+// predicate mirrors sync.ts:1057+1075 (D7).
+// ============================================================================
+
+describe('v0.41.27.0 — sync_freshness git short-circuit', () => {
+  // Reuse the stub-engine pattern from v0.32.4 describe above. Row shape now
+  // includes last_commit + chunker_version (extended SELECT in v0.41.27.0).
+  function makeStubEngine(rows: any[]): any {
+    return { executeRaw: async () => rows };
+  }
+  function agoMs(ms: number): Date {
+    return new Date(Date.now() - ms);
+  }
+
+  // Probe seams come from src/core/git-head.ts. Reset between each test so
+  // case order can't leak state. CURRENT is imported from chunkers/code.ts —
+  // tests stay correct across CHUNKER_VERSION bumps.
+  let currentChunkerVersion: string;
+
+  beforeEach(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = String(CHUNKER_VERSION);
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+
+  afterAll(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+
+  test('case 1: stale + HEAD match + clean tree + chunker match + localOnly=true → ok', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'abc123');
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      {
+        id: 'media-corpus', name: '', local_path: '/tmp/media',
+        last_sync_at: agoMs(40 * 60 * 60 * 1000),
+        last_commit: 'abc123',
+        chunker_version: currentChunkerVersion,
+      },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('ok');
+    // Single-source all-unchanged hits the cold-path message; the
+    // "X synced recently, Y unchanged since last sync" mixed-case shape
+    // is covered separately in case 6.
+    expect(result.message).toContain('no new commits since last sync');
+    expect(result.details).toEqual({
+      unchanged_count: 1, synced_recently_count: 0, stale_count: 0,
+    });
+  });
+
+  test('case 2: all stale + all unchanged + localOnly=true → ok cold-path message', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests((path) => path === '/tmp/media' ? 'abc' : 'def');
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'media-corpus', name: '', local_path: '/tmp/media',
+        last_sync_at: agoMs(40 * 60 * 60 * 1000),
+        last_commit: 'abc', chunker_version: currentChunkerVersion },
+      { id: 'archive', name: '', local_path: '/tmp/archive',
+        last_sync_at: agoMs(50 * 60 * 60 * 1000),
+        last_commit: 'def', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('ok');
+    expect(result.message).toBe(
+      'All 2 federated source(s) up to date (no new commits since last sync)',
+    );
+    expect(result.details).toEqual({
+      unchanged_count: 2, synced_recently_count: 0, stale_count: 0,
+    });
+  });
+
+  test('case 3: stale + HEAD mismatch + localOnly=true → warn (no short-circuit)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'NEW-HEAD-SHA');
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: 'OLD-SHA', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.message).toMatch(/30h ago/);
+    expect(result.details?.unchanged_count).toBe(0);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 4: stale + matching HEAD + NULL last_commit + localOnly=true → warn (legacy data)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    let headCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'abc'; });
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'legacy', name: '', local_path: '/tmp/legacy',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: null, chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    // Helper short-circuits on NULL guard — head probe should NEVER be called.
+    expect(headCalls).toBe(0);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 5: stale + non-git path (head probe returns null) + localOnly=true → warn (fail-open)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => null);  // non-git dir
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'flat-files', name: '', local_path: '/tmp/flat-files',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: 'abc', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 6: mixed 3 sources (1 unchanged + 1 synced 5min + 1 truly stale 5d) → fail, three-bucket invariant', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests((path) => {
+      if (path === '/tmp/unchanged') return 'frozen-sha';
+      if (path === '/tmp/recent') return 'new-sha';   // HEAD differs from last_commit → no short-circuit
+      return 'whatever';                                // /tmp/stale: doesn't matter, time path fails
+    });
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'unchanged', name: '', local_path: '/tmp/unchanged',
+        last_sync_at: agoMs(40 * 60 * 60 * 1000),
+        last_commit: 'frozen-sha', chunker_version: currentChunkerVersion },
+      { id: 'recent', name: '', local_path: '/tmp/recent',
+        last_sync_at: agoMs(5 * 60 * 1000),
+        last_commit: 'OLD', chunker_version: currentChunkerVersion },
+      { id: 'stale', name: '', local_path: '/tmp/stale',
+        last_sync_at: agoMs(5 * 24 * 60 * 60 * 1000),
+        last_commit: 'OLD2', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('fail');
+    // Stale source named in the issues list; unchanged + recent are NOT named.
+    expect(result.message).toContain(`'stale'`);
+    expect(result.message).not.toContain(`'unchanged'`);
+    expect(result.message).not.toContain(`'recent'`);
+    // Three-bucket invariant: sum === sources.length (the load-bearing assertion).
+    expect(result.details).toEqual({
+      unchanged_count: 1, synced_recently_count: 1, stale_count: 1,
+    });
+    const { unchanged_count, synced_recently_count, stale_count } = result.details as any;
+    expect(unchanged_count + synced_recently_count + stale_count).toBe(3);
+  });
+
+  test('case 7: stale + matching HEAD + clean tree + chunker MISMATCH + localOnly=true → warn (chunker gate fires)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'abc');
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'preupgrade', name: '', local_path: '/tmp/pre',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: 'abc',
+        chunker_version: '0',  // STALE — bumped via gbrain upgrade since last sync
+      },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.details?.unchanged_count).toBe(0);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 8: stale + matching HEAD + DIRTY tree + chunker match + localOnly=true → warn (dirty gate fires)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'abc');
+    _setGitCleanProbeForTests(() => false);  // dirty
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wip', name: '', local_path: '/tmp/wip',
+        last_sync_at: agoMs(30 * 60 * 60 * 1000),
+        last_commit: 'abc', chunker_version: currentChunkerVersion },
+    ]), { localOnly: true });
+
+    expect(result.status).toBe('warn');
+    expect(result.details?.unchanged_count).toBe(0);
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('case 9 — D4 regression: localOnly=false (default) — git probes NEVER called', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    // Probes set up to return "everything matches" — IF they were called,
+    // the source would be marked unchanged. Since localOnly defaults false,
+    // they MUST NOT fire and the source MUST be flagged stale by time check.
+    let headCalls = 0;
+    let cleanCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'matching-sha'; });
+    _setGitCleanProbeForTests(() => { cleanCalls++; return true; });
+
+    // Two callers shapes:
+    //   (a) explicit localOnly:false matches doctorReportRemote semantics
+    //   (b) omitted opts matches the default-fallthrough path
+    for (const opts of [{ localOnly: false }, undefined]) {
+      headCalls = 0;
+      cleanCalls = 0;
+      const result = await checkSyncFreshness(makeStubEngine([
+        { id: 'remote-checked', name: '', local_path: '/tmp/x',
+          last_sync_at: agoMs(40 * 60 * 60 * 1000),
+          last_commit: 'matching-sha', chunker_version: currentChunkerVersion },
+      ]), opts);
+
+      // Trust boundary: probes MUST NOT have been called.
+      expect(headCalls).toBe(0);
+      expect(cleanCalls).toBe(0);
+      // And without the short-circuit, time check fires the warn:
+      expect(result.status).toBe('warn');
+      expect(result.details?.unchanged_count).toBe(0);
+      expect(result.details?.stale_count).toBe(1);
+    }
+  });
+});
+
+// ============================================================================
+// v0.41.32.0 — commit-relative staleness (supersedes #1623)
+// ============================================================================
+// Two contracts:
+//   T1 (headline bug): a quiet repo whose only "dirt" is untracked files
+//       (`?? companies/`, `?? media/`) is now caught up on the LOCAL path —
+//       the short-circuit's clean check ignores untracked. Pre-v0.41.30 the
+//       strict clean check counted those as dirty → fell through to wall-clock
+//       → false SEVERE.
+//   T2 (trust boundary): the REMOTE path (no localOnly) computes lag from the
+//       stored newest_content_at column and NEVER shells out to git on a
+//       DB-supplied local_path (preserves the v0.41.27.0 boundary).
+// ============================================================================
+describe('v0.41.32.0 — commit-relative staleness', () => {
+  function makeStubEngine(rows: any[]): any {
+    return { executeRaw: async () => rows };
+  }
+  function agoMs(ms: number): Date { return new Date(Date.now() - ms); }
+  let currentChunkerVersion: string;
+
+  beforeEach(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    const { CHUNKER_VERSION } = await import('../src/core/chunkers/code.ts');
+    currentChunkerVersion = String(CHUNKER_VERSION);
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+  afterAll(async () => {
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(null);
+    _setGitCleanProbeForTests(null);
+  });
+
+  test('T1: stale + HEAD match + DIRTY-by-untracked-only + localOnly → ok (untracked ignored)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    _setGitHeadProbeForTests(() => 'abc123');
+    // Clean ONLY when untracked is ignored (the bug scenario: `?? companies/`).
+    let sawIgnoreUntracked = false;
+    _setGitCleanProbeForTests((_path, ignoreUntracked) => {
+      if (ignoreUntracked) { sawIgnoreUntracked = true; return true; }
+      return false; // strict mode would call it dirty
+    });
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'media-corpus', name: '', local_path: '/tmp/media',
+        last_sync_at: agoMs(86 * 60 * 60 * 1000), // 86h — would be SEVERE on wall-clock
+        last_commit: 'abc123', chunker_version: currentChunkerVersion,
+        newest_content_at: null },
+    ]), { localOnly: true });
+
+    expect(sawIgnoreUntracked).toBe(true); // the short-circuit asked to ignore untracked
+    expect(result.status).toBe('ok');
+    expect(result.details).toEqual({ unchanged_count: 1, synced_recently_count: 0, stale_count: 0 });
+  });
+
+  test('T2: REMOTE (no localOnly) reads column, quiet repo → ok, NO git subprocess', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    let headCalls = 0, cleanCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'x'; });
+    _setGitCleanProbeForTests(() => { cleanCalls++; return true; });
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'remote', name: '', local_path: '/tmp/remote',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        // Content committed BEFORE the last sync → caught up.
+        newest_content_at: agoMs(200 * 60 * 60 * 1000) },
+    ])); // NOTE: no { localOnly: true } → remote path
+
+    expect(headCalls).toBe(0);   // trust boundary: no git probe on remote path
+    expect(cleanCalls).toBe(0);
+    expect(result.status).toBe('ok');
+    expect(result.details).toEqual({ unchanged_count: 0, synced_recently_count: 1, stale_count: 0 });
+  });
+
+  test('T2b: REMOTE + NULL column → wall-clock fallback → stale (no git subprocess)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const { _setGitHeadProbeForTests, _setGitCleanProbeForTests } =
+      await import('../src/core/git-head.ts');
+    let headCalls = 0;
+    _setGitHeadProbeForTests(() => { headCalls++; return 'x'; });
+    _setGitCleanProbeForTests(() => true);
+
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'remote', name: '', local_path: '/tmp/remote',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        newest_content_at: null },
+    ]));
+
+    expect(headCalls).toBe(0); // still no git probe even on the fallback path
+    expect(result.status).toBe('fail'); // 100h wall-clock > 72h
+    expect(result.details?.stale_count).toBe(1);
+  });
+
+  test('T2c: REMOTE + content NEWER than last sync → wall-clock (genuinely behind)', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'remote', name: '', local_path: '/tmp/remote',
+        last_sync_at: agoMs(100 * 60 * 60 * 1000),
+        last_commit: 'x', chunker_version: currentChunkerVersion,
+        // committed 10h ago, synced 100h ago → behind.
+        newest_content_at: agoMs(10 * 60 * 60 * 1000) },
+    ]));
+    expect(result.status).toBe('fail');
+    expect(result.details?.stale_count).toBe(1);
+  });
+});
+
 // Supervisor crash classifier wiring. Pre-fix, doctor.ts:1013 counted every
 // `worker_exited` event as a crash regardless of `likely_cause`, inflating
 // `crashes_24h` to 120+/day from RSS-watchdog drains and SIGTERM stops.
@@ -784,5 +1156,177 @@ describe('v0.40.4 — graph_signals_coverage check', () => {
     expect(source).toMatch(/await checkGraphSignalsCoverage\(engine\)/);
     // Remote/JSON path heartbeat.
     expect(source).toContain("progress.heartbeat('graph_signals_coverage')");
+  });
+});
+
+// ─── issue #972 — link_resolution_opportunity check ───────────────────────
+
+describe('issue #972 — link_resolution_opportunity check', () => {
+  const { PGLiteEngine } = require('../src/core/pglite-engine.ts');
+  const { checkLinkResolutionOpportunity } = require('../src/commands/doctor.ts');
+
+  let engine: any;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' });
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    if (engine) await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await engine.executeRaw(`DELETE FROM links`);
+    await engine.executeRaw(`DELETE FROM pages`);
+    await engine.executeRaw(
+      `DELETE FROM config WHERE key = 'link_resolution.global_basename'`,
+    );
+  });
+
+  test('skipped silently when flag is already enabled', async () => {
+    await engine.setConfig('link_resolution.global_basename', 'true');
+    // Even with bare wikilinks that would resolve, the check returns ok
+    // because the user is already opted in — no hint to surface.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[struktura]] and [[struktura]] and [[struktura]].',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('already enabled');
+  });
+
+  test('empty brain → ok with explanation', async () => {
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('empty');
+  });
+
+  test('no bare wikilinks → ok', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice',
+      compiled_truth: 'Met [Bob](people/bob).', timeline: '',
+    });
+    await engine.putPage('people/bob', {
+      type: 'person', title: 'Bob', compiled_truth: '', timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('No bare wikilinks');
+  });
+
+  test('bare wikilinks present but none match → ok', async () => {
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[never-existed]] and [[also-not-here]].',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('none have basename matches');
+  });
+
+  test('≥5 would-resolve AND ≥20% ratio → warn with paste-ready hint', async () => {
+    // 5 distinct bare wikilinks, all resolving = 100% ratio.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/eeva', {
+      type: 'project', title: 'Eeva', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('companies/fast-weigh', {
+      type: 'company', title: 'Fast-Weigh', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/rosa', {
+      type: 'project', title: 'Rosa', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/dragon', {
+      type: 'project', title: 'Dragon', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/wiki-index', {
+      type: 'concept', title: 'Wiki',
+      compiled_truth: 'See [[struktura]], [[eeva]], [[Fast-Weigh]], [[rosa]], [[dragon]] for context.',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('5 of 5');
+    expect(check.message).toContain('100%');
+    expect(check.message).toContain(
+      'gbrain config set link_resolution.global_basename true',
+    );
+  });
+
+  test('<5 would-resolve → ok without warning (below threshold)', async () => {
+    // Only 2 bare wikilinks resolve → below the 5-link floor.
+    await engine.putPage('projects/struktura', {
+      type: 'project', title: 'Struktura', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('projects/eeva', {
+      type: 'project', title: 'Eeva', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[struktura]] and [[eeva]] for context.',
+      timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('below the 20% / 5-link threshold');
+  });
+
+  test('counts slugified-only matches (shared matcher, codex #972 DRY)', async () => {
+    // `[[Fast Weigh]]` (space) only resolves to `companies/fast-weigh` via the
+    // slugified key. Pre-consolidation the doctor index keyed raw+lower only
+    // and would have reported "none have basename matches"; the shared matcher
+    // adds the slugified key so the estimate matches what extraction resolves.
+    await engine.putPage('companies/fast-weigh', {
+      type: 'company', title: 'Fast-Weigh', compiled_truth: '', timeline: '',
+    });
+    await engine.putPage('concepts/x', {
+      type: 'concept', title: 'X',
+      compiled_truth: 'See [[Fast Weigh]] for context.', timeline: '',
+    });
+    const check = await checkLinkResolutionOpportunity(engine);
+    // 1/1 resolves (below the 5-link warn floor → ok) but it DID resolve.
+    expect(check.message).toContain('1/1');
+    expect(check.message).toContain('would resolve');
+    expect(check.message).not.toContain('none have basename matches');
+  });
+
+  test('check is wired into runDoctor AND doctorReportRemote (source-grep)', async () => {
+    const source = await Bun.file(
+      new URL('../src/commands/doctor.ts', import.meta.url),
+    ).text();
+    // Local buildChecks path.
+    expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine, progress\)/);
+    // Thin-client doctorReportRemote path.
+    expect(source).toMatch(/await checkLinkResolutionOpportunity\(engine\)/);
+    // Heartbeat label registered.
+    expect(source).toContain("progress.heartbeat('link_resolution_opportunity')");
+    // Issue #972 (T3): scan is bounded to a most-recent sample, not a full
+    // per-page getPage walk.
+    expect(source).toMatch(/ORDER BY id DESC LIMIT \$\{?SAMPLE_LIMIT\}?|ORDER BY id DESC LIMIT 1000/);
+    expect(source).not.toMatch(/await engine\.getPage\(ref\.slug/);
+  });
+});
+
+describe('v0.42 (#1699) — quarantined_pages + flagged_pages checks', () => {
+  test('both checks are wired into buildChecks (source-grep)', async () => {
+    const source = await Bun.file(new URL('../src/commands/doctor.ts', import.meta.url)).text();
+    expect(source).toContain("progress.heartbeat('quarantined_pages')");
+    expect(source).toContain("progress.heartbeat('flagged_pages')");
+    // quarantine HIDES (JSONB existence scan), content_flag WARNS.
+    expect(source).toContain("p.frontmatter ? 'quarantine'");
+    expect(source).toContain("p.frontmatter ? 'content_flag'");
+    // Each emits a named check.
+    expect(source).toMatch(/name: 'quarantined_pages'/);
+    expect(source).toMatch(/name: 'flagged_pages'/);
   });
 });

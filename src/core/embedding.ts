@@ -12,6 +12,7 @@ import {
   getEmbeddingModel as gatewayGetModel,
   getEmbeddingDimensions as gatewayGetDims,
 } from './ai/gateway.ts';
+import { lookupEmbeddingPrice } from './embedding-pricing.ts';
 
 // v0.27.1: re-export multimodal embedding so callers can pull both text and
 // image embedding APIs from `src/core/embedding`. import-image-file consumes
@@ -52,7 +53,7 @@ export async function embed(text: string): Promise<Float32Array> {
  */
 export async function embedQuery(
   text: string,
-  opts?: { embeddingModel?: string; dimensions?: number },
+  opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
 ): Promise<Float32Array> {
   return gatewayEmbedQuery(text, opts);
 }
@@ -127,13 +128,106 @@ export const EMBEDDING_MODEL = 'text-embedding-3-large';
 export const EMBEDDING_DIMENSIONS = 1536;
 
 /**
- * USD cost per 1k tokens for text-embedding-3-large. Used by
- * `gbrain sync --all` cost preview and `reindex-code` to surface
- * expected spend before accepting expensive operations.
+ * USD cost per 1k tokens for text-embedding-3-large. Retained for back-compat
+ * with callers/tests that import it directly; new cost math resolves the
+ * ACTUAL configured model's rate via embedding-pricing.ts instead of assuming
+ * OpenAI. (Hardcoding this rate produced cost previews that named the wrong
+ * provider and over-stated spend ~2.6x when the brain ran on a cheaper model.)
  */
 export const EMBEDDING_COST_PER_1K_TOKENS = 0.00013;
 
-/** Compute USD cost estimate for embedding `tokens` at current model rate. */
+/**
+ * Resolve the price-per-1M-tokens for the currently-configured embedding
+ * model. Falls back to the OpenAI text-embedding-3-large rate only when the
+ * model is unknown to the pricing table.
+ */
+export function currentEmbeddingPricePerMTok(): number {
+  let modelString: string;
+  try {
+    modelString = gatewayGetModel(); // e.g. 'zeroentropyai:zembed-1'
+  } catch {
+    // Gateway not configured (e.g. unit tests, cost preview before connect).
+    // Fall back to the OpenAI text-embedding-3-large default rate.
+    return 0.13;
+  }
+  const hit = lookupEmbeddingPrice(modelString);
+  return hit.kind === 'known' ? hit.pricePerMTok : 0.13;
+}
+
+/**
+ * Compute USD cost estimate for embedding `tokens` at the CURRENT configured
+ * model's rate (not a hardcoded OpenAI rate).
+ */
 export function estimateEmbeddingCostUsd(tokens: number): number {
-  return (tokens / 1000) * EMBEDDING_COST_PER_1K_TOKENS;
+  return (tokens / 1_000_000) * currentEmbeddingPricePerMTok();
+}
+
+/**
+ * Embedding provenance signature for the currently-configured model:
+ * `<provider:model>:<dims>` (e.g. `openai:text-embedding-3-large:1536`).
+ * Stamped onto `pages.embedding_signature` when a page's chunks are
+ * embedded so a later model/dimension swap can be detected as stale.
+ *
+ * Deliberately does NOT include the chunker version — chunker drift is
+ * already tracked per-page via `pages.chunker_version` (used by sync +
+ * doctor). This signature is strictly about the EMBEDDING space.
+ *
+ * Falls back to the OpenAI default signature when the gateway is
+ * unconfigured (unit-test context), matching the other estimator fallbacks.
+ */
+export function currentEmbeddingSignature(): string {
+  try {
+    return `${gatewayGetModel()}:${gatewayGetDims()}`;
+  } catch {
+    return `${EMBEDDING_MODEL}:${EMBEDDING_DIMENSIONS}`;
+  }
+}
+
+/**
+ * Whether a `gbrain sync --all` invocation will embed at sync time
+ * ('inline') or defer embedding to per-source `embed-backfill` minion jobs
+ * ('deferred'). Under federated_v2 the default path defers; the backfill
+ * jobs carry their own 10-min cooldown + $25/source/24h spend cap, so the
+ * sync-time cost gate only BLOCKS on the inline path. See sync.ts:2346
+ * (`effectiveNoEmbed`) — this mirrors that resolution exactly.
+ */
+export type SyncEmbedMode = 'deferred' | 'inline';
+
+/**
+ * Resolve the embed mode from the same three signals sync.ts uses to
+ * compute `effectiveNoEmbed`. Single source of truth so the cost gate and
+ * the actual embed decision can never drift.
+ *
+ *   effectiveNoEmbed = v2Enabled && !serialFlag && !noEmbed ? true : noEmbed
+ *
+ * Embed runs INLINE iff that resolves to false:
+ *   - v2 off                          → inline (legacy synchronous embed)
+ *   - v2 on + --serial + !--no-embed  → inline
+ *   - v2 on (parallel)                → deferred (backfill jobs)
+ *   - --no-embed (any path)           → the caller skips the gate entirely;
+ *                                       we report 'deferred' for completeness.
+ */
+export function willEmbedSynchronously(opts: {
+  v2Enabled: boolean;
+  serialFlag: boolean;
+  noEmbed: boolean;
+}): SyncEmbedMode {
+  const effectiveNoEmbed =
+    opts.v2Enabled && !opts.serialFlag && !opts.noEmbed ? true : opts.noEmbed;
+  return effectiveNoEmbed ? 'deferred' : 'inline';
+}
+
+/**
+ * Pure cost-gate decision. The gate BLOCKS (prompt in TTY, exit 2 envelope
+ * in non-TTY) only when embed runs inline AND the estimated spend exceeds
+ * the floor. Deferred mode NEVER blocks — the backfill cap is the real
+ * money gate, and blocking the cheap markdown import for cost the import
+ * doesn't synchronously incur is the bug this fix removes.
+ */
+export function shouldBlockSync(
+  costUsd: number,
+  floorUsd: number,
+  mode: SyncEmbedMode,
+): boolean {
+  return mode === 'inline' && costUsd > floorUsd;
 }

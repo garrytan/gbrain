@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
-import type { Page, PageInput, PageType, Chunk, SearchResult } from './types.ts';
+import type { Page, PageInput, PageType, Chunk, SearchResult, StalePageRow } from './types.ts';
 import type { Take, TakeKind } from './engine.ts';
 
 /**
@@ -122,6 +122,34 @@ export function rowToPage(row: Record<string, unknown>): Page {
 }
 
 /**
+ * v0.42.7 (#1696) — map a DB row to a StalePageRow for the extraction
+ * freshness sweep. Shared by both engines so frontmatter JSONB parsing can't
+ * drift. Mirrors rowToPage's `typeof === 'string' ? JSON.parse` idiom; tolerates
+ * NULL compiled_truth/timeline/frontmatter (empty-string / {} fallback).
+ */
+export function rowToStalePage(row: Record<string, unknown>): StalePageRow {
+  const fm = row.frontmatter;
+  return {
+    id: row.id as number,
+    slug: row.slug as string,
+    source_id: (row.source_id as string | undefined) ?? 'default',
+    type: row.type as string,
+    title: (row.title as string | null) ?? '',
+    compiled_truth: (row.compiled_truth as string | null) ?? '',
+    timeline: (row.timeline as string | null) ?? '',
+    frontmatter: (fm == null ? {} : (typeof fm === 'string' ? JSON.parse(fm) : fm)) as Record<string, unknown>,
+    updated_at: new Date(row.updated_at as string),
+    // #1768: full-µs UTC string projected by the SELECT (`updated_at_iso`).
+    // Fallback derives an ISO string from the Date — NEVER String(Date), which
+    // yields "Mon Jun 02 2026 …" that `::timestamptz` misparses. Pre-#1768
+    // callers that don't project the column still get a valid (ms) ISO value.
+    updated_at_iso: row.updated_at_iso != null
+      ? String(row.updated_at_iso)
+      : new Date(row.updated_at as string).toISOString(),
+  };
+}
+
+/**
  * Normalize an embedding value into a Float32Array.
  *
  * pgvector returns embeddings in different shapes depending on driver/path:
@@ -191,6 +219,46 @@ export function isUndefinedColumnError(error: unknown, column: string): boolean 
   if (code === '42703') return true;
   const message = error instanceof Error ? error.message : String(error);
   return message.includes(column) && /does not exist|no such column|undefined column/i.test(message);
+}
+
+/**
+ * v0.42 (T1 sibling): undefined-table predicate for defense-in-depth on
+ * pre-migration brains. Matches SQLSTATE `42P01` (postgres) plus the common
+ * "relation ... does not exist" / "no such table" message variants (PGLite +
+ * driver-wrapped paths). Use on read paths where a missing table should
+ * degrade to "no rows" rather than crash (e.g. resolveSlugWithAlias on
+ * pre-v104 brains, dangling_aliases doctor check on pre-v104 brains).
+ *
+ * Anything else falls through and caller MUST re-throw.
+ */
+export function isUndefinedTableError(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : '';
+  if (code === '42P01') return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /relation .* does not exist|no such table|undefined table/i.test(message);
+}
+
+const _warnedKeys = new Set<string>();
+
+/**
+ * v0.42 (T2): emit a stderr warning at most once per process-key. Used by
+ * `resolveSlugWithAlias` to surface multi-source alias ambiguity without
+ * spamming hot paths.
+ *
+ * Test seam: `_resetWarnOnceForTests()` clears the set so per-process
+ * warn-once contracts can be reasserted across test cases.
+ */
+export function warnOncePerProcess(key: string, message: string): void {
+  if (_warnedKeys.has(key)) return;
+  _warnedKeys.add(key);
+  console.warn(message);
+}
+
+/** @internal test seam */
+export function _resetWarnOnceForTests(): void {
+  _warnedKeys.clear();
 }
 
 let _tryParseEmbeddingWarned = false;

@@ -294,4 +294,37 @@ describe('v0.37 T12 — happy path with picker-bypassing explicit flag', () => {
     expect(cfg.embedding_model).toBe('voyage:voyage-3-large');
     expect(cfg.embedding_dimensions).toBe(1024);
   }, 120000);
+
+  test('explicit Ollama bge-m3 without dimensions initializes a 1024d schema', async () => {
+    const ollamaHome = makeTempHome();
+    try {
+      const r = await runCli([
+        'init', '--pglite',
+        '--embedding-model', 'ollama:bge-m3',
+        '--non-interactive',
+      ], {
+        gbrainHome: ollamaHome,
+        env: {},
+      });
+      expect(r.exitCode).toBe(0);
+
+      const cfg = JSON.parse(readFileSync(join(ollamaHome, '.gbrain', 'config.json'), 'utf-8'));
+      expect(cfg.embedding_model).toBe('ollama:bge-m3');
+      expect(cfg.embedding_dimensions).toBe(1024);
+
+      const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
+      const { readContentChunksEmbeddingDim } = await import('../../src/core/embedding-dim-check.ts');
+      const engine = new PGLiteEngine();
+      await engine.connect({ database_path: cfg.database_path, engine: 'pglite' });
+      try {
+        const colDim = await readContentChunksEmbeddingDim(engine);
+        expect(colDim.exists).toBe(true);
+        expect(colDim.dims).toBe(1024);
+      } finally {
+        await engine.disconnect();
+      }
+    } finally {
+      rmSync(ollamaHome, { recursive: true, force: true });
+    }
+  }, 120000);
 });

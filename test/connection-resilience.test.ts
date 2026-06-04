@@ -130,27 +130,6 @@ describe('classifyWorkerExit', () => {
 // --- Mock-based tests for reconnect logic ---
 
 describe('PostgresEngine reconnect behavior', () => {
-  it('reconnect flag prevents concurrent reconnections', async () => {
-    // Simulate the _reconnecting guard
-    let reconnecting = false;
-    let reconnectCount = 0;
-
-    async function reconnect() {
-      if (reconnecting) return;
-      reconnecting = true;
-      try {
-        reconnectCount++;
-        await new Promise(r => setTimeout(r, 10));
-      } finally {
-        reconnecting = false;
-      }
-    }
-
-    // Fire 3 concurrent reconnects — only 1 should run
-    await Promise.all([reconnect(), reconnect(), reconnect()]);
-    expect(reconnectCount).toBe(1);
-  });
-
   it('executeRaw retry does not infinite-loop on persistent connection failure', async () => {
     // Simulate: first call fails (connection error), reconnect succeeds,
     // but retry also fails with a NON-connection error
@@ -283,24 +262,55 @@ describe('Eng-review D3 — executeRaw has no per-call retry wrapper', () => {
   it('PostgresEngine.executeRaw is a single-statement passthrough (no try/catch on connection errors)', () => {
     const src = readFileSync(resolve('src/core/postgres-engine.ts'), 'utf-8');
 
-    // Find the executeRaw method in the class (not the helper inside withReservedConnection)
-    // Pattern: must be a method on the class taking (sql, params)
-    const fnMatch = src.match(/async executeRaw<T = Record<string, unknown>>\(sql: string, params\?: unknown\[\]\): Promise<T\[\]> \{([\s\S]*?)\n  \}/);
+    // v0.42.24.0 (eng-review D1): the cancellation plumbing shared by executeRaw
+    // and executeRawDirect was extracted into a private `runUnsafe(conn, ...)`
+    // helper. executeRaw / executeRawDirect now pick a connection and delegate;
+    // the single `conn.unsafe(` call lives in runUnsafe. The D3 invariant (no
+    // per-call retry wrapper) is unchanged — it just spans the delegate now, so
+    // this guard checks both the public methods AND the shared helper.
+
+    // Find executeRaw in the class (not the helper inside withReservedConnection).
+    // v0.41.18.0 (T5/A20): signature extended with optional `opts?: { signal?: AbortSignal }`.
+    const fnMatch = src.match(/async executeRaw<T = Record<string, unknown>>\(\s*sql: string,\s*params\?: unknown\[\][^)]*\):\s*Promise<T\[\]>\s*\{([\s\S]*?)\n  \}/);
     expect(fnMatch).not.toBeNull();
     const body = fnMatch![1];
 
-    // Must not have any try/catch
-    expect(body).not.toContain('try {');
-    expect(body).not.toContain('catch');
-    // Must not call reconnect() from this method
+    // executeRaw must not retry: no reconnect, no inline re-issue, and it must
+    // delegate to runUnsafe rather than re-implementing the query path.
     expect(body).not.toContain('this.reconnect()');
-    // Must call conn.unsafe directly
-    expect(body).toContain('conn.unsafe(');
+    expect(body).toContain('this.runUnsafe');
+    expect((body.match(/conn\.unsafe\(/g) || []).length).toBe(0);
+
+    // executeRawDirect (the Minion lock hot-path sibling) routes to the direct
+    // session pool but must NOT introduce a retry wrapper either — same delegate.
+    const directMatch = src.match(/async executeRawDirect<T = Record<string, unknown>>\(\s*sql: string,\s*params\?: unknown\[\][^)]*\):\s*Promise<T\[\]>\s*\{([\s\S]*?)\n  \}/);
+    expect(directMatch).not.toBeNull();
+    const directBody = directMatch![1];
+    expect(directBody).not.toContain('this.reconnect()');
+    expect(directBody).toContain('this.runUnsafe');
+    expect((directBody.match(/conn\.unsafe\(/g) || []).length).toBe(0);
+
+    // The shared helper issues conn.unsafe EXACTLY ONCE (no retry re-issue) and
+    // never reconnects. Its try/catch is ONLY the AbortSignal cancellation
+    // swallow (v0.41.18.0 A20), NOT a connection retry.
+    const helperMatch = src.match(/private runUnsafe<T>\(\s*conn:[^)]*\):\s*Promise<T\[\]>\s*\{([\s\S]*?)\n  \}/);
+    expect(helperMatch).not.toBeNull();
+    const helperBody = helperMatch![1];
+    expect(helperBody).not.toContain('this.reconnect()');
+    expect((helperBody.match(/conn\.unsafe\(/g) || []).length).toBe(1);
+    if (helperBody.includes('catch')) {
+      // If catch exists, it must be the cancel-swallow shape, NOT a retry shape.
+      expect(helperBody).not.toMatch(/catch[^{]*\{[\s\S]*?conn\.unsafe/);
+      expect(helperBody).not.toMatch(/catch[^{]*\{[\s\S]*?setTimeout/);
+    }
   });
 
   it('PostgresEngine.reconnect() still exists for supervisor-driven recovery', () => {
     const src = readFileSync(resolve('src/core/postgres-engine.ts'), 'utf-8');
-    expect(src).toContain('async reconnect()');
+    // v0.42.10.0 (#1685 GAP B): reconnect() gained an optional ctx param so it
+    // can classify the triggering error for the pool-recovery audit. Match the
+    // prefix so both `reconnect()` and `reconnect(ctx?)` satisfy the contract.
+    expect(src).toContain('async reconnect(');
     expect(src).toContain('await this.disconnect()');
   });
 

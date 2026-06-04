@@ -8,7 +8,7 @@ import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
-import { embedBatch, embedMultimodal } from './embedding.ts';
+import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
@@ -19,6 +19,13 @@ import { assessContentSanity, ContentSanityBlockError } from './content-sanity.t
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { logContentSanityAssessment } from './audit/content-sanity-audit.ts';
 import { isEmbedSkipped, buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
+import {
+  QUARANTINE_KEY,
+  CONTENT_FLAG_KEY,
+  buildQuarantineMarker,
+  buildContentFlagMarker,
+  isQuarantined,
+} from './quarantine.ts';
 import { loadConfig, loadConfigWithEngine } from './config.ts';
 import {
   buildContextualPrefix,
@@ -28,7 +35,10 @@ import {
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
+import { normalizeAliasList } from './search/alias-normalize.ts';
+import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
+import { runGuardrails } from './guardrails.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -183,6 +193,14 @@ export interface ImportResult {
    * Absent only on status='error' (early payload-size rejection).
    */
   parsedPage?: ParsedPage;
+  /** Content-quality gate (issue #1699): true when the page landed with a
+   *  `quarantine` marker (high-confidence junk, hidden from search). */
+  quarantined?: boolean;
+  /** True when the page landed with a `content_flag` marker (fuzzy
+   *  markup-heavy or oversize — stays searchable, agent warned). */
+  flagged?: boolean;
+  /** Which flag tier fired, when `flagged`. */
+  flag_reason?: 'markup_heavy' | 'oversized';
 }
 
 const MAX_FILE_SIZE = 5_000_000; // 5MB
@@ -250,6 +268,20 @@ export async function importFromContent(
     source_kind?: string | null;
     source_uri?: string | null;
     ingested_via?: string | null;
+    /**
+     * v0.42 (#1699 trust boundary). When `true` (untrusted caller — remote MCP
+     * put_page), gate-owned frontmatter markers (`quarantine`, `content_flag`,
+     * `embed_skip`) are STRIPPED from the incoming content before the content-
+     * sanity gate runs, so only the gate itself can set them. Without this, a
+     * write-scoped OAuth client could `put_page` clean content carrying a
+     * hand-crafted `quarantine` marker to hide arbitrary pages from search, or
+     * a `content_flag.detail` to inject text into the agent-trusted warning
+     * channel. `put_page` passes `ctx.remote !== false` (fail-closed: anything
+     * not strictly local is untrusted, matching the v0.26.9 F7b posture).
+     * Local/trusted callers (sync, capture, dream, `quarantine clear/scan`)
+     * leave it unset → markers preserved (the gate + CLI own them).
+     */
+    remote?: boolean;
   } = {},
 ): Promise<ImportResult> {
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
@@ -272,6 +304,40 @@ export async function importFromContent(
   }
 
   const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
+
+  // v0.42 (#1699 trust boundary): strip gate-owned markers from UNTRUSTED
+  // input. parseMarkdown preserves every frontmatter key except type/title/
+  // tags/slug, so a remote MCP put_page (ctx.remote !== false, threaded as
+  // opts.remote) could otherwise plant `quarantine` (hide a page from search +
+  // suppress chunks) or `content_flag.detail` (inject text into the agent's
+  // trusted "this looks odd" channel) on clean content. Only the content-
+  // sanity gate (below) and trusted local CLIs may set these. Fail-closed:
+  // strip whenever opts.remote === true.
+  if (opts.remote === true && parsed.frontmatter) {
+    delete parsed.frontmatter[QUARANTINE_KEY];
+    delete parsed.frontmatter[CONTENT_FLAG_KEY];
+    delete parsed.frontmatter[EMBED_SKIP_KEY];
+  }
+
+  // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
+  // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
+  // chunking, embedding, and DB write — so a registered guardrail sees the
+  // full markdown payload at the exact pre-persist moment. The returned
+  // verdict is intentionally ignored: this seam cannot block or mutate the
+  // ingest. No-op when zero guardrails are registered (OSS default).
+  await runGuardrails({
+    hook: 'file_storage.markdown',
+    content,
+    metadata: {
+      slug,
+      source_id: sourceId ?? 'default',
+      source_path: opts.sourcePath ?? null,
+      source_kind: opts.source_kind ?? null,
+      source_uri: opts.source_uri ?? null,
+      ingested_via: opts.ingested_via ?? null,
+      content_type: 'markdown',
+    },
+  });
 
   // v0.41 content-sanity gate. Runs AFTER parseMarkdown so the assessor
   // sees the parsed body (compiled_truth + timeline), title, and
@@ -300,6 +366,11 @@ export async function importFromContent(
   // acceptable for the per-page cost since the gate runs at most once
   // per ingest. Power-users with 10K-file syncs who care about this
   // overhead can set the keys via env vars instead and skip the DB read.
+  // Content-quality gate disposition flags (issue #1699), threaded onto
+  // the ImportResult so callers (sync reporting, tests) see what happened.
+  let pageQuarantined = false;
+  let pageFlagged = false;
+  let pageFlagReason: 'markup_heavy' | 'oversized' | undefined;
   {
     const baseCfg = loadConfig();
     let effectiveCfg = baseCfg;
@@ -325,57 +396,108 @@ export async function importFromContent(
       cs.disabled === true || process.env.GBRAIN_NO_SANITY === '1';
     const extra_literals =
       cs.junk_patterns_enabled !== false && !sanityDisabled ? loadOperatorLiterals() : [];
+    // Disposition for the high-confidence junk path: quarantine (hide) by
+    // default, or reject (throw → sync-failure) when the operator opts in.
+    const junkDisposition: 'quarantine' | 'reject' =
+      cs.junk_disposition === 'reject' ? 'reject' : 'quarantine';
     const sanityResult = assessContentSanity({
       compiled_truth: parsed.compiled_truth,
       timeline: parsed.timeline ?? '',
       title: parsed.title,
       bytes_warn: cs.bytes_warn,
       bytes_block: cs.bytes_block,
+      max_markup_ratio: cs.max_markup_ratio,
+      prose_check_enabled: cs.prose_check_enabled,
+      page_kind: parsed.type,
       extra_literals,
-    });
-    // Audit BEFORE branching so hard-block / soft-block / warn / bypass
-    // ALL get a row in the JSONL. The audit module's own gate
-    // suppresses no-op rows (bytes below warn, no patterns, no bypass).
-    logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
-      bypass: sanityDisabled,
     });
 
     if (sanityDisabled) {
       // Kill-switch active: loud stderr per offending ingest. Operator
       // explicitly opted into the bypass and gets noisy feedback every
-      // time it fires so they remember the gate is off.
-      if (sanityResult.shouldHardBlock || sanityResult.shouldSkipEmbed) {
+      // time it fires so they remember the gate is off. Audit as a
+      // bypass (page lands regardless).
+      logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+        bypass: true,
+      });
+      if (sanityResult.shouldQuarantine || sanityResult.shouldFlag) {
         process.stderr.write(
           `[gbrain] content-sanity bypass (GBRAIN_NO_SANITY=1): ${slug} — ${sanityResult.reason_messages.join('; ')}\n`,
         );
       }
-    } else {
-      if (sanityResult.shouldHardBlock) {
-        // Single throw point. Existing exception flow at every wrapper
-        // site fires correctly. Caller-side semantics:
-        //   - import.ts → runImport's catch increments errors → non-zero exit
-        //   - put_page MCP → operations.ts try/catch → OperationError envelope
-        //   - sync.ts → existing catch at :929 → records failure with classified code
+    } else if (sanityResult.shouldQuarantine) {
+      // High-confidence junk (Cloudflare/CAPTCHA pattern or operator
+      // literal). The detail names which fired.
+      const detail = [
+        ...sanityResult.junk_pattern_matches,
+        ...sanityResult.literal_substring_matches,
+      ].join(', ');
+      const reason = sanityResult.junk_pattern_matches.length > 0
+        ? 'junk_pattern'
+        : 'literal_substring';
+      if (junkDisposition === 'reject') {
+        // Operator opted into hard-block. Throw with PAGE_QUARANTINE so
+        // classifyErrorCode bins it. Existing exception flow at every
+        // wrapper site (import errors counter, put_page MCP envelope,
+        // sync failure record) fires through this single throw point.
+        logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+          disposition: 'reject',
+        });
         throw new ContentSanityBlockError(sanityResult);
       }
-      if (sanityResult.shouldSkipEmbed) {
-        // Soft-block: mutate frontmatter so the embed_skip marker
-        // persists into the page write. The existing chunking block
-        // below guards on isEmbedSkipped → chunks stays empty →
-        // existing tx.deleteChunks fires to purge old chunks
-        // (D9 transition invariant — old chunks were searchable
-        // against stale content; deleting them maintains the
-        // invariant that embed_skip means "no live chunks").
+      // Default: quarantine (hide). Page lands with the marker, writes
+      // zero chunks (chunking guard below widens to isQuarantined), is
+      // excluded from search via QUARANTINE_FILTER_FRAGMENT, reviewable
+      // via get_page / `gbrain quarantine list`.
+      parsed.frontmatter[QUARANTINE_KEY] = buildQuarantineMarker(reason, detail, {
+        bytes: sanityResult.bytes,
+      });
+      pageQuarantined = true;
+      logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+        disposition: 'quarantine',
+      });
+      process.stderr.write(
+        `[gbrain] content-sanity quarantine: ${slug} — ${detail} (hidden from search, reviewable via 'gbrain quarantine list')\n`,
+      );
+    } else if (sanityResult.shouldFlag) {
+      // Fuzzy markup-heavy OR oversize. The page stays usable; the agent
+      // gets warned (Garry's paradigm — "this is odd, you decide").
+      const flagReason = sanityResult.flag_reason!; // non-null when shouldFlag
+      const flagDetail = sanityResult.reason_messages.join('; ');
+      parsed.frontmatter[CONTENT_FLAG_KEY] = buildContentFlagMarker(flagReason, flagDetail, {
+        ...(sanityResult.markup_ratio !== null ? { markup_ratio: sanityResult.markup_ratio } : {}),
+        bytes: sanityResult.bytes,
+      });
+      pageFlagged = true;
+      pageFlagReason = flagReason;
+      if (flagReason === 'oversized') {
+        // Oversize also skips embedding (existing embed_skip marker). The
+        // chunking guard below honors it; tx.deleteChunks purges old chunks.
         parsed.frontmatter[EMBED_SKIP_KEY] = buildEmbedSkipMarker(sanityResult.bytes);
+        logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+          disposition: 'soft_block',
+        });
         process.stderr.write(
-          `[gbrain] content-sanity soft-block: ${slug} (${sanityResult.bytes} bytes) — page lands, embedding skipped\n`,
+          `[gbrain] content-sanity flag (oversized): ${slug} (${sanityResult.bytes} bytes) — page lands, embedding skipped, agent warned\n`,
         );
-      } else if (sanityResult.reasons.includes('oversize_warn')) {
-        // Warn tier: page lands normally; lint surface picks up too.
+      } else {
+        // markup_heavy: page ingests NORMALLY (keeps chunks, embeds). The
+        // content_flag marker rides along for the agent warning.
+        logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+          disposition: 'flag',
+        });
         process.stderr.write(
-          `[gbrain] content-sanity warn: ${slug} (${sanityResult.bytes} bytes) — exceeds warn threshold, consider splitting\n`,
+          `[gbrain] content-sanity flag (markup_heavy): ${slug} (ratio ${sanityResult.markup_ratio?.toFixed(2)}) — stays searchable, agent warned\n`,
         );
       }
+    } else if (sanityResult.reasons.includes('oversize_warn')) {
+      // Warn tier: page lands normally; lint surface picks up too.
+      logContentSanityAssessment(slug, sourceId ?? 'default', sanityResult, {
+        disposition: 'warn',
+      });
+      process.stderr.write(
+        `[gbrain] content-sanity warn: ${slug} (${sanityResult.bytes} bytes) — exceeds warn threshold, consider splitting\n`,
+      );
     }
   }
 
@@ -394,7 +516,23 @@ export async function importFromContent(
   // would update the frontmatter without changing the body, the hash
   // would not change, and tag reconciliation would silently no-op
   // (this function returns early on hash-match).
-  const HASH_EPHEMERAL_FRONTMATTER_KEYS = ['captured_at', 'ingested_at'];
+  //
+  // v0.42 (#1699): the content-sanity gate runs on EVERY import and stamps
+  // GATE-DERIVED markers (quarantine / content_flag / embed_skip) carrying a
+  // fresh `assessed_at` timestamp. Those markers are derived from the body,
+  // not source content, so they must be EXCLUDED from the hash — otherwise
+  // every re-sync of a flagged/quarantined page sees a changed hash and
+  // re-chunks + re-embeds forever (a markup-heavy page keeps chunks, so this
+  // is real, unbounded embedding spend). Same bug class as the captured_at /
+  // ingested_at fix above; the gate re-derives the markers deterministically
+  // on the next import, so dropping them from the hash is safe.
+  const HASH_EPHEMERAL_FRONTMATTER_KEYS = [
+    'captured_at',
+    'ingested_at',
+    QUARANTINE_KEY,
+    CONTENT_FLAG_KEY,
+    EMBED_SKIP_KEY,
+  ];
   const stableFrontmatter: Record<string, unknown> = { ...parsed.frontmatter };
   for (const k of HASH_EPHEMERAL_FRONTMATTER_KEYS) {
     delete stableFrontmatter[k];
@@ -425,6 +563,68 @@ export async function importFromContent(
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
 
+  // v0.41.13 (#1309) — identity-based cross-slug dedup pre-check.
+  //
+  // Catches the overlapping-ingest-roots bug class: when a user runs
+  // `gbrain import /vault/Subdir/` then later `gbrain import /vault/`,
+  // the same file is ingested under two different slugs (e.g.
+  // `vault/subdir/note` and `vault/note`). The slug-only check above
+  // misses it because the slugs differ; this check identifies the true
+  // duplicate by content_hash OR external frontmatter.id (granola UUID,
+  // ULID, etc.).
+  //
+  // Posture (codex review):
+  //   - SKIP only when frontmatter.id matches (true external duplicate).
+  //   - WARN-ALWAYS when content_hash matches but identity differs (two
+  //     intentional pages that happen to share text — templates, daily
+  //     logs). User decides whether to investigate.
+  //   - FAIL CLOSED on lookup error: a DB throw means we cannot verify
+  //     uniqueness, so throw rather than silently allow a duplicate.
+  //
+  // Soft-deleted rows are excluded at the engine layer (`deleted_at IS NULL`)
+  // so a tombstoned page doesn't block a legitimate re-import.
+  // Test doubles that don't implement `findDuplicatePage` fall through
+  // via the `?.` shape — no failure mode for fake engines.
+  const fmId = (parsed.frontmatter as Record<string, unknown> | undefined)?.id;
+  const fmIdStr = typeof fmId === 'string' && fmId.length > 0 ? fmId : null;
+  if (!opts.forceRechunk && engine.findDuplicatePage) {
+    let dup: { slug: string; id: number } | null = null;
+    try {
+      dup = await engine.findDuplicatePage(sourceId ?? 'default', {
+        hash,
+        frontmatterId: fmIdStr,
+      });
+    } catch (err) {
+      throw new Error(
+        `[import] dedup pre-check failed for ${opts.sourcePath ?? slug}: ` +
+        `${(err as Error).message}. Re-run import after DB recovery.`
+      );
+    }
+    if (dup && dup.slug !== slug) {
+      // Look up the duplicate page so we can compare frontmatter.id.
+      const dupPage = await engine.getPage(dup.slug, sourceId ? { sourceId } : undefined);
+      const dupFmId = (dupPage?.frontmatter as Record<string, unknown> | undefined)?.id;
+      const dupFmIdStr = typeof dupFmId === 'string' && dupFmId.length > 0 ? dupFmId : null;
+      const sameExternalId = fmIdStr !== null && dupFmIdStr === fmIdStr;
+      if (sameExternalId) {
+        // True duplicate (same external ID). Skip + log to stderr.
+        process.stderr.write(
+          `[import] skipping ${opts.sourcePath ?? slug}: identical to ${dup.slug} ` +
+          `(frontmatter.id=${fmIdStr}) in source ${sourceId ?? 'default'}. ` +
+          `Pass --force-rechunk to override.\n`
+        );
+        return { slug: dup.slug, status: 'skipped', chunks: 0, parsedPage };
+      }
+      // Same content_hash, different (or missing) frontmatter.id.
+      // Surface a warning but proceed with the insert — they may be
+      // legitimate independent pages that happen to share text.
+      process.stderr.write(
+        `[import] WARNING: ${opts.sourcePath ?? slug} shares content_hash with ${dup.slug} ` +
+        `(${hash.slice(0, 8)}) but has different frontmatter.id. Indexing both.\n`
+      );
+    }
+  }
+
   // Chunk compiled_truth and timeline.
   // v0.41 content-sanity soft-block: if the gate marked this page as
   // embed-skipped (oversize without junk-pattern), skip chunking
@@ -432,7 +632,12 @@ export async function importFromContent(
   // triggers tx.deleteChunks(slug) which purges any pre-existing
   // chunks (D9 transition invariant: embed_skip means no live chunks).
   const chunks: ChunkInput[] = [];
-  const embedSkipped = isEmbedSkipped(parsed.frontmatter);
+  // Skip chunking for embed-skip (oversize) OR quarantine (junk hidden).
+  // Both → zero chunks → the empty-chunks branch in the transaction fires
+  // tx.deleteChunks(slug) to purge any pre-existing chunks. (Flag/markup_heavy
+  // is NOT here — flagged pages chunk + embed normally, they just carry a
+  // warning marker.)
+  const embedSkipped = isEmbedSkipped(parsed.frontmatter) || isQuarantined(parsed.frontmatter);
   if (!embedSkipped) {
     if (parsed.compiled_truth.trim()) {
       for (const c of chunkText(parsed.compiled_truth)) {
@@ -584,18 +789,38 @@ export async function importFromContent(
       );
     }
 
-    // Tag reconciliation: remove stale, add current
-    const existingTags = await tx.getTags(slug, txOpts);
-    const newTags = new Set(parsed.tags);
-    for (const old of existingTags) {
-      if (!newTags.has(old)) await tx.removeTag(slug, old, txOpts);
-    }
+    // Tag reconciliation: ADD-ONLY (v0.41.37.0 #1621).
+    //
+    // We deliberately do NOT delete existing tags here. The `tags` table has
+    // no provenance column, and frontmatter tags are stripped from the stored
+    // `pages.frontmatter` (markdown.ts:118) — so at re-import time we cannot
+    // distinguish a frontmatter-origin tag from a DB-side enrichment tag
+    // (auto-tag / dream synthesize / signal-detector writes to the same
+    // table). The pre-v0.41.37.0 "delete every existing tag not in the current
+    // frontmatter" logic wiped ALL enrichment tags on every re-import — most
+    // visibly under `gbrain reindex --markdown` (#1621), which re-imports every
+    // page with forceRechunk. reindex is a re-chunk/re-embed op; it must not
+    // destroy tags.
+    //
+    // Trade-off (accepted): removing a tag from a page's frontmatter no longer
+    // removes it from the DB on the next sync. That staleness is minor (tags
+    // are additive metadata) and far preferable to silently losing enrichment
+    // tags. Frontmatter-tag REMOVAL would require a `tag_source` provenance
+    // column (deferred — see TODOS.md #1621-followup). addTag is idempotent
+    // (ON CONFLICT DO NOTHING), so re-adding existing tags is a no-op.
     for (const tag of parsed.tags) {
       await tx.addTag(slug, tag, txOpts);
     }
 
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
+      // v0.41.31: stamp embedding provenance when this import actually
+      // embedded (not --no-embed), so a later model/dims swap is detectable
+      // as stale via embed --stale. The deferred/backfill + per-slug embed
+      // paths stamp too; this covers the inline import/sync path.
+      if (!opts.noEmbed) {
+        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+      }
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
       await tx.deleteChunks(slug, txOpts);
@@ -639,7 +864,33 @@ export async function importFromContent(
     }
   });
 
-  return { slug, status: 'imported', chunks: chunks.length, parsedPage };
+  // T3 — project frontmatter `aliases:` into page_aliases (free-text alias
+  // resolution for search). Runs AFTER the page write commits so the slug
+  // exists. Fail-soft: a pre-v110 brain has no page_aliases table yet (the
+  // migration may not have run); an alias-write failure must NOT fail the
+  // import. Always called (even with []) so REMOVING an alias from frontmatter
+  // clears its row — the content_hash includes non-timestamp frontmatter, so
+  // an alias edit changes the hash and reaches this path (not the skip branch).
+  try {
+    const aliasNorms = normalizeAliasList((parsed.frontmatter as Record<string, unknown>).aliases);
+    await engine.setPageAliases(slug, sourceId ?? 'default', aliasNorms);
+  } catch (e) {
+    if (!isUndefinedTableError(e)) {
+      warnOncePerProcess(
+        'setPageAliases:failed',
+        `[import] page_aliases projection failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  return {
+    slug,
+    status: 'imported',
+    chunks: chunks.length,
+    parsedPage,
+    ...(pageQuarantined ? { quarantined: true } : {}),
+    ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}),
+  };
 }
 
 /**
@@ -808,6 +1059,22 @@ export async function importCodeFile(
     return { slug, status: 'skipped', chunks: 0, error: `Code file too large (${byteLength} bytes)` };
   }
 
+  // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER the
+  // code size guard, BEFORE hash compute, code-chunking, embedding, and DB
+  // write. Verdict ignored by design; no-op when no guardrail is registered.
+  await runGuardrails({
+    hook: 'file_storage.code',
+    content,
+    metadata: {
+      slug,
+      source_id: sourceId ?? 'default',
+      source_path: relativePath,
+      source_kind: 'code',
+      content_type: 'code',
+      language: lang,
+    },
+  });
+
   // Hash for idempotency. CHUNKER_VERSION is folded in so chunker shape
   // changes across releases force clean re-chunks without sync --force.
   const hash = createHash('sha256')
@@ -906,6 +1173,14 @@ export async function importCodeFile(
 
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
+      // v0.41.31: stamp embedding provenance ONLY when every chunk was
+      // freshly embedded with the current model this call (no reuse-by-hash
+      // carrying old-model vectors). Mixed pages stay unstamped rather than
+      // falsely marked current; `reindex --code --force` / `embed --stale`
+      // handle the swap for those.
+      if (!opts.noEmbed && needsEmbedIndexes.length === chunks.length) {
+        await tx.setPageEmbeddingSignature(slug, { sourceId, signature: currentEmbeddingSignature() });
+      }
     } else {
       await tx.deleteChunks(slug, txOpts);
     }

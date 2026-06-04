@@ -33,6 +33,10 @@ import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
 import { withBudgetTracker } from '../core/ai/gateway.ts';
+// v0.41.15.0 (T11, D9): per-batch parallel workers. BudgetExhausted
+// auto-aborts via the worker-pool's D13 bypass.
+import { runSlidingPool } from '../core/worker-pool.ts';
+import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 
 export interface ReindexCodeOpts {
   sourceId?: string;
@@ -52,6 +56,14 @@ export interface ReindexCodeOpts {
    * imported, the throw aborts the remaining batch).
    */
   maxCostUsd?: number;
+  /**
+   * v0.41.15.0 (T11, D9): per-batch parallel workers. Default 1.
+   * PGLite clamps to 1. Recommended 4-8 for large code corpora.
+   * BudgetExhausted from any worker aborts the pool via the worker-
+   * pool's D13 bypass — the budget cap stays load-bearing under
+   * concurrency.
+   */
+  workers?: number;
 }
 
 export interface ReindexCodeResult {
@@ -254,42 +266,58 @@ export async function runReindexCode(
         const batch = await fetchCodePages(engine, opts.sourceId, batchSize, offset);
         if (batch.length === 0) break;
 
-        for (const row of batch) {
-          const fm = row.frontmatter ?? {};
-          const relPath = typeof fm.file === 'string' ? fm.file : null;
-          if (!relPath) {
-            failed++;
-            failures.push({ slug: row.slug, error: 'missing frontmatter.file' });
-            reporter.tick();
-            continue;
-          }
-          if (!row.compiled_truth) {
-            failed++;
-            failures.push({ slug: row.slug, error: 'missing compiled_truth' });
-            reporter.tick();
-            continue;
-          }
-          try {
-            const result = await importCodeFile(engine, relPath, row.compiled_truth, {
-              noEmbed: opts.noEmbed,
-              force: opts.force,
-              sourceId: opts.sourceId,
-            });
-            if (result.status === 'imported') reindexed++;
-            else if (result.status === 'skipped') skipped++;
-            else {
+        // v0.41.15.0 (T11): per-batch sliding pool. BudgetExhausted
+        // from any worker propagates up via the helper's D13 bypass
+        // (not caught here) so the outer catch can record partial
+        // progress unchanged.
+        const writersResolved = resolveWorkersWithClamp(
+          engine,
+          opts.workers,
+          'reindex-code',
+          batch.length,
+        );
+        await runSlidingPool({
+          items: batch,
+          workers: writersResolved.workers,
+          failureLabel: (row) => row.slug,
+          onItem: async (row) => {
+            const fm = row.frontmatter ?? {};
+            const relPath = typeof fm.file === 'string' ? fm.file : null;
+            if (!relPath) {
               failed++;
-              failures.push({ slug: row.slug, error: result.error ?? result.status });
+              failures.push({ slug: row.slug, error: 'missing frontmatter.file' });
+              reporter.tick();
+              return;
             }
-          } catch (e: unknown) {
-            // Budget cap is the one error the per-page catch must NOT swallow.
-            // Caller's outer catch reports partial progress and exits.
-            if (e instanceof BudgetExhausted) throw e;
-            failed++;
-            failures.push({ slug: row.slug, error: e instanceof Error ? e.message : String(e) });
-          }
-          reporter.tick();
-        }
+            if (!row.compiled_truth) {
+              failed++;
+              failures.push({ slug: row.slug, error: 'missing compiled_truth' });
+              reporter.tick();
+              return;
+            }
+            try {
+              const result = await importCodeFile(engine, relPath, row.compiled_truth, {
+                noEmbed: opts.noEmbed,
+                force: opts.force,
+                sourceId: opts.sourceId,
+              });
+              if (result.status === 'imported') reindexed++;
+              else if (result.status === 'skipped') skipped++;
+              else {
+                failed++;
+                failures.push({ slug: row.slug, error: result.error ?? result.status });
+              }
+            } catch (e: unknown) {
+              // BudgetExhausted bypasses the helper's onError and hard-
+              // aborts the pool (D13). All other errors are captured
+              // per-page so the rest of the batch completes.
+              if (e instanceof BudgetExhausted) throw e;
+              failed++;
+              failures.push({ slug: row.slug, error: e instanceof Error ? e.message : String(e) });
+            }
+            reporter.tick();
+          },
+        });
 
         offset += batch.length;
         if (batch.length < batchSize) break;
@@ -349,6 +377,45 @@ export async function runReindexCode(
 }
 
 /**
+ * v0.42.11.0 (#1784) — what to print when the cost gate refuses to spend
+ * non-interactively without `--yes`. The REFUSAL (exit 2, no spend) is the
+ * guardrail and is correct; the FORMAT is a separate axis. Pre-#1784 this path
+ * always emitted a JSON envelope even without `--json`, violating the repo's
+ * "human by default" convention. Now: JSON only when `--json` is explicit;
+ * otherwise a human refusal on stderr. Pure + exported so it's unit-testable
+ * without a brain or a real cost preview.
+ */
+export interface CostRefusal {
+  stdout?: string;
+  stderr?: string;
+}
+export function buildCostRefusal(opts: {
+  json: boolean;
+  previewMsg: string;
+  preview: unknown;
+  costUsd: number;
+  model: string;
+}): CostRefusal {
+  if (opts.json) {
+    const envelope = serializeError(errorFor({
+      class: 'ConfirmationRequired',
+      code: 'cost_preview_requires_yes',
+      message: opts.previewMsg,
+      hint: 'Pass --yes to proceed, or --dry-run to see the preview and exit 0.',
+    }));
+    return {
+      stdout: JSON.stringify({ error: envelope, preview: opts.preview, costUsd: opts.costUsd, model: opts.model }),
+    };
+  }
+  return {
+    stderr:
+      `${opts.previewMsg}\n` +
+      'Refusing to re-embed non-interactively without confirmation. ' +
+      'Pass --yes to proceed, or --dry-run for the preview (exit 0).',
+  };
+}
+
+/**
  * CLI entrypoint. Parses argv, wires cost-preview gate + JSON/TTY branching,
  * delegates to runReindexCode. Exit codes: 0 on success/dry-run, 2 on
  * ConfirmationRequired (matches sync --all), 1 on runtime error.
@@ -361,6 +428,20 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
   const json = args.includes('--json');
   const force = args.includes('--force');
   const noEmbed = args.includes('--no-embed');
+
+  // v0.41.15.0 (T11, D9): --workers N for per-batch parallelism.
+  let workers: number | undefined;
+  const workersIdx = args.indexOf('--workers');
+  const concurrencyIdx = args.indexOf('--concurrency');
+  const workersValIdx = workersIdx >= 0 ? workersIdx + 1 : (concurrencyIdx >= 0 ? concurrencyIdx + 1 : -1);
+  if (workersValIdx > 0 && workersValIdx < args.length) {
+    try {
+      workers = parseWorkers(args[workersValIdx]);
+    } catch (e) {
+      console.error((e as Error).message);
+      process.exit(2);
+    }
+  }
 
   // F3: --max-cost / --max-cost-usd both accepted for symmetry with brainstorm.
   let maxCostUsd: number | undefined;
@@ -379,7 +460,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
   }
 
   if (dryRun) {
-    const result = await runReindexCode(engine, { sourceId, dryRun: true, yes, json, force, noEmbed, maxCostUsd });
+    const result = await runReindexCode(engine, { sourceId, dryRun: true, yes, json, force, noEmbed, maxCostUsd, workers });
     if (json) {
       console.log(JSON.stringify(result));
     } else {
@@ -414,13 +495,11 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
     if (!yes) {
       const isTTY = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
       if (!isTTY || json) {
-        const envelope = serializeError(errorFor({
-          class: 'ConfirmationRequired',
-          code: 'cost_preview_requires_yes',
-          message: previewMsg,
-          hint: 'Pass --yes to proceed, or --dry-run to see the preview and exit 0.',
-        }));
-        console.log(JSON.stringify({ error: envelope, preview, costUsd, model: getEmbeddingModelName() }));
+        // Guardrail unchanged: refuse + exit 2, no spend. Only the FORMAT splits
+        // on --json now (human refusal on stderr otherwise) — #1784.
+        const refusal = buildCostRefusal({ json, previewMsg, preview, costUsd, model: getEmbeddingModelName() });
+        if (refusal.stdout) console.log(refusal.stdout);
+        if (refusal.stderr) console.error(refusal.stderr);
         process.exit(2);
       }
       console.log(previewMsg);
@@ -432,7 +511,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
     }
   }
 
-  const result = await runReindexCode(engine, { sourceId, yes, json, force, noEmbed, maxCostUsd });
+  const result = await runReindexCode(engine, { sourceId, yes, json, force, noEmbed, maxCostUsd, workers });
   if (json) {
     console.log(JSON.stringify(result));
   } else {

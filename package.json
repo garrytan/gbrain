@@ -1,6 +1,5 @@
 {
   "name": "gbrain",
-  "version": "0.41.0.0",
   "description": "Postgres-native personal knowledge brain with hybrid RAG search",
   "type": "module",
   "main": "src/core/index.ts",
@@ -39,15 +38,20 @@
     "build:llms": "bun run scripts/build-llms.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
     "test": "bash scripts/run-unit-parallel.sh",
+    "eval:autocut": "bun test test/search/autocut-eval.test.ts",
     "test:full": "bun run verify && bash scripts/run-unit-parallel.sh && bun run test:slow && ([ -n \"$DATABASE_URL\" ] && bash scripts/run-e2e.sh || echo '[test:full] skipped E2E (no DATABASE_URL); run docker-compose -f docker-compose.ci.yml up + bun run test:e2e to include' 1>&2)",
-    "verify": "bun run check:privacy && bun run check:proposal-pii && bun run check:test-names && bun run check:jsonb && bun run check:source-id-projection && bun run check:source-config-leak && bun run check:progress && bun run check:test-isolation && bun run check:wasm && bun run check:admin-build && bun run check:admin-scope-drift && bun run check:cli-exec && bun run check:system-of-record && bun run check:eval-glossary && bun run check:no-pii-agent-voice && bun run check:synthetic-corpus-privacy && bun run check:skill-brain-first && bun run check:fuzz-purity && bun run check:operations-filter-bypass && bun run typecheck",
+    "verify": "bash scripts/run-verify-parallel.sh",
     "check:source-config-leak": "scripts/check-source-config-leak.sh",
     "check:no-pii-agent-voice": "scripts/check-no-pii-in-agent-voice.sh",
     "check:synthetic-corpus-privacy": "scripts/check-synthetic-corpus-privacy.sh",
     "check:system-of-record": "scripts/check-system-of-record.sh",
     "check:admin-scope-drift": "scripts/check-admin-scope-drift.sh",
     "check:cli-exec": "scripts/check-cli-executable.sh",
-    "check:all": "scripts/check-privacy.sh && scripts/check-proposal-pii.sh && scripts/check-test-real-names.sh && scripts/check-jsonb-pattern.sh && scripts/check-source-id-projection.sh && scripts/check-source-config-leak.sh && scripts/check-progress-to-stdout.sh && scripts/check-no-legacy-getconnection.sh && scripts/check-test-isolation.sh && scripts/check-trailing-newline.sh && scripts/check-wasm-embedded.sh && scripts/check-exports-count.sh && scripts/check-admin-build.sh && scripts/check-admin-scope-drift.sh && scripts/check-cli-executable.sh && scripts/check-skill-brain-first.sh && scripts/check-operations-filter-bypass.sh",
+    "check:all": "scripts/check-privacy.sh && scripts/check-proposal-pii.sh && scripts/check-test-real-names.sh && scripts/check-jsonb-pattern.sh && scripts/check-source-id-projection.sh && scripts/check-source-config-leak.sh && scripts/check-progress-to-stdout.sh && scripts/check-no-legacy-getconnection.sh && scripts/check-test-isolation.sh && scripts/check-trailing-newline.sh && scripts/check-wasm-embedded.sh && scripts/check-exports-count.sh && scripts/check-admin-build.sh && scripts/check-admin-scope-drift.sh && scripts/check-cli-executable.sh && scripts/check-skill-brain-first.sh && scripts/check-operations-filter-bypass.sh && scripts/check-gateway-routed-no-direct-anthropic.sh && scripts/check-worker-pool-atomicity.sh && scripts/check-key-files-current-state.sh && scripts/check-no-double-retry.sh && scripts/check-batch-audit-site.sh",
+    "check:gateway-routed": "scripts/check-gateway-routed-no-direct-anthropic.sh",
+    "check:worker-pool-atomicity": "scripts/check-worker-pool-atomicity.sh",
+    "check:doc-history": "scripts/check-key-files-current-state.sh",
+    "check:resolver": "bun src/cli.ts check-resolvable --strict --skills-dir skills/",
     "check:skill-brain-first": "scripts/check-skill-brain-first.sh",
     "check:wasm": "scripts/check-wasm-embedded.sh",
     "check:newlines": "scripts/check-trailing-newline.sh",
@@ -61,6 +65,9 @@
     "ci:select-e2e": "bun run scripts/select-e2e.ts",
     "typecheck": "tsc --noEmit",
     "check:jsonb": "scripts/check-jsonb-pattern.sh",
+    "check:no-double-retry": "scripts/check-no-double-retry.sh",
+    "check:batch-audit-site": "scripts/check-batch-audit-site.sh",
+    "check:worker-lock-renewal-shape": "scripts/check-worker-lock-renewal-shape.sh",
     "check:source-id-projection": "scripts/check-source-id-projection.sh",
     "check:privacy": "scripts/check-privacy.sh",
     "check:proposal-pii": "scripts/check-proposal-pii.sh",
@@ -73,6 +80,9 @@
     "check:test-isolation": "scripts/check-test-isolation.sh",
     "check:fuzz-purity": "scripts/check-fuzz-purity.sh",
     "check:operations-filter-bypass": "scripts/check-operations-filter-bypass.sh",
+    "check:fixture-privacy": "scripts/check-fixture-privacy.sh",
+    "check:conversation-parser": "bun src/cli.ts eval conversation-parser test/fixtures/conversation-formats/all.jsonl --no-llm",
+    "check:source-scope-onboard": "scripts/check-source-scope-onboard.sh",
     "postinstall": "command -v gbrain >/dev/null 2>&1 && gbrain apply-migrations --yes --non-interactive || echo '[gbrain] postinstall skipped. If installed via bun install -g github:...: run `gbrain doctor` and `gbrain apply-migrations --yes` manually. See https://github.com/garrytan/gbrain/issues/218' 1>&2",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin"
@@ -132,5 +142,6 @@
   "engines": {
     "bun": ">=1.3.10"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "version": "0.42.25.0"
 }

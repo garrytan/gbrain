@@ -44,7 +44,20 @@ export const ALL_PAGE_TYPES: readonly string[] = [
   'person', 'company', 'deal', 'yc', 'civic', 'project', 'concept',
   'source', 'media', 'writing', 'analysis', 'guide', 'hardware',
   'architecture', 'meeting', 'note', 'email', 'slack', 'calendar-event',
+  // v0.41.11+ — `conversation` (imported chat/transcript pages, lives
+  // under conversations/) and `atom` (smallest extractable claim unit,
+  // lives under atoms/). Both promoted into the gbrain-base seed list
+  // so they share the universal validation surface with the rest of
+  // the base types; their pack entries are declared in
+  // src/core/schema-pack/base/gbrain-base.yaml.
+  'conversation', 'atom',
   'code', 'image', 'synthesis',
+  // v0.42 — `extract_receipt` pages record extraction-run outcomes as
+  // first-class brain memory. Slug-prefix `extracts/`. Demoted in search
+  // via DEFAULT_SOURCE_BOOSTS (factor 0.3) and excluded from extraction
+  // loops via the dream_generated:true + type:extract_receipt belt-and-
+  // suspenders pattern per plan D-EXTRACT-19.
+  'extract_receipt',
 ] as const;
 
 /**
@@ -419,6 +432,70 @@ export interface SalienceResult {
 }
 
 /**
+ * v0.41.39 (issue #1700) — `gbrain enrich --thin` candidate selection.
+ *
+ * One source-aware SQL query enumerates thin (stub) pages of the given
+ * types, computes a source-correct inbound-link count per page, applies an
+ * optional re-enrich recency guard, orders by the chosen signal, and slices
+ * to `limit`. Returns a LIGHTWEIGHT projection (no page bodies) so a 100K-
+ * page brain doesn't pull every stub body into memory just to rank them.
+ *
+ * Why a dedicated engine method instead of composing `listPages` +
+ * `getBacklinkCounts` in memory:
+ *   - `getBacklinkCounts` groups by bare `slug`, so the same slug in two
+ *     sources collapses/contaminates the count. This query counts inbound
+ *     links per page row (`to_page_id = p.id`), which is source-correct by
+ *     construction.
+ *   - `listPages` returns full `Page` rows (bodies). 500 stub bodies per
+ *     type per source is not a memory guarantee. This projection carries
+ *     only `body_len`, never the body.
+ */
+export interface EnrichCandidatesOpts {
+  /** Page types to consider (e.g. ['person', 'company']). Empty → no rows. */
+  types: PageType[];
+  /** Body-length (chars) below which a page is "thin". */
+  thinThreshold: number;
+  /** Ordering signal. Whitelisted via ENRICH_ORDER_SQL. */
+  order: 'inbound-links' | 'updated' | 'salience';
+  /** Max rows to return. */
+  limit: number;
+  /**
+   * Skip pages whose frontmatter `enriched_at` is newer than
+   * `now - reenrichAfterMs`. Omitted/0 → no recency guard (every thin page
+   * is eligible). Pages never enriched (no `enriched_at`) are always eligible.
+   */
+  reenrichAfterMs?: number;
+  /** Single-source scope (canonical scalar form). */
+  sourceId?: string;
+  /** Federated read scope (array form, wins over scalar). */
+  sourceIds?: string[];
+}
+
+/** v0.41.39 — one row per enrich candidate. Lightweight: NO page body. */
+export interface EnrichCandidate {
+  slug: string;
+  source_id: string;
+  title: string;
+  type: PageType;
+  /** char_length(compiled_truth) + char_length(timeline). */
+  body_len: number;
+  /** Source-correct inbound-link count (excludes `link_source='mentions'`). */
+  inbound_count: number;
+}
+
+/**
+ * v0.41.39 — whitelisted ORDER BY fragments for EnrichCandidatesOpts.order.
+ * No SQL-injection risk: callers pass the enum, engines map to these literal
+ * fragments. Every fragment ends with the (source_id, slug) tiebreaker so
+ * tied scores produce a deterministic order across engines and runs.
+ */
+export const ENRICH_ORDER_SQL: Record<EnrichCandidatesOpts['order'], string> = {
+  'inbound-links': 'inbound_count DESC, p.source_id ASC, p.slug ASC',
+  'updated':       'p.updated_at DESC, p.source_id ASC, p.slug ASC',
+  'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id ASC, p.slug ASC',
+};
+
+/**
  * v0.29 — Anomaly detection: cohorts (tag, type) with unusually-high activity in a window.
  * Cohort baseline is computed over `lookback_days` excluding `since`; current count is
  * the number of distinct pages touched on `since`. A cohort is anomalous when its
@@ -513,6 +590,35 @@ export interface StaleChunkRow {
   page_id: number;
 }
 
+/**
+ * v0.42.7 (#1696) — a page that needs link/timeline extraction, returned by
+ * `listStalePagesForExtraction`. Carries the page CONTENT (compiled_truth +
+ * timeline + frontmatter) so `gbrain extract --stale` extracts in ~1 query per
+ * batch instead of an N+1 `getPage` per page (mirrors how StaleChunkRow carries
+ * chunk_text). `id` is the keyset cursor; `updated_at` lets callers reason about
+ * the edited-since-extract staleness arm.
+ */
+export interface StalePageRow {
+  id: number;
+  slug: string;
+  source_id: string;
+  type: string;
+  title: string;
+  compiled_truth: string;
+  timeline: string;
+  frontmatter: Record<string, unknown>;
+  updated_at: Date;
+  /**
+   * Full-precision (microsecond) UTC ISO string of `updated_at`, projected
+   * straight from the DB via `to_char(... AT TIME ZONE 'UTC', '...US"Z"')`.
+   * `updated_at` (a JS `Date`) is millisecond-truncated, so stamping it back as
+   * `links_extracted_at` left the row permanently stale on Postgres (#1768).
+   * `extractStaleFromDB` stamps THIS instead, so `links_extracted_at` equals the
+   * DB `updated_at` exactly and the staleness predicate clears.
+   */
+  updated_at_iso: string;
+}
+
 export interface ChunkInput {
   chunk_index: number;
   chunk_text: string;
@@ -564,6 +670,16 @@ export interface SearchResult {
   chunk_index: number;
   score: number;
   stale: boolean;
+  /**
+   * v0.42 (issue #1699) content-quality gate agent-warning channel. Set
+   * when the result's page carries a `frontmatter.content_flag` marker
+   * (fuzzy markup-heavy or oversize). The page is still searchable — this
+   * is the "this looks odd, examine if you expected real content" signal
+   * the agent reads to decide whether to trust the page. Stamped post-
+   * fusion by `stampContentFlags` (the v0.41.34 stampEvidence precedent).
+   * Absent when the page is clean.
+   */
+  content_flag?: { reason: string; detail: string };
   /**
    * v0.36 (cross-modal wave): the chunk's modality discriminator from
    * content_chunks.modality. 'text' for the existing text-embedding rows,
@@ -632,6 +748,51 @@ export interface SearchResult {
    *  Undefined when no reranker fired. The raw reranker relevance score
    *  is separately stamped as `rerank_score` for back-compat. */
   reranker_delta?: number;
+  /** Raw cross-encoder relevance score stamped by applyReranker on the
+   *  reranked head (undefined when no reranker fired). Distinct from `score`
+   *  (RRF + boosts). v0.42.3.0 autocut cuts on this — the trustworthy
+   *  separatrix — never on RRF/cosine. */
+  rerank_score?: number;
+  /**
+   * v0.42 (T19, plan D6) — multiplier applied by applyAliasResolvedBoost
+   * (1.0 = unchanged; default 1.05x). Fires when the result's slug is
+   * a canonical_slug in slug_aliases — the page is the authoritative
+   * version of 1+ aliases. Signals "user explicitly disambiguated this
+   * as canonical" and lets canonicals outrank fuzzy matches.
+   */
+  alias_resolved_boost?: number;
+  /**
+   * T2 (retrieval-maxpool incident) — multiplier applied by applyTitleBoost
+   * (1.0 = unchanged; default ~1.25x). Fires when the normalized query is a
+   * contiguous token-run inside the page title (or an exact full-title match).
+   * Floor-ratio-gated + clamped so a title hit reorders without burying a
+   * strong semantic match or lying about base_score (the agent's dedup gate
+   * keys off base_score / evidence, not the boosted score).
+   */
+  title_match_boost?: number;
+  /**
+   * T3 (retrieval-maxpool incident) — set when this result was surfaced or
+   * boosted by the free-text alias hop (the query exactly matched a page's
+   * declared alias in page_aliases). An injected canonical that wasn't in the
+   * organic candidate set carries alias_hit=true with score = top-of-organic
+   * + epsilon. Drives the evidence=alias_hit signal the agent's don't-duplicate
+   * decision keys off (T4).
+   */
+  alias_hit?: boolean;
+  /**
+   * T4 — the strongest signal that surfaced this page (alias_hit >
+   * exact_title_match > high_vector_match > keyword_exact > weak_semantic).
+   * Computed by classifyEvidence at the end of the hybrid pipeline.
+   */
+  evidence?: import('./search/evidence.ts').Evidence;
+  /**
+   * T4 — derived "is this page already in the brain?" hint. The agent's
+   * don't-write-a-duplicate decision keys off THIS, not a raw score:
+   * 'exists' = strong (don't duplicate), 'probable' = prefer update,
+   * 'unknown' = look closer. This is the contract that prevents the
+   * incident's duplicate-stub class.
+   */
+  create_safety?: import('./search/evidence.ts').CreateSafety;
 }
 
 /**
@@ -702,6 +863,22 @@ export interface ResolvedColumn {
 export interface SearchOpts {
   limit?: number;
   offset?: number;
+  /**
+   * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
+   * default caps; an object overrides caps per-call; omitted/`false` = off
+   * (default, no behavior change). Trims the ranked set to an intent-driven
+   * cap (entity → tight, else → recall-preserving). Only fires when offset===0.
+   * See src/core/search/return-policy.ts.
+   */
+  adaptiveReturn?: import('./search/return-policy.ts').AdaptiveReturnInput;
+  /**
+   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default-ON in
+   * reranked modes (the floor). Pass `false` to force the full top-K for breadth
+   * / exploration (the ceiling override). Cuts the ranked set at the largest
+   * cross-encoder rerank-score cliff; no-op without a reranker. Only fires when
+   * offset===0. See src/core/search/autocut.ts.
+   */
+  autocut?: import('./search/autocut.ts').AutocutInput;
   type?: PageType;
   /**
    * v0.33: multi-type filter. When set, search results are filtered to
@@ -714,9 +891,11 @@ export interface SearchOpts {
   types?: PageType[];
   exclude_slugs?: string[];
   /**
-   * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/, archive/,
+   * Slug-prefix excludes — additive over DEFAULT_HARD_EXCLUDES (test/,
    * attachments/, .raw/) and the GBRAIN_SEARCH_EXCLUDE env var. Stacks with
    * `exclude_slugs` (exact match) — a row is filtered if it matches either set.
+   * NOTE (issue #1777): `archive/` is NOT hard-excluded; it is demoted (0.5x)
+   * via DEFAULT_SOURCE_BOOSTS so archived content stays findable by default.
    */
   exclude_slug_prefixes?: string[];
   /**
@@ -1232,6 +1411,17 @@ export interface HybridSearchMeta {
    * weighting decision auditable.
    */
   intent?: 'entity' | 'temporal' | 'event' | 'general';
+  /**
+   * v0.42 — adaptive return-sizing decision (intent, cap, kept, total).
+   * Omitted when the gate is off. Surfaced for `gbrain search --explain`.
+   */
+  adaptive_return?: import('./search/return-policy.ts').AdaptiveReturnDecision;
+  /**
+   * v0.42.3.0 — autocut decision (signal, cut point, kept/total, gapRatio).
+   * Omitted when autocut didn't run (no reranker). Surfaced for
+   * `gbrain search --explain`.
+   */
+  autocut?: import('./search/autocut.ts').AutocutDecision;
   /**
    * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
    * no budget was applied (backward-compatible with pre-search-lite

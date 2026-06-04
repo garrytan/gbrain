@@ -46,6 +46,8 @@ mock.module('../../src/core/embedding.ts', () => ({
   EMBEDDING_DIMENSIONS: 1536,
   EMBEDDING_COST_PER_1K_TOKENS: 0.00013,
   estimateEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
+  // v0.41.31: embed phase reads the current signature to stamp provenance.
+  currentEmbeddingSignature: () => 'text-embedding-3-large:1536',
 }));
 
 const { runCycle, ALL_PHASES } = await import('../../src/core/cycle.ts');
@@ -106,6 +108,9 @@ async function withoutAnthropicKey<T>(body: () => Promise<T>): Promise<T> {
 //   v0.31   — added `consolidate` between recompute_emotional_weight and embed
 //   v0.33   — added `resolve_symbol_edges` between extract and patterns
 type CyclePhase = (typeof ALL_PHASES)[number];
+// Mirrors src/core/cycle.ts ALL_PHASES order exactly. v0.41.31: synced the
+// three phases that drifted in after this test was last touched (v0.41.0.0):
+// extract_atoms (v0.41 T9), synthesize_concepts, conversation_facts_backfill.
 const EXPECTED_PHASES: CyclePhase[] = [
   'lint',
   'backlinks',
@@ -113,13 +118,18 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'synthesize',
   'extract',
   'extract_facts',               // v0.32.2 — reconcile fence → DB facts index
+  'extract_atoms',               // v0.41 T9 — atom extraction (pack-gated)
   'resolve_symbol_edges',       // v0.33.3 — within-file symbol resolution
   'patterns',
+  'synthesize_concepts',         // v0.41 T9 — concept synthesis (pack-gated)
   'recompute_emotional_weight', // v0.29
   'consolidate',                // v0.31
   'propose_takes',              // v0.36.1.0 — hindsight calibration wave
   'grade_takes',                // v0.36.1.0
   'calibration_profile',        // v0.36.1.0
+  'conversation_facts_backfill', // v0.41.11.0 — opt-in conversation backfill
+  'enrich_thin',                 // v0.41.39 (#1700) — brain-internal stub enrichment (default OFF)
+  'skillopt',                    // v0.42.0.0 — self-evolving skills (default OFF)
   'embed',
   'orphans',
   'schema-suggest',              // v0.39.0.0 — passive schema-suggest after orphans

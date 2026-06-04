@@ -25,7 +25,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
-import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
+import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
@@ -187,6 +187,74 @@ export async function probeLiveness(
   }
 }
 
+/**
+ * Resolve `GBRAIN_HTTP_TRUST_PROXY` into a value Express's `app.set('trust
+ * proxy', ...)` accepts. Pure function so the test surface is one place,
+ * not the whole Express stack.
+ *
+ * Mapping:
+ *   - unset / empty → 'loopback' (pre-v0.41.3 default; trusts only
+ *     127.0.0.1, ::1, ::ffff:127.0.0.1, fc00::/7)
+ *   - '0' / 'false' → false (trust nothing; req.ip is socket peer regardless
+ *     of X-Forwarded-For)
+ *   - '1' / 'true' → 1 (trust exactly one hop; safe for Fly.io / Render /
+ *     single-layer reverse proxy; matches the legacy transport's '==1' check)
+ *   - other numeric → parseInt (trust N hops)
+ *   - any other string → pass through verbatim (Express accepts named modes
+ *     like 'uniquelocal', 'linklocal', and CIDR/IP lists)
+ *
+ * SECURITY: only set GBRAIN_HTTP_TRUST_PROXY when BOTH (a) gbrain is
+ * reachable only via a trusted reverse proxy, AND (b) the proxy strips
+ * client-supplied X-Forwarded-For headers before re-emitting its own.
+ * Otherwise clients can spoof their IP and defeat the pre-auth IP rate
+ * limit. See SECURITY.md "Reverse-proxy trust" for the full contract.
+ */
+export function resolveTrustProxy(env: string | undefined): string | number | boolean {
+  if (env === undefined || env === '') return 'loopback';
+  if (env === '0' || env === 'false') return false;
+  if (env === '1' || env === 'true') return 1;
+  if (/^\d+$/.test(env)) return parseInt(env, 10);
+  return env;
+}
+
+/**
+ * Parse `GBRAIN_HTTP_CORS_ORIGIN` into a Set of allowed origins for OAuth
+ * endpoints. Mirrors `src/mcp/http-transport.ts:parseCorsAllowlist`. Single
+ * env var so operators don't need to maintain two allowlists.
+ *
+ * Returns null when unset, empty, or whitespace-only — caller MUST treat
+ * null as "deny all cross-origin" (the same posture the legacy transport
+ * already takes).
+ */
+export function parseCorsAllowlistOAuth(): Set<string> | null {
+  const v = process.env.GBRAIN_HTTP_CORS_ORIGIN;
+  if (!v) return null;
+  const origins = v.split(',').map(s => s.trim()).filter(Boolean);
+  return origins.length === 0 ? null : new Set(origins);
+}
+
+/**
+ * Build a `cors.CorsOptions['origin']` value from the allowlist. The cors
+ * package accepts:
+ *   - `false` → reject everything (no Allow-Origin header sent)
+ *   - `(origin, cb) => cb(null, boolean)` → dynamic per-request check
+ * We use the function form when an allowlist is set so the value of the
+ * Allow-Origin header echoes the request Origin (RFC 6454) instead of a
+ * hardcoded string, and so the same options object covers all listed
+ * origins without enumeration in the response.
+ *
+ * Same-origin requests (no Origin header) get `cb(null, true)` which the
+ * cors package translates to "no CORS headers needed" — they're not
+ * cross-origin so they don't trigger the gate.
+ */
+export function resolveCorsOrigin(allowlist: Set<string> | null): cors.CorsOptions['origin'] {
+  if (allowlist === null) return false;
+  return (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin) return cb(null, true);
+    cb(null, allowlist.has(origin));
+  };
+}
+
 interface ServeHttpOptions {
   port: number;
   tokenTtl: number;
@@ -306,6 +374,27 @@ export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentC
   }));
 }
 
+/**
+ * Skill-publishing status for the startup banner + operator nudge. When OFF,
+ * connected agents (Codex / Claude Code / Perplexity / Cowork) cannot call
+ * `list_skills` / `get_skill`, so the host's skill catalog is INVISIBLE to them
+ * — the core tools (search / query / get_page / put_page / capture / think /
+ * find_experts) still work. Pure so the banner value + nudge copy are
+ * unit-tested without standing up a server. See `readMcpPublishSkills`
+ * (skill-catalog.ts) for the config resolution this status reflects.
+ */
+export function skillPublishStatus(publishSkills: boolean): { bannerValue: string; nudge: string | null } {
+  if (publishSkills) return { bannerValue: 'published', nudge: null };
+  return {
+    bannerValue: 'not published',
+    nudge:
+      "[serve-http] NOTE: skill publishing is OFF — connected agents can't call " +
+      'list_skills / get_skill, so this brain’s skill catalog is invisible to them ' +
+      '(core tools like search / query / think still work). Enable it with: ' +
+      'gbrain config set mcp.publish_skills true',
+  };
+}
+
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
   const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
   // v0.34.1 (#864, D11): default bind flipped from 0.0.0.0 to 127.0.0.1.
@@ -329,6 +418,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       '[serve-http] WARNING: --public-url is set but --bind is not. Default bind changed to 127.0.0.1 in v0.34.1; remote clients reaching the public URL will be refused. Pass --bind 0.0.0.0 to accept all interfaces.',
     );
   }
+
+  // Skill-publishing status for the banner + nudge. Mirrors readMcpPublishSkills
+  // (skill-catalog.ts): the DB plane (`gbrain config set`) wins over the file
+  // plane. When OFF, a connected coding agent can't see the host's skill
+  // catalog — surface that to the operator at startup rather than letting them
+  // discover it via an empty list_skills on the agent side.
+  let publishSkills = false;
+  try {
+    const dbVal = await engine.getConfig('mcp.publish_skills');
+    publishSkills = dbVal != null ? dbVal === 'true' : config?.mcp?.publish_skills === true;
+  } catch {
+    publishSkills = config?.mcp?.publish_skills === true;
+  }
+  const skillStatus = skillPublishStatus(publishSkills);
+  if (skillStatus.nudge) console.error(skillStatus.nudge);
 
   // Engine-aware SQL adapter. Routes through engine.executeRaw on both
   // Postgres and PGLite — the OAuth/admin/auth surface no longer requires
@@ -387,7 +491,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Express 5 app
   const app = express();
-  app.set('trust proxy', 'loopback'); // Caddy/Tailscale reverse proxy on localhost
+  // v0.41.3 (T8): configurable trust-proxy via GBRAIN_HTTP_TRUST_PROXY env.
+  // Default 'loopback' (trust Caddy/Tailscale on the same host) preserves
+  // pre-v0.41.3 behavior. Operators behind Fly.io / Render / Vercel / nginx
+  // set GBRAIN_HTTP_TRUST_PROXY=1 (one hop) so X-Forwarded-For lands as the
+  // real client IP for rate-limiting and req.secure detection. The legacy
+  // transport already reads this env var (src/mcp/http-transport.ts:111)
+  // for the same purpose; T8 makes the Express path agree.
+  app.set('trust proxy', resolveTrustProxy(process.env.GBRAIN_HTTP_TRUST_PROXY));
 
   // ---------------------------------------------------------------------------
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
@@ -395,13 +506,37 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.use(cookieParser());
 
   // ---------------------------------------------------------------------------
-  // CORS
+  // CORS (v0.41.3, T7 — default-deny on every OAuth endpoint)
   // ---------------------------------------------------------------------------
-  app.use('/mcp', cors());
-  app.use('/token', cors());
-  app.use('/authorize', cors());
-  app.use('/register', cors());
-  app.use('/revoke', cors());
+  // Pre-v0.41.3 every OAuth endpoint used bare `cors()` which defaults to
+  // `Access-Control-Allow-Origin: *` — any web origin could complete a token
+  // exchange from a logged-in operator's browser. The fix parses
+  // GBRAIN_HTTP_CORS_ORIGIN the same way the legacy transport already does
+  // (src/mcp/http-transport.ts:parseCorsAllowlist) and gates every OAuth
+  // surface behind the allowlist. When the env var is unset the OAuth
+  // endpoints reject all cross-origin requests (default deny). Same-origin
+  // requests are unaffected because browsers send no Origin header for them.
+  //
+  // The /admin SPA is the one cross-origin caller we expect on a personal
+  // laptop install; it ships co-located with the brain and uses
+  // same-origin XHR, so the lockdown doesn't break it.
+  const corsAllowlistOAuth = parseCorsAllowlistOAuth();
+  if (!corsAllowlistOAuth && bind === '0.0.0.0') {
+    console.error(
+      '[serve-http] WARNING: --bind 0.0.0.0 is set but GBRAIN_HTTP_CORS_ORIGIN is unset. OAuth endpoints will reject ALL cross-origin requests until you set the env var (comma-separated origins).',
+    );
+  }
+  const corsOAuthOptions: cors.CorsOptions = {
+    origin: resolveCorsOrigin(corsAllowlistOAuth),
+    credentials: false,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  };
+  app.use('/mcp', cors(corsOAuthOptions));
+  app.use('/token', cors(corsOAuthOptions));
+  app.use('/authorize', cors(corsOAuthOptions));
+  app.use('/register', cors(corsOAuthOptions));
+  app.use('/revoke', cors(corsOAuthOptions));
 
   // ---------------------------------------------------------------------------
   // Custom client_credentials handler (before mcpAuthRouter)
@@ -1121,18 +1256,26 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }
       const grants = Array.isArray(grantTypes) && grantTypes.length > 0 ? grantTypes : ['client_credentials'];
       const uris = Array.isArray(redirectUris) ? redirectUris : [];
-      const result = await oauthProvider.registerClientManual(
-        name, grants, scopeString, uris,
-      );
-      // Public client (PKCE-only, no secret): NULL out client_secret_hash and
-      // set auth method so the SDK's clientAuth middleware skips the hash-vs-
-      // plaintext comparison that would otherwise reject the request. This is
-      // the supported pattern for browser-based OAuth (e.g. claude.ai's
-      // Custom Connector flow, which uses authorization_code + PKCE).
-      if (tokenEndpointAuthMethod === 'none') {
-        await sql`UPDATE oauth_clients SET client_secret_hash = NULL, token_endpoint_auth_method = 'none' WHERE client_id = ${result.clientId}`;
-        delete (result as any).clientSecret;
+      // v0.41.3 (T1+T4): validate token_endpoint_auth_method via shared
+      // ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS before reaching the provider.
+      // Pre-v0.41.3 this endpoint did INSERT (confidential) → UPDATE (NULL
+      // out secret_hash) for the 'none' case, which left a confidential
+      // row stranded if the UPDATE failed (codex F4). Atomic now: pass the
+      // method to registerClientManual and let it INSERT the correct row
+      // in a single statement.
+      let validatedAuthMethod: string | undefined;
+      try {
+        validatedAuthMethod = validateTokenEndpointAuthMethod(tokenEndpointAuthMethod);
+      } catch (e) {
+        res.status(400).json({
+          error: 'invalid_token_endpoint_auth_method',
+          message: e instanceof Error ? e.message : String(e),
+        });
+        return;
       }
+      const result = await oauthProvider.registerClientManual(
+        name, grants, scopeString, uris, 'default', undefined, validatedAuthMethod,
+      );
       // Set per-client TTL if specified
       if (tokenTtl && Number(tokenTtl) > 0) {
         await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
@@ -1961,6 +2104,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 ║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
 ║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║
 ║  DCR:       ${(enableDcr ? 'enabled' : 'disabled').padEnd(40)}║
+║  Skills:    ${skillStatus.bannerValue.padEnd(40)}║
 ║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║
 ╠══════════════════════════════════════════════════════╣
 ║  Admin:     http://localhost:${port}/admin${' '.repeat(Math.max(0, 19 - String(port).length))}║

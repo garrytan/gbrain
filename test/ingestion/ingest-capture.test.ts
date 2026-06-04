@@ -19,15 +19,19 @@ import type { MinionJobContext } from '../../src/core/minions/types.ts';
 
 let engine: PGLiteEngine;
 
+// 30s hook timeout — when this file runs deep in a shard process that's
+// already created ~20 PGLite engines, the WASM cold-start + 95 migrations
+// on a fresh DB legitimately exceeds bun's 5s hook default. CI shard 4
+// hit this on v0.41.17.0 (95 migrations × 21 files × 1 bun process).
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-});
+}, 30_000);
 
 afterAll(async () => {
   await engine.disconnect();
-});
+}, 30_000);
 
 beforeEach(async () => {
   await resetPgliteState(engine);

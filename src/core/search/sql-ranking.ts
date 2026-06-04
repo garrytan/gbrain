@@ -17,8 +17,17 @@
  * inline as bare literals.
  */
 
-/** Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal. */
-function escapeLikePattern(s: string): string {
+import { quarantineFilterFragment } from '../quarantine.ts';
+
+/**
+ * Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal.
+ *
+ * Exported (issue #1777) so callers that build parameterized LIKE clauses with
+ * `ESCAPE '\'` (e.g. the `hidden_by_search_policy` doctor check) reuse this one
+ * escaper instead of re-implementing it. Pair with `ESCAPE '\'` in the SQL so
+ * the backslash this inserts is treated as the escape char, not a literal.
+ */
+export function escapeLikePattern(s: string): string {
   return s.replace(/[%_\\]/g, '\\$&');
 }
 
@@ -123,10 +132,78 @@ export function buildHardExcludeClause(slugColumn: string, prefixes: string[]): 
  * @param sourceAlias — source table alias (e.g. `'s'`); the caller is
  *                      responsible for joining `sources` so this alias resolves.
  *
- * @returns raw SQL fragment, e.g. `AND p.deleted_at IS NULL AND NOT s.archived`
+ * v0.42 (issue #1699) — also hides QUARANTINED pages (high-confidence junk
+ * the content-quality gate flagged with `frontmatter.quarantine`). Primary
+ * protection is that quarantine writes zero chunks, so a chunk-less page is
+ * already invisible to keyword/vector search; this clause is the
+ * belt-and-suspenders cover for residual chunk paths (stale/orphan chunk
+ * queries, CJK ILIKE fallback). FLAGGED pages (`content_flag`) are NOT
+ * excluded — they stay searchable by design; the agent gets a warning via
+ * `SearchResult.content_flag`.
+ *
+ * @param pageAlias   — page table alias (e.g. `'p'`)
+ * @param sourceAlias — source table alias (e.g. `'s'`); the caller is
+ *                      responsible for joining `sources` so this alias resolves.
+ *
+ * @returns raw SQL fragment, e.g.
+ *   `AND p.deleted_at IS NULL AND NOT s.archived AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine')`
  */
 export function buildVisibilityClause(pageAlias: string, sourceAlias: string): string {
-  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived`;
+  // Single source of truth for the quarantine SQL lives in quarantine.ts so
+  // the marker key + filter can't drift from the search filter (#1699).
+  const quarantine = quarantineFilterFragment(pageAlias);
+  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived AND ${quarantine}`;
+}
+
+// ============================================================
+// Per-page max-pool (T1 / D7) — single source of truth
+// ============================================================
+
+/**
+ * Build the `best_per_page` pooling CTE: collapse a chunk-grain candidate set
+ * to ONE row per page — the page's highest-scoring chunk.
+ *
+ * This is the per-page max-pool that `searchKeyword` always had and that
+ * `searchVector` was missing (the retrieval-maxpool incident: a page got
+ * represented by whichever chunk survived the candidate cut, not its best
+ * chunk). Both engines (postgres + pglite) AND both retrieval paths
+ * (keyword + vector) consume this one builder so they cannot drift — the
+ * recurring postgres/pglite parity bug class this repo guards against.
+ *
+ * Contract on the candidate CTE (`candidateCte`):
+ *   - exposes `source_id` + `slug` columns (the composite per-page collapse key)
+ *   - exposes a numeric `score` column (the value pooled on)
+ *   - exposes `page_id` and `chunk_id` columns (deterministic tiebreak)
+ *
+ * Collapse key is COMPOSITE `(source_id, slug)`, NOT slug alone — two pages
+ * with the same slug in different sources are distinct pages (the federated
+ * multi-source contract; matches dedup.ts's pageKey and the v0.34.1 source
+ * isolation seal). Pooling on bare slug would collapse them and drop the
+ * neighbor-source page before ranking. `COALESCE(source_id, 'default')` keeps
+ * pre-v0.17 single-source rows (null source_id) collapsing correctly.
+ *
+ * Determinism: `DISTINCT ON` keeps the FIRST row per key under the ORDER BY,
+ * so the tiebreak `… score DESC, page_id ASC, chunk_id ASC` makes the surviving
+ * chunk fully deterministic when two chunks of the same page tie on score
+ * (basis-vector eval fixtures, planner-independent — same rationale as the
+ * v0.41.13 searchVector stable tiebreaker).
+ *
+ * Pooling happens over the FULL candidate set (`innerLimit` rows) BEFORE the
+ * user-facing `LIMIT`, so a page's best chunk can't be truncated out by
+ * weaker chunks of OTHER pages occupying the early `LIMIT` slots — the vector
+ * path now returns N distinct pages (each by best chunk), not N chunks that
+ * collapse to fewer pages downstream.
+ *
+ * @param candidateCte — name of the upstream CTE to pool (e.g. `'hnsw_candidates'`,
+ *                        `'ranked_chunks'`). Engine-supplied identifier, never user input.
+ * @returns raw SQL fragment: `best_per_page AS ( ... )` (no trailing comma)
+ */
+export function buildBestPerPagePoolCte(candidateCte: string): string {
+  return `best_per_page AS (
+        SELECT DISTINCT ON (COALESCE(source_id, 'default'), slug) *
+        FROM ${candidateCte}
+        ORDER BY COALESCE(source_id, 'default'), slug, score DESC, page_id ASC, chunk_id ASC
+      )`;
 }
 
 // ============================================================

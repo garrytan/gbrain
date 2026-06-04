@@ -310,4 +310,212 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgPage!.title).toBe('V2');
     expect(pglitePage!.title).toBe('V2');
   });
+
+  test('v0.41.19.0 deletePages parity: both engines return same confirmed-deleted slugs', async () => {
+    const realSlugs = ['wiki/dpp-1', 'wiki/dpp-2', 'wiki/dpp-3'];
+    for (const slug of realSlugs) {
+      await pgEngine.putPage(slug, {
+        type: 'note', title: slug, compiled_truth: 'body', timeline: '',
+      });
+      await pgliteEngine.putPage(slug, {
+        type: 'note', title: slug, compiled_truth: 'body', timeline: '',
+      });
+    }
+
+    // Mix real + ghost slugs. D6: only real ones come back.
+    const allSlugs = [...realSlugs, 'wiki/dpp-ghost-a', 'wiki/dpp-ghost-b'];
+    const pgDeleted = await pgEngine.deletePages(allSlugs, { sourceId: 'default' });
+    const pgliteDeleted = await pgliteEngine.deletePages(allSlugs, { sourceId: 'default' });
+
+    expect(pgDeleted.sort()).toEqual(realSlugs.sort());
+    expect(pgliteDeleted.sort()).toEqual(realSlugs.sort());
+
+    // Pages actually gone on both engines.
+    for (const slug of realSlugs) {
+      const pg = await pgEngine.getPage(slug);
+      const pglite = await pgliteEngine.getPage(slug);
+      expect(pg).toBeNull();
+      expect(pglite).toBeNull();
+    }
+  });
+
+  test('v0.41.19.0 resolveSlugsByPaths parity: same Map on both engines', async () => {
+    const seedSql = `
+      INSERT INTO pages (source_id, slug, source_path, type, title, compiled_truth, timeline, frontmatter)
+        VALUES ('default', $1, $2, 'note', 't', 'b', '', '{}'::jsonb)
+        ON CONFLICT (source_id, slug) DO UPDATE SET source_path = EXCLUDED.source_path
+    `;
+    await pgEngine.executeRaw(seedSql, ['wiki/rsp-1', 'wiki/rsp-1.md']);
+    await pgEngine.executeRaw(seedSql, ['wiki/rsp-2', 'wiki/rsp-2.md']);
+    await pgliteEngine.executeRaw(seedSql, ['wiki/rsp-1', 'wiki/rsp-1.md']);
+    await pgliteEngine.executeRaw(seedSql, ['wiki/rsp-2', 'wiki/rsp-2.md']);
+
+    const paths = ['wiki/rsp-1.md', 'wiki/rsp-2.md', 'wiki/rsp-missing.md'];
+    const pgMap = await pgEngine.resolveSlugsByPaths(paths, { sourceId: 'default' });
+    const pgliteMap = await pgliteEngine.resolveSlugsByPaths(paths, { sourceId: 'default' });
+
+    expect(pgMap.size).toBe(2);
+    expect(pgliteMap.size).toBe(2);
+    expect(pgMap.get('wiki/rsp-1.md')).toBe('wiki/rsp-1');
+    expect(pgliteMap.get('wiki/rsp-1.md')).toBe('wiki/rsp-1');
+    expect(pgMap.get('wiki/rsp-2.md')).toBe('wiki/rsp-2');
+    expect(pgliteMap.get('wiki/rsp-2.md')).toBe('wiki/rsp-2');
+    expect(pgMap.get('wiki/rsp-missing.md')).toBeUndefined();
+    expect(pgliteMap.get('wiki/rsp-missing.md')).toBeUndefined();
+  });
+
+  // v0.41.29.0 — findOrphanPages source scoping parity. Real Postgres
+  // coverage for the postgres.js `sql` scalar fragment + `= ANY(${arr}::text[])`
+  // array binding (a documented footgun class — the jsonb double-encode saga).
+  // PGLite logic is pinned in test/orphans-source-scope.test.ts; this asserts
+  // the Postgres SQL produces the same scoped sets. Cross-source inbound
+  // (src-b → src-a) must NOT make the target an orphan of src-a (A2).
+  test('v0.41.29.0 findOrphanPages source scoping parity (scalar + federated)', async () => {
+    const srcSql = `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{}'::jsonb) ON CONFLICT DO NOTHING`;
+    const pageSql = `
+      INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter)
+        VALUES ($1, $2, 'person', 't', 'b', '', '{}'::jsonb)
+        ON CONFLICT (source_id, slug) DO NOTHING
+    `;
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(srcSql, ['orphan-src-a']);
+      await eng.executeRaw(srcSql, ['orphan-src-b']);
+      await eng.executeRaw(pageSql, ['orphan-src-a', 'people/op-orphan-a']);
+      await eng.executeRaw(pageSql, ['orphan-src-a', 'people/op-target-a']);
+      await eng.executeRaw(pageSql, ['orphan-src-b', 'people/op-linker-b']);
+      // Cross-source inbound: src-b page → src-a target (A2).
+      await eng.addLink(
+        'people/op-linker-b', 'people/op-target-a', '', 'mentions', 'markdown',
+        undefined, undefined, { fromSourceId: 'orphan-src-b', toSourceId: 'orphan-src-a' },
+      );
+    }
+
+    const scoped = async (eng: BrainEngine, opts: { sourceId?: string; sourceIds?: string[] }) =>
+      (await eng.findOrphanPages(opts)).map(r => r.slug).filter(s => s.startsWith('people/op-')).sort();
+
+    // Scalar scope to src-a: op-orphan-a is an orphan; op-target-a is saved
+    // by the cross-source inbound (A2). Parity on both engines.
+    const pgA = await scoped(pgEngine, { sourceId: 'orphan-src-a' });
+    const pgliteA = await scoped(pgliteEngine, { sourceId: 'orphan-src-a' });
+    expect(pgA).toEqual(['people/op-orphan-a']);
+    expect(pgliteA).toEqual(pgA);
+
+    // Scalar scope to src-b.
+    const pgB = await scoped(pgEngine, { sourceId: 'orphan-src-b' });
+    const pgliteB = await scoped(pgliteEngine, { sourceId: 'orphan-src-b' });
+    expect(pgB).toEqual(['people/op-linker-b']);
+    expect(pgliteB).toEqual(pgB);
+
+    // Federated array scope (= ANY binding) → union.
+    const pgFed = await scoped(pgEngine, { sourceIds: ['orphan-src-a', 'orphan-src-b'] });
+    const pgliteFed = await scoped(pgliteEngine, { sourceIds: ['orphan-src-a', 'orphan-src-b'] });
+    expect(pgFed).toEqual(['people/op-linker-b', 'people/op-orphan-a']);
+    expect(pgliteFed).toEqual(pgFed);
+  });
+
+  // v0.42.7 (#1696): stale-page extraction watermark parity. Isolated under a
+  // dedicated source so other tests' mutations don't perturb the counts.
+  test('stale-page extraction methods: Postgres ↔ PGLite parity', async () => {
+    const SRC = 'stale-parity';
+    const VER = '2026-05-31T00:00:00Z';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, 'Stale Parity', '{}'::jsonb) ON CONFLICT DO NOTHING`, [SRC]);
+      await eng.executeRaw(
+        `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at)
+         SELECT 'sp/' || g, $1, 'concept', 'SP' || g, 'body ' || g, '', '{}'::jsonb, 'sph' || g, now(), now()
+           FROM generate_series(1, 3) g`,
+        [SRC],
+      );
+    }
+
+    // NULL arm: all 3 stale on both engines.
+    expect(await pgEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(3);
+    expect(await pgliteEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(3);
+
+    // listStalePagesForExtraction: same slugs + content columns populated.
+    const pgList = (await pgEngine.listStalePagesForExtraction({ batchSize: 10, sourceId: SRC })).map(r => r.slug).sort();
+    const plList = (await pgliteEngine.listStalePagesForExtraction({ batchSize: 10, sourceId: SRC })).map(r => r.slug).sort();
+    expect(pgList).toEqual(['sp/1', 'sp/2', 'sp/3']);
+    expect(plList).toEqual(pgList);
+    const pgRow = (await pgEngine.listStalePagesForExtraction({ batchSize: 1, sourceId: SRC }))[0];
+    expect(pgRow.compiled_truth).toBeTruthy();
+    expect(pgRow.updated_at).toBeInstanceOf(Date);
+
+    // markPagesExtractedBatch: stamp one → count drops to 2 on both.
+    const stampAt = new Date().toISOString();
+    await pgEngine.markPagesExtractedBatch([{ slug: 'sp/1', source_id: SRC }], stampAt);
+    await pgliteEngine.markPagesExtractedBatch([{ slug: 'sp/1', source_id: SRC }], stampAt);
+    expect(await pgEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(2);
+    expect(await pgliteEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(2);
+
+    // version arm: stamp sp/2 old + set updated_at old (isolate version arm) →
+    // flagged only when versionTs is passed. Parity on both engines.
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.markPagesExtractedBatch([{ slug: 'sp/2', source_id: SRC }], '2000-01-01T00:00:00Z');
+      await eng.executeRaw(`UPDATE pages SET updated_at = '2000-01-01T00:00:00Z' WHERE slug = 'sp/2' AND source_id = $1`, [SRC]);
+    }
+    // Without versionTs: sp/2 not stale (stamp == updated, not NULL). sp/3 still NULL-stale.
+    expect(await pgEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(1);
+    expect(await pgliteEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(1);
+    // With versionTs: sp/2's old stamp (< VER) re-flags it → 2 stale.
+    expect(await pgEngine.countStalePagesForExtraction({ sourceId: SRC, versionTs: VER })).toBe(2);
+    expect(await pgliteEngine.countStalePagesForExtraction({ sourceId: SRC, versionTs: VER })).toBe(2);
+
+    // edited-since arm: stamp sp/1 in the recent past, updated_at slightly after →
+    // re-flagged on both engines (updated_at > links_extracted_at).
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(
+        `UPDATE pages SET links_extracted_at = now() - interval '2 hours', updated_at = now() - interval '1 hour' WHERE slug = 'sp/1' AND source_id = $1`,
+        [SRC],
+      );
+    }
+    expect(await pgEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(2); // sp/1 (edited) + sp/3 (NULL)
+    expect(await pgliteEngine.countStalePagesForExtraction({ sourceId: SRC })).toBe(2);
+  });
+
+  test('v0.41.39 listEnrichCandidates parity (thin filter + source-aware inbound + order)', async () => {
+    const stub = 'Stub page.';
+    const pageSql = `
+      INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter)
+        VALUES ('default', $1, $2, $3, $4, '', '{}'::jsonb)
+        ON CONFLICT (source_id, slug) DO NOTHING
+    `;
+    for (const eng of [pgEngine, pgliteEngine]) {
+      // Two thin people (ec-alice ← 2 inbound, ec-bob ← 1), one thin company
+      // (ec-widget ← 0), one long page (must be excluded by the thin filter).
+      await eng.executeRaw(pageSql, ['ep/ec-alice', 'person', 'EC Alice', stub]);
+      await eng.executeRaw(pageSql, ['ep/ec-bob', 'person', 'EC Bob', stub]);
+      await eng.executeRaw(pageSql, ['companies/ec-widget', 'company', 'EC Widget', stub]);
+      await eng.executeRaw(pageSql, ['ep/ec-long', 'person', 'EC Long', 'x'.repeat(900)]);
+      // Linker pages + inbound links (link_source NULL → counted).
+      await eng.executeRaw(pageSql, ['ep/ec-l1', 'note', 'L1', 'links']);
+      await eng.executeRaw(pageSql, ['ep/ec-l2', 'note', 'L2', 'links']);
+      await eng.executeRaw(pageSql, ['ep/ec-l3', 'note', 'L3', 'links']);
+      await eng.addLink('ep/ec-l1', 'ep/ec-alice', 'ctx a1');
+      await eng.addLink('ep/ec-l2', 'ep/ec-alice', 'ctx a2');
+      await eng.addLink('ep/ec-l3', 'ep/ec-bob', 'ctx b1');
+    }
+
+    const run = async (eng: BrainEngine) =>
+      (await eng.listEnrichCandidates({
+        types: ['person', 'company'],
+        thinThreshold: 400,
+        order: 'inbound-links',
+        limit: 10,
+        sourceId: 'default',
+      })).filter((c) => c.slug.startsWith('ep/') || c.slug === 'companies/ec-widget');
+
+    const pg = await run(pgEngine);
+    const pglite = await run(pgliteEngine);
+
+    const shape = (rows: typeof pg) => rows.map((r) => `${r.slug}:${r.inbound_count}:${r.body_len}`);
+    expect(shape(pg)).toEqual(shape(pglite));
+
+    // Concrete contract: long page excluded; ordering alice(2) > bob(1) > widget(0).
+    const slugs = pg.map((r) => r.slug);
+    expect(slugs).not.toContain('ep/ec-long');
+    expect(slugs.indexOf('ep/ec-alice')).toBeLessThan(slugs.indexOf('ep/ec-bob'));
+    expect(slugs.indexOf('ep/ec-bob')).toBeLessThan(slugs.indexOf('companies/ec-widget'));
+    expect(pg.find((r) => r.slug === 'ep/ec-alice')!.inbound_count).toBe(2);
+  });
 });

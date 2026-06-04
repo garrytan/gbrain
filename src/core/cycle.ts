@@ -69,7 +69,34 @@ export type CyclePhase =
   | 'embed' | 'orphans' | 'purge'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
-  | 'schema-suggest';
+  | 'schema-suggest'
+  // v0.41 T9 lens packs:
+  //  - extract_atoms: per-source Haiku extraction of atoms from
+  //    transcripts/articles/meetings into atom-typed pages. Gated on the
+  //    active pack's `phases:` declaration (gbrain-creator or gbrain-
+  //    everything declare this); other packs are no-op.
+  //  - synthesize_concepts: global aggregation of atoms into tier-promoted
+  //    concept pages via dedup → tier → Sonnet T1/T2 voice-gated narratives.
+  //    Same pack-gate model.
+  | 'extract_atoms' | 'synthesize_concepts'
+  // v0.41.11.0 — opt-in (default OFF) bulk fact extraction for long-form
+  // conversation pages. The phase wrapper does its own multi-source
+  // iteration directly (PHASE_SCOPE='source' here is taxonomy only;
+  // see comment above PHASE_SCOPE). Wraps the per-source loop in ONE
+  // brain-wide BudgetTracker and passes it through opts.budgetTracker
+  // so the core's auto-wrap doesn't REPLACE it.
+  | 'conversation_facts_backfill'
+  // v0.41.39 (#1700) — opt-in (default OFF) trickle that develops a few thin
+  // (stub) pages per source per tick via brain-internal grounded synthesis.
+  // Same brain-wide BudgetTracker + walltime-cap shape as
+  // conversation_facts_backfill; the phase wrapper does its own per-source loop.
+  | 'enrich_thin'
+  // v0.41.20.0 — SkillOpt-paper-grounded self-evolving skills. Default OFF;
+  // walks skills with stale skillopt-benchmark.jsonl AND last_run_at >7d.
+  // Per-skill cost cap $0.50; brain-wide cap $2.00. Bundled-skill safety
+  // (D16): never auto-mutates bundled skills — emits proposed.md instead
+  // for user review.
+  | 'skillopt';
 
 export const ALL_PHASES: CyclePhase[] = [
   'lint',
@@ -83,6 +110,12 @@ export const ALL_PHASES: CyclePhase[] = [
   // The empty-fence guard refuses to run if pre-v51 legacy facts are
   // pending the v0_32_2 backfill (Codex R2-#7).
   'extract_facts',
+  // v0.41 T9 — atom extraction (per-source, pack-gated). Runs AFTER
+  // extract_facts so the Haiku 3-check has fresh fact context, BEFORE
+  // resolve_symbol_edges so new atom pages don't interrupt the symbol
+  // resolution sweep mid-flight. Pack-gate via active pack's `phases:`
+  // declaration (gbrain-creator + gbrain-everything declare; others skip).
+  'extract_atoms',
   // v0.33.3 W0c — within-file two-pass symbol resolution. Runs AFTER
   // extract + extract_facts so any code edges sync emitted (still bare-token)
   // get resolved into {resolved_chunk_id: N} / {ambiguous: true,
@@ -91,6 +124,10 @@ export const ALL_PHASES: CyclePhase[] = [
   // BATCH_SIZE*10 chunks where edges_backfilled_at IS NULL or stale.
   'resolve_symbol_edges',
   'patterns',
+  // v0.41 T9 — concept synthesis (global, pack-gated). Runs AFTER patterns
+  // so the cluster pass sees fresh cross-session themes. Same pack-gate
+  // model as extract_atoms.
+  'synthesize_concepts',
   // v0.29 — runs AFTER extract + synthesize so it sees the union of
   // sync-touched + synthesize-written pages with fresh tag + take state.
   'recompute_emotional_weight',
@@ -114,6 +151,28 @@ export const ALL_PHASES: CyclePhase[] = [
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  // v0.41.11.0 — opt-in conversation-facts backfill. Default OFF; reads
+  // cycle.conversation_facts_backfill.enabled gate inside the wrapper.
+  // Ordered AFTER calibration_profile (matches the runCycle dispatch
+  // block placement, which runs between the calibration trio and embed),
+  // and BEFORE embed so newly-inserted facts get embedded same-cycle.
+  'conversation_facts_backfill',
+  // v0.41.39 (#1700) — develop thin stub pages. After
+  // conversation_facts_backfill, BEFORE embed so enriched bodies get
+  // chunked + embedded in the same cycle.
+  'enrich_thin',
+  // v0.41.20.0 SkillOpt — self-evolving skills phase. Dispatch order
+  // places it AFTER the main graph-mutating cluster (extract, patterns,
+  // consolidate, calibration, conversation-facts) so any skill that
+  // depends on cross-session themes gets optimized against the freshest
+  // state — strictly fresher than "right after patterns" since downstream
+  // phases also mutate state the optimizer reads. Default OFF; opt-in via
+  // `gbrain config set cycle.skillopt.enabled true`. Bundled-skill safety
+  // (D16): never auto-mutates bundled skills. Position MUST match the
+  // dispatch block in runCycle (see line ~1912) — pinned by the
+  // `report.phases.map(p => p.phase)).toEqual(ALL_PHASES)` assertion in
+  // test/core/cycle.serial.test.ts.
+  'skillopt',
   'embed',
   'orphans',
   // v0.39 T12: passive schema-suggest. Runs LATE so post-sync brain state
@@ -166,6 +225,21 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   orphans: 'global',
   purge: 'global',
   'schema-suggest': 'source',
+  // v0.41 T9 — extract_atoms is naturally per-source (each source's
+  // transcript dir gets walked independently). synthesize_concepts is
+  // global because concept clusters cross sources by nature.
+  extract_atoms: 'source',
+  synthesize_concepts: 'global',
+  // v0.41.11.0 — declared 'source' for taxonomy alignment with
+  // extract_facts (per-source semantics). PHASE_SCOPE has no runtime
+  // fanout enforcement today (per the comment above); the phase
+  // wrapper does its own multi-source loop via listSources().
+  conversation_facts_backfill: 'source',
+  // v0.41.39 (#1700) — per-source (wrapper loops listSources, same as above).
+  enrich_thin: 'source',
+  // v0.41.20.0 SkillOpt — global (walks the skills/ directory; per-skill
+  // DB lock inside D14 handles cross-source coordination).
+  skillopt: 'global',
 };
 
 /**
@@ -196,6 +270,20 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  // v0.41 T9 — extract_atoms writes atom-typed pages via put_page;
+  // synthesize_concepts writes concept-typed pages + tier updates. Both
+  // mutate DB state and need the lock.
+  'extract_atoms',
+  'synthesize_concepts',
+  // v0.41.11.0 — inserts facts + writes terminal audit rows; needs lock.
+  'conversation_facts_backfill',
+  // v0.41.39 (#1700) — writes pages via put_page (per-page advisory-locked
+  // internally too); coordinate via the cycle lock like the other writers.
+  'enrich_thin',
+  // v0.41.20.0 SkillOpt — writes SKILL.md + skillopt/ artifacts; needs lock.
+  // Per-skill lock (D14) is acquired inside runSkillOpt; this NEEDS_LOCK
+  // entry covers the cycle-level coordination.
+  'skillopt',
   'embed',
   'purge',
 ]);
@@ -299,8 +387,13 @@ export interface CycleOpts {
   dryRun?: boolean;
   /** Defaults to ALL_PHASES. Pass a subset for --phase lint etc. */
   phases?: CyclePhase[];
-  /** Brain directory (git repo). Required for filesystem phases. */
-  brainDir: string;
+  /**
+   * Brain directory (git repo). Required for filesystem phases (lint,
+   * backlinks, sync, synthesize, extract, patterns). `null` when the brain has
+   * no on-disk checkout (postgres/remote engine) — those phases are skipped
+   * with reason `no_brain_dir` and the DB-only phases still run.
+   */
+  brainDir: string | null;
   /** Whether sync should run `git pull`. Default false (cron-safe). */
   pull?: boolean;
   /**
@@ -373,12 +466,19 @@ export interface CycleOpts {
  * time use this row in `gbrain_cycle_locks`.
  */
 const LEGACY_CYCLE_LOCK_ID = 'gbrain-cycle';
-const LOCK_TTL_MS = 30 * 60 * 1000;       // 30 minutes
-const LOCK_TTL_MINUTES = 30;              // db-lock.ts takes minutes
+// v0.41.19.0 (T2 of ops-fix-wave): dropped from 30 min to 5 min so a
+// crashed cycle releases the lock within 5 min instead of holding it for
+// the full 30-min TTL. Wired with active in-phase refresh via
+// `buildYieldDuringPhase` (T3) — the closure passed to long phases as
+// `yieldDuringPhase` calls `lock.refresh()` every 30s, so a healthy
+// long-running cycle keeps the TTL alive while the shorter window
+// shrinks crash recovery 6×.
+const LOCK_TTL_MS = 5 * 60 * 1000;        // 5 minutes (was 30)
+const LOCK_TTL_MINUTES = 5;               // was 30; db-lock.ts takes minutes
 // Lazy: GBRAIN_HOME may be set after module load; resolve at call time.
 const getLockFilePathDefault = () => gbrainPath('cycle.lock');
 
-interface LockHandle {
+export interface LockHandle {
   release: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -511,6 +611,53 @@ function acquireFileLock(lockPath = getLockFilePathDefault()): LockHandle | null
   };
 }
 
+/**
+ * v0.41.19.0 (T3 of ops-fix-wave): build the closure that long phases
+ * call to keep the cycle DB lock alive AND fire the existing cooperative
+ * yield hook (Minion job-lock renewal in jobs.ts / autopilot.ts).
+ *
+ * Codex caught that the prior `yieldBetweenPhases` opt does NOT refresh
+ * the cycle lock — it's just a `setImmediate()` from external callers,
+ * and `lock.refresh()` was only ever called via the implicit final
+ * `release()` path. Combined with the TTL drop 30→5min (T2), a long
+ * phase like `extract_atoms` or `synthesize_concepts` would lose the
+ * lock to a competing worker mid-phase.
+ *
+ * The returned closure does TWO things on each fire:
+ *   1. `await lock.refresh()` to bump `ttl_expires_at` + `last_refreshed_at`
+ *   2. `await outer()` to renew any external job-lock the caller threaded in
+ *
+ * Both are wrapped in try/catch — a refresh failure logs to stderr but
+ * doesn't crash the phase (if the lock was truly stolen, we want this
+ * run to wind down gracefully, not throw mid-LLM-call).
+ *
+ * Returns `undefined` when there's no lock AND no outer hook so phases
+ * short-circuit via their `if (!opts.yieldDuringPhase) return;` guard.
+ */
+export function buildYieldDuringPhase(
+  lock: LockHandle | null,
+  outer?: () => Promise<void>,
+): (() => Promise<void>) | undefined {
+  if (!lock && !outer) return undefined;
+  return async () => {
+    if (lock) {
+      try {
+        await lock.refresh();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Non-fatal: a refresh error doesn't crash the phase. If the
+        // lock truly expired and was stolen, the next acquire by another
+        // worker has already happened — let this run wind down rather
+        // than throw mid-phase.
+        console.error(`[cycle] lock refresh failed (non-fatal): ${msg}`);
+      }
+    }
+    if (outer) {
+      try { await outer(); } catch { /* outer hook errors are not fatal */ }
+    }
+  };
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────
 
 function makeErrorFromException(e: unknown, fallbackClass = 'InternalError'): PhaseError {
@@ -567,10 +714,15 @@ function checkAborted(signal?: AbortSignal): void {
 // keyword is the minimal seam that lets behavioral tests drive the
 // wrapper's result-mapping (counter → status enum + summary) without
 // going through runCycle's full setup cost.
-export async function runPhaseLint(brainDir: string, dryRun: boolean): Promise<PhaseResult> {
+export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: BrainEngine | null): Promise<PhaseResult> {
   try {
     const { runLintCore } = await import('../commands/lint.ts');
-    const result = await runLintCore({ target: brainDir, fix: true, dryRun });
+    // issue #1678: pass the cycle's live engine so lint's content-sanity
+    // DB-plane lift REUSES it instead of creating + disconnecting a
+    // competing module-style engine that nulls the shared db singleton
+    // mid-cycle (which broke every phase after lint with a misleading
+    // "connect() has not been called").
+    const result = await runLintCore({ target: brainDir, fix: true, dryRun, engine: engine ?? undefined });
     const issues = result.total_issues ?? 0;
     const fixed = result.total_fixed ?? 0;
     const remaining = Math.max(0, issues - fixed);
@@ -651,8 +803,11 @@ interface SyncPhaseResult extends PhaseResult {
  */
 async function resolveSourceForDir(
   engine: BrainEngine,
-  brainDir: string,
+  brainDir: string | null,
 ): Promise<string | undefined> {
+  // No checkout → no path-derived source. Callers fall back to opts.sourceId
+  // (the cycleSourceId precedence) or 'default'.
+  if (brainDir === null) return undefined;
   try {
     const rows = await engine.executeRaw<{ id: string }>(
       `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`,
@@ -662,6 +817,42 @@ async function resolveSourceForDir(
   } catch {
     // sources table might not exist on very old brains — fall through.
     return undefined;
+  }
+}
+
+// v0.41 T9 D4-B — orchestrator-level pack gate for lens-pack phases.
+//
+// Returns true when the ACTIVE pack's `phases:` list includes `phase`.
+// Phases are local to the manifest that declares them — extends chains
+// inherit page_types + link_types + filing_rules via the registry's
+// standard merge semantics, but NOT phases. Per D4-B, each pack declares
+// its own phase participation explicitly. The gbrain-everything meta-
+// pack therefore re-declares creator's phases verbatim in its own
+// manifest (asserted by test/lens-pack-manifests.test.ts).
+//
+// Why local-only: phases are runtime control flow, not data. A user pack
+// that extends gbrain-creator may NOT want extract_atoms to run (e.g. they
+// derive atoms differently). Inheriting phases would force them into a
+// no-op-or-fork choice; local-only declaration lets them opt in cleanly.
+//
+// Fail-open semantics: if the registry lookup throws (pack not found,
+// manifest malformed, registry not initialized), the gate returns FALSE.
+// Better to skip a pack-gated phase than to run it for a brain that
+// can't resolve its active pack. Skipped phases land in the cycle report
+// with `not_in_active_pack` so doctor can surface to the user.
+export async function packDeclaresPhase(
+  engine: BrainEngine,
+  phase: CyclePhase,
+): Promise<boolean> {
+  try {
+    const { loadActivePack } = await import('./schema-pack/load-active.ts');
+    const { loadConfig } = await import('./config.ts');
+    const cfg = loadConfig();
+    const resolved = await loadActivePack({ cfg, remote: false });
+    const phases = resolved.manifest.phases ?? [];
+    return phases.includes(phase);
+  } catch {
+    return false;
   }
 }
 
@@ -1041,6 +1232,16 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     } catch {
       // Non-fatal.
     }
+    // v0.41.18.0 codex H-8 — actual 30-day pruning of batch-retry audit JSONL.
+    // The pre-v0.41.18 plan promised this "by convention"; this is the real
+    // implementation. Never throws — best-effort GC.
+    let purgedBatchRetryAuditFiles = 0;
+    try {
+      const { pruneOldBatchRetryAuditFiles } = await import('./audit/batch-retry-audit.ts');
+      purgedBatchRetryAuditFiles = pruneOldBatchRetryAuditFiles(30).removed;
+    } catch {
+      // Non-fatal.
+    }
     return {
       phase: 'purge',
       status: 'ok',
@@ -1048,7 +1249,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
       summary:
         `purged ${purgedSources.length} source(s), ${purgedPages.count} page(s), ` +
         `${purgedClones.count} orphan clone temp dir(s), ${purgedCheckpoints} stale op_checkpoint(s), ` +
-        `and ${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s)`,
+        `${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s), ` +
+        `and ${purgedBatchRetryAuditFiles} stale batch-retry audit file(s)`,
       details: {
         purged_sources_count: purgedSources.length,
         purged_pages_count: purgedPages.count,
@@ -1058,6 +1260,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_page_slugs: purgedPages.slugs,
         purged_checkpoints_count: purgedCheckpoints,
         purged_brainstorm_checkpoints_count: purgedBrainstormCheckpoints,
+        purged_batch_retry_audit_files_count: purgedBatchRetryAuditFiles,
       },
     };
   } catch (e) {
@@ -1136,6 +1339,33 @@ export async function runCycle(
   const pull = !!opts.pull;
   const timestamp = new Date().toISOString();
   const phaseResults: PhaseResult[] = [];
+
+  // Capture as a const so it narrows to `string` inside the `else` branches of
+  // the per-phase `if (brainDir === null)` guards, even within async closures
+  // (const bindings narrow across closures; property accesses don't).
+  const brainDir = opts.brainDir;
+
+  // Skip result for a filesystem phase when the brain has no on-disk checkout.
+  const skipNoBrainDir = (phase: CyclePhase): PhaseResult => ({
+    phase,
+    status: 'skipped',
+    duration_ms: 0,
+    summary: 'requires a local brain directory; this brain has no on-disk checkout '
+      + '(postgres/remote engine); pass --dir <path> to run filesystem phases',
+    details: { reason: 'no_brain_dir' },
+  });
+
+  // A1: canonical per-source scope for the DB-capable per-source phases
+  // (extract_facts, extract_atoms, the calibration trio). Explicit --source
+  // (opts.sourceId) wins; else derive from the resolved checkout dir. Without
+  // this, `gbrain dream --source repo-a` on a checkout-less brain would scope
+  // those phases to 'default' (resolveSourceForDir(null) → undefined) while the
+  // cycle still locks + stamps last_full_cycle_at for repo-a — a freshness
+  // stamp that lies. resolveSourceForDir returns undefined when brainDir is
+  // null, so opts.sourceId is the only signal in the no-checkout case.
+  const cycleSourceId: string | undefined = engine
+    ? (opts.sourceId ?? (await resolveSourceForDir(engine, brainDir)))
+    : opts.sourceId;
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
@@ -1266,22 +1496,30 @@ export async function runCycle(
     // ── Phase 1: lint ────────────────────────────────────────────
     if (phases.includes('lint')) {
       checkAborted(opts.signal);
-      progress.start('cycle.lint');
-      const { result, duration_ms } = await timePhase(() => runPhaseLint(opts.brainDir, dryRun));
-      result.duration_ms = duration_ms;
-      phaseResults.push(result);
-      progress.finish();
+      if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('lint'));
+      } else {
+        progress.start('cycle.lint');
+        const { result, duration_ms } = await timePhase(() => runPhaseLint(brainDir, dryRun, engine));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
       await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── Phase 2: backlinks ──────────────────────────────────────
     if (phases.includes('backlinks')) {
       checkAborted(opts.signal);
-      progress.start('cycle.backlinks');
-      const { result, duration_ms } = await timePhase(() => runPhaseBacklinks(opts.brainDir, dryRun));
-      result.duration_ms = duration_ms;
-      phaseResults.push(result);
-      progress.finish();
+      if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('backlinks'));
+      } else {
+        progress.start('cycle.backlinks');
+        const { result, duration_ms } = await timePhase(() => runPhaseBacklinks(brainDir, dryRun));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
       await safeYield(opts.yieldBetweenPhases);
     }
 
@@ -1301,9 +1539,11 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
+      } else if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('sync'));
       } else {
         progress.start('cycle.sync');
-        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, opts.brainDir, dryRun, pull, phases.includes('extract')));
+        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, brainDir, dryRun, pull, phases.includes('extract')));
         result.duration_ms = duration_ms;
         // Capture changed slugs for incremental extract.
         syncPagesAffected = (result as SyncPhaseResult).pagesAffected;
@@ -1323,11 +1563,13 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
+      } else if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('synthesize'));
       } else {
         progress.start('cycle.synthesize');
         const { runPhaseSynthesize } = await import('./cycle/synthesize.ts');
         const { result, duration_ms } = await timePhase(() => runPhaseSynthesize(engine, {
-          brainDir: opts.brainDir,
+          brainDir,
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
           inputFile: opts.synthInputFile,
@@ -1359,12 +1601,14 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
+      } else if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('extract'));
       } else {
         // Pass changed slugs from sync for incremental extract.
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, opts.brainDir, dryRun, syncPagesAffected));
+        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1397,9 +1641,76 @@ export async function runCycle(
         // already-resolved cycle scope; sourceId defaults to 'default' when
         // the sources table doesn't recognize this brainDir (pre-multi-
         // source installs).
-        const xfSourceId = (await resolveSourceForDir(engine, opts.brainDir)) ?? 'default';
+        const xfSourceId = cycleSourceId ?? 'default';
         const { result, duration_ms } = await timePhase(() =>
-          runPhaseExtractFacts(engine, opts.brainDir, xfSourceId, dryRun, syncPagesAffected));
+          runPhaseExtractFacts(engine, brainDir, xfSourceId, dryRun, syncPagesAffected));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── v0.41 T9: extract_atoms (per-source, pack-gated) ──────────
+    // Orchestrator-level pack gate: consults the active pack's `phases:`
+    // declaration. When the active pack does NOT declare extract_atoms
+    // (e.g. user is on gbrain-base or gbrain-investor), this phase is a
+    // no-op with reason='not_in_active_pack'. When the pack does declare
+    // it (gbrain-creator, gbrain-everything), dispatches to the
+    // extract-atoms.ts module (real body in T5; stub for now).
+    //
+    // borrow_from does NOT borrow phases — each pack declares phase
+    // participation explicitly. The packDeclaresPhase helper walks the
+    // resolved active pack's `phases:` list ONLY; not the extends chain
+    // or borrow_from targets.
+    if (phases.includes('extract_atoms')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'extract_atoms',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else if (!(await packDeclaresPhase(engine, 'extract_atoms'))) {
+        // issue #1678: the routine cycle skip stays cheap (no per-tick backlog
+        // count), but the detail is greppable — `pack_gated: true` lets the
+        // `extract_atoms_backlog` doctor check / log scrapers tell a
+        // deliberately-off phase apart from a phase that ran with no work. The
+        // backlog signal itself lives in doctor (one count, on demand).
+        phaseResults.push({
+          phase: 'extract_atoms',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'extract_atoms: active pack does not declare this phase (run `gbrain dream --phase extract_atoms --drain` to drain a backlog)',
+          details: { reason: 'not_in_active_pack', pack_gated: true },
+        });
+      } else {
+        progress.start('cycle.extract_atoms');
+        const { runPhaseExtractAtoms } = await import('./cycle/extract-atoms.ts');
+        const xaSourceId = cycleSourceId ?? 'default';
+        // v0.41.2.1 (D9 #5): union sync + synthesize affected slugs so the
+        // incremental discovery path doesn't miss pages just-written by the
+        // synthesize phase that ran earlier in the same cycle.
+        const xaAffectedSlugs =
+          syncPagesAffected || synthesizeWrittenSlugs
+            ? [
+                ...(syncPagesAffected ?? []),
+                ...(synthesizeWrittenSlugs ?? []),
+              ]
+            : undefined;
+        const { result, duration_ms } = await timePhase(() => runPhaseExtractAtoms(engine, {
+          brainDir: brainDir ?? undefined,
+          sourceId: xaSourceId,
+          dryRun,
+          affectedSlugs: xaAffectedSlugs,
+          // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
+          yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          // v0.41.19.0 (T4): pass same reporter (not a child — cycle.ts
+          // owns start/finish; phase only ticks).
+          progress,
+        }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -1446,13 +1757,59 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
+      } else if (brainDir === null) {
+        phaseResults.push(skipNoBrainDir('patterns'));
       } else {
         progress.start('cycle.patterns');
         const { runPhasePatterns } = await import('./cycle/patterns.ts');
         const { result, duration_ms } = await timePhase(() => runPhasePatterns(engine, {
-          brainDir: opts.brainDir,
+          brainDir,
           dryRun,
           yieldDuringPhase: opts.yieldDuringPhase,
+        }));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── v0.41 T9: synthesize_concepts (global, pack-gated) ───────
+    // Same pack-gate model as extract_atoms. Reads `phases:` from the
+    // resolved active pack manifest; no-op when this phase isn't
+    // declared. Real body in T6 — synthesize-concepts.ts is a stub today.
+    if (phases.includes('synthesize_concepts')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'synthesize_concepts',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else if (!(await packDeclaresPhase(engine, 'synthesize_concepts'))) {
+        // issue #1678: same greppable marker as extract_atoms. (No doctor
+        // backlog check for synthesize_concepts this wave — Codex #12: that
+        // phase has no real eligibility predicate yet, so a check would be a
+        // fake signal. Filed as a follow-up.)
+        phaseResults.push({
+          phase: 'synthesize_concepts',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'synthesize_concepts: active pack does not declare this phase',
+          details: { reason: 'not_in_active_pack', pack_gated: true },
+        });
+      } else {
+        progress.start('cycle.synthesize_concepts');
+        const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts');
+        const { result, duration_ms } = await timePhase(() => runPhaseSynthesizeConcepts(engine, {
+          brainDir: brainDir ?? undefined,
+          dryRun,
+          // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
+          yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          // v0.41.19.0 (T4): pass same reporter (not a child).
+          progress,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -1545,7 +1902,7 @@ export async function runCycle(
       if (engine) {
         const cfgMod = await import('./config.ts');
         const calibrationConfig = cfgMod.loadConfig() ?? ({} as ReturnType<typeof cfgMod.loadConfig> & object);
-        const calibrationSourceId = await resolveSourceForDir(engine, opts.brainDir);
+        const calibrationSourceId = cycleSourceId;
         const calibrationCtx = {
           engine,
           config: calibrationConfig,
@@ -1559,7 +1916,7 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.propose_takes');
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: opts.brainDir }) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -1600,6 +1957,96 @@ export async function runCycle(
           }
         }
       }
+    }
+
+    // ── v0.41.11.0: conversation_facts_backfill ─────────────────
+    // Opt-in (default OFF). Walks long-form conversation/meeting/slack/
+    // email pages, segments by 30-min gap, runs facts extractor with a
+    // topical/temporal header, writes facts + per-page TERMINAL audit
+    // row. Per-source + brain-wide cost AND walltime caps; budget
+    // tracker passed in from the phase wrapper (NOT nested-wrapped in
+    // core — would REPLACE not stack).
+    if (phases.includes('conversation_facts_backfill')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'conversation_facts_backfill',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.conversation_facts_backfill');
+        const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseConversationFactsBackfill(engine, { dryRun, signal: opts.signal }),
+        );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── v0.41.39 (#1700): enrich_thin ───────────────────────────
+    // Opt-in (default OFF). Develops a few thin (stub) pages per source per
+    // tick via brain-internal grounded synthesis. Per-source + brain-wide
+    // cost AND walltime caps; budget tracker created in the phase wrapper and
+    // passed into the core (NOT nested-wrapped — would REPLACE not stack).
+    if (phases.includes('enrich_thin')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'enrich_thin',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.enrich_thin');
+        const { runPhaseEnrichThin } = await import('./cycle/enrich-thin.ts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseEnrichThin(engine, { dryRun, signal: opts.signal }),
+        );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── v0.41.20.0: SkillOpt phase (default OFF, opt-in). ──────────
+    // Walks skills with skillopt-benchmark.jsonl AND stale last_run_at
+    // (>7d). Per-skill cap $0.50; brain-wide cap $2.00. Bundled-skill
+    // safety (D16): the phase ALWAYS runs in --no-mutate mode — proposed
+    // bests land at skills/<name>/skillopt/best.md for review.
+    if (phases.includes('skillopt')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'skillopt' as never,
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.skillopt');
+        const { runPhaseSkillopt } = await import('./skillopt/cycle-phase.ts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseSkillopt({
+            engine,
+            dryRun,
+            ...(opts.signal ? { signal: opts.signal } : {}),
+          }),
+        );
+        result.duration_ms = duration_ms;
+        phaseResults.push(result as never);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── Phase 8: embed ──────────────────────────────────────────
@@ -1843,6 +2290,11 @@ function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals']): Cyc
     totals.pages_synced > 0 ||
     totals.pages_extracted > 0 ||
     totals.pages_embedded > 0 ||
-    totals.pages_emotional_weight_recomputed > 0;
+    totals.pages_emotional_weight_recomputed > 0 ||
+    // A7: a code brain runs `gbrain dream` specifically to build the call graph
+    // (resolve_symbol_edges). Without these, an edges-only cycle reports 'clean'
+    // — indistinguishable from "nothing happened" even when N edges resolved.
+    totals.edges_resolved > 0 ||
+    totals.edges_ambiguous > 0;
   return anyWork ? 'ok' : 'clean';
 }

@@ -80,11 +80,66 @@ export interface GBrainConfig {
    * those are different stores). Edit `~/.gbrain/config.json` directly.
    * All fields default to ON — capture and scrubbing both opt-out.
    */
+  /**
+   * v0.41 — autopilot daemon configuration. Currently houses the nightly
+   * quality probe feature flag (default OFF — opt-in to protect API spend
+   * on fresh installs). Flag is gated INSIDE the autopilot tick body;
+   * absence means "do not run nightly probe."
+   */
+  autopilot?: {
+    nightly_quality_probe?: {
+      /** Enable the nightly probe in the autopilot loop. Defaults to false. */
+      enabled?: boolean;
+      /**
+       * Cost cap (USD) per probe invocation. Defaults to 5.
+       * Worst case: 5 × 30 nights ≈ $150/month per brain.
+       */
+      max_usd?: number;
+    };
+    /**
+     * v0.42.x (#1685 GAP D) — extract_atoms backlog auto-drain. Default ON so a
+     * pack-gated silent backlog never piles up unseen; daily-spend-capped so the
+     * Haiku spend stays bounded. Read via the DB plane (`engine.getConfig`) at
+     * each autopilot tick. Disable with `gbrain config set autopilot.auto_drain.enabled false`.
+     */
+    auto_drain?: {
+      /** Master switch. Default true. */
+      enabled?: boolean;
+      /** Per-drain wallclock budget in seconds. Default 120. */
+      window_seconds?: number;
+      /** Backlog must exceed this to trigger a drain. Default 25. */
+      threshold?: number;
+      /** Daily spend cap (USD); bounds drains/day = floor(cap / ~$0.30). Default 2.0. */
+      max_usd_per_day?: number;
+    };
+  };
   eval?: {
     /** false disables capture entirely. Defaults to true. */
     capture?: boolean;
     /** false disables PII scrubbing before insert. Defaults to true. */
     scrub_pii?: boolean;
+  };
+
+  /**
+   * v0.42 — self-upgrade settings (file plane; read on the hot path before any
+   * DB connect, so it must live here, not the DB plane). `mode` is the only
+   * knob most users touch: `notify` (default — emit a marker + 4-option prompt),
+   * `auto` (silent quiet-hours/idle upgrade; opt-in), `off` (never check).
+   * The rest are state the self-upgrade machinery manages.
+   */
+  self_upgrade?: {
+    mode?: 'auto' | 'notify' | 'off';
+    /** Set true once the upgrade-time consent prompt has been shown. */
+    mode_prompted?: boolean;
+    /** Quiet-hours window for the autopilot silent channel. */
+    quiet_hours?: { start?: number; end?: number; tz?: string };
+    /** Versions that failed a prior auto-upgrade; never auto-retried. */
+    failed_versions?: string[];
+    /** Pre-swap breadcrumb so a crash-on-launch version is attributable. */
+    attempting_version?: string;
+    /** Epoch ms of the last auto-channel check (24h throttle). */
+    last_check_ts?: number;
+    last_applied_version?: string;
   };
 
   /**
@@ -149,6 +204,47 @@ export interface GBrainConfig {
      *  loud stderr per page but lets everything through. Default: false.
      *  Env override: `GBRAIN_NO_SANITY=1` flips to true. */
     disabled?: boolean;
+    /** Disposition for high-confidence junk (Cloudflare/CAPTCHA pattern or
+     *  operator literal). `quarantine` (default) = page lands hidden +
+     *  reviewable; `reject` = hard-block (throw → sync-failure). Issue #1699.
+     *  No env override (a destructive flip belongs in explicit config). */
+    junk_disposition?: 'quarantine' | 'reject';
+    /** Max markup:total ratio before the fuzzy markup-heavy FLAG fires
+     *  (page stays searchable, agent warned). Default: 0.85. Env override:
+     *  `GBRAIN_MAX_MARKUP_RATIO`. */
+    max_markup_ratio?: number;
+    /** Master switch for the prose/markup pass. Default: true. When false,
+     *  no markup-heavy flagging happens (patterns + oversize still apply). */
+    prose_check_enabled?: boolean;
+  };
+
+  /**
+   * v0.41.2.1 — dream cycle config (synthesize + patterns phases).
+   * Read-precedence per key: file > DB > defaults. There are no
+   * `GBRAIN_DREAM_*` env vars; do not add an env layer without first
+   * extending `loadConfig()` to read them.
+   *
+   * Existing consumers (synthesize.ts, patterns.ts) read these keys
+   * directly via `engine.getConfig()`, so they already see DB-plane
+   * values. The structured shape here exists so consumers that read
+   * the merged config object (e.g. extract-atoms.ts) see the values
+   * uniformly without per-call-site `engine.getConfig()` fallbacks.
+   *
+   * Closes PR #1416's "silent dream.* config misses on DB-plane writes"
+   * for the merged-config code path.
+   */
+  dream?: {
+    synthesize?: {
+      session_corpus_dir?: string;
+      meeting_transcripts_dir?: string;
+      verdict_model?: string;
+      max_prompt_tokens?: number;
+      max_chunks_per_transcript?: number;
+    };
+    patterns?: {
+      lookback_days?: number;
+      min_evidence?: number;
+    };
   };
 
   /**
@@ -194,6 +290,29 @@ export interface GBrainConfig {
    * operator escape hatch.
    */
   schema_pack?: string;
+
+  /**
+   * PR1 — MCP skill-catalog publishing. Lets a thin MCP client (Codex desktop,
+   * Claude Code, Perplexity) discover and follow this agent repo's skills over
+   * `gbrain serve`. See `src/core/skill-catalog.ts` for the trust-boundary memo.
+   */
+  mcp?: {
+    /**
+     * Gate for `list_skills` / `get_skill` over a REMOTE transport. Runtime
+     * default is OFF (absent key → OFF) so an upgrade never silently grants
+     * existing read tokens host-skill read. `gbrain init` writes `true` for new
+     * installs; the upgrade migration prompts existing owners to enable it.
+     * Local CLI callers (`ctx.remote === false`) bypass the gate entirely.
+     */
+    publish_skills?: boolean;
+    /**
+     * Explicit skills-dir override. Wins over autodetect — makes which skills
+     * get published deterministic across laptop / daemon / container launches.
+     * When unset, the ops autodetect (remote callers exclude the install-path
+     * tier so a hosted gbrain never serves its own bundled dev skills).
+     */
+    skills_dir?: string;
+  };
 }
 
 /**
@@ -332,6 +451,10 @@ export function loadConfig(): GBrainConfig | null {
   if (process.env.GBRAIN_NO_SANITY === '1') {
     envContentSanity.disabled = true;
   }
+  if (process.env.GBRAIN_MAX_MARKUP_RATIO) {
+    const n = parseFloat(process.env.GBRAIN_MAX_MARKUP_RATIO);
+    if (Number.isFinite(n) && n > 0 && n <= 1) envContentSanity.max_markup_ratio = n;
+  }
   // Only attach the field when at least one env var was set, so the
   // sparse-merge semantics elsewhere in loadConfigWithEngine work
   // (env presence => "this key already has a value, don't read DB").
@@ -455,6 +578,9 @@ export async function loadConfigWithEngine(
   const dbBlockBytes = await dbInt('content_sanity.bytes_block');
   const dbJunkEnabled = await dbBool('content_sanity.junk_patterns_enabled');
   const dbSanityDisabled = await dbBool('content_sanity.disabled');
+  const dbJunkDisposition = await dbStr('content_sanity.junk_disposition');
+  const dbMaxMarkupRatioStr = await dbStr('content_sanity.max_markup_ratio');
+  const dbProseCheckEnabled = await dbBool('content_sanity.prose_check_enabled');
 
   const existingCS = merged.content_sanity ?? {};
   const mergedCS: NonNullable<GBrainConfig['content_sanity']> = { ...existingCS };
@@ -470,8 +596,72 @@ export async function loadConfigWithEngine(
   if (mergedCS.disabled === undefined && dbSanityDisabled !== undefined) {
     mergedCS.disabled = dbSanityDisabled;
   }
+  if (
+    mergedCS.junk_disposition === undefined &&
+    (dbJunkDisposition === 'quarantine' || dbJunkDisposition === 'reject')
+  ) {
+    mergedCS.junk_disposition = dbJunkDisposition;
+  }
+  if (mergedCS.max_markup_ratio === undefined && dbMaxMarkupRatioStr !== undefined) {
+    const n = parseFloat(dbMaxMarkupRatioStr);
+    if (Number.isFinite(n) && n > 0 && n <= 1) mergedCS.max_markup_ratio = n;
+  }
+  if (mergedCS.prose_check_enabled === undefined && dbProseCheckEnabled !== undefined) {
+    mergedCS.prose_check_enabled = dbProseCheckEnabled;
+  }
   if (Object.keys(mergedCS).length > 0) {
     merged.content_sanity = mergedCS;
+  }
+
+  // v0.41.2.1 — dream.* DB-plane merge. Precedence is file > DB > defaults
+  // per key (NO env layer; see GBrainConfig.dream JSDoc). Without this,
+  // `extract-atoms.ts` and any other consumer that reads the merged config
+  // (vs calling `engine.getConfig()` directly) silently misses dream.*
+  // config set via `gbrain config set`.
+  const dbSessionCorpusDir = await dbStr('dream.synthesize.session_corpus_dir');
+  const dbMeetingTranscriptsDir = await dbStr('dream.synthesize.meeting_transcripts_dir');
+  const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
+  const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
+  const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
+  const dbMinEvidence = await dbInt('dream.patterns.min_evidence');
+
+  const existingDream = merged.dream ?? {};
+  const existingSynth = existingDream.synthesize ?? {};
+  const existingPatterns = existingDream.patterns ?? {};
+  const mergedSynth: NonNullable<NonNullable<GBrainConfig['dream']>['synthesize']> = { ...existingSynth };
+  const mergedPatterns: NonNullable<NonNullable<GBrainConfig['dream']>['patterns']> = { ...existingPatterns };
+
+  if (mergedSynth.session_corpus_dir === undefined && dbSessionCorpusDir !== undefined) {
+    mergedSynth.session_corpus_dir = dbSessionCorpusDir;
+  }
+  if (mergedSynth.meeting_transcripts_dir === undefined && dbMeetingTranscriptsDir !== undefined) {
+    mergedSynth.meeting_transcripts_dir = dbMeetingTranscriptsDir;
+  }
+  if (mergedSynth.verdict_model === undefined && dbVerdictModel !== undefined) {
+    mergedSynth.verdict_model = dbVerdictModel;
+  }
+  if (mergedSynth.max_prompt_tokens === undefined && dbMaxPromptTokens !== undefined) {
+    mergedSynth.max_prompt_tokens = dbMaxPromptTokens;
+  }
+  if (mergedSynth.max_chunks_per_transcript === undefined && dbMaxChunksPerTranscript !== undefined) {
+    mergedSynth.max_chunks_per_transcript = dbMaxChunksPerTranscript;
+  }
+  if (mergedPatterns.lookback_days === undefined && dbLookbackDays !== undefined) {
+    mergedPatterns.lookback_days = dbLookbackDays;
+  }
+  if (mergedPatterns.min_evidence === undefined && dbMinEvidence !== undefined) {
+    mergedPatterns.min_evidence = dbMinEvidence;
+  }
+
+  // Only construct the dream container when at least one leaf was populated
+  // — mirrors the content_sanity pattern so empty brains keep `cfg.dream`
+  // undefined.
+  if (Object.keys(mergedSynth).length > 0 || Object.keys(mergedPatterns).length > 0) {
+    const mergedDream: NonNullable<GBrainConfig['dream']> = {};
+    if (Object.keys(mergedSynth).length > 0) mergedDream.synthesize = mergedSynth;
+    if (Object.keys(mergedPatterns).length > 0) mergedDream.patterns = mergedPatterns;
+    merged.dream = mergedDream;
   }
 
   return merged;
@@ -573,9 +763,28 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'content_sanity.bytes_block',
   'content_sanity.junk_patterns_enabled',
   'content_sanity.disabled',
+  // Content-quality gate (v0.42, issue #1699)
+  'content_sanity.junk_disposition',
+  'content_sanity.max_markup_ratio',
+  'content_sanity.prose_check_enabled',
+  // MCP skill-catalog publishing (PR1)
+  'mcp.publish_skills',
+  'mcp.publish_skills_prompted',
+  'mcp.skills_dir',
+  // Self-upgrade (v0.42; file plane, read on the hot path)
+  'self_upgrade.mode',
+  'self_upgrade.mode_prompted',
+  'self_upgrade.quiet_hours',
+  'self_upgrade.failed_versions',
+  'self_upgrade.attempting_version',
+  'self_upgrade.last_check_ts',
+  'self_upgrade.last_applied_version',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
+  // Link resolution (issue #972)
+  'link_resolution',
+  'link_resolution.global_basename',
 ];
 
 /**
@@ -591,6 +800,9 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
   'content_sanity.',    // v0.41 content-sanity tunables
+  'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
+  'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
+  'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
 ];
 
 export function saveConfig(config: GBrainConfig): void {

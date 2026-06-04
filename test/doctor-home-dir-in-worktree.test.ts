@@ -64,10 +64,20 @@ async function getCheck(name: string, env: Record<string, string | undefined>) {
     process.exit = origExit;
   }
   const text = captured.join('');
-  // The doctor's JSON envelope is the last `{` block containing `"checks":`.
-  const idx = text.lastIndexOf('"checks"');
-  const objStart = idx >= 0 ? text.lastIndexOf('{', idx) : text.lastIndexOf('{');
-  const jsonStr = objStart >= 0 ? text.slice(objStart) : text;
+  // The doctor's JSON envelope is the LAST line that starts with
+  // `{"schema_version"`. v0.41.19.0 added nested objects to the envelope
+  // (category_scores), so a "find the `{` before `\"checks\"`" heuristic
+  // no longer works — it walks back to category_scores's `{` instead of
+  // the outer one. Anchor on the canonical envelope prefix instead.
+  const lines = text.split('\n');
+  let jsonStr = '';
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (trimmed.startsWith('{"schema_version"')) {
+      jsonStr = trimmed;
+      break;
+    }
+  }
   let parsed: { checks: { name: string; status: string; message: string }[] };
   try {
     parsed = JSON.parse(jsonStr);

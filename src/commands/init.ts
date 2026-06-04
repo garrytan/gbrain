@@ -9,8 +9,23 @@ const __dirname = dirname(__filename);
 import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath, configPath, isThinClient, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
+import { runInitEmbedCheck } from '../core/init-embed-check.ts';
 
 export async function runInit(args: string[]) {
+  // Help guard: cli.ts only routes --help to printOpHelp() for shared-op
+  // commands; CLI_ONLY commands (init, embed, etc.) fall through to their
+  // handler with --help in argv. Without this guard, `gbrain init --help`
+  // proceeds into the smart-detection branch below, scans cwd for .md files,
+  // and on a directory with 1000+ files (e.g. $HOME for someone whose brain
+  // and notes share a root) silently overwrites the existing Supabase config
+  // with a fresh PGLite brain at ~/.gbrain/brain.pglite. Confirmed in the
+  // wild — flipped a working `engine: postgres` config to `engine: pglite`
+  // on a brain with 10K+ pages. Help should never mutate state.
+  if (args.includes('--help') || args.includes('-h')) {
+    printInitHelp();
+    return;
+  }
+
   const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
   const isMcpOnly = args.includes('--mcp-only');
@@ -24,6 +39,15 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  // v0.42 (T17): pack selection on fresh installs. New brains default to
+  // gbrain-base-v2 (the 15-type canonical taxonomy); --schema-pack
+  // gbrain-base opts back to the legacy 24-type pack for users who don't
+  // want the new taxonomy on day one. Existing brains stay on whatever
+  // schema_pack their config.json already says.
+  const schemaPackIdx = args.indexOf('--schema-pack');
+  const schemaPack = schemaPackIdx !== -1 && args[schemaPackIdx + 1]
+    ? args[schemaPackIdx + 1]
+    : 'gbrain-base-v2';
 
   // Multi-topology v1: thin-client init. Skips local engine entirely; writes
   // remote_mcp config that the CLI dispatch guard reads to refuse DB-bound ops.
@@ -72,6 +96,9 @@ export async function runInit(args: string[]) {
   const chatModelIdx = args.indexOf('--chat-model');
   // v0.37 (D9): --no-embedding opts into deferred-setup mode (D9 escape hatch).
   const noEmbedding = args.includes('--no-embedding');
+  // v0.42 (#1780 Gap 2): --skip-embed-check bypasses the init-time embedding
+  // key validation (also honored via GBRAIN_INIT_SKIP_EMBED_CHECK=1).
+  const skipEmbedCheck = args.includes('--skip-embed-check');
   const aiOpts = await resolveAIOptions({
     verbose: embModelIdx !== -1 ? args[embModelIdx + 1] : null,
     shorthand: modelShortIdx !== -1 ? args[modelShortIdx + 1] : null,
@@ -98,7 +125,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts });
+    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack, skipEmbedCheck });
   }
 
   // Supabase/Postgres mode
@@ -117,7 +144,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts, schemaPack, skipEmbedCheck });
 }
 
 interface ResolveAIOptionsArgs {
@@ -222,9 +249,8 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
     out.embedding_dimensions = dimsArg;
   } else if (out.embedding_model && out.embedding_dimensions === undefined) {
     // Derive default dims from the resolved recipe when verbose form was used.
-    const { getRecipe } = await import('../core/ai/recipes/index.ts');
-    const providerId = out.embedding_model.split(':')[0];
-    const recipe = getRecipe(providerId);
+    const { resolveRecipe, resolveEmbeddingDefaultDims } = await import('../core/ai/model-resolver.ts');
+    const { recipe, parsed } = resolveRecipe(out.embedding_model);
     // v0.32: user_provided_models recipes (litellm, llama-server) have
     // default_dims=0 and ship with `models: []` — there's no sensible
     // fallback. Refuse explicitly here too. Without this, the verbose path
@@ -233,14 +259,15 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
     // wrong-width schema that explodes only at first embed.
     if (recipe?.touchpoints.embedding?.user_provided_models === true) {
       console.error(
-        `Provider ${providerId} requires --embedding-dimensions <N> when using --embedding-model ${out.embedding_model}.\n` +
+        `Provider ${recipe.id} requires --embedding-dimensions <N> when using --embedding-model ${out.embedding_model}.\n` +
         `User-driven-model recipes (litellm, llama-server) have no default dimension.\n` +
         (recipe.setup_hint ? `\nSetup: ${recipe.setup_hint}` : '')
       );
       process.exit(1);
     }
-    if (recipe?.touchpoints.embedding?.default_dims) {
-      out.embedding_dimensions = recipe.touchpoints.embedding.default_dims;
+    const defaultDims = resolveEmbeddingDefaultDims(recipe, parsed.modelId);
+    if (defaultDims > 0) {
+      out.embedding_dimensions = defaultDims;
     }
   }
 
@@ -492,43 +519,26 @@ async function resolveChatByEnv(out: ResolvedAIOptions): Promise<void> {
  * clobbering the user's chosen engine.
  */
 async function initMigrateOnly(opts: { jsonOutput: boolean }) {
-  const config = loadConfig();
-  if (!config) {
-    const msg = 'No brain configured. Run `gbrain init` (interactive) or `gbrain init --pglite` / `gbrain init --supabase` first.';
+  // v0.41.37.0 #1605: delegate to the shared runMigrateOnlyCore so the CLI path
+  // and the in-process migration-orchestrator path can't drift (single source
+  // of truth for configureGateway-before-initSchema + the schema bring-up).
+  const { runMigrateOnlyCore, MigrateOnlyError } = await import('./migrations/in-process.ts');
+  try {
+    const result = await runMigrateOnlyCore();
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'error', reason: 'no_config', message: msg }));
+      console.log(JSON.stringify({ status: 'success', engine: result.engine, mode: 'migrate-only' }));
+    } else {
+      console.log(`Schema up to date (engine: ${result.engine}).`);
+    }
+  } catch (e) {
+    const isNoConfig = e instanceof MigrateOnlyError && e.message.startsWith('No brain configured');
+    const msg = e instanceof Error ? e.message : String(e);
+    if (opts.jsonOutput) {
+      console.log(JSON.stringify({ status: 'error', reason: isNoConfig ? 'no_config' : 'migrate_failed', message: msg }));
     } else {
       console.error(msg);
     }
     process.exit(1);
-  }
-
-  // B.3: configureGateway BEFORE initSchema even on the migrate-only path,
-  // so a schema bump on a brain whose file config is missing the embedding
-  // fields doesn't fall through to stale hardcoded fallbacks. Reads
-  // existing config (which loadConfig already merged with env) and
-  // propagates it into the gateway.
-  const { configureGateway: configureGw } = await import('../core/ai/gateway.ts');
-  configureGw({
-    embedding_model: config.embedding_model,
-    embedding_dimensions: config.embedding_dimensions,
-    expansion_model: config.expansion_model,
-    chat_model: config.chat_model,
-    env: { ...process.env },
-  });
-
-  const engine = await createEngine(toEngineConfig(config));
-  try {
-    await engine.connect(toEngineConfig(config));
-    await engine.initSchema();
-  } finally {
-    try { await engine.disconnect(); } catch { /* best-effort */ }
-  }
-
-  if (opts.jsonOutput) {
-    console.log(JSON.stringify({ status: 'success', engine: config.engine, mode: 'migrate-only' }));
-  } else {
-    console.log(`Schema up to date (engine: ${config.engine}).`);
   }
 }
 
@@ -771,6 +781,11 @@ async function initPGLite(opts: {
   apiKey: string | null;
   customPath: string | null;
   aiOpts?: ResolvedAIOptions;
+  /** v0.42 (T17): schema pack to default. Stored as config.schema_pack
+   *  so loadActivePack's homeConfig tier resolves it. */
+  schemaPack?: string;
+  /** v0.42 (#1780 Gap 2): skip the init-time embedding-key validation. */
+  skipEmbedCheck?: boolean;
 }) {
   const dbPath = opts.customPath || gbrainPath('brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
@@ -823,22 +838,20 @@ async function initPGLite(opts: {
   if (opts.aiOpts?.expansion_model) console.log(`  Expansion: ${opts.aiOpts.expansion_model}`);
   if (opts.aiOpts?.chat_model) console.log(`  Chat: ${opts.aiOpts.chat_model}`);
 
-  // v0.37.11.0 Lane C.3: surface ZE setup gap inline at init time when the
-  // resolved provider is ZeroEntropy and neither env nor file-plane key is
-  // set. Beats "first embed call blows up four minutes later" UX.
-  if (resolvedModel?.startsWith('zeroentropyai:')) {
-    const fileCfg = loadConfigFileOnly();
-    if (!process.env.ZEROENTROPY_API_KEY && !fileCfg?.zeroentropy_api_key) {
-      console.warn('');
-      console.warn('  Heads up: ZEROENTROPY_API_KEY is not set.');
-      console.warn('  Set it before first embed:');
-      console.warn('    export ZEROENTROPY_API_KEY=...');
-      console.warn('  Or add to ~/.gbrain/config.json:');
-      console.warn('    "zeroentropy_api_key": "..."');
-      console.warn('  Or pick a different provider:');
-      console.warn('    gbrain init --pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536');
-    }
-  }
+  // v0.42 (#1780 Gap 2): validate the embedding key at init for ALL providers
+  // (generalizes the prior ZeroEntropy-only warning). Config-only diagnose
+  // catches a missing key; a best-effort live test-embed catches an
+  // invalid/expired key. Loud warning to stderr, init still succeeds.
+  // Skipped by --no-embedding / --skip-embed-check / GBRAIN_INIT_SKIP_EMBED_CHECK=1.
+  const embedCheck = await runInitEmbedCheck({
+    resolvedModel,
+    resolvedDim,
+    expansionModel: opts.aiOpts?.expansion_model,
+    chatModel: opts.aiOpts?.chat_model,
+    apiKey: opts.apiKey ?? undefined,
+    noEmbedding: opts.aiOpts?.noEmbedding,
+    skipFlag: opts.skipEmbedCheck,
+  });
 
   const engine = await createEngine({ engine: 'pglite' });
   try {
@@ -920,8 +933,24 @@ async function initPGLite(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      // v0.42 (T17): default new brains to the schema_pack selected at init
+      // time. Existing config.schema_pack survives (...existingFile spread)
+      // unless explicitly overridden by --schema-pack on re-init.
+      ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    // PR1: new installs publish their skill catalog over MCP by default
+    // (existing config wins on re-init, so a prior opt-out is preserved).
+    config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
+    // v0.42: new installs default self-upgrade to NOTIFY (a nudge on every
+    // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
+    // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
+    config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(config.self_upgrade ?? {}) };
     saveConfig(config);
+    if (opts.schemaPack) {
+      process.stderr.write(
+        `[init] Using schema pack: ${opts.schemaPack} (override with --schema-pack <name>)\n`,
+      );
+    }
 
     // T6 (D7): post-init subagent-Anthropic caveat. Fires for both auto-pick
     // and picker paths so users see the implication of running on a chat
@@ -940,7 +969,7 @@ async function initPGLite(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count }));
+      console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck }));
     } else {
       console.log(`\nBrain ready at ${dbPath}`);
       console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
@@ -959,6 +988,11 @@ async function initPGLite(opts: {
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');
       printAdvisoryIfRecommended({ version: VERSION, context: 'init' });
+
+      // v0.41.18.0 (A4 + A18 + A20, T14): post-initSchema onboard nudge.
+      // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
+      const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
+      await runInitNudge(engine);
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -970,6 +1004,10 @@ async function initPostgres(opts: {
   jsonOutput: boolean;
   apiKey: string | null;
   aiOpts?: ResolvedAIOptions;
+  /** v0.42 (T17): schema pack to default. */
+  schemaPack?: string;
+  /** v0.42 (#1780 Gap 2): skip the init-time embedding-key validation. */
+  skipEmbedCheck?: boolean;
 }) {
   const { databaseUrl } = opts;
 
@@ -1015,22 +1053,19 @@ async function initPostgres(opts: {
   if (opts.aiOpts?.expansion_model) console.log(`  Expansion: ${opts.aiOpts.expansion_model}`);
   if (opts.aiOpts?.chat_model) console.log(`  Chat: ${opts.aiOpts.chat_model}`);
 
-  // v0.37.11.0 Lane C.3: surface ZE setup gap inline at init time when the
-  // resolved provider is ZeroEntropy and neither env nor file-plane key is
-  // set. Beats "first embed call blows up four minutes later" UX.
-  if (resolvedModel?.startsWith('zeroentropyai:')) {
-    const fileCfg = loadConfigFileOnly();
-    if (!process.env.ZEROENTROPY_API_KEY && !fileCfg?.zeroentropy_api_key) {
-      console.warn('');
-      console.warn('  Heads up: ZEROENTROPY_API_KEY is not set.');
-      console.warn('  Set it before first embed:');
-      console.warn('    export ZEROENTROPY_API_KEY=...');
-      console.warn('  Or add to ~/.gbrain/config.json:');
-      console.warn('    "zeroentropy_api_key": "..."');
-      console.warn('  Or pick a different provider:');
-      console.warn('    gbrain init --pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 1536');
-    }
-  }
+  // v0.42 (#1780 Gap 2): validate the embedding key at init for ALL providers
+  // (generalizes the prior ZeroEntropy-only warning). Same contract as the
+  // PGLite path: loud warning to stderr, init still succeeds; skipped by
+  // --no-embedding / --skip-embed-check / GBRAIN_INIT_SKIP_EMBED_CHECK=1.
+  const embedCheck = await runInitEmbedCheck({
+    resolvedModel,
+    resolvedDim,
+    expansionModel: opts.aiOpts?.expansion_model,
+    chatModel: opts.aiOpts?.chat_model,
+    apiKey: opts.apiKey ?? undefined,
+    noEmbedding: opts.aiOpts?.noEmbedding,
+    skipFlag: opts.skipEmbedCheck,
+  });
 
   // Detect Supabase direct connection URLs and warn about IPv6
   if (databaseUrl.match(/db\.[a-z]+\.supabase\.co/) || databaseUrl.includes('.supabase.co:5432')) {
@@ -1143,9 +1178,23 @@ async function initPostgres(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      // v0.42 (T17): same schema_pack default as PGLite path.
+      ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    // PR1: new installs publish their skill catalog over MCP by default
+    // (existing config wins on re-init, so a prior opt-out is preserved).
+    config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
+    // v0.42: new installs default self-upgrade to NOTIFY (a nudge on every
+    // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
+    // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
+    config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(config.self_upgrade ?? {}) };
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
+    if (opts.schemaPack) {
+      process.stderr.write(
+        `[init] Using schema pack: ${opts.schemaPack} (override with --schema-pack <name>)\n`,
+      );
+    }
 
     // T6 (D7): post-init subagent-Anthropic caveat.
     if (opts.aiOpts?.chat_model && !opts.aiOpts.chat_model.startsWith('anthropic:') && !process.env.ANTHROPIC_API_KEY) {
@@ -1161,7 +1210,7 @@ async function initPostgres(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count }));
+      console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count, embedding_check: embedCheck }));
     } else {
       console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
       if (stats.page_count > 0) {
@@ -1177,6 +1226,11 @@ async function initPostgres(opts: {
       const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
       const { VERSION } = await import('../version.ts');
       printAdvisoryIfRecommended({ version: VERSION, context: 'init' });
+
+      // v0.41.18.0 (A4 + A18 + A20, T14): post-initSchema onboard nudge.
+      // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
+      const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
+      await runInitNudge(engine);
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -1400,4 +1454,52 @@ export function reportModStatus(): void {
   console.log('Resolver: skills/RESOLVER.md');
   console.log('Soul audit: run `gbrain soul-audit` to customize agent identity');
   console.log('');
+}
+
+function printInitHelp() {
+  console.log(`
+gbrain init — initialize a brain (PGLite or Supabase Postgres)
+
+USAGE
+  gbrain init [flags]
+
+ENGINE SELECTION (mutually exclusive)
+  --pglite              Use embedded PGLite (zero-config, default for <1000 .md files)
+  --supabase            Use Supabase Postgres (recommended for 1000+ files)
+  --url <URL>           Use a manual Postgres connection string
+  --mcp-only            Thin-client mode: connect to a remote gbrain MCP, no local engine
+
+OPTIONS
+  --force               Overwrite an existing config (gated by default)
+  --non-interactive     Don't prompt; use defaults
+  --migrate-only        Apply pending schema migrations against the configured engine
+                        without re-saving config (used by post-upgrade and orchestrators)
+  --json                JSON output for status reporting
+  --path <DIR>          Override default brain path (PGLite only)
+  --key <APIKEY>        Provide an API key non-interactively (Supabase only)
+  --embedding-model <PROVIDER:MODEL>
+                        e.g. openai:text-embedding-3-large, voyage:voyage-multimodal-3
+  --model <PROVIDER>    Shorthand: pick recipe default for a provider
+  --embedding-dimensions <N>
+                        Embedding dimensions (must match the model)
+  --expansion-model <PROVIDER:MODEL>
+                        Model for query expansion (default: anthropic:claude-haiku)
+  --chat-model <PROVIDER:MODEL>
+                        Default subagent driver (v0.27+)
+  --no-embedding        Defer embedding setup (skips the embedding-key check)
+  --skip-embed-check    Skip the init-time embedding-key validation (config +
+                        live test-embed). Also via GBRAIN_INIT_SKIP_EMBED_CHECK=1
+
+EXAMPLES
+  gbrain init --pglite                      # Local-only, no API keys
+  gbrain init --supabase                    # Interactive Supabase setup
+  gbrain init --url postgresql://...        # Use a custom Postgres
+  gbrain init --mcp-only --url https://...  # Thin-client mode
+
+NOTES
+  - Bare \`gbrain init\` in a directory with 1000+ .md files defaults to Supabase
+    interactive setup. With <1000 files (or with --pglite explicitly), defaults
+    to PGLite at ~/.gbrain/brain.pglite.
+  - Existing config is preserved unless --force is passed.
+`.trim());
 }

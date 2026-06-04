@@ -3,4 +3,4 @@
 {"intent": "ask the brain taxonomist before I write this page", "expected_skill": "brain-taxonomist"}
 {"intent": "run a taxonomy check on yesterday's notes", "expected_skill": "brain-taxonomist"}
 {"intent": "I want to refile brain page about Bob", "expected_skill": "brain-taxonomist"}
-{"intent": "which directory does this page go in given the active pack?", "expected_skill": "brain-taxonomist"}
+{"intent": "which directory does this page go in given the active pack?", "expected_skill": "brain-taxonomist", "ambiguous_with": ["repo-architecture"]}

@@ -220,3 +220,36 @@ describe('configDir — GBRAIN_HOME Windows path acceptance (v0.36.1.x #1019)', 
     });
   });
 });
+
+// v0.42 (#1699): content_sanity.max_markup_ratio env parsing.
+describe('loadConfig — GBRAIN_MAX_MARKUP_RATIO env (v0.42 #1699)', () => {
+  async function withHomeAndEnv(env: Record<string, string | undefined>, fn: (cfg: unknown) => void) {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    const { withEnv } = await import('./helpers/with-env.ts');
+    const tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-cfg-mk-'));
+    try {
+      mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
+      writeFileSync(join(tmpHome, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: '/tmp/x' }));
+      await withEnv({ GBRAIN_HOME: tmpHome, ...env }, async () => {
+        const { loadConfig } = await import('../src/core/config.ts');
+        fn(loadConfig());
+      });
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  }
+
+  test('valid ratio in (0,1] is parsed onto content_sanity', async () => {
+    await withHomeAndEnv({ GBRAIN_MAX_MARKUP_RATIO: '0.7' }, (cfg) => {
+      expect((cfg as { content_sanity?: { max_markup_ratio?: number } }).content_sanity?.max_markup_ratio).toBe(0.7);
+    });
+  });
+
+  test('out-of-range value (>1) is ignored', async () => {
+    await withHomeAndEnv({ GBRAIN_MAX_MARKUP_RATIO: '1.5' }, (cfg) => {
+      expect((cfg as { content_sanity?: { max_markup_ratio?: number } }).content_sanity?.max_markup_ratio).toBeUndefined();
+    });
+  });
+});

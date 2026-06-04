@@ -19,6 +19,7 @@ import {
   resolveSchemaMultimodalDim,
   PGVECTOR_COLUMN_MAX_DIMS,
 } from '../src/core/embedding-dim-check.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 // Canonical pattern: single engine per file, init once, disconnect once.
 // The two tests below diverge in whether they want a migrated brain or a
@@ -27,6 +28,21 @@ import {
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // Hermeticity guard (cross-file gateway-state leak class — see CLAUDE.md
+  // "Test-isolation lint and helpers"). initSchema builds the
+  // content_chunks vector column at the gateway's configured dim. The
+  // bunfig preload pins OpenAI/1536, but its beforeEach only re-applies
+  // legacy when the gateway was RESET (throws) — it does NOT correct a
+  // sibling that configured a different LIVE dim (e.g. ZE/1280) and never
+  // reset. Under weight-based shard bin-packing, such a sibling can run
+  // first, so pin 1536 explicitly here BEFORE initSchema (this is exactly
+  // the "call configureGateway() in your own beforeAll" escape hatch the
+  // preload documents). Reset in afterAll so we don't leak 1536 onward.
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { ...process.env },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -34,6 +50,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 describe('readContentChunksEmbeddingDim', () => {
@@ -218,6 +235,37 @@ describe('resolveSchemaEmbeddingDim', () => {
     });
     expect(got.ok).toBe(true);
     if (got.ok) expect(got.dim).toBe(768);
+  });
+
+  test('Ollama bge-m3 resolves to its native 1024 dims', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:bge-m3' });
+    expect(got).toEqual({
+      ok: true,
+      dim: 1024,
+      model: 'ollama:bge-m3',
+      provider: 'ollama',
+      recipeDefault: 1024,
+    });
+  });
+
+  test('Ollama :latest aliases still resolve to the canonical native dim', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:bge-m3:latest' });
+    expect(got).toEqual({
+      ok: true,
+      dim: 1024,
+      model: 'ollama:bge-m3',
+      provider: 'ollama',
+      recipeDefault: 1024,
+    });
+  });
+
+  test('Ollama nomic-embed-text still rejects an impossible 1024-dim override', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:nomic-embed-text',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/does not support custom dimensions 1024|only emits/);
   });
 
   test('unknown provider rejected with provider list hint', () => {

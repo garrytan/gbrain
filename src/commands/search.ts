@@ -54,6 +54,7 @@ const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   reranker_top_n_out: 'Cap on reranked output (null = no truncate)',
   reranker_timeout_ms: 'HTTP timeout for the reranker call',
   floor_ratio: 'Floor-ratio gate for metadata boosts (0..1, undefined = off)',
+  title_boost: 'Title-phrase boost multiplier (query is a title token-run; 1.0 = off)',
   // v0.36 cross-modal knobs (D3 registry)
   cross_modal_both_text_weight: "D6 'both'-mode RRF weight for text branch (0.6 default)",
   cross_modal_both_image_weight: "D6 'both'-mode RRF weight for image branch (0.4 default)",
@@ -67,6 +68,9 @@ const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   // v0.40.3.0 contextual retrieval
   contextual_retrieval: 'CR tier (none|title|per_chunk_synopsis) — wraps chunks at embed time',
   contextual_retrieval_disabled: 'Soft kill switch — neutralizes CR wrapping for queries + new embeds',
+  // v0.42.3.0 autocut
+  autocut: 'Score-discontinuity result-sizing (cuts at the rerank-score cliff; no-op without a reranker)',
+  autocut_jump: 'Autocut sensitivity: min normalized score gap that counts as a cliff (0..1, 0.20 default)',
 };
 
 interface SearchModesReport {
@@ -253,6 +257,12 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
   console.log(`  Avg results returned:  ${stats.avg_results.toFixed(1)}`);
   console.log(`  Avg tokens delivered:  ${stats.avg_tokens.toFixed(0)}  (char/4 heuristic)`);
   console.log(`  Budget drops total:    ${stats.total_budget_dropped}`);
+  // T7 — rank-1 match-quality drift signal. Watch for avg drifting DOWN.
+  if (stats.avg_rank1_score !== null && stats.rank1_count > 0) {
+    const d = stats.rank1_distribution;
+    console.log(`  Avg rank-1 score:      ${stats.avg_rank1_score.toFixed(3)}  (${stats.rank1_count} samples; <0.6:${d.lt_solid} 0.6-0.85:${d.solid} >=0.85:${d.high})`);
+    console.log(`                         (top-result match quality; a downward drift = retrieval regressing)`);
+  }
   console.log('');
   console.log('  Mode distribution:');
   for (const [m, c] of Object.entries(stats.mode_distribution).sort((a, b) => b[1] - a[1])) {

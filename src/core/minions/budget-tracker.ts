@@ -253,7 +253,7 @@ export async function haltBudgetSubtree(
   return rows.length;
 }
 
-/** Audit table row shape. Mirrors the columns from migration v93. */
+/** Audit table row shape. Mirrors the columns from migration v94. */
 export interface BudgetEventRecord {
   job_id: number;
   owner_id: number;

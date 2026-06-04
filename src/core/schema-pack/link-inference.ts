@@ -39,7 +39,7 @@
 // universe.
 
 import type { SchemaPackManifest } from './manifest-v1.ts';
-import { PageRegexBudget } from './redos-guard.ts';
+import { PageRegexBudget, runRegexBounded } from './redos-guard.ts';
 
 /**
  * Try to resolve a link verb from the active pack's declared
@@ -80,12 +80,16 @@ export function inferLinkTypeFromPack(
       }
       if (match !== null) return lt.name;
     } else {
-      // No budget provided (test contexts) — run the regex directly.
+      // No budget provided (test contexts) — still route through the bounded
+      // executor so the v0.41.37.0 #1569 input-length cap + vm timeout apply.
+      // Previously this ran `new RegExp(pattern).test(context)` UNBOUNDED, the
+      // one ReDoS hole with no timeout. runRegexBounded throws on
+      // timeout/oversize/malformed → skip and continue (degrade to mentions).
       try {
-        if (new RegExp(pattern).test(context)) return lt.name;
+        if (runRegexBounded(pattern, context) !== null) return lt.name;
       } catch {
-        // Malformed pattern — skip and continue. Pack validation
-        // should have caught this at load.
+        // Timed out, oversize input, or malformed pattern — skip and continue.
+        // Pack validation + the star-height lint rule surface bad patterns.
       }
     }
   }
