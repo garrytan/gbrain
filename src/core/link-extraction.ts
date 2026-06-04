@@ -82,7 +82,7 @@ export type LinkResolutionType = 'qualified' | 'unqualified';
  *   - Our domain extensions: tech, finance, personal, openclaw (domain-organized wikis)
  *   - Our entity prefix: entities (we kept some legacy entities/projects/ pages)
  */
-const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities)';
+const DIR_PATTERN = '(?:people|companies|meetings|concepts|deal|deals|civic|project|projects|source|media|yc|tech|finance|personal|openclaw|entities|analysis|medical|writing|group-chats|tools|vendors|books)';
 
 /**
  * Match `[Name](path)` markdown links pointing to entity directories.
@@ -311,8 +311,11 @@ export function extractEntityRefs(content: string): EntityRef[] {
   while ((match = mdPattern.exec(stripped)) !== null) {
     const name = match[1];
     const fullPath = match[2];
-    const slug = fullPath;
-    const dir = fullPath.split('/')[0];
+    // Canonical slugs are lowercase; normalize so `analysis/THE-PORTRAIT`
+    // resolves to the real page `analysis/the-portrait` (the addLinksBatch
+    // JOIN on pages is case-sensitive — a mismatch silently drops the edge).
+    const slug = fullPath.toLowerCase();
+    const dir = slug.split('/')[0];
     refs.push({ name, slug, dir });
     markdownRanges.push([match.index, match.index + match[0].length]);
   }
@@ -329,6 +332,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (slug.includes('://')) continue;
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
     const displayName = (match[3] || slug).trim();
+    slug = slug.toLowerCase();
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir, sourceId });
     qualifiedRanges.push([match.index, match.index + match[0].length]);
@@ -345,6 +349,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (slug.includes('://')) continue;
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
     const displayName = (match[2] || slug).trim();
+    slug = slug.toLowerCase();
     const dir = slug.split('/')[0];
     refs.push({ name: displayName, slug, dir });
     unqualifiedRanges.push([match.index, match.index + match[0].length]);

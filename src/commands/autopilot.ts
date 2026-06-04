@@ -529,8 +529,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       autopilotReconnectFails = 0; // reset on success
     } catch (probeErr) {
       try {
-        await engine.disconnect();
-        await (engine as any).connect?.();
+        // Reuse saved config; connect() with no args crashed on config.poolSize.
+        await (engine as any).reconnect?.();
         autopilotReconnectFails = 0;
       } catch (e) {
         logError('reconnect', e);
