@@ -145,14 +145,15 @@ GBrain uses Supabase for vector embeddings and full-text search at scale. There 
 
 Skip this and every embed write fails with "type vector does not exist" the moment GBrain tries to create its schema. pgvector is what stores the embeddings; the schema migrations refuse to run without it. Five seconds in the UI; an hour of debugging if you forget.
 
-### 7b. Get the CONNECTION POOLER connection string, not the direct one
+### 7b. Get the SESSION POOLER connection string, not the direct one
 
-In **Project Settings → Database → Connection string**, Supabase shows you two options. They look almost identical. Use the right one.
+In the **Project navigation bar →  Connect**, Supabase shows you three options. They look almost identical. Use the right one.
 
 - **Direct connection** (port 5432). Talks straight to the Postgres instance. IPv6-only. Will fail if your Render host doesn't have IPv6 outbound (most don't by default).
-- **Connection pooler** (port 6543, hostname starts with `aws-0-...pooler.supabase.com`). Talks through Supabase's pgbouncer. Works over IPv4. Survives connection storms from parallel workers.
+- **Transaction pooler** (port 6543, hostname starts with `aws-0-...pooler.supabase.com`). Talks through Supabase's pgbouncer. Works over IPv4. Survives connection storms from parallel workers.
+- **Session pooler** (port 5432). Works over IPv4.
 
-You want the **connection pooler** string. Format looks like:
+You want the **Transaction pooler** string. Format looks like:
 
 ```
 postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres
