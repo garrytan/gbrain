@@ -16,7 +16,7 @@
 import type { BrainEngine } from './engine.ts';
 import { PGVECTOR_HNSW_VECTOR_MAX_DIMS } from './vector-index.ts';
 import { gbrainPath } from './config.ts';
-import { resolveRecipe } from './ai/model-resolver.ts';
+import { resolveRecipe, resolveEmbeddingDefaultDims } from './ai/model-resolver.ts';
 import type { Recipe } from './ai/types.ts';
 import { AIConfigError } from './ai/errors.ts';
 import {
@@ -282,7 +282,8 @@ export function resolveSchemaEmbeddingDim(opts: ResolveSchemaEmbeddingDimOpts): 
           `Pick a recipe with an embedding touchpoint (gbrain providers list).`,
       };
     }
-    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp.default_dims, tp.dims_options, opts.embedding_dimensions);
+    const defaultDims = resolveEmbeddingDefaultDims(recipe, parsed.modelId);
+    return validateDimAgainstTouchpoint(parsed.modelId, recipe, defaultDims, tp.dims_options, opts.embedding_dimensions);
   } catch (err) {
     return { ok: false, error: err instanceof AIConfigError ? err.message : String(err) };
   }
