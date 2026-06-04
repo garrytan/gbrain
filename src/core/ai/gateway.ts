@@ -704,11 +704,17 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
     };
   }
 
-  // Openai-compat recipes with empty models list require a user-provided model.
+  // Openai-compat recipes with empty models list require a user-provided model
+  // (e.g. `litellm:embeddings`). The user supplies the model as the portion after
+  // the first colon in the embedding_model string. Only reject when that portion
+  // is absent — not merely because the recipe's static models[] is empty (it is
+  // always empty for user_provided_models recipes by design).
   const isUserProvided = (tp as any).user_provided_models === true;
+  const userModelName = modelStr.includes(':') ? modelStr.slice(modelStr.indexOf(':') + 1).trim() : '';
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
+    !userModelName &&
     (recipe.id === 'litellm' || isUserProvided)
   ) {
     return {
