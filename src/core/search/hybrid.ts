@@ -26,7 +26,7 @@ import { applyAutocut, type AutocutDecision } from './autocut.ts';
 import { buildRelationalArm } from './relational-recall.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
-import { applyReranker } from './rerank.ts';
+import { applyReranker, rerankerEmitsNormalizedScores } from './rerank.ts';
 import { autoDetectDetail, classifyQuery, isAmbiguousModalityQuery } from './query-intent.ts';
 import { isTitlePhraseMatch } from './title-match.ts';
 import { normalizeAlias } from './alias-normalize.ts';
@@ -1470,10 +1470,23 @@ export async function hybridSearch(
   // never-empty failsafe (1); jumpRatio comes from the resolved mode.
   let autocutDecision: AutocutDecision | undefined;
   if (resolvedMode.autocut && offset === 0) {
+    // v0.42.x — minTopScore: weak-top floor. When the top rerank score isn't a
+    // confident anchor, autocut no-ops (fixes the rare-term cross-source
+    // collapse where a weak 0.317 top fabricated a cliff and trimmed 32→1). The
+    // floor is a [0,1] threshold, so it only applies to rerankers that emit
+    // normalized scores; on raw-logit rerankers (llama-server/Qwen3) we pass 0
+    // (disabled) to avoid suppressing legitimate cuts on an unbounded scale.
+    // Gate on the EFFECTIVE reranker model — a per-call SearchOpts.reranker
+    // .model override wins over the bundle default, so reading the bundle alone
+    // would re-open the bug for a per-call raw-logit reranker.
+    const effectiveRerankerModel = rerankerOpts.model ?? resolvedMode.reranker_model;
+    const autocutMinTopScore = rerankerEmitsNormalizedScores(effectiveRerankerModel)
+      ? resolvedMode.autocut_min_top_score
+      : 0;
     const r = applyAutocut(
       returnPool,
       (x) => x.rerank_score,
-      { enabled: true, jumpRatio: resolvedMode.autocut_jump, minKeep: 1 },
+      { enabled: true, jumpRatio: resolvedMode.autocut_jump, minKeep: 1, minTopScore: autocutMinTopScore },
       // Preserve alias-hop exact matches: applyAliasHop injects the canonical
       // page AFTER reranking, so it has no rerank_score. Without this it would
       // be dropped whenever autocut cuts on the scored set (Codex P1).
