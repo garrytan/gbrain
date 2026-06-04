@@ -5,6 +5,7 @@ import { join } from 'path';
 import { runEmbed } from '../src/commands/embed.ts';
 import { createLocalConfigDefaults } from '../src/core/config.ts';
 import { embedChunks, getEmbeddingProvider, resetEmbeddingProviderForTests, setEmbeddingProviderForTests } from '../src/core/embedding.ts';
+import { defaultLocalEmbeddingUrlForPlatform } from '../src/core/embedding/provider.ts';
 import { getEngineCapabilities } from '../src/core/engine-capabilities.ts';
 import { buildPageChunks, importFile } from '../src/core/import-file.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
@@ -530,7 +531,7 @@ printf '%s\\n' "$@" > "${capturePath}"
     }
   });
 
-  test('local provider auto-detects the default llama.cpp embeddings endpoint when env vars are unset', async () => {
+  test('local provider defaults to the platform-optimized embeddings endpoint when env vars are unset', async () => {
     const previousOpenAI = process.env.OPENAI_API_KEY;
     const previousLocalUrl = process.env.MBRAIN_LOCAL_EMBEDDING_URL;
     const previousLlamaCpp = process.env.MBRAIN_LLAMA_CPP_HOST;
@@ -546,13 +547,14 @@ printf '%s\\n' "$@" > "${capturePath}"
     delete process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
 
     const originalFetch = globalThis.fetch;
+    const expectedUrl = defaultLocalEmbeddingUrlForPlatform();
     const fetchSpy = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('http://127.0.0.1:8080/v1/embeddings');
+      expect(String(input)).toBe(expectedUrl);
       expect(init?.method).toBe('POST');
       expect(init?.headers).toEqual({ 'content-type': 'application/json' });
       expect(JSON.parse(String(init?.body ?? '{}'))).toEqual({
         model: 'qwen3-embedding:0.6b',
-        input: ['hello from default llama.cpp'],
+        input: ['hello from default local runtime'],
       });
 
       return new Response(JSON.stringify({
@@ -580,7 +582,7 @@ printf '%s\\n' "$@" > "${capturePath}"
       expect(provider.capability.model).toBe('qwen3-embedding:0.6b');
       expect(provider.capability.dimensions).toBe(1024);
 
-      const embeddings = await provider.embedBatch(['hello from default llama.cpp']);
+      const embeddings = await provider.embedBatch(['hello from default local runtime']);
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       expect(Array.from(embeddings[0] ?? [])).toEqual([1, 2, 3]);
     } finally {
@@ -622,6 +624,11 @@ printf '%s\\n' "$@" > "${capturePath}"
         process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS = previousDimensions;
       }
     }
+  });
+
+  test('local provider platform defaults prefer MLX on macOS and llama.cpp elsewhere', () => {
+    expect(defaultLocalEmbeddingUrlForPlatform('darwin')).toBe('http://127.0.0.1:8765/v1/embeddings');
+    expect(defaultLocalEmbeddingUrlForPlatform('linux')).toBe('http://127.0.0.1:8080/v1/embeddings');
   });
 
   test('local provider resolves MBRAIN_LLAMA_CPP_HOST to the OpenAI embeddings path', async () => {
@@ -680,7 +687,7 @@ printf '%s\\n' "$@" > "${capturePath}"
     }
   });
 
-  test('local provider suggests starting llama.cpp when the default embeddings endpoint is missing', async () => {
+  test('local provider suggests starting the platform default runtime when the default endpoint is missing', async () => {
     const previousLocalUrl = process.env.MBRAIN_LOCAL_EMBEDDING_URL;
     const previousLlamaCpp = process.env.MBRAIN_LLAMA_CPP_HOST;
     const previousOllama = process.env.OLLAMA_HOST;
@@ -714,9 +721,10 @@ printf '%s\\n' "$@" > "${capturePath}"
         },
       });
 
-      await expect(provider.embedBatch(['hello from missing qwen3'])).rejects.toThrow(
-        /run-qwen3-llamacpp-embedding-cpu\.sh/,
-      );
+      const expectedHint = process.platform === 'darwin'
+        ? /MLX embedding server/
+        : /run-qwen3-llamacpp-embedding-cpu\.sh/;
+      await expect(provider.embedBatch(['hello from missing qwen3'])).rejects.toThrow(expectedHint);
     } finally {
       globalThis.fetch = originalFetch;
 

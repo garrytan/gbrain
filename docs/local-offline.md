@@ -237,10 +237,17 @@ MBrain resolves the embedding runtime in this order:
 1. `MBRAIN_LOCAL_EMBEDDING_URL`
 2. `MBRAIN_LLAMA_CPP_HOST` (uses `/v1/embeddings`)
 3. `OLLAMA_HOST` (legacy compatibility, uses `/api/embed`)
-4. default llama.cpp endpoint `http://127.0.0.1:8080/v1/embeddings`
+4. platform default:
+   - macOS: MLX-compatible OpenAI embeddings endpoint `http://127.0.0.1:8765/v1/embeddings`
+   - Linux and other hosts: llama.cpp endpoint `http://127.0.0.1:8080/v1/embeddings`
 
-Start a CPU-only llama.cpp embedding server in a separate terminal before
-backfilling:
+On Apple Silicon Macs, keep an MLX embedding server running on the default
+macOS endpoint before backfilling. The server should accept OpenAI-compatible
+embedding requests (`POST /v1/embeddings`) with `{ "model", "input" }` and
+return either `data[].embedding` or `embeddings`.
+
+On Linux CPU servers, start the llama.cpp embedding server in a separate terminal
+before backfilling:
 
 ```bash
 scripts/run-qwen3-llamacpp-embedding-cpu.sh
@@ -251,8 +258,8 @@ That script is tuned for a high-core CPU host and runs Qwen3 0.6B Q4_K_M with
 `-ub 8192`. It uses no GPU offload options. Override
 `MBRAIN_LLAMA_CPP_MODEL` if you want to test another GGUF quant.
 
-With the server running on the default host/port, no extra runtime URL
-configuration is required:
+With the platform-default server running on the default host/port, no extra
+runtime URL configuration is required:
 
 ```bash
 mbrain embed --stale
@@ -296,7 +303,7 @@ What to expect:
 
 - `--stale` only embeds missing chunks
 - page-level `mbrain embed <slug>` can rebuild that page explicitly
-- if llama.cpp is not running on the default endpoint, use `MBRAIN_LLAMA_CPP_HOST` or `MBRAIN_LOCAL_EMBEDDING_URL`
+- if the platform-default runtime is not running, start MLX on macOS or llama.cpp on Linux, or use `MBRAIN_LOCAL_EMBEDDING_URL` / `MBRAIN_LLAMA_CPP_HOST`
 - `OLLAMA_HOST` is still honored only as a legacy compatibility override
 
 ---
@@ -658,16 +665,18 @@ mbrain import /path/to/brain
 mbrain stats
 ```
 
-### `mbrain embed --stale` fails while trying to reach llama.cpp
+### `mbrain embed --stale` fails while trying to reach the local runtime
 
-By default, MBrain tries `http://127.0.0.1:8080/v1/embeddings`.
+By default, MBrain tries `http://127.0.0.1:8765/v1/embeddings` on macOS and
+`http://127.0.0.1:8080/v1/embeddings` on Linux and other hosts.
 
 If your local runtime is on a different host or port, set one of:
 
 - `MBRAIN_LOCAL_EMBEDDING_URL`
 - `MBRAIN_LLAMA_CPP_HOST`
 
-If the default runtime is not available, start llama.cpp:
+If the default runtime is not available, start MLX on macOS or llama.cpp on
+Linux. For llama.cpp:
 
 ```bash
 scripts/run-qwen3-llamacpp-embedding-cpu.sh

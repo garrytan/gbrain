@@ -1471,7 +1471,8 @@ mbrain stats
 **Expected:** Embedded chunk count matches (or is close to) total chunk count.
 
 **If zero or very low:** your local embedding runtime may be unavailable or the
-model may be missing. Start the default CPU llama.cpp embedding server:
+model may be missing. On macOS, start an MLX embedding server on
+`http://127.0.0.1:8765/v1/embeddings`. On Linux CPU servers, start llama.cpp:
 
 ```bash
 scripts/run-qwen3-llamacpp-embedding-cpu.sh

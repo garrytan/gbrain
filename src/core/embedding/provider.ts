@@ -6,6 +6,7 @@ export const QWEN3_QUERY_INSTRUCTION =
   'Given a question or search query, retrieve the most relevant MBrain memory chunks.';
 
 const DEFAULT_LLAMA_CPP_HOST = 'http://127.0.0.1:8080';
+const DEFAULT_MLX_HOST = 'http://127.0.0.1:8765';
 const DEFAULT_LOCAL_EMBED_TIMEOUT_MS = 300_000;
 
 export interface EmbeddingProviderCapability {
@@ -43,6 +44,13 @@ export function defaultEmbeddingDimensionsForModel(model: string | null | undefi
   if (normalized.startsWith('bge-m3')) return 1024;
   if (normalized.startsWith('mxbai-embed-large')) return 1024;
   return null;
+}
+
+export function defaultLocalEmbeddingUrlForPlatform(platform: string = process.platform): string {
+  const host = platform === 'darwin'
+    ? DEFAULT_MLX_HOST
+    : DEFAULT_LLAMA_CPP_HOST;
+  return new URL('/v1/embeddings', withTrailingSlash(host)).toString();
 }
 
 export function prepareEmbeddingInputForModel(
@@ -195,7 +203,7 @@ function resolveLocalEmbeddingUrl(): string {
     return new URL('/api/embed', withTrailingSlash(ollamaHost)).toString();
   }
 
-  return new URL('/v1/embeddings', withTrailingSlash(DEFAULT_LLAMA_CPP_HOST)).toString();
+  return defaultLocalEmbeddingUrlForPlatform();
 }
 
 function unavailableProvider(capability: EmbeddingProviderCapability): ResolvedEmbeddingProvider {
@@ -235,7 +243,9 @@ function formatLocalEmbeddingHttpError(
 ): string {
   const base = `Local embedding runtime returned ${status} ${statusText}`;
   const suffix = detail ? `: ${detail}` : '';
-  const hint = shouldSuggestLlamaCppStart(url, status, detail)
+  const hint = shouldSuggestMlxStart(url, status, detail)
+    ? ' Start an MLX embedding server on http://127.0.0.1:8765/v1/embeddings or set MBRAIN_LOCAL_EMBEDDING_URL.'
+    : shouldSuggestLlamaCppStart(url, status, detail)
     ? ' Start llama.cpp embedding server: scripts/run-qwen3-llamacpp-embedding-cpu.sh'
     : shouldSuggestOllamaPull(url, status, detail)
     ? ` Run: ollama pull ${model}`
@@ -250,13 +260,24 @@ function formatLocalEmbeddingConnectionError(
 ): string {
   const hint = shouldSuggestLlamaCppStart(url, 0, null)
     ? ' Start llama.cpp embedding server: scripts/run-qwen3-llamacpp-embedding-cpu.sh'
+    : shouldSuggestMlxStart(url, 0, null)
+    ? ' Start an MLX embedding server on http://127.0.0.1:8765/v1/embeddings or set MBRAIN_LOCAL_EMBEDDING_URL.'
     : isLikelyOllamaEmbedUrl(url)
     ? ` Start Ollama or run: ollama pull ${model}`
     : '';
   return `Local embedding runtime is unreachable at ${url}: ${error.message}.${hint}`;
 }
 
+function shouldSuggestMlxStart(url: string, status: number, detail: string | null): boolean {
+  if (!isDefaultMlxEmbeddingUrl(url)) return false;
+  if (status === 0 || status === 404 || status === 405) return true;
+
+  const normalized = detail?.toLowerCase() ?? '';
+  return normalized.includes('embedding') || normalized.includes('model');
+}
+
 function shouldSuggestLlamaCppStart(url: string, status: number, detail: string | null): boolean {
+  if (isDefaultMlxEmbeddingUrl(url)) return false;
   if (!isLikelyLlamaCppEmbeddingUrl(url)) return false;
   if (status === 0 || status === 404 || status === 405) return true;
 
@@ -283,6 +304,18 @@ function isLikelyOllamaEmbedUrl(url: string): boolean {
 function isLikelyLlamaCppEmbeddingUrl(url: string): boolean {
   try {
     return new URL(url).pathname.endsWith('/v1/embeddings');
+  } catch {
+    return false;
+  }
+}
+
+function isDefaultMlxEmbeddingUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const defaultMlx = new URL(defaultLocalEmbeddingUrlForPlatform('darwin'));
+    return parsed.hostname === defaultMlx.hostname
+      && parsed.port === defaultMlx.port
+      && parsed.pathname === defaultMlx.pathname;
   } catch {
     return false;
   }

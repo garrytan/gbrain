@@ -234,9 +234,17 @@ MBrain은 임베딩 런타임을 아래 순서로 결정합니다.
 1. `MBRAIN_LOCAL_EMBEDDING_URL`
 2. `MBRAIN_LLAMA_CPP_HOST` (`/v1/embeddings` 사용)
 3. `OLLAMA_HOST` (레거시 호환, `/api/embed` 사용)
-4. 기본 llama.cpp 엔드포인트 `http://127.0.0.1:8080/v1/embeddings`
+4. 플랫폼 기본값
+   - macOS: MLX 호환 OpenAI embeddings 엔드포인트 `http://127.0.0.1:8765/v1/embeddings`
+   - Linux 및 그 외 호스트: llama.cpp 엔드포인트 `http://127.0.0.1:8080/v1/embeddings`
 
-backfill 전에 별도 터미널에서 CPU 전용 llama.cpp embedding server를 실행하세요.
+Apple Silicon Mac에서는 backfill 전에 기본 macOS 엔드포인트에서 MLX embedding
+server를 실행해 두세요. 서버는 OpenAI 호환 embedding 요청
+(`POST /v1/embeddings`)의 `{ "model", "input" }` payload를 받고
+`data[].embedding` 또는 `embeddings`를 반환하면 됩니다.
+
+Linux CPU 서버에서는 backfill 전에 별도 터미널에서 llama.cpp embedding server를
+실행하세요.
 
 ```bash
 scripts/run-qwen3-llamacpp-embedding-cpu.sh
@@ -247,7 +255,7 @@ scripts/run-qwen3-llamacpp-embedding-cpu.sh
 `-ub 8192`로 실행합니다. GPU offload 옵션은 사용하지 않습니다. 다른 GGUF
 quant를 테스트하려면 `MBRAIN_LLAMA_CPP_MODEL`로 override하세요.
 
-서버가 기본 호스트/포트로 떠 있다면, 런타임 URL 관련 추가 설정 없이 바로 실행하면 됩니다.
+플랫폼 기본 서버가 기본 호스트/포트로 떠 있다면, 런타임 URL 관련 추가 설정 없이 바로 실행하면 됩니다.
 
 ```bash
 mbrain embed --stale
@@ -292,7 +300,7 @@ mbrain embed notes/offline-demo
 
 - `--stale` : 아직 임베딩되지 않은 청크만 backfill
 - `mbrain embed <slug>` : 해당 페이지 전체를 명시적으로 rebuild 가능
-- 기본 엔드포인트에 llama.cpp가 없으면 `MBRAIN_LLAMA_CPP_HOST` 또는 `MBRAIN_LOCAL_EMBEDDING_URL`로 override
+- 플랫폼 기본 런타임이 떠 있지 않다면 macOS에서는 MLX, Linux에서는 llama.cpp를 시작하거나 `MBRAIN_LOCAL_EMBEDDING_URL` / `MBRAIN_LLAMA_CPP_HOST`로 override
 - `OLLAMA_HOST`는 레거시 호환 override로만 계속 지원
 
 ---
@@ -632,16 +640,18 @@ mbrain import /path/to/brain
 mbrain stats
 ```
 
-### `mbrain embed --stale`가 llama.cpp 연결 에러로 실패한다
+### `mbrain embed --stale`가 로컬 런타임 연결 에러로 실패한다
 
-기본적으로 MBrain은 `http://127.0.0.1:8080/v1/embeddings`를 먼저 시도합니다.
+기본적으로 MBrain은 macOS에서 `http://127.0.0.1:8765/v1/embeddings`, Linux와 그 외
+호스트에서 `http://127.0.0.1:8080/v1/embeddings`를 먼저 시도합니다.
 
 로컬 런타임이 다른 호스트/포트에 떠 있다면 다음 중 하나를 설정하세요.
 
 - `MBRAIN_LOCAL_EMBEDDING_URL`
 - `MBRAIN_LLAMA_CPP_HOST`
 
-기본 런타임이 떠 있지 않다면 llama.cpp를 시작하세요.
+기본 런타임이 떠 있지 않다면 macOS에서는 MLX, Linux에서는 llama.cpp를 시작하세요.
+llama.cpp는 다음 명령으로 시작할 수 있습니다.
 
 ```bash
 scripts/run-qwen3-llamacpp-embedding-cpu.sh
