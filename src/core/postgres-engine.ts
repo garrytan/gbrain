@@ -56,7 +56,7 @@ import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildSlugAllowClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 
@@ -1195,6 +1195,12 @@ export class PostgresEngine implements BrainEngine {
     const deletedCondition = filters?.includeDeleted === true
       ? sql``
       : sql`AND p.deleted_at IS NULL`;
+    // OAuth slug-prefix read binding (trust filter, see PageFilters docs).
+    // buildSlugAllowClause emits a fully-escaped literal fragment (same
+    // builder as the search paths) — spliced via sql.unsafe like orderBy.
+    const restrictCondition = filters?.restrictSlugPrefixes
+      ? sql.unsafe(buildSlugAllowClause('p.slug', filters.restrictSlugPrefixes))
+      : sql``;
 
     // v0.29: ORDER BY threading via PAGE_SORT_SQL whitelist (no SQL injection).
     // postgres.js sql.unsafe lets us splice the literal fragment safely.
@@ -1204,7 +1210,7 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT p.* FROM pages p
       ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition}
+      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${restrictCondition}
       ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
     `;
 
@@ -1515,7 +1521,11 @@ export class PostgresEngine implements BrainEngine {
     const boostMap = resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
-    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    // OAuth slug-prefix read binding (trust filter) folds into the same
+    // interpolation site as the hard-exclude policy filter — every query
+    // shape that honors hard-excludes honors the binding by construction.
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes) +
+      (opts?.restrict_slug_prefixes ? ` ${buildSlugAllowClause('p.slug', opts.restrict_slug_prefixes)}` : '');
 
     const params: unknown[] = [query];
     let typeClause = '';
@@ -1664,7 +1674,11 @@ export class PostgresEngine implements BrainEngine {
     const boostMap = resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
-    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    // OAuth slug-prefix read binding (trust filter) folds into the same
+    // interpolation site as the hard-exclude policy filter — every query
+    // shape that honors hard-excludes honors the binding by construction.
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes) +
+      (opts?.restrict_slug_prefixes ? ` ${buildSlugAllowClause('p.slug', opts.restrict_slug_prefixes)}` : '');
 
     const params: unknown[] = [query];
     let typeClause = '';
@@ -1785,7 +1799,11 @@ export class PostgresEngine implements BrainEngine {
     const boostMap = resolveBoostMap();
     const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
-    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    // OAuth slug-prefix read binding (trust filter) folds into the same
+    // interpolation site as the hard-exclude policy filter — every query
+    // shape that honors hard-excludes honors the binding by construction.
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes) +
+      (opts?.restrict_slug_prefixes ? ` ${buildSlugAllowClause('p.slug', opts.restrict_slug_prefixes)}` : '');
     const innerLimit = offset + Math.max(limit * 5, 100);
 
     const params: unknown[] = [vecStr];

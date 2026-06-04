@@ -48,7 +48,7 @@ import { normalizeWeightForStorage } from './takes-fence.ts';
 import { GBrainError, PAGE_SORT_SQL, ENRICH_ORDER_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildSlugAllowClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -1134,6 +1134,12 @@ export class PGLiteEngine implements BrainEngine {
     if (filters?.includeDeleted !== true) {
       where.push('p.deleted_at IS NULL');
     }
+    // OAuth slug-prefix read binding (trust filter, see PageFilters docs).
+    // Same builder as the search paths; strip the leading `AND ` to fit the
+    // where-array composition style.
+    if (filters?.restrictSlugPrefixes) {
+      where.push(buildSlugAllowClause('p.slug', filters.restrictSlugPrefixes).replace(/^AND /, ''));
+    }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
     params.push(limit, offset);
@@ -1442,7 +1448,11 @@ export class PGLiteEngine implements BrainEngine {
     const boostMap = resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
-    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    // OAuth slug-prefix read binding (trust filter) folds into the same
+    // interpolation site as the hard-exclude policy filter — every query
+    // shape that honors hard-excludes honors the binding by construction.
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes) +
+      (opts?.restrict_slug_prefixes ? ` ${buildSlugAllowClause('p.slug', opts.restrict_slug_prefixes)}` : '');
 
     // v0.26.5: visibility filter (soft-deleted + archived-source).
     const visibilityClause = buildVisibilityClause('p', 's');
@@ -1683,7 +1693,11 @@ export class PGLiteEngine implements BrainEngine {
     const boostMap = resolveBoostMap();
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
-    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    // OAuth slug-prefix read binding (trust filter) folds into the same
+    // interpolation site as the hard-exclude policy filter — every query
+    // shape that honors hard-excludes honors the binding by construction.
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes) +
+      (opts?.restrict_slug_prefixes ? ` ${buildSlugAllowClause('p.slug', opts.restrict_slug_prefixes)}` : '');
     const visibilityClause = buildVisibilityClause('p', 's');
 
     // v0.32.7: CJK branch (same as searchKeyword but without page-dedup).
@@ -1776,7 +1790,11 @@ export class PGLiteEngine implements BrainEngine {
     // `slug` resolves cleanly (T1 per-page pool restructure).
     const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
-    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
+    // OAuth slug-prefix read binding (trust filter) folds into the same
+    // interpolation site as the hard-exclude policy filter — every query
+    // shape that honors hard-excludes honors the binding by construction.
+    const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes) +
+      (opts?.restrict_slug_prefixes ? ` ${buildSlugAllowClause('p.slug', opts.restrict_slug_prefixes)}` : '');
     const innerLimit = offset + Math.max(limit * 5, 100);
 
     const params: unknown[] = [vecStr, innerLimit, limit, offset];

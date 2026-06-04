@@ -209,6 +209,28 @@ describe('verifyAccessToken', () => {
     expect(authInfo.token).toBe(tokens.access_token);
   });
 
+  test('bound_slug_prefixes projects onto AuthInfo.boundSlugPrefixes', async () => {
+    // Read-side slug binding: registered binding must ride the token so
+    // slugScopeOpts(ctx) can confine every read op.
+    const { clientId, clientSecret } = await provider.registerClientManual(
+      'bound-agent', ['client_credentials'], 'read', [], 'default', undefined, undefined,
+      ['clients/*', 'people/*'],
+    );
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret!, 'read');
+    const authInfo = await provider.verifyAccessToken(tokens.access_token);
+    expect((authInfo as { boundSlugPrefixes?: string[] }).boundSlugPrefixes)
+      .toEqual(['clients/*', 'people/*']);
+  });
+
+  test('unbound client has NO boundSlugPrefixes on AuthInfo (unrestricted)', async () => {
+    const { clientId, clientSecret } = await provider.registerClientManual(
+      'unbound-agent', ['client_credentials'], 'read',
+    );
+    const tokens = await provider.exchangeClientCredentials(clientId, clientSecret!, 'read');
+    const authInfo = await provider.verifyAccessToken(tokens.access_token);
+    expect((authInfo as { boundSlugPrefixes?: string[] }).boundSlugPrefixes).toBeUndefined();
+  });
+
   test('expired token is rejected', async () => {
     // Insert a token that's already expired
     const expiredToken = generateToken('gbrain_at_');

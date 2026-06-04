@@ -554,24 +554,46 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // error here — caught at the boundary via isUndefinedColumnError so
     // unmigrated brains degrade to "no source scope" rather than refusing
     // every token verification.
-    let oauthRows: Record<string, unknown>[];
+    let oauthRows: Record<string, unknown>[] | undefined;
     try {
       oauthRows = await this.sql`
         SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
-               c.source_id, c.federated_read
+               c.source_id, c.federated_read, c.bound_slug_prefixes
         FROM oauth_tokens t
         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
       `;
     } catch (err) {
       // v0.34.1: pre-v60 brain → source_id column missing. Pre-v61 brain →
-      // federated_read column missing. Both classes degrade to legacy
-      // projection so auth keeps working until the operator runs
-      // apply-migrations. Probe both column names so partial-upgrade brains
-      // (v60 applied but v61 didn't yet) also fall through cleanly.
-      if (isUndefinedColumnError(err, 'source_id') || isUndefinedColumnError(err, 'federated_read')) {
+      // federated_read column missing. Pre-v85 brain → bound_slug_prefixes
+      // column missing. All classes degrade to legacy projection so auth
+      // keeps working until the operator runs apply-migrations. Probe the
+      // column names so partial-upgrade brains (v60 applied but v61 didn't
+      // yet) also fall through cleanly.
+      if (
+        isUndefinedColumnError(err, 'source_id') ||
+        isUndefinedColumnError(err, 'federated_read') ||
+        isUndefinedColumnError(err, 'bound_slug_prefixes')
+      ) {
+        // v61..v84 brain: federated_read exists but bound_slug_prefixes
+        // doesn't yet. Retry WITHOUT the binding column so federated read
+        // scope is preserved on partially-upgraded brains.
+        if (isUndefinedColumnError(err, 'bound_slug_prefixes')) {
+          try {
+            oauthRows = await this.sql`
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+                     c.source_id, c.federated_read
+              FROM oauth_tokens t
+              LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+              WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+            `;
+          } catch {
+            // Older columns missing too — fall through to the chain below.
+            oauthRows = undefined;
+          }
+        }
         // Try the v60-only projection first (source_id but no federated_read).
-        try {
+        if (!oauthRows) try {
           oauthRows = await this.sql`
             SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
             FROM oauth_tokens t
@@ -596,7 +618,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       }
     }
 
-    if (oauthRows.length > 0) {
+    if (oauthRows && oauthRows.length > 0) {
       const row = oauthRows[0];
       // NULL expires_at is treated as expired (fail-closed). Schema permits NULL,
       // and the SDK's bearerAuth requires `typeof expiresAt === 'number'` — we
@@ -614,6 +636,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const allowedSources = Array.isArray(federatedRaw)
         ? (federatedRaw as string[])
         : undefined;
+      // Read-side slug binding (migration v85 column). NULL/undefined =
+      // unrestricted (back-compat: every pre-binding client keeps full
+      // visibility). An array — INCLUDING an empty one — is the binding,
+      // enforced fail-closed by slugScopeOpts in operations.ts.
+      const boundRaw = row.bound_slug_prefixes;
+      const boundSlugPrefixes = Array.isArray(boundRaw)
+        ? (boundRaw as string[])
+        : undefined;
       return {
         token,
         clientId: row.client_id as string,
@@ -629,6 +659,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // operations.ts prefers this array over scalar sourceId when set
         // and non-empty.
         allowedSources,
+        // Slug-prefix read binding from oauth_clients.bound_slug_prefixes.
+        // slugScopeOpts in operations.ts confines every read-side op to
+        // matching slugs when this is set.
+        boundSlugPrefixes,
       } as AuthInfo;
     }
 
@@ -820,6 +854,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     sourceId: string = 'default',
     federatedRead?: string[],
     tokenEndpointAuthMethod?: string,
+    boundSlugPrefixes?: string[],
   ): Promise<{ clientId: string; clientSecret?: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -851,20 +886,41 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     //   federated_read = [source_id] when omitted (a non-federated client
     //                    has read scope == write scope, the v0.33 default)
     const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+    // Read-side slug binding (migration v85 column). NULL = unrestricted —
+    // a client registered without --bound-slug-prefixes keeps full read
+    // visibility (back-compat). A non-empty list confines every read op.
+    const boundPrefixes = boundSlugPrefixes && boundSlugPrefixes.length > 0 ? boundSlugPrefixes : null;
     try {
       await this.sql`
         INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
                                     grant_types, scope, token_endpoint_auth_method,
                                     client_id_issued_at,
-                                    source_id, federated_read)
+                                    source_id, federated_read, bound_slug_prefixes)
         VALUES (${clientId}, ${secretHash}, ${name},
                 ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${authMethod}, ${now},
-                ${sourceId}, ${pgArray(federated)})
+                ${sourceId}, ${pgArray(federated)}, ${boundPrefixes ? pgArray(boundPrefixes) : null})
       `;
     } catch (err) {
-      // Pre-v60 / pre-v61 brain: column missing. Fall back through both
-      // projections so registration still works until apply-migrations.
-      if (isUndefinedColumnError(err, 'federated_read')) {
+      // Pre-v60 / pre-v61 / pre-v85 brain: column missing. Fall back through
+      // the projections so registration still works until apply-migrations.
+      if (isUndefinedColumnError(err, 'bound_slug_prefixes')) {
+        if (boundPrefixes) {
+          // Refuse to silently mint an UNBOUND client when the operator
+          // explicitly asked for a binding the schema can't store yet.
+          throw new Error(
+            'bound_slug_prefixes requires schema migration v85 — run `gbrain apply-migrations --yes` first.',
+          );
+        }
+        await this.sql`
+          INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                      grant_types, scope, token_endpoint_auth_method,
+                                      client_id_issued_at,
+                                      source_id, federated_read)
+          VALUES (${clientId}, ${secretHash}, ${name},
+                  ${pgArray(redirectUris)}, ${pgArray(grantTypes)}, ${scopes}, ${authMethod}, ${now},
+                  ${sourceId}, ${pgArray(federated)})
+        `;
+      } else if (isUndefinedColumnError(err, 'federated_read')) {
         // v60-only brain: source_id but no federated_read.
         try {
           await this.sql`
