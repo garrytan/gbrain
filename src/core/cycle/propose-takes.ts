@@ -145,6 +145,10 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
   model?: string;
   /** Skip pages that already have a complete takes fence. Default: true. */
   skipPagesWithFence?: boolean;
+  /** Slug prefixes to exclude from proposal scanning (e.g. ["extracts/", "01-raw/"]). 
+   *  Pages whose slug starts with any of these prefixes are skipped before the 
+   *  LLM call, saving tokens on low-signal content. Defaults to ["extracts/"]. */
+  excludeSlugPrefixes?: string[];
 }
 
 export interface ProposeTakesResult {
@@ -307,6 +311,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
+    const excludeSlugPrefixes = opts.excludeSlugPrefixes ?? ['extracts/'];
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const result: ProposeTakesResult = {
@@ -333,6 +338,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
     for (const page of pages) {
       result.pages_scanned += 1;
       this.tick(opts);
+
+      // Skip pages whose slug matches any configured exclusion prefix.
+      // Extracts/ pages are extraction receipts (metadata about what was
+      // processed, not original content) — proposing takes against them wastes
+      // LLM tokens without producing useful knowledge. Default: ["extracts/"].
+      if (excludeSlugPrefixes.length > 0 && excludeSlugPrefixes.some(p => page.slug.startsWith(p))) continue;
 
       // Skip pages that have NO prose body (e.g. metadata-only entity stubs).
       const body = page.compiled_truth ?? '';
