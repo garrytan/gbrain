@@ -209,6 +209,26 @@ describe('gbrain extract --stale', () => {
     expect(usRows[0]?.eq).toBe(true);
   });
 
+  test('CRITICAL: pre-version updated_at clears the extractor-version arm', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) advises [Acme](companies/acme).'));
+    await engine.executeRaw(`UPDATE pages SET updated_at = '2026-05-25 13:33:40.362323+00'`);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(2);
+
+    await runExtract(engine, ['--stale']);
+
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+    const rows = await engine.executeRaw<{ clears_version: boolean; preserves_read_race_guard: boolean }>(
+      `SELECT
+         bool_and(links_extracted_at >= $1::timestamptz) AS clears_version,
+         bool_and(links_extracted_at >= updated_at) AS preserves_read_race_guard
+       FROM pages`,
+      [LINK_EXTRACTOR_VERSION_TS],
+    );
+    expect(rows[0]?.clears_version).toBe(true);
+    expect(rows[0]?.preserves_read_race_guard).toBe(true);
+  });
+
   test('CDX-4 (D2): a link-flush throw aborts the sweep and leaves pages UNSTAMPED', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) founded [Acme](companies/acme).'));
