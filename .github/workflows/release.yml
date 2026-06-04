@@ -31,6 +31,13 @@ jobs:
         run: bunx tsc --noEmit --pretty false
       - run: bun run test
       - run: bun build --compile --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts
+      - name: Repair macOS compiled signature
+        if: matrix.os == 'macos-latest'
+        run: |
+          codesign --remove-signature bin/${{ matrix.artifact }} || true
+          codesign --sign - --force bin/${{ matrix.artifact }}
+      - name: Smoke compiled binary
+        run: bin/${{ matrix.artifact }} --version
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: ${{ matrix.artifact }}

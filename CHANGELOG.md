@@ -4,6 +4,58 @@ All notable changes to MBrain will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-06-05
+
+### Added
+
+- **Agent sessions can now become governed memory inputs.**
+  `mbrain agent-session preview --file session.json` and
+  `mbrain agent-session capture --file session.json (--apply|--dry-run)` accept
+  JSON/JSONL session envelopes, normalize and redact events before compression,
+  classify profile, episode, procedure, task, project-note, and open-question
+  signals, and route them through existing Memory Inbox and personal-memory
+  governance. The default `write_mode` remains `candidate_only`; direct
+  personal writes require source refs plus explicit preflight.
+- **Agent-session activation and maintenance helpers are now part of the memory
+  loop.** New services produce authority-labelled activation artifacts, plan
+  future session activation from reviewed memory, and keep recurrence/review
+  signals inspectable without turning compressed session observations into
+  canonical truth.
+- **Local Linux CPU embedding setup now has a checked-in Qwen3 llama.cpp helper.**
+  `scripts/run-qwen3-llamacpp-embedding-cpu.sh` starts a CPU-oriented
+  OpenAI-compatible embedding endpoint for `qwen3-embedding:0.6b`.
+
+### Changed
+
+- **Connected context retrieval is more useful before canonical reads.**
+  `retrieve_context` now selects connected context more effectively, while
+  `read_context` can return richer related evidence around selected sections
+  without changing the canonical evidence boundary.
+- **Retrieval selection got faster and less noisy.** Candidate selector planning
+  now applies tighter selection heuristics so broad probes spend less budget on
+  redundant or weakly connected reads.
+- **Release builds now prove compiled binaries before upload.** The tag release
+  workflow repairs Bun 1.3.12's malformed macOS compiled signature with an
+  ad-hoc signature, then runs the native `--version` smoke on both macOS and
+  Linux artifacts before publishing them to GitHub Releases.
+- **Local/offline embeddings now default to Qwen3 by platform.** macOS defaults
+  to an MLX/OpenAI-compatible endpoint on `127.0.0.1:8765`, Linux and other
+  hosts default to llama.cpp on `127.0.0.1:8080`, Qwen3 embeddings use 1024
+  dimensions, and page chunks use token-aware recursive windows tuned for
+  Korean/CJK-heavy notes. `OLLAMA_HOST` remains a legacy compatibility override.
+- **Agent rule metadata now reports `0.5.9`.** The managed rules include the
+  agent-session memory preflight/write-mode guidance, and `doctor --agent` plus
+  `setup-agent` now agree on the updated marker.
+- **Version metadata now reports `0.11.2`.** `VERSION`, `package.json`,
+  `skills/manifest.json`, and `openclaw.plugin.json` are aligned so the CLI,
+  skills manifest, and plugin bundle describe the same release.
+
+### Fixed
+
+- **`read_context` accepts retrieval selector id shorthand.** Agents can pass
+  selector ids returned by `retrieve_context` directly instead of having to
+  reconstruct the full selector payload.
+
 ## [0.11.1] - 2026-06-03
 
 ### Added

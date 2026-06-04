@@ -146,7 +146,7 @@ describe('setup-agent', () => {
       const result = await runSetupAgent(['--print'], { cwd: staleCwd });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('mbrain-agent-rules-version: 0.5.8');
+      expect(result.stdout).toContain('mbrain-agent-rules-version: 0.5.9');
       expect(result.stdout).toContain('candidate_signals');
       expect(result.stdout).not.toContain('STALE CWD RULES');
       expect(result.stdout).not.toContain('9.9.9');
@@ -232,7 +232,7 @@ describe('setup-agent', () => {
     expect(result.stdout).toContain('Rules: updated');
 
     const agentsMd = readFileSync(join(tempHome, '.codex', 'AGENTS.md'), 'utf-8');
-    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.8');
+    expect(agentsMd).toContain('mbrain-agent-rules-version: 0.5.9');
     expect(agentsMd).toContain('Route Durable Writeback');
     expect(agentsMd).toContain('route_memory_writeback');
     expect(agentsMd).toContain('expected_content_hash');

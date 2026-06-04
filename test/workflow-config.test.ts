@@ -43,6 +43,24 @@ test('release workflow typechecks before publishing binaries', () => {
   expect(source).toContain('bunx tsc --noEmit --pretty false');
 });
 
+test('release workflow smoke-tests compiled binaries before upload', () => {
+  const source = readFileSync(join(workflowsDir, 'release.yml'), 'utf-8');
+  const buildJob = getWorkflowJob(source, 'build');
+
+  expect(buildJob).toContain('name: Repair macOS compiled signature');
+  expect(buildJob).toContain("if: matrix.os == 'macos-latest'");
+  expect(buildJob).toContain('codesign --remove-signature bin/${{ matrix.artifact }} || true');
+  expect(buildJob).toContain('codesign --sign - --force bin/${{ matrix.artifact }}');
+  expect(buildJob).toContain('name: Smoke compiled binary');
+  expect(buildJob).toContain('bin/${{ matrix.artifact }} --version');
+  expect(buildJob.indexOf('name: Repair macOS compiled signature')).toBeLessThan(
+    buildJob.indexOf('name: Smoke compiled binary'),
+  );
+  expect(buildJob.indexOf('name: Smoke compiled binary')).toBeLessThan(
+    buildJob.indexOf('actions/upload-artifact@'),
+  );
+});
+
 test('workflows avoid GitHub actions pinned to deprecated Node 20 majors', () => {
   const checkoutUses = getWorkflowUseLines('actions/checkout');
   const gitleaksUses = getWorkflowUseLines('gitleaks/gitleaks-action');

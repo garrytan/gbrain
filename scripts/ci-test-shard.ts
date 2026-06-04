@@ -16,6 +16,14 @@ function normalizeTestPath(path: string): string {
   return path.split(sep).join('/');
 }
 
+export function toBunTestFileArg(file: string): string {
+  const normalized = normalizeTestPath(file);
+  if (normalized.startsWith('./') || normalized.startsWith('../') || normalized.startsWith('/')) {
+    return normalized;
+  }
+  return `./${normalized}`;
+}
+
 function parsePositiveInteger(name: string, value: string | undefined): number {
   if (!value || !/^\d+$/.test(value)) {
     throw new Error(`${name} must be a positive integer`);
@@ -162,7 +170,7 @@ function runCli(): never {
   if (process.env.TEST_MAX_CONCURRENCY) {
     args.push('--max-concurrency', process.env.TEST_MAX_CONCURRENCY);
   }
-  args.push(...files);
+  args.push(...files.map(toBunTestFileArg));
 
   const result = spawnSync(process.execPath, args, {
     cwd: process.cwd(),

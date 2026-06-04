@@ -355,6 +355,25 @@ Mixed-scope routes exist, but they are explicit. Export also respects visibility
 private-only profile memory stays private; exportable profile memory can be
 written as curated Markdown.
 
+## Agent Session Memory
+
+Agent sessions can be captured as source-backed memory inputs without granting
+the capture step canonical authority. Preview first, then capture with an
+explicit dry run or apply decision:
+
+```bash
+mbrain agent-session preview --file session.json --json
+mbrain agent-session capture --file session.json --dry-run --json
+mbrain agent-session capture --file session.json --apply --write-mode candidate_only
+```
+
+Captured sessions are redacted before compression, summarized into bounded
+observations, classified into durable memory signals, and routed through the
+same Memory Inbox and personal-memory governance as other writes. The default
+`candidate_only` mode keeps inferred or compressed session signals reviewable;
+`direct_personal_when_allowed` is only for explicit, source-backed personal
+signals that pass preflight.
+
 ## Derived Orientation: Maps and Atlases
 
 Search finds pages. Orientation tells the agent where to look next.
@@ -783,6 +802,8 @@ Historical/reference:
 
 - `docs/UPSTREAM_SYNC.md` - provenance for selected imports from gbrain
 - `docs/MBRAIN_V0.md` - Historical v0 spec
+- `docs/superpowers/specs/2026-06-03-mbrain-agent-session-memory-runtime-design.md` - agent-session memory runtime design
+- `docs/superpowers/plans/2026-06-03-mbrain-agent-session-memory-runtime.md` - implementation plan and verification map
 
 Managed Postgres storage estimates and schema details are documented in the
 engine and verification docs rather than being part of the default local setup.

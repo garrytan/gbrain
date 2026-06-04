@@ -1,4 +1,4 @@
-<!-- mbrain-agent-rules-version: 0.5.8 -->
+<!-- mbrain-agent-rules-version: 0.5.9 -->
 <!-- source: https://raw.githubusercontent.com/meghendra6/mbrain/master/docs/MBRAIN_AGENT_RULES.md -->
 # MBrain Agent Rules
 

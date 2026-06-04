@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { partitionTestFiles, parseShardEnv, selectShardFiles, stableShardIndex } from '../scripts/ci-test-shard.ts';
+import {
+  partitionTestFiles,
+  parseShardEnv,
+  selectShardFiles,
+  stableShardIndex,
+  toBunTestFileArg,
+} from '../scripts/ci-test-shard.ts';
 
 describe('ci-test-shard', () => {
   test('partitions every file into exactly one stable shard', () => {
@@ -79,5 +85,10 @@ describe('ci-test-shard', () => {
     expect(() => parseShardEnv({ TEST_SHARD_INDEX: '5', TEST_SHARD_TOTAL: '4' })).toThrow(/TEST_SHARD_INDEX/);
     expect(() => parseShardEnv({ TEST_SHARD_INDEX: '1', TEST_SHARD_TOTAL: '0' })).toThrow(/TEST_SHARD_TOTAL/);
     expect(() => parseShardEnv({ TEST_SHARD_INDEX: 'one', TEST_SHARD_TOTAL: '4' })).toThrow(/TEST_SHARD_INDEX/);
+  });
+
+  test('formats shard files as explicit relative paths for Bun exact matching', () => {
+    expect(toBunTestFileArg('test/doctor.test.ts')).toBe('./test/doctor.test.ts');
+    expect(toBunTestFileArg('./test/doctor.test.ts')).toBe('./test/doctor.test.ts');
   });
 });
