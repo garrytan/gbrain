@@ -7,6 +7,7 @@ import { readContext } from '../src/core/services/read-context-service.ts';
 import { buildStructuralContextMapEntry } from '../src/core/services/context-map-service.ts';
 import { retrieveContext } from '../src/core/services/retrieve-context-service.ts';
 import { retrievalSelectorId } from '../src/core/services/retrieval-selector-service.ts';
+import { sourceRankCandidateLimit } from '../src/core/search/source-ranking.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import type { MemoryCandidateEntryInput, SearchResult } from '../src/core/types.ts';
 
@@ -240,6 +241,408 @@ describe('retrieve context service', () => {
       expect(result.required_reads).toHaveLength(1);
       expect(result.required_reads[0]!.kind).toBe('section');
       expect(result.required_reads[0]!.section_id).toBe('concepts/runtime-notes#runtime-notes/queue-routing');
+    });
+  });
+
+  test('ranks a widened candidate window before selecting required reads', async () => {
+    await withEngine('wide-window-ranking', async (engine) => {
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing is the canonical runtime coordination model.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+
+      for (let i = 1; i <= 6; i += 1) {
+        await importFromContent(engine, `daily/2026-01-0${i}`, [
+          '---',
+          'type: concept',
+          `title: Daily Note ${i}`,
+          '---',
+          '# Daily Note',
+          `Daily note ${i} mentions queue routing as incidental meeting chatter.`,
+        ].join('\n'), { path: `daily/2026-01-0${i}.md` });
+      }
+
+      const rawResults: SearchResult[] = [
+        ...Array.from({ length: 6 }, (_, index) => ({
+          slug: `daily/2026-01-0${index + 1}`,
+          page_id: index + 1,
+          title: `Daily Note ${index + 1}`,
+          type: 'concept' as const,
+          chunk_text: `Daily note ${index + 1} mentions queue routing as incidental meeting chatter.`,
+          chunk_source: 'compiled_truth' as const,
+          score: 1,
+          stale: false,
+        })),
+        {
+          slug: 'concepts/queue-routing',
+          page_id: 99,
+          title: 'Queue Routing',
+          type: 'concept',
+          chunk_text: 'Queue routing is the canonical runtime coordination model.',
+          chunk_source: 'compiled_truth',
+          score: 0.8,
+          stale: false,
+        },
+      ];
+      const seenLimits: number[] = [];
+      expect(rawResults.slice(0, 5).some((result) => result.slug === 'concepts/queue-routing')).toBe(false);
+
+      const result = await retrieveContext(engine, {
+        query: 'queue routing',
+        include_orientation: false,
+        limit: 5,
+      }, {
+        candidateSearch: async (_query, options) => {
+          seenLimits.push(options.limit);
+          return rawResults.slice(0, options.limit);
+        },
+      });
+
+      expect(seenLimits).toContain(sourceRankCandidateLimit(5));
+      expect(result.required_reads[0]!.slug).toBe('concepts/queue-routing');
+    });
+  });
+
+  test('recalls candidates from query variants when the full query is over-constrained', async () => {
+    await withEngine('query-variant-recall', async (engine) => {
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing assigns runtime requests to worker lanes.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'The runtime platform has a generic overview for service operators.',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+
+      const seenQueries: string[] = [];
+      const result = await retrieveContext(engine, {
+        query: 'How does queue routing work in the runtime platform?',
+        include_orientation: false,
+        limit: 1,
+      }, {
+        candidateSearch: async (query) => {
+          seenQueries.push(query);
+          if (query === 'queue' || query === 'routing') {
+            return [{
+              slug: 'concepts/queue-routing',
+              page_id: 1,
+              title: 'Queue Routing',
+              type: 'concept',
+              chunk_text: 'Queue routing assigns runtime requests to worker lanes.',
+              chunk_source: 'compiled_truth',
+              score: 1,
+              stale: false,
+            }];
+          }
+          return [{
+            slug: 'systems/runtime-platform',
+            page_id: 2,
+            title: 'Runtime Platform',
+            type: 'system',
+            chunk_text: 'The runtime platform has a generic overview for service operators.',
+            chunk_source: 'compiled_truth',
+            score: 1,
+            stale: false,
+          }];
+        },
+      });
+
+      expect(seenQueries).toContain('How does queue routing work in the runtime platform?');
+      expect(seenQueries).toContain('queue');
+      expect(seenQueries).toContain('routing');
+      expect(result.required_reads[0]!.slug).toBe('concepts/queue-routing');
+    });
+  });
+
+  test('does not let duplicate canonical pages consume multiple required-read slots', async () => {
+    await withEngine('duplicate-page-family', async (engine) => {
+      const duplicateContent = [
+        '---',
+        'type: concept',
+        'title: Runtime Queue Routing',
+        '---',
+        '# Runtime Queue Routing',
+        'Queue routing maps runtime work to the correct worker lane.',
+      ].join('\n');
+      await importFromContent(engine, 'concepts/runtime-queue-routing', duplicateContent, {
+        path: 'concepts/runtime-queue-routing.md',
+      });
+      await importFromContent(engine, 'archive/runtime-queue-routing', duplicateContent, {
+        path: 'concepts/runtime-queue-routing.md',
+      });
+      await importFromContent(engine, 'systems/worker-lanes', [
+        '---',
+        'type: system',
+        'title: Worker Lanes',
+        '---',
+        '# Worker Lanes',
+        'Worker lanes are the runtime queues that receive routed work.',
+      ].join('\n'), { path: 'systems/worker-lanes.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'runtime queue routing worker lanes',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [
+          {
+            slug: 'concepts/runtime-queue-routing',
+            page_id: 1,
+            title: 'Runtime Queue Routing',
+            type: 'concept',
+            chunk_text: 'Queue routing maps runtime work to the correct worker lane.',
+            chunk_source: 'compiled_truth',
+            score: 1,
+            stale: false,
+          },
+          {
+            slug: 'archive/runtime-queue-routing',
+            page_id: 2,
+            title: 'Runtime Queue Routing',
+            type: 'concept',
+            chunk_text: 'Queue routing maps runtime work to the correct worker lane.',
+            chunk_source: 'compiled_truth',
+            score: 0.99,
+            stale: false,
+          },
+          {
+            slug: 'systems/worker-lanes',
+            page_id: 3,
+            title: 'Worker Lanes',
+            type: 'system',
+            chunk_text: 'Worker lanes are the runtime queues that receive routed work.',
+            chunk_source: 'compiled_truth',
+            score: 0.98,
+            stale: false,
+          },
+        ],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toEqual([
+        'concepts/runtime-queue-routing',
+        'systems/worker-lanes',
+      ]);
+    });
+  });
+
+  test('adds outgoing linked pages as connected canonical read candidates', async () => {
+    await withEngine('outgoing-link-expansion', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview. See [[concepts/queue-routing]].',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing explains how runtime work is assigned to lanes.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'runtime platform queue routing',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/runtime-platform',
+          page_id: 1,
+          title: 'Runtime Platform',
+          type: 'system',
+          chunk_text: 'Runtime platform overview.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/queue-routing');
+    });
+  });
+
+  test('adds backlink pages as connected canonical read candidates', async () => {
+    await withEngine('backlink-expansion', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview for synthetic services.',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing connects to [[systems/runtime-platform]] and explains worker lane assignment.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'queue routing runtime platform',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/runtime-platform',
+          page_id: 1,
+          title: 'Runtime Platform',
+          type: 'system',
+          chunk_text: 'Runtime platform overview for synthetic services.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/queue-routing');
+    });
+  });
+
+  test('adds explicit engine links as connected canonical read candidates', async () => {
+    await withEngine('explicit-link-expansion', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview for synthetic services.',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing explains worker lane assignment.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+      await engine.addLink('systems/runtime-platform', 'concepts/queue-routing', 'related routing concept', 'related');
+      engine.listNoteManifestEntries = async () => {
+        throw new Error('explicit link expansion should not scan all manifests');
+      };
+
+      const result = await retrieveContext(engine, {
+        query: 'runtime platform queue routing',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/runtime-platform',
+          page_id: 1,
+          title: 'Runtime Platform',
+          type: 'system',
+          chunk_text: 'Runtime platform overview for synthetic services.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/queue-routing');
+    });
+  });
+
+  test('adds explicit engine backlinks as connected canonical read candidates', async () => {
+    await withEngine('explicit-backlink-expansion', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview for synthetic services.',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing explains worker lane assignment.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+      await engine.addLink('concepts/queue-routing', 'systems/runtime-platform', 'supports runtime platform', 'related');
+
+      const result = await retrieveContext(engine, {
+        query: 'queue routing runtime platform',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/runtime-platform',
+          page_id: 1,
+          title: 'Runtime Platform',
+          type: 'system',
+          chunk_text: 'Runtime platform overview for synthetic services.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/queue-routing');
+    });
+  });
+
+  test('keeps linked canonical pages under arbitrary sub-brain paths when work scope allows retrieval', async () => {
+    await withEngine('work-scope-sub-brain-link', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview. See [[personal/work-architecture]].',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'personal/work-architecture', [
+        '---',
+        'type: concept',
+        'title: Work Architecture',
+        '---',
+        '# Work Architecture',
+        'Work architecture fixture content connected from an arbitrary sub-brain path.',
+      ].join('\n'), { path: 'personal/work-architecture.md' });
+      await engine.addLink('personal/work-architecture', 'systems/runtime-platform', 'architecture backlink', 'related');
+
+      const result = await retrieveContext(engine, {
+        query: 'runtime platform code architecture',
+        requested_scope: 'work',
+        include_orientation: false,
+        limit: 3,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/runtime-platform',
+          page_id: 1,
+          title: 'Runtime Platform',
+          type: 'system',
+          chunk_text: 'Runtime platform overview.',
+          chunk_source: 'compiled_truth',
+          score: 1,
+          stale: false,
+        }],
+      });
+
+      expect(result.scope_gate?.policy).toBe('allow');
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('systems/runtime-platform');
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('personal/work-architecture');
     });
   });
 

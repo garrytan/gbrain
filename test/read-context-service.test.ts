@@ -64,6 +64,107 @@ describe('read context service', () => {
     });
   });
 
+  test('marks conflicting canonical definitions as not answer-ready', async () => {
+    await withEngine('conflicting-definitions', async (engine) => {
+      await importFromContent(engine, 'concepts/qrm-relay-mode', [
+        '---',
+        'type: concept',
+        'title: QRM Relay Mode',
+        '---',
+        '# QRM (Queue Relay Mode)',
+        'QRM is the queue relay mode used by the synthetic runtime fixture.',
+        '[Source: User, direct message, 2026-05-07 09:00 KST]',
+      ].join('\n'), { path: 'concepts/qrm-relay-mode.md' });
+      await importFromContent(engine, 'concepts/qrm-routing-map', [
+        '---',
+        'type: concept',
+        'title: QRM Routing Map',
+        '---',
+        '# QRM (Queue Routing Map)',
+        'QRM is the queue routing map used by the synthetic runtime fixture.',
+        '[Source: User, direct message, 2026-05-07 09:05 KST]',
+      ].join('\n'), { path: 'concepts/qrm-routing-map.md' });
+
+      const result = await readContext(engine, {
+        selectors: [
+          { kind: 'compiled_truth', slug: 'concepts/qrm-relay-mode' },
+          { kind: 'compiled_truth', slug: 'concepts/qrm-routing-map' },
+        ],
+        token_budget: 400,
+      });
+
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts[0]!.summary).toContain('qrm');
+      expect(result.answer_ready.ready).toBe(false);
+      expect(result.answer_ready.unsupported_reasons).toContain('conflicting_canonical_evidence');
+    });
+  });
+
+  test('marks inline parenthetical definition conflicts as not answer-ready', async () => {
+    await withEngine('inline-conflicting-definitions', async (engine) => {
+      await importFromContent(engine, 'concepts/qrm-routing-map', [
+        '---',
+        'type: concept',
+        'title: QRM Routing Map',
+        '---',
+        '# QRM (Queue Routing Map)',
+        'QRM maps runtime work to queue lanes in the synthetic fixture.',
+      ].join('\n'), { path: 'concepts/qrm-routing-map.md' });
+      await importFromContent(engine, 'systems/qrm-subsystem', [
+        '---',
+        'type: system',
+        'title: QRM Subsystem',
+        '---',
+        '# QRM Subsystem',
+        'The QRM (Queue Relay Mode) subsystem coordinates synthetic worker lanes.',
+      ].join('\n'), { path: 'systems/qrm-subsystem.md' });
+
+      const result = await readContext(engine, {
+        selectors: [
+          { kind: 'compiled_truth', slug: 'concepts/qrm-routing-map' },
+          { kind: 'compiled_truth', slug: 'systems/qrm-subsystem' },
+        ],
+        token_budget: 400,
+      });
+
+      expect(result.conflicts).toHaveLength(1);
+      expect(result.answer_ready.ready).toBe(false);
+      expect(result.answer_ready.unsupported_reasons).toContain('conflicting_canonical_evidence');
+    });
+  });
+
+  test('does not treat ordinary parenthetical headings as definition conflicts', async () => {
+    await withEngine('ordinary-parenthetical-headings', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform-overview', [
+        '---',
+        'type: system',
+        'title: Runtime Platform Overview',
+        '---',
+        '# Runtime Platform (Overview)',
+        'Runtime platform overview for synthetic service operators.',
+      ].join('\n'), { path: 'systems/runtime-platform-overview.md' });
+      await importFromContent(engine, 'systems/runtime-platform-rollout', [
+        '---',
+        'type: system',
+        'title: Runtime Platform Rollout',
+        '---',
+        '# Runtime Platform (Rollout)',
+        'Runtime platform rollout notes for synthetic service operators.',
+      ].join('\n'), { path: 'systems/runtime-platform-rollout.md' });
+
+      const result = await readContext(engine, {
+        selectors: [
+          { kind: 'compiled_truth', slug: 'systems/runtime-platform-overview' },
+          { kind: 'compiled_truth', slug: 'systems/runtime-platform-rollout' },
+        ],
+        token_budget: 400,
+      });
+
+      expect(result.conflicts).toEqual([]);
+      expect(result.answer_ready.ready).toBe(true);
+    });
+  });
+
   test('reads a canonical section instead of the whole page for narrow selectors', async () => {
     await withEngine('section', async (engine) => {
       await importFromContent(engine, 'systems/mbrain', [

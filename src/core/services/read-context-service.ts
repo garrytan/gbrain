@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import type {
   CanonicalContextRead,
   ContextAnswerReady,
+  ContextConflict,
   ContextEvidenceClaim,
   DerivedJobStatus,
   MemoryArtifactAuthority,
@@ -127,11 +128,13 @@ export async function readContext(
     if (read.continuation_selector) continuations.push(read.continuation_selector);
   }
 
+  const conflicts = buildContextConflicts(reads);
+
   return maybePersistReadTrace(engine, {
-    answer_ready: buildAnswerReady(reads, unreadRequired, warnings, selectorWarnings),
+    answer_ready: buildAnswerReady(reads, unreadRequired, selectorWarnings, conflicts),
     canonical_reads: reads,
     evidence_claims: reads.map(buildEvidenceClaim),
-    conflicts: [],
+    conflicts,
     warnings,
     ...(selectorWarnings.length > 0 ? { selector_warnings: selectorWarnings } : {}),
     unread_required: unreadRequired,
@@ -760,8 +763,8 @@ function buildContinuationSelector(selector: RetrievalSelector, consumedChars: n
 function buildAnswerReady(
   reads: CanonicalContextRead[],
   unreadRequired: RetrievalSelector[],
-  warnings: string[],
   selectorWarnings: RetrievalSelectorWarning[] = [],
+  conflicts: ContextConflict[] = [],
 ): ContextAnswerReady {
   if (reads.length === 0) {
     return {
@@ -774,10 +777,11 @@ function buildAnswerReady(
     };
   }
   const hasContinuation = reads.some((read) => read.has_more);
-  if (unreadRequired.length > 0 || hasContinuation) {
+  if (unreadRequired.length > 0 || hasContinuation || conflicts.length > 0) {
     const unsupportedReasons = [
-      ...(unreadRequired.length > 0 ? ['required_selectors_unread', ...selectorWarningCodes(selectorWarnings), ...warnings] : []),
+      ...(unreadRequired.length > 0 ? ['required_selectors_unread', ...selectorWarningCodes(selectorWarnings)] : []),
       ...(hasContinuation ? ['continuation_required'] : []),
+      ...(conflicts.length > 0 ? ['conflicting_canonical_evidence'] : []),
     ];
     return {
       ready: false,
@@ -792,6 +796,167 @@ function buildAnswerReady(
     unsupported_reasons: [],
     citation_policy: 'Cite canonical_reads by selector_id and propagate source_refs when present.',
   };
+}
+
+type DefinitionClaim = {
+  subject: string;
+  definition: string;
+  selector_id: string;
+  source_refs: string[];
+};
+
+function buildContextConflicts(reads: CanonicalContextRead[]): ContextConflict[] {
+  const claimsBySubject = new Map<string, DefinitionClaim[]>();
+
+  for (const read of reads) {
+    for (const claim of extractDefinitionClaims(read)) {
+      const existing = claimsBySubject.get(claim.subject) ?? [];
+      existing.push(claim);
+      claimsBySubject.set(claim.subject, existing);
+    }
+  }
+
+  const conflicts: ContextConflict[] = [];
+  for (const [subject, claims] of claimsBySubject) {
+    const uniqueBySelector = new Map<string, DefinitionClaim>();
+    for (const claim of claims) {
+      if (!uniqueBySelector.has(claim.selector_id)) {
+        uniqueBySelector.set(claim.selector_id, claim);
+      }
+    }
+
+    const uniqueDefinitions = [...new Set([...uniqueBySelector.values()].map((claim) => claim.definition))];
+    if (uniqueBySelector.size < 2 || uniqueDefinitions.length < 2) continue;
+
+    conflicts.push({
+      selector_id: [...uniqueBySelector.keys()][0]!,
+      summary: `Conflicting canonical definitions for "${subject}": ${uniqueDefinitions.join(' vs ')}`,
+      source_refs: mergeSourceRefs([...uniqueBySelector.values()].flatMap((claim) => claim.source_refs)),
+    });
+  }
+
+  return conflicts;
+}
+
+function extractDefinitionClaims(read: CanonicalContextRead): DefinitionClaim[] {
+  const selectorId = retrievalSelectorId(read.selector);
+  const claims: DefinitionClaim[] = [];
+  const seenSubjects = new Set<string>();
+  const lines = read.text
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 8);
+
+  for (const line of lines) {
+    const headingClaim = definitionClaimFromHeading(line, selectorId, read.source_refs);
+    if (headingClaim && !seenSubjects.has(headingClaim.subject)) {
+      claims.push(headingClaim);
+      seenSubjects.add(headingClaim.subject);
+      continue;
+    }
+
+    const inlineClaim = definitionClaimFromInlineParenthetical(line, selectorId, read.source_refs);
+    if (inlineClaim && !seenSubjects.has(inlineClaim.subject)) {
+      claims.push(inlineClaim);
+      seenSubjects.add(inlineClaim.subject);
+      continue;
+    }
+
+    const sentenceClaim = definitionClaimFromSentence(line, selectorId, read.source_refs);
+    if (sentenceClaim && !seenSubjects.has(sentenceClaim.subject)) {
+      claims.push(sentenceClaim);
+      seenSubjects.add(sentenceClaim.subject);
+    }
+  }
+
+  return claims;
+}
+
+function definitionClaimFromHeading(
+  line: string,
+  selectorId: string,
+  sourceRefs: string[],
+): DefinitionClaim | undefined {
+  const match = line.match(/^#{1,6}\s+(.+?)\s+\(([^)]+)\)/);
+  if (!match) return undefined;
+  if (!isLikelyAcronymExpansion(match[1]!, match[2]!)) return undefined;
+  const subject = normalizeDefinitionPart(match[1]!);
+  const definition = normalizeDefinitionPart(match[2]!);
+  if (!isUsableDefinitionSubject(subject) || !definition) return undefined;
+  return { subject, definition, selector_id: selectorId, source_refs: sourceRefs };
+}
+
+function definitionClaimFromInlineParenthetical(
+  line: string,
+  selectorId: string,
+  sourceRefs: string[],
+): DefinitionClaim | undefined {
+  const match = line.match(/(?:^|[^a-z0-9])(?:the\s+)?([a-z][a-z0-9]{1,12})\s+\(([^)]+)\)/i);
+  if (!match) return undefined;
+  if (!isLikelyAcronymExpansion(match[1]!, match[2]!)) return undefined;
+  const subject = normalizeDefinitionPart(match[1]!);
+  const definition = normalizeDefinitionPart(match[2]!);
+  if (!isUsableDefinitionSubject(subject) || !definition) return undefined;
+  return { subject, definition, selector_id: selectorId, source_refs: sourceRefs };
+}
+
+function definitionClaimFromSentence(
+  line: string,
+  selectorId: string,
+  sourceRefs: string[],
+): DefinitionClaim | undefined {
+  const match = line.match(/^(.{2,80}?)\s+(?:is|means|refers to)\s+(.+?)(?:[.!?]\s*)?$/i);
+  if (!match) return undefined;
+  if (!isLikelyAcronymExpansion(match[1]!, match[2]!)) return undefined;
+  const subject = normalizeDefinitionPart(match[1]!);
+  const definition = normalizeDefinitionPart(match[2]!);
+  if (!isUsableDefinitionSubject(subject) || !definition) return undefined;
+  return { subject, definition, selector_id: selectorId, source_refs: sourceRefs };
+}
+
+function isUsableDefinitionSubject(subject: string): boolean {
+  if (!/[a-z0-9]/.test(subject)) return false;
+  return subject.split(/\s+/g).length <= 6;
+}
+
+function isLikelyAcronymExpansion(subject: string, definition: string): boolean {
+  const acronym = normalizeAcronym(subject);
+  if (acronym.length < 2 || acronym.length > 12) return false;
+  const definitionWords = definition
+    .match(/[a-z0-9]+/gi)
+    ?.map((word) => word.toLowerCase())
+    .filter((word) => !DEFINITION_STOPWORDS.has(word))
+    ?? [];
+  if (definitionWords.length < acronym.length) return false;
+  const initials = definitionWords
+    .slice(0, acronym.length)
+    .map((word) => word[0])
+    .join('');
+  return initials === acronym.toLowerCase();
+}
+
+function normalizeAcronym(value: string): string {
+  const compact = value.replace(/[^a-z0-9]/gi, '');
+  if (compact.length !== value.trim().length) return '';
+  return compact.toLowerCase();
+}
+
+const DEFINITION_STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'of',
+  'the',
+]);
+
+function normalizeDefinitionPart(value: string): string {
+  return value
+    .replace(/^\*+|\*+$/g, '')
+    .replace(/`/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 function selectorWarningCodes(selectorWarnings: RetrievalSelectorWarning[]): string[] {

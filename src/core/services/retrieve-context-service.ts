@@ -3,6 +3,7 @@ import { buildCandidateSignals, emptyCandidateSignalResult } from './candidate-s
 import type { BuildCandidateSignalsInput, CandidateSignalResult } from './candidate-signal-service.ts';
 import type {
   MemoryScenario,
+  NoteManifestEntry,
   NoteSectionEntry,
   RetrieveContextCandidate,
   RetrieveContextInput,
@@ -19,6 +20,7 @@ import type {
 import { getBroadSynthesisRoute } from './broad-synthesis-route-service.ts';
 import { classifyMemoryScenario } from './memory-scenario-classifier-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
+import { rankSearchResults, sourceRankCandidateLimit, sourceRankFactor } from '../search/source-ranking.ts';
 import {
   corpusLaneFromSourceRefs,
   mergeSourceRefs,
@@ -48,6 +50,13 @@ export interface RetrieveContextDependencies {
 }
 
 const DEFAULT_CANDIDATE_LIMIT = 5;
+const DEFAULT_READ_CONTEXT_MAX_SELECTORS = 3;
+const CANDIDATE_SELECTOR_BATCH_SIZE = 10;
+const MAX_CANDIDATE_QUERY_VARIANTS = 5;
+const CANDIDATE_RRF_K = 60;
+const LINKED_CANDIDATE_SEED_LIMIT = 5;
+const LINKED_CANDIDATE_PER_SEED_LIMIT = 4;
+const MANIFEST_LINK_SCAN_BATCH_SIZE = 500;
 const SEARCH_HIT_CONTEXT_CHARS = 40;
 const SEARCH_CHUNK_WARNING = 'Search/query chunks are candidate pointers; call read_context before answering factual questions.';
 const PERSONAL_SELECTOR_PREFIXES = ['personal/', 'brain/personal/', 'profile/', 'profiles/'] as const;
@@ -86,6 +95,7 @@ export async function retrieveContext(
   dependencies: RetrieveContextDependencies = {},
 ): Promise<RetrieveContextResult> {
   const limit = input.limit ?? DEFAULT_CANDIDATE_LIMIT;
+  const requiredReadLimit = Math.min(limit, DEFAULT_READ_CONTEXT_MAX_SELECTORS);
   assertPositiveInteger(limit, 'limit');
   if (input.token_budget !== undefined) assertPositiveInteger(input.token_budget, 'token_budget');
 
@@ -174,17 +184,20 @@ export async function retrieveContext(
   }
 
   const query = input.query?.trim() ?? '';
+  const searchLimit = query.length > 0 ? sourceRankCandidateLimit(limit) : 0;
   const candidateSearch = dependencies.candidateSearch ?? ((candidateQuery, options) =>
     engine.searchKeyword(candidateQuery, { limit: options.limit }));
-  const searchResults = query.length > 0 ? await candidateSearch(query, { limit }) : [];
-  const candidates = await groupCandidatesByCanonicalPage(engine, searchResults, limit, query);
+  const searchResults = query.length > 0
+    ? rankSearchResults(await searchCandidatePool(candidateSearch, query, searchLimit))
+    : [];
+  const candidates = await groupCandidatesByCanonicalPage(engine, searchResults, limit, query, scopeGate);
   const orientation = input.include_orientation === false || query.length === 0
     ? emptyOrientation()
     : await buildOrientation(engine, query, limit);
-  const requiredReads = dedupeSelectors([
+  const requiredReads = dedupeSelectorsByEvidence([
     ...candidates.map((candidate) => candidate.read_selector),
     ...orientation.recommended_reads,
-  ]).slice(0, limit);
+  ].filter((selector) => selectorAllowedByRetrieveScope(selector, scopeGate))).slice(0, requiredReadLimit);
   const candidateSignals = await buildRetrieveContextCandidateSignals(
     candidateSignalBuilder,
     engine,
@@ -305,57 +318,470 @@ function broadRetrievalReasonCodes(
   return ['no_candidate'];
 }
 
+async function searchCandidatePool(
+  candidateSearch: RetrieveContextCandidateSearch,
+  query: string,
+  limit: number,
+): Promise<SearchResult[]> {
+  const queries = candidateSearchQueries(query);
+  const settled = await Promise.allSettled(
+    queries.map((candidateQuery) => candidateSearch(candidateQuery, { limit })),
+  );
+  const resultLists = settled.flatMap((result) => (
+    result.status === 'fulfilled' ? [result.value] : []
+  ));
+  if (resultLists.length === 0) return [];
+  if (resultLists.length === 1) return resultLists[0]!;
+  return fuseCandidateSearchResults(resultLists);
+}
+
+function candidateSearchQueries(query: string): string[] {
+  const variants: string[] = [];
+  const addVariant = (variant: string) => {
+    const normalized = variant.trim();
+    if (!normalized) return;
+    if (variants.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) return;
+    variants.push(normalized);
+  };
+
+  addVariant(query);
+  for (const token of tokenizeForSectionRank(query)) {
+    addVariant(token);
+    if (variants.length >= MAX_CANDIDATE_QUERY_VARIANTS) break;
+  }
+
+  return variants;
+}
+
+function fuseCandidateSearchResults(resultLists: SearchResult[][]): SearchResult[] {
+  const fusedByKey = new Map<string, { result: SearchResult; score: number; bestOriginalScore: number; firstSeen: number }>();
+  let sequence = 0;
+
+  for (const results of resultLists) {
+    for (let rank = 0; rank < results.length; rank += 1) {
+      const result = results[rank]!;
+      const key = searchResultEvidenceKey(result);
+      const rrfScore = 1 / (CANDIDATE_RRF_K + rank + 1);
+      const existing = fusedByKey.get(key);
+      if (!existing) {
+        fusedByKey.set(key, {
+          result,
+          score: rrfScore,
+          bestOriginalScore: result.score,
+          firstSeen: sequence,
+        });
+        sequence += 1;
+        continue;
+      }
+
+      existing.score += rrfScore;
+      if (result.score > existing.bestOriginalScore) {
+        existing.result = result;
+        existing.bestOriginalScore = result.score;
+      }
+    }
+  }
+
+  return [...fusedByKey.values()]
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.bestOriginalScore !== a.bestOriginalScore) return b.bestOriginalScore - a.bestOriginalScore;
+      return a.firstSeen - b.firstSeen;
+    })
+    .map((entry) => ({
+      ...entry.result,
+      score: entry.score,
+    }));
+}
+
+function searchResultEvidenceKey(result: SearchResult): string {
+  return [
+    result.slug,
+    result.chunk_source,
+    normalizeText(result.chunk_text).slice(0, 160),
+  ].join(':');
+}
+
 async function groupCandidatesByCanonicalPage(
   engine: BrainEngine,
   searchResults: SearchResult[],
   limit: number,
   query: string,
+  scopeGate: ScopeGateDecisionResult | undefined,
 ): Promise<RetrieveContextCandidate[]> {
   const resultsBySlug = new Map<string, SearchResult[]>();
+  const firstRankBySlug = new Map<string, number>();
   for (const result of searchResults) {
     const existing = resultsBySlug.get(result.slug) ?? [];
     existing.push(result);
     resultsBySlug.set(result.slug, existing);
+    if (!firstRankBySlug.has(result.slug)) {
+      firstRankBySlug.set(result.slug, firstRankBySlug.size);
+    }
   }
 
   const groupedResults = [...resultsBySlug.entries()]
     .map(([slug, results]) => ({
       slug,
       results,
-      top: [...results].sort((a, b) => b.score - a.score)[0]!,
+      top: results[0]!,
+      rank: firstRankBySlug.get(slug) ?? Number.MAX_SAFE_INTEGER,
     }))
-    .sort((a, b) => b.top.score - a.top.score)
-    .slice(0, limit);
+    .sort((a, b) => a.rank - b.rank);
 
-  return Promise.all(groupedResults.map(async (group, index) => {
-    const readResult = bestTimelineSearchResult(group.results) ?? group.top;
-    const selector = await bestReadSelectorForSearchResult(engine, readResult, query);
-    const corpusLane = selector.corpus_lane
-      ?? corpusLaneFromSourceRefs(selector.source_refs ?? [])
-      ?? await corpusLaneForPage(engine, group.slug);
-    const readSelector = corpusLane
-      ? normalizeRetrievalSelector({ ...selector, corpus_lane: corpusLane })
-      : selector;
+  const resolvedCandidates: RetrieveContextCandidate[] = [];
+  for (let index = 0; index < groupedResults.length; index += CANDIDATE_SELECTOR_BATCH_SIZE) {
+    const batch = groupedResults.slice(index, index + CANDIDATE_SELECTOR_BATCH_SIZE);
+    const resolved = await Promise.all(batch.map((group) => resolveCandidateGroup(engine, group, query)));
+    resolvedCandidates.push(...resolved);
+  }
 
-    return {
-      candidate_id: `candidate:${group.slug}`,
-      canonical_target: {
-        kind: readSelector.kind,
-        slug: group.slug,
-        title: group.top.title,
-        type: group.top.type,
-        path: readSelector.path,
-        section_id: readSelector.section_id,
-        scope_id: readSelector.scope_id,
-        ...(corpusLane ? { corpus_lane: corpusLane } : {}),
-      },
-      matched_chunks: group.results.map((result) => toMatchedChunk(result, corpusLane)),
-      why_matched: [`matched ${group.results.length} search chunk${group.results.length === 1 ? '' : 's'}`],
-      activation: group.top.stale ? 'verify_first' : 'candidate_only',
-      read_priority: index + 1,
-      read_selector: readSelector,
-    };
-  }));
+  const rankedBaseCandidates = rankResolvedCandidates(resolvedCandidates, query);
+  const linkedCandidates = await linkedCandidatesForResolvedCandidates(engine, rankedBaseCandidates, query, limit, scopeGate);
+  const rankedCandidates = rankResolvedCandidates([...rankedBaseCandidates, ...linkedCandidates], query);
+  const candidates: RetrieveContextCandidate[] = [];
+  const seenCanonicalEvidence = new Set<string>();
+  for (const candidate of rankedCandidates) {
+    if (!selectorAllowedByRetrieveScope(candidate.read_selector, scopeGate)) continue;
+    const evidenceKey = canonicalEvidenceKey(candidate.read_selector);
+    if (evidenceKey && seenCanonicalEvidence.has(evidenceKey)) continue;
+    if (evidenceKey) seenCanonicalEvidence.add(evidenceKey);
+    candidates.push({
+      ...candidate,
+      read_priority: candidates.length + 1,
+    });
+    if (candidates.length >= limit) break;
+  }
+
+  return candidates;
+}
+
+function rankResolvedCandidates(
+  candidates: RetrieveContextCandidate[],
+  query: string,
+): RetrieveContextCandidate[] {
+  const queryTokens = tokenizeForSectionRank(query);
+  return candidates
+    .map((candidate, index) => ({
+      candidate,
+      index,
+      score: scoreResolvedCandidate(candidate, queryTokens),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.candidate);
+}
+
+function scoreResolvedCandidate(candidate: RetrieveContextCandidate, queryTokens: string[]): number {
+  const title = normalizeText(candidate.canonical_target.title ?? '');
+  const path = normalizeText(candidate.canonical_target.path ?? '');
+  const sectionId = normalizeText(candidate.canonical_target.section_id ?? '');
+  const targetText = `${title} ${path} ${sectionId}`;
+  const matchedChunkText = normalizeText(candidate.matched_chunks
+    .map((chunk) => `${chunk.title} ${chunk.slug}`)
+    .join(' '));
+  let score = Math.max(0, ...candidate.matched_chunks.map((chunk) => chunk.score)) * 100;
+  score *= sourceRankFactor(candidate.canonical_target.slug ?? candidate.read_selector.slug ?? '');
+
+  for (let index = 0; index < queryTokens.length; index += 1) {
+    const token = queryTokens[index]!;
+    const positionWeight = Math.max(1, queryTokens.length - index);
+    if (title.includes(token)) score += 16 + (positionWeight * 8);
+    if (path.includes(token)) score += 6 + (positionWeight * 3);
+    if (sectionId.includes(token)) score += 5 + (positionWeight * 2);
+    if (matchedChunkText.includes(token)) score += 2 + positionWeight;
+  }
+
+  const coveredTokens = queryTokens.filter((token) => targetText.includes(token) || matchedChunkText.includes(token));
+  score += coveredTokens.length * 4;
+  if (queryTokens.length > 0 && coveredTokens.length === queryTokens.length) score += 12;
+  if (candidate.why_matched.some((reason) => reason.startsWith('linked from '))) score += 18;
+  if (candidate.read_selector.freshness === 'stale') score -= 8;
+
+  return score;
+}
+
+async function resolveCandidateGroup(
+  engine: BrainEngine,
+  group: { slug: string; results: SearchResult[]; top: SearchResult },
+  query: string,
+): Promise<RetrieveContextCandidate> {
+  const readResult = bestTimelineSearchResult(group.results) ?? group.top;
+  const selector = await bestReadSelectorForSearchResult(engine, readResult, query);
+  const corpusLane = selector.corpus_lane
+    ?? corpusLaneFromSourceRefs(selector.source_refs ?? [])
+    ?? await corpusLaneForPage(engine, group.slug);
+  const readSelector = corpusLane
+    ? normalizeRetrievalSelector({ ...selector, corpus_lane: corpusLane })
+    : selector;
+
+  return {
+    candidate_id: `candidate:${group.slug}`,
+    canonical_target: {
+      kind: readSelector.kind,
+      slug: group.slug,
+      title: group.top.title,
+      type: group.top.type,
+      path: readSelector.path,
+      section_id: readSelector.section_id,
+      scope_id: readSelector.scope_id,
+      ...(corpusLane ? { corpus_lane: corpusLane } : {}),
+    },
+    matched_chunks: group.results.map((result) => toMatchedChunk(result, corpusLane)),
+    why_matched: [`matched ${group.results.length} search chunk${group.results.length === 1 ? '' : 's'}`],
+    activation: group.top.stale ? 'verify_first' : 'candidate_only',
+    read_priority: 0,
+    read_selector: readSelector,
+  };
+}
+
+async function linkedCandidatesForResolvedCandidates(
+  engine: BrainEngine,
+  seedCandidates: RetrieveContextCandidate[],
+  query: string,
+  limit: number,
+  scopeGate: ScopeGateDecisionResult | undefined,
+): Promise<RetrieveContextCandidate[]> {
+  const seedSlugs = seedCandidates
+    .map((candidate) => candidate.read_selector.slug)
+    .filter((slug): slug is string => Boolean(slug))
+    .slice(0, LINKED_CANDIDATE_SEED_LIMIT);
+  if (seedSlugs.length === 0) return [];
+
+  const seedManifestBySlug = await loadManifestEntriesBySlug(engine, seedSlugs);
+  const explicitLinksBySeed = new Map(
+    await Promise.all(seedSlugs.map(async (seedSlug) => [seedSlug, await explicitLinkedSlugs(engine, seedSlug)] as const)),
+  );
+
+  const linkedSlugsBySeed = new Map<string, string[]>();
+  for (const seedSlug of seedSlugs) {
+    const seedManifest = seedManifestBySlug.get(seedSlug);
+    const explicit = explicitLinksBySeed.get(seedSlug);
+    linkedSlugsBySeed.set(seedSlug, uniqueSlugs([
+      ...(seedManifest?.outgoing_wikilinks ?? []),
+      ...(explicit?.outgoing ?? []),
+      ...(explicit?.incoming ?? []),
+    ]));
+  }
+
+  const manifestBacklinkDemand = limit > seedCandidates.length ? 1 : 0;
+  const seedsNeedingManifestBacklinks = manifestBacklinkDemand === 0
+    ? []
+    : seedSlugs.filter((seedSlug) => (linkedSlugsBySeed.get(seedSlug)?.length ?? 0) < manifestBacklinkDemand);
+  if (seedsNeedingManifestBacklinks.length > 0) {
+    const incomingBySlug = await manifestBacklinkSlugs(engine, new Set(seedsNeedingManifestBacklinks));
+    for (const seedSlug of seedsNeedingManifestBacklinks) {
+      linkedSlugsBySeed.set(seedSlug, uniqueSlugs([
+        ...(linkedSlugsBySeed.get(seedSlug) ?? []),
+        ...(incomingBySlug.get(seedSlug) ?? []),
+      ]));
+    }
+  }
+
+  const linkedManifestBySlug = await loadManifestEntriesBySlug(
+    engine,
+    uniqueSlugs([...linkedSlugsBySeed.values()].flat()),
+  );
+  const output: RetrieveContextCandidate[] = [];
+  const seenSlugs = new Set(seedSlugs);
+  for (const seedSlug of seedSlugs) {
+    const linkedSlugs = linkedSlugsBySeed.get(seedSlug) ?? [];
+    let addedForSeed = 0;
+
+    for (const linkedSlug of linkedSlugs) {
+      if (addedForSeed >= LINKED_CANDIDATE_PER_SEED_LIMIT) break;
+      if (seenSlugs.has(linkedSlug)) continue;
+      const linkedManifest = linkedManifestBySlug.get(linkedSlug);
+      if (!linkedManifest) continue;
+      if (!manifestAllowedByRetrieveScope(linkedManifest, scopeGate)) continue;
+
+      const candidate = await candidateFromLinkedManifest(engine, linkedManifest, seedSlug, query);
+      output.push(candidate);
+      seenSlugs.add(linkedSlug);
+      addedForSeed += 1;
+    }
+  }
+
+  return output;
+}
+
+async function loadManifestEntriesBySlug(
+  engine: BrainEngine,
+  slugs: string[],
+): Promise<Map<string, NoteManifestEntry>> {
+  if (typeof engine.getNoteManifestEntry !== 'function') return new Map();
+  const entries = await Promise.all(uniqueSlugs(slugs).map(async (slug) => [
+    slug,
+    await engine.getNoteManifestEntry(DEFAULT_NOTE_MANIFEST_SCOPE_ID, slug),
+  ] as const));
+  return new Map(entries
+    .filter((entry): entry is readonly [string, NoteManifestEntry] => entry[1] !== null)
+    .map(([slug, manifest]) => [slug, manifest]));
+}
+
+async function manifestBacklinkSlugs(
+  engine: BrainEngine,
+  targetSlugs: Set<string>,
+): Promise<Map<string, string[]>> {
+  const incomingByTarget = new Map<string, string[]>();
+  if (targetSlugs.size === 0) return incomingByTarget;
+  if (typeof engine.listNoteManifestEntries !== 'function') return incomingByTarget;
+
+  for (let offset = 0; ; offset += MANIFEST_LINK_SCAN_BATCH_SIZE) {
+    const batch = await engine.listNoteManifestEntries({
+      scope_id: DEFAULT_NOTE_MANIFEST_SCOPE_ID,
+      limit: MANIFEST_LINK_SCAN_BATCH_SIZE,
+      offset,
+    });
+
+    for (const manifest of batch) {
+      for (const targetSlug of manifest.outgoing_wikilinks) {
+        if (!targetSlugs.has(targetSlug)) continue;
+        const incoming = incomingByTarget.get(targetSlug) ?? [];
+        if (incoming.length >= LINKED_CANDIDATE_PER_SEED_LIMIT) continue;
+        incoming.push(manifest.slug);
+        incomingByTarget.set(targetSlug, incoming);
+      }
+    }
+
+    if (manifestBacklinksSatisfied(targetSlugs, incomingByTarget) || batch.length < MANIFEST_LINK_SCAN_BATCH_SIZE) {
+      break;
+    }
+  }
+
+  return incomingByTarget;
+}
+
+function manifestBacklinksSatisfied(
+  targetSlugs: Set<string>,
+  incomingByTarget: Map<string, string[]>,
+): boolean {
+  for (const targetSlug of targetSlugs) {
+    if ((incomingByTarget.get(targetSlug)?.length ?? 0) < LINKED_CANDIDATE_PER_SEED_LIMIT) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function explicitLinkedSlugs(
+  engine: BrainEngine,
+  seedSlug: string,
+): Promise<{ outgoing: string[]; incoming: string[] }> {
+  if (typeof engine.getLinks !== 'function' && typeof engine.getBacklinks !== 'function') {
+    return { outgoing: [], incoming: [] };
+  }
+  const [linksResult, backlinksResult] = await Promise.allSettled([
+    typeof engine.getLinks === 'function' ? engine.getLinks(seedSlug) : Promise.resolve([]),
+    typeof engine.getBacklinks === 'function' ? engine.getBacklinks(seedSlug) : Promise.resolve([]),
+  ]);
+
+  return {
+    outgoing: linksResult.status === 'fulfilled'
+      ? linksResult.value.map((link) => link.to_slug)
+      : [],
+    incoming: backlinksResult.status === 'fulfilled'
+      ? backlinksResult.value.map((link) => link.from_slug)
+      : [],
+  };
+}
+
+function uniqueSlugs(slugs: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const slug of slugs) {
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    output.push(slug);
+  }
+  return output;
+}
+
+async function candidateFromLinkedManifest(
+  engine: BrainEngine,
+  manifest: NoteManifestEntry,
+  seedSlug: string,
+  query: string,
+): Promise<RetrieveContextCandidate> {
+  const selector = await bestReadSelectorForLinkedManifest(engine, manifest, query);
+  const corpusLane = selector.corpus_lane
+    ?? corpusLaneFromSourceRefs(selector.source_refs ?? [])
+    ?? corpusLaneForManifest(manifest);
+  const readSelector = corpusLane
+    ? normalizeRetrievalSelector({ ...selector, corpus_lane: corpusLane })
+    : selector;
+
+  return {
+    candidate_id: `candidate:${manifest.slug}:linked`,
+    canonical_target: {
+      kind: readSelector.kind,
+      slug: manifest.slug,
+      title: manifest.title,
+      type: manifest.page_type,
+      path: readSelector.path ?? manifest.path,
+      section_id: readSelector.section_id,
+      scope_id: readSelector.scope_id,
+      ...(corpusLane ? { corpus_lane: corpusLane } : {}),
+    },
+    matched_chunks: [],
+    why_matched: [`linked from ${seedSlug}`],
+    activation: 'candidate_only',
+    read_priority: 0,
+    read_selector: readSelector,
+  };
+}
+
+async function bestReadSelectorForLinkedManifest(
+  engine: BrainEngine,
+  manifest: NoteManifestEntry,
+  query: string,
+): Promise<RetrievalSelector> {
+  const projection = await engine.getPageProjection(manifest.slug);
+  const sections = await engine.listNoteSectionEntries({
+    scope_id: manifest.scope_id,
+    page_slug: manifest.slug,
+    limit: 50,
+  });
+  const queryTokens = tokenizeForSectionRank(query);
+  const rankedSection = sections
+    .map((section, index) => ({
+      section,
+      index,
+      score: scoreSectionCandidate(section, null, queryTokens, []),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.section.depth !== a.section.depth) return b.section.depth - a.section.depth;
+      return a.index - b.index;
+    })[0];
+
+  if (rankedSection) {
+    return normalizeRetrievalSelector({
+      kind: 'section',
+      scope_id: rankedSection.section.scope_id,
+      slug: rankedSection.section.page_slug,
+      path: `${rankedSection.section.page_path}#${rankedSection.section.heading_path.join('/')}`,
+      section_id: rankedSection.section.section_id,
+      line_start: rankedSection.section.line_start,
+      line_end: rankedSection.section.line_end,
+      source_refs: rankedSection.section.source_refs,
+      content_hash: projection?.content_hash,
+      freshness: 'current',
+    });
+  }
+
+  return normalizeRetrievalSelector({
+    kind: 'compiled_truth',
+    scope_id: manifest.scope_id,
+    slug: manifest.slug,
+    path: manifest.path,
+    source_refs: manifest.source_refs,
+    content_hash: projection?.content_hash,
+    freshness: 'current',
+  });
 }
 
 function bestTimelineSearchResult(results: SearchResult[]): SearchResult | undefined {
@@ -510,6 +936,31 @@ function hasPersonalSelectorSignal(selector: RetrievalSelector): boolean {
   ].some(startsWithPersonalPrefix);
 }
 
+function selectorAllowedByRetrieveScope(
+  selector: RetrievalSelector,
+  scopeGate: ScopeGateDecisionResult | undefined,
+): boolean {
+  if (scopeGate?.policy !== 'allow') return true;
+  if (scopeGate.resolved_scope !== 'work') return true;
+  return !hasExplicitPersonalAuthoritySelector(selector);
+}
+
+function manifestAllowedByRetrieveScope(
+  manifest: NoteManifestEntry,
+  scopeGate: ScopeGateDecisionResult | undefined,
+): boolean {
+  if (scopeGate?.policy !== 'allow') return true;
+  if (scopeGate.resolved_scope !== 'work') return true;
+  return !isPersonalScopeId(manifest.scope_id);
+}
+
+function hasExplicitPersonalAuthoritySelector(selector: RetrievalSelector): boolean {
+  if (selector.kind === 'profile_memory' || selector.kind === 'personal_episode') {
+    return true;
+  }
+  return isPersonalScopeId(selector.scope_id);
+}
+
 function isPersonalScopeId(value: string | undefined): boolean {
   if (!value) return false;
   const normalizedValue = value.trim().toLowerCase();
@@ -580,6 +1031,26 @@ function toMatchedChunk(result: SearchResult, corpusLane?: RetrievalMatchedChunk
   };
 }
 
+function canonicalEvidenceKey(selector: RetrievalSelector): string | undefined {
+  if (selector.kind !== 'section' && selector.kind !== 'compiled_truth' && selector.kind !== 'page') return undefined;
+  const contentHash = selector.content_hash?.trim();
+  const retrievalPath = selector.path
+    ? canonicalRetrievalPath(selector.path)
+    : selector.section_id
+      ? canonicalRetrievalPath(selector.section_id)
+      : selector.slug
+        ? canonicalRetrievalPath(`${selector.slug}.md`)
+        : undefined;
+  if (!retrievalPath) return undefined;
+  return contentHash
+    ? `canonical:${contentHash}:${retrievalPath}`
+    : `canonical:${selector.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID}:${retrievalPath}`;
+}
+
+function canonicalRetrievalPath(path: string): string {
+  return path.replace(/^brain\//, '').replace(/^\/+/, '').toLowerCase();
+}
+
 async function corpusLaneForPage(
   engine: BrainEngine,
   slug: string,
@@ -589,12 +1060,16 @@ async function corpusLaneForPage(
   return manifest ? corpusLaneFromSourceRefs(manifest.source_refs) : undefined;
 }
 
-function dedupeSelectors(selectors: RetrievalSelector[]): RetrievalSelector[] {
+function corpusLaneForManifest(manifest: NoteManifestEntry): RetrievalMatchedChunk['corpus_lane'] | undefined {
+  return corpusLaneFromSourceRefs(manifest.source_refs);
+}
+
+function dedupeSelectorsByEvidence(selectors: RetrievalSelector[]): RetrievalSelector[] {
   const seen = new Set<string>();
   const output: RetrievalSelector[] = [];
   for (const selector of selectors) {
     const normalized = normalizeRetrievalSelector(selector);
-    const id = retrievalSelectorId(normalized);
+    const id = canonicalEvidenceKey(normalized) ?? retrievalSelectorId(normalized);
     if (seen.has(id)) continue;
     seen.add(id);
     output.push(normalized);
