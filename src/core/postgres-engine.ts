@@ -58,6 +58,7 @@ import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowTo
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql, buildBestPerPagePoolCte } from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
+import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 
 function escapeSqlStringLiteral(value: string): string {
@@ -4539,14 +4540,20 @@ export class PostgresEngine implements BrainEngine {
     // is working as intended, not an orphan.
     const [h] = await sql`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        SELECT id, slug FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')
+      ),
+      entity_count AS (
+        SELECT count(*)::float AS n FROM entity_pages
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NOT NULL)::float /
           GREATEST((SELECT count(*) FROM content_chunks), 1)::float as embed_coverage,
         (SELECT count(*) FROM pages p
-         WHERE p.updated_at < (SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id)
+         WHERE p.deleted_at IS NULL
+           AND (p.links_extracted_at IS NULL
+             OR p.links_extracted_at < ${LINK_EXTRACTOR_VERSION_TS}::timestamptz
+             OR p.updated_at > p.links_extracted_at)
         ) as stale_pages,
         (SELECT count(*) FROM pages p
          WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
@@ -4558,19 +4565,23 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM content_chunks WHERE embedded_at IS NULL) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
         (SELECT count(DISTINCT page_id) FROM timeline_entries) as pages_with_timeline,
-        (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
-        (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
+        CASE WHEN (SELECT n FROM entity_count) = 0 THEN 1
+          ELSE (SELECT count(*) FROM entity_pages e
+           WHERE EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id))::float /
+            (SELECT n FROM entity_count)
+        END as link_coverage,
+        CASE WHEN (SELECT n FROM entity_count) = 0 THEN 1
+          ELSE (SELECT count(*) FROM entity_pages e
+           WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
+            (SELECT n FROM entity_count)
+        END as timeline_coverage
     `;
 
     const connected = await sql`
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type IN ('entity', 'person', 'company', 'organization')
       ORDER BY link_count DESC
       LIMIT 5
     `;

@@ -8,6 +8,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { PageInput, ChunkInput } from '../src/core/types.ts';
+import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
 
 let engine: PGLiteEngine;
 
@@ -1296,6 +1297,30 @@ describe('PGLiteEngine: getHealth graph metrics', () => {
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     const h2 = await engine.getHealth();
     expect(h2.orphan_pages).toBe(1);
+  });
+
+  test('entity coverage is vacuous when there are no entity pages', async () => {
+    await truncateAll();
+    await engine.putPage('notes/one', { ...testPage, type: 'note', title: 'One' });
+    const h = await engine.getHealth();
+    expect(h.link_coverage).toBe(1);
+    expect(h.timeline_coverage).toBe(1);
+  });
+
+  test('stale_pages tracks extraction freshness, not timeline-created freshness', async () => {
+    await truncateAll();
+    await engine.putPage('notes/one', { ...testPage, type: 'note', title: 'One' });
+    expect((await engine.getHealth()).stale_pages).toBe(1);
+
+    await engine.addTimelineEntry('notes/one', { date: '2026-01-15', summary: 'Later timeline row' });
+    const freshStamp = new Date(Date.now() + 1000).toISOString();
+    await engine.markPagesExtractedBatch(
+      [{ slug: 'notes/one', source_id: 'default', extractedAt: freshStamp }],
+      freshStamp,
+    );
+
+    const h = await engine.getHealth();
+    expect(h.stale_pages).toBe(0);
   });
 });
 
