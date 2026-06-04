@@ -499,7 +499,7 @@ const DEFAULT_PARALLELISM = 4;
  */
 export async function runBrainstorm(
   engine: BrainEngine,
-  config: { embedding_model?: string; emotional_weight?: { user_holder?: string } },
+  config: { embedding_model?: string; chat_model?: string; emotional_weight?: { user_holder?: string } },
   opts: BrainstormOptions
 ): Promise<BrainstormResult> {
   // v0.39.3.0 (Phase 5, CV11+T4): outer try/catch around the orchestrator
@@ -521,7 +521,7 @@ export async function runBrainstorm(
 
 async function runBrainstormImpl(
   engine: BrainEngine,
-  config: { embedding_model?: string; emotional_weight?: { user_holder?: string } },
+  config: { embedding_model?: string; chat_model?: string; emotional_weight?: { user_holder?: string } },
   opts: BrainstormOptions,
 ): Promise<BrainstormResult> {
   // v0.39.0.0 T10: install a gateway-layer BudgetTracker scope around the
@@ -541,7 +541,7 @@ async function runBrainstormImpl(
 
 async function _runBrainstormInner(
   engine: BrainEngine,
-  config: { embedding_model?: string; emotional_weight?: { user_holder?: string } },
+  config: { embedding_model?: string; chat_model?: string; emotional_weight?: { user_holder?: string } },
   opts: BrainstormOptions,
 ): Promise<BrainstormResult> {
   const profile = opts.profile ?? BRAINSTORM_PROFILE;
@@ -550,7 +550,7 @@ async function _runBrainstormInner(
   const embedFn = opts.embedQueryFn ?? embedQuery;
 
   // ---- Phase 0: cost preview + TTY grace ----
-  const modelStr = opts.modelOverride ?? 'anthropic:claude-sonnet-4-6';
+  const modelStr = opts.modelOverride ?? config.chat_model ?? 'anthropic:claude-sonnet-4-6';
   const { aborted, estimate } = await previewCostAndWait({
     profile,
     model: modelStr,

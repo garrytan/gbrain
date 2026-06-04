@@ -273,7 +273,7 @@ async function runBrainstormCli(
       maxCostUsd: parsed.maxCost,
       maxFarSet: parsed.maxFarSet,
       strictBudget: parsed.strictBudget,
-      judgeModel: parsed.judgeModel,
+      judgeModel: parsed.judgeModel || (config as any)?.models?.brainstorm?.judge || undefined,
       maxIdeasPerJudgeCall: parsed.maxIdeasPerJudgeCall,
       resumeRunId: parsed.resume,
       forceResume: parsed.forceResume,
