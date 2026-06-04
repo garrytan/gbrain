@@ -409,6 +409,15 @@ function isCustomDimValidForProvider(
   requestedDims: number,
   dimsOptions: number[] | undefined,
 ): CustomDimCheck {
+  // Tier 0: user_provided_models recipes (e.g. litellm, llama-server) have no
+  // static model list and declare default_dims=0 as a sentinel meaning "the user
+  // must supply --embedding-dimensions N". When the user does supply a dimension,
+  // that value IS the contract — there is no provider-side allow-list to check
+  // against. Accept it without further validation and skip the Matryoshka tiers.
+  if (recipe.touchpoints.embedding?.user_provided_models === true) {
+    return { valid: true, error: '' };
+  }
+
   // Tier 1: recipe-declared dims_options.
   if (dimsOptions && dimsOptions.length > 0) {
     if (dimsOptions.includes(requestedDims)) return { valid: true, error: '' };

@@ -292,6 +292,73 @@ describe('resolveSchemaEmbeddingDim', () => {
   });
 });
 
+// ============================================================================
+// user_provided_models dim validation (litellm / llama-server)
+// Bug: isCustomDimValidForProvider() fell through to the Matryoshka allow-list
+// for user_provided_models recipes, rejecting any custom dim. Fix: early-return
+// valid:true when recipe.touchpoints.embedding.user_provided_models === true.
+// ============================================================================
+
+describe('resolveSchemaEmbeddingDim — user_provided_models recipes (litellm, llama-server)', () => {
+  test('litellm with explicit embedding_dimensions is accepted', () => {
+    // The user runs `gbrain init --embedding-model litellm:embeddings --embedding-dimensions 1024`.
+    // Before the fix this was rejected because the Tier 3 fallback fired
+    // (no dims_options, not a known Matryoshka provider).
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'litellm:embeddings',
+      embedding_dimensions: 1024,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.dim).toBe(1024);
+      expect(got.provider).toBe('litellm');
+    }
+  });
+
+  test('litellm accepts any positive-integer dim — no provider allow-list applies', () => {
+    // user_provided_models recipes delegate dim choice entirely to the user;
+    // there is no server-side allow-list gbrain can know about.
+    for (const dim of [256, 512, 768, 1024, 1536, 2048, 3072]) {
+      const got = resolveSchemaEmbeddingDim({
+        embedding_model: 'litellm:my-embed-model',
+        embedding_dimensions: dim,
+      });
+      expect(got.ok).toBe(true);
+      if (got.ok) expect(got.dim).toBe(dim);
+    }
+  });
+
+  test('llama-server with explicit embedding_dimensions is accepted', () => {
+    // llama-server uses the same user_provided_models flag as litellm.
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'llama-server:nomic-embed-text',
+      embedding_dimensions: 768,
+    });
+    expect(got.ok).toBe(true);
+    if (got.ok) {
+      expect(got.dim).toBe(768);
+      expect(got.provider).toBe('llama-server');
+    }
+  });
+
+  test('regression: standard provider (OpenAI) with unsupported dim still rejects — no over-broad fix', () => {
+    // The fix must not bypass Matryoshka validation for non-user_provided_models recipes.
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 9999,
+    });
+    expect(got.ok).toBe(false);
+  });
+
+  test('regression: ZeroEntropy with disallowed dim still rejects', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 1024, // not in ZE allow-list
+    });
+    expect(got.ok).toBe(false);
+  });
+});
+
 describe('resolveSchemaMultimodalDim', () => {
   test('voyage voyage-multimodal-3 accepted', () => {
     const got = resolveSchemaMultimodalDim({ embedding_multimodal_model: 'voyage:voyage-multimodal-3' });
