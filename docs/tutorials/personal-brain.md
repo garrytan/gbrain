@@ -145,7 +145,7 @@ GBrain uses Supabase for vector embeddings and full-text search at scale. There 
 
 Skip this and every embed write fails with "type vector does not exist" the moment GBrain tries to create its schema. pgvector is what stores the embeddings; the schema migrations refuse to run without it. Five seconds in the UI; an hour of debugging if you forget.
 
-### 7b. Get the SESSION POOLER connection string, not the direct one
+### 7b. Get the TRANSACTION POOLER connection string, not the direct one
 
 In the **Project navigation bar →  Connect**, Supabase shows you three options. They look almost identical. Use the right one.
 
