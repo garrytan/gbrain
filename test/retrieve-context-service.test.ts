@@ -203,6 +203,113 @@ describe('retrieve context service', () => {
     });
   });
 
+  test('selects a matching section when search snippets are truncated away from source text', async () => {
+    await withEngine('query-section-fallback', async (engine) => {
+      await importFromContent(engine, 'concepts/runtime-notes', [
+        '---',
+        'type: concept',
+        'title: Runtime Notes',
+        '---',
+        '# Runtime Notes',
+        'Runtime overview.',
+        '',
+        '## Common Driver Module',
+        'Common module files and lifecycle.',
+        '',
+        '## Queue Routing',
+        'Request dispatch uses queue ownership, worker coordination, and backpressure.',
+      ].join('\n'), { path: 'concepts/runtime-notes.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'What is queue routing in the runtime?',
+        include_orientation: false,
+        limit: 5,
+      }, {
+        candidateSearch: async () => [{
+          slug: 'concepts/runtime-notes',
+          page_id: 1,
+          title: 'Runtime Notes',
+          type: 'concept',
+          chunk_text: '# Runtime Notes ... This document covers runtime modules and queue routing.',
+          chunk_source: 'compiled_truth',
+          score: 10,
+          stale: false,
+        }],
+      });
+
+      expect(result.required_reads).toHaveLength(1);
+      expect(result.required_reads[0]!.kind).toBe('section');
+      expect(result.required_reads[0]!.section_id).toBe('concepts/runtime-notes#runtime-notes/queue-routing');
+    });
+  });
+
+  test('resolves canonical read selectors for independent page candidates concurrently', async () => {
+    await withEngine('selector-resolution-concurrency', async (engine) => {
+      await importFromContent(engine, 'concepts/alpha', [
+        '---',
+        'type: concept',
+        'title: Alpha',
+        '---',
+        '# Alpha',
+        'Alpha compiled truth.',
+      ].join('\n'), { path: 'concepts/alpha.md' });
+      await importFromContent(engine, 'concepts/bravo', [
+        '---',
+        'type: concept',
+        'title: Bravo',
+        '---',
+        '# Bravo',
+        'Bravo compiled truth.',
+      ].join('\n'), { path: 'concepts/bravo.md' });
+
+      const originalListSections = engine.listNoteSectionEntries.bind(engine);
+      let activeSectionReads = 0;
+      let maxActiveSectionReads = 0;
+      engine.listNoteSectionEntries = async (...args) => {
+        activeSectionReads += 1;
+        maxActiveSectionReads = Math.max(maxActiveSectionReads, activeSectionReads);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        try {
+          return await originalListSections(...args);
+        } finally {
+          activeSectionReads -= 1;
+        }
+      };
+
+      const result = await retrieveContext(engine, {
+        query: 'compiled truth',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [
+          {
+            slug: 'concepts/alpha',
+            page_id: 1,
+            title: 'Alpha',
+            type: 'concept',
+            chunk_text: 'Alpha compiled truth.',
+            chunk_source: 'compiled_truth',
+            score: 10,
+            stale: false,
+          },
+          {
+            slug: 'concepts/bravo',
+            page_id: 2,
+            title: 'Bravo',
+            type: 'concept',
+            chunk_text: 'Bravo compiled truth.',
+            chunk_source: 'compiled_truth',
+            score: 9,
+            stale: false,
+          },
+        ],
+      });
+
+      expect(result.required_reads).toHaveLength(2);
+      expect(maxActiveSectionReads).toBeGreaterThan(1);
+    });
+  });
+
   test('returns candidate signals alongside canonical reads in default retrieval', async () => {
     await withEngine('candidate-signals-default', async (engine) => {
       await importFromContent(engine, 'systems/mbrain', [

@@ -3,6 +3,7 @@ import { buildCandidateSignals, emptyCandidateSignalResult } from './candidate-s
 import type { BuildCandidateSignalsInput, CandidateSignalResult } from './candidate-signal-service.ts';
 import type {
   MemoryScenario,
+  NoteSectionEntry,
   RetrieveContextCandidate,
   RetrieveContextInput,
   RetrieveContextOrientation,
@@ -50,6 +51,34 @@ const DEFAULT_CANDIDATE_LIMIT = 5;
 const SEARCH_HIT_CONTEXT_CHARS = 40;
 const SEARCH_CHUNK_WARNING = 'Search/query chunks are candidate pointers; call read_context before answering factual questions.';
 const PERSONAL_SELECTOR_PREFIXES = ['personal/', 'brain/personal/', 'profile/', 'profiles/'] as const;
+const QUERY_TOKEN_STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'are',
+  'as',
+  'at',
+  'be',
+  'by',
+  'for',
+  'from',
+  'how',
+  'in',
+  'is',
+  'it',
+  'of',
+  'on',
+  'or',
+  'the',
+  'to',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'why',
+  'with',
+]);
 
 export async function retrieveContext(
   engine: BrainEngine,
@@ -148,7 +177,7 @@ export async function retrieveContext(
   const candidateSearch = dependencies.candidateSearch ?? ((candidateQuery, options) =>
     engine.searchKeyword(candidateQuery, { limit: options.limit }));
   const searchResults = query.length > 0 ? await candidateSearch(query, { limit }) : [];
-  const candidates = await groupCandidatesByCanonicalPage(engine, searchResults, limit);
+  const candidates = await groupCandidatesByCanonicalPage(engine, searchResults, limit, query);
   const orientation = input.include_orientation === false || query.length === 0
     ? emptyOrientation()
     : await buildOrientation(engine, query, limit);
@@ -280,6 +309,7 @@ async function groupCandidatesByCanonicalPage(
   engine: BrainEngine,
   searchResults: SearchResult[],
   limit: number,
+  query: string,
 ): Promise<RetrieveContextCandidate[]> {
   const resultsBySlug = new Map<string, SearchResult[]>();
   for (const result of searchResults) {
@@ -294,20 +324,20 @@ async function groupCandidatesByCanonicalPage(
       results,
       top: [...results].sort((a, b) => b.score - a.score)[0]!,
     }))
-    .sort((a, b) => b.top.score - a.top.score);
+    .sort((a, b) => b.top.score - a.top.score)
+    .slice(0, limit);
 
-  const candidates: RetrieveContextCandidate[] = [];
-  for (const group of groupedResults) {
-    if (candidates.length >= limit) break;
+  return Promise.all(groupedResults.map(async (group, index) => {
     const readResult = bestTimelineSearchResult(group.results) ?? group.top;
-    const selector = await bestReadSelectorForSearchResult(engine, readResult);
+    const selector = await bestReadSelectorForSearchResult(engine, readResult, query);
     const corpusLane = selector.corpus_lane
       ?? corpusLaneFromSourceRefs(selector.source_refs ?? [])
       ?? await corpusLaneForPage(engine, group.slug);
     const readSelector = corpusLane
       ? normalizeRetrievalSelector({ ...selector, corpus_lane: corpusLane })
       : selector;
-    candidates.push({
+
+    return {
       candidate_id: `candidate:${group.slug}`,
       canonical_target: {
         kind: readSelector.kind,
@@ -322,12 +352,10 @@ async function groupCandidatesByCanonicalPage(
       matched_chunks: group.results.map((result) => toMatchedChunk(result, corpusLane)),
       why_matched: [`matched ${group.results.length} search chunk${group.results.length === 1 ? '' : 's'}`],
       activation: group.top.stale ? 'verify_first' : 'candidate_only',
-      read_priority: candidates.length + 1,
+      read_priority: index + 1,
       read_selector: readSelector,
-    });
-  }
-
-  return candidates;
+    };
+  }));
 }
 
 function bestTimelineSearchResult(results: SearchResult[]): SearchResult | undefined {
@@ -341,6 +369,7 @@ function bestTimelineSearchResult(results: SearchResult[]): SearchResult | undef
 async function bestReadSelectorForSearchResult(
   engine: BrainEngine,
   result: SearchResult,
+  query: string,
 ): Promise<RetrievalSelector> {
   if (result.chunk_source === 'timeline') {
     return selectorFromSearchResult(result);
@@ -351,19 +380,11 @@ async function bestReadSelectorForSearchResult(
     page_slug: result.slug,
     limit: 50,
   });
-  const normalizedChunk = normalizeText(result.chunk_text);
-  const matchingSection = normalizedChunk.length === 0
-    ? undefined
-    : sections
-      .map((section) => ({
-        section,
-        match: locateSearchSnippet(section.section_text, result.chunk_text),
-      }))
-      .find((entry) => entry.match !== null);
+  const matchingSection = bestSectionForSearchResult(sections, result, query);
 
   if (matchingSection) {
-    const charStart = matchingSection.match!.index > 0
-      ? Math.max(0, matchingSection.match!.index - SEARCH_HIT_CONTEXT_CHARS)
+    const charStart = matchingSection.match && matchingSection.match.index > 0
+      ? Math.max(0, matchingSection.match.index - SEARCH_HIT_CONTEXT_CHARS)
       : undefined;
     const projection = await engine.getPageProjection(result.slug);
     return normalizeRetrievalSelector({
@@ -382,6 +403,95 @@ async function bestReadSelectorForSearchResult(
   }
 
   return selectorFromSearchResult(result);
+}
+
+function bestSectionForSearchResult(
+  sections: NoteSectionEntry[],
+  result: SearchResult,
+  query: string,
+): { section: NoteSectionEntry; match: { index: number; length: number } | null } | undefined {
+  if (sections.length === 0) return undefined;
+
+  const queryTokens = tokenizeForSectionRank(query);
+  const chunkTokens = tokenizeForSectionRank(result.chunk_text);
+  const ranked = sections
+    .map((section, index) => {
+      const match = locateSearchSnippet(section.section_text, result.chunk_text);
+      return {
+        section,
+        index,
+        match,
+        score: scoreSectionCandidate(section, match, queryTokens, chunkTokens),
+      };
+    })
+    .filter((entry) => entry.match !== null || entry.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.section.depth !== a.section.depth) return b.section.depth - a.section.depth;
+      return a.index - b.index;
+    });
+
+  const best = ranked[0];
+  if (!best) return undefined;
+  return {
+    section: best.section,
+    match: best.match,
+  };
+}
+
+function scoreSectionCandidate(
+  section: NoteSectionEntry,
+  match: { index: number; length: number } | null,
+  queryTokens: string[],
+  chunkTokens: string[],
+): number {
+  const heading = normalizeText(`${section.heading_text} ${section.heading_path.join(' ')}`);
+  const body = normalizeText(section.section_text);
+  const searchable = `${heading} ${body}`;
+  let score = 0;
+
+  if (match) {
+    score += 40 + Math.min(match.length, 80);
+  }
+
+  for (const token of queryTokens) {
+    if (heading.includes(token)) score += 70;
+    if (body.includes(token)) score += 6;
+  }
+
+  for (const token of chunkTokens) {
+    if (heading.includes(token)) score += 12;
+    if (body.includes(token)) score += 2;
+  }
+
+  if (queryTokens.length > 0 && queryTokens.every((token) => searchable.includes(token))) {
+    score += 16;
+  }
+
+  if (match && queryTokens.some((token) => heading.includes(token))) {
+    score += 24;
+  }
+
+  const headingMatchesQueryOrChunk = queryTokens.some((token) => heading.includes(token))
+    || chunkTokens.some((token) => heading.includes(token));
+  if (section.depth > 1 && headingMatchesQueryOrChunk) {
+    score += section.depth;
+  }
+
+  return score;
+}
+
+function tokenizeForSectionRank(value: string): string[] {
+  const seen = new Set<string>();
+  const tokens = normalizeText(value)
+    .match(/[a-z0-9]+/g)
+    ?? [];
+  for (const token of tokens) {
+    if (token.length < 2) continue;
+    if (QUERY_TOKEN_STOPWORDS.has(token)) continue;
+    seen.add(token);
+  }
+  return [...seen];
 }
 
 function hasPersonalSelectorSignal(selector: RetrievalSelector): boolean {
