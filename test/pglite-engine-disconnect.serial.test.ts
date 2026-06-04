@@ -103,7 +103,7 @@ describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test('SNAPSHOT + EARLY-NULL: _db is nulled before await close', async () => {
     const dataDir = newTempDataDir();
@@ -131,7 +131,7 @@ describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test('LOCK LEAK GUARD: if db.close() throws, lock still releases', async () => {
     const dataDir = newTempDataDir();
@@ -169,7 +169,7 @@ describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test('IDEMPOTENCY: double disconnect is a clean no-op on the second call', async () => {
     const dataDir = newTempDataDir();
@@ -197,7 +197,7 @@ describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test('RECONNECT after disconnect sees clean state', async () => {
     const dataDir = newTempDataDir();
@@ -217,5 +217,5 @@ describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });

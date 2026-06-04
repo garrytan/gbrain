@@ -49,33 +49,6 @@ export async function startMcpServer(engine: BrainEngine) {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-
-  // Exit cleanly when MCP client disconnects (stdin EOF) or on signals.
-  // Without this, orphaned serve processes accumulate and contend for the
-  // PGLite write lock, causing ingest jobs (email-sync) to time out.
-  let shuttingDown = false;
-  const shutdown = (reason: string, code = 0) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    process.stderr.write(`[gbrain-serve] shutdown: ${reason}\n`);
-    Promise.resolve(engine.disconnect?.())
-      .catch(() => {})
-      .finally(() => process.exit(code));
-  };
-  // v0.34.1 (#870): when MCP_STDIO=1, the wrapping gateway (OpenClaw's
-  // bundle-mcp layer, others) often pipes the JSON-RPC handshake then
-  // closes its stdin half. Treating that as a permanent disconnect kills
-  // the server before the first tool call arrives. Signal handlers and
-  // transport.onclose still cover the legitimate shutdown paths.
-  if (process.env.MCP_STDIO !== '1') {
-    process.stdin.on('end', () => shutdown('stdin end'));
-    process.stdin.on('close', () => shutdown('stdin close'));
-  }
-  // @ts-ignore — SDK exposes onclose on transport
-  transport.onclose = () => shutdown('transport close');
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGHUP', () => shutdown('SIGHUP'));
 }
 
 // Backward compat: used by `gbrain call` command (trusted local path).

@@ -39,6 +39,7 @@ import {
   rmSync,
   writeFileSync,
   chmodSync,
+  existsSync,
 } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
@@ -275,4 +276,36 @@ describe('v0.41.8.0 — daemon survival (regression guard for narrow force-exit)
     }
     expect(wasAlive).toBe(true);
   }, 15_000);
+});
+
+describe('v0.42.x — stale lock self-heal on next CLI connect', () => {
+  test('gbrain stats reaps a dead-pid stale lock and exits 0', async () => {
+    const lockDir = join(tmpHome, '.gbrain', 'brain.pglite', '.gbrain-lock');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(
+      join(lockDir, 'lock'),
+      JSON.stringify({
+        pid: 999999999,
+        acquired_at: Date.now() - 60_000,
+        command: 'synthetic-dead-holder',
+      }),
+      'utf-8',
+    );
+
+    const { code, stdout, stderr, durationMs } = await runWithTimeout(
+      ['stats'],
+      15_000,
+    );
+
+    if (code !== 0) {
+      throw new Error(
+        `expected exit 0, got ${code}; duration=${durationMs}ms\n` +
+          `STDOUT:\n${stdout}\nSTDERR:\n${stderr}`,
+      );
+    }
+
+    expect(code).toBe(0);
+    expect(stdout).toContain('Pages:');
+    expect(existsSync(join(lockDir, 'lock'))).toBe(false);
+  }, 30_000);
 });
