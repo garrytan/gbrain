@@ -1452,7 +1452,113 @@ function parseRetrievalSelectors(value: unknown, key: string): RetrievalSelector
     throw new OperationError('invalid_params', `${key} must be an array of selector objects.`);
   }
 
-  return parsed.map((item, index) => parseRetrievalSelectorObject(item, `${key}[${index}]`));
+  return parsed.map((item, index) => {
+    if (typeof item === 'string') return parseRetrievalSelectorId(item, `${key}[${index}]`);
+    return parseRetrievalSelectorObject(item, `${key}[${index}]`);
+  });
+}
+
+function parseRetrievalSelectorId(value: string, key: string): RetrievalSelector {
+  const selectorId = value.trim();
+  if (selectorId.length === 0) {
+    throw new OperationError('invalid_params', `${key} must be a non-empty selector id.`);
+  }
+
+  const { base, char_start, char_end } = parseSelectorIdCharRange(selectorId, key);
+  const [kindValue, scopeNamespace, scopeName, ...targetParts] = base.split(':');
+  const kind = parseEnumParam(kindValue, `${key}.kind`, RETRIEVAL_SELECTOR_KINDS);
+  if (!kind) {
+    throw new OperationError('invalid_params', `${key}.kind must be one of: ${RETRIEVAL_SELECTOR_KINDS.join(', ')}.`);
+  }
+  if (!scopeNamespace || !scopeName) {
+    throw new OperationError('invalid_params', `${key} must include selector scope.`);
+  }
+
+  const scope_id = `${scopeNamespace}:${scopeName}`;
+  const target = targetParts.join(':');
+  if (!target) {
+    throw new OperationError('invalid_params', `${key} must include selector target.`);
+  }
+
+  const selector: RetrievalSelector = {
+    selector_id: selectorId,
+    kind,
+    scope_id,
+    ...(char_start !== undefined ? { char_start } : {}),
+    ...(char_end !== undefined ? { char_end } : {}),
+  };
+
+  switch (kind) {
+    case 'page':
+    case 'compiled_truth':
+    case 'timeline_range':
+      selector.slug = target;
+      break;
+    case 'section':
+      selector.section_id = target;
+      break;
+    case 'line_span': {
+      const lineStart = Number(targetParts.at(-2));
+      const lineEnd = Number(targetParts.at(-1));
+      const slug = targetParts.slice(0, -2).join(':');
+      if (!slug || !Number.isInteger(lineStart) || !Number.isInteger(lineEnd)) {
+        throw new OperationError('invalid_params', `${key} line_span selector id must include slug, line_start, and line_end.`);
+      }
+      selector.slug = slug;
+      selector.line_start = lineStart;
+      selector.line_end = lineEnd;
+      break;
+    }
+    case 'source_ref': {
+      const targetSuffixIndex = target.indexOf('@target:');
+      if (targetSuffixIndex >= 0) {
+        selector.source_ref = target.slice(0, targetSuffixIndex);
+        const targetHint = target.slice(targetSuffixIndex + '@target:'.length);
+        if (targetHint.includes('#')) {
+          selector.path = targetHint;
+        } else {
+          selector.slug = targetHint;
+        }
+      } else {
+        selector.source_ref = target;
+      }
+      break;
+    }
+    case 'timeline_entry':
+    case 'task_working_set':
+    case 'task_attempt':
+    case 'task_decision':
+    case 'profile_memory':
+    case 'personal_episode':
+      selector.object_id = target;
+      break;
+  }
+
+  return selector;
+}
+
+function parseSelectorIdCharRange(
+  selectorId: string,
+  key: string,
+): { base: string; char_start?: number; char_end?: number } {
+  const charsIndex = selectorId.lastIndexOf('@chars:');
+  if (charsIndex < 0) return { base: selectorId };
+
+  const base = selectorId.slice(0, charsIndex);
+  const [startRaw, endRaw = ''] = selectorId.slice(charsIndex + '@chars:'.length).split(':');
+  const charStart = Number(startRaw);
+  const charEnd = endRaw.length > 0 ? Number(endRaw) : undefined;
+  if (!Number.isInteger(charStart) || charStart < 0) {
+    throw new OperationError('invalid_params', `${key} char_start must be a nonnegative integer.`);
+  }
+  if (charEnd !== undefined && (!Number.isInteger(charEnd) || charEnd < 0)) {
+    throw new OperationError('invalid_params', `${key} char_end must be a nonnegative integer.`);
+  }
+  return {
+    base,
+    char_start: charStart,
+    ...(charEnd !== undefined ? { char_end: charEnd } : {}),
+  };
 }
 
 function parseRetrievalSelectorObject(value: unknown, key: string): RetrievalSelector {
