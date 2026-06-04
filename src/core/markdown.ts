@@ -105,12 +105,12 @@ export function parseMarkdown(
 
   const { compiled_truth, timeline } = splitBody(body);
 
-  const type = (frontmatter.type as string) || (
+  const type = coerceFrontmatterString(frontmatter.type) || (
     opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
   );
-  const title = (frontmatter.title as string) || inferTitle(filePath);
+  const title = coerceFrontmatterString(frontmatter.title) || inferTitle(filePath);
   const tags = extractTags(frontmatter);
-  const slug = (frontmatter.slug as string) || inferSlug(filePath);
+  const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
 
   const cleanFrontmatter = { ...frontmatter };
   delete cleanFrontmatter.type;
@@ -564,6 +564,47 @@ function inferTitle(filePath?: string): string {
   const parts = filePath.split('/');
   const filename = parts[parts.length - 1]?.replace(/\.md$/i, '') || 'Untitled';
   return filename.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * Coerce a frontmatter scalar (title / slug / type) into a string.
+ *
+ * Why this exists: js-yaml (via gray-matter) auto-parses unquoted scalars by
+ * YAML 1.1 tag-resolution rules. `title: 2026-06-03` therefore parses to a
+ * `Date` object, not a string — and downstream code (`assessContentSanity`,
+ * embedding-context `sanitizeTitle`, slug derivation) calls `.toLowerCase()`
+ * / `.replace()` / `.trim()` on it and throws `opts.title.toLowerCase is not
+ * a function`. Same hazard for numeric scalars (`title: 2026`), booleans
+ * (`title: yes` → true), nulls (`title: ~`), and timestamps.
+ *
+ * The old code used `(frontmatter.title as string) || ...` which was a
+ * compile-time-only cast — a runtime lie. This helper does the real coercion:
+ *
+ *  - string                  → trimmed string (passthrough)
+ *  - Date                    → ISO `YYYY-MM-DD` (matches the user's literal
+ *                              intent: they wrote a date-shaped title)
+ *  - number / boolean        → `String(...)`
+ *  - null / undefined / ''   → '' (caller's `||` fallback then takes over)
+ *  - object / array          → '' (fall through to inferTitle — pathological
+ *                              shapes like `title: [a, b]` shouldn't masquerade
+ *                              as a real title)
+ *
+ * This is the root-cause fix for the sync skip-class that quietly drops
+ * Obsidian journal entries with unquoted ISO-date titles.
+ */
+function coerceFrontmatterString(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (value instanceof Date) {
+    // YAML-spec Dates are always UTC-anchored when no offset is given, so
+    // toISOString() preserves the user's literal day-of-year.
+    return value.toISOString().slice(0, 10);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  // null, undefined, object, array → empty string. Caller's `||` falls
+  // through to the inference function (inferTitle/inferSlug/inferType).
+  return '';
 }
 
 function inferSlug(filePath?: string): string {

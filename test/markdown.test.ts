@@ -107,6 +107,108 @@ Content
     const parsed = parseMarkdown(md, path);
     expect(parsed.type).toBe(expectedType);
   });
+
+  // Regression: YAML auto-parses unquoted scalars by type tag. An unquoted
+  // ISO-date title (`title: 2026-06-03`) used to surface as a `Date` object,
+  // which crashed every downstream `.toLowerCase()` / `.replace()` /
+  // `.trim()` call (assessContentSanity, sanitizeTitle, slug derivation) with
+  // "opts.title.toLowerCase is not a function" — silently skipping every
+  // Obsidian daily-journal entry during `gbrain sync`. parseMarkdown now
+  // coerces non-string scalars at parse time so the ParsedMarkdown contract
+  // (title: string) is actually honored at runtime.
+  describe('frontmatter scalar coercion (YAML auto-typing)', () => {
+    test('unquoted ISO-date title parses to YYYY-MM-DD string, not a Date', () => {
+      const md = `---
+title: 2026-06-03
+type: journal
+---
+Today's entry.
+`;
+      const parsed = parseMarkdown(md, 'journal/2026-06-03.md');
+      expect(typeof parsed.title).toBe('string');
+      expect(parsed.title).toBe('2026-06-03');
+      // The whole reason this regression exists: downstream calls .toLowerCase()
+      // on the title. If we ever regress, this line throws.
+      expect(parsed.title.toLowerCase()).toBe('2026-06-03');
+    });
+
+    test('unquoted full timestamp title parses to YYYY-MM-DD string', () => {
+      const md = `---
+title: 2026-06-03T10:30:00Z
+type: journal
+---
+Body
+`;
+      const parsed = parseMarkdown(md, 'journal/entry.md');
+      expect(typeof parsed.title).toBe('string');
+      expect(parsed.title).toBe('2026-06-03');
+    });
+
+    test('quoted ISO-date title stays a string (no regression)', () => {
+      const md = `---
+title: "2026-06-03"
+type: journal
+---
+Body
+`;
+      const parsed = parseMarkdown(md, 'journal/2026-06-03.md');
+      expect(parsed.title).toBe('2026-06-03');
+    });
+
+    test('numeric title (e.g. year) coerces to string', () => {
+      const md = `---
+title: 2026
+type: note
+---
+Body
+`;
+      const parsed = parseMarkdown(md);
+      expect(typeof parsed.title).toBe('string');
+      expect(parsed.title).toBe('2026');
+    });
+
+    test('explicit boolean title (`title: true`) coerces to string', () => {
+      // YAML 1.2 only treats `true`/`false` as booleans (js-yaml default;
+      // unlike YAML 1.1's `yes`/`no`/`on`/`off`). Coercing to "true" is
+      // better than crashing — the user wrote a literal scalar and gets a
+      // literal scalar back as a string.
+      const md = `---
+title: true
+type: note
+---
+Body
+`;
+      const parsed = parseMarkdown(md);
+      expect(typeof parsed.title).toBe('string');
+      expect(parsed.title).toBe('true');
+    });
+
+    test('null title (`title: ~`) falls back to inferred title', () => {
+      const md = `---
+title: ~
+type: note
+---
+Body
+`;
+      const parsed = parseMarkdown(md, 'notes/standup-2026-06-03.md');
+      expect(typeof parsed.title).toBe('string');
+      // Falls through `|| inferTitle(filePath)` once coercion returns ''.
+      expect(parsed.title).toBe('Standup 2026 06 03');
+    });
+
+    test('unquoted ISO-date slug coerces (same hazard as title)', () => {
+      const md = `---
+title: Daily Journal
+slug: 2026-06-03
+type: journal
+---
+Body
+`;
+      const parsed = parseMarkdown(md, 'journal/2026-06-03.md');
+      expect(typeof parsed.slug).toBe('string');
+      expect(parsed.slug).toBe('2026-06-03');
+    });
+  });
 });
 
 describe('splitBody', () => {

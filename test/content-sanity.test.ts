@@ -640,3 +640,45 @@ describe('assessContentSanity — confidence split (Q1=A)', () => {
     expect(r.shouldFlag).toBe(false);
   });
 });
+
+// ─── NON-STRING TITLE COERCION ────────────────────────────────
+//
+// Regression: a caller may hand us a non-string title (e.g. a YAML
+// auto-parsed Date from gray-matter, or `undefined` from a malformed
+// frontmatter). The pre-fix code called `opts.title.toLowerCase()` directly
+// and threw "opts.title.toLowerCase is not a function", which silently
+// skipped every Obsidian journal page with an unquoted ISO-date title during
+// `gbrain sync`. parseMarkdown coerces at parse time; assessContentSanity
+// coerces defensively here as a second wall (it has callers besides
+// import-file).
+
+describe('assessContentSanity — non-string title coercion (defense-in-depth)', () => {
+  test('Date title (YAML-auto-parsed unquoted ISO date) does not crash', () => {
+    const dateTitle = new Date('2026-06-03T00:00:00.000Z') as unknown as string;
+    const r = assessContentSanity({
+      compiled_truth: 'A journal entry from June 3.',
+      timeline: '',
+      title: dateTitle,
+    });
+    expect(r.shouldQuarantine).toBe(false);
+    expect(r.shouldFlag).toBe(false);
+  });
+
+  test('undefined title does not crash', () => {
+    const r = assessContentSanity({
+      compiled_truth: 'body',
+      timeline: '',
+      title: undefined as unknown as string,
+    });
+    expect(r.shouldQuarantine).toBe(false);
+  });
+
+  test('numeric title does not crash', () => {
+    const r = assessContentSanity({
+      compiled_truth: 'body',
+      timeline: '',
+      title: 2026 as unknown as string,
+    });
+    expect(r.shouldQuarantine).toBe(false);
+  });
+});

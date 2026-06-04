@@ -376,14 +376,22 @@ export function assessContentSanity(opts: {
   // doesn't repeat the lowercase per literal.
   const bodyHead = body.slice(0, SCAN_HEAD_BYTES);
   const bodyHeadLower = bodyHead.toLowerCase();
-  const titleLower = opts.title.toLowerCase();
+  // Defense-in-depth coercion. parseMarkdown now normalizes frontmatter
+  // titles via coerceFrontmatterString (e.g. YAML auto-parses unquoted
+  // `title: 2026-06-03` to a Date), but assessContentSanity is also called
+  // directly from MCP put_page, lint, sources audit, doctor, and quarantine
+  // — any of which could be handed a non-string title from a caller that
+  // hasn't gone through parseMarkdown. Skipping a journal entry because a
+  // .toLowerCase() crashed is a worse failure than a one-line String() guard.
+  const titleStr = typeof opts.title === 'string' ? opts.title : String(opts.title ?? '');
+  const titleLower = titleStr.toLowerCase();
 
   const junk_pattern_matches: string[] = [];
   for (const p of BUILT_IN_JUNK_PATTERNS) {
     const scope = p.applies_to ?? 'both';
     let matched = false;
     if (scope === 'title' || scope === 'both') {
-      if (p.pattern.test(opts.title)) matched = true;
+      if (p.pattern.test(titleStr)) matched = true;
     }
     if (!matched && (scope === 'body' || scope === 'both')) {
       if (p.pattern.test(bodyHead)) matched = true;
