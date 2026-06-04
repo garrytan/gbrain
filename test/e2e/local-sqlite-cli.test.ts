@@ -46,7 +46,7 @@ describe('local SQLite CLI end-to-end', () => {
       database_path: harness.dbPath,
       offline: true,
       embedding_provider: 'local',
-      embedding_model: 'nomic-embed-text',
+      embedding_model: 'qwen3-embedding:0.6b',
       query_rewrite_provider: 'heuristic',
     });
     expect(config.database_url).toBeUndefined();

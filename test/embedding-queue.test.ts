@@ -231,6 +231,17 @@ describe('embedding queue', () => {
 
     expect(fake.batches).toEqual([['search_document: document body']]);
   });
+
+  test('leaves qwen3 document text unchanged before provider batching', async () => {
+    const fake = createFakeProvider({ model: 'qwen3-embedding:0.6b' });
+    const queue = createEmbeddingQueue({ provider: fake.provider, autoFlush: false });
+
+    const submitted = queue.submit([chunkInput(0, 'document body')]);
+    await queue.flush();
+    await submitted;
+
+    expect(fake.batches).toEqual([['document body']]);
+  });
 });
 
 describe('runEmbed queue integration', () => {

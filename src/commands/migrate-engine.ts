@@ -292,7 +292,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   }
 
   // Copy config (selective)
-  const configKeys = ['embedding_model', 'embedding_dimensions', 'chunk_strategy'];
+  const configKeys = ['embedding_model', 'embedding_dimensions', 'chunk_strategy', 'chunk_size_tokens', 'chunk_overlap_tokens'];
   for (const key of configKeys) {
     const val = await sourceEngine.getConfig(key);
     if (val) await targetEngine.setConfig(key, val);

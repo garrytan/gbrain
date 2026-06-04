@@ -1006,12 +1006,15 @@ describe('SQLiteEngine migrations', () => {
     await engine.initSchema();
 
     expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
-    expect(await engine.getConfig('embedding_model')).toBe('nomic-embed-text');
-    expect(await engine.getConfig('embedding_dimensions')).toBe('768');
+    expect(await engine.getConfig('embedding_model')).toBe('legacy-model');
+    expect(await engine.getConfig('embedding_dimensions')).toBe('384');
+    expect(await engine.getConfig('chunk_size_tokens')).toBe('768');
+    expect(await engine.getConfig('chunk_overlap_tokens')).toBe('128');
+    expect(await engine.getConfig('chunk_strategy')).toBe('qwen3_token_recursive');
 
     const chunks = await engine.getChunks('concepts/legacy-vector.md');
     expect(chunks).toHaveLength(1);
-    expect(chunks[0]?.model).toBe('nomic-embed-text');
+    expect(chunks[0]?.model).toBe('legacy-model');
     expect(chunks[0]?.embedding).toBeNull();
     expect(chunks[0]?.embedded_at).toBeNull();
 
@@ -1021,6 +1024,30 @@ describe('SQLiteEngine migrations', () => {
       WHERE slug = 'concepts/legacy-vector.md'
     `).get() as { page_embedding: Uint8Array | null } | null;
     expect(row?.page_embedding).toBeNull();
+  });
+
+  test('migration v50 preserves explicit token chunk settings', async () => {
+    const db = (engine as any).database as Database;
+    db.run(`UPDATE config SET value = ? WHERE key = 'version'`, ['49']);
+    db.run(`
+      INSERT INTO config (key, value) VALUES ('chunk_size_tokens', '512')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+    db.run(`
+      INSERT INTO config (key, value) VALUES ('chunk_overlap_tokens', '96')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+    db.run(`
+      INSERT INTO config (key, value) VALUES ('chunk_strategy', 'custom_token_recursive')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+
+    await engine.initSchema();
+
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+    expect(await engine.getConfig('chunk_size_tokens')).toBe('512');
+    expect(await engine.getConfig('chunk_overlap_tokens')).toBe('96');
+    expect(await engine.getConfig('chunk_strategy')).toBe('custom_token_recursive');
   });
 
   test('migration v6 backfills searchable frontmatter beyond the first 100 pages', async () => {

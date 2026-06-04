@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { estimateTokenCount } from '../token-count.ts';
 
 export type SourceOriginEvent =
   | 'initial_import'
@@ -306,11 +307,6 @@ function redactSecrets(text: string): {
 
 function normalizeRawCopyMode(value: string): string {
   return value.replace(/\+/g, '_').replace(/-/g, '_');
-}
-
-function estimateTokenCount(text: string): number {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  return Math.max(1, Math.ceil(words.length * 1.3));
 }
 
 function stableId(prefix: string, ...parts: string[]): string {

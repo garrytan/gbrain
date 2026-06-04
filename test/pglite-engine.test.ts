@@ -229,7 +229,7 @@ describe('PGLiteEngine: Search', () => {
   });
 
   test('searchVector returns empty when no embeddings', async () => {
-    const fakeEmbedding = new Float32Array(768);
+    const fakeEmbedding = new Float32Array(1024);
     const results = await engine.searchVector(fakeEmbedding);
     expect(results.length).toBe(0);
   });
@@ -387,7 +387,7 @@ describe('PGLiteEngine: Search', () => {
 
     await engine.initSchema();
 
-    const embedding = new Float32Array(768);
+    const embedding = new Float32Array(1024);
     embedding[0] = 1;
     embedding[1] = 2;
     embedding[2] = 3;
@@ -402,18 +402,18 @@ describe('PGLiteEngine: Search', () => {
     expect(Array.from(upgraded!.embedding!.slice(0, 3))).toEqual([1, 2, 3]);
   });
 
-  test('migration v7 backfills page_embedding centroids from existing chunk embeddings', async () => {
+  test('migration invalidates legacy page_embedding centroids after qwen3 resize', async () => {
     await engine.putPage('systems/page-embedding-centroid-upgrade', {
       type: 'system',
       title: 'Page Embedding Centroid Upgrade',
       compiled_truth: 'Upgrade coverage for page embedding centroid backfill.',
     });
 
-    const first = new Float32Array(768);
+    const first = new Float32Array(1024);
     first[0] = 1;
     first[1] = 2;
     first[2] = 3;
-    const second = new Float32Array(768);
+    const second = new Float32Array(1024);
     second[0] = 3;
     second[1] = 4;
     second[2] = 5;
@@ -432,16 +432,16 @@ describe('PGLiteEngine: Search', () => {
     const upgraded = pageEmbeddings.find((entry) => entry.slug === 'systems/page-embedding-centroid-upgrade');
 
     expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
-    expect(upgraded?.embedding).not.toBeNull();
-    expect(Array.from(upgraded!.embedding!.slice(0, 3))).toEqual([2, 3, 4]);
+    expect(upgraded).toBeDefined();
+    expect(upgraded?.embedding).toBeNull();
   });
 
   test('searchVector honors type and exclude_slugs filters', async () => {
-    const personEmbedding = new Float32Array(768);
+    const personEmbedding = new Float32Array(1024);
     personEmbedding[0] = 1;
-    const projectEmbedding = new Float32Array(768);
+    const projectEmbedding = new Float32Array(1024);
     projectEmbedding[0] = 1;
-    const queryEmbedding = new Float32Array(768);
+    const queryEmbedding = new Float32Array(1024);
     queryEmbedding[0] = 1;
 
     await engine.putPage('people/alice-vector', {
@@ -534,9 +534,22 @@ describe('PGLiteEngine: Chunks', () => {
     expect(chunks.length).toBe(0);
   });
 
+  test('upsertChunks rejects embeddings that do not match the qwen3 pgvector dimension', async () => {
+    await engine.putPage('test/wrong-dimension', testPage);
+
+    await expect(engine.upsertChunks('test/wrong-dimension', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Wrong dimension',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array(768).fill(0.1),
+      },
+    ])).rejects.toThrow(/expected 1024 dimensions, got 768/i);
+  });
+
   test('getChunksWithEmbeddings returns embedding data', async () => {
     await engine.putPage('test/embed', testPage);
-    const embedding = new Float32Array(768).fill(0.1);
+    const embedding = new Float32Array(1024).fill(0.1);
     await engine.upsertChunks('test/embed', [
       { chunk_index: 0, chunk_text: 'With embedding', chunk_source: 'compiled_truth', embedding },
     ]);

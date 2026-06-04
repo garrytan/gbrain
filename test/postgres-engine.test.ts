@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import * as db from '../src/core/db.ts';
+import { PGVECTOR_EMBEDDING_DIMENSIONS } from '../src/core/pgvector-dimensions.ts';
 
 type SqlCall =
   | { target: 'root' | 'reserved'; kind: 'tag'; text: string; values: unknown[] }
@@ -85,6 +86,18 @@ function createTransactionSqlMock(opts?: { unsafeResult?: Record<string, unknown
   sql.savepoint = async () => [];
 
   return { sql, calls };
+}
+
+function makePgVector(...values: number[]): Float32Array {
+  const vector = new Float32Array(PGVECTOR_EMBEDDING_DIMENSIONS);
+  values.forEach((value, index) => {
+    vector[index] = value;
+  });
+  return vector;
+}
+
+function pgVectorLiteral(embedding: Float32Array): string {
+  return `[${Array.from(embedding).join(',')}]`;
 }
 
 afterEach(async () => {
@@ -226,6 +239,7 @@ describe('PostgresEngine search wiring', () => {
   });
 
   test('searchVector uses a reserved connection, preserves the previous timeout, and passes type/exclude filters', async () => {
+    const query = makePgVector(1, 0, 0);
     const { sql, calls } = createSqlMock({
       previousTimeout: '45s',
       unsafeResults: [
@@ -247,7 +261,7 @@ describe('PostgresEngine search wiring', () => {
     const engine = new PostgresEngine() as any;
     engine._sql = sql;
 
-    const results = await engine.searchVector(new Float32Array([1, 0, 0]), {
+    const results = await engine.searchVector(query, {
       type: 'project',
       exclude_slugs: ['Projects/Apollo'],
       limit: 7,
@@ -269,7 +283,7 @@ describe('PostgresEngine search wiring', () => {
     );
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).query).toContain('LIMIT $4');
     expect((calls[3] as Extract<SqlCall, { kind: 'unsafe' }>).values).toEqual([
-      '[1,0,0]',
+      pgVectorLiteral(query),
       'project',
       ['projects/apollo'],
       7,

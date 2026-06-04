@@ -56,7 +56,7 @@ Typical result:
   "database_path": "/Users/alice/.mbrain/brain.db",
   "offline": true,
   "embedding_provider": "local",
-  "embedding_model": "nomic-embed-text",
+  "embedding_model": "qwen3-embedding:0.6b",
   "query_rewrite_provider": "heuristic"
 }
 ```
@@ -235,31 +235,49 @@ You still get:
 MBrain resolves the embedding runtime in this order:
 
 1. `MBRAIN_LOCAL_EMBEDDING_URL`
-2. `OLLAMA_HOST` (uses `/api/embed`)
-3. default Ollama endpoint `http://127.0.0.1:11434/api/embed`
+2. `MBRAIN_LLAMA_CPP_HOST` (uses `/v1/embeddings`)
+3. `OLLAMA_HOST` (legacy compatibility, uses `/api/embed`)
+4. default llama.cpp endpoint `http://127.0.0.1:8080/v1/embeddings`
 
-If Ollama is already running on the default host/port and you are using the default model, no extra runtime URL configuration is required:
+Start a CPU-only llama.cpp embedding server in a separate terminal before
+backfilling:
+
+```bash
+scripts/run-qwen3-llamacpp-embedding-cpu.sh
+```
+
+That script is tuned for a high-core CPU host and runs Qwen3 0.6B Q4_K_M with
+`--embeddings --pooling last`, 20 CPU threads, `-c 8192`, `-b 8192`, and
+`-ub 8192`. It uses no GPU offload options. Override
+`MBRAIN_LLAMA_CPP_MODEL` if you want to test another GGUF quant.
+
+With the server running on the default host/port, no extra runtime URL
+configuration is required:
 
 ```bash
 mbrain embed --stale
 ```
 
-The default model is `nomic-embed-text`. MBrain applies the retrieval prefixes
-internally, so document chunks use `search_document:` and search queries use
-`search_query:` automatically.
+The default model is `qwen3-embedding:0.6b`. MBrain leaves document chunks
+unchanged and applies Qwen3's instruction format to search queries internally.
+Its default page chunking is tuned for Qwen3's long-context embedding path:
+`chunk_size_tokens=768`, `chunk_overlap_tokens=128`, and
+`chunk_strategy=qwen3_token_recursive`. The token estimator treats CJK/Hangul
+characters as token-dense text so Korean notes are split by budget instead of by
+whitespace words.
 
 If you need a custom host/port or a non-default model, override only those pieces:
 
 ```bash
-export OLLAMA_HOST=http://127.0.0.1:11434
-export MBRAIN_LOCAL_EMBEDDING_MODEL=nomic-embed-text
+export MBRAIN_LLAMA_CPP_HOST=http://127.0.0.1:8080
+export MBRAIN_LOCAL_EMBEDDING_MODEL=qwen3-embedding:0.6b
 mbrain embed --stale
 ```
 
 Optional tuning:
 
 ```bash
-export MBRAIN_LOCAL_EMBEDDING_DIMENSIONS=768
+export MBRAIN_LOCAL_EMBEDDING_DIMENSIONS=1024
 ```
 
 Use these commands:
@@ -278,8 +296,8 @@ What to expect:
 
 - `--stale` only embeds missing chunks
 - page-level `mbrain embed <slug>` can rebuild that page explicitly
-- if Ollama is not running on the default endpoint, use `OLLAMA_HOST` or `MBRAIN_LOCAL_EMBEDDING_URL`
-- if the runtime is reachable but the model is missing, Ollama returns that error directly
+- if llama.cpp is not running on the default endpoint, use `MBRAIN_LLAMA_CPP_HOST` or `MBRAIN_LOCAL_EMBEDDING_URL`
+- `OLLAMA_HOST` is still honored only as a legacy compatibility override
 
 ---
 
@@ -640,14 +658,20 @@ mbrain import /path/to/brain
 mbrain stats
 ```
 
-### `mbrain embed --stale` fails while trying to reach Ollama
+### `mbrain embed --stale` fails while trying to reach llama.cpp
 
-By default, MBrain tries `http://127.0.0.1:11434/api/embed`.
+By default, MBrain tries `http://127.0.0.1:8080/v1/embeddings`.
 
 If your local runtime is on a different host or port, set one of:
 
 - `MBRAIN_LOCAL_EMBEDDING_URL`
-- `OLLAMA_HOST`
+- `MBRAIN_LLAMA_CPP_HOST`
+
+If the default runtime is not available, start llama.cpp:
+
+```bash
+scripts/run-qwen3-llamacpp-embedding-cpu.sh
+```
 
 Then rerun:
 

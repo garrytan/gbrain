@@ -33,9 +33,9 @@ afterEach(() => {
 });
 
 describe('config loading', () => {
-  test('createLocalConfigDefaults uses nomic-embed-text as the local default embedding model', async () => {
+  test('createLocalConfigDefaults uses qwen3-embedding:0.6b as the local default embedding model', async () => {
     const { createLocalConfigDefaults } = await import('../src/core/config.ts');
-    expect(createLocalConfigDefaults().embedding_model).toBe('nomic-embed-text');
+    expect(createLocalConfigDefaults().embedding_model).toBe('qwen3-embedding:0.6b');
   });
 
   test('loads sqlite engine settings from config', async () => {

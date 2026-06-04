@@ -7,8 +7,9 @@ import {
   PAGE_DERIVED_ARTIFACTS,
 } from './derived-jobs.ts';
 import { buildFrontmatterSearchText, parseMarkdown } from './markdown.ts';
-import { chunkText } from './chunkers/recursive.ts';
+import { chunkText, type ChunkOptions } from './chunkers/recursive.ts';
 import { estimateTokenCount } from './embedding.ts';
+import { defaultPageChunkOptions, resolvePageChunkOptions } from './page-chunk-options.ts';
 import {
   buildNoteManifestEntry,
   DEFAULT_NOTE_MANIFEST_SCOPE_ID,
@@ -43,7 +44,7 @@ export interface RefreshDerivedStorageOptions {
   signal?: AbortSignal;
 }
 
-const PAGE_CHUNKS_EXTRACTOR_VERSION = 'recursive-chunks-v1';
+const PAGE_CHUNKS_EXTRACTOR_VERSION = 'qwen3-token-recursive-chunks-v1';
 const PAGE_DERIVED_EXTRACTOR_VERSIONS: Record<DerivedArtifactKind, string> = {
   page_chunks: PAGE_CHUNKS_EXTRACTOR_VERSION,
   note_manifest: NOTE_MANIFEST_EXTRACTOR_VERSION,
@@ -136,9 +137,10 @@ export async function importFromContent(
     return { slug, status: 'skipped', chunks: 0, content_hash: hash };
   }
 
+  const chunkOptions = await resolvePageChunkOptions(engine);
   const chunks = deferDerived
     ? []
-    : buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter);
+    : buildPageChunks(parsed.compiled_truth, parsed.timeline, parsed.frontmatter, chunkOptions);
 
   // Transaction wraps all DB writes
   await engine.transaction(async (tx) => {
@@ -271,16 +273,22 @@ async function replacePageDerivedStorage(
   page: Page,
   tags: string[],
   manifestPath: string,
-  chunks = buildPageChunks(page.compiled_truth, page.timeline, page.frontmatter),
+  chunks: ChunkInput[] | undefined = undefined,
   activeArtifactKinds?: ReadonlySet<DerivedArtifactKind>,
   leaseOwner?: string,
   leaseArtifactKind?: DerivedArtifactKind,
   signal?: AbortSignal,
 ): Promise<number> {
   assertDerivedRefreshNotAborted(signal);
+  const resolvedChunks = chunks ?? buildPageChunks(
+    page.compiled_truth,
+    page.timeline,
+    page.frontmatter,
+    await resolvePageChunkOptions(engine),
+  );
   await engine.deleteChunks(page.slug);
   assertDerivedRefreshNotAborted(signal);
-  await engine.upsertChunks(page.slug, chunks);
+  await engine.upsertChunks(page.slug, resolvedChunks);
   assertDerivedRefreshNotAborted(signal);
   const manifest = await engine.upsertNoteManifestEntry(buildNoteManifestEntry({
     page_id: page.id,
@@ -315,7 +323,7 @@ async function replacePageDerivedStorage(
   )) {
     throw new DerivedRefreshTargetChangedError();
   }
-  return chunks.length;
+  return resolvedChunks.length;
 }
 
 function assertDerivedRefreshNotAborted(signal: AbortSignal | undefined): void {
@@ -562,39 +570,40 @@ export function buildPageChunks(
   compiledTruth: string,
   timeline: string,
   frontmatter?: Record<string, unknown>,
+  options: ChunkOptions = defaultPageChunkOptions(),
 ): ChunkInput[] {
   const chunks: ChunkInput[] = [];
 
   if (compiledTruth.trim()) {
-    for (const chunk of chunkText(compiledTruth)) {
+    for (const chunk of chunkText(compiledTruth, options)) {
       chunks.push({
         chunk_index: chunks.length,
         chunk_text: chunk.text,
         chunk_source: 'compiled_truth',
-        token_count: estimateTokenCount(chunk.text),
+        token_count: chunk.token_count ?? estimateTokenCount(chunk.text),
       });
     }
   }
 
   if (timeline.trim()) {
-    for (const chunk of chunkText(timeline)) {
+    for (const chunk of chunkText(timeline, options)) {
       chunks.push({
         chunk_index: chunks.length,
         chunk_text: chunk.text,
         chunk_source: 'timeline',
-        token_count: estimateTokenCount(chunk.text),
+        token_count: chunk.token_count ?? estimateTokenCount(chunk.text),
       });
     }
   }
 
   const searchText = frontmatter ? buildFrontmatterSearchText(frontmatter) : '';
   if (searchText) {
-    for (const chunk of chunkText(searchText)) {
+    for (const chunk of chunkText(searchText, options)) {
       chunks.push({
         chunk_index: chunks.length,
         chunk_text: chunk.text,
         chunk_source: 'frontmatter',
-        token_count: estimateTokenCount(chunk.text),
+        token_count: chunk.token_count ?? estimateTokenCount(chunk.text),
       });
     }
   }

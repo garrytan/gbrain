@@ -3,6 +3,11 @@ import { dirname, join } from 'path';
 import { homedir } from 'os';
 import type { StorageConfig } from './storage.ts';
 import { MBrainError, type EngineConfig } from './types.ts';
+import {
+  DEFAULT_LOCAL_EMBEDDING_DIMENSIONS,
+  DEFAULT_LOCAL_EMBEDDING_MODEL,
+  defaultEmbeddingDimensionsForModel,
+} from './embedding/provider.ts';
 
 export type EngineType = 'postgres' | 'sqlite' | 'pglite';
 export type EmbeddingProvider = 'none' | 'local';
@@ -179,6 +184,8 @@ export function validateResolvedConfig(config: MBrainConfig): void {
       );
     }
   }
+
+  validatePgVectorEmbeddingConfig(config);
 }
 
 export function toEngineConfig(
@@ -217,10 +224,35 @@ export function createLocalConfigDefaults(
     database_path: overrides.database_path ?? process.env.MBRAIN_DATABASE_PATH ?? defaultLocalDatabasePath(),
     offline: overrides.offline ?? true,
     embedding_provider: overrides.embedding_provider ?? 'local',
-    embedding_model: overrides.embedding_model ?? 'nomic-embed-text',
+    embedding_model: overrides.embedding_model ?? 'qwen3-embedding:0.6b',
     query_rewrite_provider: overrides.query_rewrite_provider ?? 'heuristic',
     openai_api_key: overrides.openai_api_key,
     anthropic_api_key: overrides.anthropic_api_key,
     storage: overrides.storage,
   });
+}
+
+function validatePgVectorEmbeddingConfig(config: MBrainConfig): void {
+  if (config.embedding_provider !== 'local') return;
+  if (config.engine !== 'postgres' && config.engine !== 'pglite') return;
+
+  const model = process.env.MBRAIN_LOCAL_EMBEDDING_MODEL
+    || config.embedding_model
+    || DEFAULT_LOCAL_EMBEDDING_MODEL;
+  const dimensions = parsePositiveInt(process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS)
+    ?? defaultEmbeddingDimensionsForModel(model);
+
+  if (dimensions === null || dimensions === DEFAULT_LOCAL_EMBEDDING_DIMENSIONS) return;
+
+  throw new MBrainError(
+    'Invalid pgvector embedding model',
+    `engine="${config.engine}" with embedding_provider="local" requires ${DEFAULT_LOCAL_EMBEDDING_DIMENSIONS}-dimensional embeddings; model "${model}" resolves to ${dimensions} dimensions`,
+    'Use qwen3-embedding:0.6b, bge-m3, mxbai-embed-large, or another 1024-dimensional embedding model for Postgres/PGLite.',
+  );
+}
+
+function parsePositiveInt(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }

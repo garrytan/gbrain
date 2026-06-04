@@ -1,9 +1,15 @@
 import type { BrainEngine } from './engine.ts';
 import { buildPageChunks } from './import-file.ts';
+import { resolvePageChunkOptions } from './page-chunk-options.ts';
 import type { Chunk, ChunkInput, Page } from './types.ts';
 
 export async function ensurePageChunks(engine: BrainEngine, page: Page): Promise<Chunk[]> {
-  const desired = buildPageChunks(page.compiled_truth, page.timeline, page.frontmatter);
+  const desired = buildPageChunks(
+    page.compiled_truth,
+    page.timeline,
+    page.frontmatter,
+    await resolvePageChunkOptions(engine),
+  );
   let chunks = await engine.getChunks(page.slug);
 
   if (desired.length === 0) {

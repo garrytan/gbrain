@@ -1,7 +1,13 @@
 import { loadConfig, type MBrainConfig } from './config.ts';
 import type { ChunkInput } from './types.ts';
 import type { ResolvedEmbeddingProvider } from './embedding/provider.ts';
-import { modelUsesNomicTaskPrefixes, resolveEmbeddingProvider } from './embedding/provider.ts';
+import {
+  DEFAULT_LOCAL_EMBEDDING_DIMENSIONS,
+  DEFAULT_LOCAL_EMBEDDING_MODEL,
+  prepareEmbeddingInputForModel,
+  resolveEmbeddingProvider,
+} from './embedding/provider.ts';
+import { estimateTokenCount } from './token-count.ts';
 
 const MAX_CHARS = 8000;
 const DEFAULT_BATCH_SIZE = 100;
@@ -157,12 +163,10 @@ export async function embedChunks(
   };
 }
 
-export function estimateTokenCount(text: string): number {
-  return Math.ceil(text.length / 4);
-}
+export { estimateTokenCount };
 
-export const EMBEDDING_MODEL = 'nomic-embed-text';
-export const EMBEDDING_DIMENSIONS = 768;
+export const EMBEDDING_MODEL = DEFAULT_LOCAL_EMBEDDING_MODEL;
+export const EMBEDDING_DIMENSIONS = DEFAULT_LOCAL_EMBEDDING_DIMENSIONS;
 
 function truncateForEmbedding(text: string): string {
   return text.slice(0, MAX_CHARS);
@@ -173,13 +177,7 @@ function prepareEmbeddingInput(
   kind: EmbeddingKind,
   provider: ResolvedEmbeddingProvider,
 ): string {
-  if (!modelUsesNomicTaskPrefixes(provider.capability.model)) {
-    return text;
-  }
-
-  return kind === 'document'
-    ? `search_document: ${text}`
-    : `search_query: ${text}`;
+  return prepareEmbeddingInputForModel(text, kind, provider.capability.model);
 }
 
 function safeLoadConfig(): MBrainConfig | null {

@@ -59,7 +59,7 @@ mbrain init --profile homebrew-postgres
   "database_path": "/Users/alice/.mbrain/brain.db",
   "offline": true,
   "embedding_provider": "local",
-  "embedding_model": "nomic-embed-text",
+  "embedding_model": "qwen3-embedding:0.6b",
   "query_rewrite_provider": "heuristic"
 }
 ```
@@ -232,31 +232,47 @@ import 이후 사용자가 마크다운 파일을 직접 수정했다면, `put_p
 MBrain은 임베딩 런타임을 아래 순서로 결정합니다.
 
 1. `MBRAIN_LOCAL_EMBEDDING_URL`
-2. `OLLAMA_HOST` (`/api/embed` 사용)
-3. 기본 Ollama 엔드포인트 `http://127.0.0.1:11434/api/embed`
+2. `MBRAIN_LLAMA_CPP_HOST` (`/v1/embeddings` 사용)
+3. `OLLAMA_HOST` (레거시 호환, `/api/embed` 사용)
+4. 기본 llama.cpp 엔드포인트 `http://127.0.0.1:8080/v1/embeddings`
 
-Ollama가 기본 호스트/포트로 떠 있고 기본 모델을 쓸 거라면, 런타임 URL 관련 추가 설정 없이 바로 실행하면 됩니다.
+backfill 전에 별도 터미널에서 CPU 전용 llama.cpp embedding server를 실행하세요.
+
+```bash
+scripts/run-qwen3-llamacpp-embedding-cpu.sh
+```
+
+이 스크립트는 high-core CPU host 기준으로 Qwen3 0.6B Q4_K_M을
+`--embeddings --pooling last`, CPU thread 20개, `-c 8192`, `-b 8192`,
+`-ub 8192`로 실행합니다. GPU offload 옵션은 사용하지 않습니다. 다른 GGUF
+quant를 테스트하려면 `MBRAIN_LLAMA_CPP_MODEL`로 override하세요.
+
+서버가 기본 호스트/포트로 떠 있다면, 런타임 URL 관련 추가 설정 없이 바로 실행하면 됩니다.
 
 ```bash
 mbrain embed --stale
 ```
 
-기본 모델은 `nomic-embed-text`입니다. MBrain이 retrieval prefix를 내부적으로
-자동 적용하므로 문서 청크는 `search_document:`, 검색 질의는 `search_query:`
-형태로 처리됩니다.
+기본 모델은 `qwen3-embedding:0.6b`입니다. MBrain은 문서 청크는 원문 그대로
+보내고, 검색 질의에만 Qwen3 instruction format을 내부적으로 적용합니다.
+기본 페이지 청킹은 Qwen3의 long-context embedding 경로에 맞춰
+`chunk_size_tokens=768`, `chunk_overlap_tokens=128`,
+`chunk_strategy=qwen3_token_recursive`를 사용합니다. token estimator는
+CJK/Hangul 문자를 token-dense 텍스트로 취급하므로 한국어 노트가 공백 단어
+기준 때문에 하나의 큰 청크로 뭉치지 않습니다.
 
 커스텀 호스트/포트나 다른 모델을 쓰는 경우에만 필요한 값만 override 하세요.
 
 ```bash
-export OLLAMA_HOST=http://127.0.0.1:11434
-export MBRAIN_LOCAL_EMBEDDING_MODEL=nomic-embed-text
+export MBRAIN_LLAMA_CPP_HOST=http://127.0.0.1:8080
+export MBRAIN_LOCAL_EMBEDDING_MODEL=qwen3-embedding:0.6b
 mbrain embed --stale
 ```
 
 옵션:
 
 ```bash
-export MBRAIN_LOCAL_EMBEDDING_DIMENSIONS=768
+export MBRAIN_LOCAL_EMBEDDING_DIMENSIONS=1024
 ```
 
 자주 쓰는 명령:
@@ -276,8 +292,8 @@ mbrain embed notes/offline-demo
 
 - `--stale` : 아직 임베딩되지 않은 청크만 backfill
 - `mbrain embed <slug>` : 해당 페이지 전체를 명시적으로 rebuild 가능
-- 기본 엔드포인트에 Ollama가 없으면 `OLLAMA_HOST` 또는 `MBRAIN_LOCAL_EMBEDDING_URL`로 override
-- 런타임은 보이지만 모델이 없으면 Ollama가 그 에러를 그대로 돌려줌
+- 기본 엔드포인트에 llama.cpp가 없으면 `MBRAIN_LLAMA_CPP_HOST` 또는 `MBRAIN_LOCAL_EMBEDDING_URL`로 override
+- `OLLAMA_HOST`는 레거시 호환 override로만 계속 지원
 
 ---
 
@@ -616,14 +632,20 @@ mbrain import /path/to/brain
 mbrain stats
 ```
 
-### `mbrain embed --stale`가 Ollama 연결 에러로 실패한다
+### `mbrain embed --stale`가 llama.cpp 연결 에러로 실패한다
 
-기본적으로 MBrain은 `http://127.0.0.1:11434/api/embed`를 먼저 시도합니다.
+기본적으로 MBrain은 `http://127.0.0.1:8080/v1/embeddings`를 먼저 시도합니다.
 
 로컬 런타임이 다른 호스트/포트에 떠 있다면 다음 중 하나를 설정하세요.
 
 - `MBRAIN_LOCAL_EMBEDDING_URL`
-- `OLLAMA_HOST`
+- `MBRAIN_LLAMA_CPP_HOST`
+
+기본 런타임이 떠 있지 않다면 llama.cpp를 시작하세요.
+
+```bash
+scripts/run-qwen3-llamacpp-embedding-cpu.sh
+```
 
 그 다음 다시:
 

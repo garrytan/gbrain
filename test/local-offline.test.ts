@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runEmbed } from '../src/commands/embed.ts';
@@ -200,7 +200,7 @@ describe('local/offline profile semantics', () => {
       database_path: join(tempDir, '.mbrain', 'brain.db'),
       offline: true,
       embedding_provider: 'local',
-      embedding_model: 'nomic-embed-text',
+      embedding_model: 'qwen3-embedding:0.6b',
       query_rewrite_provider: 'heuristic',
     });
     expect(readFileSync(join(tempDir, '.mbrain', 'config.json'), 'utf-8')).toContain('"engine": "sqlite"');
@@ -476,6 +476,33 @@ describe('local/offline profile semantics', () => {
 });
 
 describe('local/offline embedding flow', () => {
+  test('qwen3 llama.cpp CPU script defaults to the Q4_K_M GGUF quant', () => {
+    const binDir = join(tempDir, 'bin');
+    const capturePath = join(tempDir, 'llama-args.txt');
+    mkdirSync(binDir, { recursive: true });
+    const fakeServer = join(binDir, 'llama-server');
+    writeFileSync(fakeServer, `#!/usr/bin/env bash
+printf '%s\\n' "$@" > "${capturePath}"
+`);
+    chmodSync(fakeServer, 0o755);
+
+    const result = Bun.spawnSync({
+      cmd: ['bash', 'scripts/run-qwen3-llamacpp-embedding-cpu.sh'],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    expect(result.exitCode).toBe(0);
+    const args = readFileSync(capturePath, 'utf-8').trim().split('\n');
+    expect(args).toContain('-hf');
+    expect(args[args.indexOf('-hf') + 1]).toBe('mradermacher/Qwen3-Embedding-0.6B-GGUF:Q4_K_M');
+  });
+
   test('embedding provider none stays unavailable even if OPENAI_API_KEY is set', () => {
     const previous = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = 'test-key';
@@ -503,31 +530,33 @@ describe('local/offline embedding flow', () => {
     }
   });
 
-  test('local provider auto-detects the default Ollama endpoint when env vars are unset', async () => {
+  test('local provider auto-detects the default llama.cpp embeddings endpoint when env vars are unset', async () => {
     const previousOpenAI = process.env.OPENAI_API_KEY;
     const previousLocalUrl = process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    const previousLlamaCpp = process.env.MBRAIN_LLAMA_CPP_HOST;
     const previousOllama = process.env.OLLAMA_HOST;
     const previousModel = process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
     const previousDimensions = process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
 
     process.env.OPENAI_API_KEY = 'test-key';
     delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    delete process.env.MBRAIN_LLAMA_CPP_HOST;
     delete process.env.OLLAMA_HOST;
     delete process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
     delete process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
 
     const originalFetch = globalThis.fetch;
     const fetchSpy = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('http://127.0.0.1:11434/api/embed');
+      expect(String(input)).toBe('http://127.0.0.1:8080/v1/embeddings');
       expect(init?.method).toBe('POST');
       expect(init?.headers).toEqual({ 'content-type': 'application/json' });
       expect(JSON.parse(String(init?.body ?? '{}'))).toEqual({
-        model: 'nomic-embed-text',
-        input: ['hello from default ollama'],
+        model: 'qwen3-embedding:0.6b',
+        input: ['hello from default llama.cpp'],
       });
 
       return new Response(JSON.stringify({
-        embeddings: [[1, 2, 3]],
+        data: [{ embedding: [1, 2, 3], index: 0 }],
       }), {
         headers: { 'content-type': 'application/json' },
       });
@@ -548,10 +577,10 @@ describe('local/offline embedding flow', () => {
       expect(provider.capability.available).toBe(true);
       expect(provider.capability.mode).toBe('local');
       expect(provider.capability.implementation).toBe('local-http');
-      expect(provider.capability.model).toBe('nomic-embed-text');
-      expect(provider.capability.dimensions).toBeNull();
+      expect(provider.capability.model).toBe('qwen3-embedding:0.6b');
+      expect(provider.capability.dimensions).toBe(1024);
 
-      const embeddings = await provider.embedBatch(['hello from default ollama']);
+      const embeddings = await provider.embedBatch(['hello from default llama.cpp']);
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       expect(Array.from(embeddings[0] ?? [])).toEqual([1, 2, 3]);
     } finally {
@@ -567,6 +596,215 @@ describe('local/offline embedding flow', () => {
         delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
       } else {
         process.env.MBRAIN_LOCAL_EMBEDDING_URL = previousLocalUrl;
+      }
+
+      if (previousLlamaCpp === undefined) {
+        delete process.env.MBRAIN_LLAMA_CPP_HOST;
+      } else {
+        process.env.MBRAIN_LLAMA_CPP_HOST = previousLlamaCpp;
+      }
+
+      if (previousOllama === undefined) {
+        delete process.env.OLLAMA_HOST;
+      } else {
+        process.env.OLLAMA_HOST = previousOllama;
+      }
+
+      if (previousModel === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = previousModel;
+      }
+
+      if (previousDimensions === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS = previousDimensions;
+      }
+    }
+  });
+
+  test('local provider resolves MBRAIN_LLAMA_CPP_HOST to the OpenAI embeddings path', async () => {
+    const previousLocalUrl = process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    const previousLlamaCpp = process.env.MBRAIN_LLAMA_CPP_HOST;
+    const previousOllama = process.env.OLLAMA_HOST;
+
+    delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    process.env.MBRAIN_LLAMA_CPP_HOST = 'http://127.0.0.1:18080';
+    delete process.env.OLLAMA_HOST;
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('http://127.0.0.1:18080/v1/embeddings');
+      return new Response(JSON.stringify({
+        data: [{ embedding: [4, 5, 6], index: 0 }],
+      }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'sqlite',
+          database_path: join(tempDir, 'brain.db'),
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+        },
+      });
+
+      const embeddings = await provider.embedBatch(['llama.cpp host override']);
+      expect(Array.from(embeddings[0] ?? [])).toEqual([4, 5, 6]);
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      if (previousLocalUrl === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_URL = previousLocalUrl;
+      }
+
+      if (previousLlamaCpp === undefined) {
+        delete process.env.MBRAIN_LLAMA_CPP_HOST;
+      } else {
+        process.env.MBRAIN_LLAMA_CPP_HOST = previousLlamaCpp;
+      }
+
+      if (previousOllama === undefined) {
+        delete process.env.OLLAMA_HOST;
+      } else {
+        process.env.OLLAMA_HOST = previousOllama;
+      }
+    }
+  });
+
+  test('local provider suggests starting llama.cpp when the default embeddings endpoint is missing', async () => {
+    const previousLocalUrl = process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    const previousLlamaCpp = process.env.MBRAIN_LLAMA_CPP_HOST;
+    const previousOllama = process.env.OLLAMA_HOST;
+    const previousModel = process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+    const previousDimensions = process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
+
+    delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    delete process.env.MBRAIN_LLAMA_CPP_HOST;
+    delete process.env.OLLAMA_HOST;
+    delete process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+    delete process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async () => new Response(JSON.stringify({
+      error: 'not found',
+    }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' },
+    }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'sqlite',
+          database_path: join(tempDir, 'brain.db'),
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+        },
+      });
+
+      await expect(provider.embedBatch(['hello from missing qwen3'])).rejects.toThrow(
+        /run-qwen3-llamacpp-embedding-cpu\.sh/,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      if (previousLocalUrl === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_URL = previousLocalUrl;
+      }
+
+      if (previousLlamaCpp === undefined) {
+        delete process.env.MBRAIN_LLAMA_CPP_HOST;
+      } else {
+        process.env.MBRAIN_LLAMA_CPP_HOST = previousLlamaCpp;
+      }
+
+      if (previousOllama === undefined) {
+        delete process.env.OLLAMA_HOST;
+      } else {
+        process.env.OLLAMA_HOST = previousOllama;
+      }
+
+      if (previousModel === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = previousModel;
+      }
+
+      if (previousDimensions === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS = previousDimensions;
+      }
+    }
+  });
+
+  test('local provider still supports explicit OLLAMA_HOST compatibility', async () => {
+    const previousLocalUrl = process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    const previousLlamaCpp = process.env.MBRAIN_LLAMA_CPP_HOST;
+    const previousOllama = process.env.OLLAMA_HOST;
+    const previousModel = process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+    const previousDimensions = process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
+
+    delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+    delete process.env.MBRAIN_LLAMA_CPP_HOST;
+    process.env.OLLAMA_HOST = 'http://127.0.0.1:11434';
+    delete process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+    delete process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('http://127.0.0.1:11434/api/embed');
+      return new Response(JSON.stringify({
+        error: 'model "qwen3-embedding:0.6b" not found, try pulling it first',
+      }), {
+        status: 404,
+        statusText: 'Not Found',
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'sqlite',
+          database_path: join(tempDir, 'brain.db'),
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+        },
+      });
+
+      await expect(provider.embedBatch(['hello from missing qwen3'])).rejects.toThrow(
+        /ollama pull qwen3-embedding:0\.6b/,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      if (previousLocalUrl === undefined) {
+        delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+      } else {
+        process.env.MBRAIN_LOCAL_EMBEDDING_URL = previousLocalUrl;
+      }
+
+      if (previousLlamaCpp === undefined) {
+        delete process.env.MBRAIN_LLAMA_CPP_HOST;
+      } else {
+        process.env.MBRAIN_LLAMA_CPP_HOST = previousLlamaCpp;
       }
 
       if (previousOllama === undefined) {
@@ -797,6 +1035,18 @@ describe('local/offline embedding flow', () => {
     expect(provider.batches).toEqual([['search_document: document body']]);
   });
 
+  test('embedChunks leaves qwen3 documents unchanged for retrieval tasks', async () => {
+    const provider = createCapturingProvider('qwen3-embedding:0.6b');
+
+    await embedChunks([{
+      chunk_index: 0,
+      chunk_text: 'document body',
+      chunk_source: 'compiled_truth',
+    }], { provider: provider.provider });
+
+    expect(provider.batches).toEqual([['document body']]);
+  });
+
   test('embedChunks leaves non-nomic document text unchanged', async () => {
     const provider = createCapturingProvider('bge-m3');
 
@@ -848,7 +1098,7 @@ Updated chunk content for the same page.
     expect(chunksAfterRewrite).toHaveLength(1);
     expect(chunksAfterRewrite[0].chunk_text).toContain('Updated chunk content');
     expect(chunksAfterRewrite[0].embedded_at).toBeNull();
-    expect(chunksAfterRewrite[0].model).toBe('nomic-embed-text');
+    expect(chunksAfterRewrite[0].model).toBe('qwen3-embedding:0.6b');
     expect(await engine.getPageEmbeddings('concept')).toContainEqual({
       page_id: expect.any(Number),
       slug: 'concepts/rewritten',
@@ -1238,6 +1488,22 @@ Timeline sentence.
     await hybridSearch(mockEngine, 'who is alice?', { limit: 5 });
 
     expect(provider.batches).toEqual([['search_query: who is alice?']]);
+  });
+
+  test('hybrid search prefixes qwen3 queries with an instruction', async () => {
+    const provider = createCapturingProvider('qwen3-embedding:0.6b');
+    setEmbeddingProviderForTests(provider.provider);
+
+    const mockEngine = {
+      searchKeyword: async () => [],
+      searchVector: async () => [],
+    } as any;
+
+    await hybridSearch(mockEngine, 'who is alice?', { limit: 5 });
+
+    expect(provider.batches).toEqual([[
+      'Instruct: Given a question or search query, retrieve the most relevant MBrain memory chunks.\nQuery: who is alice?',
+    ]]);
   });
 
   test('hybrid search leaves non-nomic queries unchanged', async () => {

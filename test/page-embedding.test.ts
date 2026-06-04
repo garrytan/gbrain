@@ -10,7 +10,7 @@ import { buildPageCentroid } from '../src/core/services/page-embedding.ts';
 setDefaultTimeout(20_000);
 
 function makeVector(...values: number[]): Float32Array {
-  const vector = new Float32Array(768);
+  const vector = new Float32Array(1024);
   values.forEach((value, index) => {
     vector[index] = value;
   });
@@ -235,7 +235,8 @@ describe('PGLiteEngine page embeddings', () => {
 describe('PostgresEngine page embeddings', () => {
   test('serializes writes and maps reads through the backend-native vector shape', async () => {
     const calls: Array<{ text: string; values: unknown[] }> = [];
-    const expectedLiteral = `[${Array.from(new Float32Array([0.1, 0.2, 0.3])).join(',')}]`;
+    const embedding = makeVector(0.1, 0.2, 0.3);
+    const expectedLiteral = `[${Array.from(embedding).join(',')}]`;
     const sql: any = async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const text = Array.from(strings).join('<??>');
       calls.push({ text, values });
@@ -258,14 +259,14 @@ describe('PostgresEngine page embeddings', () => {
     const engine = new PostgresEngine() as any;
     engine._sql = sql;
 
-    await engine.updatePageEmbedding('systems/compiler.md', new Float32Array([0.1, 0.2, 0.3]));
+    await engine.updatePageEmbedding('systems/compiler.md', embedding);
     const embeddings = await engine.getPageEmbeddings('system');
 
     expect(embeddings).toEqual([
       {
         page_id: 7,
         slug: 'systems/compiler.md',
-        embedding: new Float32Array([0.1, 0.2, 0.3]),
+        embedding,
       },
     ]);
     expect(calls[0]?.text).toContain('UPDATE pages');

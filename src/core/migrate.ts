@@ -119,11 +119,11 @@ const MIGRATIONS: Migration[] = [
       UPDATE content_chunks
       SET embedding = NULL,
           embedded_at = NULL,
-          model = 'nomic-embed-text';
+          model = COALESCE((SELECT value FROM config WHERE key = 'embedding_model'), 'nomic-embed-text');
       INSERT INTO config (key, value) VALUES ('embedding_model', 'nomic-embed-text')
-      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+      ON CONFLICT (key) DO NOTHING;
       INSERT INTO config (key, value) VALUES ('embedding_dimensions', '768')
-      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+      ON CONFLICT (key) DO NOTHING;
       CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
     `,
   },
@@ -2929,6 +2929,70 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 49,
+    name: 'pgvector_1024_for_qwen3',
+    sql: `
+      DROP INDEX IF EXISTS idx_chunks_embedding;
+      DO $$
+      BEGIN
+        IF to_regclass('pages') IS NOT NULL THEN
+          ALTER TABLE pages
+            ADD COLUMN IF NOT EXISTS page_embedding vector(1024);
+          ALTER TABLE pages
+            ALTER COLUMN page_embedding TYPE vector(1024)
+            USING NULL::vector(1024);
+          UPDATE pages
+          SET page_embedding = NULL;
+        END IF;
+
+        IF to_regclass('content_chunks') IS NOT NULL THEN
+          ALTER TABLE content_chunks
+            ALTER COLUMN embedding TYPE vector(1024)
+            USING NULL::vector(1024);
+          ALTER TABLE content_chunks
+            ALTER COLUMN model SET DEFAULT 'qwen3-embedding:0.6b';
+          UPDATE content_chunks
+          SET embedding = NULL,
+              embedded_at = NULL,
+              model = COALESCE((SELECT value FROM config WHERE key = 'embedding_model'), 'qwen3-embedding:0.6b');
+          CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops);
+        END IF;
+      END;
+      $$;
+      INSERT INTO config (key, value) VALUES ('embedding_model', 'qwen3-embedding:0.6b')
+      ON CONFLICT (key) DO NOTHING;
+      INSERT INTO config (key, value) VALUES ('embedding_dimensions', '1024')
+      ON CONFLICT (key) DO NOTHING;
+    `,
+  },
+  {
+    version: 50,
+    name: 'qwen3_token_chunk_defaults',
+    sql: `
+      INSERT INTO config (key, value) VALUES ('chunk_size_tokens', '768')
+      ON CONFLICT (key) DO NOTHING;
+      INSERT INTO config (key, value) VALUES ('chunk_overlap_tokens', '128')
+      ON CONFLICT (key) DO NOTHING;
+      INSERT INTO config (key, value) VALUES ('chunk_strategy', 'qwen3_token_recursive')
+      ON CONFLICT (key) DO NOTHING;
+      DO $$
+      BEGIN
+        IF to_regclass('pages') IS NOT NULL THEN
+          UPDATE pages
+          SET page_embedding = NULL;
+        END IF;
+
+        IF to_regclass('content_chunks') IS NOT NULL THEN
+          UPDATE content_chunks
+          SET embedding = NULL,
+              embedded_at = NULL,
+              model = COALESCE((SELECT value FROM config WHERE key = 'embedding_model'), 'qwen3-embedding:0.6b');
+        END IF;
+      END;
+      $$;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -3040,13 +3104,13 @@ async function ensurePageEmbeddingColumn(engine: BrainEngine): Promise<void> {
   };
 
   if ('sql' in candidate && candidate.sql) {
-    await candidate.sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS page_embedding vector(768)`;
+    await candidate.sql`ALTER TABLE pages ADD COLUMN IF NOT EXISTS page_embedding vector(1024)`;
     return;
   }
 
   if ('db' in candidate && candidate.db) {
     await candidate.db.query(
-      'ALTER TABLE pages ADD COLUMN IF NOT EXISTS page_embedding vector(768)'
+      'ALTER TABLE pages ADD COLUMN IF NOT EXISTS page_embedding vector(1024)'
     );
   }
 }

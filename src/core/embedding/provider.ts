@@ -1,7 +1,11 @@
 import type { EmbeddingProvider as EmbeddingProviderMode, MBrainConfig } from '../config.ts';
 
-const DEFAULT_LOCAL_MODEL = 'nomic-embed-text';
-const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
+export const DEFAULT_LOCAL_EMBEDDING_MODEL = 'qwen3-embedding:0.6b';
+export const DEFAULT_LOCAL_EMBEDDING_DIMENSIONS = 1024;
+export const QWEN3_QUERY_INSTRUCTION =
+  'Given a question or search query, retrieve the most relevant MBrain memory chunks.';
+
+const DEFAULT_LLAMA_CPP_HOST = 'http://127.0.0.1:8080';
 const DEFAULT_LOCAL_EMBED_TIMEOUT_MS = 300_000;
 
 export interface EmbeddingProviderCapability {
@@ -23,7 +27,40 @@ export interface ResolveEmbeddingProviderOptions {
 }
 
 export function modelUsesNomicTaskPrefixes(model: string | null | undefined): boolean {
-  return typeof model === 'string' && model.startsWith('nomic-embed-text');
+  return typeof model === 'string' && model.toLowerCase().startsWith('nomic-embed-text');
+}
+
+export function modelUsesQwen3QueryInstruction(model: string | null | undefined): boolean {
+  return typeof model === 'string' && model.toLowerCase().startsWith('qwen3-embedding');
+}
+
+export function defaultEmbeddingDimensionsForModel(model: string | null | undefined): number | null {
+  const normalized = model?.toLowerCase() ?? '';
+  if (modelUsesQwen3QueryInstruction(normalized)) return DEFAULT_LOCAL_EMBEDDING_DIMENSIONS;
+  if (modelUsesNomicTaskPrefixes(normalized)) return 768;
+  if (normalized.startsWith('embeddinggemma')) return 768;
+  if (normalized.startsWith('granite-embedding')) return 768;
+  if (normalized.startsWith('bge-m3')) return 1024;
+  if (normalized.startsWith('mxbai-embed-large')) return 1024;
+  return null;
+}
+
+export function prepareEmbeddingInputForModel(
+  text: string,
+  kind: 'document' | 'query',
+  model: string | null | undefined,
+): string {
+  if (modelUsesNomicTaskPrefixes(model)) {
+    return kind === 'document'
+      ? `search_document: ${text}`
+      : `search_query: ${text}`;
+  }
+
+  if (kind === 'query' && modelUsesQwen3QueryInstruction(model)) {
+    return `Instruct: ${QWEN3_QUERY_INSTRUCTION}\nQuery: ${text}`;
+  }
+
+  return text;
 }
 
 export function resolveEmbeddingProvider(
@@ -43,7 +80,7 @@ export function resolveEmbeddingProvider(
     model: null,
     dimensions: null,
     reason: mode === 'local'
-      ? 'Local embedding runtime is not configured. Set OLLAMA_HOST or MBRAIN_LOCAL_EMBEDDING_URL.'
+      ? 'Local embedding runtime is not configured. Set MBRAIN_LLAMA_CPP_HOST or MBRAIN_LOCAL_EMBEDDING_URL.'
       : 'Embedding provider is disabled (embedding_provider=\"none\").',
   });
 }
@@ -57,8 +94,9 @@ function resolveLocalProvider(
   const configuredUrl = resolveLocalEmbeddingUrl();
   const configuredModel = process.env.MBRAIN_LOCAL_EMBEDDING_MODEL
     || config?.embedding_model
-    || DEFAULT_LOCAL_MODEL;
-  const configuredDimensions = parsePositiveInt(process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS);
+    || DEFAULT_LOCAL_EMBEDDING_MODEL;
+  const configuredDimensions = parsePositiveInt(process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS)
+    ?? defaultEmbeddingDimensionsForModel(configuredModel);
   const configuredTimeoutMs = parsePositiveInt(process.env.MBRAIN_EMBED_TIMEOUT_MS)
     ?? DEFAULT_LOCAL_EMBED_TIMEOUT_MS;
 
@@ -90,7 +128,14 @@ function resolveLocalProvider(
         });
 
         if (!response.ok) {
-          throw new Error(`Local embedding runtime returned ${response.status} ${response.statusText}`);
+          const detail = await readEmbeddingErrorDetail(response);
+          throw new Error(formatLocalEmbeddingHttpError(
+            response.status,
+            response.statusText,
+            configuredUrl,
+            configuredModel,
+            detail,
+          ));
         }
 
         payload = await response.json() as {
@@ -104,6 +149,13 @@ function resolveLocalProvider(
             `(url ${configuredUrl}, model ${configuredModel}, batch size ${texts.length}). ` +
             'Set MBRAIN_EMBED_TIMEOUT_MS to adjust.',
           );
+        }
+        if (isFetchConnectionError(error)) {
+          throw new Error(formatLocalEmbeddingConnectionError(
+            configuredUrl,
+            configuredModel,
+            error,
+          ));
         }
         throw error;
       } finally {
@@ -133,12 +185,17 @@ function resolveLocalEmbeddingUrl(): string {
   const configured = process.env.MBRAIN_LOCAL_EMBEDDING_URL;
   if (configured) return configured;
 
+  const llamaCppHost = process.env.MBRAIN_LLAMA_CPP_HOST;
+  if (llamaCppHost) {
+    return new URL('/v1/embeddings', withTrailingSlash(llamaCppHost)).toString();
+  }
+
   const ollamaHost = process.env.OLLAMA_HOST;
   if (ollamaHost) {
     return new URL('/api/embed', withTrailingSlash(ollamaHost)).toString();
   }
 
-  return new URL('/api/embed', withTrailingSlash(DEFAULT_OLLAMA_HOST)).toString();
+  return new URL('/v1/embeddings', withTrailingSlash(DEFAULT_LLAMA_CPP_HOST)).toString();
 }
 
 function unavailableProvider(capability: EmbeddingProviderCapability): ResolvedEmbeddingProvider {
@@ -148,6 +205,87 @@ function unavailableProvider(capability: EmbeddingProviderCapability): ResolvedE
       throw new Error(capability.reason || 'Embedding provider unavailable');
     },
   };
+}
+
+async function readEmbeddingErrorDetail(response: Response): Promise<string | null> {
+  try {
+    const raw = await response.text();
+    if (!raw.trim()) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as { error?: unknown; message?: unknown };
+      if (typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error.trim();
+      if (typeof parsed.message === 'string' && parsed.message.trim()) return parsed.message.trim();
+    } catch {
+      // Fall back to the raw text body below.
+    }
+
+    return raw.trim();
+  } catch {
+    return null;
+  }
+}
+
+function formatLocalEmbeddingHttpError(
+  status: number,
+  statusText: string,
+  url: string,
+  model: string,
+  detail: string | null,
+): string {
+  const base = `Local embedding runtime returned ${status} ${statusText}`;
+  const suffix = detail ? `: ${detail}` : '';
+  const hint = shouldSuggestLlamaCppStart(url, status, detail)
+    ? ' Start llama.cpp embedding server: scripts/run-qwen3-llamacpp-embedding-cpu.sh'
+    : shouldSuggestOllamaPull(url, status, detail)
+    ? ` Run: ollama pull ${model}`
+    : '';
+  return `${base}${suffix}${hint}`;
+}
+
+function formatLocalEmbeddingConnectionError(
+  url: string,
+  model: string,
+  error: TypeError,
+): string {
+  const hint = shouldSuggestLlamaCppStart(url, 0, null)
+    ? ' Start llama.cpp embedding server: scripts/run-qwen3-llamacpp-embedding-cpu.sh'
+    : isLikelyOllamaEmbedUrl(url)
+    ? ` Start Ollama or run: ollama pull ${model}`
+    : '';
+  return `Local embedding runtime is unreachable at ${url}: ${error.message}.${hint}`;
+}
+
+function shouldSuggestLlamaCppStart(url: string, status: number, detail: string | null): boolean {
+  if (!isLikelyLlamaCppEmbeddingUrl(url)) return false;
+  if (status === 0 || status === 404 || status === 405) return true;
+
+  const normalized = detail?.toLowerCase() ?? '';
+  return normalized.includes('embedding') || normalized.includes('pooling');
+}
+
+function shouldSuggestOllamaPull(url: string, status: number, detail: string | null): boolean {
+  if (!isLikelyOllamaEmbedUrl(url)) return false;
+  if (status === 404) return true;
+
+  const normalized = detail?.toLowerCase() ?? '';
+  return normalized.includes('not found') || normalized.includes('pull');
+}
+
+function isLikelyOllamaEmbedUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.endsWith('/api/embed');
+  } catch {
+    return false;
+  }
+}
+
+function isLikelyLlamaCppEmbeddingUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.endsWith('/v1/embeddings');
+  } catch {
+    return false;
+  }
 }
 
 function parsePositiveInt(value: string | undefined): number | null {
@@ -162,4 +300,8 @@ function withTrailingSlash(url: string): string {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
+}
+
+function isFetchConnectionError(error: unknown): error is TypeError {
+  return error instanceof TypeError;
 }

@@ -1413,16 +1413,19 @@ mbrain stats
 mbrain embed --stale
 ```
 
-If your local embedding runtime is not reachable, or `nomic-embed-text` is not
+If your local embedding runtime is not reachable, or `qwen3-embedding:0.6b` is not
 installed, embeddings can't be generated. Keyword search still works without
 embeddings, but hybrid/semantic search won't.
 
-If you are upgrading an existing Postgres brain to the 768-dim nomic schema,
-run this once before backfilling:
+If you are upgrading an existing Postgres brain to the 1024-dim Qwen3 schema and
+token-aware Qwen3 chunks, apply the current schema migrations before
+backfilling. The Qwen3 migration sets `embedding_dimensions=1024`; the follow-up
+chunk migration sets `chunk_size_tokens=768`, `chunk_overlap_tokens=128`, and
+`chunk_strategy=qwen3_token_recursive`. Existing embeddings are marked stale so
+the next backfill rebuilds chunks with the new layout:
 
 ```bash
-mbrain init
-mbrain embed --all
+mbrain embed --stale
 ```
 
 ### 4c. End-to-End Test
@@ -1468,16 +1471,15 @@ mbrain stats
 **Expected:** Embedded chunk count matches (or is close to) total chunk count.
 
 **If zero or very low:** your local embedding runtime may be unavailable or the
-model may be missing. Check:
+model may be missing. Start the default CPU llama.cpp embedding server:
 
 ```bash
-ollama list | grep nomic-embed-text
+scripts/run-qwen3-llamacpp-embedding-cpu.sh
 ```
 
-If the model is missing, install it. Then:
+Then rerun:
 
 ```bash
-ollama pull nomic-embed-text
 mbrain embed --stale
 ```
 

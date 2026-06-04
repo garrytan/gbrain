@@ -3,7 +3,7 @@ import {
   type EmbeddedChunkBatch,
   type EmbeddingBatchProgress,
 } from './embedding.ts';
-import { modelUsesNomicTaskPrefixes, type ResolvedEmbeddingProvider } from './embedding/provider.ts';
+import { prepareEmbeddingInputForModel, type ResolvedEmbeddingProvider } from './embedding/provider.ts';
 import type { ChunkInput } from './types.ts';
 
 const DEFAULT_BATCH_SIZE = 100;
@@ -203,8 +203,5 @@ function withTokenCount(chunk: ChunkInput): ChunkInput {
 
 function prepareEmbeddingInput(text: string, provider: ResolvedEmbeddingProvider): string {
   const truncated = text.slice(0, MAX_CHARS);
-  if (!modelUsesNomicTaskPrefixes(provider.capability.model)) {
-    return truncated;
-  }
-  return `search_document: ${truncated}`;
+  return prepareEmbeddingInputForModel(truncated, 'document', provider.capability.model);
 }

@@ -50,7 +50,7 @@ async function expectEmbeddingClearedWhenChunkIdentityChanges(engine: BrainEngin
     chunk_index: 0,
     chunk_text: 'Initial embedded chunk text.',
     chunk_source: 'compiled_truth',
-    embedding: new Float32Array(768).fill(0.25),
+    embedding: new Float32Array(1024).fill(0.25),
     model: 'test-embedding-v1',
   }]);
 
@@ -106,7 +106,7 @@ describe('chunk embedding freshness identity', () => {
         page.id,
         'Migrated embedded chunk text.',
         migratedHash,
-        `[${Array.from(new Float32Array(768).fill(0.5)).join(',')}]`,
+        `[${Array.from(new Float32Array(1024).fill(0.5)).join(',')}]`,
       ],
     );
 

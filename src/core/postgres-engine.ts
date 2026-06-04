@@ -25,6 +25,8 @@ import {
   rowToPageProjection,
 } from './page-projection.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
+import { DEFAULT_LOCAL_EMBEDDING_MODEL } from './embedding/provider.ts';
+import { assertPgVectorEmbeddingDimensions } from './pgvector-dimensions.ts';
 import { appendPendingDerivedSearchResults } from './search/derived-freshness.ts';
 import type {
   AutoPromoteVerdictKey,
@@ -679,6 +681,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
+    assertPgVectorEmbeddingDimensions(embedding, 'Vector search query');
     const limit = opts?.limit || 20;
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
     const params: PostgresParam[] = [vecStr];
@@ -751,16 +754,22 @@ export class PostgresEngine implements BrainEngine {
 
     for (const chunk of chunks) {
       const chunkHash = chunkContentHash(chunk.chunk_text, chunk.chunk_source);
+      if (chunk.embedding) {
+        assertPgVectorEmbeddingDimensions(
+          chunk.embedding,
+          `Chunk embedding for ${slug}#${chunk.chunk_index}`,
+        );
+      }
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
         : null;
 
       if (embeddingStr) {
         rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, embeddingStr, chunk.model || 'nomic-embed-text', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, embeddingStr, chunk.model || DEFAULT_LOCAL_EMBEDDING_MODEL, chunk.token_count || null);
       } else {
         rows.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, chunk.model || 'nomic-embed-text', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, chunk.model || DEFAULT_LOCAL_EMBEDDING_MODEL, chunk.token_count || null);
       }
     }
 
@@ -834,11 +843,15 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async updatePageEmbedding(slug: string, embedding: Float32Array | null): Promise<void> {
+    if (embedding) {
+      assertPgVectorEmbeddingDimensions(embedding, `Page embedding for ${slug}`);
+    }
+
     const sql = this.sql;
     const rows = embedding
       ? await sql`
         UPDATE pages
-        SET page_embedding = ${vectorLiteral(embedding)}::vector(768)
+        SET page_embedding = ${vectorLiteral(embedding)}::vector(1024)
         WHERE slug = ${slug}
         RETURNING id
       `

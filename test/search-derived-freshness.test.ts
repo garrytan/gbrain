@@ -143,7 +143,7 @@ describe('search derived freshness semantics', () => {
   test('PGLite vector search discloses pending page_chunks instead of returning empty', async () => {
     await seedPendingDerivedPage(pglite);
 
-    const results = await pglite.searchVector(new Float32Array(768), { limit: 5 });
+    const results = await pglite.searchVector(new Float32Array(1024), { limit: 5 });
 
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({

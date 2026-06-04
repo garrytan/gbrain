@@ -1,5 +1,9 @@
 import { describe, test, expect } from 'bun:test';
-import { chunkText } from '../../src/core/chunkers/recursive.ts';
+import {
+  DEFAULT_QWEN3_CHUNK_OVERLAP_TOKENS,
+  DEFAULT_QWEN3_CHUNK_SIZE_TOKENS,
+  chunkText,
+} from '../../src/core/chunkers/recursive.ts';
 
 describe('Recursive Text Chunker', () => {
   test('returns empty array for empty input', () => {
@@ -110,14 +114,26 @@ describe('Recursive Text Chunker', () => {
   });
 
   test('default options produce reasonable chunks', () => {
-    // Large text with defaults (300 words, 50 overlap)
+    // Large text with defaults (Qwen3 token budget with overlap)
     const text = Array(500).fill('This is a test sentence with several words.').join(' ');
     const chunks = chunkText(text);
     expect(chunks.length).toBeGreaterThan(1);
     for (const chunk of chunks) {
-      const wordCount = chunk.text.split(/\s+/).length;
-      // Should be roughly 300 words, with 1.5x tolerance
-      expect(wordCount).toBeLessThanOrEqual(500);
+      expect(chunk.token_count).toBeLessThanOrEqual(
+        Math.ceil(DEFAULT_QWEN3_CHUNK_SIZE_TOKENS * 1.5) + DEFAULT_QWEN3_CHUNK_OVERLAP_TOKENS,
+      );
+    }
+  });
+
+  test('default token budget splits long CJK text without whitespace', () => {
+    const text = '검색품질'.repeat(300);
+    const chunks = chunkText(text);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.token_count).toBeLessThanOrEqual(
+        Math.ceil(DEFAULT_QWEN3_CHUNK_SIZE_TOKENS * 1.5) + DEFAULT_QWEN3_CHUNK_OVERLAP_TOKENS,
+      );
     }
   });
 

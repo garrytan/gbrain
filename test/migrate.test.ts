@@ -11,7 +11,7 @@ const PGLITE_MIGRATION_TEST_TIMEOUT_MS = 45_000;
 let tempHome = '';
 
 function makeVector(...values: number[]): Float32Array {
-  const vector = new Float32Array(768);
+  const vector = new Float32Array(1024);
   values.forEach((value, index) => {
     vector[index] = value;
   });
@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe('migrate', () => {
-  test('LATEST_VERSION includes the nomic pgvector migration', () => {
+  test('LATEST_VERSION includes the qwen3 pgvector migration', () => {
     expect(typeof LATEST_VERSION).toBe('number');
     expect(LATEST_VERSION).toBeGreaterThan(6);
   });
@@ -76,16 +76,19 @@ describe('migrate', () => {
     expect(sql).not.toContain('CREATE TABLE IF NOT EXISTS access_tokens');
   });
 
-  test('postgres baseline schema uses nomic-friendly dimensions and defaults', () => {
+  test('postgres baseline schema uses qwen3-friendly dimensions and defaults', () => {
     const schemaSource = readFileSync(
       new URL('../src/schema.sql', import.meta.url),
       'utf-8',
     );
 
-    expect(schemaSource).toContain('vector(768)');
-    expect(schemaSource).toContain('page_embedding vector(768)');
-    expect(schemaSource).toContain("'nomic-embed-text'");
-    expect(schemaSource).toContain("'embedding_dimensions', '768'");
+    expect(schemaSource).toContain('vector(1024)');
+    expect(schemaSource).toContain('page_embedding vector(1024)');
+    expect(schemaSource).toContain("'qwen3-embedding:0.6b'");
+    expect(schemaSource).toContain("'embedding_dimensions', '1024'");
+    expect(schemaSource).toContain("'chunk_size_tokens', '768'");
+    expect(schemaSource).toContain("'chunk_overlap_tokens', '128'");
+    expect(schemaSource).toContain("'chunk_strategy', 'qwen3_token_recursive'");
   });
 
   test('generated schemas stay aligned on page_embedding', () => {
@@ -98,8 +101,8 @@ describe('migrate', () => {
       'utf-8',
     );
 
-    expect(embeddedSource).toContain('page_embedding vector(768)');
-    expect(pgliteSchema).toContain('page_embedding vector(768)');
+    expect(embeddedSource).toContain('page_embedding vector(1024)');
+    expect(pgliteSchema).toContain('page_embedding vector(1024)');
   });
 
   test('migration source includes the pgvector resize step', async () => {
@@ -109,8 +112,12 @@ describe('migrate', () => {
     );
 
     expect(migrateSource).toContain('pgvector_768_for_nomic');
+    expect(migrateSource).toContain('pgvector_1024_for_qwen3');
+    expect(migrateSource).toContain('qwen3_token_chunk_defaults');
     expect(migrateSource).toContain('page_embedding_upgrade');
-    expect(migrateSource).toContain('vector(768)');
+    expect(migrateSource).toContain('vector(1024)');
+    expect(migrateSource).toContain("'chunk_size_tokens', '768'");
+    expect(migrateSource).toContain("'chunk_overlap_tokens', '128'");
   });
 
   test('runMigrateEngine preserves page embeddings when migrating sqlite to pglite', async () => {

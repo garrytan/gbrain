@@ -23,6 +23,8 @@ import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import { buildFrontmatterSearchText } from './markdown.ts';
 import { ensurePageChunks } from './page-chunks.ts';
+import { DEFAULT_LOCAL_EMBEDDING_MODEL } from './embedding/provider.ts';
+import { assertPgVectorEmbeddingDimensions } from './pgvector-dimensions.ts';
 import {
   normalizePageLineSpanProjectionOptions,
   normalizePageProjectionWindows,
@@ -550,6 +552,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
+    assertPgVectorEmbeddingDimensions(embedding, 'Vector search query');
     const limit = opts?.limit || 20;
     const vecStr = '[' + Array.from(embedding).join(',') + ']';
     const params: unknown[] = [vecStr];
@@ -621,16 +624,22 @@ export class PGLiteEngine implements BrainEngine {
 
     for (const chunk of chunks) {
       const chunkHash = chunkContentHash(chunk.chunk_text, chunk.chunk_source);
+      if (chunk.embedding) {
+        assertPgVectorEmbeddingDimensions(
+          chunk.embedding,
+          `Chunk embedding for ${slug}#${chunk.chunk_index}`,
+        );
+      }
       const embeddingStr = chunk.embedding
         ? '[' + Array.from(chunk.embedding).join(',') + ']'
         : null;
 
       if (embeddingStr) {
         rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}::vector, $${paramIdx++}, $${paramIdx++}, now())`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, embeddingStr, chunk.model || 'nomic-embed-text', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, embeddingStr, chunk.model || DEFAULT_LOCAL_EMBEDDING_MODEL, chunk.token_count || null);
       } else {
         rowParts.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, NULL, $${paramIdx++}, $${paramIdx++}, NULL)`);
-        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, chunk.model || 'nomic-embed-text', chunk.token_count || null);
+        params.push(pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source, chunkHash, chunk.model || DEFAULT_LOCAL_EMBEDDING_MODEL, chunk.token_count || null);
       }
     }
 
@@ -704,9 +713,13 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async updatePageEmbedding(slug: string, embedding: Float32Array | null): Promise<void> {
+    if (embedding) {
+      assertPgVectorEmbeddingDimensions(embedding, `Page embedding for ${slug}`);
+    }
+
     const query = embedding
       ? `UPDATE pages
-         SET page_embedding = $1::vector(768)
+         SET page_embedding = $1::vector(1024)
          WHERE slug = $2
          RETURNING id`
       : `UPDATE pages
@@ -3891,9 +3904,10 @@ export class PGLiteEngine implements BrainEngine {
     );
 
     if (centroid) {
+      assertPgVectorEmbeddingDimensions(centroid, `Page centroid for ${pageId}`);
       await this.db.query(
         `UPDATE pages
-         SET page_embedding = $1::vector(768)
+         SET page_embedding = $1::vector(1024)
          WHERE id = $2`,
         [vectorLiteral(centroid), pageId],
       );

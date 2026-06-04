@@ -166,22 +166,34 @@ When you do backfill, `mbrain embed --all` and `mbrain embed --stale` share one
 queue across pages, flush chunks in batches of 100, and cap concurrent provider
 calls so semantic backfills avoid many tiny runtime requests.
 
-Legacy local SQLite mode defaults to the local Ollama-compatible
-`nomic-embed-text` path documented in `docs/local-offline.md`:
+Local SQLite mode defaults to a local llama.cpp embedding server running
+`qwen3-embedding:0.6b` with a CPU-friendly `Q4_K_M` GGUF quant, documented in
+`docs/local-offline.md`:
 
 ```bash
-ollama pull nomic-embed-text
+# terminal 1
+scripts/run-qwen3-llamacpp-embedding-cpu.sh
+
+# terminal 2
 mbrain embed --stale
 ```
 
 Runtime resolution order:
 
 1. `MBRAIN_LOCAL_EMBEDDING_URL`
-2. `OLLAMA_HOST`
-3. `http://127.0.0.1:11434/api/embed`
+2. `MBRAIN_LLAMA_CPP_HOST` (uses `/v1/embeddings`)
+3. `OLLAMA_HOST` (legacy compatibility, uses `/api/embed`)
+4. `http://127.0.0.1:8080/v1/embeddings`
 
-On that legacy local path, MBrain applies `search_document:` and `search_query:`
-prefixes internally for `nomic-embed-text`.
+For Qwen3 embeddings, MBrain leaves document chunks unchanged and applies the
+recommended instruction format to search queries internally.
+
+Qwen3 page chunks use token-aware recursive windows by default:
+`chunk_size_tokens=768`, `chunk_overlap_tokens=128`, and
+`chunk_strategy=qwen3_token_recursive`. This keeps document inputs instruction-free
+as recommended by Qwen while using larger long-context windows than the legacy
+300-word chunker. The token estimator is CJK/Hangul-aware so Korean notes do not
+collapse into one oversized whitespace chunk.
 
 ### 7. Connect an agent
 

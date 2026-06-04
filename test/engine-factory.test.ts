@@ -92,19 +92,39 @@ describe('engine factory', () => {
     expect(engine).toBeInstanceOf(SQLiteEngine);
   });
 
-  test('allows local embedding provider settings on postgres for Ollama-backed semantic query', async () => {
+  test('rejects known 768-dimensional local embedding models on pgvector engines', async () => {
+    const { resolveConfig } = await import('../src/core/engine-factory.ts');
+
+    expect(() => resolveConfig({
+      engine: 'postgres',
+      database_url: 'postgresql://user:pass@localhost:5432/mbrain',
+      embedding_provider: 'local',
+      embedding_model: 'nomic-embed-text',
+    })).toThrow(/requires 1024-dimensional embeddings/i);
+
+    expect(() => resolveConfig({
+      engine: 'pglite',
+      database_path: join(tempHome, 'brain.pglite'),
+      offline: true,
+      embedding_provider: 'local',
+      embedding_model: 'embeddinggemma',
+      query_rewrite_provider: 'heuristic',
+    })).toThrow(/requires 1024-dimensional embeddings/i);
+  });
+
+  test('allows 1024-dimensional local embedding models on pgvector engines', async () => {
     const { resolveConfig } = await import('../src/core/engine-factory.ts');
 
     const config = resolveConfig({
       engine: 'postgres',
       database_url: 'postgresql://user:pass@localhost:5432/mbrain',
       embedding_provider: 'local',
-      embedding_model: 'nomic-embed-text',
+      embedding_model: 'bge-m3',
     });
 
     expect(config.engine).toBe('postgres');
     expect(config.embedding_provider).toBe('local');
-    expect(config.embedding_model).toBe('nomic-embed-text');
+    expect(config.embedding_model).toBe('bge-m3');
   });
 
   test('rejects unsupported engines before bootstrap proceeds', async () => {

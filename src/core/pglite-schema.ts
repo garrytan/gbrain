@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS pages (
   timeline      TEXT    NOT NULL DEFAULT '',
   search_text   TEXT    NOT NULL DEFAULT '',
   frontmatter   JSONB   NOT NULL DEFAULT '{}',
-  page_embedding vector(768),
+  page_embedding vector(1024),
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -51,8 +51,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_text    TEXT    NOT NULL,
   chunk_source  TEXT    NOT NULL DEFAULT 'compiled_truth',
   chunk_content_hash TEXT NOT NULL DEFAULT '',
-  embedding     vector(768),
-  model         TEXT    NOT NULL DEFAULT 'nomic-embed-text',
+  embedding     vector(1024),
+  model         TEXT    NOT NULL DEFAULT 'qwen3-embedding:0.6b',
   token_count   INTEGER,
   embedded_at   TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -638,9 +638,11 @@ CREATE TABLE IF NOT EXISTS config (
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
   ('engine', 'pglite'),
-  ('embedding_model', 'nomic-embed-text'),
-  ('embedding_dimensions', '768'),
-  ('chunk_strategy', 'semantic')
+  ('embedding_model', 'qwen3-embedding:0.6b'),
+  ('embedding_dimensions', '1024'),
+  ('chunk_size_tokens', '768'),
+  ('chunk_overlap_tokens', '128'),
+  ('chunk_strategy', 'qwen3_token_recursive')
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================

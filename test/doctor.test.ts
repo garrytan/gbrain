@@ -229,8 +229,8 @@ describe('doctor command', () => {
           mode: 'local',
           available: true,
           implementation: 'local-http',
-          model: 'nomic-embed-text',
-          dimensions: 768,
+          model: 'qwen3-embedding:0.6b',
+          dimensions: 1024,
         },
         rewrite: {
           mode: 'heuristic',
@@ -367,8 +367,8 @@ describe('doctor command', () => {
           mode: 'local',
           available: true,
           implementation: 'local-http',
-          model: 'nomic-embed-text',
-          dimensions: 768,
+          model: 'qwen3-embedding:0.6b',
+          dimensions: 1024,
         },
         rewrite: {
           mode: 'heuristic',

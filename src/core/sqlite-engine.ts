@@ -155,7 +155,7 @@ import {
   rowToMemoryCandidateSupersessionEntry,
 } from './utils.ts';
 
-const DEFAULT_EMBEDDING_MODEL = 'nomic-embed-text';
+const DEFAULT_EMBEDDING_MODEL = 'qwen3-embedding:0.6b';
 const BASELINE_VERSION = 1;
 const INTERACTION_ID_LOOKUP_BATCH_SIZE = 500;
 const SQLITE_BUSY_TIMEOUT_MS = 5_000;
@@ -219,7 +219,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_source TEXT NOT NULL DEFAULT 'compiled_truth',
   chunk_content_hash TEXT NOT NULL DEFAULT '',
   embedding BLOB,
-  model TEXT NOT NULL DEFAULT 'nomic-embed-text',
+  model TEXT NOT NULL DEFAULT 'qwen3-embedding:0.6b',
   token_count INTEGER,
   embedded_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -780,8 +780,10 @@ export class SQLiteEngine implements BrainEngine {
         ('version', ?),
         ('engine', 'sqlite'),
         ('embedding_model', ?),
-        ('embedding_dimensions', '768'),
-        ('chunk_strategy', 'semantic')`,
+        ('embedding_dimensions', '1024'),
+        ('chunk_size_tokens', '768'),
+        ('chunk_overlap_tokens', '128'),
+        ('chunk_strategy', 'qwen3_token_recursive')`,
       [String(BASELINE_VERSION), DEFAULT_EMBEDDING_MODEL],
     );
     db.run(`UPDATE config SET value = 'sqlite' WHERE key = 'engine'`);
@@ -4527,23 +4529,21 @@ export class SQLiteEngine implements BrainEngine {
         case 5:
           this.database.run(
             `INSERT INTO config (key, value) VALUES ('embedding_model', ?)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+             ON CONFLICT(key) DO NOTHING`,
             [DEFAULT_EMBEDDING_MODEL],
           );
           this.database.run(
-            `INSERT INTO config (key, value) VALUES ('embedding_dimensions', '768')
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+            `INSERT INTO config (key, value) VALUES ('embedding_dimensions', '1024')
+             ON CONFLICT(key) DO NOTHING`,
           );
           this.database.run(
-            `UPDATE content_chunks SET embedding = NULL, embedded_at = NULL, model = ?`,
+            `UPDATE content_chunks
+             SET embedding = NULL,
+                 embedded_at = NULL,
+                 model = COALESCE((SELECT value FROM config WHERE key = 'embedding_model'), ?)`,
             [DEFAULT_EMBEDDING_MODEL],
           );
-          {
-            const columns = this.database.query(`PRAGMA table_info(pages)`).all() as Array<{ name: string }>;
-            if (columns.some((column) => column.name === 'page_embedding')) {
-              this.database.exec(`UPDATE pages SET page_embedding = NULL`);
-            }
-          }
+          this.resetPageEmbeddingsForModelChange();
           break;
         case 6:
           {
@@ -5062,12 +5062,74 @@ export class SQLiteEngine implements BrainEngine {
             );
           `);
           break;
+        case 49:
+          this.database.run(
+            `INSERT INTO config (key, value) VALUES ('embedding_model', ?)
+             ON CONFLICT(key) DO NOTHING`,
+            [DEFAULT_EMBEDDING_MODEL],
+          );
+          this.database.run(
+            `INSERT INTO config (key, value) VALUES ('embedding_dimensions', '1024')
+             ON CONFLICT(key) DO NOTHING`,
+          );
+          this.database.run(
+            `UPDATE content_chunks
+             SET embedding = NULL,
+                 embedded_at = NULL,
+                 model = COALESCE((SELECT value FROM config WHERE key = 'embedding_model'), ?)`,
+            [DEFAULT_EMBEDDING_MODEL],
+          );
+          this.resetPageEmbeddingsForModelChange();
+          break;
+        case 50:
+          this.database.run(
+            `INSERT INTO config (key, value) VALUES ('chunk_size_tokens', '768')
+             ON CONFLICT(key) DO NOTHING`,
+          );
+          this.database.run(
+            `INSERT INTO config (key, value) VALUES ('chunk_overlap_tokens', '128')
+             ON CONFLICT(key) DO NOTHING`,
+          );
+          this.database.run(
+            `INSERT INTO config (key, value) VALUES ('chunk_strategy', 'qwen3_token_recursive')
+             ON CONFLICT(key) DO NOTHING`,
+          );
+          this.database.run(
+            `UPDATE content_chunks
+             SET embedding = NULL,
+                 embedded_at = NULL,
+                 model = COALESCE((SELECT value FROM config WHERE key = 'embedding_model'), ?)`,
+            [DEFAULT_EMBEDDING_MODEL],
+          );
+          this.resetPageEmbeddingsForModelChange();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
 
       await this.setConfig('version', String(version));
       });
+    }
+  }
+
+  private resetPageEmbeddingsForModelChange(): void {
+    const columns = this.database.query(`PRAGMA table_info(pages)`).all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'page_embedding')) {
+      return;
+    }
+
+    this.database.exec(`DROP TRIGGER IF EXISTS pages_fts_update`);
+    try {
+      this.database.exec(`UPDATE pages SET page_embedding = NULL`);
+    } finally {
+      this.database.exec(`
+        CREATE TRIGGER IF NOT EXISTS pages_fts_update AFTER UPDATE ON pages BEGIN
+          INSERT INTO pages_fts(pages_fts, rowid, title, compiled_truth, timeline, search_text)
+          VALUES ('delete', old.id, old.title, old.compiled_truth, old.timeline, old.search_text);
+          INSERT INTO pages_fts(rowid, title, compiled_truth, timeline, search_text)
+          VALUES (new.id, new.title, new.compiled_truth, new.timeline, new.search_text);
+        END;
+      `);
     }
   }
 
