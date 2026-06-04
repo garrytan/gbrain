@@ -41,6 +41,7 @@ import { lagFromContentMs } from '../core/source-health.ts';
 import { CHUNKER_VERSION } from '../core/chunkers/code.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../core/link-extraction.ts';
 import { isUndefinedColumnError } from '../core/utils.ts';
+import { resolveExistingStoragePath } from '../core/path-resolve.ts';
 // issue #1777: hidden_by_search_policy — count chunked pages withheld from
 // default search by the hard-exclude prefix policy. Reuses the canonical
 // exclude resolver + LIKE escaper + visibility clause so the doctor count can't
@@ -6740,11 +6741,8 @@ export async function buildChecks(
       );
       let vanished = 0;
       const vanishedPaths: string[] = [];
-      const fs = await import('node:fs');
       for (const r of rows) {
-        try {
-          fs.statSync(r.storage_path);
-        } catch {
+        if (resolveExistingStoragePath(r.storage_path) === null) {
           vanished++;
           if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
         }
