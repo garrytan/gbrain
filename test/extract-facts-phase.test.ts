@@ -175,6 +175,28 @@ describe('runExtractFacts — happy path', () => {
     expect(r.pagesScanned).toBe(2);
     expect(r.factsInserted).toBe(2);
   });
+
+  test('full walk fast-path skips no-op per-page deletes when no fence facts exist', async () => {
+    await putPage('people/no-facts-1', '# One\n\nNo facts fence.\n');
+    await putPage('people/no-facts-2', '# Two\n\nStill no facts fence.\n');
+
+    const originalDeleteFactsForPage = engine.deleteFactsForPage.bind(engine);
+    let deleteCalls = 0;
+    engine.deleteFactsForPage = async (...args: Parameters<typeof engine.deleteFactsForPage>) => {
+      deleteCalls += 1;
+      return originalDeleteFactsForPage(...args);
+    };
+    try {
+      const r = await runExtractFacts(engine); // no slugs filter = full walk
+      expect(r.pagesScanned).toBe(2);
+      expect(r.pagesWithFacts).toBe(0);
+      expect(r.factsInserted).toBe(0);
+      expect(r.factsDeleted).toBe(0);
+      expect(deleteCalls).toBe(0);
+    } finally {
+      engine.deleteFactsForPage = originalDeleteFactsForPage;
+    }
+  });
 });
 
 describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
