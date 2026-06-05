@@ -2037,6 +2037,47 @@ export class PostgresEngine implements BrainEngine {
     }
   }
 
+  /**
+   * Single-statement sibling of {@link batchRetry} for NON-batch reads/writes
+   * that touch `this.sql` directly (the config accessors, per-phase reads).
+   *
+   * Why a separate helper rather than reusing `batchRetry`:
+   * - `batchRetry` emits batch-retry audit JSONL sized by `batchSize` and is
+   *   typed to `BatchAuditSite`. A config read is not a sized batch — routing
+   *   it through `batchRetry` would inflate the `batch_retry_health` doctor
+   *   metric and demand a bogus enum member. This path keeps the SAME retry +
+   *   reconnect posture but emits no batch audit.
+   *
+   * Why it is needed at all (PR #1593 follow-up / #1570):
+   *   The `sql` getter throws a RETRYABLE "No database connection" by design
+   *   when an instance pool was torn down mid-cycle (issue #1678), precisely so
+   *   a `withRetry`+`reconnect` caller rebuilds the pool and self-heals. The
+   *   batch path already had that wrapper; non-batch reads did not — so the
+   *   first hard DB call after a mid-cycle disconnect (e.g. `loadCfg`'s
+   *   `getConfig`) threw unhandled and crashed the worker into a respawn loop.
+   *   This closes that gap.
+   *
+   * `fn` MUST re-read `this.sql` on each invocation — `reconnect()` rebuilds
+   * the pool between attempts, so callers pass a thunk, never a captured `sql`
+   * handle. Safe for the config writes too: `withRetry` only retries on
+   * `isRetryableConnError` (a connection-class failure where the statement
+   * never committed), and both writes are idempotent (upsert / delete) so even
+   * a lost-ack replay converges.
+   */
+  private async connRetry<T>(fn: () => Promise<T>): Promise<T> {
+    const opts = this.getBulkRetryOpts();
+    return withRetry(fn, {
+      maxRetries: opts.maxRetries,
+      delayMs: opts.delayMs,
+      delayMaxMs: opts.delayMaxMs,
+      jitter: BULK_RETRY_OPTS.jitter,
+      // Same reconnect posture as batchRetry: rebuild a dead instance pool
+      // before the next attempt. Race-safe via the engine's `_reconnecting`
+      // guard; fail-loud — a reconnect throw propagates as the real cause.
+      reconnect: (ctx) => this.reconnect(ctx),
+    });
+  }
+
   // Chunks
   async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string } & BatchOpts): Promise<void> {
     return this.batchRetry(opts?.auditSite ?? 'upsertChunks', opts?.signal, () => this._upsertChunksOnce(slug, chunks, opts), chunks.length);
@@ -4748,34 +4789,46 @@ export class PostgresEngine implements BrainEngine {
 
   // Config
   async getConfig(key: string): Promise<string | null> {
-    const sql = this.sql;
-    const rows = await sql`SELECT value FROM config WHERE key = ${key}`;
-    return rows.length > 0 ? (rows[0].value as string) : null;
+    // connRetry: a mid-cycle instance-pool teardown makes `this.sql` throw a
+    // retryable "No database connection"; reconnect + retry instead of crashing
+    // the worker (PR #1593 follow-up).
+    return this.connRetry(async () => {
+      const sql = this.sql;
+      const rows = await sql`SELECT value FROM config WHERE key = ${key}`;
+      return rows.length > 0 ? (rows[0].value as string) : null;
+    });
   }
 
   async setConfig(key: string, value: string): Promise<void> {
-    const sql = this.sql;
-    await sql`
-      INSERT INTO config (key, value) VALUES (${key}, ${value})
-      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-    `;
+    return this.connRetry(async () => {
+      const sql = this.sql;
+      await sql`
+        INSERT INTO config (key, value) VALUES (${key}, ${value})
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+      `;
+    });
   }
 
   async unsetConfig(key: string): Promise<number> {
-    const sql = this.sql;
-    const result = await sql`DELETE FROM config WHERE key = ${key}` as unknown as { count: number };
-    return result.count ?? 0;
+    return this.connRetry(async () => {
+      const sql = this.sql;
+      const result = await sql`DELETE FROM config WHERE key = ${key}` as unknown as { count: number };
+      return result.count ?? 0;
+    });
   }
 
   async listConfigKeys(prefix: string): Promise<string[]> {
-    const sql = this.sql;
-    // LIKE-escape literal % and _ so a config key with those chars resolves correctly.
+    // LIKE-escape literal % and _ so a config key with those chars resolves
+    // correctly. Pure string work — keep it outside the retried thunk.
     const escaped = prefix.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
     const pattern = `${escaped}%`;
-    const rows = await sql<{ key: string }[]>`
-      SELECT key FROM config WHERE key LIKE ${pattern} ESCAPE '\\' ORDER BY key
-    `;
-    return rows.map(r => r.key);
+    return this.connRetry(async () => {
+      const sql = this.sql;
+      const rows = await sql<{ key: string }[]>`
+        SELECT key FROM config WHERE key LIKE ${pattern} ESCAPE '\\' ORDER BY key
+      `;
+      return rows.map(r => r.key);
+    });
   }
 
   // Migration support
