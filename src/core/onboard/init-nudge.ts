@@ -14,6 +14,7 @@
 // also short-circuits (CI/scripted callers see nothing).
 
 import type { BrainEngine } from '../engine.ts';
+import { referenceExclusionSql } from '../reference-flag.ts';
 
 const NUDGE_BUDGET_MS = 3000;
 
@@ -57,7 +58,8 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
       engine.executeRaw<{ count: string | number }>(
         `SELECT COUNT(*) AS count FROM pages
            WHERE type IN ('person', 'company', 'organization', 'entity')
-             AND deleted_at IS NULL`,
+             AND deleted_at IS NULL
+             AND ${referenceExclusionSql()}`,
         [],
         { signal: controller.signal },
       ),
@@ -65,6 +67,7 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
         `SELECT COUNT(*) AS count FROM pages p
            WHERE p.type IN ('person', 'company', 'organization', 'entity')
              AND p.deleted_at IS NULL
+             AND ${referenceExclusionSql('p')}
              AND EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)`,
         [],
         { signal: controller.signal },
@@ -73,6 +76,7 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
         `SELECT COUNT(*) AS count FROM pages p
            WHERE p.type IN ('person', 'company', 'organization', 'entity')
              AND p.deleted_at IS NULL
+             AND ${referenceExclusionSql('p')}
              AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)`,
         [],
         { signal: controller.signal },

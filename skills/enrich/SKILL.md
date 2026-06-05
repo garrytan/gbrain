@@ -268,6 +268,18 @@ Active items, pending decisions, things to track.
 - **YYYY-MM-DD** | Event description [Source: ...]
 ```
 
+### Reference entities (canon figures)
+
+If the entity is someone/something the user reads ABOUT but does not personally
+interact with — a book author, a historical figure, a company discussed in an
+article — mark the page as reference: `gbrain reference <slug>` (or
+`reference: true` in frontmatter). Reference pages keep their `person`/`company`
+type and stay fully searchable, enrichable, and linkable; they are only exempt
+from the entity coverage nudges (timeline/links) that don't apply to figures
+with no dated history in the user's own life. **Default: do NOT set it** — real
+people and companies the user deals with are normal entities. Full convention:
+`conventions/reference-entities.md`.
+
 ### Step 7: Cross-reference
 
 - Update company pages from person enrichment (and vice versa)

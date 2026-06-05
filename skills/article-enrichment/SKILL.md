@@ -85,6 +85,10 @@ gbrain get media/articles/<slug>
 
 # 5. Cross-link entities
 #    For every person/company mentioned, add a timeline back-link.
+#    Mark NEW pages minted for article subjects the reader only reads ABOUT
+#    (not personal contacts) as reference: `gbrain reference <slug>`
+#    (or reference: true in frontmatter). Exempts them from coverage nudges;
+#    they stay searchable. Default for real contacts: do NOT set it.
 ```
 
 ## Quality bar
