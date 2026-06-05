@@ -16,6 +16,8 @@ import {
   submitEmbedBackfill,
   COOLDOWN_CONFIG_KEY,
   SPEND_CAP_CONFIG_KEY,
+  DEFAULT_EMBED_BACKFILL_BATCH_SIZE,
+  DEFAULT_EMBED_BACKFILL_TIMEOUT_MS,
 } from '../src/core/embed-backfill-submit.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 
@@ -49,6 +51,8 @@ describe('submitEmbedBackfill — happy path', () => {
     expect(job!.name).toBe('embed-backfill');
     expect(job!.priority).toBe(5);
     expect((job!.data as { sourceId: string }).sourceId).toBe('default');
+    expect((job!.data as { batchSize: number }).batchSize).toBe(DEFAULT_EMBED_BACKFILL_BATCH_SIZE);
+    expect(job!.timeout_ms).toBe(DEFAULT_EMBED_BACKFILL_TIMEOUT_MS);
   });
 
   test('respects opts.priority override', async () => {
@@ -70,6 +74,18 @@ describe('submitEmbedBackfill — cooldown gate', () => {
     await queue.add('embed-backfill', { sourceId: 'default' }, {});
     await engine.executeRaw(
       `UPDATE minion_jobs SET status='active' WHERE name='embed-backfill'`,
+    );
+
+    const result = await submitEmbedBackfill(engine, 'default', { reason: 'unit' });
+    expect(result.status).toBe('cooldown');
+    expect(result.cooldownRemainingSeconds).toBeUndefined();
+  });
+
+  test('blocks while a generic embed job is active to avoid overlapping embed pressure', async () => {
+    const queue = new MinionQueue(engine);
+    await queue.add('embed', { stale: true }, {});
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status='active' WHERE name='embed'`,
     );
 
     const result = await submitEmbedBackfill(engine, 'default', { reason: 'unit' });

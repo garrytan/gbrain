@@ -1223,6 +1223,10 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
       slugs: Array.isArray(job.data.slugs) ? (job.data.slugs as string[]) : undefined,
       all: !!job.data.all,
       stale: job.data.all ? false : (job.data.stale !== false),
+      sourceId: typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined,
+      batchSize: typeof job.data.batchSize === 'number' ? job.data.batchSize : undefined,
+      priority: job.data.priority === 'recent' ? 'recent' : undefined,
+      catchUp: !!job.data.catchUp,
       onProgress: (done, total, embedded) => {
         // Fire-and-forget: progress updates are best-effort and must not
         // block the worker loop.

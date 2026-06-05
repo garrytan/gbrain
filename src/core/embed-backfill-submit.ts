@@ -41,6 +41,8 @@ export const SPEND_CAP_CONFIG_KEY = 'embed.backfill_max_usd_per_source_24h';
 
 const DEFAULT_COOLDOWN_MIN = 10;
 const DEFAULT_SPEND_CAP_USD = 25;
+export const DEFAULT_EMBED_BACKFILL_BATCH_SIZE = 50;
+export const DEFAULT_EMBED_BACKFILL_TIMEOUT_MS = 30 * 60 * 1000;
 
 export type SubmitEmbedBackfillStatus =
   | 'submitted'
@@ -139,16 +141,24 @@ export async function submitEmbedBackfill(
 
   // ── Source-level cooldown ─────────────────────────────────────
   // Block re-submission if (a) an embed-backfill is currently active for this
-  // source, OR (b) the most-recent embed-backfill finished within the
-  // cooldown window.
+  // source, (b) a generic embed job is currently active/waiting (shared DB +
+  // provider pressure), OR (c) the most-recent embed-backfill finished within
+  // the cooldown window.
   const lastJob = await engine.executeRaw<{
     finished_at: Date | null;
     status: string;
+    name: string;
   }>(
-    `SELECT finished_at, status
+    `SELECT finished_at, status, name
        FROM minion_jobs
-      WHERE name = 'embed-backfill'
-        AND data->>'sourceId' = $1
+      WHERE (
+          (name = 'embed-backfill' AND data->>'sourceId' = $1)
+          OR (
+            name = 'embed'
+            AND status IN ('active', 'waiting')
+            AND (data->>'sourceId' = $1 OR NOT (data ? 'sourceId'))
+          )
+        )
       ORDER BY id DESC LIMIT 1`,
     [sourceId],
   );
@@ -186,11 +196,17 @@ export async function submitEmbedBackfill(
   const queue = new MinionQueue(engine);
   const job = await queue.add(
     'embed-backfill',
-    { sourceId, batchSize: 500, reason: opts.reason },
+    { sourceId, batchSize: DEFAULT_EMBED_BACKFILL_BATCH_SIZE, reason: opts.reason },
     {
       priority: opts.priority ?? 5,
       idempotency_key: `embed-backfill:${sourceId}:${bucketize(now, 5 * 60_000)}`,
       maxWaiting: 1,
+      // Without a per-job timeout, the worker's generic wall-clock rescue uses
+      // 2 * lockDuration * max_stalled (~5m with defaults). Real backfills can
+      // exceed that legitimately, causing dead jobs and immediate retries. Give
+      // backfills a bounded but realistic window; controlled batch size keeps
+      // DB/provider pressure low inside that window.
+      timeout_ms: DEFAULT_EMBED_BACKFILL_TIMEOUT_MS,
     },
   );
 
