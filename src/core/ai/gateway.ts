@@ -705,19 +705,26 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
   }
 
   // Openai-compat recipes with empty models list require a user-provided model.
+  // When user_provided_models is set, only block if the modelId is empty
+  // (user hasn't configured a specific model via e.g. litellm:<model>).
+  // If they have provided one, skip this check — the gateway behind the proxy
+  // validates the model at call time.
   const isUserProvided = (tp as any).user_provided_models === true;
   if (
     Array.isArray(tp.models) &&
     tp.models.length === 0 &&
     (recipe.id === 'litellm' || isUserProvided)
   ) {
-    return {
-      ok: false,
-      reason: 'user_provided_model_unset',
-      model: modelStr,
-      provider: parsed.providerId,
-      recipeId: recipe.id,
-    };
+    if (!parsed.modelId) {
+      return {
+        ok: false,
+        reason: 'user_provided_model_unset',
+        model: modelStr,
+        provider: parsed.providerId,
+        recipeId: recipe.id,
+      };
+    }
+    // User provided a model — continue to auth-env check below.
   }
 
   const required = recipe.auth_env?.required ?? [];

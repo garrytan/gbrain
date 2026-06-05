@@ -40,6 +40,30 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    /**
+     * Chat touchpoint for the LiteLLM proxy. Since the proxy normalizes any
+     * backend to OpenAI-compatible, the same base URL serves both /embeddings
+     * and /chat/completions. Models depend on the proxy's config; declare
+     * empties with user_provided_models so the model allowlist is deferred to
+     * the proxy (the gateway behind the proxy decides what's real).
+     *
+     * Same cost=0 default as other local recipes — when the proxy fronts a
+     * paid provider, set costs via provider per-model config.
+     */
+    chat: {
+      models: [],
+      user_provided_models: true,
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: false,
+      max_context_tokens: 131072,
+      cost_per_1m_input_usd: 0,
+      cost_per_1m_output_usd: 0,
+      price_last_verified: '2026-05-29',
+    },
   },
-  setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
+  setup_hint:
+    'Run LiteLLM (https://docs.litellm.ai) in front of any provider; ' +
+    'set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>. ' +
+    'For chat: gbrain config set chat_model litellm:<model>.'
 };
