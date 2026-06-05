@@ -42,6 +42,8 @@
     "test:full": "bun run verify && bash scripts/run-unit-parallel.sh && bun run test:slow && ([ -n \"$DATABASE_URL\" ] && bash scripts/run-e2e.sh || echo '[test:full] skipped E2E (no DATABASE_URL); run docker-compose -f docker-compose.ci.yml up + bun run test:e2e to include' 1>&2)",
     "verify": "bash scripts/run-verify-parallel.sh",
     "check:source-config-leak": "scripts/check-source-config-leak.sh",
+    "check:pr-branch-base": "scripts/check-pr-branch-base.sh --fetch",
+    "install:pr-branch-hook": "scripts/install-pr-branch-hook.sh",
     "check:no-pii-agent-voice": "scripts/check-no-pii-in-agent-voice.sh",
     "check:synthetic-corpus-privacy": "scripts/check-synthetic-corpus-privacy.sh",
     "check:system-of-record": "scripts/check-system-of-record.sh",
