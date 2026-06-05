@@ -36,7 +36,7 @@ import {
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
-import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { isUndefinedTableError, warnOncePerProcess, validateSlug } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
 import { runGuardrails } from './guardrails.ts';
 
@@ -284,6 +284,14 @@ export async function importFromContent(
     remote?: boolean;
   } = {},
 ): Promise<ImportResult> {
+  // Normalize the slug ONCE at the entry point so every downstream tx call
+  // agrees on casing. putPage runs validateSlug (→ lowercase) internally, but
+  // addTag / upsertChunks do NOT — a mixed-case slug therefore wrote the page
+  // under a lowercased key while addTag and the chunk/return paths used the
+  // original casing, producing a spurious "Page not found" that left the row
+  // unreachable. Normalizing here keeps putPage / addTag / upsertChunks / the
+  // returned slug consistent.
+  slug = validateSlug(slug);
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
   // every per-page tx call must carry `sourceId` so writes target the right
   // (source_id, slug) row. Pre-fix, putPage relied on the schema DEFAULT and
