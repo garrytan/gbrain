@@ -277,7 +277,8 @@ article — mark the page as reference: `gbrain reference <slug>` (or
 type and stay fully searchable, enrichable, and linkable; they are only exempt
 from the entity coverage nudges (timeline/links) that don't apply to figures
 with no dated history in the user's own life. **Default: do NOT set it** — real
-people and companies the user deals with are normal entities.
+people and companies the user deals with are normal entities. Full convention:
+`conventions/reference-entities.md`.
 
 ### Step 7: Cross-reference
 
