@@ -70,6 +70,16 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openai:gpt-5':                         { input:  5.00, output: 20.00 },
   'openai:gpt-5.5':                       { input:  4.00, output: 16.00 },
 
+  // Local ChatGPT/Codex OAuth proxy routed through the OpenRouter-compatible recipe.
+  // These are quota-backed (ChatGPT plan), not metered API-billing models; keep
+  // nominal zero prices so GBrain budget-gated phases do not fail closed on
+  // `no_pricing` while still recording usage audit events.
+  'openrouter:gpt-5.5':                   { input:  0.00, output:  0.00 },
+  'openrouter:gpt-5.4':                   { input:  0.00, output:  0.00 },
+  'openrouter:gpt-5.4-mini':              { input:  0.00, output:  0.00 },
+  'openrouter:gpt-5.3-codex-spark':       { input:  0.00, output:  0.00 },
+  'openrouter:codex-auto-review':         { input:  0.00, output:  0.00 },
+
   // ── Google ─────────────────────────────────────────────────────────────
   'google:gemini-1.5-pro':                { input:  1.25, output:  5.00 },
   // Gemini 2.0 Flash: $0.10 in / $0.40 out (verified 2026-06-03). Reconciled
