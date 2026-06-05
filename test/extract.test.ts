@@ -150,6 +150,28 @@ describe('extractTimelineFromContent', () => {
     expect(entries[0]).toMatchObject({ date: '2026-05-01', source: 'timeline-table', summary: 'Measurements taken' });
     expect(entries[1]).toMatchObject({ date: '2026-05-15', source: 'timeline-table', summary: 'First fitting completed' });
   });
+
+  it('extracts Kavalier CRM operational dates from bullets and milestone tables', () => {
+    const content = `## Overview
+- **Order Date:** 2026-03-10
+- **Portal Sync Date:** 2026-04-08
+
+## Production Milestones
+| Milestone | Date |
+|---|---|
+| Created | 2026-03-13 |
+| In Production | 2026-03-14 |
+
+## Work Process Timeline
+| Garment | Timestamp | Process | Line |
+|---|---|---|---|
+| Dynamic Shirt | 2025-08-07 17:50:44 | 出库完成 | 格衬一车间 |`;
+    const entries = extractTimelineFromContent(content, 'business-vault/kavalier-clothing/crm/orders/test-order');
+    expect(entries.map(e => `${e.date}:${e.summary}`)).toContain('2026-03-10:Order Date');
+    expect(entries.map(e => `${e.date}:${e.summary}`)).toContain('2026-04-08:Portal Sync Date');
+    expect(entries.map(e => `${e.date}:${e.summary}`)).toContain('2026-03-13:Created');
+    expect(entries.map(e => `${e.date}:${e.summary}`)).toContain('2025-08-07:Dynamic Shirt: 出库完成');
+  });
 });
 
 describe('walkMarkdownFiles', () => {

@@ -425,6 +425,27 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
     }
   }
 
+  // Format 4: Kavalier CRM operational dates.
+  // These pages have timeline-relevant facts in structured CRM sections rather
+  // than the generic Timeline section: Order Date bullets and milestone tables.
+  if (slug.includes('kavalier-clothing/crm/')) {
+    const kavalierBulletPattern = /^-\s+\*\*(Order Date|Portal Sync Date|Import Date|Backfill Timestamp):\*\*\s*`?(\d{4}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2}:\d{2})?`?/gm;
+    let bulletMatch;
+    while ((bulletMatch = kavalierBulletPattern.exec(content)) !== null) {
+      entries.push({ slug, date: bulletMatch[2], source: 'kavalier-crm', summary: bulletMatch[1] });
+    }
+
+    const milestonePattern = /^\|\s*([^|]+?)\s*\|\s*(\d{4}-\d{2}-\d{2})(?:[ T]\d{2}:\d{2}:\d{2})?\s*\|\s*([^|]*?)?\s*(?:\|.*)?$/gm;
+    let milestoneMatch;
+    while ((milestoneMatch = milestonePattern.exec(content)) !== null) {
+      const label = milestoneMatch[1].trim();
+      if (!label || /^-+$/.test(label) || /^(date|timestamp)$/i.test(label)) continue;
+      const extra = (milestoneMatch[3] ?? '').trim();
+      const summary = extra ? `${label}: ${extra}` : label;
+      entries.push({ slug, date: milestoneMatch[2], source: 'kavalier-crm-table', summary });
+    }
+  }
+
   return entries;
 }
 
