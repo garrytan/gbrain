@@ -1,0 +1,5 @@
+{
+  "name": "gbrain",
+  "version": "0.25.1",
+  "description": "Personal knowledge brain skillpack — semantic + keyword retrieval over Postgres + pgvector. Skills include signal-detector, daily-task-prep, concept-synthesis, perplexity-research, briefing, and 60+ others under skills/."
+}
