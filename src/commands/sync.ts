@@ -389,6 +389,15 @@ export interface SyncOpts {
    * Precedent: CycleOpts.signal at src/core/cycle.ts (v0.22.1 #403).
    */
   signal?: AbortSignal;
+  /**
+   * Repeatable `--exclude <glob>` patterns, threaded into the `isSyncable()`
+   * filter. Lets a single git clone fan out into multiple sources: a subtree
+   * that should be imported under a different `--source-id` is skipped by the
+   * sync of the parent source. Globs use the same `matchesAnyGlob()` syntax as
+   * `SyncableOptions.exclude` in core/sync.ts (`**` = any path segments,
+   * `*` = non-slash chars). Honored on the single-source CLI path.
+   */
+  exclude?: string[];
 }
 
 /**
@@ -1345,8 +1354,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     manifest.renamed = [...manifest.renamed, ...detachedWorkingTreeManifest.renamed];
   }
 
-  // Filter to syncable files (strategy-aware)
-  const syncOpts = opts.strategy ? { strategy: opts.strategy } : undefined;
+  // Filter to syncable files (strategy-aware + caller-supplied excludes)
+  const syncOpts = (opts.strategy || (opts.exclude && opts.exclude.length > 0))
+    ? { strategy: opts.strategy, exclude: opts.exclude }
+    : undefined;
   const filtered: SyncManifest = {
     added: manifest.added.filter(p => isSyncable(p, syncOpts)),
     modified: manifest.modified.filter(p => isSyncable(p, syncOpts)),
@@ -2454,6 +2465,10 @@ Options:
   --workers N          Run the import phase with N parallel workers
                        (alias: --concurrency). Default: 4 when the
                        diff is >100 files, else serial.
+  --exclude <glob>     (repeatable) Skip paths matching this glob. Lets a
+                       single git clone fan out into multiple sources by
+                       excluding subtrees that should be imported under a
+                       different --source-id. Single-source path only.
   --source <id>        Scope sync to a single source. Defaults to the
                        brain's default source.
   --repo <path>        Path to the brain repo. Defaults to the path
@@ -2512,6 +2527,14 @@ See also:
   const syncAll = args.includes('--all');
   const jsonOut = args.includes('--json');
   const yesFlag = args.includes('--yes');
+  // Repeatable --exclude <glob>: collect every value that follows an --exclude flag.
+  const excludeGlobs: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--exclude' && i + 1 < args.length) {
+      excludeGlobs.push(args[i + 1]);
+      i++;
+    }
+  }
   // v0.41.6.0 D3: lock-recovery flags. --break-lock (safe) verifies the
   // holder is local-host + (TTL-expired OR PID-dead+60s-old) before
   // deleting the row. --force-break-lock skips the liveness check. Both
@@ -3164,6 +3187,7 @@ See also:
     repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, sourceId,
     strategy: strategyArg, concurrency,
     signal: composeAbortSignals(singleSourceInterrupt.signal, singleSourceController?.signal),
+    exclude: excludeGlobs.length > 0 ? excludeGlobs : undefined,
   };
 
   // Bug 9 — --retry-failed: before running normal sync, clear acknowledgment
