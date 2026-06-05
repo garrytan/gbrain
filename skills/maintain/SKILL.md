@@ -187,7 +187,7 @@ gbrain dream --json                                   # CycleReport JSON
 **Auto-commit deferred to v1.1:** v1 writes files to `brain_dir` but does NOT
 `git add` / `commit` / `push`. Either commit yourself or let `gbrain autopilot`
 handle it.
-Parses `- **YYYY-MM-DD** | Source — Summary` and `### YYYY-MM-DD — Title` formats.
+Parses `- YYYY-MM-DD — Summary` (canonical), legacy `- **YYYY-MM-DD** | Source — Summary`, and `### YYYY-MM-DD — Title` formats.
 Note: extracted entries improve structured queries (`gbrain timeline`), not vector search.
 
 ### Autopilot check
@@ -230,7 +230,7 @@ Check that the back-linking iron law is being followed:
   corresponding back-links FROM those entity pages
 - A mention without a back-link is a broken brain
 - Fix: add the missing back-link to the entity's Timeline or See Also section
-- Format: `- **YYYY-MM-DD** | Referenced in [page title](path) -- brief context`
+- Format: `- YYYY-MM-DD — Referenced in [page title](path) — brief context`
 
 ### Filing rule violations
 Check for common misfiling patterns (see `skills/_brain-filing-rules.md`):
@@ -262,7 +262,7 @@ Populate them periodically or after major imports:
   `advises`, `mentions`, `source`). Idempotent. Use `--source fs --dir <brain>`
   if you have a markdown checkout to walk instead.
 - `gbrain extract timeline --source db` — backfill structured timeline entries.
-  Parses `- **YYYY-MM-DD** | summary` lines from page content. Idempotent (DB
+  Parses `- YYYY-MM-DD — summary` (and legacy `- **YYYY-MM-DD** | summary`) lines from page content. Idempotent (DB
   UNIQUE constraint).
 - `gbrain extract all --source db` — both in one run.
 - `gbrain graph-query <slug> --depth 2` — verify connectivity (use any well-known

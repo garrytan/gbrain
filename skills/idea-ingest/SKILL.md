@@ -44,7 +44,7 @@ This skill guarantees:
 > **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
 Every mention of a person or company with a brain page MUST create a back-link.
-Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
+Format: `- YYYY-MM-DD — Referenced in [page title](path) — brief context`
 
 ## Phases
 

@@ -25,7 +25,7 @@ Every fact written to a brain page must carry an inline `[Source: ...]` citation
 Every mention of a person or company WITH a brain page MUST create a back-link
 FROM that entity's page TO the page mentioning them.
 
-Format: `- **YYYY-MM-DD** | Referenced in [page title](path) -- context`
+Format: `- YYYY-MM-DD — Referenced in [page title](path) — context`
 
 An unlinked mention is a broken brain.
 

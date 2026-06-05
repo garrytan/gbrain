@@ -238,7 +238,10 @@ Active conversations, pending items, things to follow up on.
 
 ## Timeline
 Reverse chronological. Every entry has a date and [Source: ...] citation.
-- **YYYY-MM-DD** | Event description [Source: ...]
+Use this exact plain-bullet shape — `- DATE — text` — no bold, no `|` pipe. This
+is the format the timeline extractor parses (`gbrain extract timeline`); bold or
+pipe variants are silently skipped.
+- YYYY-MM-DD — Event description [Source: ...]
 ```
 
 #### Company page template
@@ -265,7 +268,7 @@ Active items, pending decisions, things to track.
 ---
 
 ## Timeline
-- **YYYY-MM-DD** | Event description [Source: ...]
+- YYYY-MM-DD — Event description [Source: ...]
 ```
 
 ### Step 7: Cross-reference

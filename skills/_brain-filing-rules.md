@@ -66,9 +66,11 @@ Every mention of a person or company with a brain page MUST create a back-link
 FROM that entity's page TO the page mentioning them. This is bidirectional:
 the new page links to the entity, AND the entity's page links back.
 
-Format for back-links (append to Timeline or See Also):
+Format for back-links (append to Timeline or See Also). Plain bullet, em-dash —
+no bold, no `|` pipe — so the timeline extractor (`gbrain extract timeline`) can
+parse it:
 ```
-- **YYYY-MM-DD** | Referenced in [page title](path/to/page.md) -- brief context
+- YYYY-MM-DD — Referenced in [page title](path/to/page.md) — brief context
 ```
 
 An unlinked mention is a broken brain. The graph is the intelligence.
