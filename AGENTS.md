@@ -97,6 +97,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   rows (`meeting`, `job_change`, `location_change`) ride through the same
   pipeline; pass `kind: 'event'` or `'all'` to `find_trajectory` to query
   them.
+- **Evaluate external memory tools:** for MemPalace or similar agent-memory
+  systems, use [`docs/operations/mempalace-agent-surface-eval.md`](./docs/operations/mempalace-agent-surface-eval.md).
+  Default to do-not-adopt. Keep the first pass boxed and benchmarked: no global
+  hooks, live MCP writes, profile edits, or cross-surface adoption until the
+  eval produces receipts strong enough to justify a concrete owned task.
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.

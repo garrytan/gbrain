@@ -36,6 +36,8 @@ Repo: https://github.com/garrytan/gbrain
 
 - [docs/GBRAIN_VERIFY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VERIFY.md): 7-check post-setup verification. Start here when something feels off.
 - [docs/guides/minions-fix.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-fix.md): Troubleshooting the Minions job queue.
+- [docs/operations/mempalace-agent-surface-eval.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/operations/mempalace-agent-surface-eval.md): Boxed evaluation lane for MemPalace or similar external agent-memory systems across Claude/Codex/Hermes-style surfaces. Use before any global hooks, MCP writes, profile edits, or cross-surface adoption.
+- [docs/operations/mempalace-boxed-eval-2026-06-05.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/operations/mempalace-boxed-eval-2026-06-05.md): Dated boxed MemPalace eval receipt: 20 public-safe transcript files, 40 drawers, 20-query comparison, and do-not-adopt decision.
 - [docs/integrations/reliability-repair.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/integrations/reliability-repair.md): Data integrity recovery.
 
 ## Migrations

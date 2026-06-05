@@ -194,6 +194,20 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/minions-fix.md",
       },
       {
+        title: "docs/operations/mempalace-agent-surface-eval.md",
+        description:
+          "Boxed evaluation lane for MemPalace or similar external agent-memory systems across Claude/Codex/Hermes-style surfaces. Use before any global hooks, MCP writes, profile edits, or cross-surface adoption.",
+        path: "docs/operations/mempalace-agent-surface-eval.md",
+        includeInFull: false,
+      },
+      {
+        title: "docs/operations/mempalace-boxed-eval-2026-06-05.md",
+        description:
+          "Dated boxed MemPalace eval receipt: 20 public-safe transcript files, 40 drawers, 20-query comparison, and do-not-adopt decision.",
+        path: "docs/operations/mempalace-boxed-eval-2026-06-05.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/integrations/reliability-repair.md",
         description: "Data integrity recovery.",
         path: "docs/integrations/reliability-repair.md",
