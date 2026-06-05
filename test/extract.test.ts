@@ -135,6 +135,21 @@ describe('extractTimelineFromContent', () => {
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1);
   });
+
+  it('extracts Kavalier CRM timeline table rows', () => {
+    const content = `## Timeline
+| Date | Note |
+|------|------|
+| 2026-05-01 | Measurements taken |
+| 2026-05-15 | First fitting completed |
+
+## Notes
+| 2026-06-01 | Not a timeline row |`;
+    const entries = extractTimelineFromContent(content, 'business-vault/kavalier-clothing/crm/clients/test-client');
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ date: '2026-05-01', source: 'timeline-table', summary: 'Measurements taken' });
+    expect(entries[1]).toMatchObject({ date: '2026-05-15', source: 'timeline-table', summary: 'First fitting completed' });
+  });
 });
 
 describe('walkMarkdownFiles', () => {

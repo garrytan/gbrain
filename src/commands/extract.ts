@@ -406,6 +406,25 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
     entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim(), detail: detail || undefined });
   }
 
+  // Format 3: Markdown table rows under a Timeline section.
+  // Kavalier CRM client dossiers use:
+  //   ## Timeline
+  //   | Date | Note |
+  //   |------|------|
+  //   | 2026-05-01 | Measurements taken |
+  const timelineSectionPattern = /^##\s+Timeline\s*\n([\s\S]*?)(?=\n##\s+|$)/gi;
+  let sectionMatch;
+  while ((sectionMatch = timelineSectionPattern.exec(content)) !== null) {
+    const section = sectionMatch[1];
+    const tableRowPattern = /^\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*(.+?)\s*\|\s*$/gm;
+    let rowMatch;
+    while ((rowMatch = tableRowPattern.exec(section)) !== null) {
+      const summary = rowMatch[2].trim();
+      if (!summary || /^-+$/.test(summary)) continue;
+      entries.push({ slug, date: rowMatch[1], source: 'timeline-table', summary });
+    }
+  }
+
   return entries;
 }
 
