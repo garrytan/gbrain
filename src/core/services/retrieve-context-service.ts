@@ -59,7 +59,6 @@ const LINKED_CANDIDATE_PER_SEED_LIMIT = 4;
 const MANIFEST_LINK_SCAN_BATCH_SIZE = 500;
 const SEARCH_HIT_CONTEXT_CHARS = 40;
 const SEARCH_CHUNK_WARNING = 'Search/query chunks are candidate pointers; call read_context before answering factual questions.';
-const PERSONAL_SELECTOR_PREFIXES = ['personal/', 'brain/personal/', 'profile/', 'profiles/'] as const;
 const QUERY_TOKEN_STOPWORDS = new Set([
   'a',
   'an',
@@ -566,10 +565,9 @@ async function linkedCandidatesForResolvedCandidates(
     ]));
   }
 
-  const manifestBacklinkDemand = limit > seedCandidates.length ? 1 : 0;
-  const seedsNeedingManifestBacklinks = manifestBacklinkDemand === 0
-    ? []
-    : seedSlugs.filter((seedSlug) => (linkedSlugsBySeed.get(seedSlug)?.length ?? 0) < manifestBacklinkDemand);
+  const seedsNeedingManifestBacklinks = seedSlugs.filter(
+    (seedSlug) => (linkedSlugsBySeed.get(seedSlug)?.length ?? 0) === 0,
+  );
   if (seedsNeedingManifestBacklinks.length > 0) {
     const incomingBySlug = await manifestBacklinkSlugs(engine, new Set(seedsNeedingManifestBacklinks));
     for (const seedSlug of seedsNeedingManifestBacklinks) {
@@ -925,15 +923,7 @@ function hasPersonalSelectorSignal(selector: RetrievalSelector): boolean {
     return true;
   }
 
-  if (isPersonalScopeId(selector.scope_id)) {
-    return true;
-  }
-
-  return [
-    selector.slug,
-    selector.path,
-    selector.section_id,
-  ].some(startsWithPersonalPrefix);
+  return isPersonalScopeId(selector.scope_id);
 }
 
 function selectorAllowedByRetrieveScope(
@@ -965,12 +955,6 @@ function isPersonalScopeId(value: string | undefined): boolean {
   if (!value) return false;
   const normalizedValue = value.trim().toLowerCase();
   return normalizedValue === 'personal' || normalizedValue.startsWith('personal:');
-}
-
-function startsWithPersonalPrefix(value: string | undefined): boolean {
-  if (!value) return false;
-  const normalizedValue = value.trim().toLowerCase();
-  return PERSONAL_SELECTOR_PREFIXES.some((prefix) => normalizedValue.startsWith(prefix));
 }
 
 async function buildOrientation(

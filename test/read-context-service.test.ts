@@ -1172,8 +1172,8 @@ describe('read context service', () => {
     });
   });
 
-  test('blocks bare source_ref selectors that resolve to personal pages under work scope', async () => {
-    await withEngine('source-ref-personal-gate', async (engine) => {
+  test('reads source_ref selectors under arbitrary sub-brain paths when work scope allows retrieval', async () => {
+    await withEngine('source-ref-sub-brain-prefix', async (engine) => {
       const sourceRef = 'User, personal source, 2026-05-07 10:20 KST';
       await importFromContent(engine, 'personal/private-note', [
         '---',
@@ -1181,42 +1181,43 @@ describe('read context service', () => {
         'title: Private Note',
         '---',
         '# Compiled Truth',
-        'Private source-ref evidence must not leak through bare source_ref.',
+        'Source-ref evidence can live under arbitrary sub-brain paths.',
         `[Source: ${sourceRef}]`,
       ].join('\n'), { path: 'personal/private-note.md' });
 
-      const denied = await readContext(engine, {
+      const result = await readContext(engine, {
         selectors: [{ kind: 'source_ref', source_ref: sourceRef }],
         requested_scope: 'work',
       });
 
-      expect(denied.scope_gate?.policy).toBe('deny');
-      expect(denied.answer_ready.ready).toBe(false);
-      expect(denied.canonical_reads).toEqual([]);
-      expect(denied.unread_required).toHaveLength(1);
-      expect(denied.answer_ready.unsupported_reasons).toContain('scope_gate_deny');
+      expect(result.scope_gate?.policy).toBe('allow');
+      expect(result.answer_ready.ready).toBe(true);
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.selector.slug).toBe('personal/private-note');
+      expect(result.canonical_reads[0]!.text).toContain('Source-ref evidence can live under arbitrary sub-brain paths.');
+      expect(result.unread_required).toEqual([]);
     });
   });
 
-  test('blocks timeline_entry object ids that encode personal slugs under work scope', async () => {
-    await withEngine('timeline-entry-personal-gate', async (engine) => {
+  test('reads timeline_entry object ids under arbitrary sub-brain paths when work scope allows retrieval', async () => {
+    await withEngine('timeline-entry-sub-brain-prefix', async (engine) => {
       await importFromContent(engine, 'personal/timeline-note', [
         '---',
         'type: concept',
         'title: Personal Timeline Note',
         '---',
         '# Compiled Truth',
-        'Personal timeline fixture.',
+        'Timeline fixture under an arbitrary sub-brain path.',
       ].join('\n'), { path: 'personal/timeline-note.md' });
       await engine.addTimelineEntry('personal/timeline-note', {
         date: '2026-05-07',
         source: 'User, personal timeline, 2026-05-07 10:25 KST',
-        summary: 'Private timeline entry must not leak through encoded object id.',
+        summary: 'Timeline entry can be read when no explicit personal authority is present.',
       });
       const [entry] = await engine.getTimeline('personal/timeline-note');
       if (!entry) throw new Error('timeline entry fixture missing');
 
-      const denied = await readContext(engine, {
+      const result = await readContext(engine, {
         selectors: [{
           kind: 'timeline_entry',
           object_id: `personal/timeline-note:${entry.id}`,
@@ -1224,10 +1225,12 @@ describe('read context service', () => {
         requested_scope: 'work',
       });
 
-      expect(denied.scope_gate?.policy).toBe('deny');
-      expect(denied.answer_ready.ready).toBe(false);
-      expect(denied.canonical_reads).toEqual([]);
-      expect(denied.unread_required).toHaveLength(1);
+      expect(result.scope_gate?.policy).toBe('allow');
+      expect(result.answer_ready.ready).toBe(true);
+      expect(result.canonical_reads).toHaveLength(1);
+      expect(result.canonical_reads[0]!.selector.slug).toBe('personal/timeline-note');
+      expect(result.canonical_reads[0]!.text).toContain('Timeline entry can be read when no explicit personal authority is present.');
+      expect(result.unread_required).toEqual([]);
     });
   });
 

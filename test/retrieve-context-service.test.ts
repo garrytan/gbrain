@@ -77,24 +77,25 @@ describe('retrieve context service', () => {
     });
   });
 
-  test('gates exact selectors with personal slugs before required reads', async () => {
-    await withEngine('exact-personal-gate', async (engine) => {
+  test('does not treat arbitrary sub-brain slug prefixes as personal scope by themselves', async () => {
+    await withEngine('exact-sub-brain-prefix', async (engine) => {
       const result = await retrieveContext(engine, {
-        query: 'morning routine',
+        query: 'work architecture',
         requested_scope: 'work',
-        selectors: [{ kind: 'compiled_truth', slug: 'personal/morning-routine' }],
+        selectors: [{ kind: 'compiled_truth', slug: 'personal/work-architecture' }],
       }, {
         candidateSearch: async () => {
           throw new Error('gated exact selector retrieval must not search');
         },
       });
 
-      expect(result.scope_gate?.policy).not.toBe('allow');
-      expect(result.candidates).toEqual([]);
-      expect(result.required_reads).toEqual([]);
+      expect(result.scope_gate?.policy).toBe('allow');
+      expect(result.candidates).toHaveLength(1);
+      expect(result.required_reads).toHaveLength(1);
+      expect(result.required_reads[0]!.slug).toBe('personal/work-architecture');
       expect(result.answerability.answerable_from_probe).toBe(false);
-      expect(result.answerability.must_read_context).toBe(false);
-      expect(result.answerability.reason_codes).toContain(`scope_gate_${result.scope_gate!.policy}`);
+      expect(result.answerability.must_read_context).toBe(true);
+      expect(result.answerability.reason_codes).toContain('exact_selectors_require_canonical_read');
     });
   });
 
@@ -643,6 +644,75 @@ describe('retrieve context service', () => {
       expect(result.scope_gate?.policy).toBe('allow');
       expect(result.required_reads.map((selector) => selector.slug)).toContain('systems/runtime-platform');
       expect(result.required_reads.map((selector) => selector.slug)).toContain('personal/work-architecture');
+
+      const read = await readContext(engine, {
+        selectors: result.required_reads,
+        requested_scope: 'work',
+        token_budget: 500,
+      });
+
+      expect(read.scope_gate?.policy).toBe('allow');
+      expect(read.canonical_reads.map((entry) => entry.selector.slug)).toContain('personal/work-architecture');
+    });
+  });
+
+  test('adds manifest backlink candidates even when base search candidates fill the limit', async () => {
+    await withEngine('backlink-expansion-filled-limit', async (engine) => {
+      await importFromContent(engine, 'systems/runtime-platform', [
+        '---',
+        'type: system',
+        'title: Runtime Platform',
+        '---',
+        '# Runtime Platform',
+        'Runtime platform overview for synthetic services.',
+      ].join('\n'), { path: 'systems/runtime-platform.md' });
+      await importFromContent(engine, 'systems/runtime-dashboard', [
+        '---',
+        'type: system',
+        'title: Runtime Dashboard',
+        '---',
+        '# Runtime Dashboard',
+        'Runtime dashboard shows generic platform status.',
+      ].join('\n'), { path: 'systems/runtime-dashboard.md' });
+      await importFromContent(engine, 'concepts/queue-routing', [
+        '---',
+        'type: concept',
+        'title: Queue Routing',
+        '---',
+        '# Queue Routing',
+        'Queue routing connects to [[systems/runtime-platform]] and explains worker lane assignment.',
+      ].join('\n'), { path: 'concepts/queue-routing.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'queue routing runtime platform',
+        include_orientation: false,
+        limit: 2,
+      }, {
+        candidateSearch: async () => [
+          {
+            slug: 'systems/runtime-platform',
+            page_id: 1,
+            title: 'Runtime Platform',
+            type: 'system',
+            chunk_text: 'Runtime platform overview for synthetic services.',
+            chunk_source: 'compiled_truth',
+            score: 1,
+            stale: false,
+          },
+          {
+            slug: 'systems/runtime-dashboard',
+            page_id: 2,
+            title: 'Runtime Dashboard',
+            type: 'system',
+            chunk_text: 'Runtime dashboard shows generic platform status.',
+            chunk_source: 'compiled_truth',
+            score: 0.99,
+            stale: false,
+          },
+        ],
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/queue-routing');
     });
   });
 
