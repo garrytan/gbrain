@@ -106,12 +106,12 @@ export interface SubagentDeps {
   /** Anthropic client. Defaults to the SDK-constructed client. */
   client?: MessagesClient;
   /**
-   * Anthropic SDK constructor. Defaults to `() => new Anthropic()`.
+   * Anthropic SDK constructor. Defaults to `(apiKey) => new Anthropic({ apiKey })`.
    * Overridable in tests so the factory default-client branch is
    * exercisable without an ANTHROPIC_API_KEY or a real API call.
    * When `deps.client` is provided, this is unused.
    */
-  makeAnthropic?: () => Anthropic;
+  makeAnthropic?: (apiKey?: string) => Anthropic;
   /** Config (MCP, brain, etc.). Defaults to loadConfig(). */
   config?: GBrainConfig;
   /** Rate-lease key. Defaults to `anthropic:messages`. */
@@ -165,8 +165,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   // lives at sdk.messages.create. Assigning sdk.messages directly gets the
   // right object; JS method-call semantics preserve `this` at the call
   // site (subagent.ts invokes client.create(...) with client === sdk.messages).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
-  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
+  const makeAnthropic = deps.makeAnthropic ?? ((apiKey?: string) => new Anthropic(apiKey ? { apiKey } : undefined));
+  let client: MessagesClient | null = deps.client ?? null;
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
   const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
@@ -279,6 +279,17 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         maxTurns,
       });
     }
+
+    // ── Legacy Anthropic client ──────────────────────────────
+    // Cron/LaunchAgent workers often run without shell env, while `gbrain config set
+    // anthropic_api_key ...` stores the key in the brain config table. Construct the
+    // SDK client lazily after the engine is available so DB/file config can satisfy
+    // Anthropic auth instead of relying solely on process.env.
+    if (!client) {
+      const apiKey = await resolveAnthropicApiKey(engine, config);
+      client = makeAnthropic(apiKey || undefined).messages;
+    }
+    const messagesClient = client;
 
     // ── Load prior state (replay) ───────────────────────────
     const priorMessages = await loadPriorMessages(engine, ctx.id);
@@ -503,7 +514,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         };
 
         const combinedSignal = mergeSignals(ctx.signal, ctx.shutdownSignal);
-        assistantMsg = await client.create(params, { signal: combinedSignal });
+        assistantMsg = await messagesClient.create(params, { signal: combinedSignal });
       } catch (err) {
         // Release lease eagerly on error so we don't starve capacity.
         await releaseLease(engine, lease.leaseId!).catch(() => {});
@@ -937,6 +948,23 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
 function recipeIdFromModel(modelString: string): string {
   const idx = modelString.indexOf(':');
   return idx > 0 ? modelString.slice(0, idx) : 'anthropic';
+}
+
+export async function resolveAnthropicApiKey(engine: BrainEngine, config?: GBrainConfig): Promise<string | undefined> {
+  const envKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (envKey) return envKey;
+
+  try {
+    const dbKey = await engine.getConfig('anthropic_api_key');
+    if (typeof dbKey === 'string' && dbKey.trim()) return dbKey.trim();
+  } catch {
+    // Fall through to file config. Some tests and degraded runtime paths have
+    // an engine that cannot read config yet.
+  }
+
+  const fileKey = (config as GBrainConfig & { anthropic_api_key?: unknown } | undefined)?.anthropic_api_key;
+  if (typeof fileKey === 'string' && fileKey.trim()) return fileKey.trim();
+  return undefined;
 }
 
 /**

@@ -18,6 +18,7 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import {
   makeSubagentHandler,
   RateLeaseUnavailableError,
+  resolveAnthropicApiKey,
   stripProviderPrefix,
   type MessagesClient,
 } from '../src/core/minions/handlers/subagent.ts';
@@ -582,7 +583,7 @@ describe('makeSubagentHandler default client construction', () => {
     } as unknown as Anthropic;
 
     // Crucial: do NOT pass `client`. Only `makeAnthropic`. This forces the
-    // factory to hit the default-client branch (`deps.client ?? makeAnthropic().messages`).
+    // factory to hit the default-client branch (`makeAnthropic(apiKey).messages`).
     const handler = makeSubagentHandler({
       engine,
       makeAnthropic: () => fakeSdk,
@@ -594,5 +595,57 @@ describe('makeSubagentHandler default client construction', () => {
     expect(calls.length).toBe(1);
     expect(result.stop_reason).toBe('end_turn');
     expect(result.result).toBe('ok');
+  });
+
+  test('default Anthropic client uses DB config key when process env is absent', async () => {
+    const original = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    await engine.setConfig('anthropic_api_key', 'sk-ant-db-test');
+    try {
+      expect(await resolveAnthropicApiKey(engine, {} as any)).toBe('sk-ant-db-test');
+
+      const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
+      let seenApiKey: string | undefined;
+      const fakeSdk = {
+        messages: {
+          async create(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message> {
+            calls.push(params);
+            return {
+              id: 'msg_db_key',
+              type: 'message',
+              role: 'assistant',
+              model: params.model,
+              stop_reason: 'end_turn',
+              stop_sequence: null,
+              content: [{ type: 'text', text: 'db key ok' }],
+              usage: {
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+              },
+            } as unknown as Anthropic.Message;
+          },
+        },
+      } as unknown as Anthropic;
+
+      const handler = makeSubagentHandler({
+        engine,
+        makeAnthropic: (apiKey?: string) => {
+          seenApiKey = apiKey;
+          return fakeSdk;
+        },
+        toolRegistry: [],
+      });
+      const ctx = await makeCtx({ prompt: 'hello from cron-like env' });
+      const result = await handler(ctx);
+
+      expect(seenApiKey).toBe('sk-ant-db-test');
+      expect(calls.length).toBe(1);
+      expect(result.result).toBe('db key ok');
+    } finally {
+      await engine.setConfig('anthropic_api_key', '');
+      if (original) process.env.ANTHROPIC_API_KEY = original;
+    }
   });
 });
