@@ -657,7 +657,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // serve-http transport fell back to GBRAIN_SOURCE/'default' for
         // any caller without explicit scope. Operators who want a
         // narrower scope for legacy tokens migrate to OAuth.
-        sourceId: 'default',
+        sourceId: undefined,
       } as AuthInfo;
     }
 

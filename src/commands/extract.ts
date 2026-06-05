@@ -1531,7 +1531,7 @@ async function extractStaleFromDB(
       // landing between this SELECT and the stamp advances updated_at past the
       // stamped value, so the page stays stale and re-extracts next run instead
       // of being marked fresh-with-stale-content.
-      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: page.updated_at.toISOString() });
+      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: new Date(page.updated_at.getTime() + 1).toISOString() });
     }
 
     // Flush NON-swallowing (CDX-4): a throw here propagates out of the sweep so

@@ -1565,7 +1565,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // path codex flagged in plan review. Post-v60, every OAuth client
       // has source_id set; legacy bearer tokens default to 'default' in
       // verifyAccessToken. The env-fallback is gone.
-      const tokenSourceId = authInfo.sourceId ?? 'default';
+      const tokenSourceId = authInfo.sourceId;
 
       let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
       try {
