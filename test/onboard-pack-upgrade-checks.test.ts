@@ -4,7 +4,10 @@
 // type_proliferation pack-aware ratio (D16); dangling_aliases source-scoped
 // JOIN (F12); manual_only RemediationStep flag round-trips through render.
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import {
@@ -15,10 +18,16 @@ import {
 import { toOnboardRecommendation } from '../src/core/onboard/render.ts';
 import { _resetPackCacheForTests } from '../src/core/schema-pack/registry.ts';
 import { _resetPackLocatorForTests } from '../src/core/schema-pack/load-active.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
+let originalGbrainHome: string | undefined;
+let originalSchemaPack: string | undefined;
+let testHome: string | undefined;
 
 beforeAll(async () => {
+  originalGbrainHome = process.env.GBRAIN_HOME;
+  originalSchemaPack = process.env.GBRAIN_SCHEMA_PACK;
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -26,9 +35,16 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  if (originalGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+  else process.env.GBRAIN_HOME = originalGbrainHome;
+  if (originalSchemaPack === undefined) delete process.env.GBRAIN_SCHEMA_PACK;
+  else process.env.GBRAIN_SCHEMA_PACK = originalSchemaPack;
 });
 
 beforeEach(async () => {
+  testHome = mkdtempSync(join(tmpdir(), 'gbrain-onboard-pack-test-'));
+  process.env.GBRAIN_HOME = testHome;
+  delete process.env.GBRAIN_SCHEMA_PACK;
   await resetPgliteState(engine);
   _resetPackCacheForTests();
   // Defensive reset: sibling test files in the same shard process
@@ -39,6 +55,11 @@ beforeEach(async () => {
   // []. Repros only when sync.test.ts runs first in the same shard, so
   // local single-file runs pass but CI shard 6 fails.
   _resetPackLocatorForTests();
+});
+
+afterEach(() => {
+  if (testHome) rmSync(testHome, { recursive: true, force: true });
+  testHome = undefined;
 });
 
 async function seedPages(types: string[]) {
@@ -71,6 +92,29 @@ describe('checkPackUpgradeAvailable', () => {
     const step = result.remediations[0];
     const rec = toOnboardRecommendation(step);
     expect(rec.apply_policy).toBe('manual_only');
+  });
+
+  it('honors home-config schema_pack when DB config is unset', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-onboard-pack-home-'));
+    try {
+      const configDir = join(home, '.gbrain');
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(
+        join(configDir, 'config.json'),
+        JSON.stringify({ engine: 'pglite', schema_pack: 'gbrain-base-v2' }),
+        'utf-8',
+      );
+      await withEnv({ GBRAIN_HOME: home, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+        _resetPackCacheForTests();
+        const result = await checkPackUpgradeAvailable(engine);
+        expect(result.check.name).toBe('pack_upgrade_available');
+        expect(result.check.status).toBe('ok');
+        expect(result.check.message).toContain('gbrain-base-v2');
+        expect(result.remediations.length).toBe(0);
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

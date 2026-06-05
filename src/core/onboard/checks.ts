@@ -16,6 +16,7 @@
 // when ctx threads — onboard surface threads explicitly per A26.
 
 import type { BrainEngine } from '../engine.ts';
+import { loadConfig } from '../config.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
 
@@ -387,13 +388,14 @@ export async function checkPackUpgradeAvailable(
   try {
     const { loadActivePack, findPackSuccessors } = await import('../schema-pack/load-active.ts');
     // Read the engine's DB-side schema_pack so a post-unify flip is visible
-    // here even before the file-plane config catches up. Falls through to
-    // file-plane/env/default resolution when unset.
+    // here even before the file-plane config catches up. Still pass file-plane
+    // config so unset DB config falls through to ~/.gbrain/config.json instead
+    // of the default pack.
     let dbConfig: string | undefined;
     try {
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* engine.config may not exist on very old brains */ }
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig })
+    const active = await loadActivePack({ cfg: loadConfig(), remote: false, dbConfig })
       .catch(() => null);
     if (!active) {
       return {
@@ -467,7 +469,7 @@ export async function checkTypeProliferation(
     try {
       dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
     } catch { /* tolerate pre-config brains */ }
-    const active = await loadActivePack({ cfg: null, remote: false, dbConfig })
+    const active = await loadActivePack({ cfg: loadConfig(), remote: false, dbConfig })
       .catch(() => null);
     if (active) declared = active.manifest.page_types.length;
   } catch {
