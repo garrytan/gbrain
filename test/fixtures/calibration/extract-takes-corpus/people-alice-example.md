@@ -1,7 +1,7 @@
 ---
 title: alice-example
 type: people
-slug: people/alice-example
+
 ---
 
 # Alice Example
