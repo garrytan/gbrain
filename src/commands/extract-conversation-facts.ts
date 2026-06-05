@@ -35,9 +35,10 @@
  *     `listPages({type, sourceId, limit: PAGE_LIST_BATCH})` so worst
  *     case is BATCH × 25MB per batch (currently 10 × 25MB = 250MB
  *     bounded). Per-page body cap drops oversize before parsing.
- *   - Body read covers compiled_truth + timeline. parseMarkdown splits
- *     conversation imports across both columns; reading only
- *     compiled_truth silently drops half on iMessage/Slack imports.
+ *   - Body read prefers frontmatter.raw_transcript when present, then
+ *     falls back to compiled_truth + timeline. Meeting pages often
+ *     store the real turn-by-turn transcript in a sidecar file while
+ *     compiled_truth is just the human summary.
  *   - Page-global row_num accumulator. facts table unique index is
  *     (source_id, source_markdown_slug, row_num); per-segment row_num
  *     would collide on segment 2. Per-page counter increments across
@@ -286,6 +287,7 @@ import {
   parseConversation,
   type ParseConversationOpts as OrchestratorParseOpts,
 } from '../core/conversation-parser/parse.ts';
+import { readConversationBodyForParsing } from '../core/conversation-parser/body.ts';
 
 /**
  * v0.41.13.0 — back-compat shape for direct callers + the existing
@@ -472,16 +474,6 @@ function pageBodyBytes(page: Page): number {
   const compiled = page.compiled_truth ?? '';
   const timeline = page.timeline ?? '';
   return Buffer.byteLength(compiled, 'utf8') + Buffer.byteLength(timeline, 'utf8');
-}
-
-function readPageBody(page: Page): string {
-  // F1: read BOTH compiled_truth AND timeline; iMessage importers
-  // place chronological message stream in timeline.
-  const compiled = page.compiled_truth ?? '';
-  const timeline = page.timeline ?? '';
-  if (!compiled) return timeline;
-  if (!timeline) return compiled;
-  return `${compiled}\n\n${timeline}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -682,7 +674,7 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  const body = readPageBody(page);
+  const body = await readConversationBodyForParsing(state.engine, page);
   // v0.41.13.0: thread the full Page through the orchestrator so D8
   // date-derivation chain (frontmatter.date > effective_date >
   // '1970-01-01') AND timezone_policy warnings apply. The historical

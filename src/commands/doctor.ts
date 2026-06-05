@@ -4487,6 +4487,7 @@ export async function buildChecks(
   // triage the misses interactively.
   if (engine) {
     try {
+      const { readConversationBodyForParsing } = await import('../core/conversation-parser/body.ts');
       const { parseConversation } = await import('../core/conversation-parser/parse.ts');
       const allowedTypes = ['conversation', 'meeting', 'slack', 'email'] as const;
       // PageFilters supports singular `type` only; iterate the 4 types
@@ -4506,7 +4507,7 @@ export async function buildChecks(
         const hitsByPattern: Record<string, number> = {};
         let unmatched = 0;
         for (const page of sample) {
-          const body = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`.trim();
+          const body = await readConversationBodyForParsing(engine, page);
           const result = parseConversation(body, { page, noPolish: true, noFallback: true });
           const id = result.matched_pattern_id ?? '_no_match';
           hitsByPattern[id] = (hitsByPattern[id] ?? 0) + 1;
