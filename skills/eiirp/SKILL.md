@@ -37,14 +37,6 @@ tools:
   - add_timeline_entry
 mutating: true
 writes_pages: true
----
-
-# EIIRP files across the full canonical set — the actual destination
-# per page is decided by brain-taxonomist consulting the active schema
-# pack via `gbrain schema show --json`. List the gbrain-recommended set
-# of canonical directories here so the filing-audit gate passes; on
-# brains with custom packs, the routing surface is broader and routes
-# through loadActivePack at write time.
 writes_to:
   - people/
   - companies/
