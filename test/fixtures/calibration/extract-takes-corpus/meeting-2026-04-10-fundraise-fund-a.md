@@ -1,7 +1,7 @@
 ---
 title: "Fundraise office hours — fund-a + alice-example"
 type: meeting
-slug: meetings/2026-04-10-fundraise-fund-a
+
 date: 2026-04-10
 attendees: [you, alice-example, fund-a]
 ---

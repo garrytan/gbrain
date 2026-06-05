@@ -1,7 +1,7 @@
 ---
 title: bob-example
 type: people
-slug: people/bob-example
+
 ---
 
 # Bob Example

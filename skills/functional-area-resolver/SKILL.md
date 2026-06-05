@@ -27,6 +27,8 @@ tools:
   - write
   - edit
 mutating: true
+---
+
 # This skill names other skills (perplexity-research, brain-publish,
 # etc.) in its dispatcher prose; the v0.36.x brain-first regex matches
 # the word `perplexity` but the skill never actually calls external
