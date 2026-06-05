@@ -33,8 +33,6 @@ import { pathToSlug } from '../sync.ts';
 const DEFAULT_TOKEN_BUDGET = 900;
 const DEFAULT_MAX_SELECTORS = 3;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
-const PERSONAL_SELECTOR_PREFIXES = ['personal/', 'brain/personal/', 'profile/', 'profiles/'] as const;
-
 type ReadSelectorOptions = {
   token_budget: number;
   include_timeline: 'auto' | 'include' | 'exclude';
@@ -1286,29 +1284,13 @@ function hasPersonalSelectorSignal(selector: RetrievalSelector): boolean {
     return true;
   }
 
-  if (isPersonalScopeId(selector.scope_id)) {
-    return true;
-  }
-
-  return [
-    selector.slug,
-    selector.path,
-    selector.section_id,
-    timelineEntryTarget(selector)?.slug,
-    selector.object_id,
-  ].some(startsWithPersonalPrefix);
+  return isPersonalScopeId(selector.scope_id);
 }
 
 function isPersonalScopeId(value: string | undefined): boolean {
   if (!value) return false;
   const normalizedValue = value.trim().toLowerCase();
   return normalizedValue === 'personal' || normalizedValue.startsWith('personal:');
-}
-
-function startsWithPersonalPrefix(value: string | undefined): boolean {
-  if (!value) return false;
-  const normalizedValue = value.trim().toLowerCase();
-  return PERSONAL_SELECTOR_PREFIXES.some((prefix) => normalizedValue.startsWith(prefix));
 }
 
 async function maybePersistReadTrace(
