@@ -492,6 +492,18 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
     entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim(), detail: detail || undefined });
   }
 
+  // Format 3: Plain bullet — - YYYY-MM-DD — Summary
+  // This is the format gbrain's own enrich skill writes (no bold, no source
+  // pipe). Without it, every brain-authored timeline entry is invisible to
+  // extraction and timeline_coverage stays at 0%. Anchored at line start so a
+  // date inside a summary/link cannot start a spurious entry; a bold Format-1
+  // line (`- **…**`) cannot match here (a `*` follows the bullet, not a digit),
+  // so the two patterns never double-count.
+  const plainBulletPattern = /^-\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+)$/gm;
+  while ((match = plainBulletPattern.exec(content)) !== null) {
+    entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim() });
+  }
+
   return entries;
 }
 

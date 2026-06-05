@@ -135,6 +135,40 @@ describe('extractTimelineFromContent', () => {
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1);
   });
+
+  // Format 3: the plain bullet `- YYYY-MM-DD — Summary` that gbrain's own
+  // enrich skill writes. Before this was supported, every brain-authored
+  // timeline entry was invisible and timeline_coverage was stuck at 0%.
+  it('extracts plain bullet format (- YYYY-MM-DD — Summary)', () => {
+    const content = `## Timeline\n- 2026-06-01 — Catch-up call with Elliot; intros offered.`;
+    const entries = extractTimelineFromContent(content, 'people/ben');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-06-01');
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Catch-up call with Elliot; intros offered.');
+  });
+
+  it('plain bullet keeps trailing source/link text in the summary', () => {
+    const content = `- 2026-05-31 — Confirmed full name. [Source: User, Telegram, 2026-05-31]`;
+    const entries = extractTimelineFromContent(content, 'people/charlie');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-05-31');
+    expect(entries[0].summary).toContain('[Source: User, Telegram, 2026-05-31]');
+  });
+
+  it('does not double-count bold (Format 1) lines as plain bullets', () => {
+    const content = `- **2025-03-18** | Meeting — Discussed partnership`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('Meeting');
+  });
+
+  it('does not start a spurious entry from a date inside a summary', () => {
+    const content = `- 2026-06-01 — See [meeting](meetings/ben-gottlieb-2026-06-01).`;
+    const entries = extractTimelineFromContent(content, 'people/ben');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-06-01');
+  });
 });
 
 describe('walkMarkdownFiles', () => {
