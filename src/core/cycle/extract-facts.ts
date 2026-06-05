@@ -186,6 +186,45 @@ export async function runExtractFacts(
     slugs = Array.from(slugSet);
   }
 
+  // ── Fast-path: no fence facts to reconcile ─────────────────────
+  // Full-walk autopilot cycles can cover thousands of pages. When the source
+  // has no existing fence-derived facts AND no page currently contains a
+  // Facts fence, the per-page delete/reinsert loop below degenerates into
+  // thousands of no-op DELETE round-trips. On remote Postgres/Supabase that can
+  // hold a minion job for minutes despite doing no useful work. Skip safely:
+  // there are no rows to delete and no fences to insert.
+  if (opts.slugs === undefined && phantomResult.touched_canonicals.length === 0) {
+    try {
+      const [counts] = await engine.executeRaw<{
+        existing_fence_facts: number | string;
+        pages_with_facts_fence: number | string;
+      }>(
+        `SELECT
+           (SELECT COUNT(*) FROM facts
+             WHERE source_id = $1
+               AND source_markdown_slug IS NOT NULL
+               AND row_num IS NOT NULL) AS existing_fence_facts,
+           (SELECT COUNT(*) FROM pages
+             WHERE source_id = $1
+               AND compiled_truth LIKE '%## Facts%') AS pages_with_facts_fence`,
+        [sourceId],
+      );
+      const existingFenceFacts = Number(counts?.existing_fence_facts ?? 0);
+      const pagesWithFactsFence = Number(counts?.pages_with_facts_fence ?? 0);
+      if (existingFenceFacts === 0 && pagesWithFactsFence === 0) {
+        result.pagesScanned = slugs.length;
+        return result;
+      }
+    } catch (err) {
+      // Fall back to the conservative per-page loop if the optimization probe
+      // fails. extract_facts should remain correct even when this fast-path is
+      // unavailable on older schemas/backends.
+      result.warnings.push(
+        `extract_facts fast-path probe failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   // ── Reconcile each page ───────────────────────────────────────
   for (const slug of slugs) {
     result.pagesScanned += 1;

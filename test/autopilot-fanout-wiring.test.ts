@@ -36,19 +36,38 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     // dispatchPerSource must appear in the same hot path as the
     // pre-fix `queue.add('autopilot-cycle', ...)` did — i.e. when
     // shouldFullCycle is true, not in the targeted-plan path.
-    const dispatchIdx = AUTOPILOT_SRC.indexOf('dispatchPerSource(engine, queue');
-    expect(dispatchIdx).toBeGreaterThan(-1);
-    // Verify shouldFullCycle is structurally near the call (within
-    // ~3000 chars of source, roughly the same if/else branch)
     const fullCycleIdx = AUTOPILOT_SRC.indexOf('shouldFullCycle');
     expect(fullCycleIdx).toBeGreaterThan(-1);
-    expect(Math.abs(dispatchIdx - fullCycleIdx)).toBeLessThan(3000);
+    const dispatchIdx = AUTOPILOT_SRC.indexOf('dispatchPerSource(engine, queue', fullCycleIdx);
+    expect(dispatchIdx).toBeGreaterThan(fullCycleIdx);
+    // Verify shouldFullCycle is structurally near the call (within
+    // ~3000 chars of source, roughly the same if/else branch)
+    expect(dispatchIdx - fullCycleIdx).toBeLessThan(3000);
   });
 
   test('updates lastFullCycleAt on dispatch (so the 60-min floor is honored)', () => {
     // After the dispatchPerSource call, the lastFullCycleAt module var
     // must update so the next tick doesn't immediately re-fan-out.
     expect(AUTOPILOT_SRC).toMatch(/lastFullCycleAt\s*=\s*Date\.now\(\)/);
+  });
+
+
+  test('freshness gate dispatches per-source cycles, not sync-only jobs', () => {
+    const freshnessIdx = AUTOPILOT_SRC.indexOf('per-source full-cycle freshness');
+    expect(freshnessIdx).toBeGreaterThan(-1);
+    const autoDrainIdx = AUTOPILOT_SRC.indexOf('#1685 GAP D', freshnessIdx);
+    expect(autoDrainIdx).toBeGreaterThan(freshnessIdx);
+    const freshnessBlock = AUTOPILOT_SRC.slice(freshnessIdx, autoDrainIdx);
+
+    expect(freshnessBlock).toContain('dispatchPerSource(engine, queue');
+    expect(freshnessBlock).not.toContain("queue.add(\n                  'sync'");
+    expect(freshnessBlock).not.toContain('autopilot-sync:${src.id}:${slot}');
+    expect(freshnessBlock).not.toMatch(/maxWaiting\s*:/);
+  });
+
+  test('skips targeted remediation after freshness cycle dispatch', () => {
+    expect(AUTOPILOT_SRC).toContain('sourceFreshnessCycleDispatched');
+    expect(AUTOPILOT_SRC).toContain('skip_targeted_after_freshness_cycle');
   });
 
   test('does NOT regress to the single-job dispatch on the full-cycle path', () => {

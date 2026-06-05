@@ -351,13 +351,28 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   try {
     mkdirSync(gbrainHomePath(), { recursive: true });
     if (existsSync(lockPath)) {
-      const stat = require('fs').statSync(lockPath);
+      const fs = require('fs');
+      const stat = fs.statSync(lockPath);
       const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
-      if (ageMinutes < 10) {
+      const lockPidRaw = fs.readFileSync(lockPath, 'utf8').trim();
+      const lockPid = Number(lockPidRaw);
+      const lockPidAlive = Number.isInteger(lockPid) && lockPid > 0 && (() => {
+        try {
+          process.kill(lockPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      if (ageMinutes < 10 && lockPidAlive) {
         console.error('Another autopilot instance is running (lock file is fresh). Exiting.');
         process.exit(0);
       }
-      console.log('Stale lock file found (>10 min). Taking over.');
+      if (ageMinutes < 10 && !lockPidAlive) {
+        console.log(`Fresh autopilot lock belongs to dead pid ${lockPidRaw || '<empty>'}. Taking over.`);
+      } else {
+        console.log('Stale lock file found (>10 min). Taking over.');
+      }
     }
     writeFileSync(lockPath, String(process.pid));
   } catch { /* best-effort */ }
@@ -634,51 +649,40 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         const slot = new Date(slotMs).toISOString();
         const timeoutMs = Math.max(baseInterval * 2 * 1000, 300_000);
 
-        // ── v0.40 D17: per-source freshness check ────────────────────
-        // Runs first; independent of score gate. Submits a 'sync' job per
-        // source whose last_sync_at is older than the interval. The sync
-        // handler (T6/T7) auto-enqueues embed-backfill on completion if
-        // pages changed.
+        // ── v0.40 D17 / v0.42.25 hotfix: per-source full-cycle freshness ──
+        // Runs first; independent of score gate. This MUST dispatch the same
+        // per-source autopilot-cycle primitive doctor checks via
+        // sources.config.last_full_cycle_at. A sync-only job updates
+        // last_sync_at but never stamps last_full_cycle_at, so doctor keeps
+        // failing cycle_freshness forever while autopilot proudly logs work.
+        // Also do not use maxWaiting here: it coalesces by (name, queue), not
+        // by source. dispatchPerSource owns the source-aware idempotency keys.
+        let sourceFreshnessCycleDispatched = false;
         try {
           const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
           if (await isFederatedV2Enabled(engine)) {
-            const { loadAllSources } = await import('../core/sources-load.ts');
-            const sources = await loadAllSources(engine);
-            const intervalMs = baseInterval * 1000;
-            const now = Date.now();
-            for (const src of sources) {
-              if (!src.local_path) continue;
-              const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
-              const ageMs = now - lastSyncMs;
-              if (ageMs < intervalMs) continue; // fresh enough
-              try {
-                const job = await queue.add(
-                  'sync',
-                  {
-                    sourceId: src.id,
-                    repoPath: src.local_path,
-                    auto_embed_backfill: true,
-                    embed_reason: 'autopilot_freshness',
-                  },
-                  {
-                    queue: 'default',
-                    idempotency_key: `autopilot-sync:${src.id}:${slot}`,
-                    max_attempts: 2,
-                    timeout_ms: timeoutMs,
-                    maxWaiting: 1,
-                  },
-                );
-                if (jsonMode) {
-                  process.stderr.write(JSON.stringify({
-                    event: 'dispatched', job_id: job.id, mode: 'freshness',
-                    source_id: src.id, age_ms: ageMs,
-                  }) + '\n');
-                } else {
-                  console.log(`[dispatch] job #${job.id} sync (freshness: ${src.id}; age=${Math.floor(ageMs / 60000)}min)`);
-                }
-              } catch (e) {
-                logError('dispatch.freshness', e);
-              }
+            const { dispatchPerSource, resolveFanoutMax } = await import('./autopilot-fanout.ts');
+            const fanoutMax = await resolveFanoutMax(engine);
+            const result = await dispatchPerSource(engine, queue, {
+              repoPath,
+              slot,
+              timeoutMs,
+              fanoutMax,
+              jsonMode,
+            });
+            sourceFreshnessCycleDispatched = result.dispatched.length > 0 || result.legacy_fallback;
+            if (sourceFreshnessCycleDispatched) {
+              lastFullCycleAt = Date.now();
+            }
+            if (jsonMode) {
+              process.stderr.write(JSON.stringify({
+                event: 'freshness_cycle_summary',
+                dispatched: result.dispatched,
+                skipped_fresh: result.skipped_fresh,
+                skipped_cap: result.skipped_cap,
+                legacy_fallback: result.legacy_fallback,
+                fanout_max: fanoutMax,
+              }) + '\n');
             }
           }
         } catch (e) {
@@ -852,7 +856,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
 
         const shouldSleep = score >= 95 && plan.length === 0 && minutesSinceLastFull < FULL_CYCLE_FLOOR_MIN;
 
-        if (shouldSleep) {
+        if (sourceFreshnessCycleDispatched) {
+          if (jsonMode) {
+            process.stderr.write(JSON.stringify({ event: 'skip_targeted_after_freshness_cycle', score, plan_size: plan.length }) + '\n');
+          }
+        } else if (shouldSleep) {
           if (jsonMode) {
             process.stderr.write(JSON.stringify({ event: 'skip_healthy', score, plan_size: 0 }) + '\n');
           }
