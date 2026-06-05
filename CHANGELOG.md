@@ -2,6 +2,29 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.26.0] - 2026-06-04
+
+**The Supabase setup docs now match the current dashboard and call out the one thing that actually breaks on IPv4 hosts.** The connection-string instructions were written for the old Supabase UI (two options under Project Settings) and used inconsistent pooler names: some docs said "Connection pooler," others mislabeled port 6543 as the "Session pooler," and a few carried a stale warning to avoid the transaction pooler entirely. The current Supabase UI puts the string under **Connect** in the top navigation with three options (Direct, Transaction pooler, Session pooler). gbrain is tuned for the **Transaction pooler** (port 6543): it disables prepared statements there and routes migrations, DDL, and worker locks to a separate direct connection. This release makes every setup surface say that, consistently.
+
+It also documents the IPv4 footgun that was easy to hit and hard to diagnose: the direct connection gbrain derives for migrations and locks is IPv6-only, so on an IPv4-only host (most Render plans) reads work but sync silently skips pages. The tutorial now leads with the free fix (point `GBRAIN_DIRECT_DATABASE_URL` at the Session pooler, port 5432, IPv4) and keeps the IPv4 add-on as the paid alternative.
+
+Docs only, nothing to configure. Thanks to @FilipHarald (#1848) for catching the outdated UI walkthrough.
+
+### Changed
+- Supabase tutorial (`docs/tutorials/personal-brain.md`), `gbrain init` prompts, the setup skill, the verify runbook, and the live-sync guide all recommend the **Transaction pooler** (port 6543) via the new **Connect** navigation, and explain the IPv4 direct-connection fix.
+
+### Fixed
+- Removed stale "transaction mode pooler breaks sync (`.begin() is not a function`)" warnings that contradicted gbrain's current dual-pool behavior, plus the mislabeling of port 6543 as the Session pooler.
+
+### To take advantage of v0.42.26.0
+
+Nothing to run. If you set up a Supabase brain on an IPv4-only host and `gbrain stats` shows far fewer pages than files, point the direct connection at the Session pooler:
+
+```bash
+export GBRAIN_DIRECT_DATABASE_URL="postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-YOUR-REGION.pooler.supabase.com:5432/postgres"
+gbrain sync --full
+```
+
 ## [0.42.25.0] - 2026-06-03
 
 **Cost caps and budget gates now fire on Opus 4.8 — and every model price lives in one place, so they can't silently drift again.** If you pointed a gbrain tier at Opus 4.8 (`models.aliases.opus`), the cost guardrails were quietly not working: there was no price on file for 4.8, so the `gbrain dream` budget meter let runs proceed unbounded (it warns `BUDGET_METER_NO_PRICING` and skips the gate for unpriced models), and `gbrain skillopt --max-cost-usd` fell back to a cheaper tier's rate and refused too late. This release adds Opus 4.8 pricing ($5 in / $25 out per 1M tokens, same as 4.7) and the caps enforce again.
