@@ -601,7 +601,10 @@ export class MinionQueue {
   async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[]): Promise<MinionJob | null> {
     if (registeredNames.length === 0) return null;
 
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    // Direct (session-mode) pool: claim opens the lock that renewLock then
+    // heartbeats. Both must live on a connection the transaction-mode pooler
+    // won't recycle mid-hold, or the lock orphans and the worker wedges.
+    const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET
         status = 'active',
         lock_token = $1,
@@ -1073,7 +1076,10 @@ export class MinionQueue {
 
   /** Renew lock (token-fenced). Returns false if token mismatch (job was reclaimed). */
   async renewLock(id: number, lockToken: string, lockDurationMs: number): Promise<boolean> {
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+    // Direct (session-mode) pool — see claim(). The heartbeat that keeps a job
+    // alive for minutes cannot run on the transaction pooler without periodic
+    // CONNECTION_ENDED drops that look like lock-expiry and orphan the job.
+    const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET lock_until = now() + ($1::double precision * interval '1 millisecond'), updated_at = now()
        WHERE id = $2 AND lock_token = $3 AND status = 'active'
        RETURNING id`,

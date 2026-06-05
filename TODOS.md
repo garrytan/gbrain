@@ -95,6 +95,27 @@ structural change). Plan + GSTACK REVIEW REPORT at
   (`apply-edits.ts:311`) + `mkdirSync(recursive)` in
   `runOptimizationLoop` (`src/core/skillopt/orchestrator.ts`). Small, own PR.
 
+## Minion-lock direct-pool follow-up (v0.42+)
+
+Filed from the eng-review of the lock-claim/renewLock → direct-session-pool fix
+(PR #1816, now folded into `garrytan/minion-locks-session-pool`). Deliberately
+scoped OUT of that change; not a regression.
+
+- [ ] **P3 — Size the direct session pool for enrich fan-out.** The lock
+  hot-path (`claim`/`renewLock`) now routes through the direct session-mode pool
+  (port 5432) via `executeRawDirect`. Supabase's session-mode pool has a far
+  smaller connection ceiling than the transaction pooler (6543). `executeRawDirect`
+  checks out per-statement (not held open), so the risk is bounded by *concurrent
+  in-flight heartbeats*, not duration — but under heavy `enrich` fan-out (many
+  Minion workers each heartbeating at once) the smaller pool could contend or
+  exhaust. **Why:** a starved session pool would reintroduce the exact wedge class
+  the fix removes, just from a different cause. **Current state:** direct pool size
+  comes from `resolveDirectPoolSize` / `DEFAULT_DIRECT_POOL_SIZE`
+  (`src/core/connection-manager.ts`); no fan-out-aware tuning. **Where to start:**
+  measure concurrent heartbeat count under a realistic `enrich` burst, compare to
+  `DEFAULT_DIRECT_POOL_SIZE`, and either raise the default or add a
+  worker-count-aware knob. **Depends on:** PR #1816 landing first.
+
 ## v0.42.12.0 #1685 brain-health-as-solved follow-ups (v0.42+)
 
 Deferred from the v0.42.12.0 wave (issue #1685, the posture umbrella over #1678/#1735).
@@ -636,9 +657,23 @@ all are latent-debt cleanup.
 
 - [ ] **Config-write normalization.** Whenever a user writes `gbrain config set models.tier.deep anthropic/claude-opus-4-7` we silently store the slash form. v0.41.22.1 centralized the read-side via `splitProviderModelId`, but config writes still preserve whatever shape the user typed. Canonical form should be colon (`anthropic:claude-opus-4-7`). Fix: rewrite at config-write time in `src/core/config.ts`. Breaks existing config files that explicitly hold the slash form — defer to a v0.42+ config-migration wave that also handles the rewrite + once-per-process deprecation warn. Files: `src/core/config.ts`, `src/core/model-config.ts:saveConfig` path. Priority: P3 (latent, not user-visible).
 
-- [ ] **Non-Anthropic pricing tables.** `src/core/anthropic-pricing.ts` is the only pricing surface gbrain ships. Brainstorm + LSD users routing through OpenAI / Gemini / OpenRouter get `BUDGET_TRACKER_NO_PRICING` warn-once + bypass-gate (without `--max-cost`) OR `no_pricing` hard-fail (with `--max-cost`). The right shape: rename to `provider-pricing.ts`, add OpenAI / Gemini / OpenRouter tables, route `lookupPricing` through provider-routed table selection. OpenRouter is a special case (period-vs-dash key mismatch: their `claude-sonnet-4.6` won't match our `claude-sonnet-4-6` either way). Files: `src/core/anthropic-pricing.ts` (rename + extend), `src/core/budget/budget-tracker.ts`, `src/core/eval-contradictions/cost-tracker.ts`. Priority: P2 (real user pain when running brainstorm against non-Anthropic).
+- [ ] **Non-Anthropic budget-tracker pricing.** PARTIALLY ADDRESSED by v0.42.25.0: `src/core/model-pricing.ts` is now the canonical multi-provider table (OpenAI / Google / Together / DeepSeek entries exist alongside Anthropic), and cross-modal-eval + takes-quality already price non-Anthropic models from it. REMAINING: `src/core/budget/budget-tracker.ts:lookupPricing` still routes only through the bare-keyed `ANTHROPIC_PRICING` view, so brainstorm + LSD users running budget gates against OpenAI / Gemini / OpenRouter still get `BUDGET_TRACKER_NO_PRICING` warn-once + bypass-gate (without `--max-cost`) OR `no_pricing` hard-fail (with `--max-cost`). Right fix: route `lookupPricing` through `canonicalLookup`. OpenRouter stays a special case (period-vs-dash key mismatch: their `claude-sonnet-4.6` won't match our `claude-sonnet-4-6`, and it intentionally misses to avoid pricing markup as native). Files: `src/core/budget/budget-tracker.ts`, `src/core/model-pricing.ts`. Priority: P2 (real user pain when running brainstorm against non-Anthropic).
 
-- [ ] **Eval-contradictions duplicate ANTHROPIC_PRICING consolidation.** `src/core/eval-contradictions/cost-tracker.ts:28-38` ships its OWN copy of the Anthropic pricing table with different keys (both bare and `anthropic:`-prefixed forms) and a silent-Haiku fallback on unknown. v0.41.22.1 routed both tables' lookups through `splitProviderModelId` but left the duplication. Right fix: delete the local table, import from `src/core/anthropic-pricing.ts`. Either (a) preserve the silent-Haiku-fallback semantic with an explicit `?? canonicalPricing['claude-haiku-4-5']` at the call site, or (b) tighten to warn-once on unknown (which changes the eval-contradictions soft-ceiling `--budget-usd` contract — coordinate with that subsystem). Files: `src/core/eval-contradictions/cost-tracker.ts`, `src/core/anthropic-pricing.ts`, `test/eval-contradictions/cost-tracker-slash.test.ts` (the legacy-Haiku-fallback pin would need updating). Priority: P3 (DRY cleanup, no user-visible impact).
+- [x] **Eval-contradictions duplicate ANTHROPIC_PRICING consolidation.** **Completed:** v0.42.25.0 (2026-06-03). Deleted the local duplicate table in `src/core/eval-contradictions/cost-tracker.ts`; it now imports the canonical-derived `ANTHROPIC_PRICING` view and `pricingFor` preserves the silent-Haiku fallback (pinned by `test/eval-contradictions/cost-tracker-slash.test.ts`). Closed as part of the wider model-pricing unification.
+
+## v0.42.25.0 pricing-unification follow-ups (v0.42+)
+
+Filed from the v0.42.25.0 ship review (Claude + Codex adversarial + pre-landing).
+All latent / hardening — none are user-reported bugs. The unification landed a
+single canonical `src/core/model-pricing.ts` with `canonicalLookup`.
+
+- [ ] **`canonicalLookup` is case-sensitive (silent-miss undercount).** `src/core/model-pricing.ts:canonicalLookup` does exact-key + `splitProviderModelId` lookups with no lowercasing, so `ANTHROPIC:claude-opus-4-8` or `anthropic:CLAUDE-OPUS-4-8` return `undefined` → consumers that treat a miss as zero-cost (cross-modal runner note, cost-tracker silent-Haiku, skillopt Sonnet fallback) silently mis-budget. Latent today (recipe/CLI paths emit lowercase), but the fail-mode is a silent undercount, not a throw. Fix: lowercase provider+model before lookup in `canonicalLookup`. Add a mixed-case test. Priority: P3.
+
+- [ ] **takes-quality `getPricing` is exact-key only.** `src/core/takes-quality-eval/pricing.ts:getPricing` does a raw `MODEL_PRICING[modelId]` lookup. A user passing a bare/slash/dotted form of an allowlisted model (e.g. `google:gemini-2.0-flash` when the allowlist holds `google:gemini-2-flash`, or `anthropic/claude-opus-4-8`) hits `PricingNotFoundError` even though canonical prices it. Safe direction (fail-closed) but a usability regression. Fix: normalize the lookup key through `canonicalLookup`/`splitProviderModelId` before the allowlist check, keeping fail-closed for genuinely-unsupported models. Priority: P3.
+
+- [ ] **No negative-path test for the takes-quality module-load throw.** `src/core/takes-quality-eval/pricing.ts` throws at import if a `SUPPORTED_MODELS` id is absent from canonical (good fail-fast), but nothing tests it (awkward to test a module-load-time throw in-process). Add a small harness/fixture test. Priority: P3 (programmer-error guard).
+
+- [ ] **Recipe display-layer pricing is stale and unconsolidated.** Each `src/core/ai/recipes/*.ts` carries coarse per-provider `cost_per_1m_input_usd`/`cost_per_1m_output_usd` baselines (e.g. `google.ts` chat = `$0.30/$1.20`, `price_last_verified: 2026-04-20`) read only by `gbrain providers` for display — NOT by any budget gate. They've drifted (google chat baseline predates the Gemini 2.0 Flash `$0.10/$0.40` reconciliation; codex flagged OpenAI baselines too). These are intentionally a separate coarse layer from the per-model `model-pricing.ts` budget tables, so consolidating is non-trivial (one-number-per-provider vs per-model). Options: (a) refresh the `price_last_verified` baselines, or (b) have `gbrain providers` show per-model rates from canonical where available and fall back to the recipe baseline. Flagged by the v0.42.25.0 ship Codex adversarial pass. Priority: P3 (display-only, no budget-gating impact).
 
 ## v0.41.21.0 ops-fix-wave follow-ups (v0.41.22+)
 

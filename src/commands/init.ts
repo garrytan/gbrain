@@ -1072,9 +1072,8 @@ async function initPostgres(opts: {
     console.warn('');
     console.warn('WARNING: You provided a Supabase direct connection URL (db.*.supabase.co:5432).');
     console.warn('  Direct connections are IPv6 only and fail in many environments.');
-    console.warn('  Use the Session pooler connection string instead (port 6543):');
-    console.warn('  Supabase Dashboard > gear icon (Project Settings) > Database >');
-    console.warn('  Connection string > URI tab > change dropdown to "Session pooler"');
+    console.warn('  Use the Transaction pooler connection string instead (port 6543):');
+    console.warn('  Supabase Dashboard > Connect (top bar) > Connection String > Transaction pooler');
     console.warn('');
   }
 
@@ -1087,7 +1086,7 @@ async function initPostgres(opts: {
       const msg = e instanceof Error ? e.message : String(e);
       if (databaseUrl.includes('supabase.co') && (msg.includes('ECONNREFUSED') || msg.includes('ETIMEDOUT'))) {
         console.error('Connection failed. Supabase direct connections (db.*.supabase.co:5432) are IPv6 only.');
-        console.error('Use the Session pooler connection string instead (port 6543).');
+        console.error('Use the Transaction pooler connection string instead (port 6543).');
       }
       throw e;
     }
@@ -1277,7 +1276,7 @@ async function supabaseWizard(): Promise<string> {
 
   console.log('\nEnter your Supabase/Postgres connection URL:');
   console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres'); /* allow-pg-url-literal */
-  console.log('  Find it: Supabase Dashboard > Connect (top bar) > Connection String > Session Pooler\n');
+  console.log('  Find it: Supabase Dashboard > Connect (top bar) > Connection String > Transaction pooler\n');
 
   const url = await readLine('Connection URL: ');
   if (!url) {

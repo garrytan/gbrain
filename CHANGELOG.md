@@ -2,6 +2,70 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.26.0] - 2026-06-04
+
+**The Supabase setup docs now match the current dashboard and call out the one thing that actually breaks on IPv4 hosts.** The connection-string instructions were written for the old Supabase UI (two options under Project Settings) and used inconsistent pooler names: some docs said "Connection pooler," others mislabeled port 6543 as the "Session pooler," and a few carried a stale warning to avoid the transaction pooler entirely. The current Supabase UI puts the string under **Connect** in the top navigation with three options (Direct, Transaction pooler, Session pooler). gbrain is tuned for the **Transaction pooler** (port 6543): it disables prepared statements there and routes migrations, DDL, and worker locks to a separate direct connection. This release makes every setup surface say that, consistently.
+
+It also documents the IPv4 footgun that was easy to hit and hard to diagnose: the direct connection gbrain derives for migrations and locks is IPv6-only, so on an IPv4-only host (most Render plans) reads work but sync silently skips pages. The tutorial now leads with the free fix (point `GBRAIN_DIRECT_DATABASE_URL` at the Session pooler, port 5432, IPv4) and keeps the IPv4 add-on as the paid alternative.
+
+Docs only, nothing to configure. Thanks to @FilipHarald (#1848) for catching the outdated UI walkthrough.
+
+### Changed
+- Supabase tutorial (`docs/tutorials/personal-brain.md`), `gbrain init` prompts, the setup skill, the verify runbook, and the live-sync guide all recommend the **Transaction pooler** (port 6543) via the new **Connect** navigation, and explain the IPv4 direct-connection fix.
+
+### Fixed
+- Removed stale "transaction mode pooler breaks sync (`.begin() is not a function`)" warnings that contradicted gbrain's current dual-pool behavior, plus the mislabeling of port 6543 as the Session pooler.
+
+### To take advantage of v0.42.26.0
+
+Nothing to run. If you set up a Supabase brain on an IPv4-only host and `gbrain stats` shows far fewer pages than files, point the direct connection at the Session pooler:
+
+```bash
+export GBRAIN_DIRECT_DATABASE_URL="postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-YOUR-REGION.pooler.supabase.com:5432/postgres"
+gbrain sync --full
+```
+
+## [0.42.25.0] - 2026-06-03
+
+**Cost caps and budget gates now fire on Opus 4.8 — and every model price lives in one place, so they can't silently drift again.** If you pointed a gbrain tier at Opus 4.8 (`models.aliases.opus`), the cost guardrails were quietly not working: there was no price on file for 4.8, so the `gbrain dream` budget meter let runs proceed unbounded (it warns `BUDGET_METER_NO_PRICING` and skips the gate for unpriced models), and `gbrain skillopt --max-cost-usd` fell back to a cheaper tier's rate and refused too late. This release adds Opus 4.8 pricing ($5 in / $25 out per 1M tokens, same as 4.7) and the caps enforce again.
+
+While fixing that, the deeper problem surfaced: model prices were hand-copied across five separate tables and had already drifted apart. One eval's budget gate priced Opus 4.7 at a stale $15/$75 (3x too high), and Gemini 2.0 Flash disagreed with itself between two tables. All chat-model prices now live in one canonical table (`src/core/model-pricing.ts`) and every other table derives from it — so cross-table price drift is structurally impossible, not just discouraged.
+
+Nothing to configure. `gbrain upgrade` and your caps start enforcing on 4.8.
+
+### Added
+- Opus 4.8 pricing ($5 in / $25 out per 1M tokens) so `--max-cost-usd` and the dream-cycle budget meter enforce on 4.8 runs.
+
+### Changed
+- All chat-model pricing unified into one canonical source. The Anthropic bare-key table, the takes-quality eval allowlist, the contradictions cost-tracker, the cross-modal eval panel, and the skillopt preflight estimate all derive their numbers from it instead of carrying their own copies.
+- skillopt preflight now resolves bare, colon, and slash model ids through the shared parser (previously bare-only), so provider-prefixed 4.8 ids price correctly.
+
+### Fixed
+- Stale Opus 4.7 price in the takes-quality eval budget gate ($15/$75 → $5/$25), which over-estimated cost ~3x.
+- Gemini 2.0 Flash price reconciled to $0.10/$0.40 across the budget-gating tables (the coarse per-provider baselines shown by `gbrain providers` are a separate display layer, unchanged here).
+- Brainstorm and brain-score cost estimates now price provider-prefixed model ids (e.g. `anthropic:claude-opus-4-8`) instead of silently falling back to a default rate.
+
+### To take advantage of v0.42.25.0
+
+`gbrain upgrade` applies this automatically — no migrations, no config. To confirm:
+
+1. With Opus 4.8 as your deep tier, run a capped skillopt dry-run and watch the estimate refuse above the cap:
+   ```bash
+   gbrain skillopt <skill> --bootstrap-from-skill --dry-run --max-cost-usd 1
+   ```
+2. The dream-cycle budget meter no longer prints `BUDGET_METER_NO_PRICING` for Opus 4.8.
+## [0.42.24.0] - 2026-06-03
+
+**Minion workers no longer silently wedge mid-job on a Supabase brain.** The background worker that runs your cron jobs, enrich fan-out, and autopilot cycle holds a lock on each job and heartbeats it every couple of seconds to say "still working." On a Supabase brain that heartbeat was running on the transaction-mode pooler (the high-traffic 6543 port), which recycles its connections per transaction. A lock is held open for minutes, so the pooler would periodically drop the socket mid-heartbeat. The worker read that dropped socket as "the lock expired," force-evicted its own in-flight job, and then sat in a claim loop holding nothing — process alive, no errors in the log, just quietly doing no work. It showed up most under heavy `enrich` load.
+
+The fix routes only the lock hot-path (`claim` and `renewLock`) to the direct **session-mode** pool (port 5432, `GBRAIN_DIRECT_DATABASE_URL`), which holds its connection open for the life of the worker so heartbeats survive. gbrain already shipped this dual-pool design for DDL and bulk work; the lock path just never used it. No new infrastructure — the direct URL was already in your config.
+
+- **Nothing to configure.** `gbrain upgrade` and the worker uses the right pool automatically on any Supabase brain. PGLite (the zero-config default) has no pooler, so this is a no-op there — same behavior on both engines.
+- **Atomicity is preserved.** Statements inside an open transaction still run on the transaction's own connection; only the standalone lock heartbeat (which never runs inside a transaction) gets rerouted. There's a kill-switch (`GBRAIN_DISABLE_DIRECT_POOL`) if you ever need the old behavior.
+- **Empirically:** a heartbeat survived 4/4 beats over 8s on the session pool, vs. connection-drop storms on the transaction pooler.
+
+### For contributors
+New `BrainEngine.executeRawDirect()` — same contract as `executeRaw`, but routes to the direct pool when dual-pool is active (no-op delegation on PGLite / non-Supabase / kill-switch). `claim`/`renewLock` in `minions/queue.ts` point at it. The Postgres impl shares its cancellation plumbing with `executeRaw` via a private `runUnsafe` helper; the in-transaction guard keys on `peekReadPool() !== _sql` so a tx clone is detected and never rerouted. New `test/postgres-execute-raw-direct.test.ts` covers the routing decision (dual-pool on/off × in-tx/not, plus abort short-circuit) without a live Postgres; `test/queue-lock-retry.test.ts` gains a guard that `claim` can never fall back to `executeRaw`. Eng review cleared the plan; the four lock/pool guards stay green.
 ## [0.42.23.0] - 2026-06-03
 
 **`gbrain jobs work` and `gbrain jobs supervisor` take a `--nice <n>` flag that lowers the background job tree's CPU scheduling priority without cutting concurrency.** When the Minions worker pool runs at full width (sync, embed, extract, subagent fans), it can drive a machine's load average high enough to starve your interactive shell. Dropping concurrency throws away throughput. Niceness is the right lever: keep full concurrency, run at low priority, and the work finishes just as fast when the box is idle while yielding politely when it's busy. In the real incident that drove this, reniceing the tree took load from ~7 to ~3 with no measurable throughput loss.

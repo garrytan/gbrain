@@ -4879,17 +4879,25 @@ export class PostgresEngine implements BrainEngine {
     }
   }
 
-  async executeRaw<T = Record<string, unknown>>(
+  /**
+   * Shared body for executeRaw / executeRawDirect: run a raw statement on the
+   * given connection and wire AbortSignal cancellation onto the pending query.
+   * The ONLY difference between the two public methods is which connection they
+   * pick (read pool vs direct session pool), so the cancellation plumbing lives
+   * here in one place rather than being copy-pasted.
+   *
+   * v0.41.18.0 (A20, codex #7): real cancellation via postgres.js's .cancel()
+   * on the pending query. Init nudge (3s wallclock cap) is the first consumer;
+   * the AbortSignal fires when the timer trips. An already-aborted signal
+   * short-circuits before the network round-trip.
+   */
+  private runUnsafe<T>(
+    conn: ReturnType<typeof postgres>,
     sql: string,
     params?: unknown[],
     opts?: { signal?: AbortSignal },
   ): Promise<T[]> {
-    const conn = this.sql;
     const pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]);
-    // v0.41.18.0 (A20, codex #7): real cancellation via postgres.js's
-    // .cancel() on the pending query. Init nudge (3s wallclock cap) is the
-    // first consumer; the AbortSignal fires when the timer trips.
-    // Already-aborted signal short-circuits before the network round-trip.
     if (opts?.signal) {
       if (opts.signal.aborted) {
         // .cancel() is fire-and-forget; the awaited query rejects with the
@@ -4905,7 +4913,7 @@ export class PostgresEngine implements BrainEngine {
         try {
           (pending as unknown as { cancel?: () => void }).cancel?.();
         } catch {
-          // best-effort; the .then below settles regardless
+          // best-effort; the .finally below settles regardless
         }
       };
       opts.signal.addEventListener('abort', onAbort, { once: true });
@@ -4913,7 +4921,15 @@ export class PostgresEngine implements BrainEngine {
         opts.signal?.removeEventListener('abort', onAbort);
       });
     }
-    return pending as unknown as T[];
+    return pending as unknown as Promise<T[]>;
+  }
+
+  async executeRaw<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]> {
+    return this.runUnsafe<T>(this.sql, sql, params, opts);
     // Pre-#406 behavior: throw on any error including connection death.
     // Per-call auto-retry is not safe here because executeRaw is also used
     // for non-transactional mutations (DELETE/UPDATE/INSERT in sources.ts,
@@ -4922,6 +4938,34 @@ export class PostgresEngine implements BrainEngine {
     // Recovery instead happens at the supervisor level: the watchdog detects
     // 3 consecutive health-check failures and calls engine.reconnect() to
     // swap in a fresh pool. See db.ts setSessionDefaults / supervisor.ts.
+  }
+
+  /**
+   * Minion lock hot-path variant of executeRaw. Routes to the DIRECT
+   * session-mode pool (port 5432) when dual-pool is active so lock
+   * heartbeats survive the transaction-pooler's per-transaction connection
+   * recycling. See BrainEngine.executeRawDirect for the full rationale.
+   *
+   * When this engine is a transaction-scoped clone (txEngine from
+   * transaction()), `connectionManager` is inherited but `this.sql` is the tx
+   * connection; we intentionally honor the tx connection in that case by
+   * falling through to this.sql, because routing a statement inside an open
+   * transaction onto a different pool would break atomicity. The lock
+   * hot-path (claim/renewLock) does NOT run inside transaction(), so in
+   * practice this always reaches the direct pool there.
+   */
+  async executeRawDirect<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]> {
+    // Inside an open transaction, _sql is the reserved tx connection (set via
+    // defineProperty in transaction()); never reroute off it.
+    const inTransaction = this._sql !== null && this.connectionManager?.peekReadPool() !== this._sql;
+    const conn = (!inTransaction && this.connectionManager?.isDualPoolActive())
+      ? await this.connectionManager.ddl()
+      : this.sql;
+    return this.runUnsafe<T>(conn, sql, params, opts);
   }
 
   // ============================================================

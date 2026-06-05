@@ -74,6 +74,15 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   Postgres; plain `CREATE INDEX` on PGLite via `sqlFor.pglite`).
 - **Multi-source.** Slug uniqueness is `(source_id, slug)`, not slug. Key batch ops and
   reverse-writes on the composite key; `validateSourceId` before any `source_id` path join.
+- **One canonical chat-pricing table.** All paid-cloud chat/completion prices live ONCE in
+  `src/core/model-pricing.ts` (`CANONICAL_PRICING` + `canonicalLookup`). Every other table
+  (`anthropic-pricing.ts`'s `ANTHROPIC_PRICING`, `takes-quality-eval/pricing.ts`'s
+  `MODEL_PRICING`, the contradictions/cross-modal/skillopt cost views) is a DERIVED view, never
+  a hand-copied duplicate — so cross-table price drift is structurally impossible. Update a
+  price in `model-pricing.ts` only; each consumer keeps its own key allowlist + miss policy
+  (fail-closed vs warn-only vs null), not its own numbers. Pinned by `test/model-pricing.test.ts`
+  (drift guard asserts each view equals canonical). Embeddings price separately in
+  `embedding-pricing.ts` (different unit).
 
 
 ## Reference map (load on demand)

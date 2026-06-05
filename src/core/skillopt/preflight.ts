@@ -20,12 +20,13 @@
  *     - epochs × 1 slow-update reflect call (if no improvement that epoch)
  *     - 1× final test eval on D_test
  *
- * Prices come from existing per-model pricing tables (Anthropic +
- * embedding-pricing). For unknown providers we fail-loud — same posture
- * as BudgetTracker's TX2 contract.
+ * Prices come from the canonical pricing table (model-pricing.ts) via
+ * canonicalLookup. For unknown providers `lookupPrice` returns a warn-only
+ * Sonnet-tier fallback (preflight estimates, never gates) — the actual
+ * fail-loud gate is BudgetTracker's TX2 contract at run time.
  */
 
-import { ANTHROPIC_PRICING } from '../anthropic-pricing.ts';
+import { canonicalLookup } from '../model-pricing.ts';
 import { VALIDATION_RUNS_PER_TASK } from './types.ts';
 
 /** Conservative per-rollout token estimates (input + output). */
@@ -188,10 +189,10 @@ export function preflight(opts: PreflightOpts): PreflightResult {
 }
 
 function lookupPrice(model: string): { input: number; output: number } {
-  // Anthropic models — strip provider prefix.
-  const bare = model.startsWith('anthropic:') ? model.slice('anthropic:'.length) : model;
-  const anth = (ANTHROPIC_PRICING as Record<string, { input: number; output: number }>)[bare];
-  if (anth) return anth;
+  // Canonical lookup handles bare/colon/slash forms (fixes this site's prior
+  // bare-only limitation, which mispriced `anthropic/...` slash ids).
+  const p = canonicalLookup(model);
+  if (p) return p;
   // Conservative fallback: assume Sonnet-tier pricing for unknown providers.
   // Don't throw — preflight is for warning, not gating. The actual budget
   // tracker (BudgetTracker TX2) will fail-loud at run time if pricing is

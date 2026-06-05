@@ -4756,6 +4756,20 @@ export class PGLiteEngine implements BrainEngine {
     return Promise.race([queryPromise, abortPromise]);
   }
 
+  /**
+   * PGLite is in-process WASM with no connection pooler, so the direct-pool
+   * routing that `executeRawDirect` provides on Postgres is a no-op here:
+   * delegate straight to `executeRaw`. Present so the BrainEngine contract is
+   * satisfied and the Minion lock hot-path works identically on both engines.
+   */
+  async executeRawDirect<T = Record<string, unknown>>(
+    sql: string,
+    params?: unknown[],
+    opts?: { signal?: AbortSignal },
+  ): Promise<T[]> {
+    return this.executeRaw<T>(sql, params, opts);
+  }
+
   // ============================================================
   // v0.20.0 Cathedral II: code edges (Layer 1 stubs — filled by Layer 5)
   // ============================================================
