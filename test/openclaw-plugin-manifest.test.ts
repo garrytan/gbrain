@@ -12,5 +12,6 @@ describe('root OpenClaw plugin manifest', () => {
     expect(manifest.configSchema).toBeDefined();
     expect(typeof manifest.configSchema).toBe('object');
     expect(manifest.contracts?.contextEngines).toContain('gbrain-context');
+    expect(entrySource).toContain('export function register');
   });
 });
