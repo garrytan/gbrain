@@ -558,7 +558,7 @@ printf '%s\\n' "$@" > "${capturePath}"
       });
 
       return new Response(JSON.stringify({
-        data: [{ embedding: [1, 2, 3], index: 0 }],
+        data: [{ embedding: Array.from({ length: 1024 }, (_, i) => i + 1), index: 0 }],
       }), {
         headers: { 'content-type': 'application/json' },
       });
@@ -584,7 +584,8 @@ printf '%s\\n' "$@" > "${capturePath}"
 
       const embeddings = await provider.embedBatch(['hello from default local runtime']);
       expect(fetchSpy).toHaveBeenCalledTimes(1);
-      expect(Array.from(embeddings[0] ?? [])).toEqual([1, 2, 3]);
+      expect(embeddings[0]?.length).toBe(1024);
+      expect(Array.from(embeddings[0]?.slice(0, 3) ?? [])).toEqual([1, 2, 3]);
     } finally {
       globalThis.fetch = originalFetch;
 
@@ -626,6 +627,170 @@ printf '%s\\n' "$@" > "${capturePath}"
     }
   });
 
+  test('local provider rejects embeddings whose dimensions do not match the configured model', async () => {
+    process.env.MBRAIN_LOCAL_EMBEDDING_URL = 'http://127.0.0.1:9090/v1/embeddings';
+    process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = 'qwen3-embedding:0.6b';
+    process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS = '4';
+
+    const originalFetch = globalThis.fetch;
+    // The runtime persistently returns a 6-dimensional vector when 4 is configured.
+    // After the per-input retry also returns the wrong size, the provider fails with
+    // a clear error — mirroring the real "expected 1024 dimensions, got 12724" failure
+    // caused by an embedding server serving a different model or pooling configuration.
+    const fetchSpy = mock(async () => new Response(JSON.stringify({
+      data: [{ embedding: [1, 2, 3, 4, 5, 6], index: 0 }],
+    }), {
+      headers: { 'content-type': 'application/json' },
+    }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'sqlite',
+          database_path: join(tempDir, 'brain.db'),
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+        },
+      });
+
+      expect(provider.capability.dimensions).toBe(4);
+
+      let caught: Error | null = null;
+      try {
+        await provider.embedBatch(['mismatched runtime vector']);
+      } catch (error: unknown) {
+        caught = error as Error;
+      }
+
+      expect(caught).not.toBeNull();
+      expect(caught?.message).toMatch(/returned a 6-dimensional vector/i);
+      expect(caught?.message).toContain('4 dimensions');
+      expect(caught?.message).toContain('http://127.0.0.1:9090/v1/embeddings');
+      expect(caught?.message).toContain('qwen3-embedding:0.6b');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('local provider formats bun connection errors with runtime start hints', async () => {
+    process.env.MBRAIN_LOCAL_EMBEDDING_URL = 'http://127.0.0.1:8080/v1/embeddings';
+    process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = 'qwen3-embedding:0.6b';
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async () => {
+      throw new Error('Unable to connect. Is the computer able to access the url?');
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'sqlite',
+          database_path: join(tempDir, 'brain.db'),
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+        },
+      });
+
+      await expect(provider.embedBatch(['runtime is not listening']))
+        .rejects.toThrow(/Local embedding runtime is unreachable at http:\/\/127\.0\.0\.1:8080\/v1\/embeddings/i);
+      await expect(provider.embedBatch(['runtime is not listening']))
+        .rejects.toThrow(/scripts\/run-qwen3-llamacpp-embedding-cpu\.sh/i);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
+      delete process.env.MBRAIN_LOCAL_EMBEDDING_MODEL;
+    }
+  });
+
+  test('postgres local provider enforces pgvector dimensions when model dimensions are unknown', async () => {
+    process.env.MBRAIN_LOCAL_EMBEDDING_URL = 'http://127.0.0.1:9094/v1/embeddings';
+    process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = 'custom-qwen3-runtime-alias';
+    delete process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS;
+
+    const originalFetch = globalThis.fetch;
+    const fetchSpy = mock(async () => new Response(JSON.stringify({
+      data: [{
+        embedding: Array.from({ length: 12724 }, (_, index) => index),
+        index: 0,
+      }],
+    }), {
+      headers: { 'content-type': 'application/json' },
+    }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'postgres',
+          database_url: 'postgres://example',
+          offline: false,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'none',
+        },
+      });
+
+      expect(provider.capability.dimensions).toBe(1024);
+      await expect(provider.embedBatch(['runtime returned token-level embeddings']))
+        .rejects.toThrow(/returned a 12724-dimensional vector/i);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('local provider self-heals a wrong-sized batch entry by re-embedding it alone', async () => {
+    process.env.MBRAIN_LOCAL_EMBEDDING_URL = 'http://127.0.0.1:9091/v1/embeddings';
+    process.env.MBRAIN_LOCAL_EMBEDDING_MODEL = 'qwen3-embedding:0.6b';
+    process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS = '3';
+
+    const originalFetch = globalThis.fetch;
+    // Mirrors the real llama.cpp failure: the runtime returns a malformed, oversized
+    // vector for one input inside a multi-input batch, but embeds that same input
+    // correctly when it is the only input in the request.
+    const fetchSpy = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const inputs = JSON.parse(String(init?.body ?? '{}')).input as string[];
+      const data = inputs.map((_text, index) =>
+        inputs.length > 1 && index === 0
+          ? { embedding: [9, 9, 9, 9, 9, 9, 9], index } // 7-dim, malformed in-batch
+          : { embedding: [1, 2, 3], index });
+      return new Response(JSON.stringify({ data }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    try {
+      const provider = getEmbeddingProvider({
+        config: {
+          engine: 'sqlite',
+          database_path: join(tempDir, 'brain.db'),
+          offline: true,
+          embedding_provider: 'local',
+          query_rewrite_provider: 'heuristic',
+        },
+      });
+
+      expect(provider.capability.dimensions).toBe(3);
+
+      const embeddings = await provider.embedBatch(['first chunk', 'second chunk']);
+
+      expect(embeddings).toHaveLength(2);
+      expect(embeddings[0]?.length).toBe(3);
+      expect(embeddings[1]?.length).toBe(3);
+      expect(Array.from(embeddings[0] ?? [])).toEqual([1, 2, 3]); // healed via single-input retry
+      expect(Array.from(embeddings[1] ?? [])).toEqual([1, 2, 3]);
+      // one batch request + one single-input retry for the malformed entry
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test('local provider platform defaults prefer MLX on macOS and llama.cpp elsewhere', () => {
     expect(defaultLocalEmbeddingUrlForPlatform('darwin')).toBe('http://127.0.0.1:8765/v1/embeddings');
     expect(defaultLocalEmbeddingUrlForPlatform('linux')).toBe('http://127.0.0.1:8080/v1/embeddings');
@@ -639,6 +804,7 @@ printf '%s\\n' "$@" > "${capturePath}"
     delete process.env.MBRAIN_LOCAL_EMBEDDING_URL;
     process.env.MBRAIN_LLAMA_CPP_HOST = 'http://127.0.0.1:18080';
     delete process.env.OLLAMA_HOST;
+    process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS = '3';
 
     const originalFetch = globalThis.fetch;
     const fetchSpy = mock(async (input: RequestInfo | URL) => {
@@ -1067,6 +1233,25 @@ printf '%s\\n' "$@" > "${capturePath}"
     expect(provider.batches).toEqual([['document body']]);
   });
 
+  test('embedChunks rejects provider vectors that do not match declared dimensions', async () => {
+    await expect(embedChunks([{
+      chunk_index: 0,
+      chunk_text: 'wrong dimension document',
+      chunk_source: 'compiled_truth',
+    }], {
+      provider: {
+        capability: {
+          available: true,
+          mode: 'local',
+          implementation: 'test-local',
+          model: 'test-local-v1',
+          dimensions: 3,
+        },
+        embedBatch: async () => [new Float32Array([1, 2, 3, 4])],
+      },
+    })).rejects.toThrow(/expected 3 dimensions, got 4/i);
+  });
+
   test('deferred re-import marks rewritten chunks as missing embeddings', async () => {
     const firstProvider = createFakeProvider();
     setEmbeddingProviderForTests(firstProvider.provider);
@@ -1205,6 +1390,90 @@ Updated chunk content for the same page.
     expect(after[1]?.chunk_source).toBe('frontmatter');
     expect(after[1]?.chunk_text).toContain('PassBuilder::buildPerModuleDefaultPipeline()');
     expect(after[1]?.embedded_at).toBeInstanceOf(Date);
+  });
+
+  test('stale-only embedding clears preserved qwen chunks with invalid dimensions', async () => {
+    const model = 'qwen3-embedding:0.6b';
+    const fake = createCapturingProvider(model);
+    setEmbeddingProviderForTests(fake.provider);
+
+    await engine.putPage('systems/invalid-preserved-embedding', {
+      type: 'system',
+      title: 'Invalid Preserved Embedding',
+      compiled_truth: 'Compiler infrastructure overview.',
+      timeline: '',
+      frontmatter: {
+        codemap: [
+          {
+            system: 'systems/invalid-preserved-embedding',
+            pointers: [
+              {
+                path: 'src/core/page-chunks.ts',
+                symbol: 'ensurePageChunks',
+                role: 'Repairs stale chunk layouts',
+                verified_at: '2026-06-05',
+              },
+            ],
+          },
+        ],
+      },
+    });
+    await engine.upsertChunks('systems/invalid-preserved-embedding', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Compiler infrastructure overview.',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array(12_724),
+        model,
+        token_count: 3,
+      },
+    ]);
+
+    await runEmbed(engine, ['--stale']);
+
+    const embeddedTexts = fake.batches.flat();
+    expect(embeddedTexts).toContain('Compiler infrastructure overview.');
+    expect(embeddedTexts.some(text => text.includes('ensurePageChunks'))).toBe(true);
+
+    const after = await engine.getChunks('systems/invalid-preserved-embedding');
+    expect(after).toHaveLength(2);
+    expect(after[0]?.chunk_source).toBe('compiled_truth');
+    expect(after[0]?.embedded_at).toBeInstanceOf(Date);
+    expect(after[0]?.model).toBe(model);
+    expect(after[1]?.chunk_source).toBe('frontmatter');
+    expect(after[1]?.embedded_at).toBeInstanceOf(Date);
+  });
+
+  test('stale-only embedding clears same-layout qwen chunks with invalid dimensions', async () => {
+    const model = 'qwen3-embedding:0.6b';
+    const fake = createCapturingProvider(model);
+    setEmbeddingProviderForTests(fake.provider);
+
+    await engine.putPage('concepts/invalid-same-layout-embedding', {
+      type: 'concept',
+      title: 'Invalid Same Layout Embedding',
+      compiled_truth: 'Same layout content.',
+      timeline: '',
+      frontmatter: {},
+    });
+    await engine.upsertChunks('concepts/invalid-same-layout-embedding', [
+      {
+        chunk_index: 0,
+        chunk_text: 'Same layout content.',
+        chunk_source: 'compiled_truth',
+        embedding: new Float32Array(12_724),
+        model,
+        token_count: 3,
+      },
+    ]);
+
+    await runEmbed(engine, ['--stale']);
+
+    expect(fake.batches.flat()).toContain('Same layout content.');
+    const after = await engine.getChunks('concepts/invalid-same-layout-embedding');
+    expect(after).toHaveLength(1);
+    expect(after[0]?.embedded_at).toBeInstanceOf(Date);
+    expect(after[0]?.model).toBe(model);
   });
 
   test('stale-only embedding removes obsolete frontmatter chunks after codemap deletion', async () => {

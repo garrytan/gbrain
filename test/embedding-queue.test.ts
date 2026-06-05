@@ -187,6 +187,25 @@ describe('embedding queue', () => {
     await expect(submitted).rejects.toThrow('Embedding provider returned an unexpected result count');
   });
 
+  test('rejects provider vectors that do not match declared dimensions before storage writes', async () => {
+    const provider: ResolvedEmbeddingProvider = {
+      capability: {
+        available: true,
+        mode: 'local',
+        implementation: 'test-local',
+        model: 'test-local-v1',
+        dimensions: 3,
+      },
+      embedBatch: async () => [new Float32Array([1, 2, 3, 4])],
+    };
+    const queue = createEmbeddingQueue({ provider, autoFlush: false });
+
+    const submitted = queue.submit([chunkInput(0, 'wrong dimensions')]);
+    await queue.flush();
+
+    await expect(submitted).rejects.toThrow(/expected 3 dimensions, got 4/i);
+  });
+
   test('defers unavailable providers without calling embedBatch', async () => {
     let calls = 0;
     const provider: ResolvedEmbeddingProvider = {

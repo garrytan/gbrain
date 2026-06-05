@@ -10,6 +10,8 @@ export function assertPgVectorEmbeddingDimensions(
 
   throw new Error(
     `${context} expected ${PGVECTOR_EMBEDDING_DIMENSIONS} dimensions, got ${embedding.length}. ` +
-    'Postgres/PGLite pgvector storage is configured for qwen3-embedding:0.6b-compatible embeddings.',
+    'The embedding runtime returned a vector of the wrong size — it is likely serving a different ' +
+    'model or pooling configuration than the configured qwen3-embedding:0.6b (1024 dimensions). ' +
+    'Fix the embedding runtime (or MBRAIN_LOCAL_EMBEDDING_URL / OLLAMA_HOST) rather than the storage.',
   );
 }

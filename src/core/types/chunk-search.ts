@@ -20,6 +20,7 @@ export interface ChunkInput {
   chunk_text: string;
   chunk_source: ChunkSource;
   embedding?: Float32Array;
+  clear_embedding?: boolean;
   model?: string;
   token_count?: number;
 }

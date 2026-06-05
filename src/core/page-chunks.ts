@@ -1,4 +1,5 @@
 import type { BrainEngine } from './engine.ts';
+import { defaultEmbeddingDimensionsForModel } from './embedding/provider.ts';
 import { buildPageChunks } from './import-file.ts';
 import { resolvePageChunkOptions } from './page-chunk-options.ts';
 import type { Chunk, ChunkInput, Page } from './types.ts';
@@ -20,7 +21,7 @@ export async function ensurePageChunks(engine: BrainEngine, page: Page): Promise
   }
 
   if (sameChunkLayout(chunks, desired)) {
-    return chunks;
+    return clearInvalidSameLayoutEmbeddings(engine, page.slug, chunks);
   }
 
   if (chunks.length === 0) {
@@ -42,11 +43,12 @@ export async function ensurePageChunks(engine: BrainEngine, page: Page): Promise
 
   const rebuilt = desired.map((chunk, index) => {
     const preserved = preservedByKey.get(chunkKey(chunk.chunk_source, chunk.chunk_text))?.shift();
+    const embeddingPatch = preservedEmbeddingPatch(preserved);
     return {
       chunk_index: index,
       chunk_text: chunk.chunk_text,
       chunk_source: chunk.chunk_source,
-      embedding: preserved?.embedding ?? undefined,
+      ...embeddingPatch,
       model: preserved?.model ?? chunk.model,
       token_count: preserved?.token_count ?? chunk.token_count,
     };
@@ -67,4 +69,53 @@ function sameChunkLayout(existing: Chunk[], built: ChunkInput[]): boolean {
 
 function chunkKey(chunkSource: Chunk['chunk_source'], chunkText: string): string {
   return `${chunkSource}\u0000${chunkText}`;
+}
+
+async function clearInvalidSameLayoutEmbeddings(
+  engine: BrainEngine,
+  slug: string,
+  chunks: Chunk[],
+): Promise<Chunk[]> {
+  const hasKnownDimensionEmbeddings = chunks.some(chunk =>
+    chunk.embedded_at !== null && defaultEmbeddingDimensionsForModel(chunk.model) !== null,
+  );
+  if (!hasKnownDimensionEmbeddings) return chunks;
+
+  const chunksWithEmbeddings = await engine.getChunksWithEmbeddings(slug);
+  const invalidIndices = new Set(
+    chunksWithEmbeddings
+      .filter(hasInvalidKnownDimensions)
+      .map(chunk => chunk.chunk_index),
+  );
+  if (invalidIndices.size === 0) return chunks;
+
+  await engine.upsertChunks(slug, chunks.map(chunk => ({
+    chunk_index: chunk.chunk_index,
+    chunk_text: chunk.chunk_text,
+    chunk_source: chunk.chunk_source,
+    clear_embedding: invalidIndices.has(chunk.chunk_index) || undefined,
+    model: chunk.model,
+    token_count: chunk.token_count ?? undefined,
+  })));
+
+  return engine.getChunks(slug);
+}
+
+function preservedEmbeddingPatch(
+  chunk: Chunk | undefined,
+): Pick<ChunkInput, 'embedding' | 'clear_embedding'> {
+  if (!chunk?.embedding) return {};
+
+  if (hasInvalidKnownDimensions(chunk)) {
+    return { clear_embedding: true };
+  }
+
+  return { embedding: chunk.embedding };
+}
+
+function hasInvalidKnownDimensions(chunk: Chunk): boolean {
+  if (!chunk.embedding) return false;
+
+  const expectedDimensions = defaultEmbeddingDimensionsForModel(chunk.model);
+  return expectedDimensions !== null && chunk.embedding.length !== expectedDimensions;
 }

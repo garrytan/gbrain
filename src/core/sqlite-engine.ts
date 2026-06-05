@@ -1193,6 +1193,16 @@ export class SQLiteEngine implements BrainEngine {
       [pageId, ...indices],
     );
 
+    const clearEmbeddingIndices = chunks
+      .filter(chunk => chunk.clear_embedding === true)
+      .map(chunk => chunk.chunk_index);
+    if (clearEmbeddingIndices.length > 0) {
+      db.run(
+        `DELETE FROM content_chunks WHERE page_id = ? AND chunk_index IN (${clearEmbeddingIndices.map(() => '?').join(', ')})`,
+        [pageId, ...clearEmbeddingIndices],
+      );
+    }
+
     for (const chunk of chunks) {
       const embedding = chunk.embedding ? float32ToBlob(chunk.embedding) : null;
       const chunkHash = chunkContentHash(chunk.chunk_text, chunk.chunk_source);

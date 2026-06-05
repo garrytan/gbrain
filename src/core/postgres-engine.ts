@@ -745,6 +745,13 @@ export class PostgresEngine implements BrainEngine {
       return;
     }
 
+    const clearEmbeddingIndices = chunks
+      .filter(chunk => chunk.clear_embedding === true)
+      .map(chunk => chunk.chunk_index);
+    if (clearEmbeddingIndices.length > 0) {
+      await sql`DELETE FROM content_chunks WHERE page_id = ${pageId} AND chunk_index = ANY(${clearEmbeddingIndices})`;
+    }
+
     // Batch upsert: build a single multi-row INSERT ON CONFLICT statement
     // This avoids per-row round-trips and reduces lock contention under parallel workers
     const cols = '(page_id, chunk_index, chunk_text, chunk_source, chunk_content_hash, embedding, model, token_count, embedded_at)';

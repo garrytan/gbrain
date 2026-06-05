@@ -1,4 +1,5 @@
 import {
+  assertEmbeddingBatchDimensions,
   estimateTokenCount,
   type EmbeddedChunkBatch,
   type EmbeddingBatchProgress,
@@ -160,6 +161,7 @@ export function createEmbeddingQueue(options: EmbeddingQueueOptions): EmbeddingQ
       if (embeddings.length !== batch.length) {
         throw new Error('Embedding provider returned an unexpected result count');
       }
+      assertEmbeddingBatchDimensions(embeddings, provider.capability.dimensions);
 
       for (let index = 0; index < batch.length; index++) {
         const entry = batch[index];

@@ -46,6 +46,16 @@ export function defaultEmbeddingDimensionsForModel(model: string | null | undefi
   return null;
 }
 
+export function defaultEmbeddingDimensionsForConfig(
+  config: Pick<MBrainConfig, 'engine'> | null,
+  model: string | null | undefined,
+): number | null {
+  return defaultEmbeddingDimensionsForModel(model)
+    ?? (config?.engine === 'postgres' || config?.engine === 'pglite'
+      ? DEFAULT_LOCAL_EMBEDDING_DIMENSIONS
+      : null);
+}
+
 export function defaultLocalEmbeddingUrlForPlatform(platform: string = process.platform): string {
   const host = platform === 'darwin'
     ? DEFAULT_MLX_HOST
@@ -104,9 +114,90 @@ function resolveLocalProvider(
     || config?.embedding_model
     || DEFAULT_LOCAL_EMBEDDING_MODEL;
   const configuredDimensions = parsePositiveInt(process.env.MBRAIN_LOCAL_EMBEDDING_DIMENSIONS)
-    ?? defaultEmbeddingDimensionsForModel(configuredModel);
+    ?? defaultEmbeddingDimensionsForConfig(config, configuredModel);
   const configuredTimeoutMs = parsePositiveInt(process.env.MBRAIN_EMBED_TIMEOUT_MS)
     ?? DEFAULT_LOCAL_EMBED_TIMEOUT_MS;
+
+  async function requestLocalEmbeddings(inputs: string[]): Promise<number[][]> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), configuredTimeoutMs);
+    let payload: {
+      embeddings?: number[][];
+      data?: Array<{ embedding?: number[] }>;
+    } | null = null;
+
+    try {
+      const response = await fetch(configuredUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: configuredModel,
+          input: inputs,
+        }),
+      });
+
+      if (!response.ok) {
+        const detail = await readEmbeddingErrorDetail(response);
+        throw new Error(formatLocalEmbeddingHttpError(
+          response.status,
+          response.statusText,
+          configuredUrl,
+          configuredModel,
+          detail,
+        ));
+      }
+
+      payload = await response.json() as {
+        embeddings?: number[][];
+        data?: Array<{ embedding?: number[] }>;
+      };
+    } catch (error: unknown) {
+      if (controller.signal.aborted || isAbortError(error)) {
+        throw new Error(
+          `Local embedding runtime timed out after ${configuredTimeoutMs}ms ` +
+          `(url ${configuredUrl}, model ${configuredModel}, batch size ${inputs.length}). ` +
+          'Set MBRAIN_EMBED_TIMEOUT_MS to adjust.',
+        );
+      }
+      if (isFetchConnectionError(error)) {
+        throw new Error(formatLocalEmbeddingConnectionError(
+          configuredUrl,
+          configuredModel,
+          error,
+        ));
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!payload) {
+      throw new Error('Local embedding runtime returned an unexpected embedding payload');
+    }
+
+    const embeddings = Array.isArray(payload.embeddings)
+      ? payload.embeddings
+      : Array.isArray(payload.data)
+        ? payload.data.map(item => item.embedding ?? [])
+        : [];
+
+    if (embeddings.length !== inputs.length || embeddings.some(vector => vector.length === 0)) {
+      throw new Error('Local embedding runtime returned an unexpected embedding payload');
+    }
+
+    return embeddings;
+  }
+
+  function dimensionMismatchError(actualLength: number): Error {
+    return new Error(
+      `Local embedding runtime at ${configuredUrl} returned a ${actualLength}-dimensional vector, ` +
+      `but model "${configuredModel}" is configured for ${configuredDimensions} dimensions. ` +
+      'The runtime is serving a different model or pooling configuration than MBrain expects. ' +
+      'Restart it with the matching model (scripts/run-qwen3-llamacpp-embedding-cpu.sh) ' +
+      'or point MBRAIN_LOCAL_EMBEDDING_URL / OLLAMA_HOST at the correct server.',
+    );
+  }
 
   return {
     capability: {
@@ -117,74 +208,29 @@ function resolveLocalProvider(
       dimensions: configuredDimensions,
     },
     embedBatch: async (texts: string[]) => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), configuredTimeoutMs);
-      let payload: {
-        embeddings?: number[][];
-        data?: Array<{ embedding?: number[] }>;
-      } | null = null;
+      const embeddings = await requestLocalEmbeddings(texts);
+      const vectors = embeddings.map(vector => new Float32Array(vector));
 
-      try {
-        const response = await fetch(configuredUrl, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            model: configuredModel,
-            input: texts,
-          }),
-        });
-
-        if (!response.ok) {
-          const detail = await readEmbeddingErrorDetail(response);
-          throw new Error(formatLocalEmbeddingHttpError(
-            response.status,
-            response.statusText,
-            configuredUrl,
-            configuredModel,
-            detail,
-          ));
-        }
-
-        payload = await response.json() as {
-          embeddings?: number[][];
-          data?: Array<{ embedding?: number[] }>;
-        };
-      } catch (error: unknown) {
-        if (controller.signal.aborted || isAbortError(error)) {
-          throw new Error(
-            `Local embedding runtime timed out after ${configuredTimeoutMs}ms ` +
-            `(url ${configuredUrl}, model ${configuredModel}, batch size ${texts.length}). ` +
-            'Set MBRAIN_EMBED_TIMEOUT_MS to adjust.',
-          );
-        }
-        if (isFetchConnectionError(error)) {
-          throw new Error(formatLocalEmbeddingConnectionError(
-            configuredUrl,
-            configuredModel,
-            error,
-          ));
-        }
-        throw error;
-      } finally {
-        clearTimeout(timeout);
+      if (configuredDimensions === null) {
+        return vectors;
       }
 
-      if (!payload) {
-        throw new Error('Local embedding runtime returned an unexpected embedding payload');
+      for (let index = 0; index < vectors.length; index++) {
+        if (vectors[index].length === configuredDimensions) continue;
+
+        // Some local runtimes (notably llama.cpp) occasionally return a
+        // wrong-sized vector for one input inside a multi-input batch, even
+        // though that same input embeds correctly on its own. Re-request the
+        // offending input by itself before failing the whole batch.
+        const [retry] = await requestLocalEmbeddings([texts[index]]);
+        const retried = new Float32Array(retry ?? []);
+        if (retried.length !== configuredDimensions) {
+          throw dimensionMismatchError(retried.length);
+        }
+        vectors[index] = retried;
       }
 
-      const embeddings = Array.isArray(payload.embeddings)
-        ? payload.embeddings
-        : Array.isArray(payload.data)
-          ? payload.data.map(item => item.embedding ?? [])
-          : [];
-
-      if (embeddings.length !== texts.length || embeddings.some(vector => vector.length === 0)) {
-        throw new Error('Local embedding runtime returned an unexpected embedding payload');
-      }
-
-      return embeddings.map(vector => new Float32Array(vector));
+      return vectors;
     },
   };
 }
@@ -256,7 +302,7 @@ function formatLocalEmbeddingHttpError(
 function formatLocalEmbeddingConnectionError(
   url: string,
   model: string,
-  error: TypeError,
+  error: Error,
 ): string {
   const hint = shouldSuggestLlamaCppStart(url, 0, null)
     ? ' Start llama.cpp embedding server: scripts/run-qwen3-llamacpp-embedding-cpu.sh'
@@ -335,6 +381,13 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-function isFetchConnectionError(error: unknown): error is TypeError {
-  return error instanceof TypeError;
+function isFetchConnectionError(error: unknown): error is Error {
+  if (error instanceof TypeError) return true;
+  if (!(error instanceof Error)) return false;
+
+  const message = error.message.toLowerCase();
+  return message.includes('unable to connect')
+    || message.includes('connection refused')
+    || message.includes('econnrefused')
+    || message.includes('fetch failed');
 }

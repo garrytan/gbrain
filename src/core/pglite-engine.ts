@@ -616,6 +616,16 @@ export class PGLiteEngine implements BrainEngine {
       return;
     }
 
+    const clearEmbeddingIndices = chunks
+      .filter(chunk => chunk.clear_embedding === true)
+      .map(chunk => chunk.chunk_index);
+    if (clearEmbeddingIndices.length > 0) {
+      await this.db.query(
+        `DELETE FROM content_chunks WHERE page_id = $1 AND chunk_index = ANY($2::int[])`,
+        [pageId, clearEmbeddingIndices],
+      );
+    }
+
     // Batch upsert: build dynamic multi-row INSERT
     const cols = '(page_id, chunk_index, chunk_text, chunk_source, chunk_content_hash, embedding, model, token_count, embedded_at)';
     const rowParts: string[] = [];

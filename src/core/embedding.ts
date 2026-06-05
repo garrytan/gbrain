@@ -113,6 +113,11 @@ async function embedBatchForKind(
     if (batchResults.length !== batch.length) {
       throw new Error('Embedding provider returned an unexpected result count');
     }
+    assertEmbeddingBatchDimensions(
+      batchResults,
+      provider.capability.dimensions,
+      index,
+    );
     results.push(...batchResults);
     options.onBatchComplete?.({
       batchIndex,
@@ -167,6 +172,24 @@ export { estimateTokenCount };
 
 export const EMBEDDING_MODEL = DEFAULT_LOCAL_EMBEDDING_MODEL;
 export const EMBEDDING_DIMENSIONS = DEFAULT_LOCAL_EMBEDDING_DIMENSIONS;
+
+export function assertEmbeddingBatchDimensions(
+  embeddings: Float32Array[],
+  expectedDimensions: number | null,
+  startIndex = 0,
+): void {
+  if (expectedDimensions === null) return;
+
+  for (let index = 0; index < embeddings.length; index++) {
+    const actualDimensions = embeddings[index].length;
+    if (actualDimensions === expectedDimensions) continue;
+
+    throw new Error(
+      `Embedding provider result ${startIndex + index} expected ` +
+      `${expectedDimensions} dimensions, got ${actualDimensions}.`,
+    );
+  }
+}
 
 function truncateForEmbedding(text: string): string {
   return text.slice(0, MAX_CHARS);
