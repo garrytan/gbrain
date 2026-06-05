@@ -63,7 +63,12 @@ export async function extractTimelineFromMeetings(
     `SELECT slug, source_id, title, effective_date, updated_at,
             compiled_truth, COALESCE(timeline, '') AS timeline
        FROM pages
-      WHERE type = 'meeting'
+      WHERE (
+              type = 'meeting'
+              OR slug LIKE 'meetings/%'
+              OR frontmatter->>'legacy_type' = 'meeting'
+              OR frontmatter->'tags' ? 'meeting'
+            )
         AND deleted_at IS NULL
         ${sourceFilter}
       ORDER BY effective_date DESC NULLS LAST, slug`,
@@ -85,7 +90,12 @@ export async function extractTimelineFromMeetings(
        JOIN pages pf ON pf.id = l.from_page_id
        JOIN pages pt ON pt.id = l.to_page_id
       WHERE l.link_type = 'attended'
-        AND pf.type = 'meeting'
+        AND (
+              pf.type = 'meeting'
+              OR pf.slug LIKE 'meetings/%'
+              OR pf.frontmatter->>'legacy_type' = 'meeting'
+              OR pf.frontmatter->'tags' ? 'meeting'
+            )
         AND pf.deleted_at IS NULL
         AND pt.deleted_at IS NULL`,
   );
