@@ -7,7 +7,7 @@ tools:
   - gbrain onboard --check --explain
   - gbrain onboard --check --json
   - gbrain jobs submit unify-types
-  - gbrain jobs follow
+  - gbrain jobs get
   - gbrain schema active
   - gbrain schema use
   - gbrain schema stats
@@ -93,11 +93,13 @@ gbrain jobs submit unify-types \
   --params '{"target_pack":"gbrain-base-v2"}'
 ```
 
-Watch progress per phase:
+Inspect progress/result per phase:
 
 ```bash
-gbrain jobs follow <job_id>
+gbrain jobs get <job_id>
 ```
+
+Note: older skill notes referenced `gbrain jobs follow`, but this build exposes job inspection through `gbrain jobs get <job_id>`.
 
 On a 186K-page brain expect ~10 minutes. The handler runs:
 1. Preflight (validate target pack has `mapping_rules:`)
@@ -241,7 +243,7 @@ Final celebration summary to stderr:
 ═══════════════════════════════════════════════════════════
 ```
 
-JSON output (`gbrain jobs follow <id> --json`) returns the structured `UnifyTypesResult` shape with `per_phase`, `pack_identity_after`, `active_pack_flipped`.
+Job inspection (`gbrain jobs get <id>`) surfaces the structured `UnifyTypesResult` shape with `per_phase`, `pack_identity_after`, `active_pack_flipped` when the handler records it in the result payload.
 
 ## Reference
 
