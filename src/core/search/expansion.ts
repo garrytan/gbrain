@@ -8,7 +8,7 @@
  *
  * Provider selection (in order of preference):
  *   1. Anthropic (ANTHROPIC_API_KEY) → claude-haiku-4-5-20251001
- *   2. MiniMax (MINIMAX_API_KEY)     → MiniMax-M2.7 via Anthropic-compatible API
+ *   2. MiniMax (MINIMAX_API_KEY)     → MiniMax-M3 via Anthropic-compatible API
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -17,7 +17,7 @@ const MAX_QUERIES = 3;
 const MIN_WORDS = 3;
 
 const MINIMAX_BASE_URL = 'https://api.minimax.io/anthropic';
-const MINIMAX_MODEL = 'MiniMax-M2.7';
+const MINIMAX_MODEL = 'MiniMax-M3';
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 
 let anthropicClient: Anthropic | null = null;

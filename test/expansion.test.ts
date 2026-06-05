@@ -37,7 +37,7 @@ describe('Expansion provider selection', () => {
   test('uses MiniMax model when only MINIMAX_API_KEY is set', () => {
     process.env.MINIMAX_API_KEY = 'test-minimax-key';
     const model = selectModel(process.env);
-    expect(model).toBe('MiniMax-M2.7');
+    expect(model).toBe('MiniMax-M3');
   });
 
   test('prefers Anthropic when both ANTHROPIC_API_KEY and MINIMAX_API_KEY are set', () => {
@@ -82,7 +82,7 @@ describe('expandQuery short-circuit', () => {
 
 function selectModel(env: NodeJS.ProcessEnv): string {
   if (env.MINIMAX_API_KEY && !env.ANTHROPIC_API_KEY) {
-    return 'MiniMax-M2.7';
+    return 'MiniMax-M3';
   }
   return 'claude-haiku-4-5-20251001';
 }
