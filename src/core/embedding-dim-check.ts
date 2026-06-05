@@ -118,7 +118,10 @@ export async function readContentChunksEmbeddingDim(engine: BrainEngine): Promis
   const formatted = formatRows?.[0]?.formatted ?? null;
   if (!formatted) return { exists: true, dims: null };
 
-  const m = formatted.match(/vector\((\d+)\)/i);
+  // Match halfvec(N) BEFORE vector(N) — halfvec is a distinct pgvector type
+  // (>=0.7) used when dims exceed the indexable vector(N) limit (e.g.
+  // zembed-1 at 2560). Mirrors readFactsEmbeddingInfo below (codex #19).
+  const m = formatted.match(/halfvec\((\d+)\)/i) ?? formatted.match(/vector\((\d+)\)/i);
   return { exists: true, dims: m ? parseInt(m[1], 10) : null };
 }
 
