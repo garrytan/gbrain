@@ -76,7 +76,24 @@ export class PostgresEngine implements BrainEngine {
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock)
     await conn`SELECT pg_advisory_lock(42)`;
     try {
-      await conn.unsafe(SCHEMA_SQL);
+      // SCHEMA_SQL includes index builds (e.g. the HNSW idx_chunks_embedding)
+      // that can exceed Supabase's ~2 min server statement_timeout on a large
+      // brain, aborting the whole batch with SQLSTATE 57014. Run the schema on a
+      // reserved backend with an extended session-scoped timeout — the same
+      // primitive and rationale as runMigrationSQL's transaction:false path
+      // (a plain SET on the pool would leak the GUC onto other connections).
+      // A bigger maintenance_work_mem keeps index builds off the slow on-disk
+      // path. Both SETs are best-effort: managed Postgres may restrict them, in
+      // which case the DDL runs with server defaults.
+      await this.withReservedConnection(async (rconn) => {
+        try {
+          await rconn.executeRaw("SET statement_timeout = '600000'");
+          await rconn.executeRaw("SET maintenance_work_mem = '256MB'");
+        } catch {
+          // Non-fatal: fall through and run with server defaults.
+        }
+        await rconn.executeRaw(SCHEMA_SQL);
+      });
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this);
