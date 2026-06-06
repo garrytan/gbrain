@@ -99,7 +99,7 @@ mbrain --version
 mbrain init --profile homebrew-postgres --non-interactive
 mbrain import <brain-markdown-export> --no-embed
 mbrain search "<known imported term>" --json
-mbrain doctor --agent --json
+mbrain doctor --agent --explain --json
 MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 ```
 
@@ -110,6 +110,8 @@ Expected:
   `doctor --json`.
 - `mbrain --version` reports the release being validated.
 - Postgres doctor checks are healthy for the active profile.
+- `doctor --agent --explain --json` includes read-only `agent_explain`
+  output, including proof status and agent authority-boundary limitations.
 - `runtime_db_identity` is evidence from the active process. Treat same-DB
   claims across CLI, MCP, and autopilot as proven only after checking the actual
   configured agent command and Postgres profile, not from the isolated installed
@@ -117,6 +119,35 @@ Expected:
 - The smoke command discovers MCP tools and completes the page lifecycle,
   search, and `route_memory_writeback` dry-run checks in its temporary local
   profile.
+
+## Agent trust UX and integrated acceptance
+
+Use this gate after changing managed agent setup, installed-agent doctor output,
+proof mode, or authority-first memory boundaries:
+
+```bash
+bun run test:agent-trust
+bun run typecheck
+```
+
+For installed-command confidence on the local machine, also run:
+
+```bash
+mbrain doctor --agent --explain --json
+```
+
+Expected:
+
+- setup preview and diff modes are zero-write.
+- `setup-agent --apply` is the recommended explicit mutating path; bare
+  `setup-agent` remains a documented mutating compatibility alias.
+- uninstall removes only MBrain-managed prompt, hook, skip-dir, and supported
+  MCP registration surfaces.
+- when run locally, `doctor --agent --explain --json` is read-only and reports
+  installed surface, answer-authority boundaries, the `read_context` evidence
+  boundary, hint-only surfaces, proof status, next actions, and limitations.
+- integrated acceptance reports zero authority-first safety counters in its
+  deterministic fixture.
 
 ## HTTP OAuth runtime confidence smoke
 

@@ -442,15 +442,18 @@ If you need a non-default config directory, use the same wrapper-script pattern 
 
 ---
 
-## 10. One-command agent setup: `mbrain setup-agent`
+## 10. Inspect, diff, then apply agent setup
 
-Instead of manually registering MCP and copying behavioral rules, run:
+Instead of manually registering MCP and copying behavioral rules, inspect the
+managed setup plan before applying it:
 
 ```bash
-mbrain setup-agent
+mbrain setup-agent --preview
+mbrain setup-agent --diff
+mbrain setup-agent --apply
 ```
 
-This single command:
+The apply command:
 
 1. **Detects** which AI clients are installed (`~/.claude/` and/or `~/.codex/`)
 2. **Registers** the MCP server with each detected client (if not already registered)
@@ -462,14 +465,22 @@ The agent rules teach your AI client the brain-agent loop: read brain when MBrai
 ### Options
 
 ```bash
-mbrain setup-agent              # auto-detect and set up all installed clients
-mbrain setup-agent --claude     # Claude Code only
-mbrain setup-agent --codex      # Codex only
-mbrain setup-agent --claude --scope local  # Claude project-local MCP registration
-mbrain setup-agent --skip-mcp   # inject rules only, skip MCP registration
+mbrain setup-agent --preview    # show planned client/rules/hook actions without writing
+mbrain setup-agent --diff       # show redacted diffs without writing
+mbrain setup-agent --apply      # explicitly apply managed setup actions
+mbrain setup-agent              # legacy compatibility alias for --apply
+mbrain setup-agent --claude --apply     # Claude Code only
+mbrain setup-agent --codex --apply      # Codex only
+mbrain setup-agent --claude --scope local --apply  # Claude project-local MCP registration
+mbrain setup-agent --skip-mcp --apply   # inject rules only, skip MCP registration
+mbrain setup-agent --uninstall  # remove only MBrain-managed setup surfaces
 mbrain setup-agent --print      # print the rules to stdout instead of writing files
 mbrain setup-agent --json       # machine-readable output
 ```
+
+Prefer `--preview` and `--diff` before changing files. `--apply` is the
+recommended explicit mutating setup path; bare `mbrain setup-agent` remains a
+mutating compatibility alias for existing workflows.
 
 ### What gets written
 
@@ -482,7 +493,9 @@ Claude Code registration defaults to user scope. Pass
 `mbrain setup-agent --claude --scope local` when you want MBrain registered only
 for the current Claude Code project.
 
-Rules are wrapped in `<!-- MBRAIN:RULES:START -->` / `<!-- MBRAIN:RULES:END -->` markers so existing content is never touched. Running `setup-agent` again updates the mbrain section in place.
+Rules are wrapped in `<!-- MBRAIN:RULES:START -->` / `<!-- MBRAIN:RULES:END -->`
+markers so user content outside the managed MBrain block is preserved. Running
+`setup-agent` again updates the MBrain section in place.
 
 For Claude Code, `setup-agent` also installs:
 
@@ -509,15 +522,17 @@ First verify the installed command, client MCP registration, prompt rules, and
 Claude stop hook from the shell:
 
 ```bash
-mbrain doctor --agent --json
+mbrain doctor --agent --explain
 MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp
 ```
 
-`doctor --agent` checks that Codex and Claude are registered to a working
-`mbrain serve` command, that the registration is enabled/connected, and that the
-managed prompt rules are installed. The smoke command starts the installed MCP
-server over stdio and exercises tool discovery, a page lifecycle, search, and
-`route_memory_writeback` dry-run availability.
+`doctor --agent --explain` checks that Codex and Claude are registered to a
+working `mbrain serve` command, that the registration is enabled/connected, and
+that the managed prompt rules are installed. Its read-only proof summary reports
+that candidates, graph paths, Dream outputs, and raw episodes are hint-only by
+default, and includes deterministic proof status. The smoke command starts the
+installed MCP server over stdio and exercises tool discovery, a page lifecycle,
+search, and `route_memory_writeback` dry-run availability.
 
 Then start a new session in your AI client and verify:
 

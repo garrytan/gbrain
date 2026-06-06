@@ -726,6 +726,7 @@ describe('doctor command', () => {
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain('--agent');
     expect(stdout).toContain('--explain');
+    expect(stdout).toContain('requires --agent');
     expect(stdout).toContain('--agent-command');
   });
 });

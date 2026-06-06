@@ -126,10 +126,13 @@ describe('Postgres target runtime product messaging', () => {
     const korean = readRepoFile('docs/local-offline.ko.md');
 
     for (const doc of [readme, english, korean]) {
-      expect(doc).toContain('mbrain doctor --agent --json');
+      expect(doc).toContain('mbrain doctor --agent --explain');
       expect(doc).toContain('MBRAIN_SMOKE_COMMAND=mbrain bun run smoke:installed-mcp');
     }
 
+    expect(readme).toContain('read-only summary of agent memory authority boundaries');
+    expect(english).toContain('read-only proof summary');
+    expect(korean).toContain('read-only proof summary');
     expect(english).toContain('route_memory_writeback');
     expect(korean).toContain('route_memory_writeback');
   });

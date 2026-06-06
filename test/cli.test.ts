@@ -177,6 +177,25 @@ describe('CLI version', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
+  test('package exposes the focused agent trust verification script', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+    expect(pkg.scripts['test:agent-trust']).toBe(
+      'bun test ./test/setup-agent-trust-ux.test.ts ./test/setup-agent.test.ts ./test/doctor-agent-explain.test.ts ./test/doctor.test.ts ./test/installed-agent-readiness-service.test.ts ./test/proof-agent-command.test.ts ./test/authority-first-integrated-acceptance.test.ts ./test/cli.test.ts',
+    );
+  });
+
+  test('verification docs cover agent trust explain and integrated acceptance', () => {
+    const verify = readFileSync(new URL('../docs/MBRAIN_VERIFY.md', import.meta.url), 'utf-8');
+    expect(verify).toContain('Agent trust UX and integrated acceptance');
+    expect(verify).toContain('bun run test:agent-trust');
+    expect(verify).toContain('mbrain doctor --agent --explain --json');
+    expect(verify).toContain('read-only');
+    expect(verify).toContain('answer-authority boundaries');
+    expect(verify).toContain('read_context');
+    expect(verify).toContain('proof status');
+    expect(verify).toContain('zero authority-first safety counters');
+  });
+
   test('VERSION is a valid semver string', async () => {
     const { VERSION } = await import('../src/version.ts');
     expect(VERSION).toMatch(/^\d+\.\d+\.\d+/);
