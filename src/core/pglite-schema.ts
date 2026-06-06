@@ -628,6 +628,159 @@ CREATE INDEX IF NOT EXISTS idx_memory_redaction_items_target
   ON memory_redaction_plan_items(target_object_type, target_object_id);
 
 -- ============================================================
+-- assertion pipeline
+-- ============================================================
+CREATE TABLE IF NOT EXISTS extracted_claims (
+  id                    TEXT PRIMARY KEY,
+  source_id             TEXT NOT NULL,
+  source_item_id        TEXT NOT NULL,
+  source_chunk_id       TEXT NOT NULL,
+  extractor_kind        TEXT NOT NULL,
+  extractor_version     TEXT NOT NULL,
+  runner_job_id         TEXT,
+  claim_text            TEXT NOT NULL,
+  claim_type            TEXT NOT NULL,
+  target_hint           TEXT NOT NULL,
+  property_hint         TEXT NOT NULL,
+  value_json            JSONB NOT NULL,
+  confidence            REAL NOT NULL,
+  sensitivity_level     TEXT NOT NULL,
+  prompt_injection_flag BOOLEAN NOT NULL DEFAULT false,
+  secret_flag           BOOLEAN NOT NULL DEFAULT false,
+  status                TEXT NOT NULL CHECK (status IN ('pending', 'pending_resolution', 'resolved', 'rejected')),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_extracted_claims_source_chunk
+  ON extracted_claims(source_chunk_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_extracted_claims_target
+  ON extracted_claims(claim_type, target_hint, property_hint);
+
+CREATE TABLE IF NOT EXISTS assertions (
+  id                         TEXT PRIMARY KEY,
+  scope_id                   TEXT NOT NULL DEFAULT 'workspace:default',
+  policy_version             TEXT NOT NULL DEFAULT 'policy:v1',
+  authority_scope            TEXT NOT NULL DEFAULT 'work',
+  claim_type                 TEXT NOT NULL,
+  target_type                TEXT NOT NULL,
+  target_id                  TEXT NOT NULL,
+  target_slug                TEXT,
+  property                   TEXT NOT NULL,
+  value_json                 JSONB NOT NULL,
+  normalized_claim           TEXT NOT NULL,
+  authority_summary          JSONB NOT NULL DEFAULT '{}',
+  confidence                 REAL NOT NULL DEFAULT 0,
+  evidence_count             INTEGER NOT NULL DEFAULT 0,
+  authority_state            TEXT NOT NULL CHECK (authority_state IN ('unresolved', 'candidate', 'canonical', 'conflicted', 'rejected')),
+  lifecycle_state            TEXT NOT NULL CHECK (lifecycle_state IN ('active', 'stale', 'expired', 'archived', 'purged')),
+  valid_from                 TIMESTAMPTZ,
+  valid_until                TIMESTAMPTZ,
+  supersedes_assertion_id    TEXT,
+  superseded_by_assertion_id TEXT,
+  conflict_set_id            TEXT,
+  created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_assertions_target_property
+  ON assertions(target_type, target_id, property);
+CREATE INDEX IF NOT EXISTS idx_assertions_scope_target_property
+  ON assertions(scope_id, target_slug, target_type, target_id, property);
+CREATE INDEX IF NOT EXISTS idx_assertions_authority_lifecycle
+  ON assertions(authority_state, lifecycle_state);
+
+CREATE TABLE IF NOT EXISTS assertion_events (
+  id                   TEXT PRIMARY KEY,
+  assertion_id          TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+  event_type            TEXT NOT NULL,
+  from_authority_state  TEXT,
+  to_authority_state    TEXT,
+  from_lifecycle_state  TEXT,
+  to_lifecycle_state    TEXT,
+  reason                TEXT NOT NULL DEFAULT '',
+  source_refs_json      JSONB NOT NULL DEFAULT '[]',
+  actor                 TEXT NOT NULL DEFAULT '',
+  job_id                TEXT,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_assertion_events_assertion_created
+  ON assertion_events(assertion_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS assertion_evidence (
+  id                  TEXT PRIMARY KEY,
+  assertion_id         TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+  scope_id             TEXT NOT NULL DEFAULT 'workspace:default',
+  policy_version       TEXT NOT NULL DEFAULT 'policy:v1',
+  authority_scope      TEXT NOT NULL DEFAULT 'work',
+  extracted_claim_id   TEXT NOT NULL,
+  source_id            TEXT NOT NULL,
+  source_item_id       TEXT NOT NULL,
+  source_chunk_id      TEXT NOT NULL,
+  session_id           TEXT,
+  task_event_id        TEXT,
+  contribution_type    TEXT NOT NULL CHECK (contribution_type IN ('supports', 'contradicts', 'supersedes', 'superseded_by', 'context', 'audit_only')),
+  evidence_authority   TEXT NOT NULL,
+  evidence_confidence  REAL NOT NULL,
+  valid_from           TIMESTAMPTZ,
+  valid_until          TIMESTAMPTZ,
+  revocation_state     TEXT NOT NULL DEFAULT 'active',
+  forgetting_state     TEXT NOT NULL DEFAULT 'retained',
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_assertion_evidence_assertion
+  ON assertion_evidence(assertion_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_assertion_evidence_scope_assertion
+  ON assertion_evidence(scope_id, assertion_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_assertion_evidence_source
+  ON assertion_evidence(source_id, source_item_id, source_chunk_id);
+
+CREATE TABLE IF NOT EXISTS assertion_lineage (
+  id                 TEXT PRIMARY KEY,
+  assertion_id       TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+  extracted_claim_id TEXT NOT NULL,
+  source_id          TEXT NOT NULL,
+  source_item_id     TEXT NOT NULL,
+  source_chunk_id    TEXT NOT NULL,
+  session_id         TEXT,
+  task_event_id      TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS assertion_links (
+  id                 TEXT PRIMARY KEY,
+  scope_id           TEXT NOT NULL DEFAULT 'workspace:default',
+  policy_version     TEXT NOT NULL DEFAULT 'policy:v1',
+  from_assertion_id  TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+  to_assertion_id    TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+  link_type          TEXT NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(from_assertion_id, to_assertion_id, link_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assertion_links_scope_from
+  ON assertion_links(scope_id, from_assertion_id, link_type);
+
+CREATE TABLE IF NOT EXISTS conflict_sets (
+  id             TEXT PRIMARY KEY,
+  target_type    TEXT NOT NULL,
+  target_id      TEXT NOT NULL,
+  property       TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'open',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS conflict_set_assertions (
+  conflict_set_id TEXT NOT NULL REFERENCES conflict_sets(id) ON DELETE CASCADE,
+  assertion_id     TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+  role             TEXT NOT NULL DEFAULT 'member',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY(conflict_set_id, assertion_id)
+);
+
+-- ============================================================
 -- config: brain-level settings
 -- ============================================================
 CREATE TABLE IF NOT EXISTS config (

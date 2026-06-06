@@ -120,7 +120,12 @@ const DREAM_CLI_SPEC: Operation = {
     dry_run: { type: 'boolean', description: 'Preview without writing candidates' },
     apply: { type: 'boolean', description: 'Run candidate-writing phases behind a cycle lock' },
     write_candidates: { type: 'boolean', description: 'Allow governed candidate writes in apply mode' },
+    apply_auto_promote: { type: 'boolean', description: 'Allow auto-promote to apply in apply mode' },
+    allow_canonical_page_writes: { type: 'boolean', description: 'Allow auto-promote to write canonical pages' },
     limit: { type: 'number', description: 'Maximum items per phase family' },
+    max_runner_calls: { type: 'number', description: 'Maximum runner calls for auto-promote review' },
+    time_budget_ms: { type: 'number', description: 'Maximum auto-promote runner time budget in milliseconds' },
+    max_candidates_per_cycle: { type: 'number', description: 'Maximum auto-promote candidates per Dream cycle' },
     allow_llm: { type: 'boolean', description: 'Allow budgeted LLM use when a phase supports it' },
     allow_local_runner: { type: 'boolean', description: 'Allow local runner-backed phase work' },
   },
@@ -585,7 +590,8 @@ ADMIN
   config [show|get|set] <key> [val]  Brain config
   assertion-retrieval [--target-slug S]
                                     List lifecycle-aware assertion retrieval plans
-  dream [--apply|--dry-run]           Run the Dream maintenance phase runner
+  dream [--apply|--dry-run] [--apply-auto-promote] [--allow-canonical-page-writes]
+                                    Run the Dream maintenance phase runner
   lifecycle-report [--scope-id S]     Report lifecycle forgetting candidates and restore windows
   lifecycle-plan-purge [--scope-id S] Create a reviewed lifecycle purge plan
   lifecycle-restore --entity-type T --entity-id ID

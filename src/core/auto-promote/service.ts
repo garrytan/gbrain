@@ -19,6 +19,9 @@ export interface RunAutoPromoteInput {
   contextLoader: (targetRef: string) => Promise<string | TargetContextSnapshot>;
   scope_id?: string;
   limit?: number;
+  allow_canonical_page_writes?: boolean;
+  max_runner_calls?: number;
+  time_budget_ms?: number;
 }
 export interface TargetContextSnapshot {
   text: string;
@@ -55,14 +58,18 @@ export async function runAutoPromote(input: RunAutoPromoteInput): Promise<RunAut
 
   const verdicts: PromotionVerdict[] = [];
   const targetSnapshotHashes = new Map<string, string | null>();
+  const runnerBudget = {
+    calls: 0,
+    max: input.max_runner_calls ?? Number.POSITIVE_INFINITY,
+  };
   for (const c of buckets.low_risk) {
-    const v = await judge(input, c, input.config.first_pass_model, targetSnapshotHashes);
+    const v = await judge(input, c, input.config.first_pass_model, targetSnapshotHashes, runnerBudget);
     if (v) verdicts.push(v);
   }
   let escalated = 0;
   if (input.config.escalation.enabled) {
     for (const c of buckets.risky.slice(0, input.config.escalation.max_per_cycle)) {
-      const v = await judge(input, c, input.config.escalation_model ?? input.config.first_pass_model, targetSnapshotHashes);
+      const v = await judge(input, c, input.config.escalation_model ?? input.config.first_pass_model, targetSnapshotHashes, runnerBudget);
       if (v) { verdicts.push(v); escalated++; }
     }
   }
@@ -71,6 +78,8 @@ export async function runAutoPromote(input: RunAutoPromoteInput): Promise<RunAut
     engine: input.engine, verdicts, candidates: [...buckets.low_risk, ...buckets.risky],
     config: input.config, now: input.now, actor: 'mbrain:auto_promote',
     target_snapshot_hashes: targetSnapshotHashes,
+    allow_canonical_page_writes: input.allow_canonical_page_writes === true,
+    canonical_write_candidate_ids: new Set(buckets.low_risk.map((candidate) => candidate.id)),
   });
   const deferred = verdicts.filter((v) => v.decision === 'defer').length;
   const reportableGateSkips = gate.skipped.filter((entry) => isReportableGateSkip(entry.reason));
@@ -125,6 +134,7 @@ async function judge(
   c: { id: string; proposed_content: string; target_object_id: string | null; source_refs: string[] },
   _model: string | null,
   targetSnapshotHashes: Map<string, string | null>,
+  runnerBudget: { calls: number; max: number },
 ): Promise<PromotionVerdict | null> {
   const targetContext = normalizeTargetContext(await input.contextLoader(c.target_object_id ?? ''));
   targetSnapshotHashes.set(c.id, targetContext.content_hash);
@@ -143,6 +153,8 @@ async function judge(
     // source_refs is empty: verdict cache doesn't persist them and the gate doesn't read them
     return { candidate_id: c.id, decision: cached.decision as PromotionVerdict['decision'], confidence: cached.confidence, reasoning: cached.reasoning, source_refs: [] };
   }
+  if (runnerBudget.calls >= runnerBudget.max) return null;
+  runnerBudget.calls += 1;
   const prompt = buildPromotionReviewPrompt({
     candidate_content: c.proposed_content,
     target_ref: c.target_object_id ?? '(unknown)',

@@ -59,7 +59,12 @@ export interface DreamCycleRunInput {
   now?: string;
   dry_run?: boolean;
   write_candidates?: boolean;
+  apply_auto_promote?: boolean;
+  allow_canonical_page_writes?: boolean;
   limit?: number;
+  max_runner_calls?: number;
+  time_budget_ms?: number;
+  max_candidates_per_cycle?: number;
   allow_llm?: boolean;
   allow_local_runner?: boolean;
   trigger?: 'cli' | 'autopilot' | 'job' | 'manual';
@@ -102,7 +107,15 @@ export interface DreamCycleRunDeps {
   };
   phaseHandlers?: Partial<Record<DreamCyclePhaseFamily, DreamCyclePhaseHandler>>;
   autoPromote?: {
-    run(input: { scope_id: string; now?: string; dry_run?: boolean; limit?: number }): Promise<{ counts: Record<string, number> }>;
+    run(input: {
+      scope_id: string;
+      now?: string;
+      dry_run?: boolean;
+      limit?: number;
+      allow_canonical_page_writes?: boolean;
+      max_runner_calls?: number;
+      time_budget_ms?: number;
+    }): Promise<{ counts: Record<string, number> }>;
   };
 }
 
@@ -112,10 +125,16 @@ export type DreamCyclePhaseHandler = (
 
 export interface DreamCyclePhaseContext {
   engine: BrainEngine;
-  input: Required<Pick<DreamCycleRunInput, 'dry_run' | 'write_candidates' | 'trigger'>> & {
+  input: Required<Pick<
+    DreamCycleRunInput,
+    'dry_run' | 'write_candidates' | 'apply_auto_promote' | 'allow_canonical_page_writes' | 'trigger'
+  >> & {
     scope_id: string;
     now: string;
     limit?: number;
+    max_runner_calls?: number;
+    time_budget_ms?: number;
+    max_candidates_per_cycle?: number;
     allow_llm: boolean;
     allow_local_runner: boolean;
   };
@@ -519,11 +538,17 @@ async function runAutoPromotePhase(
       llm_or_runner_used: false,
     };
   }
+  const autoPromoteApply = context.input.dry_run
+    ? false
+    : context.input.write_candidates && context.input.apply_auto_promote;
   const result = await deps.autoPromote.run({
     scope_id: context.input.scope_id,
     now: context.input.now,
-    dry_run: context.input.dry_run || !context.input.write_candidates,
-    limit: context.input.limit,
+    dry_run: !autoPromoteApply,
+    limit: context.input.max_candidates_per_cycle ?? context.input.limit,
+    allow_canonical_page_writes: autoPromoteApply && context.input.allow_canonical_page_writes,
+    max_runner_calls: context.input.max_runner_calls,
+    time_budget_ms: context.input.time_budget_ms,
   });
   const counts = result.counts ?? {};
   const hasActionableWork = Object.values(counts).some((count) => count > 0);
@@ -602,12 +627,18 @@ function normalizeRunInput(input: DreamCycleRunInput): DreamCyclePhaseContext['i
   if (typeof now !== 'string' || Number.isNaN(Date.parse(now))) {
     throw new Error('now must be a valid ISO datetime string');
   }
+  const dryRun = input.dry_run !== false;
   return {
     scope_id: input.scope_id?.trim() || 'workspace:default',
     now,
-    dry_run: input.dry_run !== false,
+    dry_run: dryRun,
     write_candidates: input.write_candidates === true,
+    apply_auto_promote: !dryRun && input.apply_auto_promote === true,
+    allow_canonical_page_writes: !dryRun && input.allow_canonical_page_writes === true,
     limit: input.limit,
+    max_runner_calls: input.max_runner_calls,
+    time_budget_ms: input.time_budget_ms,
+    max_candidates_per_cycle: input.max_candidates_per_cycle,
     allow_llm: input.allow_llm === true,
     allow_local_runner: input.allow_local_runner === true,
     trigger: input.trigger ?? 'manual',

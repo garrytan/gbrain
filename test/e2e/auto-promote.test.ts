@@ -57,7 +57,15 @@ describe('auto-promote E2E pipeline (PGLite, stub runner)', () => {
 
       const counter = { calls: 0 };
       const cfg = { ...defaultAutoPromoteConfig(), enabled: true };
-      const args = { engine, config: cfg, now: NOW, runnerExecutor: makeStubExecutor(counter), contextLoader: stubContext, runner: { kind: 'claude_code' } as any };
+      const args = {
+        engine,
+        config: cfg,
+        now: NOW,
+        runnerExecutor: makeStubExecutor(counter),
+        contextLoader: stubContext,
+        runner: { kind: 'claude_code' } as any,
+        allow_canonical_page_writes: true,
+      };
 
       const res = await runAutoPromote(args);
       expect(res.counts.selected_low_risk).toBe(1);

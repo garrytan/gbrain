@@ -202,6 +202,91 @@ describe('dream cycle phase runner', () => {
     });
   });
 
+  test('auto-promote is dry-run unless apply_auto_promote is explicitly enabled', async () => {
+    const calls: any[] = [];
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-06-06T00:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+      apply_auto_promote: false,
+      allow_local_runner: true,
+    } as any, {
+      runtime: createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' }),
+      autoPromote: {
+        run: async (input: any) => {
+          calls.push(input);
+          return { counts: { selected_low_risk: 1, canonical_writes: 0 } };
+        },
+      },
+    });
+
+    expect(calls[0]).toMatchObject({
+      dry_run: true,
+      allow_canonical_page_writes: false,
+    });
+    expect(result.phases.find((phase) => phase.family === 'auto_promote')).toMatchObject({
+      status: 'warn',
+    });
+  });
+
+  test('auto-promote receives canonical write permission only when explicitly allowed', async () => {
+    const calls: any[] = [];
+    await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-06-06T00:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+      apply_auto_promote: true,
+      allow_canonical_page_writes: true,
+      allow_local_runner: true,
+      max_runner_calls: 2,
+      time_budget_ms: 1000,
+      max_candidates_per_cycle: 4,
+    } as any, {
+      runtime: createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' }),
+      autoPromote: {
+        run: async (input: any) => {
+          calls.push(input);
+          return { counts: {} };
+        },
+      },
+    });
+
+    expect(calls[0]).toMatchObject({
+      dry_run: false,
+      allow_canonical_page_writes: true,
+      max_runner_calls: 2,
+      time_budget_ms: 1000,
+      limit: 4,
+    });
+  });
+
+  test('dry-run suppresses apply and canonical permissions for programmatic callers', async () => {
+    const calls: any[] = [];
+    await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-06-06T00:00:00.000Z',
+      dry_run: true,
+      write_candidates: true,
+      apply_auto_promote: true,
+      allow_canonical_page_writes: true,
+      allow_local_runner: true,
+    }, {
+      autoPromote: {
+        run: async (input: any) => {
+          calls.push(input);
+          return { counts: { selected_low_risk: 1 } };
+        },
+      },
+    });
+
+    expect(calls[0]).toMatchObject({
+      dry_run: true,
+      allow_canonical_page_writes: false,
+    });
+  });
+
   test('read-only landed phases warn only on actionable counts', async () => {
     const engine = {
       sql: {

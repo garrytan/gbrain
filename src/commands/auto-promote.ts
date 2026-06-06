@@ -56,6 +56,7 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
     runnerExecutor: createCliRunnerExecutor({ model: config.first_pass_model }),
     contextLoader: createPageContextLoader(engine),
     scope_id: parsed.scope_id,
+    allow_canonical_page_writes: parsed.dry_run === false,
     ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
   });
 
@@ -71,7 +72,15 @@ export async function runAutoPromoteCommand(engine: BrainEngine, args: string[])
 
 export function createAutoPromoteDreamDependency(engine: BrainEngine) {
   return {
-    run: async (input: { scope_id: string; now?: string; dry_run?: boolean; limit?: number }) => {
+    run: async (input: {
+      scope_id: string;
+      now?: string;
+      dry_run?: boolean;
+      limit?: number;
+      allow_canonical_page_writes?: boolean;
+      max_runner_calls?: number;
+      time_budget_ms?: number;
+    }) => {
       const base = normalizeAutoPromoteConfig(loadConfig()?.auto_promote as Partial<AutoPromoteConfig> | undefined);
       const config: AutoPromoteConfig = { ...base, dry_run: input.dry_run !== false };
       if (!config.enabled) return { counts: zeroCounts() };
@@ -86,6 +95,9 @@ export function createAutoPromoteDreamDependency(engine: BrainEngine) {
         runnerExecutor: createCliRunnerExecutor({ model: config.first_pass_model }),
         contextLoader: createPageContextLoader(engine),
         scope_id: input.scope_id,
+        allow_canonical_page_writes: input.allow_canonical_page_writes === true,
+        max_runner_calls: input.max_runner_calls,
+        time_budget_ms: input.time_budget_ms,
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       });
       return { counts: result.counts };

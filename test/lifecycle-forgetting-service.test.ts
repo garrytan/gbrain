@@ -1378,6 +1378,9 @@ function insertSQLiteAssertion(
   (harness.engine as any).database.query(`
     INSERT INTO assertions (
       id,
+      scope_id,
+      policy_version,
+      authority_scope,
       claim_type,
       target_type,
       target_id,
@@ -1397,9 +1400,12 @@ function insertSQLiteAssertion(
       conflict_set_id,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     assertion.id,
+    assertion.scope_id,
+    assertion.policy_version,
+    assertion.authority_scope,
     assertion.claim_type,
     assertion.target_type,
     assertion.target_id,
@@ -1496,6 +1502,9 @@ function insertSQLiteEvidence(
     INSERT INTO assertion_evidence (
       id,
       assertion_id,
+      scope_id,
+      policy_version,
+      authority_scope,
       extracted_claim_id,
       source_id,
       source_item_id,
@@ -1510,10 +1519,13 @@ function insertSQLiteEvidence(
       revocation_state,
       forgetting_state,
       created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     evidence.id,
     evidence.assertion_id,
+    evidence.scope_id,
+    evidence.policy_version,
+    evidence.authority_scope,
     evidence.extracted_claim_id,
     evidence.source_id,
     evidence.source_item_id,
@@ -1911,6 +1923,9 @@ function runtimeClaim(input: {
 function canonicalAssertion(id: string, input: { claimType?: AssertionRecord['claim_type'] } = {}): AssertionRecord {
   return {
     id,
+    scope_id: 'workspace:default',
+    policy_version: 'policy:v1',
+    authority_scope: 'work',
     claim_type: input.claimType ?? 'architecture_claim',
     target_type: 'system',
     target_id: 'systems/mbrain',
@@ -1942,6 +1957,9 @@ function evidenceRecord(
   return {
     id,
     assertion_id: assertionId,
+    scope_id: 'workspace:default',
+    policy_version: 'policy:v1',
+    authority_scope: 'work',
     extracted_claim_id: id.replace('assertion-evidence', 'extracted-claim'),
     source_id: 'source:codex-session',
     source_item_id: 'source-item:runtime',

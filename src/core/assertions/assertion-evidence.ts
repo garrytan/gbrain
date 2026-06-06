@@ -11,6 +11,9 @@ import {
 
 export interface AssertionEvidenceInput {
   assertion_id: string;
+  scope_id?: string;
+  policy_version?: string;
+  authority_scope?: string;
   extracted_claim: ExtractedClaim;
   session_id?: string | null;
   task_event_id?: string | null;
@@ -36,6 +39,9 @@ export function buildAssertionEvidence(input: AssertionEvidenceInput): Assertion
       input.contribution_type ?? 'supports',
     ),
     assertion_id: input.assertion_id,
+    scope_id: input.scope_id ?? 'workspace:default',
+    policy_version: input.policy_version ?? 'policy:v1',
+    authority_scope: input.authority_scope ?? 'work',
     extracted_claim_id: input.extracted_claim.id,
     source_id: input.extracted_claim.source_id,
     source_item_id: input.extracted_claim.source_item_id,
@@ -237,6 +243,9 @@ function directEvidence(input: DirectAssertionEvidenceInput, now: string): Asser
   return {
     id: input.id ?? stableId('assertion-evidence', input.assertion_id, input.extracted_claim_id, input.contribution_type),
     assertion_id: input.assertion_id,
+    scope_id: input.scope_id ?? 'workspace:default',
+    policy_version: input.policy_version ?? 'policy:v1',
+    authority_scope: input.authority_scope ?? 'work',
     extracted_claim_id: input.extracted_claim_id,
     source_id: input.source_id,
     source_item_id: input.source_item_id,

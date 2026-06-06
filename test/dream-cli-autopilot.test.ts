@@ -10,6 +10,21 @@ const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8
 describe('dream CLI and autopilot integration', () => {
   test('top-level help exposes dream command', () => {
     expect(cliSource).toContain('dream [--apply|--dry-run]');
+    expect(cliSource).toContain('--apply-auto-promote');
+    expect(cliSource).toContain('--allow-canonical-page-writes');
+  });
+
+  test('dream help exposes split permission flags', async () => {
+    const { runDream } = await importFreshDreamCommand();
+    const { runAutopilot } = await importFreshAutopilotCommand();
+
+    const dreamHelp = await captureConsole(() => runDream(stubEngine(), ['--help']));
+    const autopilotDreamHelp = await captureConsole(() => runAutopilot(['dream', '--help']));
+
+    expect(dreamHelp.stdout).toContain('--apply-auto-promote');
+    expect(dreamHelp.stdout).toContain('--allow-canonical-page-writes');
+    expect(autopilotDreamHelp.stdout).toContain('--apply-auto-promote');
+    expect(autopilotDreamHelp.stdout).toContain('--allow-canonical-page-writes');
   });
 
   test('dream CLI and autopilot dream command call the same phase runner input contract', async () => {
@@ -44,6 +59,8 @@ describe('dream CLI and autopilot integration', () => {
         now: '2026-05-21T10:00:00.000Z',
         dry_run: true,
         write_candidates: false,
+        apply_auto_promote: false,
+        allow_canonical_page_writes: false,
         trigger: 'cli',
     });
     expect(calls[1]).toMatchObject({
@@ -51,6 +68,8 @@ describe('dream CLI and autopilot integration', () => {
         now: '2026-05-21T10:00:00.000Z',
         dry_run: true,
         write_candidates: false,
+        apply_auto_promote: false,
+        allow_canonical_page_writes: false,
         trigger: 'autopilot',
     });
     expect(calls[1]).toHaveProperty('allow_local_runner', false);
@@ -67,6 +86,34 @@ describe('dream CLI and autopilot integration', () => {
     expect(parseDreamArgs(['--write-candidates'], 'cli')).toMatchObject({
       dry_run: true,
       write_candidates: false,
+    });
+  });
+
+  test('dream permission flags are split beyond apply', async () => {
+    const { parseDreamArgs } = await importFreshDreamCommand();
+
+    expect(parseDreamArgs(['--apply'], 'cli')).toMatchObject({
+      dry_run: false,
+      write_candidates: true,
+      apply_auto_promote: false,
+      allow_canonical_page_writes: false,
+    });
+
+    expect(parseDreamArgs([
+      '--apply',
+      '--apply-auto-promote',
+      '--allow-canonical-page-writes',
+      '--max-runner-calls', '3',
+      '--time-budget-ms', '5000',
+      '--max-candidates-per-cycle', '8',
+    ], 'cli')).toMatchObject({
+      dry_run: false,
+      write_candidates: true,
+      apply_auto_promote: true,
+      allow_canonical_page_writes: true,
+      max_runner_calls: 3,
+      time_budget_ms: 5000,
+      max_candidates_per_cycle: 8,
     });
   });
 

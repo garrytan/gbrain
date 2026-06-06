@@ -4,6 +4,7 @@ import { PostgresEngine } from '../postgres-engine.ts';
 export interface AssertionExplainInput {
   assertion_id?: string;
   target_slug?: string;
+  scope_id?: string;
   limit?: number;
   include_raw?: boolean;
 }
@@ -33,6 +34,7 @@ interface SqlCapableEngine extends BrainEngine {
 
 interface LineageBuildInput {
   query: Record<string, string>;
+  scope_id?: string;
   assertions: Record<string, unknown>[];
   projectionTargets?: Record<string, unknown>[];
   writeAttempts?: Record<string, unknown>[];
@@ -48,12 +50,14 @@ export async function explainAssertionForEngine(
   input: AssertionExplainInput,
 ): Promise<Record<string, unknown>> {
   const limit = normalizeLimit(input.limit);
+  const scopeId = input.scope_id ?? 'workspace:default';
   const assertions = input.assertion_id
-    ? await selectRowsByIds(engine, 'assertions', 'id', [input.assertion_id])
-    : await selectAssertionsByTargetSlug(engine, input.target_slug ?? '', limit);
+    ? await selectAssertionsByIds(engine, [input.assertion_id], scopeId)
+    : await selectAssertionsByTargetSlug(engine, input.target_slug ?? '', scopeId, limit);
 
   return buildLineageExplanation(engine, {
-    query: input.assertion_id ? { assertion_id: input.assertion_id } : { target_slug: input.target_slug ?? '' },
+    query: input.assertion_id ? { assertion_id: input.assertion_id, scope_id: scopeId } : { target_slug: input.target_slug ?? '', scope_id: scopeId },
+    scope_id: scopeId,
     assertions,
     include_raw: input.include_raw,
     limit,
@@ -99,7 +103,7 @@ async function buildLineageExplanation(
   const rawAssertionRows = input.assertions.map(normalizeAssertionRow);
   const assertionIds = rawAssertionRows.map((assertion) => assertion.id);
   const evidenceRows = assertionIds.length > 0
-    ? (await selectRowsByIds(engine, 'assertion_evidence', 'assertion_id', assertionIds))
+    ? (await selectAssertionEvidenceByAssertionIds(engine, assertionIds, input.scope_id))
       .map(normalizeAssertionEvidenceRow)
     : [];
   const evidenceIds = evidenceRows.map((evidence) => evidence.id);
@@ -211,24 +215,82 @@ async function buildLineageExplanation(
 async function selectAssertionsByTargetSlug(
   engine: BrainEngine,
   targetSlug: string,
+  scopeId: string,
   limit: number,
 ): Promise<Record<string, unknown>[]> {
   return queryRows(engine, {
     sqlite: `
       SELECT *
       FROM assertions
-      WHERE target_slug = ?
+      WHERE target_slug = ? AND scope_id = ?
       ORDER BY created_at ASC, id ASC
       LIMIT ?
     `,
     pg: `
       SELECT *
       FROM assertions
-      WHERE target_slug = $1
+      WHERE target_slug = $1 AND scope_id = $2
       ORDER BY created_at ASC, id ASC
-      LIMIT $2
+      LIMIT $3
     `,
-    params: [targetSlug, limit],
+    params: [targetSlug, scopeId, limit],
+  });
+}
+
+async function selectAssertionsByIds(
+  engine: BrainEngine,
+  ids: string[],
+  scopeId: string,
+): Promise<Record<string, unknown>[]> {
+  const uniqueIds = uniqueStrings(ids);
+  if (uniqueIds.length === 0) return [];
+  const sqlitePlaceholders = uniqueIds.map(() => '?').join(', ');
+  const pgPlaceholders = uniqueIds.map((_, index) => `$${index + 1}`).join(', ');
+  const scopePlaceholder = uniqueIds.length + 1;
+  return queryRows(engine, {
+    sqlite: `
+      SELECT *
+      FROM assertions
+      WHERE id IN (${sqlitePlaceholders}) AND scope_id = ?
+      ORDER BY id ASC
+    `,
+    pg: `
+      SELECT *
+      FROM assertions
+      WHERE id IN (${pgPlaceholders}) AND scope_id = $${scopePlaceholder}
+      ORDER BY id ASC
+    `,
+    params: [...uniqueIds, scopeId],
+  });
+}
+
+async function selectAssertionEvidenceByAssertionIds(
+  engine: BrainEngine,
+  assertionIds: string[],
+  scopeId: string | undefined,
+): Promise<Record<string, unknown>[]> {
+  if (!scopeId) {
+    return selectRowsByIds(engine, 'assertion_evidence', 'assertion_id', assertionIds);
+  }
+  const uniqueIds = uniqueStrings(assertionIds);
+  if (uniqueIds.length === 0) return [];
+  const sqlitePlaceholders = uniqueIds.map(() => '?').join(', ');
+  const pgPlaceholders = uniqueIds.map((_, index) => `$${index + 1}`).join(', ');
+  const scopePlaceholder = uniqueIds.length + 1;
+  return queryRows(engine, {
+    sqlite: `
+      SELECT *
+      FROM assertion_evidence
+      WHERE assertion_id IN (${sqlitePlaceholders}) AND scope_id = ?
+      ORDER BY id ASC
+    `,
+    pg: `
+      SELECT *
+      FROM assertion_evidence
+      WHERE assertion_id IN (${pgPlaceholders}) AND scope_id = $${scopePlaceholder}
+      ORDER BY id ASC
+    `,
+    params: [...uniqueIds, scopeId],
   });
 }
 
@@ -589,6 +651,9 @@ function findMissingLinks(input: {
 function normalizeAssertionRow(row: Record<string, unknown>) {
   return {
     id: stringValue(row.id),
+    scope_id: stringValue(row.scope_id) || 'workspace:default',
+    policy_version: stringValue(row.policy_version) || 'policy:v1',
+    authority_scope: stringValue(row.authority_scope) || 'work',
     claim_type: stringValue(row.claim_type),
     target_type: stringValue(row.target_type),
     target_id: nullableString(row.target_id),
@@ -638,6 +703,9 @@ function normalizeAssertionEvidenceRow(row: Record<string, unknown>) {
   return {
     id: stringValue(row.id),
     assertion_id: stringValue(row.assertion_id),
+    scope_id: stringValue(row.scope_id) || 'workspace:default',
+    policy_version: stringValue(row.policy_version) || 'policy:v1',
+    authority_scope: stringValue(row.authority_scope) || 'work',
     extracted_claim_id: stringValue(row.extracted_claim_id),
     source_id: stringValue(row.source_id),
     source_item_id: stringValue(row.source_item_id),

@@ -3,7 +3,7 @@ import {
   createAssertionPipelineService,
   type AssertionPipelineService,
 } from '../src/core/services/assertion-pipeline-service.ts';
-import type { ExtractedClaimInput } from '../src/core/assertions/assertion-types.ts';
+import { stableId, type ExtractedClaimInput } from '../src/core/assertions/assertion-types.ts';
 
 const NOW = '2026-05-20T12:00:00.000Z';
 
@@ -192,7 +192,17 @@ describe('assertion pipeline service', () => {
     const firstAssertion = await service.getAssertion(firstResolution.assertion.id);
 
     expect(conflictResolution.kind).toBe('created_conflict');
-    expect(conflictResolution.conflict_set).toMatchObject({
+    const conflictSet = conflictResolution.conflict_set;
+    if (!conflictSet) throw new Error('expected conflict set');
+    expect(conflictSet.id).toBe(stableId(
+      'conflict-set',
+      'workspace:default',
+      'system',
+      'systems/mbrain',
+      'runtime.semantic_state',
+    ));
+    expect(conflictResolution.assertion.conflict_set_id).toBe(conflictSet.id);
+    expect(conflictSet).toMatchObject({
       property: 'runtime.semantic_state',
       status: 'open',
       assertion_ids: expect.arrayContaining([

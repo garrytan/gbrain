@@ -81,6 +81,7 @@ describe('memory activation policy', () => {
     });
 
     expect(result.decisions[0]?.decision).toBe('verify_first');
+    expect(result.decisions[0]?.reason_codes).toContain('stale_artifact');
     expect(result.verification_required).toBe(true);
     expect(result.next_tool).toBe('reverify_code_claims');
   });
@@ -97,6 +98,74 @@ describe('memory activation policy', () => {
 
     expect(result.decisions[0]?.decision).toBe('orientation_only');
     expect(result.next_tool).toBe('get_page');
+  });
+
+  test('labels memory candidates as promote-first without answer grounding', () => {
+    const result = selectActivationPolicy({
+      scenario: 'project_qa',
+      artifacts: [{
+        id: 'candidate:direction',
+        artifact_kind: 'memory_candidate',
+        source_ref: 'memory-candidate:direction',
+        candidate_status: 'candidate',
+        target_object_type: 'curated_note',
+        source_refs_count: 2,
+      }],
+    });
+
+    expect(result.decisions[0]).toMatchObject({
+      artifact_id: 'candidate:direction',
+      decision: 'candidate_only',
+      activation_label: 'promote_first',
+      authority: 'unreviewed_candidate',
+    });
+    expect(result.decisions[0]?.reason_codes).toContain('memory_candidate');
+    expect(result.next_tool).toBe('rank_memory_candidate_entries');
+  });
+
+  test('labels untargeted memory candidates as hint-only', () => {
+    const result = selectActivationPolicy({
+      scenario: 'knowledge_qa',
+      artifacts: [{
+        id: 'candidate:untargeted',
+        artifact_kind: 'memory_candidate',
+        source_ref: 'memory-candidate:untargeted',
+        candidate_status: 'candidate',
+        source_refs_count: 1,
+      }],
+    });
+
+    expect(result.decisions[0]).toMatchObject({
+      decision: 'candidate_only',
+      activation_label: 'hint_only',
+      authority: 'unreviewed_candidate',
+    });
+  });
+
+  test('labels rejected and superseded candidates as audit-only', () => {
+    const result = selectActivationPolicy({
+      scenario: 'knowledge_qa',
+      artifacts: [
+        {
+          id: 'candidate:rejected',
+          artifact_kind: 'memory_candidate',
+          candidate_status: 'rejected',
+          source_ref: 'memory-candidate:rejected',
+        },
+        {
+          id: 'candidate:superseded',
+          artifact_kind: 'memory_candidate',
+          candidate_status: 'superseded',
+          source_ref: 'memory-candidate:superseded',
+        },
+      ],
+    });
+
+    expect(result.decisions.map((decision) => decision.activation_label)).toEqual([
+      'audit_only',
+      'audit_only',
+    ]);
+    expect(result.decisions.every((decision) => decision.decision === 'candidate_only')).toBe(true);
   });
 
   test('suppresses failed attempts only when anchors are valid', () => {
@@ -175,6 +244,7 @@ describe('memory activation policy', () => {
       decision: 'answer_ground',
       authority: 'profile_memory',
     });
+    expect(withAllow.decisions[0]?.reason_codes).toContain('scope_allowed_personal_memory');
   });
 
   test('requires explicit scope allow before grounding personal episodes with episode authority', () => {
@@ -209,5 +279,49 @@ describe('memory activation policy', () => {
       decision: 'answer_ground',
       authority: 'personal_episode',
     });
+    expect(withAllow.decisions[0]?.reason_codes).toContain('scope_allowed_personal_memory');
+  });
+
+  test('preserves aggregate routing fields while using trust contract decisions', () => {
+    const result = selectActivationPolicy({
+      scenario: 'project_qa',
+      artifacts: [
+        {
+          id: 'page:systems/mbrain',
+          artifact_kind: 'compiled_truth',
+          source_ref: 'page:systems/mbrain',
+        },
+        {
+          id: 'candidate:direction',
+          artifact_kind: 'memory_candidate',
+          source_ref: 'memory-candidate:direction',
+          candidate_status: 'candidate',
+          target_object_type: 'curated_note',
+          source_refs_count: 1,
+        },
+      ],
+    });
+
+    expect(result.decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        artifact_id: 'page:systems/mbrain',
+        decision: 'answer_ground',
+        authority: 'canonical_compiled_truth',
+        reason_codes: ['compiled_truth'],
+      }),
+      expect.objectContaining({
+        artifact_id: 'candidate:direction',
+        decision: 'candidate_only',
+        activation_label: 'promote_first',
+        authority: 'unreviewed_candidate',
+        reason_codes: ['memory_candidate'],
+      }),
+    ]));
+    expect(result.next_tool).toBe('rank_memory_candidate_entries');
+    expect(result.writeback_hint).toBe('defer_for_review');
+    expect(result.source_refs).toEqual([
+      'page:systems/mbrain',
+      'memory-candidate:direction',
+    ]);
   });
 });

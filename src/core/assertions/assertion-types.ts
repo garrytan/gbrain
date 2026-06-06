@@ -75,6 +75,9 @@ export interface ExtractedClaimInput {
 export interface AssertionEvidenceInput {
   id?: string;
   assertion_id: string;
+  scope_id?: string;
+  policy_version?: string;
+  authority_scope?: string;
   extracted_claim_id: string;
   source_id: string;
   source_item_id: string;
@@ -113,6 +116,9 @@ export interface ExtractedClaim {
 
 export interface AssertionRecord {
   id: string;
+  scope_id: string;
+  policy_version: string;
+  authority_scope: string;
   claim_type: AssertionClaimType;
   target_type: string;
   target_id: string | null;
@@ -152,6 +158,9 @@ export interface AssertionEventRecord {
 export interface AssertionEvidenceRecord {
   id: string;
   assertion_id: string;
+  scope_id: string;
+  policy_version: string;
+  authority_scope: string;
   extracted_claim_id: string;
   source_id: string;
   source_item_id: string;
@@ -182,6 +191,8 @@ export interface AssertionLineageRecord {
 
 export interface AssertionLinkRecord {
   id: string;
+  scope_id: string;
+  policy_version: string;
   from_assertion_id: string;
   to_assertion_id: string;
   link_type: string;

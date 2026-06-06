@@ -22,6 +22,7 @@ describe('assertion audit explain operations', () => {
     expect(operationsByName.explain_assertion?.cliHints?.name).toBe('assertion-explain');
     expect(operationsByName.explain_assertion?.params.assertion_id).toMatchObject({ type: 'string' });
     expect(operationsByName.explain_assertion?.params.target_slug).toMatchObject({ type: 'string' });
+    expect(operationsByName.explain_assertion?.params.scope_id).toMatchObject({ type: 'string' });
 
     expect(operationsByName.explain_projection?.cliHints?.name).toBe('projection-explain');
     expect(operationsByName.explain_projection?.params.projection_target_id).toMatchObject({ type: 'string' });
@@ -49,10 +50,11 @@ describe('assertion audit explain operations', () => {
         assertion_id: 'assertion:runtime',
       }) as any;
 
-      expect(result.query).toEqual({ assertion_id: 'assertion:runtime' });
+      expect(result.query).toEqual({ assertion_id: 'assertion:runtime', scope_id: 'workspace:default' });
       expect(result.assertions).toEqual([
         expect.objectContaining({
           id: 'assertion:runtime',
+          scope_id: 'workspace:default',
           target_slug: 'systems/mbrain',
           normalized_claim: '[REDACTED_SECRET]',
           value_json: { redacted: true },
@@ -72,6 +74,7 @@ describe('assertion audit explain operations', () => {
         expect.objectContaining({
           id: 'evidence:runtime',
           assertion_id: 'assertion:runtime',
+          scope_id: 'workspace:default',
           extracted_claim_id: 'claim:runtime',
           source_id: 'source:design',
           source_item_id: 'item:design',

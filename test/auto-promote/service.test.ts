@@ -61,6 +61,7 @@ describe('runAutoPromote', () => {
         engine, config: { ...defaultAutoPromoteConfig(), enabled: true }, now: NOW,
         runnerExecutor: stubExecutor('promote', 0.95), contextLoader: (targetRef) => pageContext(engine, targetRef),
         runner: { kind: 'claude_code' } as any,
+        allow_canonical_page_writes: true,
       });
       expect(res.counts.auto_promoted).toBe(1);
       expect(res.counts.canonical_handoffs).toBe(1);
@@ -88,6 +89,7 @@ describe('runAutoPromote', () => {
           return { text: page?.compiled_truth ?? '', content_hash: page?.content_hash ?? null };
         },
         runner: { kind: 'claude_code' } as any,
+        allow_canonical_page_writes: true,
       });
 
       expect(res.counts.auto_promoted).toBe(1);
@@ -119,6 +121,37 @@ describe('runAutoPromote', () => {
       const rows = (engine as any).db.query('SELECT * FROM auto_promote_verdicts').all();
       expect(rows).toHaveLength(0);
       expect(await engine.listCanonicalHandoffEntries({ candidate_id: 'cand-1' })).toHaveLength(0);
+    });
+  });
+  it('respects runner call budget', async () => {
+    await withEngine(async (engine) => {
+      await seedTargetPage(engine);
+      await seedEligibleCandidate(engine, 'cand-1');
+      await seedEligibleCandidate(engine, 'cand-2', { target_object_id: 'concepts/acme' });
+      const calls: any[] = [];
+
+      await runAutoPromote({
+        engine,
+        config: { ...defaultAutoPromoteConfig(), enabled: true, dry_run: false },
+        now: '2026-06-06T00:00:00.000Z',
+        runner: { kind: 'claude_code' } as any,
+        runnerExecutor: async (request) => {
+          calls.push(request);
+          return {
+            status: 'succeeded' as const,
+            output: JSON.stringify({ decision: 'defer', confidence: 0.5, reasoning: 'budget test' }),
+            token_usage_json: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+            cost_estimate_usd: null,
+          };
+        },
+        contextLoader: (targetRef) => pageContext(engine, targetRef),
+        scope_id: 'workspace:default',
+        max_runner_calls: 1,
+      });
+
+      expect(calls).toHaveLength(1);
+      const rows = (engine as any).db.query('SELECT * FROM auto_promote_verdicts').all() as Array<Record<string, unknown>>;
+      expect(rows).toHaveLength(1);
     });
   });
   it('excludes candidates with unresolved contradictions before judging by default', async () => {
@@ -198,6 +231,34 @@ describe('runAutoPromote', () => {
       await runAutoPromote({ engine, config: cfg, now: NOW, runnerExecutor: executor, contextLoader: stubContext, runner: { kind: 'claude_code' } as any });
 
       expect(models).toEqual(['escalation']);
+    });
+  });
+  it('lets handoff-only candidates reach the runner but blocks canonical writes', async () => {
+    await withEngine(async (engine) => {
+      await seedTargetPage(engine);
+      const candidate = await seedEligibleCandidate(engine, 'handoff-only', { candidate_type: 'open_question' });
+      const calls: any[] = [];
+      const res = await runAutoPromote({
+        engine,
+        config: { ...defaultAutoPromoteConfig(), enabled: true },
+        now: NOW,
+        runnerExecutor: async (req: any) => {
+          calls.push(req);
+          return stubExecutor('promote', 0.95)(req);
+        },
+        contextLoader: (targetRef) => pageContext(engine, targetRef),
+        runner: { kind: 'claude_code' } as any,
+        allow_canonical_page_writes: true,
+      });
+
+      expect(calls).toHaveLength(1);
+      expect(res.counts.selected_low_risk).toBe(0);
+      expect(res.counts.selected_risky).toBe(1);
+      expect(res.counts.auto_promoted).toBe(1);
+      expect(res.counts.canonical_handoffs).toBe(1);
+      expect(res.counts.canonical_writes).toBe(0);
+      expect(res.excluded.find((entry) => entry.id === candidate.id)?.reason).toBe('canonical_policy_not_allowed');
+      expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
     });
   });
   it('does nothing when disabled', async () => {

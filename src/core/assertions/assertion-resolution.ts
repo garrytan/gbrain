@@ -22,6 +22,9 @@ export interface ResolveExtractedClaimInput {
   claim: ExtractedClaim;
   existing_assertions?: readonly AssertionRecord[];
   existing_evidence?: readonly AssertionEvidenceRecord[];
+  scope_id?: string;
+  policy_version?: string;
+  authority_scope?: string;
   target_type?: string;
   target_id?: string;
   target_slug?: string | null;
@@ -72,17 +75,24 @@ export interface AssertionRetrievalPlan {
 
 export function resolveExtractedClaim(input: ResolveExtractedClaimInput): AssertionResolutionResult {
   const now = input.now ?? new Date().toISOString();
+  const scopeId = input.scope_id ?? 'workspace:default';
+  const policyVersion = input.policy_version ?? 'policy:v1';
+  const authorityScope = input.authority_scope ?? 'work';
   const claim = { ...input.claim, status: 'resolved' as const };
   const targetType = input.target_type ?? inferTargetType(claim.target_hint);
   const targetId = input.target_id ?? claim.target_hint;
   const targetSlug = input.target_slug ?? null;
   const matching = (input.existing_assertions ?? [])
+    .filter((assertion) => assertionScopeId(assertion) === scopeId)
     .filter((assertion) => sameTargetProperty(assertion, targetType, targetId, claim.property_hint))
     .filter(isResolutionCurrentAssertion);
   const duplicate = matching.find((assertion) => normalizeScalar(assertion.value_json) === normalizeScalar(claim.value_json));
   if (duplicate) {
     const evidence = buildAssertionEvidence({
       assertion_id: duplicate.id,
+      scope_id: scopeId,
+      policy_version: policyVersion,
+      authority_scope: authorityScope,
       extracted_claim: claim,
       session_id: input.session_id,
       task_event_id: input.task_event_id,
@@ -105,18 +115,25 @@ export function resolveExtractedClaim(input: ResolveExtractedClaimInput): Assert
 
   const superseded = matching.find((assertion) => shouldSupersede(assertion, claim));
   const conflict = !superseded && matching.length > 0;
+  const conflictSetId = conflict ? stableId('conflict-set', scopeId, targetType, targetId, claim.property_hint) : null;
   const assertion = newAssertion({
     claim,
     target_type: targetType,
     target_id: targetId,
     target_slug: targetSlug,
     authority_state: conflict ? 'conflicted' : input.authority_state ?? 'canonical',
-    conflict_set_id: conflict ? stableId('conflict-set', targetType, targetId, claim.property_hint) : null,
+    conflict_set_id: conflictSetId,
     supersedes_assertion_id: superseded?.id ?? null,
+    scope_id: scopeId,
+    policy_version: policyVersion,
+    authority_scope: authorityScope,
     now,
   });
   const evidence = buildAssertionEvidence({
     assertion_id: assertion.id,
+    scope_id: scopeId,
+    policy_version: policyVersion,
+    authority_scope: authorityScope,
     extracted_claim: claim,
     session_id: input.session_id,
     task_event_id: input.task_event_id,
@@ -139,7 +156,7 @@ export function resolveExtractedClaim(input: ResolveExtractedClaimInput): Assert
       }))
       : [];
   const conflictSets = conflict
-    ? [conflictSet(targetType, targetId, claim.property_hint, now)]
+    ? [conflictSet(scopeId, targetType, targetId, claim.property_hint, now)]
     : [];
   const conflictSetAssertions = conflict
     ? [
@@ -183,6 +200,8 @@ export function resolveExtractedClaim(input: ResolveExtractedClaimInput): Assert
     lineage: [lineage(hydratedAssertion.id, claim, input, now)],
     links: superseded ? [{
       id: stableId('assertion-link', hydratedAssertion.id, superseded.id, 'supersedes'),
+      scope_id: scopeId,
+      policy_version: policyVersion,
       from_assertion_id: hydratedAssertion.id,
       to_assertion_id: superseded.id,
       link_type: 'supersedes',
@@ -368,6 +387,10 @@ function sameTargetProperty(
     && assertion.property === property;
 }
 
+function assertionScopeId(assertion: AssertionRecord): string {
+  return assertion.scope_id ?? 'workspace:default';
+}
+
 function shouldSupersede(assertion: AssertionRecord, claim: ExtractedClaim): boolean {
   if (!claim.valid_from || !assertion.valid_from) return false;
   return new Date(claim.valid_from).getTime() > new Date(assertion.valid_from).getTime();
@@ -387,17 +410,24 @@ function newAssertion(input: {
   authority_state: AssertionAuthorityState;
   conflict_set_id: string | null;
   supersedes_assertion_id: string | null;
+  scope_id?: string;
+  policy_version?: string;
+  authority_scope?: string;
   now: string;
 }): AssertionRecord {
   return {
     id: stableId(
       'assertion',
+      input.scope_id ?? 'workspace:default',
       input.target_type,
       input.target_id,
       input.claim.property_hint,
       canonicalJson(input.claim.value_json),
       input.claim.valid_from ?? '',
     ),
+    scope_id: input.scope_id ?? 'workspace:default',
+    policy_version: input.policy_version ?? 'policy:v1',
+    authority_scope: input.authority_scope ?? 'work',
     claim_type: input.claim.claim_type,
     target_type: input.target_type,
     target_id: input.target_id,
@@ -499,9 +529,9 @@ function lineage(
   };
 }
 
-function conflictSet(targetType: string, targetId: string, property: string, now: string): ConflictSetRecord {
+function conflictSet(scopeId: string, targetType: string, targetId: string, property: string, now: string): ConflictSetRecord {
   return {
-    id: stableId('conflict-set', targetType, targetId, property),
+    id: stableId('conflict-set', scopeId, targetType, targetId, property),
     target_type: targetType,
     target_id: targetId,
     property,

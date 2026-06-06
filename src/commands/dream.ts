@@ -39,15 +39,24 @@ export function parseDreamArgs(
   const apply = hasFlag(args, '--apply');
   const dryRunFlag = hasFlag(args, '--dry-run');
   const dryRun = dryRunFlag || !apply;
+  const limit = readNumberFlag(args, '--limit');
+  const maxRunnerCalls = readNumberFlag(args, '--max-runner-calls');
+  const timeBudgetMs = readNumberFlag(args, '--time-budget-ms');
+  const maxCandidatesPerCycle = readNumberFlag(args, '--max-candidates-per-cycle');
   return {
     scope_id: readFlag(args, '--scope-id') ?? readFlag(args, '--scope') ?? 'workspace:default',
     now: readFlag(args, '--now'),
     dry_run: dryRun,
     write_candidates: !dryRun && (apply || hasFlag(args, '--write-candidates')),
+    apply_auto_promote: !dryRun && hasFlag(args, '--apply-auto-promote'),
+    allow_canonical_page_writes: !dryRun && hasFlag(args, '--allow-canonical-page-writes'),
     trigger,
     ...(hasFlag(args, '--allow-llm') ? { allow_llm: true } : {}),
     ...(hasFlag(args, '--allow-local-runner') ? { allow_local_runner: true } : {}),
-    ...(readNumberFlag(args, '--limit') !== undefined ? { limit: readNumberFlag(args, '--limit') } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(maxRunnerCalls !== undefined ? { max_runner_calls: maxRunnerCalls } : {}),
+    ...(timeBudgetMs !== undefined ? { time_budget_ms: timeBudgetMs } : {}),
+    ...(maxCandidatesPerCycle !== undefined ? { max_candidates_per_cycle: maxCandidatesPerCycle } : {}),
   };
 }
 
@@ -74,7 +83,11 @@ function printDreamHelp(): void {
   console.log(`mbrain dream -- run the Dream maintenance phase runner
 
 USAGE
-  mbrain dream [--dry-run|--apply] [--scope-id SCOPE] [--now ISO] [--limit N]
+  mbrain dream [--dry-run|--apply] [--write-candidates]
+               [--scope-id SCOPE] [--now ISO] [--limit N]
+               [--apply-auto-promote] [--allow-canonical-page-writes]
+               [--max-runner-calls N] [--time-budget-ms MS]
+               [--max-candidates-per-cycle N]
                [--allow-llm] [--allow-local-runner]
 `);
 }

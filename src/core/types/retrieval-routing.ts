@@ -126,6 +126,18 @@ export type MemoryActivationDecision =
   | 'candidate_only'
   | 'ignore';
 
+export type MemoryActivationLabel =
+  | 'answer_ground'
+  | 'citation_only'
+  | 'orientation_only'
+  | 'hint_only'
+  | 'promote_first'
+  | 'audit_only'
+  | 'verify_first'
+  | 'suppress_if_valid'
+  | 'candidate_only'
+  | 'ignore';
+
 export type MemoryArtifactKind =
   | 'current_artifact'
   | 'compiled_truth'
@@ -259,6 +271,9 @@ export interface MemoryActivationArtifact {
   stale?: boolean;
   anchors_valid?: boolean;
   scope_policy?: ScopeGatePolicy;
+  candidate_status?: MemoryCandidateStatus;
+  target_object_type?: MemoryCandidateTargetObjectType;
+  source_refs_count?: number;
 }
 
 export interface MemoryActivationPolicyInput {
@@ -269,6 +284,7 @@ export interface MemoryActivationPolicyInput {
 export interface MemoryActivationPolicyDecision {
   artifact_id: string;
   decision: MemoryActivationDecision;
+  activation_label: MemoryActivationLabel;
   authority: MemoryArtifactAuthority;
   reason_codes: string[];
   source_ref: string | null;

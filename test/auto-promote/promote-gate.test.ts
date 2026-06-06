@@ -4,7 +4,7 @@ import { runPromoteGate } from '../../src/core/auto-promote/promote-gate.ts';
 import { defaultAutoPromoteConfig } from '../../src/core/auto-promote/config.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 
-async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1') {
+async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1', overrides: Record<string, unknown> = {}) {
   return engine.createMemoryCandidateEntry({
     id, scope_id: 'workspace:default', candidate_type: 'fact',
     proposed_content: 'Acme raised a seed round.',
@@ -14,6 +14,7 @@ async function seedEligibleCandidate(engine: BrainEngine, id = 'cand-1') {
     sensitivity: 'work', status: 'captured',
     target_object_type: 'curated_note', target_object_id: 'concepts/acme',
     reviewed_at: null, review_reason: null,
+    ...overrides,
   });
 }
 
@@ -43,7 +44,15 @@ describe('runPromoteGate', () => {
     await withEngine(async (engine) => {
       const cfg = { ...defaultAutoPromoteConfig(), dry_run: true };
       const candidate = await seedEligibleCandidate(engine);
-      const res = await runPromoteGate({ engine, verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }], candidates: [candidate], config: cfg, now: '2026-06-01T00:00:00Z', actor: 'mbrain:auto_promote' });
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }],
+        candidates: [candidate],
+        config: cfg,
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
       expect(res.promoted).toEqual([]);
       expect(res.would_promote).toContain(candidate.id);
       expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).not.toBe('promoted');
@@ -62,6 +71,8 @@ describe('runPromoteGate', () => {
         now: '2026-06-01T00:00:00Z',
         actor: 'mbrain:auto_promote',
         target_snapshot_hashes: new Map([[candidate.id, target.content_hash ?? null]]),
+        allow_canonical_page_writes: true,
+        canonical_write_candidate_ids: new Set([candidate.id]),
       });
       expect(res.promoted).toContain(candidate.id);
       expect(res.canonical_handoffs).toContain(candidate.id);
@@ -74,6 +85,72 @@ describe('runPromoteGate', () => {
       expect(handoffs).toHaveLength(1);
       const events = await engine.listMemoryMutationEvents({ operation: 'put_page', target_id: 'concepts/acme' });
       expect(events.some((event) => event.source_refs.includes(`canonical_handoff:${handoffs[0]!.id}`))).toBe(true);
+    });
+  });
+  it('creates a new canonical page only for canonical-eligible candidates', async () => {
+    await withEngine(async (engine) => {
+      const cfg = { ...defaultAutoPromoteConfig(), dry_run: false };
+      const candidate = await seedEligibleCandidate(engine);
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }],
+        candidates: [candidate],
+        config: cfg,
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        target_snapshot_hashes: new Map([[candidate.id, null]]),
+        allow_canonical_page_writes: true,
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
+      expect(res.canonical_writes).toContain('concepts/acme');
+      expect((await engine.getPage('concepts/acme'))?.compiled_truth).toContain('Acme raised a seed round.');
+    });
+  });
+  it('requires explicit permission before writing canonical pages', async () => {
+    await withEngine(async (engine) => {
+      const target = await seedTargetPage(engine);
+      const candidate = await seedEligibleCandidate(engine);
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }],
+        candidates: [candidate],
+        config: { ...defaultAutoPromoteConfig(), dry_run: false },
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        target_snapshot_hashes: new Map([[candidate.id, target.content_hash ?? null]]),
+        allow_canonical_page_writes: false,
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
+
+      expect(res.promoted).toContain(candidate.id);
+      expect(res.canonical_handoffs).toContain(candidate.id);
+      expect(res.canonical_writes).toEqual([]);
+      expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toBe('canonical_page_writes_not_allowed');
+      expect((await engine.getMemoryCandidateEntry(candidate.id))?.status).toBe('promoted');
+      expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
+    });
+  });
+  it('records handoff but blocks page write for handoff-only candidates', async () => {
+    await withEngine(async (engine) => {
+      const target = await seedTargetPage(engine);
+      const candidate = await seedEligibleCandidate(engine, 'handoff-only', { extraction_kind: 'inferred' });
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.95, reasoning: 'ok', source_refs: [] }],
+        candidates: [candidate],
+        config: { ...defaultAutoPromoteConfig(), dry_run: false },
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        target_snapshot_hashes: new Map([[candidate.id, target.content_hash ?? null]]),
+        allow_canonical_page_writes: true,
+        canonical_write_candidate_ids: new Set(),
+      });
+
+      expect(res.promoted).toContain(candidate.id);
+      expect(res.canonical_handoffs).toContain(candidate.id);
+      expect(res.canonical_writes).toEqual([]);
+      expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toBe('canonical_policy_not_allowed');
+      expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
     });
   });
   it('skips canonical write when the target changed after the judge snapshot', async () => {
@@ -95,6 +172,8 @@ describe('runPromoteGate', () => {
         now: '2026-06-01T00:00:00Z',
         actor: 'mbrain:auto_promote',
         target_snapshot_hashes: new Map([[candidate.id, target.content_hash ?? null]]),
+        allow_canonical_page_writes: true,
+        canonical_write_candidate_ids: new Set([candidate.id]),
       });
       expect(res.promoted).toContain(candidate.id);
       expect(res.canonical_handoffs).toContain(candidate.id);
@@ -107,7 +186,15 @@ describe('runPromoteGate', () => {
     await withEngine(async (engine) => {
       const cfg = { ...defaultAutoPromoteConfig(), confidence_threshold: 0.9 };
       const candidate = await seedEligibleCandidate(engine);
-      const res = await runPromoteGate({ engine, verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.5, reasoning: 'meh', source_refs: [] }], candidates: [candidate], config: cfg, now: '2026-06-01T00:00:00Z', actor: 'mbrain:auto_promote' });
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.5, reasoning: 'meh', source_refs: [] }],
+        candidates: [candidate],
+        config: cfg,
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
       expect(res.promoted).toEqual([]);
       expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toContain('below_threshold');
     });
@@ -115,7 +202,15 @@ describe('runPromoteGate', () => {
   it('skips verdicts carrying a proposed_patch (not yet supported)', async () => {
     await withEngine(async (engine) => {
       const candidate = await seedEligibleCandidate(engine);
-      const res = await runPromoteGate({ engine, verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.99, reasoning: 'ok', source_refs: [], proposed_patch: { body: 'x' } }], candidates: [candidate], config: { ...defaultAutoPromoteConfig(), dry_run: false }, now: '2026-06-01T00:00:00Z', actor: 'mbrain:auto_promote' });
+      const res = await runPromoteGate({
+        engine,
+        verdicts: [{ candidate_id: candidate.id, decision: 'promote' as const, confidence: 0.99, reasoning: 'ok', source_refs: [], proposed_patch: { body: 'x' } }],
+        candidates: [candidate],
+        config: { ...defaultAutoPromoteConfig(), dry_run: false },
+        now: '2026-06-01T00:00:00Z',
+        actor: 'mbrain:auto_promote',
+        canonical_write_candidate_ids: new Set([candidate.id]),
+      });
       expect(res.skipped.find((s) => s.id === candidate.id)?.reason).toBe('patch_apply_not_yet_supported');
     });
   });

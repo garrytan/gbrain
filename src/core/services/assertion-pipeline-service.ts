@@ -27,8 +27,8 @@ export interface AssertionPipelineService {
   resolveExtractedClaim(id: string): Promise<PipelineResolutionResult>;
   createAssertion(input: AssertionCreateInput): Promise<AssertionRecord>;
   getAssertion(id: string): Promise<AssertionRecord | null>;
-  listAssertions(filters?: { include_non_canonical?: boolean }): Promise<AssertionRecord[]>;
-  listCanonicalAssertions(filters?: { target_slug?: string }): Promise<AssertionRecord[]>;
+  listAssertions(filters?: { include_non_canonical?: boolean; scope_id?: string }): Promise<AssertionRecord[]>;
+  listCanonicalAssertions(filters?: { target_slug?: string; scope_id?: string }): Promise<AssertionRecord[]>;
   listRetrievableAssertions(filters?: { target_slug?: string; mode?: AssertionRetrievalMode; scope_id?: string }): Promise<AssertionRetrievalPlan[]>;
 }
 
@@ -55,6 +55,9 @@ export interface AssertionPipelineOptions {
 
 export interface AssertionCreateInput {
   id?: string;
+  scope_id?: string;
+  policy_version?: string;
+  authority_scope?: string;
   claim_type: AssertionRecord['claim_type'];
   target_type: string;
   target_id?: string | null;
@@ -133,9 +136,13 @@ export function createAssertionPipelineService(options: AssertionPipelineOptions
     async resolveExtractedClaim(id) {
       const claim = claims.get(id);
       if (!claim) throw new Error(`extracted claim not found: ${id}`);
+      const scopeId = 'workspace:default';
+      const policyVersion = 'policy:v1';
+      const authorityScope = 'work';
       const target = resolveTarget(claim.target_hint);
       const matching = [...assertions.values()].filter((assertion) => (
-        assertion.target_type === target.target_type
+        assertion.scope_id === scopeId
+        && assertion.target_type === target.target_type
         && assertion.target_slug === target.target_slug
         && assertion.property === claim.property_hint
         && assertion.lifecycle_state !== 'expired'
@@ -144,7 +151,7 @@ export function createAssertionPipelineService(options: AssertionPipelineOptions
       ));
       const duplicate = matching.find((assertion) => canonicalJson(assertion.value_json) === canonicalJson(claim.value_json));
       if (duplicate) {
-        const evidence = await evidenceService.linkEvidence(evidenceInputFor(duplicate.id, claim, claimOrigins.get(claim.id)));
+        const evidence = await evidenceService.linkEvidence(evidenceInputFor(duplicate, claim, claimOrigins.get(claim.id)));
         const summary = await evidenceService.recomputeAssertionEvidenceSummary(duplicate.id);
         const updated = {
           ...duplicate,
@@ -165,7 +172,7 @@ export function createAssertionPipelineService(options: AssertionPipelineOptions
       const superseded = matching.find((assertion) => claim.valid_from && assertion.valid_from
         && new Date(claim.valid_from).getTime() > new Date(assertion.valid_from).getTime());
       const conflict = !superseded && matching.length > 0;
-      const conflictSetId = conflict ? stableId('conflict-set', target.target_type, target.target_slug ?? '', claim.property_hint) : null;
+      const conflictSetId = conflict ? stableId('conflict-set', scopeId, target.target_type, target.target_slug ?? '', claim.property_hint) : null;
       const assertion = await this.createAssertion({
         claim_type: claim.claim_type,
         target_type: target.target_type,
@@ -173,6 +180,9 @@ export function createAssertionPipelineService(options: AssertionPipelineOptions
         target_slug: target.target_slug,
         property: claim.property_hint,
         value_json: claim.value_json,
+        scope_id: scopeId,
+        policy_version: policyVersion,
+        authority_scope: authorityScope,
         confidence: claim.confidence,
         authority_state: conflict ? 'conflicted' : 'canonical',
         lifecycle_state: 'active',
@@ -181,7 +191,7 @@ export function createAssertionPipelineService(options: AssertionPipelineOptions
         supersedes_assertion_id: superseded?.id ?? null,
         conflict_set_id: conflictSetId,
       });
-      const evidence = await evidenceService.linkEvidence(evidenceInputFor(assertion.id, claim, claimOrigins.get(claim.id)));
+      const evidence = await evidenceService.linkEvidence(evidenceInputFor(assertion, claim, claimOrigins.get(claim.id)));
       const summary = await evidenceService.recomputeAssertionEvidenceSummary(assertion.id);
       const hydrated = {
         ...assertion,
@@ -250,8 +260,14 @@ export function createAssertionPipelineService(options: AssertionPipelineOptions
     },
     async createAssertion(input) {
       const now = options.now();
+      const scopeId = input.scope_id ?? 'workspace:default';
+      const policyVersion = input.policy_version ?? 'policy:v1';
+      const authorityScope = input.authority_scope ?? 'work';
       const assertion: AssertionRecord = {
-        id: input.id ?? stableId('assertion', input.target_type, input.target_slug ?? input.target_id ?? '', input.property, canonicalJson(input.value_json), input.valid_from ?? ''),
+        id: input.id ?? stableId('assertion', scopeId, input.target_type, input.target_slug ?? input.target_id ?? '', input.property, canonicalJson(input.value_json), input.valid_from ?? ''),
+        scope_id: scopeId,
+        policy_version: policyVersion,
+        authority_scope: authorityScope,
         claim_type: input.claim_type,
         target_type: input.target_type,
         target_id: input.target_id ?? input.target_slug ?? null,
@@ -281,16 +297,21 @@ export function createAssertionPipelineService(options: AssertionPipelineOptions
       return assertion ? { ...assertion } : null;
     },
     async listAssertions(filters = {}) {
-      const all = [...assertions.values()];
+      const scopeId = filters.scope_id ?? 'workspace:default';
+      const all = [...assertions.values()].filter((assertion) => assertion.scope_id === scopeId);
       return (filters.include_non_canonical ? all : canonicalOnly(all)).map((assertion) => ({ ...assertion }));
     },
     async listCanonicalAssertions(filters = {}) {
+      const scopeId = filters.scope_id ?? 'workspace:default';
       return canonicalOnly([...assertions.values()])
+        .filter((assertion) => assertion.scope_id === scopeId)
         .filter((assertion) => !filters.target_slug || assertion.target_slug === filters.target_slug)
         .map((assertion) => ({ ...assertion }));
     },
     async listRetrievableAssertions(filters = {}) {
-      const planned = planRetrievableAssertions([...assertions.values()], {
+      const scopeId = filters.scope_id ?? 'workspace:default';
+      const planned = planRetrievableAssertions([...assertions.values()]
+        .filter((assertion) => assertion.scope_id === scopeId), {
         mode: filters.mode ?? 'default',
       })
         .filter((entry) => !filters.target_slug || entry.assertion.target_slug === filters.target_slug)
@@ -301,7 +322,6 @@ export function createAssertionPipelineService(options: AssertionPipelineOptions
         }));
       if (!options.lifecycle_store || filters.mode !== 'audit') return planned;
       const decorated: AssertionRetrievalPlan[] = [];
-      const scopeId = filters.scope_id ?? 'workspace:default';
       for (const entry of planned) {
         const [events, tombstone] = await Promise.all([
           options.lifecycle_store.listForgettingEvents({
@@ -360,12 +380,15 @@ function extractedClaimFromInput(input: ExtractedClaimInput, now: string): Extra
 }
 
 function evidenceInputFor(
-  assertionId: string,
+  assertion: AssertionRecord,
   claim: ExtractedClaim,
   origin: { session_id: string | null; task_event_id: string | null } | undefined,
 ) {
   return {
-    assertion_id: assertionId,
+    assertion_id: assertion.id,
+    scope_id: assertion.scope_id,
+    policy_version: assertion.policy_version,
+    authority_scope: assertion.authority_scope,
     extracted_claim_id: claim.id,
     source_id: claim.source_id,
     source_item_id: claim.source_item_id,

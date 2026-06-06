@@ -488,6 +488,9 @@ CREATE INDEX IF NOT EXISTS idx_extracted_claims_target
 
 CREATE TABLE IF NOT EXISTS assertions (
   id                         TEXT PRIMARY KEY,
+  scope_id                   TEXT NOT NULL DEFAULT 'workspace:default',
+  policy_version             TEXT NOT NULL DEFAULT 'policy:v1',
+  authority_scope            TEXT NOT NULL DEFAULT 'work',
   claim_type                 TEXT NOT NULL,
   target_type                TEXT NOT NULL,
   target_id                  TEXT NOT NULL,
@@ -511,6 +514,8 @@ CREATE TABLE IF NOT EXISTS assertions (
 
 CREATE INDEX IF NOT EXISTS idx_assertions_target_property
   ON assertions(target_type, target_id, property);
+CREATE INDEX IF NOT EXISTS idx_assertions_scope_target_property
+  ON assertions(scope_id, target_slug, target_type, target_id, property);
 CREATE INDEX IF NOT EXISTS idx_assertions_authority_lifecycle
   ON assertions(authority_state, lifecycle_state);
 
@@ -535,6 +540,9 @@ CREATE INDEX IF NOT EXISTS idx_assertion_events_assertion_created
 CREATE TABLE IF NOT EXISTS assertion_evidence (
   id                  TEXT PRIMARY KEY,
   assertion_id         TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+  scope_id             TEXT NOT NULL DEFAULT 'workspace:default',
+  policy_version       TEXT NOT NULL DEFAULT 'policy:v1',
+  authority_scope      TEXT NOT NULL DEFAULT 'work',
   extracted_claim_id   TEXT NOT NULL,
   source_id            TEXT NOT NULL,
   source_item_id       TEXT NOT NULL,
@@ -553,6 +561,8 @@ CREATE TABLE IF NOT EXISTS assertion_evidence (
 
 CREATE INDEX IF NOT EXISTS idx_assertion_evidence_assertion
   ON assertion_evidence(assertion_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_assertion_evidence_scope_assertion
+  ON assertion_evidence(scope_id, assertion_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assertion_evidence_source
   ON assertion_evidence(source_id, source_item_id, source_chunk_id);
 
@@ -570,12 +580,17 @@ CREATE TABLE IF NOT EXISTS assertion_lineage (
 
 CREATE TABLE IF NOT EXISTS assertion_links (
   id                 TEXT PRIMARY KEY,
+  scope_id           TEXT NOT NULL DEFAULT 'workspace:default',
+  policy_version     TEXT NOT NULL DEFAULT 'policy:v1',
   from_assertion_id  TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
   to_assertion_id    TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
   link_type          TEXT NOT NULL,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(from_assertion_id, to_assertion_id, link_type)
 );
+
+CREATE INDEX IF NOT EXISTS idx_assertion_links_scope_from
+  ON assertion_links(scope_id, from_assertion_id, link_type);
 
 CREATE TABLE IF NOT EXISTS conflict_sets (
   id             TEXT PRIMARY KEY,

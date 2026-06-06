@@ -5113,6 +5113,9 @@ export class SQLiteEngine implements BrainEngine {
           );
           this.resetPageEmbeddingsForModelChange();
           break;
+        case 51:
+          this.ensureAssertionScopePolicyColumns();
+          break;
         default:
           throw new Error(`SQLite migration ${version} is not implemented`);
       }
@@ -6943,6 +6946,9 @@ export class SQLiteEngine implements BrainEngine {
 
       CREATE TABLE IF NOT EXISTS assertions (
         id TEXT PRIMARY KEY,
+        scope_id TEXT NOT NULL DEFAULT 'workspace:default',
+        policy_version TEXT NOT NULL DEFAULT 'policy:v1',
+        authority_scope TEXT NOT NULL DEFAULT 'work',
         claim_type TEXT NOT NULL,
         target_type TEXT NOT NULL,
         target_id TEXT NOT NULL,
@@ -6965,6 +6971,8 @@ export class SQLiteEngine implements BrainEngine {
       );
       CREATE INDEX IF NOT EXISTS idx_assertions_target_property
         ON assertions(target_type, target_id, property);
+      CREATE INDEX IF NOT EXISTS idx_assertions_scope_target_property
+        ON assertions(scope_id, target_slug, target_type, target_id, property);
       CREATE INDEX IF NOT EXISTS idx_assertions_authority_lifecycle
         ON assertions(authority_state, lifecycle_state);
 
@@ -6988,6 +6996,9 @@ export class SQLiteEngine implements BrainEngine {
       CREATE TABLE IF NOT EXISTS assertion_evidence (
         id TEXT PRIMARY KEY,
         assertion_id TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
+        scope_id TEXT NOT NULL DEFAULT 'workspace:default',
+        policy_version TEXT NOT NULL DEFAULT 'policy:v1',
+        authority_scope TEXT NOT NULL DEFAULT 'work',
         extracted_claim_id TEXT NOT NULL,
         source_id TEXT NOT NULL,
         source_item_id TEXT NOT NULL,
@@ -7005,6 +7016,8 @@ export class SQLiteEngine implements BrainEngine {
       );
       CREATE INDEX IF NOT EXISTS idx_assertion_evidence_assertion
         ON assertion_evidence(assertion_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_assertion_evidence_scope_assertion
+        ON assertion_evidence(scope_id, assertion_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_assertion_evidence_source
         ON assertion_evidence(source_id, source_item_id, source_chunk_id);
 
@@ -7022,12 +7035,16 @@ export class SQLiteEngine implements BrainEngine {
 
       CREATE TABLE IF NOT EXISTS assertion_links (
         id TEXT PRIMARY KEY,
+        scope_id TEXT NOT NULL DEFAULT 'workspace:default',
+        policy_version TEXT NOT NULL DEFAULT 'policy:v1',
         from_assertion_id TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
         to_assertion_id TEXT NOT NULL REFERENCES assertions(id) ON DELETE CASCADE,
         link_type TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
         UNIQUE(from_assertion_id, to_assertion_id, link_type)
       );
+      CREATE INDEX IF NOT EXISTS idx_assertion_links_scope_from
+        ON assertion_links(scope_id, from_assertion_id, link_type);
 
       CREATE TABLE IF NOT EXISTS conflict_sets (
         id TEXT PRIMARY KEY,
@@ -7047,6 +7064,45 @@ export class SQLiteEngine implements BrainEngine {
         PRIMARY KEY(conflict_set_id, assertion_id)
       );
     `);
+  }
+
+  private ensureAssertionScopePolicyColumns(): void {
+    if (!this.sqliteTableExists('assertions')
+      || !this.sqliteTableExists('assertion_evidence')
+      || !this.sqliteTableExists('assertion_links')) {
+      this.ensureAssertionPipelineSchema();
+    }
+
+    this.addSqliteColumnIfMissing('assertions', 'scope_id', `TEXT NOT NULL DEFAULT 'workspace:default'`);
+    this.addSqliteColumnIfMissing('assertions', 'policy_version', `TEXT NOT NULL DEFAULT 'policy:v1'`);
+    this.addSqliteColumnIfMissing('assertions', 'authority_scope', `TEXT NOT NULL DEFAULT 'work'`);
+
+    if (this.sqliteTableExists('assertion_evidence')) {
+      this.addSqliteColumnIfMissing('assertion_evidence', 'scope_id', `TEXT NOT NULL DEFAULT 'workspace:default'`);
+      this.addSqliteColumnIfMissing('assertion_evidence', 'policy_version', `TEXT NOT NULL DEFAULT 'policy:v1'`);
+      this.addSqliteColumnIfMissing('assertion_evidence', 'authority_scope', `TEXT NOT NULL DEFAULT 'work'`);
+    }
+
+    if (this.sqliteTableExists('assertion_links')) {
+      this.addSqliteColumnIfMissing('assertion_links', 'scope_id', `TEXT NOT NULL DEFAULT 'workspace:default'`);
+      this.addSqliteColumnIfMissing('assertion_links', 'policy_version', `TEXT NOT NULL DEFAULT 'policy:v1'`);
+    }
+
+    this.database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_assertions_scope_target_property
+        ON assertions(scope_id, target_slug, target_type, target_id, property);
+      CREATE INDEX IF NOT EXISTS idx_assertion_evidence_scope_assertion
+        ON assertion_evidence(scope_id, assertion_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_assertion_links_scope_from
+        ON assertion_links(scope_id, from_assertion_id, link_type);
+    `);
+  }
+
+  private addSqliteColumnIfMissing(tableName: string, columnName: string, definition: string): void {
+    const columns = this.database.query(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === columnName)) {
+      this.database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition};`);
+    }
   }
 
   private repairMemorySessionExpiryContract(): void {

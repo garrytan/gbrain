@@ -2993,6 +2993,32 @@ const MIGRATIONS: Migration[] = [
       $$;
     `,
   },
+  {
+    version: 51,
+    name: 'assertion_scope_policy_labels',
+    sql: `
+      ALTER TABLE assertions
+        ADD COLUMN IF NOT EXISTS scope_id TEXT NOT NULL DEFAULT 'workspace:default',
+        ADD COLUMN IF NOT EXISTS policy_version TEXT NOT NULL DEFAULT 'policy:v1',
+        ADD COLUMN IF NOT EXISTS authority_scope TEXT NOT NULL DEFAULT 'work';
+
+      ALTER TABLE assertion_evidence
+        ADD COLUMN IF NOT EXISTS scope_id TEXT NOT NULL DEFAULT 'workspace:default',
+        ADD COLUMN IF NOT EXISTS policy_version TEXT NOT NULL DEFAULT 'policy:v1',
+        ADD COLUMN IF NOT EXISTS authority_scope TEXT NOT NULL DEFAULT 'work';
+
+      ALTER TABLE assertion_links
+        ADD COLUMN IF NOT EXISTS scope_id TEXT NOT NULL DEFAULT 'workspace:default',
+        ADD COLUMN IF NOT EXISTS policy_version TEXT NOT NULL DEFAULT 'policy:v1';
+
+      CREATE INDEX IF NOT EXISTS idx_assertions_scope_target_property
+        ON assertions(scope_id, target_slug, target_type, target_id, property);
+      CREATE INDEX IF NOT EXISTS idx_assertion_evidence_scope_assertion
+        ON assertion_evidence(scope_id, assertion_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_assertion_links_scope_from
+        ON assertion_links(scope_id, from_assertion_id, link_type);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

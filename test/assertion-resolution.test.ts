@@ -9,6 +9,109 @@ import type { AssertionRecord, ExtractedClaim } from '../src/core/assertions/ass
 const NOW = '2026-05-20T12:00:00.000Z';
 
 describe('assertion resolution lifecycle retrieval', () => {
+  test('identical claims in different scopes create distinct assertions', () => {
+    const workspace = resolveExtractedClaim({
+      claim: claim({
+        id: 'extracted-claim:runtime:workspace',
+        value_json: { profile: 'managed' },
+      }),
+      scope_id: 'workspace:default',
+      now: NOW,
+    });
+
+    const personal = resolveExtractedClaim({
+      claim: claim({
+        id: 'extracted-claim:runtime:personal',
+        value_json: { profile: 'managed' },
+      }),
+      existing_assertions: [workspace.assertion],
+      scope_id: 'personal:default',
+      now: NOW,
+    });
+
+    expect(personal.resolution).toBe('created');
+    expect(personal.assertion.scope_id).toBe('personal:default');
+    expect(personal.assertion.id).not.toBe(workspace.assertion.id);
+  });
+
+  test('identical claims in the same scope remain duplicates', () => {
+    const first = resolveExtractedClaim({
+      claim: claim({
+        id: 'extracted-claim:runtime:first',
+        value_json: { profile: 'managed' },
+      }),
+      scope_id: 'workspace:default',
+      now: NOW,
+    });
+
+    const duplicate = resolveExtractedClaim({
+      claim: claim({
+        id: 'extracted-claim:runtime:duplicate',
+        value_json: { profile: 'managed' },
+      }),
+      existing_assertions: [first.assertion],
+      scope_id: 'workspace:default',
+      now: NOW,
+    });
+
+    expect(duplicate.resolution).toBe('duplicate');
+    expect(duplicate.assertion.id).toBe(first.assertion.id);
+    expect(duplicate.assertion.scope_id).toBe('workspace:default');
+  });
+
+  test('conflict set IDs include scope and stay stable within a scope', () => {
+    const workspaceBase = assertion({
+      id: 'assertion:workspace:base',
+      value_json: { profile: 'managed' },
+    });
+    const workspaceConflict = resolveExtractedClaim({
+      claim: claim({
+        id: 'extracted-claim:workspace:conflict',
+        value_json: { profile: 'local' },
+      }),
+      existing_assertions: [workspaceBase],
+      scope_id: 'workspace:default',
+      now: NOW,
+    });
+    const workspaceConflictAgain = resolveExtractedClaim({
+      claim: claim({
+        id: 'extracted-claim:workspace:conflict-again',
+        value_json: { profile: 'hybrid' },
+      }),
+      existing_assertions: [workspaceBase],
+      scope_id: 'workspace:default',
+      now: NOW,
+    });
+    const personalBase = assertion({
+      id: 'assertion:personal:base',
+      scope_id: 'personal:default',
+      value_json: { profile: 'managed' },
+    });
+    const personalConflict = resolveExtractedClaim({
+      claim: claim({
+        id: 'extracted-claim:personal:conflict',
+        value_json: { profile: 'local' },
+      }),
+      existing_assertions: [personalBase],
+      scope_id: 'personal:default',
+      now: NOW,
+    });
+
+    const workspaceConflictSetId = workspaceConflict.assertion.conflict_set_id;
+    const workspaceConflictAgainSetId = workspaceConflictAgain.assertion.conflict_set_id;
+    const personalConflictSetId = personalConflict.assertion.conflict_set_id;
+    if (!workspaceConflictSetId || !workspaceConflictAgainSetId || !personalConflictSetId) {
+      throw new Error('expected conflict set ids');
+    }
+
+    expect(workspaceConflict.resolution).toBe('conflicted');
+    expect(personalConflict.resolution).toBe('conflicted');
+    expect(workspaceConflictSetId).toBe(workspaceConflictAgainSetId);
+    expect(workspaceConflictSetId).not.toBe(personalConflictSetId);
+    expect(workspaceConflict.conflict_sets[0]!.id).toBe(workspaceConflictSetId);
+    expect(personalConflict.conflict_sets[0]!.id).toBe(personalConflictSetId);
+  });
+
   test('temporal supersession expires the older assertion', () => {
     const oldAssertion = assertion({
       id: 'assertion:runtime:old',
@@ -166,9 +269,13 @@ function assertion(input: {
   property?: string;
   value_json?: Record<string, unknown>;
   valid_from?: string | null;
+  scope_id?: string;
 }): AssertionRecord {
   return {
     id: input.id,
+    scope_id: input.scope_id ?? 'workspace:default',
+    policy_version: 'policy:v1',
+    authority_scope: 'work',
     claim_type: input.claim_type ?? 'architecture_claim',
     target_type: 'system',
     target_id: 'systems/mbrain',

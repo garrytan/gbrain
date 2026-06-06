@@ -81,6 +81,22 @@ describe('scenario memory orchestration operations', () => {
     expect((result as { next_tool: string }).next_tool).toBe('reverify_code_claims');
   });
 
+  test('select_activation_policy preserves candidate metadata for activation labels', async () => {
+    const result = await operationsByName.select_activation_policy.handler(ctx, {
+      scenario: 'project_qa',
+      artifacts: [{
+        id: 'candidate:direction',
+        artifact_kind: 'memory_candidate',
+        source_ref: 'memory-candidate:direction',
+        candidate_status: 'candidate',
+        target_object_type: 'curated_note',
+        source_refs_count: 2,
+      }],
+    });
+
+    expect((result as { decisions: Array<{ activation_label: string }> }).decisions[0]?.activation_label).toBe('promote_first');
+  });
+
   test('registers plan_scenario_memory_request as non-mutating with CLI hint', () => {
     const op = operationsByName.plan_scenario_memory_request;
     expect(op).toBeDefined();
@@ -167,6 +183,60 @@ describe('scenario memory orchestration operations', () => {
         stale: 'true',
       }],
     })).rejects.toThrow('artifacts[0].stale must be a boolean');
+
+    await expect(operationsByName.select_activation_policy.handler(ctx, {
+      scenario: 'project_qa',
+      artifacts: [{
+        id: 'bad-candidate-status',
+        artifact_kind: 'memory_candidate',
+        candidate_status: 'not-real',
+      }],
+    })).rejects.toThrow('artifacts[0].candidate_status must be one of');
+
+    await expect(operationsByName.select_activation_policy.handler(ctx, {
+      scenario: 'project_qa',
+      artifacts: [{
+        id: 'null-candidate-status',
+        artifact_kind: 'memory_candidate',
+        candidate_status: null,
+      }],
+    })).rejects.toThrow('artifacts[0].candidate_status must be one of');
+
+    await expect(operationsByName.select_activation_policy.handler(ctx, {
+      scenario: 'project_qa',
+      artifacts: [{
+        id: 'bad-target-object-type',
+        artifact_kind: 'memory_candidate',
+        target_object_type: 'not-real',
+      }],
+    })).rejects.toThrow('artifacts[0].target_object_type must be one of');
+
+    await expect(operationsByName.select_activation_policy.handler(ctx, {
+      scenario: 'project_qa',
+      artifacts: [{
+        id: 'null-target-object-type',
+        artifact_kind: 'memory_candidate',
+        target_object_type: null,
+      }],
+    })).rejects.toThrow('artifacts[0].target_object_type must be one of');
+
+    await expect(operationsByName.select_activation_policy.handler(ctx, {
+      scenario: 'project_qa',
+      artifacts: [{
+        id: 'bad-source-refs-count',
+        artifact_kind: 'memory_candidate',
+        source_refs_count: -1,
+      }],
+    })).rejects.toThrow('artifacts[0].source_refs_count must be a non-negative integer');
+
+    await expect(operationsByName.select_activation_policy.handler(ctx, {
+      scenario: 'project_qa',
+      artifacts: [{
+        id: 'null-source-refs-count',
+        artifact_kind: 'memory_candidate',
+        source_refs_count: null,
+      }],
+    })).rejects.toThrow('artifacts[0].source_refs_count must be a non-negative integer');
   });
 
   test('accepts typed known_subjects JSON through planner for system subjects', async () => {

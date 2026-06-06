@@ -186,6 +186,9 @@ describe('assertion evidence service', () => {
 function canonicalAssertion(id: string): AssertionRecord {
   return {
     id,
+    scope_id: 'workspace:default',
+    policy_version: 'policy:v1',
+    authority_scope: 'work',
     claim_type: 'architecture_claim',
     target_type: 'system',
     target_id: null,
@@ -237,6 +240,9 @@ function storedEvidence(
   return {
     id: patch.id,
     assertion_id: input.assertion_id,
+    scope_id: input.scope_id ?? 'workspace:default',
+    policy_version: input.policy_version ?? 'policy:v1',
+    authority_scope: input.authority_scope ?? 'work',
     extracted_claim_id: input.extracted_claim_id,
     source_id: input.source_id,
     source_item_id: input.source_item_id,

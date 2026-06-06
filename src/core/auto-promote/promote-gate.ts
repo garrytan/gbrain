@@ -17,6 +17,8 @@ export interface PromoteGateInput {
   now: string;
   actor: string;
   target_snapshot_hashes?: Map<string, string | null>;
+  allow_canonical_page_writes?: boolean;
+  canonical_write_candidate_ids: ReadonlySet<string>;
 }
 export interface PromoteGateResult {
   promoted: string[];
@@ -46,7 +48,9 @@ export async function runPromoteGate(input: PromoteGateInput): Promise<PromoteGa
 
     if (input.config.dry_run) {
       result.would_promote.push(v.candidate_id);
-      if (isPageBackedCandidate(candidate)) result.would_canonicalize.push(v.candidate_id);
+      if (isPageBackedCandidate(candidate) && isCanonicalWriteEligible(input, candidate)) {
+        result.would_canonicalize.push(v.candidate_id);
+      }
       continue;
     }
 
@@ -101,6 +105,12 @@ async function canonicalizePromotedCandidate(
     reviewed_at: input.now,
     review_reason: `auto_promote canonical handoff (${input.actor})`,
   });
+  if (!isCanonicalWriteEligible(input, candidate)) {
+    return { handoff: true, skipped_reason: 'canonical_policy_not_allowed' };
+  }
+  if (input.allow_canonical_page_writes !== true) {
+    return { handoff: true, skipped_reason: 'canonical_page_writes_not_allowed' };
+  }
   const targetSlug = handoff.handoff.target_object_id;
   const expectedContentHash = input.target_snapshot_hashes?.get(candidate.id);
   try {
@@ -135,6 +145,13 @@ function isPageBackedCandidate(candidate: MemoryCandidateEntry): boolean {
   return candidate.target_object_type === 'curated_note'
     && typeof candidate.target_object_id === 'string'
     && candidate.target_object_id.trim().length > 0;
+}
+
+function isCanonicalWriteEligible(input: PromoteGateInput, candidate: MemoryCandidateEntry): boolean {
+  return input.canonical_write_candidate_ids.has(candidate.id)
+    && isPageBackedCandidate(candidate)
+    && input.config.eligibility.sensitivities.includes(candidate.sensitivity as AutoPromoteConfig['eligibility']['sensitivities'][number])
+    && candidate.source_refs.some((ref) => ref.trim().length > 0);
 }
 
 function serializeCanonicalCandidatePage(

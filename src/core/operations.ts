@@ -99,6 +99,8 @@ import type {
   CorpusLaneMetadata,
   MemoryActivationArtifact,
   MemoryArtifactKind,
+  MemoryCandidateStatus,
+  MemoryCandidateTargetObjectType,
   MemoryScenario,
   MemoryScenarioKnownSubject,
   MemoryScenarioKnownSubjectKind,
@@ -339,6 +341,23 @@ const MEMORY_ARTIFACT_KINDS = [
   'profile_memory',
   'personal_episode',
 ] as const satisfies readonly MemoryArtifactKind[];
+
+const MEMORY_CANDIDATE_STATUS_VALUES = [
+  'captured',
+  'candidate',
+  'staged_for_review',
+  'rejected',
+  'promoted',
+  'superseded',
+] as const satisfies readonly MemoryCandidateStatus[];
+
+const MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES = [
+  'curated_note',
+  'procedure',
+  'profile_memory',
+  'personal_episode',
+  'other',
+] as const satisfies readonly MemoryCandidateTargetObjectType[];
 
 export interface ParseOpArgsOptions {
   warn?: (msg: string) => void;
@@ -1684,6 +1703,31 @@ function parseActivationArtifacts(
       throw new OperationError('invalid_params', `${key}[${index}].anchors_valid must be a boolean.`);
     }
 
+    if (artifact.candidate_status === null) {
+      throw new OperationError('invalid_params', `${key}[${index}].candidate_status must be one of: ${MEMORY_CANDIDATE_STATUS_VALUES.join(', ')}.`);
+    }
+    if (artifact.target_object_type === null) {
+      throw new OperationError('invalid_params', `${key}[${index}].target_object_type must be one of: ${MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES.join(', ')}.`);
+    }
+    if (artifact.source_refs_count === null) {
+      throw new OperationError('invalid_params', `${key}[${index}].source_refs_count must be a non-negative integer`);
+    }
+
+    const candidateStatus = parseEnumParam(
+      artifact.candidate_status,
+      `${key}[${index}].candidate_status`,
+      MEMORY_CANDIDATE_STATUS_VALUES,
+    );
+    const targetObjectType = parseEnumParam(
+      artifact.target_object_type,
+      `${key}[${index}].target_object_type`,
+      MEMORY_CANDIDATE_TARGET_OBJECT_TYPE_VALUES,
+    );
+    const sourceRefsCount = parseNonNegativeIntegerParam(
+      artifact.source_refs_count,
+      `${key}[${index}].source_refs_count`,
+    );
+
     let scopePolicy: ScopeGatePolicy | undefined;
     if (artifact.scope_policy !== undefined) {
       if (artifact.scope_policy === null) {
@@ -1703,6 +1747,9 @@ function parseActivationArtifacts(
       stale: artifact.stale,
       anchors_valid: artifact.anchors_valid,
       scope_policy: scopePolicy,
+      candidate_status: candidateStatus,
+      target_object_type: targetObjectType,
+      source_refs_count: sourceRefsCount,
     };
   });
 }

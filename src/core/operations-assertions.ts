@@ -121,7 +121,7 @@ export function createAssertionOperations(
     params: {
       target_slug: { type: 'string', description: 'Optional target slug filter.' },
       mode: { type: 'string', description: 'Retrieval mode: default or audit.' },
-      scope_id: { type: 'string', description: 'Lifecycle audit scope id for event/tombstone decoration.' },
+      scope_id: { type: 'string', description: 'Assertion retrieval scope id. Defaults to workspace:default.' },
       include_candidates: { type: 'boolean', description: 'Include candidate assertions as verify-first plans.' },
       include_rejected: { type: 'boolean', description: 'Include rejected assertions as audit-only plans.' },
       limit: { type: 'number', description: 'Maximum retrieval plans to return.' },
@@ -129,7 +129,7 @@ export function createAssertionOperations(
     handler: async (ctx, p) => listRetrievableAssertionsForEngine(ctx.engine, {
       target_slug: optionalString(deps, 'target_slug', p.target_slug),
       mode: optionalAssertionRetrievalMode(deps, p.mode),
-      scope_id: optionalString(deps, 'scope_id', p.scope_id),
+      scope_id: optionalString(deps, 'scope_id', p.scope_id) ?? 'workspace:default',
       include_candidates: optionalBoolean(deps, 'include_candidates', p.include_candidates),
       include_rejected: optionalBoolean(deps, 'include_rejected', p.include_rejected),
       limit: optionalNumber(deps, 'limit', p.limit),
@@ -143,6 +143,7 @@ export function createAssertionOperations(
     params: {
       assertion_id: { type: 'string', description: 'Assertion id to explain.' },
       target_slug: { type: 'string', description: 'Target slug whose assertions should be explained when assertion_id is omitted.' },
+      scope_id: { type: 'string', description: 'Assertion lineage scope id. Defaults to workspace:default.' },
       include_raw: { type: 'boolean', description: 'Include raw chunk text only for non-secret, non-injection source chunks.' },
       limit: { type: 'number', description: 'Maximum assertions to explain when using target_slug.' },
     },
@@ -155,6 +156,7 @@ export function createAssertionOperations(
       return explainAssertionForEngine(ctx.engine, {
         assertion_id,
         target_slug,
+        scope_id: optionalString(deps, 'scope_id', p.scope_id) ?? 'workspace:default',
         include_raw: optionalBoolean(deps, 'include_raw', p.include_raw),
         limit: optionalNumber(deps, 'limit', p.limit),
       });

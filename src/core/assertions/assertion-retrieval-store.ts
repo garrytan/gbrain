@@ -18,6 +18,7 @@ export interface AssertionRetrievalFilters {
   target_slug?: string;
   mode?: AssertionRetrievalMode;
   scope_id?: string;
+  frontier?: boolean;
   include_candidates?: boolean;
   include_rejected?: boolean;
   limit?: number;
@@ -90,9 +91,10 @@ async function listAssertionRows(
   engine: BrainEngine,
   filters: AssertionRetrievalFilters,
 ): Promise<AssertionRecord[]> {
+  requireScopeForFrontier(filters);
+
   if (engine instanceof PostgresEngine) {
-    const where = filters.target_slug ? 'WHERE target_slug = $1' : '';
-    const params = filters.target_slug ? [filters.target_slug] : [];
+    const { where, params } = assertionWhereClause(filters, (index) => `$${index}`);
     const rows = await (engine as PostgresEngine).sql.unsafe(`
       SELECT *
       FROM assertions
@@ -107,23 +109,17 @@ async function listAssertionRows(
     db?: AsyncQueryLike;
   };
   if (candidate.database) {
-    const rows = filters.target_slug
-      ? candidate.database.query<Record<string, unknown>>(`
-        SELECT *
-        FROM assertions
-        WHERE target_slug = ?
-        ORDER BY created_at ASC, id ASC
-      `).all(filters.target_slug)
-      : candidate.database.query<Record<string, unknown>>(`
-        SELECT *
-        FROM assertions
-        ORDER BY created_at ASC, id ASC
-      `).all();
+    const { where, params } = assertionWhereClause(filters, () => '?');
+    const rows = candidate.database.query<Record<string, unknown>>(`
+      SELECT *
+      FROM assertions
+      ${where}
+      ORDER BY created_at ASC, id ASC
+    `).all(...params);
     return rows.map(rowToAssertion);
   }
   if (candidate.db) {
-    const where = filters.target_slug ? 'WHERE target_slug = $1' : '';
-    const params = filters.target_slug ? [filters.target_slug] : [];
+    const { where, params } = assertionWhereClause(filters, (index) => `$${index}`);
     const rows = await candidate.db.query(`
       SELECT *
       FROM assertions
@@ -135,6 +131,32 @@ async function listAssertionRows(
 
   const engineName = (engine as { constructor?: { name?: string } }).constructor?.name ?? 'unknown';
   throw new Error(`assertion retrieval requires a SQL-capable engine; got ${engineName}`);
+}
+
+function requireScopeForFrontier(filters: AssertionRetrievalFilters): void {
+  if (filters.frontier === true && !filters.scope_id) {
+    throw new Error('scope_id is required for assertion frontier retrieval');
+  }
+}
+
+function assertionWhereClause(
+  filters: AssertionRetrievalFilters,
+  placeholder: (index: number) => string,
+): { where: string; params: string[] } {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (filters.scope_id) {
+    params.push(filters.scope_id);
+    clauses.push(`scope_id = ${placeholder(params.length)}`);
+  }
+  if (filters.target_slug) {
+    params.push(filters.target_slug);
+    clauses.push(`target_slug = ${placeholder(params.length)}`);
+  }
+  return {
+    where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+    params,
+  };
 }
 
 function sortRetrievalPlans(plans: AssertionRetrievalPlan[]): AssertionRetrievalPlan[] {
@@ -160,6 +182,9 @@ function lifecycleRank(state: AssertionLifecycleState): number {
 function rowToAssertion(row: Record<string, unknown>): AssertionRecord {
   return {
     id: stringValue(row.id),
+    scope_id: stringValue(row.scope_id) || 'workspace:default',
+    policy_version: stringValue(row.policy_version) || 'policy:v1',
+    authority_scope: stringValue(row.authority_scope) || 'work',
     claim_type: stringValue(row.claim_type) as AssertionRecord['claim_type'],
     target_type: stringValue(row.target_type),
     target_id: nullableString(row.target_id),

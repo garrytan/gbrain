@@ -191,6 +191,52 @@ Phase 13 evidence is deterministic replay plus live-eval budget gating by
 default. `bun run test:phase13` proves the deterministic fixture, policy,
 projection, source-safety, and budget guardrails. Do not report live LLM eval evidence unless the budgeted live eval was actually run in an environment with the required provider credentials.
 
+## Authority-first memory foundation
+
+Run:
+
+```bash
+bun run test:authority-foundation
+```
+
+Expected:
+
+- candidate and graph artifacts remain discovery, handoff, or review surfaces;
+  they do not become answer authority without a canonical evidence boundary.
+- assertion retrieval applies scope filtering before frontier expansion or
+  retrieval use, including lineage and conflict graph surfaces.
+- `dream --apply` permits candidate writes only; it does not imply
+  auto-promote apply.
+- canonical page writes require explicit canonical write permission in addition
+  to runner promotion.
+- B-lite auto-promote lanes are enforced:
+  - fact-like manual or extracted candidates may be canonical eligible.
+  - inferred, ambiguous, dream-generated, and non-fact candidates are
+    handoff-only, not canonical page-write eligible.
+  - excluded candidates do not reach the runner.
+- handoff-only candidates may reach the runner and produce handoff or review
+  signals, but cannot call `put_page`.
+- verdict cache compatibility remains covered without requiring a
+  policy-aware cache key schema.
+
+## Trust contract service
+
+Run:
+
+```bash
+bun run test:trust-contract
+```
+
+Expected:
+
+- trust contract decisions centralize activation, authority, freshness,
+  revalidation, reason codes, and policy version/hash output.
+- candidates, source/timeline evidence, derived orientation artifacts, stale
+  compiled truth, scoped profile or episode memory, and assertion surfaces keep
+  their intended authority boundaries.
+- `memory-activation-policy-service` preserves its existing public output while
+  delegating policy decisions through the trust contract.
+
 ## Phase 0 parity verification
 
 Run:

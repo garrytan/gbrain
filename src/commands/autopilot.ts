@@ -256,7 +256,8 @@ COMMANDS
   logs [--lines N]
   config [--json]
   run-once
-  dream [--dry-run|--apply] [--scope-id SCOPE] [--now ISO] [--limit N]
+  dream [--dry-run|--apply] [--apply-auto-promote] [--allow-canonical-page-writes]
+        [--scope-id SCOPE] [--now ISO] [--limit N]
 `);
 }
 
@@ -264,7 +265,11 @@ function printAutopilotDreamHelp(): void {
   console.log(`mbrain autopilot dream -- run the Dream phase runner through autopilot policy
 
 USAGE
-  mbrain autopilot dream [--dry-run|--apply] [--scope-id SCOPE] [--now ISO] [--limit N]
+  mbrain autopilot dream [--dry-run|--apply] [--write-candidates]
+                        [--scope-id SCOPE] [--now ISO] [--limit N]
+                        [--apply-auto-promote] [--allow-canonical-page-writes]
+                        [--max-runner-calls N] [--time-budget-ms MS]
+                        [--max-candidates-per-cycle N]
                         [--allow-llm] [--allow-local-runner]
 `);
 }
