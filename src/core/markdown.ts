@@ -283,9 +283,12 @@ function collectValidationErrors(
   if (ctx.expectedSlug && typeof ctx.parsedFrontmatter.slug === 'string') {
     const declared = ctx.parsedFrontmatter.slug as string;
     if (declared !== ctx.expectedSlug) {
+      const caseHint = declared.toLowerCase() === ctx.expectedSlug
+        ? ` Slugs are case-sensitive; use "${ctx.expectedSlug}" or remove the slug field to use the path-derived value.`
+        : '';
       errors.push({
         code: 'SLUG_MISMATCH',
-        message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`,
+        message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}".${caseHint}`,
       });
     }
   }

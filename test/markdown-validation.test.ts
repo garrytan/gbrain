@@ -83,6 +83,18 @@ describe('parseMarkdown validation surface', () => {
       expect(parsed.errors!.map(e => e.code)).toContain('SLUG_MISMATCH');
     });
 
+    test('mixed-case slug mismatch includes actionable lowercase hint', () => {
+      const md = `${fence}\ntype: concept\ntitle: hi\nslug: projects/README\n${fence}\n\nbody`;
+      const parsed = parseMarkdown(md, 'projects/README.md', {
+        validate: true,
+        expectedSlug: 'projects/readme',
+      });
+      const error = parsed.errors!.find(e => e.code === 'SLUG_MISMATCH');
+      expect(error).toBeDefined();
+      expect(error!.message).toContain('Slugs are case-sensitive');
+      expect(error!.message).toContain('projects/readme');
+    });
+
     test('matching slug -> no error', () => {
       const md = `${fence}\ntype: concept\ntitle: hi\nslug: people/jane-doe\n${fence}\n\nbody`;
       const parsed = parseMarkdown(md, 'people/jane-doe.md', {
