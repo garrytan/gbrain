@@ -78,6 +78,9 @@ describe('CLI source shape', () => {
 
   test('setup-agent help mentions Claude stop hook installation', () => {
     expect(cliSource).toContain('Register MCP, inject rules, install Claude stop hook');
+    expect(cliSource).toContain('setup-agent [--preview|--diff|--apply]');
+    expect(cliSource).toContain('Preview managed setup actions without writing files');
+    expect(cliSource).toContain('Show redacted managed setup diffs without writing files');
   });
 
   test('connectors command is exposed as a registry inspection command', () => {

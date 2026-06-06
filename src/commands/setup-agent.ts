@@ -7,6 +7,10 @@ import {
   CLAUDE_MBRAIN_SKIP_DIRS,
   CLAUDE_MBRAIN_STOP_HOOK,
 } from './setup-agent-hook-assets.ts';
+import {
+  formatSetupAgentTrustUxReport,
+  planSetupAgentTrustUx,
+} from '../core/services/setup-agent-trust-ux-service.ts';
 
 const MARKER_START = '<!-- MBRAIN:RULES:START -->';
 const MARKER_END = '<!-- MBRAIN:RULES:END -->';
@@ -20,6 +24,7 @@ interface DetectedClient {
 }
 
 type ClaudeMcpScope = 'user' | 'local';
+type SetupAgentRunMode = 'preview' | 'diff' | 'apply';
 
 export async function runSetupAgent(args: string[]) {
   const home = process.env.HOME || process.env.USERPROFILE || '';
@@ -28,6 +33,12 @@ export async function runSetupAgent(args: string[]) {
   const printOnly = args.includes('--print');
   const jsonOutput = args.includes('--json');
   const skipMcp = args.includes('--skip-mcp');
+  const modeParse = parseSetupAgentRunMode(args);
+  if ('error' in modeParse) {
+    console.error(modeParse.error);
+    process.exit(1);
+  }
+  const runMode = modeParse.mode;
   const scopeParse = parseClaudeMcpScope(args);
   if ('error' in scopeParse) {
     console.error(scopeParse.error);
@@ -58,7 +69,7 @@ export async function runSetupAgent(args: string[]) {
       name: 'claude',
       configDir: claudeDir,
       targetFile: join(claudeDir, 'CLAUDE.md'),
-      mcpRegistered: checkMcpRegistered('claude', home, claudeMcpScope),
+      mcpRegistered: skipMcp ? false : checkMcpRegistered('claude', home, claudeMcpScope),
     });
   }
 
@@ -67,7 +78,7 @@ export async function runSetupAgent(args: string[]) {
       name: 'codex',
       configDir: codexDir,
       targetFile: join(codexDir, 'AGENTS.md'),
-      mcpRegistered: checkMcpRegistered('codex', home),
+      mcpRegistered: skipMcp ? false : checkMcpRegistered('codex', home),
     });
   }
 
@@ -75,6 +86,43 @@ export async function runSetupAgent(args: string[]) {
     console.error('No AI clients detected. Expected ~/.claude/ or ~/.codex/ to exist.');
     console.error('Install Claude Code or Codex first, then rerun: mbrain setup-agent');
     process.exit(1);
+  }
+
+  if (runMode === 'preview' || runMode === 'diff') {
+    const report = planSetupAgentTrustUx({
+      mode: runMode,
+      version: VERSION,
+      rules_content: rulesContent,
+      skip_mcp: skipMcp,
+      claude_mcp_scope: claudeMcpScope,
+      clients: clients.map((client) => ({
+        client: client.name,
+        config_dir: client.configDir,
+        target_file: client.targetFile,
+        mcp_registered: client.mcpRegistered,
+        prompt_content: readOptionalFile(client.targetFile),
+        ...(client.name === 'claude'
+          ? {
+              mcp_scope: claudeMcpScope,
+              claude_stop_hook_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'stop-mbrain-check.sh')),
+              claude_relevance_lib_content: readOptionalFile(join(client.configDir, 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh')),
+              claude_skip_dirs_content: readOptionalFile(join(client.configDir, 'mbrain-skip-dirs')),
+              claude_settings_content: readOptionalFile(join(client.configDir, 'settings.json')),
+              claude_legacy_hooks_content: readOptionalFile(join(client.configDir, 'hooks', 'hooks.json')),
+            }
+          : {}),
+      })),
+      expected_claude_stop_hook: CLAUDE_MBRAIN_STOP_HOOK,
+      expected_claude_relevance_lib: CLAUDE_MBRAIN_RELEVANCE_LIB,
+      expected_claude_skip_dirs: CLAUDE_MBRAIN_SKIP_DIRS,
+    });
+
+    if (jsonOutput) {
+      console.log(JSON.stringify(report));
+    } else {
+      console.log(formatSetupAgentTrustUxReport(report));
+    }
+    return;
   }
 
   const results: Array<{ client: string; mcp: string; rules: string; mcp_scope?: ClaudeMcpScope }> = [];
@@ -109,11 +157,19 @@ export async function runSetupAgent(args: string[]) {
     console.log(JSON.stringify({
       status: 'ok',
       version: VERSION,
+      mode: 'apply',
+      mutating: true,
+      compatibility_alias: modeParse.compatibilityAlias,
+      changed: results.some((r) => r.mcp === 'registered' || r.rules === 'injected' || r.rules === 'updated'),
+      managed_only: true,
       ...(hasClaude ? { claudeScope: claudeMcpScope } : {}),
       clients: results,
     }));
   } else {
     console.log('\nmbrain setup-agent complete:\n');
+    if (modeParse.compatibilityAlias) {
+      console.log('  Compatibility: bare setup-agent is a legacy mutating alias for --apply.\n');
+    }
     for (const r of results) {
       const clientLabel = r.client === 'claude' ? 'Claude Code' : 'Codex';
       const mcpIcon = r.mcp === 'registered' ? '+' : r.mcp === 'already_registered' ? '=' : '-';
@@ -136,6 +192,21 @@ export async function runSetupAgent(args: string[]) {
     console.log('\nDone. Start a new session in your AI client to activate the rules.');
     console.log('Full reference: use the get_skillpack MCP tool inside your AI client.');
   }
+}
+
+function parseSetupAgentRunMode(args: string[]): { mode: SetupAgentRunMode; compatibilityAlias: boolean } | { error: string } {
+  const modeFlags = ['--preview', '--diff', '--apply', '--uninstall'].filter((flag) => args.includes(flag));
+  if (modeFlags.length > 1) {
+    return { error: 'setup-agent modes are mutually exclusive: --preview, --diff, --apply, --uninstall' };
+  }
+  const flag = modeFlags[0];
+  if (flag === '--preview') return { mode: 'preview', compatibilityAlias: false };
+  if (flag === '--diff') return { mode: 'diff', compatibilityAlias: false };
+  if (flag === '--apply') return { mode: 'apply', compatibilityAlias: false };
+  if (flag === '--uninstall') {
+    return { error: 'setup-agent --uninstall is planned but not implemented yet; no changes were made.' };
+  }
+  return { mode: 'apply', compatibilityAlias: true };
 }
 
 function parseClaudeMcpScope(args: string[]): { scope: ClaudeMcpScope } | { error: string } {
@@ -179,6 +250,14 @@ function loadAgentRules(): string | null {
   }
 
   return null;
+}
+
+function readOptionalFile(path: string): string | null {
+  try {
+    return existsSync(path) ? readFileSync(path, 'utf-8') : null;
+  } catch {
+    return null;
+  }
 }
 
 function checkMcpRegistered(client: 'claude' | 'codex', home: string, claudeScope: ClaudeMcpScope = 'user'): boolean {
