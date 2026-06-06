@@ -269,7 +269,10 @@ bun run typecheck
 **Purpose:** Test whether graph-assisted selector planning improves canonical
 read selection without making graph edges factual answer evidence.
 
-**Status:** Detailed plan exists and should execute after Phase 6 acceptance.
+**Status:** Implemented as a default-off, explicit-flag graph frontier
+experiment with deterministic graph-off/on evaluation and a focused
+verification gate. Passing the evaluation gate does not make graph frontier
+default-on.
 
 **Required implementation plan scope:**
 
@@ -285,8 +288,10 @@ read selection without making graph edges factual answer evidence.
 **Required tests:**
 
 ```bash
-bun test test/assertion-frontier-retrieval-service.test.ts test/graph-frontier-evaluation.test.ts
+bun run test:graph-frontier
+bun run test:authority-foundation
 bun run typecheck
+git diff --check
 ```
 
 **Exit criteria:**

@@ -219,6 +219,34 @@ Expected:
 - verdict cache compatibility remains covered without requiring a
   policy-aware cache key schema.
 
+## Graph frontier retrieval experiment
+
+Graph frontier is an explicit, default-off evaluation gate for selector
+planning. It may add canonical selectors to `retrieve_context.required_reads`
+only when `graph_frontier.enabled` is true. Passing this gate does not make
+graph frontier default-on.
+
+Graph paths and edges are trace/explanation only. They must never be source
+refs, citations, answer evidence, assertion authority, or canonical write
+permission.
+
+Run:
+
+```bash
+bun run test:graph-frontier
+bun run typecheck
+```
+
+Expected:
+
+- graph frontier remains default-off and explicit-flag only.
+- traversal is scope-filtered, policy-filtered, depth-capped, and fanout-capped.
+- graph paths remain selector-planning explanation, not answer evidence.
+- false bridge rate, p95 latency delta, and p95 token delta are measured from
+  deterministic fixtures.
+- graph-on improves canonical read recall or time-to-evidence without reducing
+  canonical read precision in the fixture gate.
+
 ## Trust contract service
 
 Run:
