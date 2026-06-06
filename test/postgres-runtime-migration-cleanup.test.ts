@@ -165,6 +165,7 @@ describe('postgres runtime migration cleanup', () => {
       expect(setupAgent.stdout).toContain('managed Postgres target runtime');
       expect(setupAgent.stdout).toContain('--print');
       expect(setupAgent.stdout).toContain('--skip-mcp');
+      expect(setupAgent.stdout).toContain('--uninstall');
       expect(setupAgent.stdout).not.toContain('No AI clients detected');
       expect(existsSync(join(setupAgent.home, '.mbrain', 'config.json'))).toBe(false);
     } finally {

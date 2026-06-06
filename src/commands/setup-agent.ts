@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
 import { VERSION } from '../version.ts';
@@ -24,7 +24,19 @@ interface DetectedClient {
 }
 
 type ClaudeMcpScope = 'user' | 'local';
-type SetupAgentRunMode = 'preview' | 'diff' | 'apply';
+type SetupAgentRunMode = 'preview' | 'diff' | 'apply' | 'uninstall';
+type SetupAgentApplyResult = { client: string; mcp: string; rules: string; mcp_scope?: ClaudeMcpScope };
+type SetupAgentUninstallResult = {
+  client: string;
+  mcp: string;
+  rules: string;
+  mcp_scope?: ClaudeMcpScope;
+  claude_stop_hook?: string;
+  claude_relevance_lib?: string;
+  claude_skip_dirs?: string;
+  claude_settings_hook?: string;
+  claude_legacy_hook?: string;
+};
 
 export async function runSetupAgent(args: string[]) {
   const home = process.env.HOME || process.env.USERPROFILE || '';
@@ -125,7 +137,70 @@ export async function runSetupAgent(args: string[]) {
     return;
   }
 
-  const results: Array<{ client: string; mcp: string; rules: string; mcp_scope?: ClaudeMcpScope }> = [];
+  if (runMode === 'uninstall') {
+    const results = clients.map((client): SetupAgentUninstallResult => {
+      const mcpStatus = skipMcp
+        ? 'skipped'
+        : client.mcpRegistered
+          ? unregisterMcp(client.name)
+          : 'not_registered';
+      const rulesStatus = removeRules(client);
+      const claudeStatus = client.name === 'claude'
+        ? uninstallClaudeStopHook(client.configDir)
+        : {};
+
+      return {
+        client: client.name,
+        mcp: mcpStatus,
+        rules: rulesStatus,
+        ...(client.name === 'claude' ? { mcp_scope: claudeMcpScope, ...claudeStatus } : {}),
+      };
+    });
+
+    const changed = results.some(uninstallResultChanged);
+    const status = results.some(uninstallResultWarn) ? 'warn' : 'ok';
+    const warnings = buildUninstallWarnings(results);
+
+    if (jsonOutput) {
+      const hasClaude = results.some(r => r.client === 'claude');
+      console.log(JSON.stringify({
+        status,
+        version: VERSION,
+        mode: 'uninstall',
+        mutating: true,
+        changed,
+        managed_only: true,
+        warnings,
+        ...(hasClaude ? { claudeScope: claudeMcpScope } : {}),
+        clients: results,
+      }));
+    } else {
+      console.log(status === 'ok'
+        ? '\nmbrain setup-agent uninstall complete:\n'
+        : '\nmbrain setup-agent partial uninstall:\n');
+      for (const r of results) {
+        const clientLabel = r.client === 'claude' ? 'Claude Code' : 'Codex';
+        console.log(`  ${clientLabel}:`);
+        console.log(`    MCP: ${r.mcp}`);
+        console.log(`    Rules: ${r.rules}`);
+        if (r.client === 'claude') {
+          console.log(`    Claude stop hook: ${r.claude_stop_hook}`);
+          console.log(`    Claude relevance lib: ${r.claude_relevance_lib}`);
+          console.log(`    Claude skip dirs: ${r.claude_skip_dirs}`);
+          console.log(`    Claude settings hook: ${r.claude_settings_hook}`);
+          console.log(`    Claude legacy hook: ${r.claude_legacy_hook}`);
+        }
+      }
+      if (warnings.length > 0) {
+        console.log('\nWarnings:');
+        for (const warning of warnings) console.log(`  - ${warning}`);
+      }
+      console.log('\nManaged-only uninstall complete. User content and unrelated hooks/settings were preserved.');
+    }
+    return;
+  }
+
+  const results: SetupAgentApplyResult[] = [];
 
   for (const client of clients) {
     // Step 1: MCP registration
@@ -203,9 +278,7 @@ function parseSetupAgentRunMode(args: string[]): { mode: SetupAgentRunMode; comp
   if (flag === '--preview') return { mode: 'preview', compatibilityAlias: false };
   if (flag === '--diff') return { mode: 'diff', compatibilityAlias: false };
   if (flag === '--apply') return { mode: 'apply', compatibilityAlias: false };
-  if (flag === '--uninstall') {
-    return { error: 'setup-agent --uninstall is planned but not implemented yet; no changes were made.' };
-  }
+  if (flag === '--uninstall') return { mode: 'uninstall', compatibilityAlias: false };
   return { mode: 'apply', compatibilityAlias: true };
 }
 
@@ -324,6 +397,22 @@ function registerMcp(client: 'claude' | 'codex', opts: { claudeScope: ClaudeMcpS
   }
 }
 
+function unregisterMcp(client: 'claude' | 'codex'): string {
+  const cmd = client === 'claude'
+    ? 'claude mcp remove mbrain'
+    : 'codex mcp remove mbrain';
+
+  try {
+    execSync(cmd, { encoding: 'utf-8', timeout: 15000, stdio: 'pipe' });
+    return 'removed';
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`  Warning: could not remove MCP registration for ${client}: ${msg}`);
+    console.warn(`  Remove manually if needed: ${cmd}`);
+    return 'remove_failed';
+  }
+}
+
 function injectRules(client: DetectedClient, rulesContent: string): string {
   const block = formatRulesBlock(rulesContent);
 
@@ -363,6 +452,25 @@ function injectRules(client: DetectedClient, rulesContent: string): string {
   return 'injected';
 }
 
+function removeRules(client: DetectedClient): string {
+  if (!existsSync(client.targetFile)) return 'absent';
+  const existing = readFileSync(client.targetFile, 'utf-8');
+  const startIdx = existing.indexOf(MARKER_START);
+  if (startIdx === -1) return 'absent';
+  const endIdx = existing.indexOf(MARKER_END, startIdx + MARKER_START.length);
+  if (endIdx === -1) return 'malformed_preserved';
+
+  const before = existing.slice(0, startIdx);
+  const after = existing.slice(endIdx + MARKER_END.length);
+  atomicWrite(client.targetFile, normalizeRemovedRulesContent(before, after));
+  return 'removed';
+}
+
+function normalizeRemovedRulesContent(before: string, after: string): string {
+  const joined = `${before}${after}`;
+  return joined.replace(/\n{3,}/g, '\n\n');
+}
+
 function installClaudeStopHook(claudeDir: string): void {
   const hookPath = join(claudeDir, 'scripts', 'hooks', 'stop-mbrain-check.sh');
   const libPath = join(claudeDir, 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh');
@@ -378,6 +486,30 @@ function installClaudeStopHook(claudeDir: string): void {
 
   upsertClaudeStopHook(settingsPath);
   cleanupLegacyHooksJson(legacyHooksJsonPath);
+}
+
+function uninstallClaudeStopHook(claudeDir: string): Omit<SetupAgentUninstallResult, 'client' | 'mcp' | 'rules' | 'mcp_scope'> {
+  const hookPath = join(claudeDir, 'scripts', 'hooks', 'stop-mbrain-check.sh');
+  const libPath = join(claudeDir, 'scripts', 'hooks', 'lib', 'mbrain-relevance.sh');
+  const skipDirsPath = join(claudeDir, 'mbrain-skip-dirs');
+  const settingsPath = join(claudeDir, 'settings.json');
+  const legacyHooksJsonPath = join(claudeDir, 'hooks', 'hooks.json');
+
+  return {
+    claude_stop_hook: removeManagedFile(hookPath, CLAUDE_MBRAIN_STOP_HOOK),
+    claude_relevance_lib: removeManagedFile(libPath, CLAUDE_MBRAIN_RELEVANCE_LIB),
+    claude_skip_dirs: removeManagedFile(skipDirsPath, CLAUDE_MBRAIN_SKIP_DIRS),
+    claude_settings_hook: removeClaudeStopHookFromSettings(settingsPath),
+    claude_legacy_hook: removeClaudeStopHookFromSettings(legacyHooksJsonPath),
+  };
+}
+
+function removeManagedFile(path: string, expectedContent: string): string {
+  if (!existsSync(path)) return 'absent';
+  const content = readFileSync(path, 'utf-8');
+  if (content !== expectedContent) return 'preserved_modified';
+  unlinkSync(path);
+  return 'removed';
 }
 
 function upsertClaudeStopHook(settingsPath: string): void {
@@ -424,6 +556,69 @@ function cleanupLegacyHooksJson(legacyPath: string): void {
 
   hooks.Stop = filtered;
   atomicWrite(legacyPath, JSON.stringify(parsed, null, 2) + '\n');
+}
+
+function removeClaudeStopHookFromSettings(settingsPath: string): string {
+  if (!existsSync(settingsPath)) return 'absent';
+
+  const parsed = parseJsonOrEmpty(settingsPath) as { hooks?: Record<string, unknown> };
+  const hooks = parsed.hooks;
+  if (!hooks || typeof hooks !== 'object') return 'absent';
+
+  const stop = Array.isArray(hooks.Stop) ? hooks.Stop as any[] : null;
+  if (!stop) return 'absent';
+
+  const managedEntries = stop.filter(isManagedClaudeStopHookEntry);
+  const modifiedMbrainEntries = stop.filter(entry => entry?.id === 'stop:mbrain-check' && !isManagedClaudeStopHookEntry(entry));
+  if (managedEntries.length === 0) {
+    return modifiedMbrainEntries.length > 0 ? 'preserved_modified' : 'absent';
+  }
+
+  const filtered = stop.filter(entry => !isManagedClaudeStopHookEntry(entry));
+  hooks.Stop = filtered;
+  atomicWrite(settingsPath, JSON.stringify(parsed, null, 2) + '\n');
+  return 'removed';
+}
+
+function isManagedClaudeStopHookEntry(entry: any): boolean {
+  return entry?.id === 'stop:mbrain-check'
+    && entry?.matcher === '*'
+    && entry?.description === 'Ask agent to write session knowledge back to mbrain.'
+    && Array.isArray(entry?.hooks)
+    && entry.hooks.length === 1
+    && entry.hooks[0]?.type === 'command'
+    && entry.hooks[0]?.command === 'bash "$HOME/.claude/scripts/hooks/stop-mbrain-check.sh"';
+}
+
+function uninstallResultChanged(result: SetupAgentUninstallResult): boolean {
+  return Object.entries(result).some(([key, value]) => {
+    if (key === 'client' || key === 'mcp_scope') return false;
+    return value === 'removed';
+  });
+}
+
+function uninstallResultWarn(result: SetupAgentUninstallResult): boolean {
+  return Object.entries(result).some(([, value]) => {
+    return value === 'remove_failed'
+      || value === 'preserved_modified'
+      || value === 'malformed_preserved';
+  });
+}
+
+function buildUninstallWarnings(results: SetupAgentUninstallResult[]): string[] {
+  const warnings: string[] = [];
+  for (const result of results) {
+    for (const [key, value] of Object.entries(result)) {
+      if (value === 'remove_failed') {
+        warnings.push(`${result.client} ${key} removal failed; remove manually if needed.`);
+      } else if (value === 'preserved_modified') {
+        warnings.push(`${result.client} ${key} was modified by the user and was preserved.`);
+      } else if (value === 'malformed_preserved') {
+        warnings.push(`${result.client} ${key} has malformed MBrain markers and was preserved.`);
+      }
+    }
+  }
+  return warnings;
 }
 
 function parseJsonOrEmpty(path: string): Record<string, unknown> {

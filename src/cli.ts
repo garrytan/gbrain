@@ -80,7 +80,7 @@ const SETUP_AGENT_CLI_SPEC: Operation = {
     preview: { type: 'boolean', description: 'Preview managed setup actions without writing files' },
     diff: { type: 'boolean', description: 'Show redacted managed setup diffs without writing files' },
     apply: { type: 'boolean', description: 'Explicitly apply managed setup actions' },
-    uninstall: { type: 'boolean', description: 'Remove managed setup actions; planned, not yet implemented' },
+    uninstall: { type: 'boolean', description: 'Remove managed setup actions without touching user content' },
     skip_mcp: { type: 'boolean', description: 'Inject rules without registering MCP' },
     print: { type: 'boolean', description: 'Print the agent rules instead of writing files' },
     json: { type: 'boolean', description: 'Emit machine-readable setup results' },
@@ -530,7 +530,7 @@ USAGE
 SETUP
   init [--local|--pglite|--supabase|--url <conn>]
                                     Create target Postgres brain; legacy SQLite/PGLite only by explicit flag
-  setup-agent [--preview|--diff|--apply] [--claude|--codex] [--scope user|local]
+  setup-agent [--preview|--diff|--apply|--uninstall] [--claude|--codex] [--scope user|local]
                                     Register MCP, inject rules, install Claude stop hook
   migrate --to <postgres|supabase>   Prepare Markdown-first migration into the Postgres target runtime
   upgrade                            Self-update
