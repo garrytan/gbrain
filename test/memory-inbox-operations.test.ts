@@ -27,6 +27,7 @@ test('memory inbox operations can be built from a dedicated domain module', () =
 
   expect(built.map((operation) => operation.name)).toEqual([
     'get_memory_candidate_entry',
+    'read_candidate_context',
     'list_memory_candidate_entries',
     'list_memory_candidate_status_events',
     'delete_memory_candidate_entry',
@@ -74,6 +75,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   const supersede = operations.find((operation) => operation.name === 'supersede_memory_candidate_entry');
   const contradiction = operations.find((operation) => operation.name === 'resolve_memory_candidate_contradiction');
   const dreamCycle = operations.find((operation) => operation.name === 'run_dream_cycle_maintenance');
+  const readCandidateContext = operations.find((operation) => operation.name === 'read_candidate_context');
 
   expect(create?.cliHints?.name).toBe('create-memory-candidate');
   expect(createPatch?.cliHints?.name).toBe('create-memory-patch-candidate');
@@ -97,6 +99,7 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(supersede?.cliHints?.name).toBe('supersede-memory-candidate');
   expect(contradiction?.cliHints?.name).toBe('resolve-memory-candidate-contradiction');
   expect(dreamCycle?.cliHints?.name).toBe('run-dream-cycle-maintenance');
+  expect(readCandidateContext?.cliHints?.name).toBe('read-candidate-context');
   expect(create?.params.status?.enum).toEqual(['captured', 'candidate', 'staged_for_review']);
   expect(create?.params.patch_operation_state).toBeUndefined();
   expect(create?.params.patch_ledger_event_ids).toBeUndefined();
@@ -134,6 +137,8 @@ test('memory inbox operations are registered with CLI hints', () => {
   expect(supersede?.params.interaction_id?.type).toBe('string');
   expect(contradiction?.params.interaction_id?.type).toBe('string');
   expect(recordCanonicalHandoff?.params.interaction_id?.type).toBe('string');
+  expect(readCandidateContext?.params.purpose?.enum).toEqual(['review', 'promotion', 'audit', 'debug']);
+  expect(readCandidateContext?.params.requested_scope?.enum).toEqual(['work', 'personal', 'mixed']);
   expect(advance?.params.next_status?.description).toContain('depends on the current stored status');
 });
 

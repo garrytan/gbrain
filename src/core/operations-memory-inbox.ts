@@ -10,6 +10,7 @@ import {
   rejectMemoryCandidateEntry,
 } from './services/memory-inbox-service.ts';
 import { rankMemoryCandidateEntries } from './services/memory-candidate-scoring-service.ts';
+import { readCandidateContext } from './services/inbox-lead-service.ts';
 import { captureMapDerivedCandidates } from './services/map-derived-candidate-service.ts';
 import { getStructuralContextMapReport } from './services/context-map-report-service.ts';
 import { buildMemoryCandidateReviewBacklog } from './services/memory-candidate-dedup-service.ts';
@@ -116,6 +117,8 @@ const MEMORY_PATCH_OPERATION_STATE_VALUES = [
   'failed',
 ] as const;
 const MEMORY_PATCH_REVIEW_DECISION_VALUES = ['approve', 'reject'] as const;
+const READ_CANDIDATE_CONTEXT_PURPOSE_VALUES = ['review', 'promotion', 'audit', 'debug'] as const;
+const READ_CANDIDATE_CONTEXT_SCOPE_VALUES = ['work', 'personal', 'mixed'] as const;
 const MEMORY_PATCH_RISK_CLASS_VALUES = ['low', 'medium', 'high', 'critical', 'unknown'] as const;
 const MEMORY_PATCH_FIELD_NAMES = [
   'patch_target_kind',
@@ -866,6 +869,42 @@ export function createMemoryInboxOperations(
       return ctx.engine.getMemoryCandidateEntry(String(p.id));
     },
     cliHints: { name: 'get-memory-candidate' },
+  };
+
+  const read_candidate_context: Operation = {
+    name: 'read_candidate_context',
+    description: 'Read gated Memory Inbox candidate context with non-canonical authority labels.',
+    params: {
+      id: { type: 'string', required: true, description: 'Memory candidate entry id' },
+      purpose: {
+        type: 'string',
+        description: 'Explicit reason for reading candidate content',
+        enum: [...READ_CANDIDATE_CONTEXT_PURPOSE_VALUES],
+      },
+      requested_scope: {
+        type: 'string',
+        description: 'Requested scope for sensitive candidate context',
+        enum: [...READ_CANDIDATE_CONTEXT_SCOPE_VALUES],
+      },
+      audit_reason: {
+        type: 'string',
+        description: 'Required audit reason for personal or unknown-sensitivity candidate context',
+      },
+    },
+    mutating: false,
+    handler: async (ctx, p) => {
+      const id = normalizeOptionalNonEmptyString(deps, 'id', p.id);
+      if (!id) throw invalidParams(deps, 'id must be a non-empty string');
+      const candidate = await ctx.engine.getMemoryCandidateEntry(id);
+      if (!candidate) throw invalidParams(deps, `memory candidate not found: ${id}`);
+      return readCandidateContext({
+        candidate,
+        purpose: optionalEnumValue(deps, 'purpose', p.purpose, READ_CANDIDATE_CONTEXT_PURPOSE_VALUES),
+        requested_scope: optionalEnumValue(deps, 'requested_scope', p.requested_scope, READ_CANDIDATE_CONTEXT_SCOPE_VALUES),
+        audit_reason: normalizeOptionalNonEmptyString(deps, 'audit_reason', p.audit_reason) ?? null,
+      });
+    },
+    cliHints: { name: 'read-candidate-context', positional: ['id'] },
   };
 
   const list_memory_candidate_entries: Operation = {
@@ -2460,6 +2499,7 @@ export function createMemoryInboxOperations(
 
   return [
     get_memory_candidate_entry,
+    read_candidate_context,
     list_memory_candidate_entries,
     list_memory_candidate_status_events,
     delete_memory_candidate_entry,

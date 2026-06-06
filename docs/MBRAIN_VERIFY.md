@@ -281,6 +281,30 @@ Expected:
 - proof output reports authority violations if candidate or derived-orientation
   artifacts are marked as answer grounding.
 
+## Episode capture and Inbox leads
+
+Run:
+
+```bash
+bun run test:episode-capture
+bun run typecheck
+```
+
+Expected:
+
+- allowlisted episode capture preview reuses agent-session redaction and shows
+  redacted preview text only.
+- broad raw chat capture is disabled by default and raw episode artifacts stay
+  provenance-only or hint-only, never answer grounding.
+- Inbox leads stay content-light by default, including `retrieve_context`
+  candidate signals.
+- candidate content requires the explicit non-mutating `read_candidate_context`
+  path and is labeled non-canonical candidate context.
+- secret candidates are denied by default, and personal candidates require
+  personal or mixed scope plus an audit reason.
+- candidate debt metrics report missing provenance, stale promoted candidates
+  without handoff, unresolved exposed candidates, and review latency.
+
 ## Phase 0 parity verification
 
 Run:

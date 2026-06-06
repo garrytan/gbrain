@@ -104,6 +104,9 @@ describe('agentic retrieval context operations', () => {
     expect(result.required_reads[0].line_start).toBe(1);
     expect(result.required_reads[0].line_end).toBe(4);
     expect(result.required_reads[0].content_hash).toBe('page-hash-1');
+    expect(JSON.stringify(result.candidate_signals)).not.toContain(
+      'Candidate signal for retrieval operation output should stay non-canonical.',
+    );
 
     const output = formatResult('retrieve_context', result);
     expect(output).toContain('Answerable from probe: no');
@@ -116,6 +119,7 @@ describe('agentic retrieval context operations', () => {
     expect(output).toContain('promotion=advance_to_review');
     expect(output).toContain('disposition=keep_candidate');
     expect(output).toContain('Candidate signals are non-canonical; do not use them as answer evidence.');
+    expect(output).not.toContain('Candidate signal for retrieval operation output should stay non-canonical.');
   });
 
   test('read_context parses JSON selectors and preserves char offsets for bounded reads', async () => {

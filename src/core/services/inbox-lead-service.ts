@@ -1,0 +1,174 @@
+import type {
+  CandidateDebtInput,
+  CandidateDebtMetrics,
+  InboxLead,
+  InboxLeadInput,
+  InboxLeadResult,
+  MemoryCandidateEntry,
+  MemoryActivationLabel,
+  ReadCandidateContextInput,
+  ReadCandidateContextResult,
+} from '../types.ts';
+
+export function buildInboxLeads(input: InboxLeadInput): InboxLeadResult {
+  const handoffIds = new Set(input.canonical_handoff_candidate_ids ?? []);
+  const leads: InboxLead[] = [];
+  const suppressionReasonCodes: string[] = [];
+
+  for (const candidate of input.candidates) {
+    if (candidate.sensitivity === 'secret') {
+      suppressionReasonCodes.push('secret_candidate_hidden');
+      continue;
+    }
+    leads.push(buildInboxLead(candidate, handoffIds));
+  }
+
+  return {
+    leads,
+    suppressed_count: input.candidates.length - leads.length,
+    suppression_reason_codes: dedupeStrings(suppressionReasonCodes),
+    debt_metrics: computeCandidateDebtMetrics(input),
+  };
+}
+
+export function computeCandidateDebtMetrics(input: CandidateDebtInput): CandidateDebtMetrics {
+  const handoffIds = new Set(input.canonical_handoff_candidate_ids ?? []);
+  const visibleCandidates = input.candidates.filter((candidate) => candidate.sensitivity !== 'secret');
+  const reviewLatencies = visibleCandidates
+    .flatMap((candidate) => {
+      if (!candidate.reviewed_at) return [];
+      const duration = candidate.reviewed_at.getTime() - candidate.created_at.getTime();
+      return duration >= 0 ? [duration] : [];
+    })
+    .sort((left, right) => left - right);
+
+  return {
+    visible_candidate_count: visibleCandidates.length,
+    missing_provenance_count: visibleCandidates.filter((candidate) =>
+      !candidate.source_refs.some((sourceRef) => sourceRef.trim().length > 0)
+    ).length,
+    stale_promoted_without_handoff_count: visibleCandidates.filter((candidate) =>
+      candidate.status === 'promoted' && !handoffIds.has(candidate.id)
+    ).length,
+    unresolved_exposed_count: visibleCandidates.filter((candidate) =>
+      !isTerminal(candidate) && !handoffIds.has(candidate.id)
+    ).length,
+    median_review_latency_ms: median(reviewLatencies),
+  };
+}
+
+export function readCandidateContext(input: ReadCandidateContextInput): ReadCandidateContextResult {
+  const base = {
+    candidate_id: input.candidate.id,
+    activation: 'candidate_only' as const,
+    activation_label: candidateActivationLabel(input.candidate),
+    authority: 'unreviewed_candidate' as const,
+    source_refs: input.candidate.source_refs,
+    warnings: ['Candidate context is non-canonical; do not use as answer evidence.'],
+  };
+  const denialReasons = candidateContextDenialReasons(input);
+  if (denialReasons.length > 0) {
+    return {
+      ...base,
+      access: 'denied',
+      content: null,
+      reason_codes: denialReasons,
+    };
+  }
+
+  return {
+    ...base,
+    access: 'allowed',
+    content: input.candidate.proposed_content,
+    reason_codes: ['candidate_context_explicitly_requested'],
+  };
+}
+
+function buildInboxLead(
+  candidate: MemoryCandidateEntry,
+  handoffIds: Set<string>,
+): InboxLead {
+  const terminalAudit = candidate.status === 'rejected' || candidate.status === 'superseded';
+  const promotedNeedsHandoff = candidate.status === 'promoted' && !handoffIds.has(candidate.id);
+  const missingProvenance = !candidate.source_refs.some((sourceRef) => sourceRef.trim().length > 0);
+  const pressureReasons = [
+    ...(missingProvenance ? ['missing_provenance' as const] : []),
+    ...(promotedNeedsHandoff ? ['stale_promoted_without_handoff' as const] : []),
+    ...(!isTerminal(candidate) && !handoffIds.has(candidate.id) ? ['unresolved_exposed_candidate' as const] : []),
+    ...(candidate.recurrence_score > 0 ? ['high_recurrence' as const] : []),
+  ];
+
+  return {
+    candidate_id: candidate.id,
+    status: candidate.status,
+    activation: 'candidate_only',
+    activation_label: terminalAudit ? 'audit_only' : 'promote_first',
+    target_object_type: candidate.target_object_type,
+    target_object_id: candidate.target_object_id,
+    relation_to_canonical: candidate.target_object_id ? 'same_target' : 'unknown',
+    promotion_hint: promotedNeedsHandoff
+      ? 'already_promoted_needs_handoff'
+      : missingProvenance
+        ? 'needs_provenance'
+        : 'advance_to_review',
+    disposition_hint: terminalAudit ? 'hide_from_default_retrieval' : 'keep_candidate',
+    pressure_reasons: pressureReasons,
+    review_priority_hint: promotedNeedsHandoff
+      ? 'record_canonical_handoff'
+      : missingProvenance
+        ? 'reject_missing_provenance'
+        : 'advance_to_review',
+    source_refs_count: candidate.source_refs.filter((sourceRef) => sourceRef.trim().length > 0).length,
+    content_visibility: 'gated',
+    reason_codes: [
+      `status:${candidate.status}`,
+      ...(terminalAudit ? ['audit_only'] : ['content_gated']),
+      ...pressureReasons,
+    ],
+    created_at: candidate.created_at.toISOString(),
+    updated_at: candidate.updated_at.toISOString(),
+  };
+}
+
+function candidateContextDenialReasons(input: ReadCandidateContextInput): string[] {
+  const reasons: string[] = [];
+  if (!input.purpose) reasons.push('purpose_required');
+  if (input.candidate.sensitivity === 'secret') reasons.push('secret_candidate_denied');
+  if (
+    input.candidate.sensitivity === 'personal'
+    && input.requested_scope !== 'personal'
+    && input.requested_scope !== 'mixed'
+  ) {
+    reasons.push('personal_scope_required');
+  }
+  if (
+    (input.candidate.sensitivity === 'personal' || input.candidate.sensitivity === 'unknown')
+    && !input.audit_reason?.trim()
+  ) {
+    reasons.push('audit_reason_required');
+  }
+  return reasons;
+}
+
+function candidateActivationLabel(candidate: MemoryCandidateEntry): MemoryActivationLabel {
+  return candidate.status === 'rejected' || candidate.status === 'superseded'
+    ? 'audit_only'
+    : 'promote_first';
+}
+
+function isTerminal(candidate: MemoryCandidateEntry): boolean {
+  return candidate.status === 'rejected'
+    || candidate.status === 'superseded'
+    || candidate.status === 'promoted';
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const middle = Math.floor(values.length / 2);
+  if (values.length % 2 === 1) return values[middle]!;
+  return Math.round((values[middle - 1]! + values[middle]!) / 2);
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
