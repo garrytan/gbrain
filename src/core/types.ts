@@ -17,3 +17,4 @@ export * from './types/errors.ts';
 export * from './types/auto-promote.ts';
 export * from './types/agent-session-memory.ts';
 export * from './types/trust-contract.ts';
+export * from './types/decision-projections.ts';

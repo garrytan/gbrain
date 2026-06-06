@@ -237,6 +237,27 @@ Expected:
 - `memory-activation-policy-service` preserves its existing public output while
   delegating policy decisions through the trust contract.
 
+## Decision and negative memory projections
+
+Run:
+
+```bash
+bun run test:decision-projections
+bun run typecheck
+```
+
+Expected:
+
+- decision packets are projections over existing task, assertion, trace,
+  candidate, handoff, and source records; they do not create a new truth store.
+- projection services do not mutate canonical pages, Memory Inbox candidates,
+  assertions, handoffs, or persisted projection rows.
+- negative memory suppresses repeated work only when applicability anchors still
+  match the current context.
+- `reopen_if` and `valid_until` can reopen or expire suppression.
+- rejected or superseded candidates remain audit history rather than global
+  suppression rules.
+
 ## Phase 0 parity verification
 
 Run:
