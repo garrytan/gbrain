@@ -20,6 +20,7 @@ import {
 import type { BrainEngine } from '../core/engine.ts';
 import type { MemoryCandidateEntry, MemoryMutationEvent } from '../core/types.ts';
 import { createLifecycleForgettingStoreForEngine } from '../core/maintenance/lifecycle-forgetting.ts';
+import { computeCandidateDebtMetrics } from '../core/services/inbox-lead-service.ts';
 
 const DEFAULT_SCOPE_ID = 'workspace:default';
 const DEFAULT_LIMIT = 100;
@@ -88,6 +89,7 @@ export async function collectMemoryReportInput(
     collectMaintenanceJobs(engine, limit),
     collectConnectorHealth(engine, limit),
   ]);
+  const canonicalHandoffCandidateIds = await collectCanonicalHandoffCandidateIds(engine, scopeId, candidates);
 
   return {
     scope_id: scopeId,
@@ -113,7 +115,31 @@ export async function collectMemoryReportInput(
     runner_jobs: runnerJobs,
     jobs,
     connector_health: connectorHealth,
+    candidate_debt: computeCandidateDebtMetrics({
+      candidates,
+      canonical_handoff_candidate_ids: canonicalHandoffCandidateIds,
+    }),
   };
+}
+
+async function collectCanonicalHandoffCandidateIds(
+  engine: BrainEngine,
+  scopeId: string,
+  candidates: MemoryCandidateEntry[],
+): Promise<string[]> {
+  const ids = new Set<string>();
+  await Promise.all(candidates
+    .filter((candidate) => candidate.status === 'promoted')
+    .map(async (candidate) => {
+      const handoffs = await engine.listCanonicalHandoffEntries({
+        scope_id: scopeId,
+        candidate_id: candidate.id,
+        limit: 1,
+        offset: 0,
+      });
+      if (handoffs.length > 0) ids.add(candidate.id);
+    }));
+  return [...ids];
 }
 
 function memoryMutationToCanonicalMemory(event: MemoryMutationEvent): ReportCanonicalMemory[] {

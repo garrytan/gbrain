@@ -74,9 +74,11 @@ but does not extend a Dream cycle lock.
   canary before apply-capable phase work, renews same-holder locks before
   candidate-writing maintenance phases, and aborts before guarded phase
   handlers on renewal failure.
-- [ ] Slice B report-only maintenance visibility:
-  safety-state counts, candidate debt, and projection freshness remain to be
-  added without new storage or canonical-write authority.
+- [x] Slice B report-only maintenance visibility, bounded subset:
+  daily memory review reports now include candidate debt and projection
+  freshness as content-light maintenance health signals, without new storage or
+  canonical-write authority. Broader trust/source/negative-memory/replay-canary
+  safety-state reporting remains future work under the full roadmap.
 
 ## Existing Surfaces To Reuse
 
@@ -306,21 +308,23 @@ Expected: PASS.
 
 **Files:**
 
-- Modify: `src/core/services/dream-cycle-maintenance-service.ts`
-- Add or modify: `test/dream-report-service.test.ts`
+- Modify: `src/core/services/memory-review-report-service.ts`
+- Modify: `src/commands/memory-report.ts`
+- Modify: `test/memory-review-report-service.test.ts`
 - Modify: `docs/MBRAIN_VERIFY.md`
 
-- [ ] **Step 1: Write failing report tests**
+- [x] **Step 1: Write failing report tests**
 
-Create tests covering:
+Create tests covering the bounded daily-report slice:
 
-- unresolved contradictions appear as report-only safety states;
-- redaction and runner failures appear as report-only safety states;
 - candidate debt is summarized without exposing candidate content;
-- projection freshness is summarized from existing derived freshness data;
-- replay canary failure appears in summary lines and does not imply mutation.
+- promoted candidates with existing canonical handoffs are not falsely reported
+  as stale when the scoped handoff page is limited;
+- projection freshness is summarized from existing projection target status and
+  freshness fields;
+- zero-debt maintenance inventory alone does not open a warning report.
 
-- [ ] **Step 2: Implement report-only summaries**
+- [x] **Step 2: Implement report-only summaries**
 
 Prefer deriving counts from existing phase counts and maintenance reports. Do
 not create new tables. Keep `proposed_content` and raw source text out of
@@ -328,12 +332,12 @@ report summaries. Reuse `computeCandidateDebtMetrics` for candidate debt rather
 than inventing a second debt model, and derive projection freshness from
 existing projection target status/freshness fields.
 
-- [ ] **Step 3: Run report tests**
+- [x] **Step 3: Run report tests**
 
 Run:
 
 ```bash
-bun test test/dream-maintenance-guardrails.test.ts test/dream-report-service.test.ts
+bun test test/memory-review-report-service.test.ts
 bun run typecheck
 ```
 
@@ -346,15 +350,15 @@ Expected: PASS.
 - Modify: `package.json`
 - Modify: `docs/MBRAIN_VERIFY.md`
 
-- [ ] **Step 1: Add script**
+- [x] **Step 1: Add script**
 
 Add:
 
 ```json
-"test:dream-guardrails": "bun test test/dream-cycle-runner-service.test.ts test/dream-maintenance-guardrails.test.ts test/dream-report-service.test.ts"
+"test:dream-guardrails": "bun test test/dream-cycle-runner-service.test.ts test/dream-cycle-maintenance-service.test.ts test/memory-review-report-service.test.ts"
 ```
 
-- [ ] **Step 2: Add docs section**
+- [x] **Step 2: Add docs section**
 
 Add a short `Dream maintenance guardrails` section to `docs/MBRAIN_VERIFY.md`:
 
@@ -371,7 +375,7 @@ Acceptance:
 - Dream-generated outputs cannot be promoted in the same cycle;
 - safety states are report-only unless explicit gates authorize action.
 
-- [ ] **Step 3: Run phase gate**
+- [x] **Step 3: Run phase gate**
 
 Run:
 
@@ -386,13 +390,13 @@ Expected: PASS.
 
 ## Phase Acceptance
 
-- [ ] Mutating Dream renews the cycle lock before apply-capable work.
-- [ ] Dream aborts before applying when lock renewal fails or runtime is
+- [x] Mutating Dream renews the cycle lock before apply-capable work.
+- [x] Dream aborts before applying when lock renewal fails or runtime is
   missing.
-- [ ] Replay canary gates candidate-writing and auto-promote apply paths.
+- [x] Replay canary gates candidate-writing and auto-promote apply paths.
 - [ ] Dream-generated candidates cannot be promoted in the same cycle.
 - [ ] Trust/source/contradiction/negative-memory/freshness/runner/redaction
   safety states are report-only by default.
-- [ ] Candidate debt and projection freshness appear as bounded, content-light
+- [x] Candidate debt and projection freshness appear as bounded, content-light
   report signals.
-- [ ] Focused tests, episode-capture regression, typecheck, and diff check pass.
+- [x] Focused tests, episode-capture regression, typecheck, and diff check pass.

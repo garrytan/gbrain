@@ -3,10 +3,14 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { collectMemoryReportInput } from '../src/commands/memory-report.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { createLifecycleForgettingServiceForEngine } from '../src/core/services/lifecycle-forgetting-engine-service.ts';
+import { advanceMemoryCandidateStatus } from '../src/core/services/memory-inbox-service.ts';
+import { promoteMemoryCandidateEntry } from '../src/core/services/memory-inbox-promotion-service.ts';
+import type { MemoryCandidateEntry } from '../src/core/types.ts';
 import {
   buildMemoryReviewReport,
   formatMemoryReviewReport,
@@ -180,6 +184,13 @@ describe('memory review report service', () => {
           credential_status: 'revoked',
         },
       ],
+      candidate_debt: {
+        visible_candidate_count: 5,
+        missing_provenance_count: 1,
+        stale_promoted_without_handoff_count: 1,
+        unresolved_exposed_count: 3,
+        median_review_latency_ms: 5000,
+      },
     });
 
     expect(report.summary).toMatchObject({
@@ -194,6 +205,27 @@ describe('memory review report service', () => {
       reconciliation_failures: 1,
       unhealthy_sources: 2,
       unhealthy_connectors: 1,
+      candidate_missing_provenance: 1,
+      candidate_promoted_without_handoff: 1,
+      candidate_unresolved_exposed: 3,
+      pending_projections: 0,
+      stale_projections: 1,
+    });
+    expect(report.sections.maintenance_health).toEqual({
+      candidate_debt: {
+        visible_candidate_count: 5,
+        missing_provenance_count: 1,
+        stale_promoted_without_handoff_count: 1,
+        unresolved_exposed_count: 3,
+        median_review_latency_ms: 5000,
+      },
+      projection_freshness: {
+        total_exception_count: 2,
+        pending_reconcile_count: 0,
+        failed_count: 1,
+        conflict_count: 0,
+        stale_count: 1,
+      },
     });
     expect(report.sections.source_ingest.by_source).toEqual([
       { source_id: 'source:gmail', ingested: 1, skipped: 1, failed: 0 },
@@ -309,6 +341,9 @@ describe('memory review report service', () => {
 
     const formatted = formatMemoryReviewReport(report);
     expect(formatted).toContain('Memory Review Report');
+    expect(formatted).toContain('Maintenance Health');
+    expect(formatted).toContain('Candidate debt: visible 5');
+    expect(formatted).toContain('Projection freshness: pending 0');
     expect(formatted).toContain('[REDACTED_SECRET]');
     expect(formatted).not.toContain('sk-testsecret123456');
   });
@@ -357,6 +392,67 @@ describe('memory review report service', () => {
     const formatted = formatMemoryReviewReport(report);
     expect(formatted).toContain('Canonical Memories');
     expect(formatted).not.toContain('No reportable memory exceptions.');
+  });
+
+  test('candidate debt checks promoted handoffs by candidate id, not by a limited scoped handoff page', async () => {
+    const timestamp = new Date(now);
+    const promotedCandidate: MemoryCandidateEntry = {
+      id: 'candidate:promoted-with-handoff',
+      scope_id: 'workspace:default',
+      candidate_type: 'fact',
+      proposed_content: 'Promoted candidate with a handoff outside the scoped page.',
+      source_refs: ['Source: handoff paging test'],
+      generated_by: 'agent',
+      extraction_kind: 'extracted',
+      confidence_score: 0.8,
+      importance_score: 0.6,
+      recurrence_score: 0.1,
+      sensitivity: 'work',
+      status: 'promoted',
+      target_object_type: 'curated_note',
+      target_object_id: 'people/ada',
+      reviewed_at: timestamp,
+      review_reason: 'Promoted for handoff paging test.',
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    const requestedHandoffFilters: Array<{ candidate_id?: string }> = [];
+    const engine = {
+      listMemoryMutationEvents: async () => [],
+      listMemoryCandidateEntries: async () => [promotedCandidate],
+      listCanonicalHandoffEntries: async (filters?: { candidate_id?: string }) => {
+        requestedHandoffFilters.push(filters ?? {});
+        if (filters?.candidate_id !== promotedCandidate.id) return [];
+        return [{
+          id: 'handoff:promoted-with-handoff',
+          scope_id: 'workspace:default',
+          candidate_id: promotedCandidate.id,
+          target_object_type: 'curated_note',
+          target_object_id: 'people/ada',
+          source_refs: promotedCandidate.source_refs,
+          reviewed_at: timestamp,
+          review_reason: 'Canonical handoff recorded.',
+          interaction_id: null,
+          created_at: timestamp,
+          updated_at: timestamp,
+        }];
+      },
+    } as unknown as BrainEngine;
+
+    const input = await collectMemoryReportInput(engine, 'workspace:default', 1, now);
+
+    expect(requestedHandoffFilters).toEqual([
+      expect.objectContaining({ candidate_id: promotedCandidate.id }),
+    ]);
+    expect(input.candidate_debt).toMatchObject({
+      visible_candidate_count: 1,
+      stale_promoted_without_handoff_count: 0,
+      unresolved_exposed_count: 0,
+    });
+
+    const formatted = formatMemoryReviewReport(buildMemoryReviewReport(input));
+    expect(formatted).toContain('No reportable memory exceptions.');
+    expect(formatted).not.toContain('Maintenance Health');
   });
 
   test('collects Phase 12 report evidence from the configured runtime, not only synthetic input', async () => {
@@ -423,6 +519,65 @@ describe('memory review report service', () => {
         importance_score: 0.25,
         recurrence_score: 0.1,
         sensitivity: 'work',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'people/ada',
+      });
+      await engine.createMemoryCandidateEntry({
+        id: 'candidate:missing-provenance',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Candidate with missing provenance.',
+        source_refs: [],
+        generated_by: 'agent',
+        extraction_kind: 'extracted',
+        confidence_score: 0.43,
+        importance_score: 0.25,
+        recurrence_score: 0.1,
+        sensitivity: 'work',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'people/ada',
+      });
+      await engine.createMemoryCandidateEntry({
+        id: 'candidate:promoted-without-handoff',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Promoted but no canonical handoff was recorded.',
+        source_refs: ['Source: promoted candidate test'],
+        generated_by: 'agent',
+        extraction_kind: 'extracted',
+        confidence_score: 0.72,
+        importance_score: 0.5,
+        recurrence_score: 0.1,
+        sensitivity: 'work',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'people/ada',
+      });
+      await advanceMemoryCandidateStatus(engine, {
+        id: 'candidate:promoted-without-handoff',
+        next_status: 'staged_for_review',
+        review_reason: 'Prepared for promotion.',
+        reviewed_at: now,
+      });
+      await promoteMemoryCandidateEntry(engine, {
+        id: 'candidate:promoted-without-handoff',
+        reviewed_at: now,
+        review_reason: 'Promoted without handoff for report debt test.',
+      });
+      await engine.createMemoryCandidateEntry({
+        id: 'candidate:secret-hidden',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Secret candidate should be hidden from debt visibility.',
+        source_refs: [],
+        generated_by: 'agent',
+        extraction_kind: 'extracted',
+        confidence_score: 0.5,
+        importance_score: 0.2,
+        recurrence_score: 0.1,
+        sensitivity: 'secret',
         status: 'candidate',
         target_object_type: 'curated_note',
         target_object_id: 'people/ada',
@@ -587,6 +742,22 @@ describe('memory review report service', () => {
         reconciliation_failures: 1,
         unhealthy_sources: 1,
         unhealthy_connectors: 1,
+        candidate_missing_provenance: 1,
+        candidate_promoted_without_handoff: 1,
+        candidate_unresolved_exposed: 4,
+        pending_projections: 0,
+        stale_projections: 1,
+      });
+      expect(report.sections.maintenance_health.candidate_debt).toMatchObject({
+        visible_candidate_count: 5,
+        missing_provenance_count: 1,
+        stale_promoted_without_handoff_count: 1,
+        unresolved_exposed_count: 4,
+      });
+      expect(report.sections.maintenance_health.projection_freshness).toMatchObject({
+        total_exception_count: 1,
+        failed_count: 1,
+        stale_count: 1,
       });
       expect(report.sections.source_ingest.by_source).toEqual(expect.arrayContaining([
         { source_id: 'source:gmail', ingested: 1, skipped: 0, failed: 1 },

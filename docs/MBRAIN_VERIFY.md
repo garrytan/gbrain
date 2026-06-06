@@ -325,6 +325,8 @@ Expected:
 - failed replay canary blocks auto-promote apply before runner use.
 - dry-run and report-only Dream paths remain non-mutating and do not require the
   apply guardrails.
+- candidate debt and projection freshness appear as bounded, content-light
+  report-only maintenance health signals.
 
 ## Phase 0 parity verification
 

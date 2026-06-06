@@ -1,3 +1,5 @@
+import type { CandidateDebtMetrics } from '../types.ts';
+
 export type ReportHealthStatus = 'ok' | 'warn' | 'fail';
 export type ReportActionKind =
   | 'undo'
@@ -164,6 +166,7 @@ export interface MemoryReviewReportInput {
   jobs?: ReportMaintenanceJob[];
   connector_health?: ReportConnectorHealth[];
   auto_promote_summary?: AutoPromoteReportSummary;
+  candidate_debt?: CandidateDebtMetrics;
 }
 
 export interface SourceIngestSummary {
@@ -199,6 +202,8 @@ export interface MemoryReviewReportSummary {
   new_canonical_memories: number;
   updated_canonical_memories: number;
   updated_projections: number;
+  stale_projections: number;
+  pending_projections: number;
   stale_memories: number;
   expired_memories: number;
   archived_memories: number;
@@ -212,6 +217,22 @@ export interface MemoryReviewReportSummary {
   reconciliation_failures: number;
   unhealthy_sources: number;
   unhealthy_connectors: number;
+  candidate_missing_provenance: number;
+  candidate_promoted_without_handoff: number;
+  candidate_unresolved_exposed: number;
+}
+
+export interface ProjectionFreshnessSummary {
+  total_exception_count: number;
+  pending_reconcile_count: number;
+  failed_count: number;
+  conflict_count: number;
+  stale_count: number;
+}
+
+export interface MaintenanceHealthSummary {
+  candidate_debt: CandidateDebtMetrics;
+  projection_freshness: ProjectionFreshnessSummary;
 }
 
 export interface MemoryReviewReport {
@@ -238,6 +259,7 @@ export interface MemoryReviewReport {
     failed_jobs: Array<ReportRunnerJob | ReportMaintenanceJob>;
     source_health: ReportSource[];
     connector_health: ReportConnectorHealth[];
+    maintenance_health: MaintenanceHealthSummary;
   };
   actions: MemoryReportAction[];
   auto_promote_summary?: AutoPromoteReportSummary;
@@ -267,11 +289,15 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
   const unhealthyConnectors = connectorHealth.filter(
     (connector) => connector.health_status !== 'healthy' || connector.credential_status === 'revoked',
   );
+  const candidateDebt = input.candidate_debt ?? emptyCandidateDebtMetrics();
+  const projectionFreshness = summarizeProjectionFreshness(projectionTargets);
 
   const summary: MemoryReviewReportSummary = {
     new_canonical_memories: canonicalMemories.filter((memory) => memory.change_type === 'created').length,
     updated_canonical_memories: canonicalMemories.filter((memory) => memory.change_type === 'updated').length,
     updated_projections: projectionTargets.filter((target) => target.canonical_changed_since_projection).length,
+    stale_projections: projectionFreshness.stale_count,
+    pending_projections: projectionFreshness.pending_reconcile_count,
     stale_memories: lifecycleStates.filter((state) => state.lifecycle_state === 'stale').length,
     expired_memories: lifecycleStates.filter((state) => state.lifecycle_state === 'expired').length,
     archived_memories: lifecycleStates.filter((state) => state.lifecycle_state === 'archived').length,
@@ -285,6 +311,9 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
     reconciliation_failures: reconciliationFailures.length,
     unhealthy_sources: unhealthySources.length,
     unhealthy_connectors: unhealthyConnectors.length,
+    candidate_missing_provenance: candidateDebt.missing_provenance_count,
+    candidate_promoted_without_handoff: candidateDebt.stale_promoted_without_handoff_count,
+    candidate_unresolved_exposed: candidateDebt.unresolved_exposed_count,
   };
 
   return {
@@ -308,6 +337,10 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       failed_jobs: [...failedRunnerJobs, ...failedMaintenanceJobs],
       source_health: sources,
       connector_health: connectorHealth,
+      maintenance_health: {
+        candidate_debt: candidateDebt,
+        projection_freshness: projectionFreshness,
+      },
     },
     actions: buildReportActions({
       scopeId: input.scope_id,
@@ -355,6 +388,14 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     }
   }
 
+  if (hasMaintenanceHealthSignals(report.sections.maintenance_health)) {
+    const candidateDebt = report.sections.maintenance_health.candidate_debt;
+    const projectionFreshness = report.sections.maintenance_health.projection_freshness;
+    lines.push('', 'Maintenance Health');
+    lines.push(`- Candidate debt: visible ${candidateDebt.visible_candidate_count} | missing provenance ${candidateDebt.missing_provenance_count} | promoted without handoff ${candidateDebt.stale_promoted_without_handoff_count} | unresolved exposed ${candidateDebt.unresolved_exposed_count}`);
+    lines.push(`- Projection freshness: pending ${projectionFreshness.pending_reconcile_count} | failed ${projectionFreshness.failed_count} | conflict ${projectionFreshness.conflict_count} | stale ${projectionFreshness.stale_count}`);
+  }
+
   if (report.auto_promote_summary) {
     const s = report.auto_promote_summary;
     lines.push('', 'Auto-promotion (non-blocking)');
@@ -369,10 +410,15 @@ function buildReportHealth(summary: MemoryReviewReportSummary): MemoryReviewRepo
   const reasons: string[] = [];
   if (summary.failed_jobs > 0) reasons.push(`${summary.failed_jobs} failed jobs`);
   if (summary.reconciliation_failures > 0) reasons.push(`${summary.reconciliation_failures} reconciliation failures`);
+  if (summary.pending_projections > 0) reasons.push(`${summary.pending_projections} pending projections`);
+  if (summary.stale_projections > 0) reasons.push(`${summary.stale_projections} stale projections`);
   if (summary.unhealthy_sources > 0) reasons.push(`${summary.unhealthy_sources} unhealthy sources`);
   if (summary.unhealthy_connectors > 0) reasons.push(`${summary.unhealthy_connectors} unhealthy connectors`);
   if (summary.secret_detections > 0) reasons.push(`${summary.secret_detections} secret detections`);
   if (summary.conflicts > 0) reasons.push(`${summary.conflicts} conflicts`);
+  if (summary.candidate_missing_provenance > 0) reasons.push(`${summary.candidate_missing_provenance} candidates missing provenance`);
+  if (summary.candidate_promoted_without_handoff > 0) reasons.push(`${summary.candidate_promoted_without_handoff} promoted candidates without handoff`);
+  if (summary.candidate_unresolved_exposed > 0) reasons.push(`${summary.candidate_unresolved_exposed} unresolved exposed candidates`);
 
   return {
     status: reasons.length === 0 ? 'ok' : summary.failed_jobs > 0 || summary.reconciliation_failures > 0 ? 'fail' : 'warn',
@@ -618,7 +664,38 @@ function governedAction(
 }
 
 function isEmptyReport(report: MemoryReviewReport): boolean {
-  return Object.values(report.summary).every((count) => count === 0);
+  return Object.values(report.summary).every((count) => count === 0)
+    && !hasMaintenanceHealthSignals(report.sections.maintenance_health);
+}
+
+function summarizeProjectionFreshness(targets: ReportProjectionTarget[]): ProjectionFreshnessSummary {
+  return {
+    total_exception_count: targets.length,
+    pending_reconcile_count: targets.filter((target) => target.status === 'pending_reconcile').length,
+    failed_count: targets.filter((target) => target.status === 'failed').length,
+    conflict_count: targets.filter((target) => target.status === 'conflict').length,
+    stale_count: targets.filter((target) => target.canonical_changed_since_projection).length,
+  };
+}
+
+function emptyCandidateDebtMetrics(): CandidateDebtMetrics {
+  return {
+    visible_candidate_count: 0,
+    missing_provenance_count: 0,
+    stale_promoted_without_handoff_count: 0,
+    unresolved_exposed_count: 0,
+    median_review_latency_ms: null,
+  };
+}
+
+function hasMaintenanceHealthSignals(health: MaintenanceHealthSummary): boolean {
+  return health.candidate_debt.missing_provenance_count > 0
+    || health.candidate_debt.stale_promoted_without_handoff_count > 0
+    || health.candidate_debt.unresolved_exposed_count > 0
+    || health.projection_freshness.pending_reconcile_count > 0
+    || health.projection_freshness.failed_count > 0
+    || health.projection_freshness.conflict_count > 0
+    || health.projection_freshness.stale_count > 0;
 }
 
 function redactReportValues<T>(value: T): T {
