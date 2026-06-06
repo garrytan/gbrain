@@ -109,6 +109,7 @@ import type {
   PageProjection,
   PersonalEpisodeSourceKind,
   ProfileMemoryType,
+  RetrieveContextGraphFrontierOptions,
   RetrievalRequestPlannerInput,
   RetrievalRouteIntent,
   RetrievalSelector,
@@ -1421,6 +1422,48 @@ function parsePositiveIntegerParam(value: unknown, key: string): number | undefi
     throw new OperationError('invalid_params', `${key} must be a positive integer.`);
   }
   return value;
+}
+
+function parseRetrieveContextGraphFrontierParam(
+  value: unknown,
+  key: string,
+): RetrieveContextGraphFrontierOptions | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'boolean') return { enabled: value };
+
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return undefined;
+    if (trimmed === 'true') return { enabled: true };
+    if (trimmed === 'false') return { enabled: false };
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new OperationError('invalid_params', `${key} must be valid JSON when passed as a string.`);
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new OperationError('invalid_params', `${key} must be an object, boolean, or JSON object string.`);
+  }
+
+  const object = parsed as Record<string, unknown>;
+  const allowedKeys = new Set(['enabled', 'max_depth', 'fanout_cap']);
+  for (const optionKey of Object.keys(object)) {
+    if (!allowedKeys.has(optionKey)) {
+      throw new OperationError('invalid_params', `${key}.${optionKey} is not a supported option.`);
+    }
+  }
+  if (typeof object.enabled !== 'boolean') {
+    throw new OperationError('invalid_params', `${key}.enabled must be a boolean.`);
+  }
+
+  return {
+    enabled: object.enabled,
+    ...(object.max_depth !== undefined ? { max_depth: parseNonNegativeIntegerParam(object.max_depth, `${key}.max_depth`) } : {}),
+    ...(object.fanout_cap !== undefined ? { fanout_cap: parseNonNegativeIntegerParam(object.fanout_cap, `${key}.fanout_cap`) } : {}),
+  };
 }
 
 function parseKnownSubjectsParam(
@@ -5293,6 +5336,10 @@ const retrieve_context: Operation = {
     limit: { type: 'number', description: 'Candidate and required-read limit' },
     token_budget: { type: 'number', description: 'Approximate probe output token budget' },
     include_orientation: { type: 'boolean', description: 'Include derived orientation when useful' },
+    graph_frontier: {
+      type: ['object', 'string', 'boolean'],
+      description: 'Explicit graph frontier selector planning flag. Default is off; graph paths are explanation-only.',
+    },
     persist_trace: { type: 'boolean', description: 'Persist a retrieval trace for this probe' },
   },
   mutating: false,
@@ -5307,6 +5354,7 @@ const retrieve_context: Operation = {
     limit: parsePositiveIntegerParam(p.limit, 'limit'),
     token_budget: parsePositiveIntegerParam(p.token_budget, 'token_budget'),
     include_orientation: typeof p.include_orientation === 'boolean' ? p.include_orientation : undefined,
+    graph_frontier: parseRetrieveContextGraphFrontierParam(p.graph_frontier, 'graph_frontier'),
     persist_trace: p.persist_trace === true,
   })),
   cliHints: { name: 'retrieve-context', positional: ['query'], aliases: { n: 'limit', scope: 'requested_scope' } },

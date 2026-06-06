@@ -44,7 +44,7 @@ export interface GraphFrontierEdge {
 
 export interface GraphFrontierInput {
   enabled: boolean;
-  scope_id?: string;
+  scope_id: string;
   policy_version: string;
   seed_node_ids: string[];
   nodes: GraphFrontierNode[];

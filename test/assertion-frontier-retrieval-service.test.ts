@@ -67,7 +67,7 @@ describe('assertion graph frontier planner', () => {
       seed_node_ids: ['a'],
       nodes: [node('a', 'systems/a')],
       edges: [],
-    })).toThrow('scope_id is required for graph frontier planning');
+    } as unknown as Parameters<typeof planAssertionGraphFrontier>[0])).toThrow('scope_id is required for graph frontier planning');
   });
 
   test('selects canonical read selectors without turning graph paths into evidence', () => {
@@ -162,6 +162,42 @@ describe('assertion graph frontier planner', () => {
       from_node_id: 'a',
       to_node_id: 'b',
       reason: 'scope_mismatch',
+      edge_type: 'supports',
+    });
+  });
+
+  test('omits target nodes whose scope or policy does not match the frontier scope', () => {
+    const result = planAssertionGraphFrontier({
+      enabled: true,
+      scope_id: scopeId,
+      policy_version: policyVersion,
+      seed_node_ids: ['a'],
+      nodes: [
+        node('a', 'systems/a'),
+        node('scope-target', 'people/private', { scope_id: 'personal:default' }),
+        node('policy-target', 'systems/old-policy', { policy_version: 'policy:v2' }),
+      ],
+      edges: [
+        edge('edge:target-scope', 'a', 'scope-target'),
+        edge('edge:target-policy', 'a', 'policy-target'),
+      ],
+      max_depth: 1,
+      fanout_cap: 5,
+    });
+
+    expect(result.selected_selectors).toEqual([]);
+    expect(result.omitted_paths).toContainEqual({
+      edge_id: 'edge:target-scope',
+      from_node_id: 'a',
+      to_node_id: 'scope-target',
+      reason: 'scope_mismatch',
+      edge_type: 'supports',
+    });
+    expect(result.omitted_paths).toContainEqual({
+      edge_id: 'edge:target-policy',
+      from_node_id: 'a',
+      to_node_id: 'policy-target',
+      reason: 'policy_mismatch',
       edge_type: 'supports',
     });
   });
@@ -266,6 +302,79 @@ describe('assertion graph frontier planner', () => {
       to_node_id: 'd',
       reason: 'depth_cap',
       edge_type: 'supports',
+    });
+  });
+
+  test('filters scope and policy before reporting depth-cap omissions', () => {
+    const result = planAssertionGraphFrontier({
+      enabled: true,
+      scope_id: scopeId,
+      policy_version: policyVersion,
+      seed_node_ids: ['a'],
+      nodes: [
+        node('a', 'systems/a'),
+        node('b', 'systems/b'),
+        node('visible', 'systems/visible'),
+        node('private', 'people/private', { scope_id: 'personal:default' }),
+        node('old-policy', 'systems/old-policy', { policy_version: 'policy:v2' }),
+      ],
+      edges: [
+        edge('edge:a-b', 'a', 'b'),
+        edge('edge:b-visible', 'b', 'visible'),
+        edge('edge:b-private', 'b', 'private', 'supports', { scope_id: 'personal:default' }),
+        edge('edge:b-old-policy', 'b', 'old-policy', 'supports', { policy_version: 'policy:v2' }),
+      ],
+      max_depth: 1,
+      fanout_cap: 5,
+    });
+
+    expect(result.omitted_paths).toContainEqual({
+      edge_id: 'edge:b-visible',
+      from_node_id: 'b',
+      to_node_id: 'visible',
+      reason: 'depth_cap',
+      edge_type: 'supports',
+    });
+    expect(JSON.stringify(result.omitted_paths)).not.toContain('edge:b-private');
+    expect(JSON.stringify(result.omitted_paths)).not.toContain('edge:b-old-policy');
+  });
+
+  test('respects explicit edge allowlist overrides', () => {
+    const result = planAssertionGraphFrontier({
+      enabled: true,
+      scope_id: scopeId,
+      policy_version: policyVersion,
+      seed_node_ids: ['a'],
+      nodes: [
+        node('a', 'systems/a'),
+        node('supported', 'systems/supported'),
+        node('conflict', 'systems/conflict'),
+        node('verify', 'systems/verify'),
+      ],
+      edges: [
+        edge('edge:supports', 'a', 'supported', 'supports'),
+        edge('edge:conflict', 'a', 'conflict', 'contradicts'),
+        edge('edge:verify', 'a', 'verify', 'requires_reverification'),
+      ],
+      allowed_edge_types: ['supports'],
+      max_depth: 1,
+      fanout_cap: 5,
+    });
+
+    expect(result.selected_selectors.map((entry) => entry.node_id)).toEqual(['supported']);
+    expect(result.omitted_paths).toContainEqual({
+      edge_id: 'edge:conflict',
+      from_node_id: 'a',
+      to_node_id: 'conflict',
+      reason: 'unsupported_edge_type',
+      edge_type: 'contradicts',
+    });
+    expect(result.omitted_paths).toContainEqual({
+      edge_id: 'edge:verify',
+      from_node_id: 'a',
+      to_node_id: 'verify',
+      reason: 'unsupported_edge_type',
+      edge_type: 'requires_reverification',
     });
   });
 

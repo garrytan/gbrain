@@ -5,11 +5,12 @@ import { join } from 'path';
 import { importFromContent } from '../src/core/import-file.ts';
 import { readContext } from '../src/core/services/read-context-service.ts';
 import { buildStructuralContextMapEntry } from '../src/core/services/context-map-service.ts';
+import { planAssertionGraphFrontier } from '../src/core/services/assertion-frontier-retrieval-service.ts';
 import { retrieveContext } from '../src/core/services/retrieve-context-service.ts';
 import { retrievalSelectorId } from '../src/core/services/retrieval-selector-service.ts';
 import { sourceRankCandidateLimit } from '../src/core/search/source-ranking.ts';
 import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
-import type { MemoryCandidateEntryInput, SearchResult } from '../src/core/types.ts';
+import type { GraphFrontierEdge, GraphFrontierInput, GraphFrontierNode, MemoryCandidateEntryInput, SearchResult } from '../src/core/types.ts';
 
 async function withEngine<T>(label: string, fn: (engine: SQLiteEngine) => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), `mbrain-retrieve-context-${label}-`));
@@ -201,6 +202,229 @@ describe('retrieve context service', () => {
       expect(result.required_reads[0]!.slug).toBe('concepts/retrieval');
       expect(result.warnings).toContain(
         'Search/query chunks are candidate pointers; call read_context before answering factual questions.',
+      );
+    });
+  });
+
+  test('does not call graph frontier dependencies unless the explicit flag is enabled', async () => {
+    await withEngine('graph-frontier-default-off', async (engine) => {
+      const dependencies = {
+        candidateSearch: async () => [],
+        graphFrontierInputBuilder: () => {
+          throw new Error('graph frontier must stay default-off');
+        },
+      };
+      const result = await retrieveContext(engine, {
+        query: 'graph frontier default off',
+        include_orientation: false,
+      }, dependencies);
+      const disabledResult = await retrieveContext(engine, {
+        query: 'graph frontier disabled',
+        include_orientation: false,
+        graph_frontier: { enabled: false },
+      }, dependencies);
+
+      expect(result.required_reads).toEqual([]);
+      expect(result.orientation.derived_consulted).not.toContain('graph_frontier');
+      expect(disabledResult.required_reads).toEqual([]);
+      expect(disabledResult.orientation.derived_consulted).not.toContain('graph_frontier');
+    });
+  });
+
+  test('adds explicit graph frontier canonical selectors to required reads without source-ref authority', async () => {
+    await withEngine('graph-frontier-enabled', async (engine) => {
+      await importFromContent(engine, 'systems/seed', [
+        '---',
+        'type: system',
+        'title: Seed System',
+        '---',
+        '# Seed System',
+        'Seed system text mentions graph frontier retrieval.',
+      ].join('\n'), { path: 'systems/seed.md' });
+      await importFromContent(engine, 'concepts/graph-target', [
+        '---',
+        'type: concept',
+        'title: Graph Target',
+        '---',
+        '# Graph Target',
+        'Graph frontier target is still read through canonical context.',
+      ].join('\n'), { path: 'concepts/graph-target.md' });
+
+      const nodes = graphFrontierFixtureNodes();
+      const edges = graphFrontierFixtureEdges();
+      let plannerInput: GraphFrontierInput | undefined;
+      const result = await retrieveContext(engine, {
+        query: 'graph frontier retrieval',
+        include_orientation: false,
+        persist_trace: true,
+        limit: 3,
+        graph_frontier: {
+          enabled: true,
+          max_depth: 1,
+          fanout_cap: 5,
+        },
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/seed',
+          page_id: 1,
+          title: 'Seed System',
+          type: 'system',
+          chunk_text: 'Seed system text mentions graph frontier retrieval.',
+          chunk_source: 'compiled_truth',
+          score: 10,
+          stale: false,
+        }],
+        graphFrontierInputBuilder: () => ({
+          scope_id: 'workspace:default',
+          policy_version: 'policy:v1',
+          seed_node_ids: ['assertion:seed'],
+          nodes,
+          edges,
+        }),
+        graphFrontierPlanner: (input) => {
+          plannerInput = input;
+          return planAssertionGraphFrontier(input);
+        },
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('systems/seed');
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('concepts/graph-target');
+      expect(result.orientation.derived_consulted).toContain('graph_frontier');
+      expect(result.orientation.graph_paths_considered).toContain(
+        'graph_frontier_path:1 activation=canonical_read authority=selector_planning_only',
+      );
+      expect(plannerInput).toMatchObject({
+        scope_id: 'workspace:default',
+        policy_version: 'policy:v1',
+        seed_node_ids: ['assertion:seed'],
+        max_depth: 1,
+        fanout_cap: 5,
+      });
+      expect(JSON.stringify(result.required_reads)).not.toContain('edge:seed-target');
+      expect(result.trace?.derived_consulted).toContain('graph_frontier');
+      expect(result.trace?.verification).toContain('graph_frontier_paths_considered:1');
+      expect(result.trace?.verification).toContain('graph_frontier_authority:selector_planning_only');
+      expect(result.trace?.source_refs.join('\n')).not.toContain('edge:seed-target');
+    });
+  });
+
+  test('dedupes graph frontier reads with search-selected canonical reads', async () => {
+    await withEngine('graph-frontier-dedupe', async (engine) => {
+      await importFromContent(engine, 'concepts/graph-target', [
+        '---',
+        'type: concept',
+        'title: Graph Target',
+        '---',
+        '# Graph Target',
+        'Graph target appears from search and graph frontier.',
+      ].join('\n'), { path: 'concepts/graph-target.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'graph target',
+        include_orientation: false,
+        limit: 3,
+        graph_frontier: {
+          enabled: true,
+          max_depth: 1,
+          fanout_cap: 5,
+        },
+      }, {
+        candidateSearch: async () => [{
+          slug: 'concepts/graph-target',
+          page_id: 1,
+          title: 'Graph Target',
+          type: 'concept',
+          chunk_text: 'Graph target appears from search and graph frontier.',
+          chunk_source: 'compiled_truth',
+          score: 10,
+          stale: false,
+        }],
+        graphFrontierInputBuilder: () => ({
+          scope_id: 'workspace:default',
+          policy_version: 'policy:v1',
+          seed_node_ids: ['assertion:seed'],
+          nodes: graphFrontierFixtureNodes(),
+          edges: graphFrontierFixtureEdges(),
+        }),
+      });
+
+      expect(result.required_reads.filter((selector) => selector.slug === 'concepts/graph-target')).toHaveLength(1);
+      expect(result.orientation.graph_paths_considered).toHaveLength(1);
+    });
+  });
+
+  test('does not merge graph review or revalidation selectors into required reads', async () => {
+    await withEngine('graph-frontier-verify-first', async (engine) => {
+      await importFromContent(engine, 'systems/seed', [
+        '---',
+        'type: system',
+        'title: Seed System',
+        '---',
+        '# Seed System',
+        'Seed system text mentions graph frontier retrieval.',
+      ].join('\n'), { path: 'systems/seed.md' });
+      await importFromContent(engine, 'concepts/reverify-target', [
+        '---',
+        'type: concept',
+        'title: Reverify Target',
+        '---',
+        '# Reverify Target',
+        'Reverify target must not be treated as a normal graph-added required read.',
+      ].join('\n'), { path: 'concepts/reverify-target.md' });
+
+      const result = await retrieveContext(engine, {
+        query: 'graph frontier reverify',
+        include_orientation: false,
+        limit: 3,
+        graph_frontier: {
+          enabled: true,
+          max_depth: 1,
+          fanout_cap: 5,
+        },
+      }, {
+        candidateSearch: async () => [{
+          slug: 'systems/seed',
+          page_id: 1,
+          title: 'Seed System',
+          type: 'system',
+          chunk_text: 'Seed system text mentions graph frontier retrieval.',
+          chunk_source: 'compiled_truth',
+          score: 10,
+          stale: false,
+        }],
+        graphFrontierInputBuilder: () => ({
+          scope_id: 'workspace:default',
+          policy_version: 'policy:v1',
+          seed_node_ids: ['assertion:seed'],
+          nodes: [
+            graphFrontierFixtureNodes()[0]!,
+            {
+              id: 'assertion:reverify',
+              scope_id: 'workspace:default',
+              policy_version: 'policy:v1',
+              selector: {
+                kind: 'page',
+                scope_id: 'workspace:default',
+                slug: 'concepts/reverify-target',
+                freshness: 'current',
+              },
+            },
+          ],
+          edges: [{
+            id: 'edge:seed-reverify',
+            edge_type: 'requires_reverification',
+            from_node_id: 'assertion:seed',
+            to_node_id: 'assertion:reverify',
+            scope_id: 'workspace:default',
+            policy_version: 'policy:v1',
+          }],
+        }),
+      });
+
+      expect(result.required_reads.map((selector) => selector.slug)).toContain('systems/seed');
+      expect(result.required_reads.map((selector) => selector.slug)).not.toContain('concepts/reverify-target');
+      expect(result.orientation.graph_paths_considered).toContain(
+        'graph_frontier_path:1 activation=verify_first authority=selector_planning_only',
       );
     });
   });
@@ -1107,6 +1331,11 @@ describe('retrieve context service', () => {
       const result = await retrieveContext(engine, {
         query: 'Remember my personal routine',
         requested_scope: 'work',
+        graph_frontier: { enabled: true },
+      }, {
+        graphFrontierInputBuilder: () => {
+          throw new Error('scope-blocked retrieval must not call graph frontier');
+        },
       });
 
       expect(result.scope_gate?.policy).not.toBe('allow');
@@ -1121,3 +1350,41 @@ describe('retrieve context service', () => {
     });
   });
 });
+
+function graphFrontierFixtureNodes(): GraphFrontierNode[] {
+  return [
+    {
+      id: 'assertion:seed',
+      scope_id: 'workspace:default',
+      policy_version: 'policy:v1',
+      selector: {
+        kind: 'page',
+        scope_id: 'workspace:default',
+        slug: 'systems/seed',
+        freshness: 'current',
+      },
+    },
+    {
+      id: 'assertion:target',
+      scope_id: 'workspace:default',
+      policy_version: 'policy:v1',
+      selector: {
+        kind: 'page',
+        scope_id: 'workspace:default',
+        slug: 'concepts/graph-target',
+        freshness: 'current',
+      },
+    },
+  ];
+}
+
+function graphFrontierFixtureEdges(): GraphFrontierEdge[] {
+  return [{
+    id: 'edge:seed-target',
+    edge_type: 'supports',
+    from_node_id: 'assertion:seed',
+    to_node_id: 'assertion:target',
+    scope_id: 'workspace:default',
+    policy_version: 'policy:v1',
+  }];
+}

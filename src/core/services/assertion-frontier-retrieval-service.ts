@@ -109,6 +109,12 @@ export function planAssertionGraphFrontier(input: GraphFrontierInput): GraphFron
 
     if (current.depth >= maxDepth) {
       for (const edge of outgoing) {
+        const edgeType = allowedEdgeType(edge.edge_type, allowedEdgeTypes);
+        if (!edgeVisibleAtBoundary(input, nodesById, edge)) continue;
+        if (!edgeType) {
+          omit(result, edge, 'unsupported_edge_type');
+          continue;
+        }
         omit(result, edge, 'depth_cap');
       }
       continue;
@@ -255,6 +261,21 @@ function buildIncomingConstraints(
     }
   }
   return result;
+}
+
+function edgeVisibleAtBoundary(
+  input: GraphFrontierInput,
+  nodesById: Map<string, GraphFrontierNode>,
+  edge: GraphFrontierEdge,
+): boolean {
+  if (edge.scope_id !== input.scope_id || edge.policy_version !== input.policy_version) return false;
+  if (edge.stale) return false;
+
+  const targetNode = nodesById.get(edge.to_node_id);
+  if (!targetNode) return true;
+  return targetNode.scope_id === input.scope_id
+    && targetNode.policy_version === input.policy_version
+    && targetNode.stale !== true;
 }
 
 function allowedEdgeType(

@@ -2,10 +2,16 @@ import type { BrainEngine } from '../engine.ts';
 import { buildCandidateSignals, emptyCandidateSignalResult } from './candidate-signal-service.ts';
 import type { BuildCandidateSignalsInput, CandidateSignalResult } from './candidate-signal-service.ts';
 import type {
+  GraphFrontierEdge,
+  GraphFrontierInput,
+  GraphFrontierNode,
+  GraphFrontierPathTrace,
+  GraphFrontierResult,
   MemoryScenario,
   NoteManifestEntry,
   NoteSectionEntry,
   RetrieveContextCandidate,
+  RetrieveContextGraphFrontierOptions,
   RetrieveContextInput,
   RetrieveContextOrientation,
   RetrieveContextResult,
@@ -18,6 +24,7 @@ import type {
   SearchResult,
 } from '../types.ts';
 import { getBroadSynthesisRoute } from './broad-synthesis-route-service.ts';
+import { planAssertionGraphFrontier } from './assertion-frontier-retrieval-service.ts';
 import { classifyMemoryScenario } from './memory-scenario-classifier-service.ts';
 import { DEFAULT_NOTE_MANIFEST_SCOPE_ID } from './note-manifest-service.ts';
 import { rankSearchResults, sourceRankCandidateLimit, sourceRankFactor } from '../search/source-ranking.ts';
@@ -44,9 +51,38 @@ export type RetrieveContextCandidateSignalBuilder = (
   input: BuildCandidateSignalsInput,
 ) => Promise<CandidateSignalResult>;
 
+export interface RetrieveContextGraphFrontierBuildInput {
+  engine: BrainEngine;
+  input: RetrieveContextInput;
+  query: string;
+  limit: number;
+  candidates: RetrieveContextCandidate[];
+  required_reads: RetrievalSelector[];
+  orientation: RetrieveContextOrientation;
+  scope_gate?: ScopeGateDecisionResult;
+}
+
+export interface RetrieveContextGraphFrontierBuildResult {
+  scope_id?: string;
+  policy_version?: string;
+  seed_node_ids?: string[];
+  nodes?: GraphFrontierNode[];
+  edges?: GraphFrontierEdge[];
+}
+
+export type RetrieveContextGraphFrontierInputBuilder = (
+  input: RetrieveContextGraphFrontierBuildInput,
+) => Promise<RetrieveContextGraphFrontierBuildResult> | RetrieveContextGraphFrontierBuildResult;
+
+export type RetrieveContextGraphFrontierPlanner = (
+  input: GraphFrontierInput,
+) => Promise<GraphFrontierResult> | GraphFrontierResult;
+
 export interface RetrieveContextDependencies {
   candidateSearch?: RetrieveContextCandidateSearch;
   candidateSignalBuilder?: RetrieveContextCandidateSignalBuilder;
+  graphFrontierInputBuilder?: RetrieveContextGraphFrontierInputBuilder;
+  graphFrontierPlanner?: RetrieveContextGraphFrontierPlanner;
 }
 
 const DEFAULT_CANDIDATE_LIMIT = 5;
@@ -59,6 +95,7 @@ const LINKED_CANDIDATE_PER_SEED_LIMIT = 4;
 const MANIFEST_LINK_SCAN_BATCH_SIZE = 500;
 const SEARCH_HIT_CONTEXT_CHARS = 40;
 const SEARCH_CHUNK_WARNING = 'Search/query chunks are candidate pointers; call read_context before answering factual questions.';
+const DEFAULT_GRAPH_FRONTIER_POLICY_VERSION = 'policy:v1';
 const QUERY_TOKEN_STOPWORDS = new Set([
   'a',
   'an',
@@ -193,10 +230,20 @@ export async function retrieveContext(
   const orientation = input.include_orientation === false || query.length === 0
     ? emptyOrientation()
     : await buildOrientation(engine, query, limit);
-  const requiredReads = dedupeSelectorsByEvidence([
+  const baseRequiredReads = dedupeSelectorsByEvidence([
     ...candidates.map((candidate) => candidate.read_selector),
     ...orientation.recommended_reads,
   ].filter((selector) => selectorAllowedByRetrieveScope(selector, scopeGate))).slice(0, requiredReadLimit);
+  const graphAugmentation = await maybeAugmentRequiredReadsWithGraphFrontier(engine, input, dependencies, {
+    query,
+    limit,
+    candidates,
+    required_reads: baseRequiredReads,
+    orientation,
+    scope_gate: scopeGate,
+    required_read_limit: requiredReadLimit,
+  });
+  const requiredReads = graphAugmentation.required_reads;
   const candidateSignals = await buildRetrieveContextCandidateSignals(
     candidateSignalBuilder,
     engine,
@@ -220,10 +267,11 @@ export async function retrieveContext(
     },
     candidates,
     required_reads: requiredReads,
-    orientation,
+    orientation: graphAugmentation.orientation,
     ...candidateSignals,
     warnings: [
       ...(searchResults.length > 0 ? [SEARCH_CHUNK_WARNING] : []),
+      ...graphAugmentation.warnings,
       ...(requiredReads.length === 0 && candidateSignals.candidate_signals.length > 0
         ? ['No canonical read candidate was found; non-canonical Memory Inbox candidate signals are available.']
         : []),
@@ -232,6 +280,152 @@ export async function retrieveContext(
         : []),
     ],
   }, input);
+}
+
+async function maybeAugmentRequiredReadsWithGraphFrontier(
+  engine: BrainEngine,
+  input: RetrieveContextInput,
+  dependencies: RetrieveContextDependencies,
+  context: Omit<RetrieveContextGraphFrontierBuildInput, 'engine' | 'input'> & {
+    required_read_limit: number;
+  },
+): Promise<{
+  required_reads: RetrievalSelector[];
+  orientation: RetrieveContextOrientation;
+  warnings: string[];
+}> {
+  const options = input.graph_frontier;
+  if (options?.enabled !== true) {
+    return {
+      required_reads: context.required_reads,
+      orientation: context.orientation,
+      warnings: [],
+    };
+  }
+
+  const buildResult = dependencies.graphFrontierInputBuilder
+    ? await dependencies.graphFrontierInputBuilder({
+      engine,
+      input,
+      query: context.query,
+      limit: context.limit,
+      candidates: context.candidates,
+      required_reads: context.required_reads,
+      orientation: context.orientation,
+      scope_gate: context.scope_gate,
+    })
+    : {};
+  const graphInput = buildGraphFrontierInput(input, options, context.required_reads, buildResult);
+  const graphResult = await (dependencies.graphFrontierPlanner ?? planAssertionGraphFrontier)(graphInput);
+  const graphSelectors = graphResult.selected_selectors
+    .filter((entry) => entry.activation === 'canonical_read')
+    .map((entry) => entry.selector)
+    .filter((selector) => selectorAllowedByRetrieveScope(selector, context.scope_gate));
+  const baseGraphKeys = new Set(context.required_reads
+    .map(graphSelectorDuplicateKey)
+    .filter((key): key is string => key !== undefined));
+  const newGraphSelectors = graphSelectors.filter((selector) => {
+    const key = graphSelectorDuplicateKey(selector);
+    return key === undefined || !baseGraphKeys.has(key);
+  });
+  const requiredReads = dedupeSelectorsByEvidence([
+    ...context.required_reads,
+    ...newGraphSelectors,
+  ]).slice(0, context.required_read_limit);
+  const graphPaths = graphResult.paths_considered.map(formatGraphFrontierPath);
+  const orientation = graphPaths.length > 0 || graphSelectors.length > 0
+    ? {
+      ...context.orientation,
+      derived_consulted: mergeSourceRefs(context.orientation.derived_consulted, ['graph_frontier']),
+      graph_paths_considered: mergeSourceRefs(context.orientation.graph_paths_considered ?? [], graphPaths),
+      summary_lines: [
+        ...context.orientation.summary_lines,
+        `Graph frontier considered ${graphResult.paths_considered.length} path${graphResult.paths_considered.length === 1 ? '' : 's'} and selected ${newGraphSelectors.length} canonical read${newGraphSelectors.length === 1 ? '' : 's'}.`,
+      ],
+    }
+    : context.orientation;
+
+  return {
+    required_reads: requiredReads,
+    orientation,
+    warnings: graphFrontierWarnings(options, buildResult, graphResult),
+  };
+}
+
+function graphSelectorDuplicateKey(selector: RetrievalSelector): string | undefined {
+  const scopeId = selector.scope_id ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID;
+  const pageRef = selector.slug
+    ?? pageRefFromPath(selector.path)
+    ?? (selector.section_id ? selector.section_id.split('#')[0] : undefined);
+  return pageRef ? `${scopeId}:${canonicalPageRef(pageRef)}` : undefined;
+}
+
+function pageRefFromPath(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  return path.split('#')[0]?.trim() || undefined;
+}
+
+function canonicalPageRef(value: string): string {
+  return canonicalRetrievalPath(value)
+    .replace(/\.md$/i, '')
+    .split('#')[0]!;
+}
+
+function buildGraphFrontierInput(
+  input: RetrieveContextInput,
+  options: RetrieveContextGraphFrontierOptions,
+  requiredReads: RetrievalSelector[],
+  buildResult: RetrieveContextGraphFrontierBuildResult,
+): GraphFrontierInput {
+  return {
+    enabled: true,
+    scope_id: firstNonEmpty(buildResult.scope_id, candidateSignalScopeId(input, requiredReads)),
+    policy_version: firstNonEmpty(buildResult.policy_version, DEFAULT_GRAPH_FRONTIER_POLICY_VERSION),
+    seed_node_ids: buildResult.seed_node_ids ?? [],
+    nodes: buildResult.nodes ?? [],
+    edges: buildResult.edges ?? [],
+    ...(options.max_depth !== undefined ? { max_depth: options.max_depth } : {}),
+    ...(options.fanout_cap !== undefined ? { fanout_cap: options.fanout_cap } : {}),
+  };
+}
+
+function graphFrontierWarnings(
+  options: RetrieveContextGraphFrontierOptions,
+  buildResult: RetrieveContextGraphFrontierBuildResult,
+  graphResult: GraphFrontierResult,
+): string[] {
+  const omittedSummary = summarizeGraphOmissions(graphResult);
+  return [
+    ...((buildResult.seed_node_ids ?? []).length === 0
+      ? ['Graph frontier enabled but no seed nodes were available.']
+      : []),
+    ...((buildResult.nodes ?? []).length === 0
+      ? ['Graph frontier enabled but no scoped graph nodes were available.']
+      : []),
+    ...(omittedSummary.length > 0 ? [`Graph frontier omitted paths: ${omittedSummary.join(', ')}.`] : []),
+    ...(graphResult.warnings.length > 0 ? ['Graph frontier reported stale graph warnings.'] : []),
+    ...(graphResult.authority_violations.length > 0
+      ? [`Graph frontier reported ${graphResult.authority_violations.length} authority violation${graphResult.authority_violations.length === 1 ? '' : 's'}.`]
+      : []),
+  ];
+}
+
+function summarizeGraphOmissions(graphResult: GraphFrontierResult): string[] {
+  const counts = new Map<string, number>();
+  for (const omitted of graphResult.omitted_paths) {
+    counts.set(omitted.reason, (counts.get(omitted.reason) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, count]) => `${reason}=${count}`);
+}
+
+function formatGraphFrontierPath(path: GraphFrontierPathTrace, index: number): string {
+  return `graph_frontier_path:${index + 1} activation=${path.activation} authority=${path.authority}`;
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string {
+  return values.find((value) => value !== undefined && value.trim().length > 0) ?? DEFAULT_NOTE_MANIFEST_SCOPE_ID;
 }
 
 async function maybeEvaluateScopeGate(
@@ -1127,6 +1321,7 @@ async function persistRetrieveTrace(
       ...result.answerability.reason_codes.map((code) => `answerability:${code}`),
       ...buildScopeGateVerification(result.scope_gate),
       ...corpusLaneVerification(result.required_reads),
+      ...buildGraphFrontierVerification(result),
       ...buildCandidateSignalVerification(result),
     ],
     write_outcome: 'no_durable_write',
@@ -1152,6 +1347,15 @@ function corpusLaneVerification(selectors: RetrievalSelector[]): string[] {
       .filter((ref) => ref.startsWith('corpus_lane:'))
       .map((ref) => `${ref}:post_scope_metadata`)
   ));
+}
+
+function buildGraphFrontierVerification(result: RetrieveContextResult): string[] {
+  const paths = result.orientation.graph_paths_considered ?? [];
+  if (paths.length === 0) return [];
+  return [
+    `graph_frontier_paths_considered:${paths.length}`,
+    'graph_frontier_authority:selector_planning_only',
+  ];
 }
 
 function intentFromScenario(scenario: RetrieveContextResult['scenario']): RetrievalRouteIntent {

@@ -24,6 +24,7 @@ describe('agentic retrieval context operations', () => {
     expect(retrieve?.mutating).toBe(false);
     expect(retrieve?.cliHints?.name).toBe('retrieve-context');
     expect(retrieve?.cliHints?.positional).toEqual(['query']);
+    expect(retrieve?.params.graph_frontier).toBeDefined();
 
     expect(read).toBeDefined();
     expect(read?.mutating).toBe(false);
@@ -265,5 +266,29 @@ describe('agentic retrieval context operations', () => {
         code: 'invalid_params',
       });
     }
+  });
+
+  test('retrieve_context rejects invalid graph frontier options', async () => {
+    const retrieve = operationsByName.retrieve_context;
+    if (!retrieve) throw new Error('retrieve_context operation is missing');
+
+    await expect(retrieve.handler(opContext({}), {
+      graph_frontier: { enabled: true, max_depth: -1 },
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+
+    await expect(retrieve.handler(opContext({}), {
+      graph_frontier: { enabled: true, allowed_edge_types: ['derived_from'] },
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+
+    await expect(retrieve.handler(opContext({
+      listMemoryCandidateEntries: async () => [],
+      listCanonicalHandoffEntries: async () => [],
+    }), {
+      graph_frontier: '{"enabled":true,"max_depth":1}',
+    })).resolves.toMatchObject({
+      orientation: expect.objectContaining({
+        derived_consulted: [],
+      }),
+    });
   });
 });

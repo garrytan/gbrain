@@ -509,6 +509,13 @@ export interface RetrieveContextOrientation {
   derived_consulted: string[];
   recommended_reads: RetrievalSelector[];
   summary_lines: string[];
+  graph_paths_considered?: string[];
+}
+
+export interface RetrieveContextGraphFrontierOptions {
+  enabled: boolean;
+  max_depth?: number;
+  fanout_cap?: number;
 }
 
 export interface RetrieveContextInput extends MemoryScenarioClassifierInput {
@@ -516,6 +523,7 @@ export interface RetrieveContextInput extends MemoryScenarioClassifierInput {
   limit?: number;
   token_budget?: number;
   include_orientation?: boolean;
+  graph_frontier?: RetrieveContextGraphFrontierOptions;
   persist_trace?: boolean;
 }
 

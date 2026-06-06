@@ -131,12 +131,14 @@ describe('memory-why service', () => {
       ],
       activation_decisions: [
         activationDecision('context-map:bad', 'answer_ground', 'answer_ground', ['bad_fixture']),
+        activationDecision('graph-path:path:edge', 'answer_ground', 'answer_ground', ['graph_path']),
       ],
       graph_paths_considered: ['assertion:a -> supports -> assertion:b'],
     });
 
     expect(report.authority_violations).toContain('candidate_signal_answer_ground:candidate:bad');
     expect(report.authority_violations).toContain('derived_orientation_answer_ground:context-map:bad');
+    expect(report.authority_violations).toContain('derived_orientation_answer_ground:graph-path:path:edge');
   });
 
   test('returns stable zero-count output for empty inputs', () => {
