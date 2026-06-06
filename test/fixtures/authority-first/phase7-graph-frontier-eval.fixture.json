@@ -1,0 +1,601 @@
+{
+  "id": "phase7-graph-frontier-eval",
+  "description": "Deterministic graph-off/graph-on evaluation fixture for assertion graph frontier retrieval.",
+  "cases": [
+    {
+      "id": "recall_bridge",
+      "family": "recall_bridge",
+      "query": "Find the graph target related to the seed system.",
+      "scope_id": "workspace:default",
+      "policy_version": "policy:v1",
+      "seed_node_ids": ["assertion:recall-seed"],
+      "graph_off_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/recall-seed",
+          "freshness": "current"
+        }
+      ],
+      "gold_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "concepts/recall-target",
+          "freshness": "current"
+        }
+      ],
+      "allowed_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/recall-seed",
+          "freshness": "current"
+        },
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "concepts/recall-target",
+          "freshness": "current"
+        }
+      ],
+      "frontier": {
+        "max_depth": 1,
+        "fanout_cap": 4,
+        "nodes": [
+          {
+            "id": "assertion:recall-seed",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "systems/recall-seed",
+              "freshness": "current"
+            }
+          },
+          {
+            "id": "assertion:recall-target",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "concepts/recall-target",
+              "freshness": "current"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge:recall-seed-target",
+            "edge_type": "supports",
+            "from_node_id": "assertion:recall-seed",
+            "to_node_id": "assertion:recall-target",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1"
+          }
+        ]
+      },
+      "instrumentation": {
+        "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+        "graph_on": { "latency_ms": 12, "estimated_tokens": 115 }
+      },
+      "answer_evidence_refs": []
+    },
+    {
+      "id": "false_bridge_distractor",
+      "family": "false_bridge_distractor",
+      "query": "Avoid unrelated graph bridges.",
+      "scope_id": "workspace:default",
+      "policy_version": "policy:v1",
+      "seed_node_ids": ["assertion:distractor-seed"],
+      "graph_off_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/distractor-seed",
+          "freshness": "current"
+        }
+      ],
+      "gold_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/distractor-seed",
+          "freshness": "current"
+        }
+      ],
+      "allowed_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/distractor-seed",
+          "freshness": "current"
+        }
+      ],
+      "forbidden_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "concepts/unrelated-distractor",
+          "freshness": "current"
+        }
+      ],
+      "frontier": {
+        "max_depth": 1,
+        "fanout_cap": 4,
+        "nodes": [
+          {
+            "id": "assertion:distractor-seed",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "systems/distractor-seed",
+              "freshness": "current"
+            }
+          },
+          {
+            "id": "assertion:unrelated-distractor",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "concepts/unrelated-distractor",
+              "freshness": "current"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge:distractor-unsupported",
+            "edge_type": "derived_from",
+            "from_node_id": "assertion:distractor-seed",
+            "to_node_id": "assertion:unrelated-distractor",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1"
+          }
+        ]
+      },
+      "instrumentation": {
+        "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+        "graph_on": { "latency_ms": 11, "estimated_tokens": 105 }
+      },
+      "answer_evidence_refs": []
+    },
+    {
+      "id": "scope_boundary",
+      "family": "scope_boundary",
+      "query": "Do not cross workspace to personal graph nodes.",
+      "scope_id": "workspace:default",
+      "policy_version": "policy:v1",
+      "seed_node_ids": ["assertion:scope-seed"],
+      "graph_off_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/scope-seed",
+          "freshness": "current"
+        }
+      ],
+      "gold_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/scope-seed",
+          "freshness": "current"
+        }
+      ],
+      "allowed_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/scope-seed",
+          "freshness": "current"
+        }
+      ],
+      "frontier": {
+        "max_depth": 1,
+        "fanout_cap": 4,
+        "nodes": [
+          {
+            "id": "assertion:scope-seed",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "systems/scope-seed",
+              "freshness": "current"
+            }
+          },
+          {
+            "id": "assertion:personal-target",
+            "scope_id": "personal:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "personal:default",
+              "slug": "people/private-target",
+              "freshness": "current"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge:scope-personal",
+            "edge_type": "supports",
+            "from_node_id": "assertion:scope-seed",
+            "to_node_id": "assertion:personal-target",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1"
+          }
+        ]
+      },
+      "instrumentation": {
+        "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+        "graph_on": { "latency_ms": 11, "estimated_tokens": 105 }
+      },
+      "answer_evidence_refs": []
+    },
+    {
+      "id": "contradiction",
+      "family": "contradiction",
+      "query": "Contradictory graph edges require review.",
+      "scope_id": "workspace:default",
+      "policy_version": "policy:v1",
+      "seed_node_ids": ["assertion:contradiction-seed"],
+      "graph_off_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/contradiction-seed",
+          "freshness": "current"
+        }
+      ],
+      "gold_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/contradiction-seed",
+          "freshness": "current"
+        }
+      ],
+      "allowed_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/contradiction-seed",
+          "freshness": "current"
+        }
+      ],
+      "frontier": {
+        "max_depth": 1,
+        "fanout_cap": 4,
+        "nodes": [
+          {
+            "id": "assertion:contradiction-seed",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "systems/contradiction-seed",
+              "freshness": "current"
+            }
+          },
+          {
+            "id": "assertion:contradictor",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "concepts/contradictor",
+              "freshness": "current"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge:contradicts",
+            "edge_type": "contradicts",
+            "from_node_id": "assertion:contradiction-seed",
+            "to_node_id": "assertion:contradictor",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1"
+          }
+        ]
+      },
+      "instrumentation": {
+        "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+        "graph_on": { "latency_ms": 11, "estimated_tokens": 105 }
+      },
+      "answer_evidence_refs": []
+    },
+    {
+      "id": "supersession",
+      "family": "supersession",
+      "query": "Historical superseded graph targets stay out of current reads.",
+      "scope_id": "workspace:default",
+      "policy_version": "policy:v1",
+      "seed_node_ids": ["assertion:supersession-current"],
+      "graph_off_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "concepts/current-canonical",
+          "freshness": "current"
+        }
+      ],
+      "gold_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "concepts/current-canonical",
+          "freshness": "current"
+        }
+      ],
+      "allowed_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "concepts/current-canonical",
+          "freshness": "current"
+        }
+      ],
+      "frontier": {
+        "max_depth": 1,
+        "fanout_cap": 4,
+        "nodes": [
+          {
+            "id": "assertion:supersession-current",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "concepts/current-canonical",
+              "freshness": "current"
+            }
+          },
+          {
+            "id": "assertion:superseded-old",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "concepts/old-canonical",
+              "freshness": "current"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge:supersedes-old",
+            "edge_type": "supersedes",
+            "from_node_id": "assertion:supersession-current",
+            "to_node_id": "assertion:superseded-old",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1"
+          }
+        ]
+      },
+      "instrumentation": {
+        "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+        "graph_on": { "latency_ms": 11, "estimated_tokens": 105 }
+      },
+      "answer_evidence_refs": []
+    },
+    {
+      "id": "requires_reverification",
+      "family": "requires_reverification",
+      "query": "Reverification graph edges do not ground answers.",
+      "scope_id": "workspace:default",
+      "policy_version": "policy:v1",
+      "seed_node_ids": ["assertion:reverify-seed"],
+      "graph_off_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/reverify-seed",
+          "freshness": "current"
+        }
+      ],
+      "gold_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/reverify-seed",
+          "freshness": "current"
+        }
+      ],
+      "allowed_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/reverify-seed",
+          "freshness": "current"
+        }
+      ],
+      "frontier": {
+        "max_depth": 1,
+        "fanout_cap": 4,
+        "nodes": [
+          {
+            "id": "assertion:reverify-seed",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "systems/reverify-seed",
+              "freshness": "current"
+            }
+          },
+          {
+            "id": "assertion:needs-reverify",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "concepts/needs-reverify",
+              "freshness": "current"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge:requires-reverification",
+            "edge_type": "requires_reverification",
+            "from_node_id": "assertion:reverify-seed",
+            "to_node_id": "assertion:needs-reverify",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1"
+          }
+        ]
+      },
+      "instrumentation": {
+        "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+        "graph_on": { "latency_ms": 11, "estimated_tokens": 105 }
+      },
+      "answer_evidence_refs": []
+    },
+    {
+      "id": "stale_graph",
+      "family": "stale_graph",
+      "query": "Stale graph records cannot leak into current reads.",
+      "scope_id": "workspace:default",
+      "policy_version": "policy:v1",
+      "seed_node_ids": ["assertion:stale-seed"],
+      "graph_off_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/stale-seed",
+          "freshness": "current"
+        }
+      ],
+      "gold_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/stale-seed",
+          "freshness": "current"
+        }
+      ],
+      "allowed_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "systems/stale-seed",
+          "freshness": "current"
+        }
+      ],
+      "frontier": {
+        "max_depth": 1,
+        "fanout_cap": 4,
+        "nodes": [
+          {
+            "id": "assertion:stale-seed",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "systems/stale-seed",
+              "freshness": "current"
+            }
+          },
+          {
+            "id": "assertion:stale-target",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "stale": true,
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "concepts/stale-target",
+              "freshness": "stale"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge:stale-target",
+            "edge_type": "supports",
+            "from_node_id": "assertion:stale-seed",
+            "to_node_id": "assertion:stale-target",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1"
+          }
+        ]
+      },
+      "instrumentation": {
+        "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+        "graph_on": { "latency_ms": 11, "estimated_tokens": 105 }
+      },
+      "answer_evidence_refs": []
+    },
+    {
+      "id": "graph_only_no_canonical",
+      "family": "graph_only_no_canonical",
+      "query": "A graph-only path without a canonical selector is not answer-ready.",
+      "scope_id": "workspace:default",
+      "policy_version": "policy:v1",
+      "seed_node_ids": ["assertion:no-canonical-seed"],
+      "graph_off_selectors": [],
+      "gold_selectors": [
+        {
+          "kind": "page",
+          "scope_id": "workspace:default",
+          "slug": "concepts/no-canonical-target",
+          "freshness": "current"
+        }
+      ],
+      "allowed_selectors": [],
+      "frontier": {
+        "max_depth": 1,
+        "fanout_cap": 4,
+        "nodes": [
+          {
+            "id": "assertion:no-canonical-seed",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1",
+            "selector": {
+              "kind": "page",
+              "scope_id": "workspace:default",
+              "slug": "systems/no-canonical-seed",
+              "freshness": "current"
+            }
+          },
+          {
+            "id": "assertion:no-canonical-target",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1"
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge:no-canonical-target",
+            "edge_type": "supports",
+            "from_node_id": "assertion:no-canonical-seed",
+            "to_node_id": "assertion:no-canonical-target",
+            "scope_id": "workspace:default",
+            "policy_version": "policy:v1"
+          }
+        ]
+      },
+      "instrumentation": {
+        "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+        "graph_on": { "latency_ms": 11, "estimated_tokens": 105 }
+      },
+      "answer_evidence_refs": []
+    }
+  ]
+}
