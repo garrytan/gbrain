@@ -310,6 +310,8 @@ git diff --check
 **Purpose:** Make the completed authority-first memory system inspectable for
 Codex, Claude, and the user.
 
+**Status:** Detailed implementation plan exists; implementation remains pending.
+
 **Required implementation plan scope:**
 
 - Add or extend `setup-agent --preview`.
@@ -362,23 +364,15 @@ After all phases are complete, run:
 
 ```bash
 bun run test:authority-foundation
-bun test \
-  test/trust-contract-service.test.ts \
-  test/decision-packet-projection-service.test.ts \
-  test/negative-memory-projection-service.test.ts \
-  test/memory-why-service.test.ts \
-  test/proof-agent-command.test.ts \
-  test/episode-capture-service.test.ts \
-  test/inbox-lead-service.test.ts \
-  test/read-candidate-context.test.ts \
-  test/dream-maintenance-guardrails.test.ts \
-  test/dream-report-service.test.ts \
-  test/assertion-frontier-retrieval-service.test.ts \
-  test/graph-frontier-evaluation.test.ts \
-  test/setup-agent-trust-ux.test.ts \
-  test/doctor-agent-explain.test.ts \
-  test/authority-first-integrated-acceptance.test.ts
+bun run test:trust-contract
+bun run test:decision-projections
+bun run test:memory-why
+bun run test:episode-capture
+bun run test:dream-guardrails
+bun run test:graph-frontier
+bun run test:agent-trust
 bun run typecheck
+git diff --check
 git status --short --branch
 ```
 
