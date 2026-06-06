@@ -17,7 +17,12 @@ import {
 } from '../src/core/sync.ts';
 
 describe('#1433 — isSyncable / unsyncableReason are duals of one classifier', () => {
-  const cases: Array<{ path: string; expected: SyncableReason | null; note: string }> = [
+  const cases: Array<{
+    path: string;
+    expected: SyncableReason | null;
+    note: string;
+    opts?: Parameters<typeof unsyncableReason>[1];
+  }> = [
     { path: 'people/alice.md', expected: null, note: 'normal markdown page' },
     { path: 'docs/guide.mdx', expected: null, note: 'mdx accepted by markdown strategy' },
     { path: 'learning-and-strategy/log.md', expected: 'metafile', note: 'log.md anywhere is metafile' },
@@ -29,12 +34,24 @@ describe('#1433 — isSyncable / unsyncableReason are duals of one classifier', 
     { path: 'ops/scratch/note.md', expected: 'pruned-dir', note: 'ops/ is pruned' },
     { path: '.git/notes.md', expected: 'pruned-dir', note: 'hidden dir pruned' },
     { path: 'node_modules/foo/README.md', expected: 'pruned-dir', note: 'node_modules pruned' },
+    {
+      path: 'venv/lib/python3.11/site-packages/pkg/main.py',
+      expected: 'pruned-dir',
+      note: 'venv pruned',
+      opts: { strategy: 'code' },
+    },
+    {
+      path: '.venv/lib/python3.11/site-packages/pkg/main.py',
+      expected: 'pruned-dir',
+      note: '.venv pruned',
+      opts: { strategy: 'code' },
+    },
   ];
 
   for (const c of cases) {
     test(`${c.path} → ${c.expected ?? 'syncable'} (${c.note})`, () => {
-      const reason = unsyncableReason(c.path);
-      const sync = isSyncable(c.path);
+      const reason = unsyncableReason(c.path, c.opts);
+      const sync = isSyncable(c.path, c.opts);
       expect(reason).toBe(c.expected);
       expect(sync).toBe(c.expected === null);
     });
@@ -56,7 +73,7 @@ describe('#1433 — isSyncable / unsyncableReason are duals of one classifier', 
 
   test('isSyncable(p) === (unsyncableReason(p) === null) — duality holds for all canonical cases', () => {
     for (const c of cases) {
-      expect(isSyncable(c.path)).toBe(unsyncableReason(c.path) === null);
+      expect(isSyncable(c.path, c.opts)).toBe(unsyncableReason(c.path, c.opts) === null);
     }
   });
 });

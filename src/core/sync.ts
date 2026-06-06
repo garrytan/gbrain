@@ -235,12 +235,14 @@ function matchesAnyGlob(path: string, patterns?: string[]): boolean {
  * Pattern: dirname matching at single path-segment granularity. Walkers
  * call `pruneDir(entry.name)` on each subdirectory before recursing.
  *
- * `node_modules` lacks a leading dot so the dot-prefix exclusion in
- * isSyncable below doesn't catch it; explicit entry here closes the
- * latent walker bug (#923, #202).
+ * `node_modules` and virtualenv dirs lack a leading dot in common checkouts,
+ * so the dot-prefix exclusion in isSyncable below doesn't catch them.
+ * Explicit entries here close the latent walker bug (#923, #202).
  */
 const PRUNE_DIR_NAMES = new Set<string>([
   'node_modules',
+  'venv',
+  '.venv',
   '.raw',
   'ops',
 ]);
@@ -248,9 +250,9 @@ const PRUNE_DIR_NAMES = new Set<string>([
 /**
  * Should this directory be descended into? Returns `false` for vendor / hidden /
  * generated dirs that walkers should skip BEFORE recursing. Catches
- * `node_modules` (latent bug — no leading dot), dot-prefix dirs (`.git`,
- * `.obsidian`, `.raw`, `.cache`, etc. via the leading-dot heuristic), and the
- * explicit `PRUNE_DIR_NAMES` set above.
+ * `node_modules` / virtualenv dirs (latent bug — no leading dot), dot-prefix
+ * dirs (`.git`, `.obsidian`, `.raw`, `.cache`, etc. via the leading-dot
+ * heuristic), and the explicit `PRUNE_DIR_NAMES` set above.
  *
  * `name` is a single path segment (basename of the directory entry), NOT a
  * full path. Walkers consult this on each subdirectory entry during recursion.
@@ -263,8 +265,8 @@ const PRUNE_DIR_NAMES = new Set<string>([
  */
 export function pruneDir(name: string, parentDir?: string): boolean {
   if (!name) return true;
-  if (name.startsWith('.')) return false;
   if (PRUNE_DIR_NAMES.has(name)) return false;
+  if (name.startsWith('.')) return false;
   // `.raw` is the literal directory name; `*.raw` is the gbrain sidecar
   // convention (e.g. `people/pedro.raw/` holds raw source for pedro.md).
   // Both forms should be skipped at descent time.
@@ -332,7 +334,7 @@ function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason 
 
   // Skip every path segment that pruneDir would block walkers from descending
   // into. Catches hidden dirs (`.git`, `.obsidian`), `.raw/` sidecars,
-  // `node_modules/` (latent bug fix), and `ops/` at any depth.
+  // `node_modules/` and virtualenv dirs (latent bug fix), and `ops/` at any depth.
   const segments = path.split('/');
   if (segments.some(p => !pruneDir(p))) return 'pruned-dir';
 

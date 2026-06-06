@@ -9,7 +9,7 @@
  * 2. Symlink chain through real dirs does not loop (inode-set defense).
  * 3. MAX_WALK_DEPTH=32 bailout is structural backstop.
  * 4. Strategy filter (code/markdown/auto) admits the right files.
- * 5. Dot-prefixed dirs (.git/.claude/.raw) and node_modules still skipped.
+ * 5. Dot-prefixed dirs (.git/.claude/.raw), node_modules, and venv still skipped.
  * 6. Multimodal preservation under markdown-strategy (codex C5).
  * 7. Deterministic ordering — runImport's index-based resume depends on it
  *    (codex C8).
@@ -102,23 +102,30 @@ describe('collectSyncableFiles symlink + cycle hardening', () => {
     });
   });
 
-  test('5. dot-prefixed dirs and node_modules still skipped', async () => {
+  test('5. dot-prefixed dirs and vendor dirs still skipped', async () => {
     await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: undefined }, () => {
       writeFileSync(join(tmp, 'real.md'), 'r\n');
+      writeFileSync(join(tmp, 'real.py'), '# r\n');
       mkdirSync(join(tmp, '.git'));
       writeFileSync(join(tmp, '.git/HEAD'), 'ref: refs/heads/main\n');
       mkdirSync(join(tmp, '.claude/skills'), { recursive: true });
       writeFileSync(join(tmp, '.claude/skills/SKILL.md'), 's\n');
       mkdirSync(join(tmp, 'node_modules/foo'), { recursive: true });
       writeFileSync(join(tmp, 'node_modules/foo/index.md'), 'no\n');
+      mkdirSync(join(tmp, 'venv/lib/python3.11/site-packages/pkg'), { recursive: true });
+      writeFileSync(join(tmp, 'venv/lib/python3.11/site-packages/pkg/main.py'), '# no\n');
+      mkdirSync(join(tmp, '.venv/lib/python3.11/site-packages/pkg'), { recursive: true });
+      writeFileSync(join(tmp, '.venv/lib/python3.11/site-packages/pkg/main.py'), '# no\n');
 
-      const files = collectSyncableFiles(tmp, { strategy: 'markdown' });
+      const files = collectSyncableFiles(tmp, { strategy: 'code' });
       const names = files.map(f => f.replace(tmp, ''));
 
-      expect(names).toContain('/real.md');
+      expect(names).toContain('/real.py');
       expect(names.every(n => !n.startsWith('/.git'))).toBe(true);
       expect(names.every(n => !n.startsWith('/.claude'))).toBe(true);
       expect(names.every(n => !n.startsWith('/node_modules'))).toBe(true);
+      expect(names.every(n => !n.startsWith('/venv'))).toBe(true);
+      expect(names.every(n => !n.startsWith('/.venv'))).toBe(true);
     });
   });
 
