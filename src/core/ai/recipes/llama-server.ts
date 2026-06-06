@@ -29,11 +29,24 @@ export const llamaServer: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: [], // user-driven; whatever model the server was launched with
-      user_provided_models: true,
-      default_dims: 0, // forces explicit --embedding-dimensions
+      // Common embedding model names served by llama-server. Operators
+      // can override the model via env (`GBRAIN_EMBEDDING_MODEL=llama-server:<id>`)
+      // without editing the recipe. Other GGUFs work as long as they
+      // emit a dim in `dims_options` below.
+      models: [
+        'nomic-embed-text-v1.5',
+        'bge-large-en-v1.5',
+        'mxbai-embed-large',
+        'all-MiniLM-L6-v2',
+        'snowflake-arctic-embed',
+        'e5-large-v2',
+      ],
+      default_dims: 768,
+      // llama-server emits whatever dim the model was trained at. nomic-embed
+      // is 768, bge-large and mxbai are 1024, all-MiniLM is 384.
+      dims_options: [384, 768, 1024],
       cost_per_1m_tokens_usd: 0,
-      price_last_verified: '2026-05-10',
+      price_last_verified: '2026-06-06',
       // llama-server's batch capacity is set by `--ctx-size` at launch
       // time; no static cap to declare. v0.32 (#779).
       no_batch_cap: true,
