@@ -1053,7 +1053,7 @@ describe('CLI dispatch integration', () => {
     const exitCode = await proc.exited;
     expect(stdout).toContain('USAGE');
     expect(stdout).toContain('mbrain <command>');
-    expect(stdout).toContain('doctor [--json]');
+    expect(stdout).toContain('doctor [--json] [--agent] [--explain]');
     expect(stdout).toContain('embed [<slug>|--all|--stale]');
     expect(stdout).toContain('serve [--http] [--host H] [--port P] [--oauth]');
     expect(stdout).toContain('import <dir> [--no-embed]');

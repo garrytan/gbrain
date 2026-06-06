@@ -570,7 +570,16 @@ describe('doctor command', () => {
     expect(parseDoctorAgentArgs(['--agent', '--agent-command', '--json']).agentCommand).toBe('mbrain');
     expect(parseDoctorAgentArgs(['--agent', '--agent-command=bun run src/cli.ts']).agentCommand)
       .toBe('bun run src/cli.ts');
-    expect(parseDoctorAgentArgs(['--agent-command', '--agent'])).toEqual({ agent: true, agentCommand: 'mbrain' });
+    expect(parseDoctorAgentArgs(['--agent-command', '--agent'])).toEqual({
+      agent: true,
+      explain: false,
+      agentCommand: 'mbrain',
+    });
+    expect(parseDoctorAgentArgs(['--agent', '--explain'])).toEqual({
+      agent: true,
+      explain: true,
+      agentCommand: 'mbrain',
+    });
   });
 
   test('LATEST_VERSION is importable from migrate', async () => {
@@ -716,6 +725,7 @@ describe('doctor command', () => {
 
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain('--agent');
+    expect(stdout).toContain('--explain');
     expect(stdout).toContain('--agent-command');
   });
 });

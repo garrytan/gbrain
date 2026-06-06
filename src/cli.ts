@@ -51,6 +51,7 @@ const DOCTOR_CLI_SPEC: Operation = {
   params: {
     json: { type: 'boolean', description: 'Emit JSON instead of human-readable output' },
     agent: { type: 'boolean', description: 'Include installed Codex/Claude MCP and prompt readiness checks' },
+    explain: { type: 'boolean', description: 'Explain installed-agent memory trust behavior; requires --agent' },
     agent_command: { type: 'string', description: 'Installed mbrain command to verify (default: mbrain)' },
   },
   handler: noopHandler,
@@ -535,7 +536,8 @@ SETUP
   migrate --to <postgres|supabase>   Prepare Markdown-first migration into the Postgres target runtime
   upgrade                            Self-update
   check-update [--json]              Check for new versions
-  doctor [--json]                    Health check (engine, schema, embeddings, local/managed capabilities)
+  doctor [--json] [--agent] [--explain]
+                                    Health check (engine, schema, embeddings, local/managed capabilities)
   integrations [subcommand]          Manage integration recipes
   connectors [list|show]             Inspect personal data connector definitions
   memory-report [--json]             Show the memory review report surface

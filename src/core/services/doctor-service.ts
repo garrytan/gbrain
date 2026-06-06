@@ -9,6 +9,7 @@ import {
   resolvePostgresRuntimeProfile,
 } from '../postgres-runtime/connection-profile.ts';
 import type { BrainHealth, BrainStats } from '../types.ts';
+import type { AgentTrustExplainReport } from '../types/agent-trust-explain.ts';
 import type { InstalledAgentReadinessReport } from './installed-agent-readiness-service.ts';
 import * as db from '../db.ts';
 
@@ -21,6 +22,7 @@ export interface DoctorCheck {
 export interface DoctorReport {
   status: 'healthy' | 'unhealthy';
   checks: DoctorCheck[];
+  agent_explain?: AgentTrustExplainReport;
 }
 
 export interface DoctorInputs {
@@ -36,6 +38,7 @@ export interface DoctorInputs {
   latestVersion: number;
   health?: BrainHealth;
   installedAgent?: InstalledAgentReadinessReport;
+  agentExplain?: AgentTrustExplainReport;
   systemOfRecord?: {
     pending_reconcile: number;
     failed: number;
@@ -287,6 +290,7 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
     return {
       status: 'unhealthy',
       checks,
+      ...doctorAgentExplainField(input.agentExplain),
     };
   }
 
@@ -486,6 +490,7 @@ export function buildDoctorReport(input: DoctorInputs): DoctorReport {
   return {
     status: checks.some((check) => check.status === 'fail') ? 'unhealthy' : 'healthy',
     checks,
+    ...doctorAgentExplainField(input.agentExplain),
   };
 }
 
@@ -521,7 +526,36 @@ export function formatDoctorReport(report: DoctorReport): string {
     lines.push('', 'All checks passed.');
   }
 
+  if (report.agent_explain) {
+    const explain = report.agent_explain;
+    const proof = explain.proof;
+    lines.push(
+      '',
+      'Agent Trust Explain',
+      '===================',
+      `  Installed: command ${explain.installed_surface.command}; MCP ${formatList(explain.installed_surface.mcp_registrations)}; prompt rules ${explain.installed_surface.prompt_rules_version ?? 'missing'}; Claude hook ${explain.installed_surface.claude_stop_hook}`,
+      `  Answer authority: ${explain.memory_behavior.answer_authority.join('; ')}`,
+      `  Hints only: ${explain.memory_behavior.hint_only_surfaces.join('; ')}`,
+      `  Writes: ${explain.memory_behavior.writeback_route}; canonical writes require ${explain.memory_behavior.canonical_write_requirements.join(' + ')}`,
+      `  read_context evidence boundary: ${explain.memory_behavior.read_context_evidence_boundary}`,
+      `  Graph frontier: ${explain.memory_behavior.graph_frontier_default}`,
+      `  Proof: ${proof.status}; ${proof.scenarios.length} scenarios; ${proof.authority_violations} authority violations; ${proof.mutations} mutations`,
+      `  Next: ${explain.next_actions.join('; ')}`,
+      `  Limits: ${explain.limitations.join('; ')}`,
+    );
+  }
+
   return lines.join('\n');
+}
+
+function doctorAgentExplainField(
+  explain: AgentTrustExplainReport | undefined,
+): Pick<DoctorReport, 'agent_explain'> {
+  return explain ? { agent_explain: explain } : {};
+}
+
+function formatList(values: string[]): string {
+  return values.length > 0 ? values.join(', ') : 'not checked';
 }
 
 export function doctorExitCode(report: DoctorReport): number {

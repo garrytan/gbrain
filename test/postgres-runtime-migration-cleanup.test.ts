@@ -178,6 +178,7 @@ describe('postgres runtime migration cleanup', () => {
       expect(doctor.stderr).toBe('');
       expect(doctor.stdout).toContain('target Postgres runtime');
       expect(doctor.stdout).toContain('legacy local profile');
+      expect(doctor.stdout).toContain('--explain');
       expect(doctor.stdout).not.toContain('No brain configured');
       expect(existsSync(join(doctor.home, '.mbrain', 'config.json'))).toBe(false);
     } finally {

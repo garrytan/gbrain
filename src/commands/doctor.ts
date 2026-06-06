@@ -7,7 +7,9 @@ import {
   doctorExitCode,
   formatDoctorReport,
 } from '../core/services/doctor-service.ts';
+import { buildAgentTrustExplainReport } from '../core/services/agent-trust-explain-service.ts';
 import { collectInstalledAgentReadiness } from '../core/services/installed-agent-readiness-service.ts';
+import { runProofAgentMemory } from '../core/services/proof-agent-service.ts';
 
 const MARKER_VERSION_RE = /<!-- mbrain-agent-rules-version: ([\d.]+) -->/;
 export const EMBEDDED_AGENT_RULES_VERSION = '0.5.9';
@@ -15,14 +17,29 @@ export const EMBEDDED_AGENT_RULES_VERSION = '0.5.9';
 export async function runDoctor(engine: BrainEngine, args: string[]) {
   const jsonOutput = args.includes('--json');
   const agentArgs = parseDoctorAgentArgs(args);
+  if (agentArgs.explain && !agentArgs.agent) {
+    console.error('doctor --explain requires --agent');
+    process.exit(1);
+    return;
+  }
+
   const inputs = await collectDoctorInputs(engine);
 
   if (agentArgs.agent) {
+    const expectedRulesVersion = getExpectedAgentRulesVersion();
     inputs.installedAgent = await collectInstalledAgentReadiness({
       command: agentArgs.agentCommand,
-      expectedRulesVersion: getExpectedAgentRulesVersion(),
+      expectedRulesVersion,
       expectedRulesContent: getExpectedAgentRulesContent(),
     });
+    if (agentArgs.explain) {
+      inputs.agentExplain = buildAgentTrustExplainReport({
+        command: agentArgs.agentCommand,
+        installedAgent: inputs.installedAgent,
+        expectedRulesVersion,
+        proof: runProofAgentMemory(),
+      });
+    }
   }
 
   const report = buildDoctorReport(inputs);
@@ -36,14 +53,17 @@ export async function runDoctor(engine: BrainEngine, args: string[]) {
   process.exit(doctorExitCode(report));
 }
 
-export function parseDoctorAgentArgs(args: string[]): { agent: boolean; agentCommand: string } {
+export function parseDoctorAgentArgs(args: string[]): { agent: boolean; explain: boolean; agentCommand: string } {
   let agent = false;
+  let explain = false;
   let agentCommand = 'mbrain';
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--agent') {
       agent = true;
+    } else if (arg === '--explain') {
+      explain = true;
     } else if (arg === '--agent-command') {
       const value = args[i + 1];
       if (value && !value.startsWith('--')) {
@@ -58,7 +78,7 @@ export function parseDoctorAgentArgs(args: string[]): { agent: boolean; agentCom
     }
   }
 
-  return { agent, agentCommand };
+  return { agent, explain, agentCommand };
 }
 
 export function getExpectedAgentRulesVersion(): string {
