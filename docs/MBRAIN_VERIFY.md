@@ -258,6 +258,29 @@ Expected:
 - rejected or superseded candidates remain audit history rather than global
   suppression rules.
 
+## Memory-why and proof mode
+
+Run:
+
+```bash
+bun run test:memory-why
+bun run typecheck
+```
+
+Expected:
+
+- concise memory-why output summarizes canonical reads, ignored Inbox leads,
+  stale revalidations, valid negative-memory suppressions, and trace refs in no
+  more than five lines.
+- verbose memory-why output lists selected selectors, omitted candidate refs,
+  activation decisions, freshness snapshots, graph-path trace fields, and scope
+  policy snapshots without running graph frontier retrieval.
+- `proof_agent_memory` / `proof-agent` demonstrates decision reuse,
+  failed-attempt avoidance, stale code verify-first behavior, candidate
+  exclusion, and memory-why explanation without mutating memory.
+- proof output reports authority violations if candidate or derived-orientation
+  artifacts are marked as answer grounding.
+
 ## Phase 0 parity verification
 
 Run:

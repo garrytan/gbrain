@@ -18,3 +18,4 @@ export * from './types/auto-promote.ts';
 export * from './types/agent-session-memory.ts';
 export * from './types/trust-contract.ts';
 export * from './types/decision-projections.ts';
+export * from './types/memory-why.ts';

@@ -74,6 +74,7 @@ import { previewPersonalExport } from './services/personal-export-visibility-ser
 import { DEFAULT_PROFILE_MEMORY_SCOPE_ID, getPersonalProfileLookupRoute } from './services/personal-profile-lookup-route-service.ts';
 import { selectPersonalWriteTarget } from './services/personal-write-target-service.ts';
 import { getPrecisionLookupRoute } from './services/precision-lookup-route-service.ts';
+import { runProofAgentMemory } from './services/proof-agent-service.ts';
 import { readContext } from './services/read-context-service.ts';
 import { planRetrievalRequest } from './services/retrieval-request-planner-service.ts';
 import { selectRetrievalRoute } from './services/retrieval-route-selector-service.ts';
@@ -1051,6 +1052,26 @@ export function formatResult(
         ...(resultValue.warnings?.length ? [
           'Warnings:',
           ...resultValue.warnings.map((warning: string) => `- ${warning}`),
+        ] : []),
+      ].join('\n') + '\n';
+    }
+    case 'proof_agent_memory': {
+      const resultValue = result as any;
+      return [
+        `Proof status: ${resultValue.status}`,
+        `Generated: ${resultValue.generated_at}`,
+        'Scenarios:',
+        ...(resultValue.scenarios ?? []).map((scenario: any) =>
+          `${scenario.id}\t${scenario.status}\t${scenario.activation}\t${scenario.authority}`
+        ),
+        'Memory why:',
+        ...(resultValue.memory_why?.concise_lines ?? []),
+        `Authority violations: ${formatCsv(resultValue.authority_violations) || 'none'}`,
+        ...(params.verbose === true && resultValue.memory_why?.verbose ? [
+          'Verbose:',
+          `Selected selectors: ${formatCsv(resultValue.memory_why.verbose.selected_selectors)}`,
+          `Omitted candidates: ${formatCsv(resultValue.memory_why.verbose.omitted_candidate_refs)}`,
+          `Graph paths considered: ${formatCsv(resultValue.memory_why.verbose.graph_paths_considered)}`,
         ] : []),
       ].join('\n') + '\n';
     }
@@ -5379,6 +5400,19 @@ const select_activation_policy: Operation = {
   cliHints: { name: 'select-activation-policy' },
 };
 
+const proof_agent_memory: Operation = {
+  name: 'proof_agent_memory',
+  description: 'Run deterministic authority-first memory proof scenarios for agent use without mutating memory.',
+  params: {
+    verbose: { type: 'boolean', description: 'Include verbose memory-why fields in formatted output' },
+  },
+  mutating: false,
+  handler: async (_ctx, p) => runProofAgentMemory({
+    verbose: p.verbose === true,
+  }),
+  cliHints: { name: 'proof-agent' },
+};
+
 const plan_scenario_memory_request: Operation = {
   name: 'plan_scenario_memory_request',
   description: 'Plan scenario-aware memory reads, activation, next tool, and writeback hints without mutating memory.',
@@ -6065,7 +6099,7 @@ export const operations: Operation[] = [
   // Structural graph
   get_note_structural_neighbors, find_note_structural_path,
   // Persisted context maps
-  build_context_map, get_context_map_entry, list_context_map_entries, get_context_map_report, get_context_map_explanation, query_context_map, find_context_map_path, get_broad_synthesis_route, get_precision_lookup_route, get_mixed_scope_bridge, get_mixed_scope_disclosure, get_personal_profile_lookup_route, get_personal_episode_lookup_route, select_personal_write_target, preview_personal_export, evaluate_scope_gate, select_retrieval_route, plan_retrieval_request, retrieve_context, read_context, classify_memory_scenario, select_activation_policy, plan_scenario_memory_request, reverify_code_claims, get_workspace_system_card, get_workspace_project_card, get_workspace_orientation_bundle, get_workspace_corpus_card,
+  build_context_map, get_context_map_entry, list_context_map_entries, get_context_map_report, get_context_map_explanation, query_context_map, find_context_map_path, get_broad_synthesis_route, get_precision_lookup_route, get_mixed_scope_bridge, get_mixed_scope_disclosure, get_personal_profile_lookup_route, get_personal_episode_lookup_route, select_personal_write_target, preview_personal_export, evaluate_scope_gate, select_retrieval_route, plan_retrieval_request, retrieve_context, read_context, classify_memory_scenario, select_activation_policy, proof_agent_memory, plan_scenario_memory_request, reverify_code_claims, get_workspace_system_card, get_workspace_project_card, get_workspace_orientation_bundle, get_workspace_corpus_card,
   // Context atlas registry
   build_context_atlas, get_context_atlas_entry, list_context_atlas_entries, select_context_atlas_entry, get_context_atlas_overview, get_context_atlas_report, get_atlas_orientation_card, get_atlas_orientation_bundle,
   // Operational memory
