@@ -17,7 +17,7 @@
  *   gbrain autopilot --status [--json]
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, utimesSync, unlinkSync, statSync, renameSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
@@ -37,6 +37,62 @@ import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
 import { detectInstallMethod } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
+
+const AUTOPILOT_LOCK_STALE_MINUTES = 10;
+
+export type AutopilotLockDecisionReason = 'fresh_live' | 'fresh_invalid' | 'invalid_pid' | 'pid_dead' | 'stale_age';
+
+export interface AutopilotLockAcquireResult {
+  acquired: boolean;
+  reason: AutopilotLockDecisionReason | null;
+  pid: number | null;
+}
+
+export function parseAutopilotLockPid(raw: string): number | null {
+  const value = raw.trim();
+  if (!/^\d+$/.test(value)) return null;
+  const pid = Number.parseInt(value, 10);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
+export function isAutopilotLockPidLive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    const code = e && typeof e === 'object' && 'code' in e ? String((e as { code?: unknown }).code) : '';
+    return code === 'EPERM';
+  }
+}
+
+export function shouldTakeOverAutopilotLock(
+  raw: string,
+  mtimeMs: number,
+  nowMs = Date.now(),
+  isPidLive = isAutopilotLockPidLive,
+): { takeOver: boolean; reason: AutopilotLockDecisionReason; pid: number | null } {
+  const ageMinutes = (nowMs - mtimeMs) / 60000;
+  const pid = parseAutopilotLockPid(raw);
+  if (pid === null) {
+    return ageMinutes >= AUTOPILOT_LOCK_STALE_MINUTES
+      ? { takeOver: true, reason: 'invalid_pid', pid }
+      : { takeOver: false, reason: 'fresh_invalid', pid };
+  }
+  const pidLive = isPidLive(pid);
+  if (pidLive && ageMinutes < AUTOPILOT_LOCK_STALE_MINUTES) {
+    return { takeOver: false, reason: 'fresh_live', pid };
+  }
+  if (ageMinutes >= AUTOPILOT_LOCK_STALE_MINUTES) return { takeOver: true, reason: 'stale_age', pid };
+  return { takeOver: true, reason: 'pid_dead', pid };
+}
+
+function fileErrorCode(e: unknown): string {
+  return e && typeof e === 'object' && 'code' in e ? String((e as { code?: unknown }).code) : '';
+}
+
+function isMissingFileError(e: unknown): boolean {
+  return fileErrorCode(e) === 'ENOENT';
+}
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -89,6 +145,116 @@ function logError(phase: string, e: unknown) {
     mkdirSync(logDir, { recursive: true });
     appendFileSync(join(logDir, 'autopilot.log'), line + '\n');
   } catch { /* best-effort */ }
+}
+
+export function refreshAutopilotLockIfOwned(lockPath: string, pid = process.pid): boolean {
+  try {
+    if (parseAutopilotLockPid(readFileSync(lockPath, 'utf8')) !== pid) return false;
+    utimesSync(lockPath, new Date(), new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function removeAutopilotLockIfOwned(lockPath: string, pid = process.pid) {
+  try {
+    if (parseAutopilotLockPid(readFileSync(lockPath, 'utf8')) === pid) {
+      unlinkSync(lockPath);
+    }
+  } catch {}
+}
+
+function readExistingAutopilotLock(lockPath: string): { raw: string; mtimeMs: number } | null {
+  try {
+    const stat = statSync(lockPath);
+    try {
+      return { raw: readFileSync(lockPath, 'utf8'), mtimeMs: stat.mtimeMs };
+    } catch (e) {
+      if (!isMissingFileError(e)) throw e;
+      return null;
+    }
+  } catch (e) {
+    if (!isMissingFileError(e)) throw e;
+    return null;
+  }
+}
+
+function tryAcquireTakeoverLock(
+  takeoverPath: string,
+  pid: number,
+  nowMs: number,
+  isPidLive: (pid: number) => boolean,
+): boolean {
+  try {
+    writeFileSync(takeoverPath, String(pid), { flag: 'wx' });
+    return true;
+  } catch (e) {
+    if (fileErrorCode(e) !== 'EEXIST') throw e;
+  }
+
+  const existing = readExistingAutopilotLock(takeoverPath);
+  if (!existing) return tryAcquireTakeoverLock(takeoverPath, pid, nowMs, isPidLive);
+  const decision = shouldTakeOverAutopilotLock(existing.raw, existing.mtimeMs, nowMs, isPidLive);
+  if (!decision.takeOver) return false;
+  try { unlinkSync(takeoverPath); } catch (e) {
+    if (!isMissingFileError(e)) throw e;
+  }
+  try {
+    writeFileSync(takeoverPath, String(pid), { flag: 'wx' });
+    return true;
+  } catch (e) {
+    if (fileErrorCode(e) === 'EEXIST') return false;
+    throw e;
+  }
+}
+
+export function acquireAutopilotLock(
+  lockPath: string,
+  homePath = gbrainHomePath(),
+  pid = process.pid,
+  nowMs = Date.now(),
+  isPidLive = isAutopilotLockPidLive,
+  attempts = 0,
+): AutopilotLockAcquireResult {
+  mkdirSync(homePath, { recursive: true });
+  const existing = readExistingAutopilotLock(lockPath);
+
+  if (existing) {
+    const decision = shouldTakeOverAutopilotLock(existing.raw, existing.mtimeMs, nowMs, isPidLive);
+    if (!decision.takeOver) {
+      return { acquired: false, reason: decision.reason, pid: decision.pid };
+    }
+    const takeoverPath = `${lockPath}.takeover`;
+    if (!tryAcquireTakeoverLock(takeoverPath, pid, nowMs, isPidLive)) {
+      return { acquired: false, reason: decision.reason, pid: decision.pid };
+    }
+    try {
+      const current = readExistingAutopilotLock(lockPath);
+      if (current) {
+        const currentDecision = shouldTakeOverAutopilotLock(current.raw, current.mtimeMs, nowMs, isPidLive);
+        if (!currentDecision.takeOver) {
+          return { acquired: false, reason: currentDecision.reason, pid: currentDecision.pid };
+        }
+      }
+      const nextLockPath = `${lockPath}.${pid}.tmp`;
+      writeFileSync(nextLockPath, String(pid));
+      renameSync(nextLockPath, lockPath);
+      return { acquired: true, reason: decision.reason, pid: decision.pid };
+    } finally {
+      removeAutopilotLockIfOwned(takeoverPath, pid);
+    }
+  }
+
+  try {
+    writeFileSync(lockPath, String(pid), { flag: 'wx' });
+    return { acquired: true, reason: null, pid: null };
+  } catch (e) {
+    if (fileErrorCode(e) === 'EEXIST' && attempts < 1) {
+      return acquireAutopilotLock(lockPath, homePath, pid, nowMs, isPidLive, attempts + 1);
+    }
+    throw e;
+  }
 }
 
 /**
@@ -349,18 +515,18 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   // forever.
   const lockPath = gbrainHomePath('autopilot.lock');
   try {
-    mkdirSync(gbrainHomePath(), { recursive: true });
-    if (existsSync(lockPath)) {
-      const stat = require('fs').statSync(lockPath);
-      const ageMinutes = (Date.now() - stat.mtimeMs) / 60000;
-      if (ageMinutes < 10) {
-        console.error('Another autopilot instance is running (lock file is fresh). Exiting.');
-        process.exit(0);
-      }
-      console.log('Stale lock file found (>10 min). Taking over.');
+    const lock = acquireAutopilotLock(lockPath);
+    if (!lock.acquired) {
+      console.error('Another autopilot instance is running (lock file is fresh). Exiting.');
+      process.exit(0);
     }
-    writeFileSync(lockPath, String(process.pid));
-  } catch { /* best-effort */ }
+    if (lock.reason) {
+      console.log(`Stale lock file found (${lock.reason}). Taking over.`);
+    }
+  } catch (e) {
+    console.error(`[autopilot] FATAL: failed to acquire lock: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
 
   console.log(`Autopilot starting. Repo: ${repoPath}, interval: ${baseInterval}s`);
 
@@ -450,6 +616,17 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     console.log('[autopilot] --no-worker set: dispatch loop only (worker managed externally)');
   }
 
+  const lockHeartbeat = setInterval(() => { refreshAutopilotLockIfOwned(lockPath); }, 60_000);
+
+  const drainChildSupervisor = async () => {
+    if (!childSupervisor) return;
+    childSupervisor.killChild('SIGTERM');
+    await childSupervisor.awaitChildExit(35_000);
+    if (childSupervisor.childAlive) {
+      childSupervisor.killChild('SIGKILL');
+    }
+  };
+
   // Async shutdown with 35s drain window for the worker child. The worker
   // has its own SIGTERM handler (minions/worker.ts:79-85) that drains
   // in-flight jobs for up to 30s before exit. We give it 35s here to
@@ -461,14 +638,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     if (stopping) return;
     stopping = true;
     console.log(`Autopilot stopping (${sig}).`);
-    if (childSupervisor) {
-      childSupervisor.killChild('SIGTERM');
-      await childSupervisor.awaitChildExit(35_000);
-      if (childSupervisor.childAlive) {
-        childSupervisor.killChild('SIGKILL');
-      }
-    }
-    try { unlinkSync(lockPath); } catch { /* already gone */ }
+    clearInterval(lockHeartbeat);
+    await drainChildSupervisor();
+    removeAutopilotLockIfOwned(lockPath);
     process.exit(0);
   };
   process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
@@ -507,7 +679,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
 
     // Refresh the lock mtime so another cron-fired autopilot doesn't
     // declare the instance stale after 10 minutes (Codex C).
-    try { utimesSync(lockPath, new Date(), new Date()); } catch { /* best-effort */ }
+    if (!refreshAutopilotLockIfOwned(lockPath)) {
+      console.error('[autopilot] Lost autopilot lock ownership. Stopping.');
+      stopping = true;
+      break;
+    }
 
     // DB health check (reconnect if needed).
     //
@@ -882,6 +1058,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               event: 'fanout_summary',
               dispatched: result.dispatched,
               skipped_fresh: result.skipped_fresh,
+              skipped_pending: result.skipped_pending,
               skipped_cap: result.skipped_cap,
               legacy_fallback: result.legacy_fallback,
               fanout_max: fanoutMax,
@@ -890,7 +1067,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           } else if (!result.legacy_fallback) {
             console.log(
               `[dispatch] fanout: ${result.dispatched.length} dispatched, ` +
-              `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped ` +
+              `${result.skipped_fresh.length} fresh, ${result.skipped_pending.length} pending, ` +
+              `${result.skipped_cap.length} capped ` +
               `(score=${score}, max=${fanoutMax})`,
             );
           }
@@ -1023,6 +1201,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // Wait for next cycle
     await new Promise(r => setTimeout(r, interval * 1000));
   }
+  clearInterval(lockHeartbeat);
+  await drainChildSupervisor();
+  removeAutopilotLockIfOwned(lockPath);
 }
 
 // --- Install/Uninstall ---

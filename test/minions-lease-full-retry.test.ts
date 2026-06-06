@@ -56,6 +56,23 @@ async function claimJobReal(name: string): Promise<{ id: number; lockToken: stri
 }
 
 describe('queue.releaseLeaseFullJob (Bug 2 load-bearing)', () => {
+  test('liveSingletonKey returns an existing live job and allows a new terminal successor', async () => {
+    const first = await queue.add('test-singleton', { seq: 1 }, { liveSingletonKey: 'cycle:alpha' });
+    const second = await queue.add('test-singleton', { seq: 2 }, { liveSingletonKey: 'cycle:alpha' });
+    expect(second.id).toBe(first.id);
+
+    const live = await queue.getJob(first.id);
+    expect((live!.data as Record<string, unknown>).seq).toBe(1);
+    expect((live!.data as Record<string, unknown>)._live_singleton_key).toBe('cycle:alpha');
+
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET status = 'completed', finished_at = now() WHERE id = $1`,
+      [first.id],
+    );
+    const third = await queue.add('test-singleton', { seq: 3 }, { liveSingletonKey: 'cycle:alpha' });
+    expect(third.id).not.toBe(first.id);
+  });
+
   test('flips status to delayed without incrementing attempts_made', async () => {
     await queue.add('test-flip', {});
     const { id, lockToken } = await claimJobReal('test-flip');

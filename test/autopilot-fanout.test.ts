@@ -17,6 +17,8 @@ import {
   selectSourcesForDispatch,
   resolveFanoutMax,
   dispatchPerSource,
+  hasPendingSourceCycle,
+  listPendingAutopilotCycles,
 } from '../src/commands/autopilot-fanout.ts';
 import type { SourceRow, BrainEngine } from '../src/core/engine.ts';
 
@@ -167,6 +169,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
         if (opts?.listThrows) throw new Error('sources table missing');
         return sources;
       },
+      executeRaw: async () => [],
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: unknown, addOpts: Record<string, unknown>) => {
@@ -196,6 +199,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(added[0].name).toBe('autopilot-cycle');
     expect((added[0].data as Record<string, unknown>).source_id).toBeUndefined();
     expect(added[0].opts.idempotency_key).toBe('autopilot-cycle:2026-05-22T12:00:00.000Z');
+    expect(added[0].opts.liveSingletonKey).toBe('autopilot-cycle:global');
   });
 
   test('listAllSources throwing also falls back to legacy', async () => {
@@ -217,9 +221,142 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
       'autopilot-cycle:alpha:2026-05-22T12:00:00.000Z',
       'autopilot-cycle:beta:2026-05-22T12:00:00.000Z',
     ]);
+    const singletonKeys = added.map(j => j.opts.liveSingletonKey as string).sort();
+    expect(singletonKeys).toEqual([
+      'autopilot-cycle:alpha',
+      'autopilot-cycle:beta',
+    ]);
     // source_id threaded through job data
     const sourceIds = added.map(j => (j.data as Record<string, unknown>).source_id).sort();
     expect(sourceIds).toEqual(['alpha', 'beta']);
+  });
+
+  test('per-source fan-out skips a source that already has a live cycle', async () => {
+    const added: AddedJob[] = [];
+    const events: string[] = [];
+    let pendingQueries = 0;
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async () => [src('alpha'), src('beta')],
+      executeRaw: async () => {
+        pendingQueries += 1;
+        return [{ source_id: 'alpha' }];
+      },
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
+        added.push({ name, data, opts });
+        return { id: 100 + added.length };
+      },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp/brain',
+      slot: '2026-05-22T12:00:00.000Z',
+      timeoutMs: 600_000,
+      fanoutMax: 4,
+      jsonMode: true,
+      emit: (line) => events.push(line),
+      log: () => {},
+    });
+
+    expect(result.dispatched).toEqual(['beta']);
+    expect(result.skipped_pending).toEqual(['alpha']);
+    expect(pendingQueries).toBe(1);
+    expect(added.length).toBe(1);
+    expect((added[0].data as Record<string, unknown>).source_id).toBe('beta');
+    expect(events.some(e => e.includes('fanout_source_pending') && e.includes('alpha'))).toBe(true);
+  });
+
+  test('pending sources do not consume fanout slots for other stale sources', async () => {
+    const added: AddedJob[] = [];
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async () => [src('alpha'), src('beta'), src('gamma')],
+      executeRaw: async () => [{ source_id: 'alpha' }],
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
+        added.push({ name, data, opts });
+        return { id: 100 + added.length };
+      },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp/brain',
+      slot: '2026-05-22T12:00:00.000Z',
+      timeoutMs: 600_000,
+      fanoutMax: 1,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+
+    expect(result.dispatched).toEqual(['beta']);
+    expect(result.skipped_pending).toEqual(['alpha']);
+    expect(result.skipped_cap).toEqual(['gamma']);
+    expect((added[0].data as Record<string, unknown>).source_id).toBe('beta');
+  });
+
+  test('pending check does not block first-run brains before jobs schema exists', async () => {
+    const engine = {
+      executeRaw: async () => {
+        throw new Error('relation "minion_jobs" does not exist');
+      },
+    } as unknown as BrainEngine;
+
+    expect(await hasPendingSourceCycle(engine, 'alpha')).toBe(false);
+    const pending = await listPendingAutopilotCycles(engine);
+    expect(pending.global).toBe(false);
+    expect(pending.sourceIds.size).toBe(0);
+  });
+
+  test('pending check treats legacy source-less cycles as global blockers', async () => {
+    let query = '';
+    const engine = {
+      executeRaw: async (sql: string) => {
+        query = sql;
+        return [{ source_id: null }];
+      },
+    } as unknown as BrainEngine;
+
+    expect(await hasPendingSourceCycle(engine, 'alpha')).toBe(true);
+    expect(query).toContain("data->>'source_id'");
+  });
+
+  test('legacy source-less pending cycles are checked once per tick', async () => {
+    const added: AddedJob[] = [];
+    let pendingQueries = 0;
+    const engine = {
+      kind: 'postgres' as const,
+      listAllSources: async () => [src('alpha'), src('beta'), src('gamma')],
+      executeRaw: async () => {
+        pendingQueries += 1;
+        return [{ source_id: null }];
+      },
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
+        added.push({ name, data, opts });
+        return { id: 100 + added.length };
+      },
+    } as unknown as Parameters<typeof dispatchPerSource>[1];
+
+    const result = await dispatchPerSource(engine, queue, {
+      repoPath: '/tmp/brain',
+      slot: '2026-05-22T12:00:00.000Z',
+      timeoutMs: 600_000,
+      fanoutMax: 2,
+      jsonMode: true,
+      emit: () => {},
+      log: () => {},
+    });
+
+    expect(result.dispatched).toEqual([]);
+    expect(result.skipped_pending).toEqual(['alpha', 'beta', 'gamma']);
+    expect(result.skipped_cap).toEqual([]);
+    expect(added).toEqual([]);
+    expect(pendingQueries).toBe(1);
   });
 
   test('pull: true only when source.config.remote_url is set', async () => {
@@ -251,6 +388,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const engine = {
       kind: 'postgres' as const,
       listAllSources: async () => sources,
+      executeRaw: async () => [],
     } as unknown as BrainEngine;
     const queue = {
       add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
@@ -294,6 +432,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     await dispatchPerSource(engine, queue, fanoutOpts);
     for (const job of added) {
       expect(job.opts.maxWaiting).toBeUndefined();
+      expect(String(job.opts.liveSingletonKey)).toStartWith('autopilot-cycle:');
     }
   });
 

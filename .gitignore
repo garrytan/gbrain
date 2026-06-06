@@ -35,6 +35,9 @@ export/
 # .context/test-shards/. Workspace-local by design — never committed.
 .context/
 
+# Local autoreview hook reports are generated during agent commits/reviews.
+.autoreview-reports/
+
 # Tier 3 PGLite snapshot fixture (built on demand by build:pglite-snapshot)
 test/fixtures/pglite-snapshot.tar
 test/fixtures/pglite-snapshot.version

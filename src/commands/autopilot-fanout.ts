@@ -56,6 +56,7 @@ export interface FanoutResult {
   dispatched: string[];
   /** Source ids skipped because their last_full_cycle_at is still fresh. */
   skipped_fresh: string[];
+  skipped_pending: string[];
   /** Source ids beyond the fanoutMax cap (will retry next tick). */
   skipped_cap: string[];
   /** True when this tick fell back to the legacy single-job path
@@ -144,6 +145,45 @@ export function selectSourcesForDispatch(
   return { dispatch, skippedFresh: fresh, skippedCap };
 }
 
+export interface PendingAutopilotCycles {
+  global: boolean;
+  sourceIds: Set<string>;
+}
+
+export async function listPendingAutopilotCycles(engine: BrainEngine): Promise<PendingAutopilotCycles> {
+  try {
+    const rows = await engine.executeRaw<{ source_id: string | null }>(
+      `SELECT data->>'source_id' AS source_id
+         FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND queue = 'default'
+          AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+        GROUP BY data->>'source_id'`,
+    );
+    const sourceIds = new Set<string>();
+    let global = false;
+    for (const row of rows) {
+      if (typeof row.source_id === 'string' && row.source_id.length > 0) {
+        sourceIds.add(row.source_id);
+      } else if (row.source_id === null) {
+        global = true;
+      }
+    }
+    return { global, sourceIds };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (/\bminion_jobs\b/i.test(message) && /(does not exist|no such table|undefined_table)/i.test(message)) {
+      return { global: false, sourceIds: new Set() };
+    }
+    throw e;
+  }
+}
+
+export async function hasPendingSourceCycle(engine: BrainEngine, sourceId: string): Promise<boolean> {
+  const pending = await listPendingAutopilotCycles(engine);
+  return pending.global || pending.sourceIds.has(sourceId);
+}
+
 /**
  * Per-tick autopilot fan-out. Replaces the v0.36+ single autopilot-cycle
  * dispatch when `shouldFullCycle` is true.
@@ -183,6 +223,7 @@ export async function dispatchPerSource(
       {
         queue: 'default',
         idempotency_key: `autopilot-cycle:${opts.slot}`,
+        liveSingletonKey: 'autopilot-cycle:global',
         max_attempts: 2,
         timeout_ms: opts.timeoutMs,
         maxWaiting: 1,
@@ -193,14 +234,34 @@ export async function dispatchPerSource(
     } else {
       log(`[dispatch] job #${job.id} autopilot-cycle (legacy single-source)`);
     }
-    return { dispatched: [], skipped_fresh: [], skipped_cap: [], legacy_fallback: true };
+    return { dispatched: [], skipped_fresh: [], skipped_pending: [], skipped_cap: [], legacy_fallback: true };
   }
 
-  const { dispatch, skippedFresh, skippedCap } = selectSourcesForDispatch(sources, opts.fanoutMax);
+  const { dispatch, skippedFresh } = selectSourcesForDispatch(sources, Number.MAX_SAFE_INTEGER);
+  const pendingCycles = await listPendingAutopilotCycles(engine);
 
   const dispatched: string[] = [];
+  const skippedPending: string[] = [];
+  const skippedCap: typeof dispatch = [];
   for (const src of dispatch) {
     try {
+      if (pendingCycles.global || pendingCycles.sourceIds.has(src.id)) {
+        skippedPending.push(src.id);
+        if (opts.jsonMode) {
+          emit(JSON.stringify({
+            event: 'fanout_source_pending',
+            source_id: src.id,
+            reason: 'live_autopilot_cycle',
+          }));
+        } else {
+          log(`[dispatch] skip source=${src.id}: prior autopilot-cycle still live`);
+        }
+        continue;
+      }
+      if (dispatched.length >= opts.fanoutMax) {
+        skippedCap.push(src);
+        continue;
+      }
       const remoteUrl = typeof src.config?.remote_url === 'string' ? src.config.remote_url : null;
       const job = await queue.add(
         'autopilot-cycle',
@@ -214,6 +275,7 @@ export async function dispatchPerSource(
           // Per-source idempotency key — two ticks for the same source
           // within the same slot coalesce; different sources never collide.
           idempotency_key: `autopilot-cycle:${src.id}:${opts.slot}`,
+          liveSingletonKey: `autopilot-cycle:${src.id}`,
           max_attempts: 2,
           timeout_ms: opts.timeoutMs,
           // DELIBERATELY no maxWaiting: 1 here. maxWaiting is per
@@ -264,6 +326,7 @@ export async function dispatchPerSource(
   return {
     dispatched,
     skipped_fresh: skippedFresh.map(s => s.id),
+    skipped_pending: skippedPending,
     skipped_cap: skippedCap.map(s => s.id),
     legacy_fallback: false,
   };

@@ -127,6 +127,10 @@ export class MinionQueue {
     const childStatus: MinionJobStatus = opts?.delay ? 'delayed' : 'waiting';
     const delayUntil = opts?.delay ? new Date(Date.now() + opts.delay) : null;
     const maxSpawnDepth = opts?.max_spawn_depth ?? this.maxSpawnDepth;
+    const liveSingletonKey = opts?.liveSingletonKey ?? null;
+    const jobData = liveSingletonKey
+      ? { ...((data ?? {}) as Record<string, unknown>), _live_singleton_key: liveSingletonKey }
+      : (data ?? {});
 
     return this.engine.transaction(async (tx) => {
       // 1. Idempotency fast path — if a row already exists for this key, return it
@@ -196,6 +200,25 @@ export class MinionQueue {
             return coalesced;
           }
         }
+      }
+
+      if (liveSingletonKey) {
+        const singletonQueue = opts?.queue ?? 'default';
+        await tx.executeRaw(
+          `SELECT pg_advisory_xact_lock(hashtext('minion_livesingleton:' || $1))`,
+          [liveSingletonKey]
+        );
+        const existingLive = await tx.executeRaw<Record<string, unknown>>(
+          `SELECT * FROM minion_jobs
+           WHERE name = $1
+             AND queue = $2
+             AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+             AND data->>'_live_singleton_key' = $3
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+          [jobName, singletonQueue, liveSingletonKey]
+        );
+        if (existingLive.length > 0) return rowToMinionJob(existingLive[0]);
       }
 
       // 2. Parent lock + depth/cap validation
@@ -268,7 +291,7 @@ export class MinionQueue {
         opts?.queue ?? 'default',
         childStatus,
         opts?.priority ?? 0,
-        data ?? {},
+        jobData,
         opts?.max_attempts ?? 3,
         opts?.backoff_type ?? 'exponential',
         opts?.backoff_delay ?? 1000,

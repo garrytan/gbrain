@@ -130,6 +130,7 @@ export interface MinionJobInput {
   idempotency_key?: string;
   /** Submission backpressure: cap waiting jobs with this name before inserting a new row. */
   maxWaiting?: number;
+  liveSingletonKey?: string;
 
   // v12: scheduler polish
   /**

@@ -103,7 +103,7 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     expect(sources).toEqual(['alpha', 'beta', 'gamma']);
   });
 
-  test('re-dispatch within same slot dedupes via idempotency key', async () => {
+  test('re-dispatch within same slot skips pending source', async () => {
     await seedSource('alpha');
     await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
     const queue = new MinionQueue(engine);
@@ -120,8 +120,8 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     const r1 = await dispatchPerSource(engine, queue, opts);
     const r2 = await dispatchPerSource(engine, queue, opts);
     expect(r1.dispatched).toEqual(['alpha']);
-    expect(r2.dispatched).toEqual(['alpha']);
-    // Only ONE row in minion_jobs (idempotency-key coalesce)
+    expect(r2.dispatched).toEqual([]);
+    expect(r2.skipped_pending).toEqual(['alpha']);
     const jobs = await engine.executeRaw<{ id: number }>(
       `SELECT id FROM minion_jobs WHERE name = 'autopilot-cycle'`,
     );
