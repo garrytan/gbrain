@@ -130,6 +130,116 @@ describe('dream cycle phase runner', () => {
     expect(readCount).toBe(0);
   });
 
+  test('mutating dream runs require a replay canary before phase work', async () => {
+    let readCount = 0;
+    const result = await runDreamCycle({
+      listMemoryCandidateEntries: async () => {
+        readCount += 1;
+        return [];
+      },
+    } as any, {
+      scope_id: 'workspace:default',
+      now: '2026-06-06T00:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+    }, {
+      runtime: createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' }),
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.guardrails.replay_canary).toMatchObject({
+      status: 'not_configured',
+      required: true,
+    });
+    expect(result.phases).toEqual([]);
+    expect(readCount).toBe(0);
+  });
+
+  test('mutating dream runs renew the same-holder cycle lock before mutating phases', async () => {
+    const runtime = createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' });
+    const acquireCalls: any[] = [];
+    const wrappedRuntime = {
+      acquireCycleLock: async (input: any) => {
+        acquireCalls.push(input);
+        return runtime.acquireCycleLock(input);
+      },
+      releaseCycleLock: (input: any) => runtime.releaseCycleLock(input),
+    };
+
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-06-06T00:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+    }, {
+      runtime: wrappedRuntime,
+      replayCanary: passingReplayCanary(),
+    });
+
+    expect(result.guardrails.lock_renewal).toMatchObject({
+      status: 'renewed',
+      renewal_count: 2,
+    });
+    expect(acquireCalls).toHaveLength(3);
+    expect(acquireCalls.map((call) => call.cycle_name)).toEqual([
+      'dream_cycle:workspace:default',
+      'dream_cycle:workspace:default',
+      'dream_cycle:workspace:default',
+    ]);
+  });
+
+  test('lock renewal failure aborts before invoking the guarded phase', async () => {
+    const runtime = createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' });
+    let acquireCount = 0;
+    let consolidationCalls = 0;
+    const wrappedRuntime = {
+      acquireCycleLock: async (input: any) => {
+        acquireCount += 1;
+        if (acquireCount > 1) {
+          return {
+            status: 'busy' as const,
+            current_holder: {
+              holder_pid: 99,
+              holder_host: 'host-b',
+              holder_kind: 'daemon',
+              ttl_expires_at: '2026-06-06T00:01:00.000Z',
+            },
+          };
+        }
+        return runtime.acquireCycleLock(input);
+      },
+      releaseCycleLock: (input: any) => runtime.releaseCycleLock(input),
+    };
+
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-06-06T00:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+    }, {
+      runtime: wrappedRuntime,
+      replayCanary: passingReplayCanary(),
+      phaseHandlers: {
+        consolidation: async () => {
+          consolidationCalls += 1;
+          return { status: 'ok' };
+        },
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.guardrails.lock_renewal).toMatchObject({
+      status: 'aborted',
+      renewal_count: 0,
+      reason_codes: ['cycle_lock_renewal_busy'],
+    });
+    expect(result.phases.find((phase) => phase.family === 'consolidation')).toMatchObject({
+      status: 'failed',
+      errors: ['Dream cycle lock renewal failed before consolidation.'],
+    });
+    expect(consolidationCalls).toBe(0);
+  });
+
   test('failed phase and policy denial produce structured phase results', async () => {
     const result = await runDreamCycle(stubEngine(), {
       scope_id: 'workspace:default',
@@ -213,6 +323,7 @@ describe('dream cycle phase runner', () => {
       allow_local_runner: true,
     } as any, {
       runtime: createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' }),
+      replayCanary: passingReplayCanary(),
       autoPromote: {
         run: async (input: any) => {
           calls.push(input);
@@ -245,6 +356,7 @@ describe('dream cycle phase runner', () => {
       max_candidates_per_cycle: 4,
     } as any, {
       runtime: createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' }),
+      replayCanary: passingReplayCanary(),
       autoPromote: {
         run: async (input: any) => {
           calls.push(input);
@@ -260,6 +372,41 @@ describe('dream cycle phase runner', () => {
       time_budget_ms: 1000,
       limit: 4,
     });
+  });
+
+  test('failed replay canary blocks auto-promote apply before runner use', async () => {
+    const calls: any[] = [];
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-06-06T00:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+      apply_auto_promote: true,
+      allow_canonical_page_writes: true,
+      allow_local_runner: true,
+    } as any, {
+      runtime: createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' }),
+      replayCanary: {
+        run: async () => ({
+          status: 'failed',
+          reason_codes: ['replay_regression'],
+        }),
+      },
+      autoPromote: {
+        run: async (input: any) => {
+          calls.push(input);
+          return { counts: { canonical_writes: 1 } };
+        },
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.guardrails.replay_canary).toMatchObject({
+      status: 'failed',
+      required: true,
+      reason_codes: ['replay_regression'],
+    });
+    expect(calls).toEqual([]);
   });
 
   test('dry-run suppresses apply and canonical permissions for programmatic callers', async () => {
@@ -475,6 +622,7 @@ describe('dream cycle phase runner', () => {
       write_candidates: true,
     }, {
       runtime: createMaintenanceRuntimeService({ now: () => '2026-05-21T10:00:00.000Z' }),
+      replayCanary: passingReplayCanary(),
       lifecycleForgetting,
     });
 
@@ -498,4 +646,13 @@ function stubEngine() {
   return {
     listMemoryCandidateEntries: async () => [],
   } as any;
+}
+
+function passingReplayCanary() {
+  return {
+    run: async () => ({
+      status: 'passed' as const,
+      reason_codes: ['focused_replay_canary_passed'],
+    }),
+  };
 }

@@ -305,6 +305,27 @@ Expected:
 - candidate debt metrics report missing provenance, stale promoted candidates
   without handoff, unresolved exposed candidates, and review latency.
 
+## Dream maintenance guardrails
+
+Run:
+
+```bash
+bun run test:dream-guardrails
+bun run typecheck
+```
+
+Expected:
+
+- mutating Dream runs require an active cycle lock and fail closed when the
+  runtime lock surface is missing.
+- apply-capable Dream runs require a replay canary before phase work.
+- same-holder cycle lock renewal happens before candidate-writing maintenance
+  phases.
+- lock renewal failure aborts before the guarded phase handler runs.
+- failed replay canary blocks auto-promote apply before runner use.
+- dry-run and report-only Dream paths remain non-mutating and do not require the
+  apply guardrails.
+
 ## Phase 0 parity verification
 
 Run:

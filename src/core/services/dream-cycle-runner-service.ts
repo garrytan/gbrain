@@ -79,6 +79,7 @@ export interface DreamCycleRunResult {
   canonical_write_allowed: false;
   llm_or_runner_used: boolean;
   cycle_lock: DreamCycleLockResult | null;
+  guardrails: DreamCycleGuardrailReport;
   self_consumption_guard: {
     generated_by: 'dream_cycle';
     anti_loop_marker: 'mbrain:dream-cycle-output:v1';
@@ -86,6 +87,28 @@ export interface DreamCycleRunResult {
   };
   phases: DreamCyclePhaseResult[];
   summary_lines: string[];
+}
+
+export interface DreamCycleGuardrailReport {
+  lock_renewal: {
+    status: 'not_required' | 'renewed' | 'aborted' | 'missing_runtime';
+    renewal_count: number;
+    last_renewed_at: string | null;
+    reason_codes: string[];
+  };
+  replay_canary: {
+    status: 'not_required' | 'passed' | 'failed' | 'not_configured';
+    required: boolean;
+    checked_at: string | null;
+    reason_codes: string[];
+    summary_lines: string[];
+  };
+}
+
+export interface DreamReplayCanaryResult {
+  status: 'passed' | 'failed';
+  reason_codes?: string[];
+  summary_lines?: string[];
 }
 
 export type DreamCycleLockResult = AcquireMaintenanceCycleLockResult & {
@@ -116,6 +139,16 @@ export interface DreamCycleRunDeps {
       max_runner_calls?: number;
       time_budget_ms?: number;
     }): Promise<{ counts: Record<string, number> }>;
+  };
+  replayCanary?: {
+    run(input: {
+      scope_id: string;
+      now: string;
+      trigger: DreamCyclePhaseContext['input']['trigger'];
+      write_candidates: boolean;
+      apply_auto_promote: boolean;
+      allow_canonical_page_writes: boolean;
+    }): Promise<DreamReplayCanaryResult>;
   };
 }
 
@@ -165,23 +198,56 @@ export async function runDreamCycle(
   deps: DreamCycleRunDeps = {},
 ): Promise<DreamCycleRunResult> {
   const normalized = normalizeRunInput(input);
+  const guardrails = initialGuardrailReport(normalized);
   const mutating = normalized.dry_run === false && normalized.write_candidates === true;
   const lockName = dreamCycleLockName(normalized.scope_id);
   const lock = mutating ? await acquireDreamLock(deps, lockName, normalized.now) : null;
   if (lock?.status === 'missing_runtime') {
-    return buildResult(normalized, [], 'failed', lock);
+    guardrails.lock_renewal = {
+      status: 'missing_runtime',
+      renewal_count: 0,
+      last_renewed_at: null,
+      reason_codes: ['cycle_lock_runtime_missing'],
+    };
+    return buildResult(normalized, [], 'failed', lock, guardrails);
   }
   if (lock?.status === 'busy') {
-    return buildResult(normalized, [], 'failed', lock);
+    guardrails.lock_renewal = {
+      status: 'aborted',
+      renewal_count: 0,
+      last_renewed_at: null,
+      reason_codes: ['cycle_lock_busy'],
+    };
+    return buildResult(normalized, [], 'failed', lock, guardrails);
   }
 
   try {
+    guardrails.replay_canary = await runReplayCanaryIfRequired(normalized, deps);
+    if (blocksApplyByReplayCanary(guardrails.replay_canary)) {
+      return buildResult(normalized, [], 'failed', lock, guardrails);
+    }
+
     const phases: DreamCyclePhaseResult[] = [];
     for (const registry of DREAM_CYCLE_PHASE_FAMILIES) {
+      const renewal = await renewDreamLockBeforePhase(deps, lockName, lock, normalized, registry, guardrails);
+      if (renewal.status === 'aborted') {
+        phases.push(phaseResult(registry, {
+          status: 'failed',
+          errors: [`Dream cycle lock renewal failed before ${registry.family}.`],
+          policy_denials: [{
+            code: 'cycle_lock_renewal_required',
+            message: 'Dream apply-capable phase requires an active same-holder cycle lock.',
+          }],
+          next_recommended_action: 'Retry after the current Dream cycle lock owner releases or expires.',
+          canonical_mutations: 0,
+          llm_or_runner_used: false,
+        }, Date.now()));
+        break;
+      }
       phases.push(await runPhase(engine, normalized, registry, deps));
     }
     const status = summarizeStatus(phases);
-    return buildResult(normalized, phases, status, lock);
+    return buildResult(normalized, phases, status, lock, guardrails);
   } finally {
     if (lock?.status === 'acquired') {
       await deps.runtime?.releaseCycleLock?.({
@@ -645,6 +711,148 @@ function normalizeRunInput(input: DreamCycleRunInput): DreamCyclePhaseContext['i
   };
 }
 
+function initialGuardrailReport(input: DreamCyclePhaseContext['input']): DreamCycleGuardrailReport {
+  return {
+    lock_renewal: {
+      status: input.dry_run || !input.write_candidates ? 'not_required' : 'renewed',
+      renewal_count: 0,
+      last_renewed_at: null,
+      reason_codes: [],
+    },
+    replay_canary: {
+      status: 'not_required',
+      required: false,
+      checked_at: null,
+      reason_codes: [],
+      summary_lines: [],
+    },
+  };
+}
+
+async function runReplayCanaryIfRequired(
+  input: DreamCyclePhaseContext['input'],
+  deps: DreamCycleRunDeps,
+): Promise<DreamCycleGuardrailReport['replay_canary']> {
+  if (!requiresReplayCanary(input)) {
+    return {
+      status: 'not_required',
+      required: false,
+      checked_at: null,
+      reason_codes: [],
+      summary_lines: [],
+    };
+  }
+  if (!deps.replayCanary) {
+    return {
+      status: 'not_configured',
+      required: true,
+      checked_at: input.now,
+      reason_codes: ['replay_canary_not_configured'],
+      summary_lines: ['Replay canary is required before Dream apply-capable phases.'],
+    };
+  }
+  try {
+    const result = await deps.replayCanary.run({
+      scope_id: input.scope_id,
+      now: input.now,
+      trigger: input.trigger,
+      write_candidates: input.write_candidates,
+      apply_auto_promote: input.apply_auto_promote,
+      allow_canonical_page_writes: input.allow_canonical_page_writes,
+    });
+    return {
+      status: result.status,
+      required: true,
+      checked_at: input.now,
+      reason_codes: result.reason_codes ?? [],
+      summary_lines: result.summary_lines ?? [],
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      required: true,
+      checked_at: input.now,
+      reason_codes: ['replay_canary_error'],
+      summary_lines: [errorMessage(error)],
+    };
+  }
+}
+
+function requiresReplayCanary(input: DreamCyclePhaseContext['input']): boolean {
+  return !input.dry_run && input.write_candidates === true;
+}
+
+function blocksApplyByReplayCanary(
+  canary: DreamCycleGuardrailReport['replay_canary'],
+): boolean {
+  return canary.required && canary.status !== 'passed';
+}
+
+async function renewDreamLockBeforePhase(
+  deps: DreamCycleRunDeps,
+  cycleName: string,
+  lock: DreamCycleLockResult | null,
+  input: DreamCyclePhaseContext['input'],
+  registry: DreamCyclePhaseRegistryEntry,
+  guardrails: DreamCycleGuardrailReport,
+): Promise<{ status: 'not_required' | 'renewed' | 'aborted' }> {
+  if (!phaseRequiresLockRenewal(input, registry)) return { status: 'not_required' };
+  if (!deps.runtime || lock?.status !== 'acquired') {
+    guardrails.lock_renewal = {
+      status: 'missing_runtime',
+      renewal_count: guardrails.lock_renewal.renewal_count,
+      last_renewed_at: guardrails.lock_renewal.last_renewed_at,
+      reason_codes: [...guardrails.lock_renewal.reason_codes, 'cycle_lock_runtime_missing'],
+    };
+    return { status: 'aborted' };
+  }
+
+  try {
+    const renewed = await deps.runtime.acquireCycleLock({
+      cycle_name: cycleName,
+      holder_pid: lock.holder.holder_pid,
+      holder_host: lock.holder.holder_host,
+      holder_kind: lock.holder.holder_kind,
+      ttl_ms: 15 * 60 * 1000,
+    });
+    if (renewed.status !== 'acquired') {
+      guardrails.lock_renewal = {
+        status: 'aborted',
+        renewal_count: guardrails.lock_renewal.renewal_count,
+        last_renewed_at: guardrails.lock_renewal.last_renewed_at,
+        reason_codes: [...guardrails.lock_renewal.reason_codes, 'cycle_lock_renewal_busy'],
+      };
+      return { status: 'aborted' };
+    }
+    guardrails.lock_renewal = {
+      status: 'renewed',
+      renewal_count: guardrails.lock_renewal.renewal_count + 1,
+      last_renewed_at: input.now,
+      reason_codes: guardrails.lock_renewal.reason_codes,
+    };
+    return { status: 'renewed' };
+  } catch (error) {
+    guardrails.lock_renewal = {
+      status: 'aborted',
+      renewal_count: guardrails.lock_renewal.renewal_count,
+      last_renewed_at: guardrails.lock_renewal.last_renewed_at,
+      reason_codes: [...guardrails.lock_renewal.reason_codes, 'cycle_lock_renewal_error'],
+    };
+    return { status: 'aborted' };
+  }
+}
+
+function phaseRequiresLockRenewal(
+  input: DreamCyclePhaseContext['input'],
+  registry: DreamCyclePhaseRegistryEntry,
+): boolean {
+  if (input.dry_run || !input.write_candidates) return false;
+  if (registry.family === 'auto_promote') {
+    return input.apply_auto_promote;
+  }
+  return registry.family === 'consolidation' || registry.family === 'forgetting_review';
+}
+
 async function acquireDreamLock(
   deps: DreamCycleRunDeps,
   cycleName: string,
@@ -716,6 +924,7 @@ function buildResult(
   phases: DreamCyclePhaseResult[],
   status: DreamCycleRunResult['status'],
   lock: DreamCycleLockResult | null,
+  guardrails: DreamCycleGuardrailReport,
 ): DreamCycleRunResult {
   return {
     status,
@@ -726,6 +935,7 @@ function buildResult(
     canonical_write_allowed: false,
     llm_or_runner_used: phases.some((phase) => phase.llm_or_runner_used),
     cycle_lock: lock,
+    guardrails,
     self_consumption_guard: {
       generated_by: 'dream_cycle',
       anti_loop_marker: 'mbrain:dream-cycle-output:v1',
