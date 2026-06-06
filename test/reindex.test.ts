@@ -68,6 +68,26 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
     expect(rows.every(r => Number(r.chunker_version) === MARKDOWN_CHUNKER_VERSION)).toBe(true);
   });
 
+  test('soft-deletes stale sync metafile rows during markdown sweep', async () => {
+    await seedLegacyPage('legacy-readme', 'legacy README body', 'docs/README.md');
+
+    const result = await runReindex(engine, ['--markdown', '--no-embed']);
+    expect(result.pending).toBe(1);
+    expect(result.reindexed).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.failed).toBe(0);
+
+    const rows = await engine.executeRaw<{ deleted_at: string | null; chunker_version: number }>(
+      `SELECT deleted_at, chunker_version FROM pages WHERE slug = 'legacy-readme'`,
+    );
+    expect(rows[0].deleted_at).not.toBeNull();
+    expect(Number(rows[0].chunker_version)).toBe(1);
+
+    const second = await runReindex(engine, ['--markdown', '--no-embed']);
+    expect(second.pending).toBe(0);
+    expect(second.reindexed).toBe(0);
+  });
+
   test('idempotent: re-run on a fully-updated brain reports nothing to do', async () => {
     await seedLegacyPage('note-e', 'body e');
     // First pass with --no-embed bumps chunker_version but does NOT stamp

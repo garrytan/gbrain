@@ -27,6 +27,7 @@ import { importFromContent, importFromFile } from '../core/import-file.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
+import { unsyncableReason } from '../core/sync.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
 // v0.41.15.0 (T10, D9): per-batch parallel workers.
@@ -86,6 +87,12 @@ function parseArgs(args: string[]): ReindexOpts {
     }
   }
   return out;
+}
+
+function isSkippedMarkdownMetafile(sourcePath: string | null): boolean {
+  if (!sourcePath) return false;
+  const normalized = sourcePath.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  return unsyncableReason(normalized, { strategy: 'markdown' }) === 'metafile';
 }
 
 /**
@@ -208,6 +215,12 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
       onItem: async (row) => {
         reporter.tick();
         try {
+          if (isSkippedMarkdownMetafile(row.source_path)) {
+            await engine.softDeletePage(row.slug, { sourceId: row.source_id });
+            skipped++;
+            return;
+          }
+
           if (row.source_path && repoPath) {
             const absPath = resolve(repoPath, row.source_path);
             if (existsSync(absPath)) {
@@ -270,7 +283,7 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
       chunker_version: MARKDOWN_CHUNKER_VERSION,
     }) + '\n');
   } else {
-    process.stderr.write(`[reindex] Done. reindexed=${reindexed} failed=${failed} pending=${Math.max(0, pending - reindexed - failed)}\n`);
+    process.stderr.write(`[reindex] Done. reindexed=${reindexed} skipped=${skipped} failed=${failed} pending=${Math.max(0, pending - reindexed - skipped - failed)}\n`);
   }
 
   return result;
