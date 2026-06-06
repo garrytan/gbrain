@@ -80,6 +80,7 @@ export function createAutoPromoteDreamDependency(engine: BrainEngine) {
       allow_canonical_page_writes?: boolean;
       max_runner_calls?: number;
       time_budget_ms?: number;
+      exclude_candidate_ids?: string[];
     }) => {
       const base = normalizeAutoPromoteConfig(loadConfig()?.auto_promote as Partial<AutoPromoteConfig> | undefined);
       const config: AutoPromoteConfig = { ...base, dry_run: input.dry_run !== false };
@@ -98,6 +99,7 @@ export function createAutoPromoteDreamDependency(engine: BrainEngine) {
         allow_canonical_page_writes: input.allow_canonical_page_writes === true,
         max_runner_calls: input.max_runner_calls,
         time_budget_ms: input.time_budget_ms,
+        exclude_candidate_ids: input.exclude_candidate_ids,
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       });
       return { counts: result.counts };

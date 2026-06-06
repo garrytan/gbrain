@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 import { createMaintenanceRuntimeService } from '../src/core/services/maintenance-runtime-service.ts';
 import {
   DREAM_CYCLE_PHASE_FAMILIES,
@@ -71,6 +72,8 @@ describe('dream cycle phase runner', () => {
       generated_by: 'dream_cycle',
       anti_loop_marker: 'mbrain:dream-cycle-output:v1',
       raw_source_ingest_allowed: false,
+      same_cycle_candidate_promotion_allowed: false,
+      guarded_candidate_ids: [],
     });
     expect(result.phases.every((phase) => phase.canonical_mutations === 0)).toBe(true);
   });
@@ -407,6 +410,101 @@ describe('dream cycle phase runner', () => {
       reason_codes: ['replay_regression'],
     });
     expect(calls).toEqual([]);
+  });
+
+  test('auto-promote excludes candidates generated earlier in the same dream cycle', async () => {
+    const calls: any[] = [];
+    const result = await runDreamCycle(stubEngine(), {
+      scope_id: 'workspace:default',
+      now: '2026-06-06T00:00:00.000Z',
+      dry_run: false,
+      write_candidates: true,
+      apply_auto_promote: true,
+      allow_local_runner: true,
+      max_candidates_per_cycle: 4,
+    } as any, {
+      runtime: createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' }),
+      replayCanary: passingReplayCanary(),
+      phaseHandlers: {
+        consolidation: async (context) => {
+          context.cycle.dream_generated_candidate_ids.add('candidate:dream-this-cycle');
+          return {
+            status: 'warn',
+            counts: { suggestions: 1 },
+          };
+        },
+      },
+      autoPromote: {
+        run: async (input: any) => {
+          calls.push(input);
+          return { counts: { excluded: input.exclude_candidate_ids.length } };
+        },
+      },
+    });
+
+    expect(calls[0]).toMatchObject({
+      dry_run: false,
+      exclude_candidate_ids: ['candidate:dream-this-cycle'],
+      limit: 4,
+    });
+    expect(result.phases.find((phase) => phase.family === 'auto_promote')).toMatchObject({
+      status: 'warn',
+      counts: { excluded: 1 },
+    });
+  });
+
+  test('default consolidation adds created dream candidate ids to the same-cycle guard', async () => {
+    const engine = new SQLiteEngine();
+    await engine.connect({ engine: 'sqlite', database_path: ':memory:' });
+    await engine.initSchema();
+    try {
+      await engine.createMemoryCandidateEntry({
+        id: 'candidate:manual-input',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Manual input candidate for dream recap.',
+        source_refs: ['Source: dream self-consumption integration test'],
+        generated_by: 'manual',
+        extraction_kind: 'manual',
+        confidence_score: 0.9,
+        importance_score: 0.5,
+        recurrence_score: 0,
+        sensitivity: 'work',
+        status: 'candidate',
+        target_object_type: 'curated_note',
+        target_object_id: 'concepts/acme',
+      });
+      const calls: any[] = [];
+
+      const result = await runDreamCycle(engine, {
+        scope_id: 'workspace:default',
+        now: '2026-06-06T00:00:00.000Z',
+        dry_run: false,
+        write_candidates: true,
+        apply_auto_promote: true,
+        allow_local_runner: true,
+        limit: 1,
+      } as any, {
+        runtime: createMaintenanceRuntimeService({ now: () => '2026-06-06T00:00:00.000Z' }),
+        replayCanary: passingReplayCanary(),
+        autoPromote: {
+          run: async (input: any) => {
+            calls.push(input);
+            return { counts: { excluded: input.exclude_candidate_ids.length } };
+          },
+        },
+      });
+
+      expect(result.self_consumption_guard.guarded_candidate_ids).toHaveLength(1);
+      expect(calls[0].exclude_candidate_ids).toEqual(result.self_consumption_guard.guarded_candidate_ids);
+      const guardedCandidate = await engine.getMemoryCandidateEntry(result.self_consumption_guard.guarded_candidate_ids[0]!);
+      expect(guardedCandidate).toMatchObject({
+        generated_by: 'dream_cycle',
+        status: 'candidate',
+      });
+    } finally {
+      await engine.disconnect();
+    }
   });
 
   test('dry-run suppresses apply and canonical permissions for programmatic callers', async () => {

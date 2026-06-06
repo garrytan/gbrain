@@ -79,6 +79,11 @@ but does not extend a Dream cycle lock.
   freshness as content-light maintenance health signals, without new storage or
   canonical-write authority. Broader trust/source/negative-memory/replay-canary
   safety-state reporting remains future work under the full roadmap.
+- [x] Slice C same-cycle self-consumption guard:
+  Dream now tracks candidate ids created during the current cycle and passes
+  those ids to auto-promote as exclusions, so same-cycle Dream outputs cannot be
+  promoted by the cycle that generated them. This is cycle-scoped and does not
+  globally block older Dream-generated candidates from review.
 
 ## Existing Surfaces To Reuse
 
@@ -394,7 +399,7 @@ Expected: PASS.
 - [x] Dream aborts before applying when lock renewal fails or runtime is
   missing.
 - [x] Replay canary gates candidate-writing and auto-promote apply paths.
-- [ ] Dream-generated candidates cannot be promoted in the same cycle.
+- [x] Dream-generated candidates cannot be promoted in the same cycle.
 - [ ] Trust/source/contradiction/negative-memory/freshness/runner/redaction
   safety states are report-only by default.
 - [x] Candidate debt and projection freshness appear as bounded, content-light

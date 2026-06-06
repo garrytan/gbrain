@@ -22,6 +22,7 @@ export interface RunAutoPromoteInput {
   allow_canonical_page_writes?: boolean;
   max_runner_calls?: number;
   time_budget_ms?: number;
+  exclude_candidate_ids?: string[];
 }
 export interface TargetContextSnapshot {
   text: string;
@@ -47,8 +48,13 @@ export async function runAutoPromote(input: RunAutoPromoteInput): Promise<RunAut
   if (!input.config.enabled) {
     return { counts: zeroCounts(), promoted: [], excluded: [] };
   }
-  const candidates = (await input.engine.listMemoryCandidateEntries({ scope_id: scopeId, limit: input.limit ?? 200, offset: 0 }))
+  const excludeIds = new Set(input.exclude_candidate_ids ?? []);
+  const allCandidates = (await input.engine.listMemoryCandidateEntries({ scope_id: scopeId, limit: input.limit ?? 200, offset: 0 }))
     .filter(isAutoPromoteOpenStatus);
+  const selfConsumptionExcluded = allCandidates
+    .filter((candidate) => excludeIds.has(candidate.id))
+    .map((candidate) => ({ id: candidate.id, reason: 'dream_self_consumption_guard' }));
+  const candidates = allCandidates.filter((candidate) => !excludeIds.has(candidate.id));
   const contradictionExcluded = await excludedByOpenContradiction(input, candidates);
   const contradictionExcludedIds = new Set(contradictionExcluded.map((entry) => entry.id));
   const buckets = selectAutoPromoteCandidates(
@@ -84,6 +90,7 @@ export async function runAutoPromote(input: RunAutoPromoteInput): Promise<RunAut
   const deferred = verdicts.filter((v) => v.decision === 'defer').length;
   const reportableGateSkips = gate.skipped.filter((entry) => isReportableGateSkip(entry.reason));
   const excluded = [
+    ...selfConsumptionExcluded,
     ...contradictionExcluded.map((entry) => ({ id: entry.id, reason: 'open_contradiction' })),
     ...buckets.excluded.map((e) => ({ id: e.candidate.id, reason: e.reason })),
     ...reportableGateSkips,

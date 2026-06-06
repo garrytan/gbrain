@@ -186,6 +186,35 @@ describe('runAutoPromote', () => {
       expect((await engine.getPage('concepts/acme'))?.compiled_truth).not.toContain('Acme raised a seed round.');
     });
   });
+  it('excludes same-cycle dream candidates before runner judgment', async () => {
+    await withEngine(async (engine) => {
+      await seedTargetPage(engine);
+      const dreamCandidate = await seedEligibleCandidate(engine, 'dream-this-cycle', {
+        generated_by: 'dream_cycle',
+      });
+      let calls = 0;
+      const res = await runAutoPromote({
+        engine,
+        config: { ...defaultAutoPromoteConfig(), enabled: true },
+        now: NOW,
+        runnerExecutor: async (req: any) => {
+          calls++;
+          return stubExecutor('promote', 0.95)(req);
+        },
+        contextLoader: (targetRef) => pageContext(engine, targetRef),
+        runner: { kind: 'claude_code' } as any,
+        exclude_candidate_ids: [dreamCandidate.id],
+      });
+
+      expect(calls).toBe(0);
+      expect(res.counts.excluded).toBe(1);
+      expect(res.excluded).toEqual([
+        { id: dreamCandidate.id, reason: 'dream_self_consumption_guard' },
+      ]);
+      expect((await engine.getMemoryCandidateEntry(dreamCandidate.id))?.status).toBe('captured');
+      expect(await engine.listCanonicalHandoffEntries({ candidate_id: dreamCandidate.id })).toHaveLength(0);
+    });
+  });
   it('misses cache when source refs or target context change', async () => {
     await withEngine(async (engine) => {
       await seedEligibleCandidate(engine);

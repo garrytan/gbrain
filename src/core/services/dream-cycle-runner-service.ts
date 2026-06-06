@@ -84,6 +84,8 @@ export interface DreamCycleRunResult {
     generated_by: 'dream_cycle';
     anti_loop_marker: 'mbrain:dream-cycle-output:v1';
     raw_source_ingest_allowed: false;
+    same_cycle_candidate_promotion_allowed: false;
+    guarded_candidate_ids: string[];
   };
   phases: DreamCyclePhaseResult[];
   summary_lines: string[];
@@ -138,6 +140,7 @@ export interface DreamCycleRunDeps {
       allow_canonical_page_writes?: boolean;
       max_runner_calls?: number;
       time_budget_ms?: number;
+      exclude_candidate_ids?: string[];
     }): Promise<{ counts: Record<string, number> }>;
   };
   replayCanary?: {
@@ -172,6 +175,11 @@ export interface DreamCyclePhaseContext {
     allow_local_runner: boolean;
   };
   registry: DreamCyclePhaseRegistryEntry;
+  cycle: DreamCyclePhaseCycleState;
+}
+
+export interface DreamCyclePhaseCycleState {
+  dream_generated_candidate_ids: Set<string>;
 }
 
 export const DREAM_CYCLE_PHASE_FAMILIES: readonly DreamCyclePhaseRegistryEntry[] = [
@@ -201,6 +209,7 @@ export async function runDreamCycle(
   const guardrails = initialGuardrailReport(normalized);
   const mutating = normalized.dry_run === false && normalized.write_candidates === true;
   const lockName = dreamCycleLockName(normalized.scope_id);
+  const cycle = initialPhaseCycleState();
   const lock = mutating ? await acquireDreamLock(deps, lockName, normalized.now) : null;
   if (lock?.status === 'missing_runtime') {
     guardrails.lock_renewal = {
@@ -209,7 +218,7 @@ export async function runDreamCycle(
       last_renewed_at: null,
       reason_codes: ['cycle_lock_runtime_missing'],
     };
-    return buildResult(normalized, [], 'failed', lock, guardrails);
+    return buildResult(normalized, [], 'failed', lock, guardrails, cycle);
   }
   if (lock?.status === 'busy') {
     guardrails.lock_renewal = {
@@ -218,13 +227,13 @@ export async function runDreamCycle(
       last_renewed_at: null,
       reason_codes: ['cycle_lock_busy'],
     };
-    return buildResult(normalized, [], 'failed', lock, guardrails);
+    return buildResult(normalized, [], 'failed', lock, guardrails, cycle);
   }
 
   try {
     guardrails.replay_canary = await runReplayCanaryIfRequired(normalized, deps);
     if (blocksApplyByReplayCanary(guardrails.replay_canary)) {
-      return buildResult(normalized, [], 'failed', lock, guardrails);
+      return buildResult(normalized, [], 'failed', lock, guardrails, cycle);
     }
 
     const phases: DreamCyclePhaseResult[] = [];
@@ -244,10 +253,10 @@ export async function runDreamCycle(
         }, Date.now()));
         break;
       }
-      phases.push(await runPhase(engine, normalized, registry, deps));
+      phases.push(await runPhase(engine, normalized, registry, deps, cycle));
     }
     const status = summarizeStatus(phases);
-    return buildResult(normalized, phases, status, lock, guardrails);
+    return buildResult(normalized, phases, status, lock, guardrails, cycle);
   } finally {
     if (lock?.status === 'acquired') {
       await deps.runtime?.releaseCycleLock?.({
@@ -265,6 +274,7 @@ async function runPhase(
   input: DreamCyclePhaseContext['input'],
   registry: DreamCyclePhaseRegistryEntry,
   deps: DreamCycleRunDeps = {},
+  cycle: DreamCyclePhaseCycleState,
 ): Promise<DreamCyclePhaseResult> {
   const started = Date.now();
   const handler = deps.phaseHandlers?.[registry.family] ?? defaultPhaseHandler(registry, deps);
@@ -278,7 +288,7 @@ async function runPhase(
   }
 
   try {
-    return phaseResult(registry, await handler({ engine, input, registry }), started);
+    return phaseResult(registry, await handler({ engine, input, registry, cycle }), started);
   } catch (error) {
     return phaseResult(registry, {
       status: 'failed',
@@ -516,6 +526,9 @@ async function runConsolidationPhase(
     write_candidates: context.input.dry_run ? false : context.input.write_candidates,
     include_derived_freshness: false,
   });
+  for (const candidateId of report.suggestions.flatMap((suggestion) => suggestion.candidate_id ?? [])) {
+    context.cycle.dream_generated_candidate_ids.add(candidateId);
+  }
   return {
     status: report.suggestions.length > 0 ? 'warn' : 'ok',
     counts: {
@@ -615,6 +628,7 @@ async function runAutoPromotePhase(
     allow_canonical_page_writes: autoPromoteApply && context.input.allow_canonical_page_writes,
     max_runner_calls: context.input.max_runner_calls,
     time_budget_ms: context.input.time_budget_ms,
+    exclude_candidate_ids: [...context.cycle.dream_generated_candidate_ids].sort(),
   });
   const counts = result.counts ?? {};
   const hasActionableWork = Object.values(counts).some((count) => count > 0);
@@ -726,6 +740,12 @@ function initialGuardrailReport(input: DreamCyclePhaseContext['input']): DreamCy
       reason_codes: [],
       summary_lines: [],
     },
+  };
+}
+
+function initialPhaseCycleState(): DreamCyclePhaseCycleState {
+  return {
+    dream_generated_candidate_ids: new Set<string>(),
   };
 }
 
@@ -925,6 +945,7 @@ function buildResult(
   status: DreamCycleRunResult['status'],
   lock: DreamCycleLockResult | null,
   guardrails: DreamCycleGuardrailReport,
+  cycle: DreamCyclePhaseCycleState,
 ): DreamCycleRunResult {
   return {
     status,
@@ -940,6 +961,8 @@ function buildResult(
       generated_by: 'dream_cycle',
       anti_loop_marker: 'mbrain:dream-cycle-output:v1',
       raw_source_ingest_allowed: false,
+      same_cycle_candidate_promotion_allowed: false,
+      guarded_candidate_ids: [...cycle.dream_generated_candidate_ids].sort(),
     },
     phases,
     summary_lines: [
