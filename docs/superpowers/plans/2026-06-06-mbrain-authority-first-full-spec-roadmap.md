@@ -269,6 +269,8 @@ bun run typecheck
 **Purpose:** Test whether graph-assisted selector planning improves canonical
 read selection without making graph edges factual answer evidence.
 
+**Status:** Detailed plan exists and should execute after Phase 6 acceptance.
+
 **Required implementation plan scope:**
 
 - Add strict edge allowlist for `supports`, `contradicts`, `supersedes`, and
