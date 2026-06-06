@@ -455,6 +455,79 @@ describe('memory review report service', () => {
     expect(formatted).not.toContain('Maintenance Health');
   });
 
+  test('collects staged candidate review items without proposed candidate content', async () => {
+    const timestamp = new Date(now);
+    const stagedCandidates: MemoryCandidateEntry[] = [
+      {
+        id: 'candidate:staged-work',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'Private staged work candidate content must stay gated.',
+        source_refs: ['Source: staged work test'],
+        generated_by: 'agent',
+        extraction_kind: 'extracted',
+        confidence_score: 0.61,
+        importance_score: 0.4,
+        recurrence_score: 0.1,
+        sensitivity: 'work',
+        status: 'staged_for_review',
+        target_object_type: 'curated_note',
+        target_object_id: 'people/ada',
+        reviewed_at: null,
+        review_reason: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+      },
+      {
+        id: 'candidate:staged-secret',
+        scope_id: 'workspace:default',
+        candidate_type: 'fact',
+        proposed_content: 'sk-secretcandidatecontent123456 should never appear in the report.',
+        source_refs: ['Source: staged secret test'],
+        generated_by: 'agent',
+        extraction_kind: 'extracted',
+        confidence_score: 0.7,
+        importance_score: 0.8,
+        recurrence_score: 0.1,
+        sensitivity: 'secret',
+        status: 'staged_for_review',
+        target_object_type: 'curated_note',
+        target_object_id: 'target-secret-should-not-appear-in-summary',
+        reviewed_at: null,
+        review_reason: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+      },
+    ];
+    const engine = {
+      listMemoryMutationEvents: async () => [],
+      listMemoryCandidateEntries: async () => stagedCandidates,
+      listCanonicalHandoffEntries: async () => [],
+    } as unknown as BrainEngine;
+
+    const input = await collectMemoryReportInput(engine, 'workspace:default', 10, now);
+    const report = buildMemoryReviewReport(input);
+    const reportJson = JSON.stringify(report);
+
+    expect(input.review_items).toEqual([
+      expect.objectContaining({
+        id: 'candidate:staged-work',
+        summary: expect.stringContaining('content gated'),
+        severity: 'medium',
+      }),
+      expect.objectContaining({
+        id: 'candidate:staged-secret',
+        summary: expect.stringContaining('content gated'),
+        severity: 'high',
+      }),
+    ]);
+    expect(reportJson).not.toContain('Private staged work candidate content');
+    expect(reportJson).not.toContain('sk-secretcandidatecontent123456');
+    expect(reportJson).toContain('read_candidate_context');
+    expect(input.review_items?.find((item) => item.id === 'candidate:staged-secret')?.summary)
+      .not.toContain('target-secret-should-not-appear-in-summary');
+  });
+
   test('collects Phase 12 report evidence from the configured runtime, not only synthetic input', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mbrain-memory-report-'));
     tempPaths.push(dir);

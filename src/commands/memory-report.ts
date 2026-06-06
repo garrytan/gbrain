@@ -161,12 +161,13 @@ function memoryMutationToCanonicalMemory(event: MemoryMutationEvent): ReportCano
 
 function memoryCandidateToReviewItem(candidate: MemoryCandidateEntry): ReportReviewItem[] {
   if (!needsReview(candidate.status)) return [];
+  const sourceRefsCount = candidate.source_refs.filter((sourceRef) => sourceRef.trim().length > 0).length;
   return [
     {
       id: candidate.id,
       review_type: candidate.candidate_type,
       target_ref: candidate.target_object_id ?? candidate.target_object_type ?? undefined,
-      summary: candidate.proposed_content,
+      summary: `Memory candidate is staged for review (${candidate.candidate_type}; source_refs ${sourceRefsCount}; content gated; use read_candidate_context for explicit audited access).`,
       severity: candidate.sensitivity === 'secret' ? 'high' : 'medium',
     },
   ];
