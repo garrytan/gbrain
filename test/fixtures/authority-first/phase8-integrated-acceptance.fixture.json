@@ -1,0 +1,499 @@
+{
+  "id": "phase8-integrated-acceptance",
+  "now": "2026-06-06T00:00:00.000Z",
+  "scope_id": "workspace:default",
+  "graph_frontier_default": "off",
+  "retrieval_probe": {
+    "search_result_refs": ["search-hit:systems/mbrain"],
+    "query_result_refs": ["query-hit:memory-boundary"],
+    "candidate_signal_refs": ["candidate:phase8-inbox"],
+    "required_reads": ["read:canonical:systems/mbrain-authority"],
+    "answer_evidence_refs": []
+  },
+  "answer_evidence_refs": [
+    {
+      "ref": "read:canonical:systems/mbrain-authority",
+      "surface": "read_context",
+      "authority": "canonical_compiled_truth",
+      "factual_answer_evidence": true
+    },
+    {
+      "ref": "search-hit:systems/mbrain",
+      "surface": "search_chunk",
+      "authority": "derived_orientation",
+      "factual_answer_evidence": false
+    },
+    {
+      "ref": "candidate-signal:phase8",
+      "surface": "retrieve_context_candidate",
+      "authority": "unreviewed_candidate",
+      "factual_answer_evidence": false
+    },
+    {
+      "ref": "candidate:phase8-inbox",
+      "surface": "memory_inbox_candidate",
+      "authority": "unreviewed_candidate",
+      "factual_answer_evidence": false
+    },
+    {
+      "ref": "graph_path:phase8-recall",
+      "surface": "graph_path",
+      "authority": "derived_orientation",
+      "factual_answer_evidence": false
+    },
+    {
+      "ref": "raw-episode:phase8",
+      "surface": "raw_episode",
+      "authority": "provenance_only",
+      "factual_answer_evidence": false
+    },
+    {
+      "ref": "candidate:dream-phase8",
+      "surface": "dream_output",
+      "authority": "unreviewed_candidate",
+      "factual_answer_evidence": false
+    }
+  ],
+  "trust_cases": [
+    {
+      "id": "canonical-compiled-truth",
+      "input": {
+        "id": "page:systems/mbrain-authority",
+        "artifact_kind": "compiled_truth",
+        "stale": false,
+        "source_ref": "read:canonical:systems/mbrain-authority"
+      },
+      "expected_activation": "answer_ground",
+      "expected_authority": "canonical_compiled_truth"
+    },
+    {
+      "id": "stale-code-verify-first",
+      "input": {
+        "id": "code:src/core/operations.ts",
+        "artifact_kind": "current_artifact",
+        "stale": true,
+        "source_ref": "code:src/core/operations.ts"
+      },
+      "expected_activation": "verify_first",
+      "expected_authority": "verified_current_artifact"
+    },
+    {
+      "id": "personal-episode-allowed",
+      "input": {
+        "id": "personal-episode:allowed",
+        "artifact_kind": "personal_episode",
+        "scope_policy": "allow",
+        "source_ref": "personal_episode:allowed"
+      },
+      "expected_activation": "answer_ground",
+      "expected_authority": "personal_episode"
+    },
+    {
+      "id": "personal-episode-denied",
+      "input": {
+        "id": "personal-episode:denied",
+        "artifact_kind": "personal_episode",
+        "scope_policy": "deny",
+        "source_ref": "personal_episode:denied"
+      },
+      "expected_activation": "ignore",
+      "expected_authority": "scope_denied"
+    },
+    {
+      "id": "candidate-only",
+      "input": {
+        "id": "candidate:phase8-inbox",
+        "artifact_kind": "memory_candidate",
+        "candidate_status": "candidate",
+        "target_object_type": "curated_note",
+        "source_refs_count": 1,
+        "source_ref": "candidate:phase8-inbox"
+      },
+      "expected_activation": "candidate_only",
+      "expected_authority": "unreviewed_candidate"
+    },
+    {
+      "id": "graph-path-orientation",
+      "input": {
+        "id": "graph_path:phase8-recall",
+        "artifact_kind": "graph_path",
+        "source_ref": "graph_path:phase8-recall"
+      },
+      "expected_activation": "orientation_only",
+      "expected_authority": "derived_orientation"
+    }
+  ],
+  "secret_checks": [
+    {
+      "id": "secret-redacted",
+      "contains_secret": true,
+      "exposed_to_answer": false,
+      "canonicalized": false
+    }
+  ],
+  "write_attempts": [],
+  "candidate_promotions": [],
+  "memory_candidates": [
+    {
+      "id": "candidate:dream-phase8",
+      "scope_id": "workspace:default",
+      "candidate_type": "fact",
+      "proposed_content": "Dream-generated candidate remains review-only during the same cycle.",
+      "source_refs": ["source_item:dream-phase8"],
+      "generated_by": "dream_cycle",
+      "extraction_kind": "extracted",
+      "confidence_score": 0.9,
+      "importance_score": 0.5,
+      "recurrence_score": 0,
+      "sensitivity": "work",
+      "status": "candidate",
+      "target_object_type": "curated_note",
+      "target_object_id": "systems/mbrain-authority",
+      "reviewed_at": null,
+      "review_reason": null,
+      "runner_executed": false
+    },
+    {
+      "id": "candidate:excluded-no-source",
+      "scope_id": "workspace:default",
+      "candidate_type": "fact",
+      "proposed_content": "Candidate without provenance stays excluded.",
+      "source_refs": [],
+      "generated_by": "agent",
+      "extraction_kind": "inferred",
+      "confidence_score": 0.8,
+      "importance_score": 0.4,
+      "recurrence_score": 0,
+      "sensitivity": "work",
+      "status": "candidate",
+      "target_object_type": "curated_note",
+      "target_object_id": "systems/mbrain-authority",
+      "reviewed_at": null,
+      "review_reason": null,
+      "runner_executed": false
+    }
+  ],
+  "auto_promote_policy": {
+    "eligibility": {
+      "evidence_kinds": ["direct_user_statement", "source_extracted"],
+      "sensitivities": ["public", "work"],
+      "allow_contradictions": false
+    }
+  },
+  "episode_capture": {
+    "source_kind": "agent_session",
+    "session_id": "session-phase8",
+    "client_name": "codex",
+    "repo_path": "/Users/meghendra/Work/mbrain",
+    "workspace_id": "systems/mbrain-authority",
+    "now": "2026-06-06T00:00:00.000Z",
+    "allow_broad_raw_capture": false,
+    "events": [
+      {
+        "event_id": "event-raw-episode-preview",
+        "event_kind": "assistant_response",
+        "actor": "assistant",
+        "text": "Decision: use read_context before answering factual questions.",
+        "occurred_at": "2026-06-06T00:00:00.000Z"
+      }
+    ]
+  },
+  "writeback_inputs": [
+    {
+      "id": "canonical-router-allowed",
+      "input": {
+        "content": "Canonical write requires source refs and target snapshot hash.",
+        "source_refs": ["source_record:phase8"],
+        "source_kind": "manual",
+        "evidence_kind": "direct_user_statement",
+        "target_object_type": "curated_note",
+        "target_object_id": "systems/mbrain-authority",
+        "target_snapshot_hash": "hash-before",
+        "scope_id": "workspace:default",
+        "sensitivity": "work",
+        "allow_canonical_write": true
+      },
+      "expected_decision": "canonical_write_allowed",
+      "expected_intended_operation": "put_page"
+    },
+    {
+      "id": "agent-inferred-candidate-only",
+      "input": {
+        "content": "Agent inferred signal must become a candidate.",
+        "source_refs": ["source_item:phase8-agent"],
+        "source_kind": "session_end",
+        "evidence_kind": "agent_inferred",
+        "target_object_type": "curated_note",
+        "target_object_id": "systems/mbrain-authority",
+        "scope_id": "workspace:default",
+        "sensitivity": "work"
+      },
+      "expected_decision": "create_candidate",
+      "expected_intended_operation": "create_memory_candidate_entry"
+    }
+  ],
+  "dream": {
+    "generated_candidate_ids": ["candidate:dream-phase8"],
+    "same_cycle_promoted_candidate_ids": [],
+    "canonical_write_attempt_ids": []
+  },
+  "projections": {
+    "decision_input": {
+      "task_decisions": [
+        {
+          "id": "decision-phase8",
+          "task_id": "task-phase8",
+          "summary": "Treat retrieve_context candidates as pointers until read_context.",
+          "rationale": "Factual answer evidence must come from canonical reads.",
+          "consequences": ["Candidate and graph surfaces stay hint-only."],
+          "validity_context": {
+            "canonical_target": "systems/mbrain-authority",
+            "scope_id": "workspace:default",
+            "affected_selectors": ["read:canonical:systems/mbrain-authority"],
+            "revalidation_path": "read_canonical"
+          },
+          "created_at": "2026-06-06T00:00:00.000Z"
+        }
+      ],
+      "retrieval_traces": [
+        {
+          "id": "trace-phase8",
+          "task_id": "task-phase8",
+          "source_refs": ["read:canonical:systems/mbrain-authority"],
+          "route": ["retrieve_context", "read_context"]
+        }
+      ],
+      "assertions": [
+        {
+          "id": "assertion-phase8",
+          "scope_id": "workspace:default",
+          "claim_text": "Treat retrieve_context candidates as pointers until read_context.",
+          "authority_state": "canonical",
+          "lifecycle_state": "active",
+          "target_id": "systems/mbrain-authority",
+          "source_refs": ["assertion-evidence:phase8"],
+          "valid_until": null
+        }
+      ]
+    },
+    "negative_input": {
+      "current_anchors": {
+        "repo": "mbrain",
+        "command": "bun test ./test/authority-first-integrated-acceptance.test.ts"
+      },
+      "task_attempts": [
+        {
+          "id": "attempt-phase8",
+          "task_id": "task-phase8",
+          "summary": "Using prose snapshots made the acceptance test brittle.",
+          "outcome": "failed",
+          "applicability_context": {
+            "repo": "mbrain",
+            "command": "bun test ./test/authority-first-integrated-acceptance.test.ts",
+            "valid_until": "2026-12-31T00:00:00.000Z"
+          },
+          "evidence": ["Use numeric counters instead."]
+        }
+      ],
+      "now": "2026-06-06T00:00:00.000Z"
+    },
+    "mutation_attempt_refs": []
+  },
+  "graph_evaluation": {
+    "id": "phase8-integrated-mini-graph",
+    "description": "Small graph fixture embedded in the integrated authority-first acceptance runner.",
+    "cases": [
+      {
+        "id": "recall_bridge",
+        "family": "recall_bridge",
+        "query": "Find the graph target related to the seed system.",
+        "scope_id": "workspace:default",
+        "policy_version": "policy:v1",
+        "seed_node_ids": ["assertion:recall-seed"],
+        "graph_off_selectors": [
+          {
+            "kind": "page",
+            "scope_id": "workspace:default",
+            "slug": "systems/recall-seed",
+            "freshness": "current"
+          }
+        ],
+        "gold_selectors": [
+          {
+            "kind": "page",
+            "scope_id": "workspace:default",
+            "slug": "concepts/recall-target",
+            "freshness": "current"
+          }
+        ],
+        "allowed_selectors": [
+          {
+            "kind": "page",
+            "scope_id": "workspace:default",
+            "slug": "systems/recall-seed",
+            "freshness": "current"
+          },
+          {
+            "kind": "page",
+            "scope_id": "workspace:default",
+            "slug": "concepts/recall-target",
+            "freshness": "current"
+          }
+        ],
+        "frontier": {
+          "max_depth": 1,
+          "fanout_cap": 4,
+          "nodes": [
+            {
+              "id": "assertion:recall-seed",
+              "scope_id": "workspace:default",
+              "policy_version": "policy:v1",
+              "selector": {
+                "kind": "page",
+                "scope_id": "workspace:default",
+                "slug": "systems/recall-seed",
+                "freshness": "current"
+              }
+            },
+            {
+              "id": "assertion:recall-target",
+              "scope_id": "workspace:default",
+              "policy_version": "policy:v1",
+              "selector": {
+                "kind": "page",
+                "scope_id": "workspace:default",
+                "slug": "concepts/recall-target",
+                "freshness": "current"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "edge:recall-seed-target",
+              "edge_type": "supports",
+              "from_node_id": "assertion:recall-seed",
+              "to_node_id": "assertion:recall-target",
+              "scope_id": "workspace:default",
+              "policy_version": "policy:v1"
+            }
+          ]
+        },
+        "instrumentation": {
+          "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+          "graph_on": { "latency_ms": 12, "estimated_tokens": 115 }
+        },
+        "answer_evidence_refs": []
+      },
+      {
+        "id": "false_bridge_distractor",
+        "family": "false_bridge_distractor",
+        "query": "Avoid unrelated graph bridges.",
+        "scope_id": "workspace:default",
+        "policy_version": "policy:v1",
+        "seed_node_ids": ["assertion:distractor-seed"],
+        "graph_off_selectors": [
+          {
+            "kind": "page",
+            "scope_id": "workspace:default",
+            "slug": "systems/distractor-seed",
+            "freshness": "current"
+          }
+        ],
+        "gold_selectors": [
+          {
+            "kind": "page",
+            "scope_id": "workspace:default",
+            "slug": "systems/distractor-seed",
+            "freshness": "current"
+          }
+        ],
+        "allowed_selectors": [
+          {
+            "kind": "page",
+            "scope_id": "workspace:default",
+            "slug": "systems/distractor-seed",
+            "freshness": "current"
+          }
+        ],
+        "forbidden_selectors": [
+          {
+            "kind": "page",
+            "scope_id": "workspace:default",
+            "slug": "concepts/unrelated-distractor",
+            "freshness": "current"
+          }
+        ],
+        "frontier": {
+          "max_depth": 1,
+          "fanout_cap": 4,
+          "nodes": [
+            {
+              "id": "assertion:distractor-seed",
+              "scope_id": "workspace:default",
+              "policy_version": "policy:v1",
+              "selector": {
+                "kind": "page",
+                "scope_id": "workspace:default",
+                "slug": "systems/distractor-seed",
+                "freshness": "current"
+              }
+            },
+            {
+              "id": "assertion:unrelated-distractor",
+              "scope_id": "workspace:default",
+              "policy_version": "policy:v1",
+              "selector": {
+                "kind": "page",
+                "scope_id": "workspace:default",
+                "slug": "concepts/unrelated-distractor",
+                "freshness": "current"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "edge:distractor-unsupported",
+              "edge_type": "derived_from",
+              "from_node_id": "assertion:distractor-seed",
+              "to_node_id": "assertion:unrelated-distractor",
+              "scope_id": "workspace:default",
+              "policy_version": "policy:v1"
+            }
+          ]
+        },
+        "instrumentation": {
+          "graph_off": { "latency_ms": 10, "estimated_tokens": 100 },
+          "graph_on": { "latency_ms": 11, "estimated_tokens": 105 }
+        },
+        "answer_evidence_refs": []
+      }
+    ]
+  },
+  "expected_proof_scenario_ids": [
+    "decision_reuse",
+    "failed_attempt_avoidance",
+    "stale_code_verify_first",
+    "candidate_exclusion",
+    "memory_why_explanation"
+  ],
+  "expected_zero_counters": {
+    "noncanonical_answer_evidence_count": 0,
+    "candidate_answer_evidence_count": 0,
+    "graph_as_answer_evidence_count": 0,
+    "raw_episode_answer_evidence_count": 0,
+    "scope_leak_count": 0,
+    "secret_leak_count": 0,
+    "stale_verify_first_miss_count": 0,
+    "canonical_write_without_permission_count": 0,
+    "promotion_bypass_count": 0,
+    "prompt_injection_auto_write_count": 0,
+    "secret_canonicalization_count": 0,
+    "dream_canonical_write_attempt_count": 0,
+    "dream_self_consumption_count": 0,
+    "projection_mutation_count": 0,
+    "proof_mutation_count": 0,
+    "handoff_only_put_page_count": 0,
+    "excluded_candidate_runner_count": 0,
+    "graph_frontier_default_on_count": 0
+  }
+}
