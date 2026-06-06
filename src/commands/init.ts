@@ -241,8 +241,9 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       console.error(`Provider ${shorthand} has no embedding models listed. Use --embedding-model provider:model.`);
       process.exit(1);
     }
+    const { embeddingDefaultDimsForModel } = await import('../core/ai/model-resolver.ts');
     out.embedding_model = `${shorthand}:${firstModel}`;
-    out.embedding_dimensions = recipe.touchpoints.embedding!.default_dims;
+    out.embedding_dimensions = embeddingDefaultDimsForModel(recipe, firstModel);
   }
 
   if (dimsArg !== null && !Number.isNaN(dimsArg) && dimsArg > 0) {
@@ -267,7 +268,9 @@ async function resolveAIOptions(opts: ResolveAIOptionsArgs): Promise<ResolvedAIO
       process.exit(1);
     }
     if (recipe?.touchpoints.embedding?.default_dims) {
-      out.embedding_dimensions = recipe.touchpoints.embedding.default_dims;
+      const { parseModelId, embeddingDefaultDimsForModel } = await import('../core/ai/model-resolver.ts');
+      const parsed = parseModelId(out.embedding_model);
+      out.embedding_dimensions = embeddingDefaultDimsForModel(recipe, parsed.modelId);
     }
   }
 
@@ -430,9 +433,10 @@ async function resolveEmbeddingByEnv(out: ResolvedAIOptions, nonInteractive: boo
       // legacy OpenAI 1536), not the recipe's 2560.
       const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } =
         await import('../core/ai/defaults.ts');
+      const { embeddingDefaultDimsForModel } = await import('../core/ai/model-resolver.ts');
       const dims = fullModel === DEFAULT_EMBEDDING_MODEL
         ? DEFAULT_EMBEDDING_DIMENSIONS
-        : tp.default_dims;
+        : embeddingDefaultDimsForModel(r, model);
       out.embedding_model = fullModel;
       out.embedding_dimensions = dims;
       console.error(

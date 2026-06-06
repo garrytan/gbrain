@@ -16,7 +16,7 @@
 import type { BrainEngine } from './engine.ts';
 import { PGVECTOR_HNSW_VECTOR_MAX_DIMS } from './vector-index.ts';
 import { gbrainPath } from './config.ts';
-import { resolveRecipe } from './ai/model-resolver.ts';
+import { resolveRecipe, embeddingDefaultDimsForModel } from './ai/model-resolver.ts';
 import type { Recipe } from './ai/types.ts';
 import { AIConfigError } from './ai/errors.ts';
 import {
@@ -265,8 +265,9 @@ export interface ResolveSchemaEmbeddingDimOpts {
  *  3. Recipe declares an `embedding` touchpoint.
  *  4. Resolved dim is a positive integer.
  *  5. Resolved dim ≤ PGVECTOR_COLUMN_MAX_DIMS (16000).
- *  6. If user passed `embedding_dimensions`, it either matches
- *     `recipe.touchpoints.embedding.default_dims` OR is in the recipe's
+ *  6. If user passed `embedding_dimensions`, it either matches the model's
+ *     native default (`model_dims[model]` when declared, otherwise
+ *     `recipe.touchpoints.embedding.default_dims`) OR is in the recipe's
  *     `dims_options` list (Matryoshka providers). Otherwise reject — the
  *     user picked a model that doesn't support custom dims.
  */
@@ -282,7 +283,8 @@ export function resolveSchemaEmbeddingDim(opts: ResolveSchemaEmbeddingDimOpts): 
           `Pick a recipe with an embedding touchpoint (gbrain providers list).`,
       };
     }
-    return validateDimAgainstTouchpoint(parsed.modelId, recipe, tp.default_dims, tp.dims_options, opts.embedding_dimensions);
+    const defaultDims = embeddingDefaultDimsForModel(recipe, parsed.modelId);
+    return validateDimAgainstTouchpoint(parsed.modelId, recipe, defaultDims, tp.dims_options, opts.embedding_dimensions);
   } catch (err) {
     return { ok: false, error: err instanceof AIConfigError ? err.message : String(err) };
   }

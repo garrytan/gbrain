@@ -27,6 +27,12 @@ export type Implementation =
 export interface EmbeddingTouchpoint {
   models: string[];
   default_dims: number;
+  /**
+   * Optional per-model native dimensions for providers that expose multiple
+   * fixed-width embedding models under one recipe (for example Ollama local
+   * models). When omitted, consumers fall back to default_dims.
+   */
+  model_dims?: Record<string, number>;
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date

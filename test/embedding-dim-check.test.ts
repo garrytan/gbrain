@@ -237,6 +237,43 @@ describe('resolveSchemaEmbeddingDim', () => {
     if (got.ok) expect(got.dim).toBe(768);
   });
 
+  test('Ollama qwen3-embedding:0.6b resolves to its per-model 1024d default', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:qwen3-embedding:0.6b' });
+    expect(got).toEqual({
+      ok: true,
+      dim: 1024,
+      model: 'ollama:qwen3-embedding:0.6b',
+      provider: 'ollama',
+      recipeDefault: 1024,
+    });
+  });
+
+  test('Ollama qwen3-embedding resolves to its per-model 4096d default', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:qwen3-embedding' });
+    expect(got).toEqual({
+      ok: true,
+      dim: 4096,
+      model: 'ollama:qwen3-embedding',
+      provider: 'ollama',
+      recipeDefault: 4096,
+    });
+  });
+
+  test('Ollama all-minilm resolves to its per-model 384d default', () => {
+    const got = resolveSchemaEmbeddingDim({ embedding_model: 'ollama:all-minilm' });
+    expect(got.ok).toBe(true);
+    if (got.ok) expect(got.dim).toBe(384);
+  });
+
+  test('Ollama qwen3-embedding rejects non-native explicit dimensions', () => {
+    const got = resolveSchemaEmbeddingDim({
+      embedding_model: 'ollama:qwen3-embedding:0.6b',
+      embedding_dimensions: 768,
+    });
+    expect(got.ok).toBe(false);
+    if (!got.ok) expect(got.error).toMatch(/does not support custom dimensions 768/);
+  });
+
   test('unknown provider rejected with provider list hint', () => {
     const got = resolveSchemaEmbeddingDim({ embedding_model: 'notarealprovider:foo' });
     expect(got.ok).toBe(false);

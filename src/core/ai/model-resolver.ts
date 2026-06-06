@@ -141,6 +141,20 @@ export function assertTouchpoint(
   }
 }
 
+/**
+ * Return the native embedding width for a concrete model in a recipe.
+ *
+ * Most providers expose one fixed width per embedding recipe, so default_dims is
+ * enough. Local/model-hosting recipes such as Ollama can list multiple fixed
+ * width models under the same provider; model_dims lets those models size the
+ * schema correctly without forcing users to pass --embedding-dimensions.
+ */
+export function embeddingDefaultDimsForModel(recipe: Recipe, modelId: string): number {
+  const tp = recipe.touchpoints.embedding;
+  if (!tp) return 0;
+  return tp.model_dims?.[modelId] ?? tp.default_dims;
+}
+
 export function knownProviderIds(): string[] {
   return [...RECIPES.keys()];
 }

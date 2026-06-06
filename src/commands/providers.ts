@@ -6,6 +6,7 @@
  */
 
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
+import { parseModelId, embeddingDefaultDimsForModel } from '../core/ai/model-resolver.ts';
 import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
 import { loadConfig } from '../core/config.ts';
@@ -181,7 +182,7 @@ async function runTest(args: string[]): Promise<void> {
     } catch { /* loadConfig throws when no brain configured — first-time install path; the no-config branch above handles it. */ }
 
     if (tpArg === 'embedding') {
-      const dims = recipe?.touchpoints.embedding?.default_dims ?? 1536;
+      const dims = recipe ? embeddingDefaultDimsForModel(recipe, parseModelId(modelArg).modelId) : 1536;
       configureGateway({
         embedding_model: modelArg,
         embedding_dimensions: dims,
@@ -299,7 +300,7 @@ async function runExplain(args: string[]): Promise<void> {
         id: `${r.id}:${m.models[0]}`,
         touchpoint: 'embedding',
         model: m.models[0],
-        dims: m.default_dims,
+        dims: embeddingDefaultDimsForModel(r, m.models[0]),
         cost_per_1m_tokens_usd: m.cost_per_1m_tokens_usd,
         price_last_verified: m.price_last_verified,
         env_ready: envReady(r) || (r.id === 'ollama' && ollama.models_endpoint_valid === true),

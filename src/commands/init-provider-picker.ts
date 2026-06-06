@@ -21,6 +21,7 @@
  */
 
 import { listRecipes } from '../core/ai/recipes/index.ts';
+import { embeddingDefaultDimsForModel } from '../core/ai/model-resolver.ts';
 import { envReady, formatRecipeTable } from './providers.ts';
 import { readLineSafe } from './init.ts';
 import type { Recipe } from '../core/ai/types.ts';
@@ -123,8 +124,8 @@ export async function pickProvider(opts: PickProviderOpts): Promise<PickedProvid
   const lines = ready.map((r, i) => {
     const tp = r.touchpoints[opts.touchpoint];
     let label = `  ${i + 1}) ${r.id}`;
-    if (opts.touchpoint === 'embedding' && tp && 'default_dims' in tp) {
-      label += `  (${tp.default_dims}d)`;
+    if (opts.touchpoint === 'embedding' && tp && 'default_dims' in tp && 'models' in tp && Array.isArray(tp.models) && tp.models.length > 0) {
+      label += `  (${embeddingDefaultDimsForModel(r, tp.models[0])}d)`;
     }
     if (tp && 'models' in tp && Array.isArray(tp.models) && tp.models.length > 0) {
       label += `  ${tp.models[0]}`;
@@ -169,7 +170,7 @@ export async function pickProvider(opts: PickProviderOpts): Promise<PickedProvid
 
   const dim =
     opts.touchpoint === 'embedding' && 'default_dims' in tp
-      ? (tp as { default_dims: number }).default_dims
+      ? embeddingDefaultDimsForModel(picked, modelId)
       : 0;
 
   return {
