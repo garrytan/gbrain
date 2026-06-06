@@ -84,6 +84,12 @@ but does not extend a Dream cycle lock.
   those ids to auto-promote as exclusions, so same-cycle Dream outputs cannot be
   promoted by the cycle that generated them. This is cycle-scoped and does not
   globally block older Dream-generated candidates from review.
+- [x] Slice D report-only safety-state inventory:
+  daily memory review reports now expose trust, source, contradiction,
+  negative-memory, freshness, runner, and redaction states as content-light
+  report-only signals. Each state is marked `report_only: true` and
+  `canonical_write_allowed: false`; no new storage, Dream authority, or
+  canonical-write path was added.
 
 ## Existing Surfaces To Reuse
 
@@ -327,6 +333,9 @@ Create tests covering the bounded daily-report slice:
   as stale when the scoped handoff page is limited;
 - projection freshness is summarized from existing projection target status and
   freshness fields;
+- trust/source/contradiction/negative-memory/freshness/runner/redaction safety
+  states are summarized without raw source text, candidate content, or failed
+  attempt details;
 - zero-debt maintenance inventory alone does not open a warning report.
 
 - [x] **Step 2: Implement report-only summaries**
@@ -400,7 +409,7 @@ Expected: PASS.
   missing.
 - [x] Replay canary gates candidate-writing and auto-promote apply paths.
 - [x] Dream-generated candidates cannot be promoted in the same cycle.
-- [ ] Trust/source/contradiction/negative-memory/freshness/runner/redaction
+- [x] Trust/source/contradiction/negative-memory/freshness/runner/redaction
   safety states are report-only by default.
 - [x] Candidate debt and projection freshness appear as bounded, content-light
   report signals.

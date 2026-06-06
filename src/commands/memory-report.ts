@@ -18,9 +18,15 @@ import {
   type ReportSourceItem,
 } from '../core/services/memory-review-report-service.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { MemoryCandidateEntry, MemoryMutationEvent } from '../core/types.ts';
+import type {
+  DecisionProjectionMemoryCandidate,
+  DecisionProjectionTaskAttempt,
+  MemoryCandidateEntry,
+  MemoryMutationEvent,
+} from '../core/types.ts';
 import { createLifecycleForgettingStoreForEngine } from '../core/maintenance/lifecycle-forgetting.ts';
 import { computeCandidateDebtMetrics } from '../core/services/inbox-lead-service.ts';
+import { buildNegativeMemoryProjections } from '../core/services/negative-memory-projection-service.ts';
 
 const DEFAULT_SCOPE_ID = 'workspace:default';
 const DEFAULT_LIMIT = 100;
@@ -72,6 +78,7 @@ export async function collectMemoryReportInput(
     runnerJobs,
     jobs,
     connectorHealth,
+    failedTaskAttempts,
   ] = await Promise.all([
     engine.listMemoryMutationEvents({ scope_id: scopeId, limit, offset: 0 }),
     engine.listMemoryCandidateEntries({ scope_id: scopeId, limit, offset: 0 }),
@@ -88,8 +95,20 @@ export async function collectMemoryReportInput(
     collectRunnerJobs(engine, limit),
     collectMaintenanceJobs(engine, limit),
     collectConnectorHealth(engine, limit),
+    collectFailedTaskAttempts(engine, scopeId, limit),
   ]);
   const canonicalHandoffCandidateIds = await collectCanonicalHandoffCandidateIds(engine, scopeId, candidates);
+  const negativeMemoryProjections = [
+    ...failedTaskAttempts.flatMap((attempt) => buildNegativeMemoryProjections({
+      task_attempts: [attempt],
+      current_anchors: attempt.applicability_context,
+      now: generatedAt,
+    })),
+    ...buildNegativeMemoryProjections({
+      memory_candidates: candidates.map(memoryCandidateToDecisionProjectionCandidate),
+      now: generatedAt,
+    }),
+  ];
 
   return {
     scope_id: scopeId,
@@ -119,6 +138,7 @@ export async function collectMemoryReportInput(
       candidates,
       canonical_handoff_candidate_ids: canonicalHandoffCandidateIds,
     }),
+    negative_memory_projections: negativeMemoryProjections,
   };
 }
 
@@ -171,6 +191,20 @@ function memoryCandidateToReviewItem(candidate: MemoryCandidateEntry): ReportRev
       severity: candidate.sensitivity === 'secret' ? 'high' : 'medium',
     },
   ];
+}
+
+function memoryCandidateToDecisionProjectionCandidate(
+  candidate: MemoryCandidateEntry,
+): DecisionProjectionMemoryCandidate {
+  return {
+    id: candidate.id,
+    proposed_content: '',
+    status: candidate.status,
+    target_object_type: candidate.target_object_type,
+    target_object_id: candidate.target_object_id,
+    source_refs: candidate.source_refs,
+    review_reason: candidate.review_reason,
+  };
 }
 
 function memoryMutationToPolicyDenial(event: MemoryMutationEvent): ReportPolicyDenial[] {
@@ -587,6 +621,47 @@ async function collectConnectorHealth(engine: BrainEngine, limit: number): Promi
   }));
 }
 
+async function collectFailedTaskAttempts(
+  engine: BrainEngine,
+  scopeId: string,
+  limit: number,
+): Promise<DecisionProjectionTaskAttempt[]> {
+  const taskScope = taskScopeForReportScope(scopeId);
+  if (!taskScope) return [];
+  const rows = await queryRows(engine, `
+    SELECT ta.id, ta.task_id, ta.summary, ta.outcome, ta.applicability_context, ta.evidence, ta.created_at
+    FROM task_attempts ta
+    JOIN task_threads tt ON tt.id = ta.task_id
+    WHERE ta.outcome = 'failed'
+      AND tt.scope = ?
+    ORDER BY ta.created_at DESC, ta.id ASC
+    LIMIT ?
+  `, [taskScope, limit], `
+    SELECT ta.id, ta.task_id, ta.summary, ta.outcome, ta.applicability_context, ta.evidence, ta.created_at
+    FROM task_attempts ta
+    JOIN task_threads tt ON tt.id = ta.task_id
+    WHERE ta.outcome = 'failed'
+      AND tt.scope = $1
+    ORDER BY ta.created_at DESC, ta.id ASC
+    LIMIT $2
+  `);
+  return rows.map((row) => ({
+    id: stringFromUnknown(row.id),
+    task_id: stringFromUnknown(row.task_id),
+    summary: stringFromUnknown(row.summary),
+    outcome: 'failed',
+    applicability_context: jsonObject(row.applicability_context),
+    evidence: jsonStringArray(row.evidence),
+    created_at: stringFromUnknown(row.created_at),
+  }));
+}
+
+function taskScopeForReportScope(scopeId: string): 'work' | 'personal' | null {
+  if (scopeId.startsWith('personal:')) return 'personal';
+  if (scopeId.startsWith('workspace:')) return 'work';
+  return null;
+}
+
 async function queryRows(
   engine: BrainEngine,
   sqliteSql: string,
@@ -693,6 +768,22 @@ function jsonObject(value: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+function jsonStringArray(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((item) => stringFromUnknown(item)).filter((item) => item.length > 0);
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed)
+        ? parsed.map((item) => stringFromUnknown(item)).filter((item) => item.length > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 function printMemoryReportHelp(): void {

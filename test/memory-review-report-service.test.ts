@@ -191,6 +191,21 @@ describe('memory review report service', () => {
         unresolved_exposed_count: 3,
         median_review_latency_ms: 5000,
       },
+      negative_memory_projections: [
+        {
+          id: 'negative-memory:task-attempt:old-command',
+          failed_under: { repo_path: '/repo/mbrain', command: 'bun test' },
+          why_failed: 'Old failed command details should stay out of the report body.',
+          do_not_repeat_if: { repo_path: '/repo/mbrain', command: 'bun test' },
+          reopen_if: {},
+          valid_until: null,
+          source_refs: ['task-attempt:old-command'],
+          owner_or_task: 'task:memory-report',
+          activation: 'suppress_if_valid',
+          suppression_applies: true,
+          reason_codes: ['applicability_anchors_match'],
+        },
+      ],
     });
 
     expect(report.summary).toMatchObject({
@@ -239,6 +254,57 @@ describe('memory review report service', () => {
       total_output_tokens: 250,
       total_estimated_cost_usd: 0.017,
       failed_runner_jobs: 1,
+    });
+    const safetyByCategory = new Map(report.sections.safety_states.map((state) => [state.category, state]));
+    expect([...safetyByCategory.keys()]).toEqual([
+      'trust',
+      'source',
+      'contradiction',
+      'negative_memory',
+      'freshness',
+      'runner',
+      'redaction',
+    ]);
+    for (const state of report.sections.safety_states) {
+      expect(state.report_only).toBe(true);
+      expect(state.canonical_write_allowed).toBe(false);
+    }
+    expect(safetyByCategory.get('trust')).toMatchObject({
+      status: 'warn',
+      count: 1,
+      reason_codes: ['policy_denials_present'],
+      sample_ids: ['denial:1'],
+    });
+    expect(safetyByCategory.get('source')).toMatchObject({
+      status: 'warn',
+      count: 3,
+      reason_codes: ['source_review_required'],
+    });
+    expect(safetyByCategory.get('contradiction')).toMatchObject({
+      status: 'warn',
+      count: 1,
+      reason_codes: ['unresolved_conflicts_present'],
+    });
+    expect(safetyByCategory.get('negative_memory')).toMatchObject({
+      status: 'warn',
+      count: 1,
+      reason_codes: ['negative_memory_blocks_present'],
+      sample_ids: ['negative-memory:task-attempt:old-command'],
+    });
+    expect(safetyByCategory.get('freshness')).toMatchObject({
+      status: 'warn',
+      count: 3,
+      reason_codes: ['freshness_review_required'],
+    });
+    expect(safetyByCategory.get('runner')).toMatchObject({
+      status: 'warn',
+      count: 1,
+      reason_codes: ['runner_failures_present'],
+    });
+    expect(safetyByCategory.get('redaction')).toMatchObject({
+      status: 'warn',
+      count: 2,
+      reason_codes: ['redaction_review_required'],
     });
     expect(report.actions.map((action) => action.kind)).toEqual(expect.arrayContaining([
       'undo',
@@ -344,8 +410,12 @@ describe('memory review report service', () => {
     expect(formatted).toContain('Maintenance Health');
     expect(formatted).toContain('Candidate debt: visible 5');
     expect(formatted).toContain('Projection freshness: pending 0');
+    expect(formatted).toContain('Safety States (report-only)');
+    expect(formatted).toContain('Trust: 1 | policy_denials_present | canonical writes blocked');
+    expect(formatted).toContain('Negative Memory: 1 | negative_memory_blocks_present | canonical writes blocked');
     expect(formatted).toContain('[REDACTED_SECRET]');
     expect(formatted).not.toContain('sk-testsecret123456');
+    expect(formatted).not.toContain('Old failed command details');
   });
 
   test('empty reports stay quiet and healthy', () => {
@@ -356,8 +426,15 @@ describe('memory review report service', () => {
 
     expect(report.health.status).toBe('ok');
     expect(report.summary.failed_jobs).toBe(0);
+    expect(report.sections.safety_states.find((state) => state.category === 'negative_memory')).toMatchObject({
+      status: 'not_instrumented',
+      count: 0,
+      report_only: true,
+      canonical_write_allowed: false,
+    });
     expect(report.actions).toEqual([]);
     expect(formatMemoryReviewReport(report)).toContain('No reportable memory exceptions.');
+    expect(formatMemoryReviewReport(report)).not.toContain('Safety States');
   });
 
   test('updated canonical memories are reportable and not formatted as empty', () => {
@@ -655,6 +732,48 @@ describe('memory review report service', () => {
         target_object_type: 'curated_note',
         target_object_id: 'people/ada',
       });
+      await engine.createTaskThread({
+        id: 'task:negative-memory-report',
+        scope: 'work',
+        title: 'Negative memory report fixture',
+        status: 'active',
+        repo_path: '/repo/mbrain',
+        branch_name: 'main',
+        current_summary: 'Runtime report fixture for failed-attempt projection.',
+      });
+      await engine.recordTaskAttempt({
+        id: 'attempt:negative-memory-report',
+        task_id: 'task:negative-memory-report',
+        summary: 'Running the stale command failed and should be report-only.',
+        outcome: 'failed',
+        applicability_context: {
+          repo_path: '/repo/mbrain',
+          branch_name: 'main',
+          command: 'bun test:old',
+          valid_until: '2026-06-30T00:00:00.000Z',
+        },
+        evidence: ['Source: failed attempt fixture'],
+      });
+      await engine.createTaskThread({
+        id: 'task:personal-negative-memory-report',
+        scope: 'personal',
+        title: 'Personal negative memory fixture',
+        status: 'active',
+        repo_path: null,
+        branch_name: null,
+        current_summary: 'Personal failed attempt should not appear in workspace report.',
+      });
+      await engine.recordTaskAttempt({
+        id: 'attempt:personal-negative-memory-report',
+        task_id: 'task:personal-negative-memory-report',
+        summary: 'Personal failed attempt must stay out of the workspace report.',
+        outcome: 'failed',
+        applicability_context: {
+          profile: 'private',
+          valid_until: '2026-06-30T00:00:00.000Z',
+        },
+        evidence: ['Source: personal failed attempt fixture'],
+      });
 
       const lifecycle = createLifecycleForgettingServiceForEngine(engine, () => now);
       await lifecycle.transitionEntity({
@@ -844,6 +963,66 @@ describe('memory review report service', () => {
         total_estimated_cost_usd: 0.002,
         failed_runner_jobs: 1,
       });
+      const runtimeSafetyByCategory = new Map(report.sections.safety_states.map((state) => [state.category, state]));
+      expect([...runtimeSafetyByCategory.keys()]).toEqual([
+        'trust',
+        'source',
+        'contradiction',
+        'negative_memory',
+        'freshness',
+        'runner',
+        'redaction',
+      ]);
+      for (const state of report.sections.safety_states) {
+        expect(state.report_only).toBe(true);
+        expect(state.canonical_write_allowed).toBe(false);
+      }
+      expect(runtimeSafetyByCategory.get('trust')).toMatchObject({
+        status: 'warn',
+        count: 1,
+        reason_codes: ['policy_denials_present'],
+      });
+      expect(runtimeSafetyByCategory.get('source')).toMatchObject({
+        status: 'warn',
+        count: 3,
+        reason_codes: ['source_review_required'],
+      });
+      expect(runtimeSafetyByCategory.get('contradiction')).toMatchObject({
+        status: 'warn',
+        count: 1,
+        reason_codes: ['unresolved_conflicts_present'],
+      });
+      expect(runtimeSafetyByCategory.get('negative_memory')).toMatchObject({
+        status: 'warn',
+        count: 1,
+        reason_codes: ['negative_memory_blocks_present'],
+        sample_ids: ['negative-memory:task-attempt:attempt:negative-memory-report'],
+      });
+      expect(runtimeSafetyByCategory.get('freshness')).toMatchObject({
+        status: 'warn',
+        count: 2,
+        reason_codes: ['freshness_review_required'],
+      });
+      expect(runtimeSafetyByCategory.get('runner')).toMatchObject({
+        status: 'warn',
+        count: 1,
+        reason_codes: ['runner_failures_present'],
+      });
+      expect(runtimeSafetyByCategory.get('redaction')).toMatchObject({
+        status: 'warn',
+        count: 2,
+        reason_codes: ['redaction_review_required'],
+      });
+      const runtimeFormatted = formatMemoryReviewReport(report);
+      const runtimeJson = JSON.stringify(report);
+      expect(runtimeFormatted).toContain('Safety States (report-only)');
+      expect(runtimeFormatted).toContain('Negative Memory: 1 | negative_memory_blocks_present | canonical writes blocked');
+      expect(runtimeFormatted).not.toContain('Running the stale command failed');
+      expect(runtimeFormatted).not.toContain('Personal failed attempt');
+      expect(runtimeJson).not.toContain('Running the stale command failed');
+      expect(runtimeJson).not.toContain('Personal failed attempt');
+      expect(runtimeJson).not.toContain('Source: failed attempt fixture');
+      expect(runtimeJson).not.toContain('Source: personal failed attempt fixture');
       expect(report.actions).toEqual(expect.arrayContaining([
         expect.objectContaining({
           kind: 'reject',

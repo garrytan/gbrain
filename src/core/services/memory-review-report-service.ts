@@ -1,4 +1,4 @@
-import type { CandidateDebtMetrics } from '../types.ts';
+import type { CandidateDebtMetrics, NegativeMemoryProjection } from '../types.ts';
 
 export type ReportHealthStatus = 'ok' | 'warn' | 'fail';
 export type ReportActionKind =
@@ -123,6 +123,27 @@ export interface ReportRunnerJob {
   cost_estimate_usd?: number;
 }
 
+export type ReportSafetyStateCategory =
+  | 'trust'
+  | 'source'
+  | 'contradiction'
+  | 'negative_memory'
+  | 'freshness'
+  | 'runner'
+  | 'redaction';
+
+export type ReportSafetyStateStatus = 'ok' | 'warn' | 'not_instrumented';
+
+export interface ReportSafetyState {
+  category: ReportSafetyStateCategory;
+  status: ReportSafetyStateStatus;
+  count: number;
+  reason_codes: string[];
+  sample_ids: string[];
+  report_only: true;
+  canonical_write_allowed: false;
+}
+
 export interface ReportMaintenanceJob {
   id: string;
   name: string;
@@ -167,6 +188,7 @@ export interface MemoryReviewReportInput {
   connector_health?: ReportConnectorHealth[];
   auto_promote_summary?: AutoPromoteReportSummary;
   candidate_debt?: CandidateDebtMetrics;
+  negative_memory_projections?: NegativeMemoryProjection[];
 }
 
 export interface SourceIngestSummary {
@@ -259,6 +281,7 @@ export interface MemoryReviewReport {
     failed_jobs: Array<ReportRunnerJob | ReportMaintenanceJob>;
     source_health: ReportSource[];
     connector_health: ReportConnectorHealth[];
+    safety_states: ReportSafetyState[];
     maintenance_health: MaintenanceHealthSummary;
   };
   actions: MemoryReportAction[];
@@ -286,11 +309,25 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
   const failedMaintenanceJobs = jobs.filter((job) => job.status === 'failed' || job.status === 'dead');
   const reconciliationFailures = projectionTargets.filter((target) => target.status === 'failed' || target.status === 'conflict');
   const unhealthySources = sources.filter((source) => source.health_status === 'unhealthy');
+  const failedSourceItems = sourceItems.filter((item) => item.status === 'failed');
   const unhealthyConnectors = connectorHealth.filter(
     (connector) => connector.health_status !== 'healthy' || connector.credential_status === 'revoked',
   );
   const candidateDebt = input.candidate_debt ?? emptyCandidateDebtMetrics();
   const projectionFreshness = summarizeProjectionFreshness(projectionTargets);
+  const safetyStates = buildReportOnlySafetyStates({
+    policyDenials,
+    unhealthySources,
+    failedSourceItems,
+    unhealthyConnectors,
+    conflicts,
+    negativeMemoryProjections: input.negative_memory_projections,
+    lifecycleStates,
+    projectionTargets,
+    failedRunnerJobs,
+    quarantinedSources,
+    secretDetections,
+  });
 
   const summary: MemoryReviewReportSummary = {
     new_canonical_memories: canonicalMemories.filter((memory) => memory.change_type === 'created').length,
@@ -337,6 +374,7 @@ export function buildMemoryReviewReport(input: MemoryReviewReportInput): MemoryR
       failed_jobs: [...failedRunnerJobs, ...failedMaintenanceJobs],
       source_health: sources,
       connector_health: connectorHealth,
+      safety_states: safetyStates,
       maintenance_health: {
         candidate_debt: candidateDebt,
         projection_freshness: projectionFreshness,
@@ -396,6 +434,13 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
     lines.push(`- Projection freshness: pending ${projectionFreshness.pending_reconcile_count} | failed ${projectionFreshness.failed_count} | conflict ${projectionFreshness.conflict_count} | stale ${projectionFreshness.stale_count}`);
   }
 
+  if (hasSafetyStateSignals(report.sections.safety_states)) {
+    lines.push('', 'Safety States (report-only)');
+    for (const state of report.sections.safety_states.filter((entry) => entry.status === 'warn' && entry.count > 0)) {
+      lines.push(`- ${formatSafetyStateCategory(state.category)}: ${state.count} | ${state.reason_codes.join(', ')} | canonical writes blocked`);
+    }
+  }
+
   if (report.auto_promote_summary) {
     const s = report.auto_promote_summary;
     lines.push('', 'Auto-promotion (non-blocking)');
@@ -404,6 +449,104 @@ export function formatMemoryReviewReport(report: MemoryReviewReport): string {
   }
 
   return lines.join('\n');
+}
+
+function buildReportOnlySafetyStates(input: {
+  policyDenials: ReportPolicyDenial[];
+  unhealthySources: ReportSource[];
+  failedSourceItems: ReportSourceItem[];
+  unhealthyConnectors: ReportConnectorHealth[];
+  conflicts: ReportConflict[];
+  negativeMemoryProjections?: NegativeMemoryProjection[];
+  lifecycleStates: ReportLifecycleState[];
+  projectionTargets: ReportProjectionTarget[];
+  failedRunnerJobs: ReportRunnerJob[];
+  quarantinedSources: ReportQuarantinedSource[];
+  secretDetections: ReportSecretDetection[];
+}): ReportSafetyState[] {
+  const sourceIds = [
+    ...input.unhealthySources.map((source) => source.id),
+    ...input.failedSourceItems.map((item) => item.id),
+    ...input.unhealthyConnectors.map((connector) => connector.account_id),
+  ];
+  const freshnessIds = [
+    ...input.lifecycleStates
+      .filter((state) => state.lifecycle_state === 'stale' || state.lifecycle_state === 'expired')
+      .map((state) => state.id),
+    ...input.projectionTargets
+      .filter((target) =>
+        target.status === 'pending_reconcile'
+        || target.status === 'failed'
+        || target.status === 'conflict'
+        || target.canonical_changed_since_projection === true
+      )
+      .map((target) => target.id),
+  ];
+  const negativeMemoryBlocks = input.negativeMemoryProjections?.filter((entry) =>
+    entry.activation === 'suppress_if_valid' && entry.suppression_applies === true
+  );
+
+  return [
+    safetyState('trust', input.policyDenials.length, ['policy_denials_present'], input.policyDenials.map((denial) => denial.id)),
+    safetyState('source', sourceIds.length, ['source_review_required'], sourceIds),
+    safetyState('contradiction', input.conflicts.length, ['unresolved_conflicts_present'], input.conflicts.map((conflict) => conflict.id)),
+    negativeMemoryBlocks === undefined
+      ? notInstrumentedSafetyState('negative_memory', ['negative_memory_report_input_missing'])
+      : safetyState('negative_memory', negativeMemoryBlocks.length, ['negative_memory_blocks_present'], negativeMemoryBlocks.map((entry) => entry.id)),
+    safetyState('freshness', freshnessIds.length, ['freshness_review_required'], freshnessIds),
+    safetyState('runner', input.failedRunnerJobs.length, ['runner_failures_present'], input.failedRunnerJobs.map((job) => job.id)),
+    safetyState('redaction', input.quarantinedSources.length + input.secretDetections.length, ['redaction_review_required'], [
+      ...input.quarantinedSources.map((source) => source.id),
+      ...input.secretDetections.map((detection) => detection.id),
+    ]),
+  ];
+}
+
+function safetyState(
+  category: ReportSafetyStateCategory,
+  count: number,
+  warnReasonCodes: string[],
+  ids: string[],
+): ReportSafetyState {
+  return {
+    category,
+    status: count > 0 ? 'warn' : 'ok',
+    count,
+    reason_codes: count > 0 ? warnReasonCodes : ['no_reportable_signal'],
+    sample_ids: sampleIds(ids),
+    report_only: true,
+    canonical_write_allowed: false,
+  };
+}
+
+function notInstrumentedSafetyState(
+  category: ReportSafetyStateCategory,
+  reasonCodes: string[],
+): ReportSafetyState {
+  return {
+    category,
+    status: 'not_instrumented',
+    count: 0,
+    reason_codes: reasonCodes,
+    sample_ids: [],
+    report_only: true,
+    canonical_write_allowed: false,
+  };
+}
+
+function hasSafetyStateSignals(states: ReportSafetyState[]): boolean {
+  return states.some((state) => state.status === 'warn' && state.count > 0);
+}
+
+function sampleIds(ids: string[]): string[] {
+  return [...new Set(ids.filter((id) => id.length > 0))].slice(0, 3);
+}
+
+function formatSafetyStateCategory(category: ReportSafetyStateCategory): string {
+  return category
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function buildReportHealth(summary: MemoryReviewReportSummary): MemoryReviewReport['health'] {
