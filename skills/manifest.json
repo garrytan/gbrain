@@ -195,6 +195,11 @@
       "description": "Deduplicate and synthesize raw concept stubs into a tiered intellectual map (T1 Canon to T4 Riff), tracing idea evolution across sources over time."
     },
     {
+      "name": "idea-lineage",
+      "path": "idea-lineage/SKILL.md",
+      "description": "Trace one idea's evolution through the brain: first mention, best articulation, reversals, contradictions, abandoned branches, related concepts, and current live version."
+    },
+    {
       "name": "perplexity-research",
       "path": "perplexity-research/SKILL.md",
       "description": "Brain-augmented web research via Perplexity plus Opus; surfaces what is NEW vs already-known about a topic by cross-referencing against the brain first."

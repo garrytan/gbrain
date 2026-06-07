@@ -2546,21 +2546,18 @@ export class PGLiteEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
-    // v0.31.8 (D16): two-branch query. See getLinks() comment.
-    if (opts?.sourceId) {
-      const { rows } = await this.db.query(
-        `SELECT f.slug as from_slug, t.slug as to_slug,
-                l.link_type, l.context, l.link_source,
-                o.slug as origin_slug, l.origin_field
-         FROM links l
-         JOIN pages f ON f.id = l.from_page_id
-         JOIN pages t ON t.id = l.to_page_id
-         LEFT JOIN pages o ON o.id = l.origin_page_id
-         WHERE t.slug = $1 AND t.source_id = $2`,
-        [slug, opts.sourceId]
-      );
-      return rows as unknown as Link[];
+  async getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
+    // v0.42.x: federated source scope (array federated path wins over scalar;
+    // neither set => no source filter, preserving pre-v0.31.8 cross-source
+    // semantics). Mirrors postgres-engine getBacklinks.
+    const where: string[] = ['t.slug = $1'];
+    const params: unknown[] = [slug];
+    if (Array.isArray(opts?.sourceIds) && opts!.sourceIds!.length > 0) {
+      params.push(opts!.sourceIds);
+      where.push(`t.source_id = ANY($${params.length}::text[])`);
+    } else if (opts?.sourceId) {
+      params.push(opts.sourceId);
+      where.push(`t.source_id = $${params.length}`);
     }
     const { rows } = await this.db.query(
       `SELECT f.slug as from_slug, t.slug as to_slug,
@@ -2570,8 +2567,8 @@ export class PGLiteEngine implements BrainEngine {
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
        LEFT JOIN pages o ON o.id = l.origin_page_id
-       WHERE t.slug = $1`,
-      [slug]
+       WHERE ${where.join(' AND ')}`,
+      params
     );
     return rows as unknown as Link[];
   }
@@ -3131,7 +3128,12 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.before);
       where.push(`te.date <= $${params.length}::date`);
     }
-    if (opts?.sourceId) {
+    // v0.42.x: federated source scope (array path wins over scalar; neither =>
+    // no source filter). Mirrors postgres-engine getTimeline.
+    if (Array.isArray(opts?.sourceIds) && opts!.sourceIds!.length > 0) {
+      params.push(opts!.sourceIds);
+      where.push(`p.source_id = ANY($${params.length}::text[])`);
+    } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       where.push(`p.source_id = $${params.length}`);
     }
@@ -4051,9 +4053,22 @@ export class PGLiteEngine implements BrainEngine {
 
   async searchTakes(
     query: string,
-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+    opts: { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
+    // v0.42.x: source isolation — holder allow-list is NOT a source boundary.
+    // Array federated path wins over scalar; neither => no filter. Mirrors
+    // postgres-engine searchTakes.
+    const params: unknown[] = [query, opts.takesHoldersAllowList ?? null];
+    let srcClause = '';
+    if (Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      srcClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts.sourceId) {
+      params.push(opts.sourceId);
+      srcClause = `AND p.source_id = $${params.length}`;
+    }
+    params.push(limit);
     const { rows } = await this.db.query(
       `SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
               t.claim, t.kind, t.holder, t.weight,
@@ -4063,19 +4078,31 @@ export class PGLiteEngine implements BrainEngine {
        WHERE t.active
          AND t.claim % $1
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+         ${srcClause}
        ORDER BY score DESC, t.weight DESC
-       LIMIT $3`,
-      [query, opts.takesHoldersAllowList ?? null, limit]
+       LIMIT $${params.length}`,
+      params
     );
     return rows as unknown as TakeHit[];
   }
 
   async searchTakesVector(
     embedding: Float32Array,
-    opts: { limit?: number; takesHoldersAllowList?: string[] } = {},
+    opts: { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[] } = {},
   ): Promise<TakeHit[]> {
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const vec = `[${Array.from(embedding).join(',')}]`;
+    // v0.42.x: source isolation (see searchTakes).
+    const params: unknown[] = [vec, opts.takesHoldersAllowList ?? null];
+    let srcClause = '';
+    if (Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      srcClause = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts.sourceId) {
+      params.push(opts.sourceId);
+      srcClause = `AND p.source_id = $${params.length}`;
+    }
+    params.push(limit);
     const { rows } = await this.db.query(
       `SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
               t.claim, t.kind, t.holder, t.weight,
@@ -4085,9 +4112,10 @@ export class PGLiteEngine implements BrainEngine {
        WHERE t.active
          AND t.embedding IS NOT NULL
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
+         ${srcClause}
        ORDER BY t.embedding <=> $1::vector
-       LIMIT $3`,
-      [vec, opts.takesHoldersAllowList ?? null, limit]
+       LIMIT $${params.length}`,
+      params
     );
     return rows as unknown as TakeHit[];
   }

@@ -41,3 +41,8 @@ test/fixtures/pglite-snapshot.version
 
 # Private brain reports — never check these in (per CLAUDE.md privacy rule)
 reports/network-intelligence/
+
+# Per-run eval output (eval-results.jsonl, idea-lineage-results.jsonl, …).
+# Machine-specific runtime records; the audit trail is the CHANGELOG + git, not
+# these raw run logs.
+.gbrain-evals/

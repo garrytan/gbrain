@@ -1202,9 +1202,15 @@ export interface TimelineOpts {
   /**
    * v0.31.8: when set, scope the page-id lookup to this source. When omitted,
    * the read returns timeline entries for every same-slug page across sources
-   * (pre-v0.31.8 behavior; preserved by the two-branch query in both engines).
+   * (pre-v0.31.8 behavior; preserved by the composed query in both engines).
    */
   sourceId?: string;
+  /**
+   * v0.42.x: federated array scope (mutually exclusive with sourceId; the array
+   * wins when set). Mirrors findTrajectory/SearchOpts. Engine applies
+   * `WHERE p.source_id = ANY($N::text[])`.
+   */
+  sourceIds?: string[];
 }
 
 // Raw data

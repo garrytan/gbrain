@@ -147,6 +147,11 @@ export const METRIC_GLOSSARY: Readonly<Record<string, Readonly<MetricGlossEntry>
     eli10: 'The size of the largest score drop autocut found, as a fraction of the top result\'s score. A gap of 0.40 means the score fell by 40% of the top score at the steepest point. Autocut cuts there only when this clears the sensitivity threshold (autocut_jump, default 0.20).',
     range: '0..1, higher = a sharper cliff (more confident cut). Below the autocut_jump threshold → no cut.',
   }),
+  'lineage_evidence_coverage': Object.freeze({
+    industry_term: 'Lineage evidence coverage',
+    eli10: 'For an idea_lineage run, the fraction of evidence buckets (matches, related concepts, timeline, takes, trajectory, contradictions) that came back with at least one item. High coverage means the brain had rich, multi-angle evidence for the idea; low coverage means the lineage rests on thin evidence and the answer should hedge.',
+    range: '0..1, higher is better. 0.5 means 3 of the 6 evidence buckets were populated for the resolved anchor.',
+  }),
 });
 
 /**
@@ -225,6 +230,7 @@ export function renderMetricGlossaryMarkdown(): string {
     ['Statistical-Significance Metrics', ['p_value', 'confidence_interval']],
     ['Operational / Cost Metrics', ['cache_hit_rate', 'avg_results', 'avg_tokens', 'cost_per_query_usd', 'p99_latency_ms']],
     ['Result-Sizing Metrics', ['autocut.signal', 'autocut.gap_ratio']],
+    ['Lineage Metrics', ['lineage_evidence_coverage']],
   ];
 
   for (const [groupTitle, metrics] of groups) {

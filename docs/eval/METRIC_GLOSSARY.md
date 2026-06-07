@@ -168,6 +168,16 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 **Range:** 0..1, higher = a sharper cliff (more confident cut). Below the autocut_jump threshold → no cut.
 
+## Lineage Metrics
+
+### Lineage evidence coverage
+
+**Key:** `lineage_evidence_coverage`
+
+**Plain English:** For an idea_lineage run, the fraction of evidence buckets (matches, related concepts, timeline, takes, trajectory, contradictions) that came back with at least one item. High coverage means the brain had rich, multi-angle evidence for the idea; low coverage means the lineage rests on thin evidence and the answer should hedge.
+
+**Range:** 0..1, higher is better. 0.5 means 3 of the 6 evidence buckets were populated for the resolved anchor.
+
 ---
 
 ## Coverage

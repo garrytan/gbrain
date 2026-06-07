@@ -105,6 +105,28 @@ export const FIND_TRAJECTORY_DESCRIPTION =
   "the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` " +
   "for an aggregated rollup of the same data.";
 
+export const IDEA_LINEAGE_DESCRIPTION =
+  "Gather the deterministic evidence bundle for how ONE idea evolved through the " +
+  "brain: resolve a free-text idea to its best concept/page anchor, then collect " +
+  "dated matches, related concepts (backlinks + a depth-2 graph walk), timeline " +
+  "anchors, attributed takes, an optional entity trajectory, and any cached " +
+  "contradiction findings touching the anchor. Use this when the user asks 'how " +
+  "has my thinking about X changed', 'where did this idea come from', 'what " +
+  "changed my mind about X', or 'what is my current version of this idea'. It is " +
+  "the gather step behind the idea-lineage skill — the agent classifies first " +
+  "mention / reversal / abandoned branch and writes the narrative; the op only " +
+  "returns evidence. NOT concept-synthesis (whole-corpus map) and NOT " +
+  "find_trajectory (entity metric/status timeline). Returns " +
+  "`{idea, resolved, candidates: [{slug, score, via}], disambiguation_needed, " +
+  "degraded, matches, related, timeline, takes, trajectory, contradictions, " +
+  "contradiction_run, partial, errors, schema_version: 2}`. `disambiguation_needed` " +
+  "is true when the idea resolves to more than one strong anchor — let the user " +
+  "choose. `degraded` is true when semantic search was unavailable (keyword-only); " +
+  "cap confidence accordingly. `partial` is true (with failed channel names in " +
+  "`errors`) when a gather channel failed but others succeeded. Source-scoped via " +
+  "the caller's grant. Remote/MCP callers see world-visibility trajectory facts " +
+  "only and do not receive the global contradiction trend.";
+
 // ──────────────────────────────────────────────────────────────────────────────
 // v0.33.3 Cathedral III foundation — code-intelligence ops (MCP-exposed).
 // Pre-v0.33.3 the callers/callees/def/refs commands were CLI-only — agents

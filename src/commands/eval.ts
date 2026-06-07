@@ -94,6 +94,12 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalTrajectory } = await import('./eval-trajectory.ts');
     return runEvalTrajectory(engine, args.slice(1));
   }
+  if (sub === 'idea-lineage') {
+    // idea_lineage gather-op coverage eval. Local-only (the op is localOnly);
+    // persists a per-run record to .gbrain-evals/idea-lineage-results.jsonl.
+    const { runEvalIdeaLineage } = await import('./eval-idea-lineage.ts');
+    return runEvalIdeaLineage(engine, args.slice(1));
+  }
   if (sub === 'conversation-parser') {
     // v0.41.13.0 — fixture-corpus CI gate for the 12-pattern built-in
     // registry + opt-in LLM polish/fallback. Pure-function eval; no

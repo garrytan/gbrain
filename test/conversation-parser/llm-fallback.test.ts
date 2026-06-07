@@ -11,8 +11,14 @@
  *   - Cache hit: doesn't re-call
  */
 
-import { describe, expect, test, beforeEach } from 'bun:test';
+import { describe, expect, test, beforeEach, beforeAll, afterAll } from 'bun:test';
 import { withEnv } from '../helpers/with-env.ts';
+import { suppressAnthropicKey } from '../helpers/no-anthropic-key.ts';
+
+// Isolate "no API key" assertions from the developer's real ~/.gbrain config.
+let __restoreNoKey: () => void;
+beforeAll(() => { __restoreNoKey = suppressAnthropicKey(); });
+afterAll(() => { __restoreNoKey?.(); });
 import { runLlmFallback } from '../../src/core/conversation-parser/llm-fallback.ts';
 import { _resetLlmCacheForTests } from '../../src/core/conversation-parser/llm-base.ts';
 import { makeChatResult } from './helpers.ts';

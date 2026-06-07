@@ -15,10 +15,16 @@
  * These tests pin the four spec points. Hermetic — no real LLM call.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { __thinkAdapter } from '../src/core/think/index.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { suppressAnthropicKey } from './helpers/no-anthropic-key.ts';
+
+// Isolate "no API key" assertions from the developer's real ~/.gbrain config.
+let __restoreNoKey: () => void;
+beforeAll(() => { __restoreNoKey = suppressAnthropicKey(); });
+afterAll(() => { __restoreNoKey?.(); });
 
 describe('think gateway adapter — response shape conversion', () => {
   test('chatResultToMessage maps ChatResult.text to Anthropic.Message content[0].text', () => {

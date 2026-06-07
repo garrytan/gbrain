@@ -1136,7 +1136,7 @@ export interface BrainEngine {
    * v0.31.8 (D12 + D16): same `opts.sourceId` semantics as `getLinks`,
    * applied to the to-page side of the join.
    */
-  getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]>;
+  getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]>;
   /**
    * Fuzzy-match a display name to a page slug using pg_trgm similarity.
    * Zero embedding cost, zero LLM cost — designed for the v0.13 resolver used

@@ -10,6 +10,7 @@ import {
   GET_SKILL_DESCRIPTION,
   SKILL_CATALOG_INSTRUCTIONS,
   SKILL_CLIENT_GUIDANCE,
+  IDEA_LINEAGE_DESCRIPTION,
 } from '../src/core/operations-descriptions.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../src/core/minions/tools/brain-allowlist.ts';
@@ -143,6 +144,35 @@ describe('v0.29 — operations array carries the three new ops', () => {
     expect(names).toContain('get_recent_salience');
     expect(names).toContain('find_anomalies');
     expect(names).toContain('get_recent_transcripts');
+  });
+});
+
+describe('idea_lineage description', () => {
+  test('matches the operation registration', () => {
+    expect(operationsByName['idea_lineage'].description).toBe(IDEA_LINEAGE_DESCRIPTION);
+  });
+
+  test('routes the belief-evolution intents and disclaims the adjacent surfaces', () => {
+    expect(IDEA_LINEAGE_DESCRIPTION).toContain('how has my thinking about');
+    expect(IDEA_LINEAGE_DESCRIPTION).toContain('what changed my mind about');
+    expect(IDEA_LINEAGE_DESCRIPTION).toContain('NOT concept-synthesis');
+    expect(IDEA_LINEAGE_DESCRIPTION).toContain('NOT');
+    expect(IDEA_LINEAGE_DESCRIPTION).toContain('find_trajectory');
+  });
+
+  test('discloses the remote posture and the evidence-gather contract', () => {
+    expect(IDEA_LINEAGE_DESCRIPTION).toContain('Remote/MCP callers');
+    expect(IDEA_LINEAGE_DESCRIPTION).toContain('world-visibility');
+    expect(IDEA_LINEAGE_DESCRIPTION).toContain('disambiguation_needed');
+    expect(IDEA_LINEAGE_DESCRIPTION).toContain('degraded');
+  });
+
+  test('is registered as a remote-capable read op (not localOnly)', () => {
+    const op = operationsByName['idea_lineage'];
+    expect(op.scope).toBe('read');
+    expect(op.localOnly).toBeUndefined();
+    expect(op.mutating).toBeFalsy();
+    expect(operations.map((o) => o.name)).toContain('idea_lineage');
   });
 });
 

@@ -2634,22 +2634,17 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
+  async getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
     const sql = this.sql;
-    // v0.31.8 (D16): two-branch query, mirrors getLinks above.
-    if (opts?.sourceId) {
-      const rows = await sql`
-        SELECT f.slug as from_slug, t.slug as to_slug,
-               l.link_type, l.context, l.link_source,
-               o.slug as origin_slug, l.origin_field
-        FROM links l
-        JOIN pages f ON f.id = l.from_page_id
-        JOIN pages t ON t.id = l.to_page_id
-        LEFT JOIN pages o ON o.id = l.origin_page_id
-        WHERE t.slug = ${slug} AND t.source_id = ${opts.sourceId}
-      `;
-      return rows as unknown as Link[];
-    }
+    // v0.42.x: federated source scope. Source predicate mirrors findTrajectory's
+    // shape (array federated path wins over scalar; neither set => no source
+    // filter, preserving pre-v0.31.8 cross-source semantics for local callers).
+    const useArray = Array.isArray(opts?.sourceIds) && opts!.sourceIds!.length > 0;
+    const srcFilter = useArray
+      ? sql`AND t.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND t.source_id = ${opts.sourceId}`
+        : sql``;
     const rows = await sql`
       SELECT f.slug as from_slug, t.slug as to_slug,
              l.link_type, l.context, l.link_source,
@@ -2658,7 +2653,7 @@ export class PostgresEngine implements BrainEngine {
       JOIN pages f ON f.id = l.from_page_id
       JOIN pages t ON t.id = l.to_page_id
       LEFT JOIN pages o ON o.id = l.origin_page_id
-      WHERE t.slug = ${slug}
+      WHERE t.slug = ${slug} ${srcFilter}
     `;
     return rows as unknown as Link[];
   }
@@ -3219,51 +3214,24 @@ export class PostgresEngine implements BrainEngine {
   async getTimeline(slug: string, opts?: TimelineOpts): Promise<TimelineEntry[]> {
     const sql = this.sql;
     const limit = opts?.limit || 100;
-    // v0.31.8 (D16): branch on every combination of (after, before, sourceId).
-    // 8 cases is too many — use an explicit branch on sourceId, then nested
-    // branches on after/before. Mirrors pglite-engine but stays in postgres.js
-    // template-literal idiom (which doesn't compose fragment WHERE chains
-    // cleanly).
-    const sourceId = opts?.sourceId;
-    let rows;
-    if (sourceId) {
-      if (opts?.after && opts?.before) {
-        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
-            AND te.date >= ${opts.after}::date AND te.date <= ${opts.before}::date
-          ORDER BY te.date DESC LIMIT ${limit}`;
-      } else if (opts?.after) {
-        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
-            AND te.date >= ${opts.after}::date
-          ORDER BY te.date DESC LIMIT ${limit}`;
-      } else if (opts?.before) {
-        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
-            AND te.date <= ${opts.before}::date
-          ORDER BY te.date DESC LIMIT ${limit}`;
-      } else {
-        rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-          WHERE p.slug = ${slug} AND p.source_id = ${sourceId}
-          ORDER BY te.date DESC LIMIT ${limit}`;
-      }
-    } else if (opts?.after && opts?.before) {
-      rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-        WHERE p.slug = ${slug} AND te.date >= ${opts.after}::date AND te.date <= ${opts.before}::date
-        ORDER BY te.date DESC LIMIT ${limit}`;
-    } else if (opts?.after) {
-      rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-        WHERE p.slug = ${slug} AND te.date >= ${opts.after}::date
-        ORDER BY te.date DESC LIMIT ${limit}`;
-    } else if (opts?.before) {
-      rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-        WHERE p.slug = ${slug} AND te.date <= ${opts.before}::date
-        ORDER BY te.date DESC LIMIT ${limit}`;
-    } else {
-      rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
-        WHERE p.slug = ${slug}
-        ORDER BY te.date DESC LIMIT ${limit}`;
-    }
+    // v0.42.x: federated source scope + composed date bounds. Source predicate
+    // mirrors findTrajectory (array federated path wins over scalar; neither set
+    // => no source filter, preserving pre-v0.31.8 cross-source semantics). The
+    // prior 8-case branch collapses to one composed query — fragment
+    // interpolation works (see findTrajectory above), the older "doesn't compose
+    // cleanly" note referred to chaining whole WHERE clauses, not single
+    // predicate fragments.
+    const useArray = Array.isArray(opts?.sourceIds) && opts!.sourceIds!.length > 0;
+    const srcFilter = useArray
+      ? sql`AND p.source_id = ANY(${opts!.sourceIds!}::text[])`
+      : opts?.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
+    const afterFilter = opts?.after ? sql`AND te.date >= ${opts.after}::date` : sql``;
+    const beforeFilter = opts?.before ? sql`AND te.date <= ${opts.before}::date` : sql``;
+    const rows = await sql`SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
+      WHERE p.slug = ${slug} ${srcFilter} ${afterFilter} ${beforeFilter}
+      ORDER BY te.date DESC LIMIT ${limit}`;
     return rows as unknown as TimelineEntry[];
   }
 
@@ -4152,6 +4120,16 @@ export class PostgresEngine implements BrainEngine {
   async searchTakes(query: string, opts: SearchOpts & { takesHoldersAllowList?: string[] } = {}): Promise<TakeHit[]> {
     const sql = this.sql;
     const limit = clampSearchLimit(opts.limit, 30, 100);
+    // v0.42.x: source isolation. Holder allow-list is NOT a source boundary —
+    // a federated caller scoped to source-A must not see source-B takes. Source
+    // predicate mirrors findTrajectory (array federated path wins; neither =>
+    // no filter, cross-source for local/unscoped callers).
+    const useArray = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
+    const srcFilter = useArray
+      ? sql`AND p.source_id = ANY(${opts.sourceIds!}::text[])`
+      : opts.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
     const rows = await sql`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
              t.claim, t.kind, t.holder, t.weight,
@@ -4160,6 +4138,7 @@ export class PostgresEngine implements BrainEngine {
       JOIN pages p ON p.id = t.page_id
       WHERE t.active
         AND t.claim % ${query}
+        ${srcFilter}
         AND (
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
@@ -4177,6 +4156,14 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const limit = clampSearchLimit(opts.limit, 30, 100);
     const vec = `[${Array.from(embedding).join(',')}]`;
+    // v0.42.x: source isolation (see searchTakes). Holder allow-list is not a
+    // source boundary.
+    const useArray = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
+    const srcFilter = useArray
+      ? sql`AND p.source_id = ANY(${opts.sourceIds!}::text[])`
+      : opts.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
     const rows = await sql`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
              t.claim, t.kind, t.holder, t.weight,
@@ -4185,6 +4172,7 @@ export class PostgresEngine implements BrainEngine {
       JOIN pages p ON p.id = t.page_id
       WHERE t.active
         AND t.embedding IS NOT NULL
+        ${srcFilter}
         AND (
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])

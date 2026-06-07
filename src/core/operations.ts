@@ -24,6 +24,11 @@ import { getContentFlag } from './quarantine.ts';
 import { bumpLastRetrievedAt } from './last-retrieved.ts';
 import { isSearchMode } from './search/mode.ts';
 import { stampEvidence } from './search/evidence.ts';
+import {
+  loadLatestContradictionFindings,
+  filterContradictions,
+  filterContradictionsBySlugs,
+} from './contradiction-filter.ts';
 import type { SearchResult } from './types.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
 import * as db from './db.ts';
@@ -38,6 +43,7 @@ import {
   SEARCH_DESCRIPTION,
   FIND_CONTRADICTIONS_DESCRIPTION,
   FIND_TRAJECTORY_DESCRIPTION,
+  IDEA_LINEAGE_DESCRIPTION,
   CODE_CALLERS_DESCRIPTION,
   CODE_CALLEES_DESCRIPTION,
   CODE_DEF_DESCRIPTION,
@@ -3111,39 +3117,19 @@ const find_contradictions: Operation = {
     const sevFilter = (p.severity === 'low' || p.severity === 'medium' || p.severity === 'high')
       ? p.severity
       : null;
-    const rows = await ctx.engine.loadContradictionsTrend(30);
-    if (rows.length === 0) {
+    const latest = await loadLatestContradictionFindings(ctx.engine);
+    if (!latest) {
       return { contradictions: [], note: 'No probe runs in the last 30 days; run `gbrain eval suspected-contradictions` first.' };
     }
-    const latest = rows[0];
-    const report = latest.report_json as Record<string, unknown> | null;
-    const perQuery = (report?.per_query as Array<{
-      contradictions: Array<{
-        kind: string;
-        severity: 'low' | 'medium' | 'high';
-        axis: string;
-        confidence: number;
-        a: { slug: string; chunk_id: number | null; take_id: number | null };
-        b: { slug: string; chunk_id: number | null; take_id: number | null };
-        resolution_kind: string;
-        resolution_command: string;
-      }>;
-    }> | undefined) ?? [];
-    const findings = perQuery.flatMap((q) => q.contradictions);
-    const filtered = findings.filter((f) => {
-      if (sevFilter && f.severity !== sevFilter) return false;
-      if (slugFilter) {
-        const sA = f.a.slug.toLowerCase();
-        const sB = f.b.slug.toLowerCase();
-        if (!sA.includes(slugFilter) && !sB.includes(slugFilter)) return false;
-      }
-      return true;
+    const filtered = filterContradictions(latest.findings, {
+      severity: sevFilter,
+      slugSubstrings: slugFilter ? [slugFilter] : [],
     });
     return {
       run_id: latest.run_id,
       ran_at: latest.ran_at,
       contradictions: filtered.slice(0, limit),
-      total_in_run: findings.length,
+      total_in_run: latest.findings.length,
     };
   },
   cliHints: { name: 'find-contradictions' },
@@ -3239,6 +3225,260 @@ const find_trajectory: Operation = {
     };
   },
   cliHints: { name: 'find-trajectory' },
+};
+
+// Entity-slug prefixes for which a typed-fact trajectory is meaningful. A plain
+// concept (e.g. `concepts/founder-led-sales`) has no entity_slug facts, so
+// calling find_trajectory on it just returns [] — only ask for the trajectory
+// side-channel when the resolved anchor actually looks like an entity (A3).
+const IDEA_LINEAGE_ENTITY_PREFIXES = ['companies/', 'people/', 'funds/', 'orgs/', 'organizations/'];
+
+// Near-tie ratio: when the #2 candidate's score is within this fraction of #1's,
+// the resolution is ambiguous and the caller should disambiguate.
+const IDEA_LINEAGE_AMBIGUITY_RATIO = 0.85;
+
+const idea_lineage: Operation = {
+  name: 'idea_lineage',
+  description: IDEA_LINEAGE_DESCRIPTION,
+  scope: 'read',
+  // v0.42.x: remote/agent-callable (HTTP/OAuth MCP), mirroring find_trajectory.
+  // Safety comes from (a) federated source isolation — every channel gets the
+  // same sourceScopeOpts(ctx) scope, and getBacklinks/getTimeline/searchTakes
+  // are now sourceIds[]-aware; (b) the trajectory channel threads
+  // remote=ctx.remote===true → visibility='world'; (c) contradictions (global,
+  // unscoped trend) are omitted for remote callers; (d) the `source` override
+  // is validated against ctx.auth.allowedSources for remote callers (no
+  // cross-source IDOR). NOT added to the subagent BRAIN_TOOL_ALLOWLIST — that
+  // is a separate, deliberate security decision (see TODOS).
+  params: {
+    idea: { type: 'string', required: true, description: 'Free-text idea, topic, concept phrase, or concept slug.' },
+    source: { type: 'string', description: 'Scope to a single source id. Defaults to OperationContext.sourceId.' },
+    since: { type: 'string', description: 'Lower bound (YYYY-MM-DD or ISO) on gathered matches.' },
+    until: { type: 'string', description: 'Upper bound (YYYY-MM-DD or ISO) on gathered matches.' },
+    max_matches: { type: 'number', description: 'Max search matches gathered. Default 12, cap 50.' },
+    max_related: { type: 'number', description: 'Max related concepts (backlinks + graph). Default 12, cap 50.' },
+    max_timeline: { type: 'number', description: 'Max timeline anchors. Default 20, cap 100.' },
+    max_takes: { type: 'number', description: 'Max attributed takes. Default 12, cap 50.' },
+  },
+  handler: async (ctx, p) => {
+    const remote = ctx.remote === true;
+    const idea = typeof p.idea === 'string' ? p.idea.trim() : '';
+    if (!idea) {
+      throw new OperationError('invalid_params', 'idea_lineage requires `idea` (non-empty string).');
+    }
+
+    const cap = (v: unknown, def: number, max: number): number =>
+      typeof v === 'number' && v > 0 ? Math.min(Math.floor(v), max) : def;
+    const maxMatches = cap(p.max_matches, 12, 50);
+    const maxRelated = cap(p.max_related, 12, 50);
+    const maxTimeline = cap(p.max_timeline, 20, 100);
+    const maxTakes = cap(p.max_takes, 12, 50);
+
+    // Source scope (D4): one validated scope object threaded to every channel.
+    // Federated allowedSources array > scalar ctx.sourceId. A remote caller MAY
+    // pass `source` to narrow within its grant, but it must be inside
+    // ctx.auth.allowedSources / ctx.sourceId — otherwise it's a cross-source
+    // IDOR. Local CLI (remote=false) keeps the free override.
+    const sourceParam = typeof p.source === 'string' && p.source.length > 0 ? p.source : undefined;
+    let scope: { sourceId?: string; sourceIds?: string[] };
+    if (sourceParam) {
+      if (remote) {
+        const allowed = ctx.auth?.allowedSources;
+        const inGrant = allowed && allowed.length > 0
+          ? allowed.includes(sourceParam)
+          : ctx.sourceId
+            ? sourceParam === ctx.sourceId
+            : false;
+        if (!inGrant) {
+          throw new OperationError(
+            'permission_denied',
+            `idea_lineage: source '${sourceParam}' is not within this caller's allowed sources.`,
+          );
+        }
+      }
+      scope = { sourceId: sourceParam };
+    } else {
+      scope = sourceScopeOpts(ctx);
+    }
+    if (remote) {
+      ctx.logger?.info?.(`idea_lineage remote call: scope=${JSON.stringify(scope)} idea_len=${idea.length}`);
+    }
+    const since = typeof p.since === 'string' ? p.since : undefined;
+    const until = typeof p.until === 'string' ? p.until : undefined;
+
+    // ── Phase 1: resolve the idea to candidate anchors ──────────────────────
+    // hybridSearch embeds the idea text via the gateway (handler/gateway layer,
+    // not the engine — A1) and falls back to keyword-only when no API key. The
+    // onMeta callback tells us whether the semantic path actually ran.
+    let meta: HybridSearchMeta | null = null;
+    const matches = await hybridSearch(ctx.engine, idea, {
+      limit: maxMatches,
+      expansion: false,
+      ...scope,
+      since,
+      until,
+      onMeta: (m) => { meta = m; },
+    });
+    const degraded = meta ? (meta as HybridSearchMeta).vector_enabled === false : false;
+
+    // Candidate anchors: exact-ish slug resolutions (concept-page anchors)
+    // outrank semantic matches. Deterministic ordering: score desc, then slug.
+    const SLUG_TIER = 1_000_000;
+    const candMap = new Map<string, { slug: string; score: number; via: 'slug' | 'search' }>();
+    for (const m of matches) {
+      const prev = candMap.get(m.slug);
+      if (!prev || m.score > prev.score) {
+        candMap.set(m.slug, { slug: m.slug, score: m.score, via: 'search' });
+      }
+    }
+    const slugMatches = await ctx.engine.resolveSlugs(idea, scope);
+    for (let i = 0; i < slugMatches.length; i++) {
+      candMap.set(slugMatches[i], { slug: slugMatches[i], score: SLUG_TIER - i, via: 'slug' });
+    }
+    const candidates = [...candMap.values()].sort(
+      (a, b) => b.score - a.score || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0),
+    );
+    const resolved = candidates[0]?.slug ?? null;
+
+    let disambiguation_needed = false;
+    if (candidates.length >= 2) {
+      const [c0, c1] = candidates;
+      if (c0.via === 'slug' && c1.via === 'slug') {
+        // Two or more exact concept-page anchors — genuinely ambiguous.
+        disambiguation_needed = true;
+      } else if (c0.via === 'search' && c0.score > 0 && c1.score / c0.score >= IDEA_LINEAGE_AMBIGUITY_RATIO) {
+        // Near-tie semantic matches with no exact anchor to break the tie.
+        disambiguation_needed = true;
+      }
+    }
+
+    const wireMatches = matches.slice(0, maxMatches).map((m) => ({
+      slug: m.slug,
+      title: m.title,
+      type: m.type,
+      snippet: m.chunk_text.length > 280 ? m.chunk_text.slice(0, 280) + '…' : m.chunk_text,
+      score: m.score,
+    }));
+
+    // No anchor → return the (possibly degraded) matches + empty buckets. The
+    // skill/eval layer turns empty buckets into narrative gaps; the op does not
+    // invent lineage (Codex #10).
+    if (!resolved) {
+      return {
+        idea,
+        resolved: null,
+        candidates,
+        disambiguation_needed,
+        degraded,
+        matches: wireMatches,
+        related: [],
+        timeline: [],
+        takes: [],
+        trajectory: [],
+        contradictions: [],
+        contradiction_run: null,
+        partial: false,
+        errors: [],
+        schema_version: 2,
+      };
+    }
+
+    // ── Phase 2: gather evidence for the resolved anchor ────────────────────
+    // Parallel fan-out is correct ONLY here, after the anchor slug is known
+    // (resolve→gather, Codex #8). Graph depth pinned to 2 (P2A).
+    //
+    // D5: allSettled, not all — one slow/failed channel degrades to an empty
+    // bucket plus a `partial`/`errors` flag, instead of 500ing the whole
+    // lineage (mirrors the `degraded` posture for the search channel).
+    // Contradictions: the cached trend is global + unscoped, so it is NOT
+    // loaded for remote callers (fail-closed). All five channels get the SAME
+    // validated `scope` object (no scalar/federated mismatch).
+    const errors: string[] = [];
+    const pick = <T>(r: PromiseSettledResult<T>, fallback: T, label: string): T => {
+      if (r.status === 'fulfilled') return r.value;
+      errors.push(label);
+      ctx.logger?.warn?.(`idea_lineage: ${label} channel failed: ${String(r.reason)}`);
+      return fallback;
+    };
+    const gather = await Promise.allSettled([
+      ctx.engine.getBacklinks(resolved, scope),
+      ctx.engine.traverseGraph(resolved, 2, scope),
+      ctx.engine.getTimeline(resolved, scope),
+      ctx.engine.searchTakes(idea, { limit: maxTakes, ...scope, takesHoldersAllowList: ctx.takesHoldersAllowList }),
+      remote ? Promise.resolve(null) : loadLatestContradictionFindings(ctx.engine),
+    ] as const);
+    const backlinks = pick(gather[0], [], 'backlinks');
+    const graph = pick(gather[1], [], 'graph');
+    const timeline = pick(gather[2], [], 'timeline');
+    const takes = pick(gather[3], [], 'takes');
+    const contraBundle = pick(gather[4], null, 'contradictions');
+
+    // Related concepts: inbound edges (descendants / abandoned branches) +
+    // depth-2 graph neighbors, deduped by slug, excluding the anchor itself.
+    const relatedMap = new Map<string, { slug: string; title?: string; via: 'backlink' | 'graph'; depth?: number }>();
+    for (const l of backlinks) {
+      if (l.from_slug === resolved) continue;
+      if (!relatedMap.has(l.from_slug)) relatedMap.set(l.from_slug, { slug: l.from_slug, via: 'backlink' });
+    }
+    for (const n of graph) {
+      if (n.slug === resolved) continue;
+      if (!relatedMap.has(n.slug)) relatedMap.set(n.slug, { slug: n.slug, title: n.title, via: 'graph', depth: n.depth });
+    }
+    const related = [...relatedMap.values()].slice(0, maxRelated);
+
+    // Trajectory side-channel: only when the anchor looks like an entity (A3).
+    // Strip embeddings before returning (CQ1).
+    let trajectory: Array<{ date: string; metric: string | null; value: number | null; unit: string | null; text: string }> = [];
+    if (IDEA_LINEAGE_ENTITY_PREFIXES.some((pre) => resolved.startsWith(pre))) {
+      const points = await ctx.engine.findTrajectory({
+        entitySlug: resolved,
+        ...scope,
+        remote,
+        limit: 100,
+      });
+      trajectory = points.map((pt) => ({
+        date: pt.valid_from.toISOString().slice(0, 10),
+        metric: pt.metric,
+        value: pt.value,
+        unit: pt.unit,
+        text: pt.text,
+      }));
+    }
+
+    // Contradictions scoped to the anchor (+ other strong candidates) via the
+    // shared slug filter (A4 / DRY).
+    const anchorSlugs = candidates.slice(0, 5).map((c) => c.slug);
+    const contradictions = contraBundle
+      ? filterContradictionsBySlugs(contraBundle.findings, anchorSlugs).slice(0, 50)
+      : [];
+
+    return {
+      idea,
+      resolved,
+      candidates,
+      disambiguation_needed,
+      degraded,
+      matches: wireMatches,
+      related,
+      timeline: timeline.slice(0, maxTimeline).map((t) => ({
+        // Normalize to YYYY-MM-DD — engines return the DATE column as a Date
+        // at runtime even though the type says string.
+        date: (t.date as unknown) instanceof Date
+          ? (t.date as unknown as Date).toISOString().slice(0, 10)
+          : String(t.date).slice(0, 10),
+        summary: t.summary,
+        source: t.source,
+      })),
+      takes: takes.slice(0, maxTakes).map((t) => ({ slug: t.page_slug, claim: t.claim, kind: t.kind, holder: t.holder, weight: t.weight })),
+      trajectory,
+      contradictions,
+      contradiction_run: contraBundle ? { run_id: contraBundle.run_id, ran_at: contraBundle.ran_at } : null,
+      partial: errors.length > 0,
+      errors,
+      schema_version: 2,
+    };
+  },
+  cliHints: { name: 'idea-lineage', positional: ['idea'] },
 };
 
 const get_recent_transcripts: Operation = {
@@ -4723,6 +4963,8 @@ export const operations: Operation[] = [
   find_experts,
   // v0.35.4: temporal trajectory (typed claims over time + regression detection)
   find_trajectory,
+  // idea-lineage gather op (local-only; resolve→gather evidence bundle)
+  idea_lineage,
   // v0.33.3: Cathedral III code-intelligence (MCP-exposed; were CLI_ONLY pre-v0.33.3)
   code_callers, code_callees, code_def, code_refs,
   // v0.34 W3: recursive code_blast + code_flow

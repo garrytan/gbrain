@@ -11,8 +11,14 @@
  *   - parseLlmJson 4-strategy fallback
  */
 
-import { describe, expect, test, beforeEach } from 'bun:test';
+import { describe, expect, test, beforeEach, beforeAll, afterAll } from 'bun:test';
 import { withEnv } from '../helpers/with-env.ts';
+import { suppressAnthropicKey } from '../helpers/no-anthropic-key.ts';
+
+// Isolate "no API key" assertions from the developer's real ~/.gbrain config.
+let __restoreNoKey: () => void;
+beforeAll(() => { __restoreNoKey = suppressAnthropicKey(); });
+afterAll(() => { __restoreNoKey?.(); });
 import {
   runLlmCall,
   parseLlmJson,
