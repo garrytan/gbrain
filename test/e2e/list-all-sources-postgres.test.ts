@@ -38,7 +38,7 @@ beforeEach(async () => {
 
 async function seedSource(
   id: string,
-  opts: { local_path?: string | null; archived?: boolean; config?: Record<string, unknown> } = {},
+  opts: { local_path?: string | null; archived?: boolean; config?: unknown } = {},
 ): Promise<void> {
   const localPath = opts.local_path === undefined ? `/tmp/${id}` : opts.local_path;
   const archived = opts.archived === true;
@@ -100,6 +100,20 @@ describeIfDB('Postgres parity — listAllSources', () => {
     expect(fred.config.remote_url).toBe('https://x');
   });
 
+  test('legacy array-shaped config normalizes to object on read', async () => {
+    await seedSource('legacy-array', {
+      config: [
+        '{"remote_url":"https://x","last_full_cycle_at":"2026-05-22T08:00:00.000Z"}',
+        { last_full_cycle_at: '2026-05-22T09:00:00.000Z' },
+      ],
+    });
+    const all = await engine.listAllSources();
+    const source = all.find(s => s.id === 'legacy-array')!;
+    expect(Array.isArray(source.config)).toBe(false);
+    expect(source.config.remote_url).toBe('https://x');
+    expect(source.config.last_full_cycle_at).toBe('2026-05-22T09:00:00.000Z');
+  });
+
   test('default source sorts first', async () => {
     await seedSource('zebra');
     await seedSource('alpha');
@@ -158,6 +172,25 @@ describeIfDB('Postgres parity — updateSourceConfig', () => {
          FROM sources WHERE id = 'delta'`,
     );
     expect(rows[0]?.typeof).toBe('object');
+    expect(rows[0]?.value).toBe('2026-05-22T12:00:00.000Z');
+  });
+
+  test('repairs legacy array-shaped config on update', async () => {
+    await seedSource('echo', {
+      config: [
+        '{"remote_url":"https://x","last_full_cycle_at":"2026-05-22T08:00:00.000Z"}',
+        { last_full_cycle_at: '2026-05-22T09:00:00.000Z' },
+      ],
+    });
+    await engine.updateSourceConfig('echo', { last_full_cycle_at: '2026-05-22T12:00:00.000Z' });
+    const rows = await engine.executeRaw<{ typeof: string; remote_url: string | null; value: string | null }>(
+      `SELECT jsonb_typeof(config) AS typeof,
+              config->>'remote_url' AS remote_url,
+              config->>'last_full_cycle_at' AS value
+         FROM sources WHERE id = 'echo'`,
+    );
+    expect(rows[0]?.typeof).toBe('object');
+    expect(rows[0]?.remote_url).toBe('https://x');
     expect(rows[0]?.value).toBe('2026-05-22T12:00:00.000Z');
   });
 });
