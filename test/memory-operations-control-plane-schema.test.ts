@@ -9,7 +9,9 @@ import { SQLiteEngine } from '../src/core/sqlite-engine.ts';
 
 setDefaultTimeout(20_000);
 
-const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 20_000;
+// PGLite schema initialization can exceed the default timeout on macOS release runners
+// when the full suite has already exercised many embedded Postgres databases.
+const PGLITE_SCHEMA_TEST_TIMEOUT_MS = 60_000;
 
 const MUTATION_EVENT_COLUMNS = [
   'id',
